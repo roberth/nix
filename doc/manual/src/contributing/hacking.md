@@ -229,6 +229,14 @@ User-visible changes should come with a release note.
 
 ### Add an entry
 
+Use the wizard script.
+
+```console
+$ maintainers/add-release-note
+```
+
+### Entry format
+
 Here's what a complete entry looks like. The file name is not incorporated in the document.
 
 ```
