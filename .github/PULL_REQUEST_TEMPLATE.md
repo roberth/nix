@@ -13,3 +13,8 @@
 # Priorities
 
 Add :+1: to [pull requests you find important](https://github.com/NixOS/nix/pulls?q=is%3Aopen+sort%3Areactions-%2B1-desc).
+
+-----
+
+> [!TIP]
+> Making a user facing change? `$ maintainers/add-release-note` :rocket:
