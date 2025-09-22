@@ -321,3 +321,7 @@ This will be picked up by the _Format Document_ command, `"editor.formatOnSave"`
   },
 }
 ```
+
+## C API
+
+When hacking on the C API, read the [dedicated C API hacking page](https://github.com/NixOS/nix/blob/master/doc/hacking/c-api.md)
