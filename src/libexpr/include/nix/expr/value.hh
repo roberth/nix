@@ -15,6 +15,7 @@
 
 #include "nix/expr/eval-gc.hh"
 #include "nix/expr/value/context.hh"
+#include "nix/expr/object-type.hh"
 #include "nix/util/source-path.hh"
 #include "nix/expr/print-options.hh"
 #include "nix/util/checked-arithmetic.hh"
@@ -68,20 +69,7 @@ enum InternalType {
  * grouping together implementation details like tList*, different function
  * types, and types in non-normal form (so thunks and co.)
  */
-typedef enum {
-    nThunk,
-    nFailed,
-    nInt,
-    nFloat,
-    nBool,
-    nString,
-    nPath,
-    nNull,
-    nAttrs,
-    nList,
-    nFunction,
-    nExternal,
-} ValueType;
+using ValueType = ObjectType;
 
 class Bindings;
 struct Env;
