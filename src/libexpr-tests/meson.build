@@ -49,6 +49,7 @@ subdir('nix-meson-build-support/common')
 sources = files(
   'accessors-equivalent.cc',
   'attr-pos-path.cc',
+  'coarse-eval-cache.cc',
   'coerce-to-rooted-path.cc',
   'compare-for-tostring-equivalence.cc',
   'concat-strings.cc',
@@ -56,6 +57,7 @@ sources = files(
   'derived-path.cc',
   'error_traces.cc',
   'eval.cc',
+  'evaluator.cc',
   'is-path-equivalent.cc',
   'json.cc',
   'lazy-fetcher-attr.cc',

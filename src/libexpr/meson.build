@@ -157,6 +157,8 @@ endforeach
 sources = files(
   'attr-path.cc',
   'attr-set.cc',
+  'coarse-eval-cache-cursor-object.cc',
+  'coarse-eval-cache.cc',
   'eval-cache.cc',
   'eval-error.cc',
   'eval-gc.cc',
@@ -166,6 +168,8 @@ sources = files(
   'eval.cc',
   'function-trace.cc',
   'get-drvs.cc',
+  'interpreter-object.cc',
+  'interpreter.cc',
   'json-to-value.cc',
   'nixexpr.cc',
   'paths.cc',
