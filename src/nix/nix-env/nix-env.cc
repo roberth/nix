@@ -3,6 +3,7 @@
 #include "nix/cmd/common-eval-args.hh"
 #include "nix/store/derivations.hh"
 #include "nix/store/outputs-query.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/get-drvs.hh"
 #include "nix/store/globals.hh"
@@ -246,9 +247,9 @@ static std::strong_ordering comparePriorities(EvalState & state, PackageInfo & d
 static bool isPrebuilt(EvalState & state, PackageInfo & elem)
 {
     auto path = elem.queryOutPath();
-    if (state.store->isValidPath(path))
+    if (state.systemEnvironment->store->isValidPath(path))
         return true;
-    return state.store->querySubstitutablePaths({path}).count(path);
+    return state.systemEnvironment->store->querySubstitutablePaths({path}).count(path);
 }
 
 static void checkSelectorUse(DrvNames & selectors)
@@ -451,7 +452,7 @@ static void queryInstSources(
     case srcStorePaths: {
 
         for (auto & i : args) {
-            auto path = state.store->followLinksToStorePath(i);
+            auto path = state.systemEnvironment->store->followLinksToStorePath(i);
 
             std::string name(path.name());
 
@@ -460,7 +461,7 @@ static void queryInstSources(
 
             if (path.isDerivation()) {
                 elem.setDrvPath(path);
-                auto outputs = deepQueryDerivationOutputMap(*state.store, path);
+                auto outputs = deepQueryDerivationOutputMap(*state.systemEnvironment->store, path);
                 elem.setOutPath(outputs.at("out"));
                 if (name.size() >= drvExtension.size()
                     && std::string(name, name.size() - drvExtension.size()) == drvExtension)
@@ -510,7 +511,7 @@ static void printMissing(EvalState & state, PackageInfos & elems)
                     .path = i.queryOutPath(),
                 });
 
-    printMissing(state.store, targets);
+    printMissing(state.systemEnvironment->store, targets);
 }
 
 static bool keep(PackageInfo & drv)
@@ -760,7 +761,7 @@ static void opSetFlag(Globals & globals, Strings opFlags, Strings opArgs)
 
 static void opSet(Globals & globals, Strings opFlags, Strings opArgs)
 {
-    auto store2 = globals.state->store.dynamic_pointer_cast<LocalFSStore>();
+    auto store2 = globals.state->systemEnvironment->store.dynamic_pointer_cast<LocalFSStore>();
     if (!store2)
         throw Error("--set is not supported for this Nix store");
 
@@ -793,10 +794,10 @@ static void opSet(Globals & globals, Strings opFlags, Strings opArgs)
                       .path = drv.queryOutPath(),
                   }),
     };
-    printMissing(globals.state->store, paths);
+    printMissing(globals.state->systemEnvironment->store, paths);
     if (globals.dryRun)
         return;
-    globals.state->store->buildPaths(paths, globals.state->repair ? bmRepair : bmNormal);
+    globals.state->systemEnvironment->store->buildPaths(paths, globals.state->repair ? bmRepair : bmNormal);
 
     debug("switching to new user environment");
     auto generation = createGeneration(*store2, globals.profile, drv.queryOutPath());
@@ -813,7 +814,7 @@ static void uninstallDerivations(Globals & globals, Strings & selectors, const s
         for (auto & selector : selectors) {
             PackageInfos::iterator split = workingElems.begin();
             if (isPath(selector)) {
-                StorePath selectorStorePath = globals.state->store->followLinksToStorePath(selector);
+                StorePath selectorStorePath = globals.state->systemEnvironment->store->followLinksToStorePath(selector);
                 split = std::partition(
                     workingElems.begin(), workingElems.end(), [&selectorStorePath, globals](auto & elem) {
                         return selectorStorePath != elem.queryOutPath();
@@ -923,7 +924,7 @@ queryJSON(Globals & globals, std::vector<PackageInfo> & elems, bool printOutPath
                 outputObj = json::object();
                 for (auto & j : outputs) {
                     if (j.second)
-                        outputObj[j.first] = globals.state->store->printStorePath(*j.second);
+                        outputObj[j.first] = globals.state->systemEnvironment->store->printStorePath(*j.second);
                     else
                         outputObj[j.first] = nullptr;
                 }
@@ -932,7 +933,7 @@ queryJSON(Globals & globals, std::vector<PackageInfo> & elems, bool printOutPath
             if (printDrvPath) {
                 auto drvPath = i.queryDrvPath();
                 if (drvPath)
-                    pkgObj["drvPath"] = globals.state->store->printStorePath(*drvPath);
+                    pkgObj["drvPath"] = globals.state->systemEnvironment->store->printStorePath(*drvPath);
             }
 
             if (printMeta) {
@@ -962,7 +963,7 @@ queryJSON(Globals & globals, std::vector<PackageInfo> & elems, bool printOutPath
 
 static void opQuery(Globals & globals, Strings opFlags, Strings opArgs)
 {
-    auto & store{*globals.state->store};
+    auto & store{*globals.state->systemEnvironment->store};
 
     Strings remaining;
     std::string attrPath;

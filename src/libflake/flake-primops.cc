@@ -6,7 +6,9 @@
 
 #include "nix/flake/flake-primops.hh"
 #include "nix/expr/eval.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/expr/source-root.hh"
+#include "nix/fetchers/mountable-tree.hh"
 #include "nix/flake/flake.hh"
 #include "nix/flake/flakeref.hh"
 #include "nix/flake/settings.hh"
@@ -59,9 +61,11 @@ PrimOp getFlake(const Settings & settings)
                So if a flake input has a physical source path that is inside the store, first try to look it up in the
                storeFS. */
             if (auto sourcePath = flakeRef.input.getSourcePath();
-                flakeRef.input.getType() == "path" && sourcePath && state.store->isInStore(sourcePath->string())) {
-                auto [storePath, subPath] = state.store->toStorePath(sourcePath->string());
-                if (auto mount = state.storeFS->getMount(CanonPath(state.store->printStorePath(storePath)))) {
+                flakeRef.input.getType() == "path" && sourcePath
+                && state.systemEnvironment->store->isInStore(sourcePath->string())) {
+                auto [storePath, subPath] = state.systemEnvironment->store->toStorePath(sourcePath->string());
+                if (auto mount = state.systemEnvironment->storeFS->getMount(
+                        CanonPath(state.systemEnvironment->store->printStorePath(storePath)))) {
                     /* `mount` was registered by a fetcher (the only
                        site that mounts an individual storePath — the
                        constructor only mounts `/` and `/nix/store`),
@@ -156,16 +160,18 @@ PrimOp getFlake(const Settings & settings)
                 fetchers::Attrs attrs;
                 attrs.insert_or_assign("type", std::string("path"));
                 std::string subdir;
-                if (state.store->isInStore(absStr)) {
-                    auto [storePath, subPath] = state.store->toStorePath(absStr);
-                    attrs.insert_or_assign("path", state.store->printStorePath(storePath));
+                if (state.systemEnvironment->store->isInStore(absStr)) {
+                    auto [storePath, subPath] = state.systemEnvironment->store->toStorePath(absStr);
+                    attrs.insert_or_assign("path", state.systemEnvironment->store->printStorePath(storePath));
                     /* Externally-recorded narHash from the store, not
                        computed from current eval. Makes the synthesised
                        FlakeRef satisfy `isLocked()` in pure-eval, and
                        lets the `path:` fetcher's in-store shortcut
                        reuse the storepath verbatim. */
                     attrs.insert_or_assign(
-                        "narHash", state.store->queryPathInfo(storePath)->narHash.to_string(HashFormat::SRI, true));
+                        "narHash",
+                        state.systemEnvironment->store->queryPathInfo(storePath)->narHash.to_string(
+                            HashFormat::SRI, true));
                     subdir = std::string{CanonPath(subPath).rel()};
                 } else {
                     /* No external narHash to attach. `isLocked()` will

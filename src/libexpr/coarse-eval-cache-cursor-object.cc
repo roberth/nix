@@ -1,4 +1,5 @@
 #include "nix/expr/coarse-eval-cache-cursor-object.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/interpreter-object.hh"
 #include "nix/store/store-api.hh"
@@ -48,7 +49,7 @@ std::string CoarseEvalCacheCursorObject::getStringWithoutContext()
             .error<EvalError>(
                 "the string '%1%' is not allowed to refer to a store path (such as '%2%')",
                 str,
-                context.begin()->display(*cursor->root->state.store))
+                context.begin()->display(*cursor->root->state.systemEnvironment->store))
             .debugThrow();
     return str;
 }

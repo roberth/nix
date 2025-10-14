@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "nix/expr/environment/system.hh"
 
 #include "nix/expr/source-root.hh"
 #include "nix/expr/tests/libexpr.hh"
@@ -68,7 +69,7 @@ protected:
        slash, no `.` / `..` components). */
     Value * mkStoreString(std::string_view hash, std::string_view subpath = "")
     {
-        std::string s = std::string{state.store->storeDir} + "/" + std::string{hash} + "-source";
+        std::string s = std::string{state.systemEnvironment->store->storeDir} + "/" + std::string{hash} + "-source";
         if (!subpath.empty())
             s += subpath;
         return mkStringVal(s);
@@ -86,10 +87,11 @@ protected:
        call. */
     void mountAtStorePath(std::string_view hash, ref<MemorySourceAccessor> accessor)
     {
-        auto pathStr = std::string{state.store->storeDir} + "/" + std::string{hash} + "-source";
-        auto sp = state.store->parseStorePath(pathStr);
-        state.storeFS->mount(
-            CanonPath(state.store->printStorePath(sp)), [accessor]() { return accessor.cast<SourceAccessor>(); });
+        auto pathStr = std::string{state.systemEnvironment->store->storeDir} + "/" + std::string{hash} + "-source";
+        auto sp = state.systemEnvironment->store->parseStorePath(pathStr);
+        state.systemEnvironment->storeFS->mount(
+            CanonPath(state.systemEnvironment->store->printStorePath(sp)),
+            [accessor]() { return accessor.cast<SourceAccessor>(); });
     }
 
     /* Build an in-memory accessor with a single marker file at
@@ -189,7 +191,7 @@ TEST_F(CompareForToStringEquivalenceTest, trailingSlashFallsToCampB)
     /* `toString` of a Copyable never produces a trailing
        slash; a string with one cannot be Camp A. Falls to
        Camp B, compares less than any Camp A value. */
-    auto storeDir = std::string{state.store->storeDir};
+    auto storeDir = std::string{state.systemEnvironment->store->storeDir};
     auto * nonCanon = mkStringVal(storeDir + "/" + h1 + "-source/");
     auto * canonA = mkStoreString(h1);
     EXPECT_EQ(call(*nonCanon, *canonA), std::strong_ordering::less);
@@ -198,7 +200,7 @@ TEST_F(CompareForToStringEquivalenceTest, trailingSlashFallsToCampB)
 TEST_F(CompareForToStringEquivalenceTest, dotComponentFallsToCampB)
 {
     /* `toString` never emits `/.`; non-canonical. */
-    auto storeDir = std::string{state.store->storeDir};
+    auto storeDir = std::string{state.systemEnvironment->store->storeDir};
     auto * nonCanon = mkStringVal(storeDir + "/" + h1 + "-source/.");
     auto * canonA = mkStoreString(h1);
     EXPECT_EQ(call(*nonCanon, *canonA), std::strong_ordering::less);
@@ -207,7 +209,7 @@ TEST_F(CompareForToStringEquivalenceTest, dotComponentFallsToCampB)
 TEST_F(CompareForToStringEquivalenceTest, dotDotComponentFallsToCampB)
 {
     /* `toString` never emits `/foo/..`; non-canonical. */
-    auto storeDir = std::string{state.store->storeDir};
+    auto storeDir = std::string{state.systemEnvironment->store->storeDir};
     auto * nonCanon = mkStringVal(storeDir + "/" + h1 + "-source/foo/..");
     auto * canonA = mkStoreString(h1, "/foo");
     EXPECT_EQ(call(*nonCanon, *canonA), std::strong_ordering::less);
@@ -216,7 +218,7 @@ TEST_F(CompareForToStringEquivalenceTest, dotDotComponentFallsToCampB)
 TEST_F(CompareForToStringEquivalenceTest, doubleSlashFallsToCampB)
 {
     /* `toString` never emits `//`; non-canonical. */
-    auto storeDir = std::string{state.store->storeDir};
+    auto storeDir = std::string{state.systemEnvironment->store->storeDir};
     auto * nonCanon = mkStringVal(storeDir + "/" + h1 + "-source//foo");
     auto * canonA = mkStoreString(h1, "/foo");
     EXPECT_EQ(call(*nonCanon, *canonA), std::strong_ordering::less);
@@ -226,7 +228,7 @@ TEST_F(CompareForToStringEquivalenceTest, shortHashFallsToCampB)
 {
     /* `storeDir + "/hi"` isn't a valid store-path shape (hash too
        short). Whole thing is just bytes; Camp B. */
-    auto storeDir = std::string{state.store->storeDir};
+    auto storeDir = std::string{state.systemEnvironment->store->storeDir};
     auto * nonCanon = mkStringVal(storeDir + "/hi");
     auto * canonA = mkStoreString(h1);
     EXPECT_EQ(call(*nonCanon, *canonA), std::strong_ordering::less);
@@ -237,7 +239,7 @@ TEST_F(CompareForToStringEquivalenceTest, nonSourceNameFallsToCampB)
     /* Copyable always materialises under name `source`; a store
        path with a different name can't be equivalent to any
        Copyable. Treated as Camp B for our purposes. */
-    auto storeDir = std::string{state.store->storeDir};
+    auto storeDir = std::string{state.systemEnvironment->store->storeDir};
     auto * nonCanon = mkStringVal(storeDir + "/" + h1 + "-foo");
     auto * canonA = mkStoreString(h1);
     EXPECT_EQ(call(*nonCanon, *canonA), std::strong_ordering::less);
@@ -270,7 +272,7 @@ TEST_F(CompareForToStringEquivalenceTest, hashWithExcludedNix32CharFallsToCampB)
        char individually so a regression in the alphabet check
        (e.g. accidentally accepting all hex+lowercase) is
        caught. */
-    auto storeDir = std::string{state.store->storeDir};
+    auto storeDir = std::string{state.systemEnvironment->store->storeDir};
     auto * canonA = mkStoreString(h1);
     for (char c : std::string_view{"eotu"}) {
         std::string hash(32, '0');
@@ -285,7 +287,7 @@ TEST_F(CompareForToStringEquivalenceTest, hashTooLongFallsToCampB)
 {
     /* 33-char hash slot: even if every char is in the nix32
        alphabet, the length disqualifies. */
-    auto storeDir = std::string{state.store->storeDir};
+    auto storeDir = std::string{state.systemEnvironment->store->storeDir};
     std::string tooLong(33, '0');
     auto * nonCanon = mkStringVal(storeDir + "/" + tooLong + "-source");
     auto * canonA = mkStoreString(h1);
@@ -298,7 +300,7 @@ TEST_F(CompareForToStringEquivalenceTest, dotComponentInMiddleFallsToCampB)
        `/foo/bar` respectively — neither is what `toString` would
        emit, so Camp B. Tests the in-middle case, distinct from
        the `/.` at the trailing edge already covered. */
-    auto storeDir = std::string{state.store->storeDir};
+    auto storeDir = std::string{state.systemEnvironment->store->storeDir};
     auto * canonA = mkStoreString(h1, "/foo");
     auto * leading = mkStringVal(storeDir + "/" + h1 + "-source/./foo");
     auto * middle = mkStringVal(storeDir + "/" + h1 + "-source/foo/./bar");
@@ -310,7 +312,7 @@ TEST_F(CompareForToStringEquivalenceTest, dotComponentAtEndAloneFallsToCampB)
 {
     /* `/.` at the very end (no trailing `/`) is also rejected;
        complements `/foo/..` and the trailing-slash cases. */
-    auto storeDir = std::string{state.store->storeDir};
+    auto storeDir = std::string{state.systemEnvironment->store->storeDir};
     auto * nonCanon = mkStringVal(storeDir + "/" + h1 + "-source/foo/.");
     auto * canonA = mkStoreString(h1, "/foo");
     EXPECT_EQ(call(*nonCanon, *canonA), std::strong_ordering::less);
@@ -321,7 +323,7 @@ TEST_F(CompareForToStringEquivalenceTest, bareTrailingSlashSubpathFallsToCampB)
     /* Subpath of exactly `/` (no name after the slash) is a
        trailing-slash form `toString` never emits — Copyable's
        root toString has no trailing slash at all. */
-    auto storeDir = std::string{state.store->storeDir};
+    auto storeDir = std::string{state.systemEnvironment->store->storeDir};
     auto * nonCanon = mkStringVal(storeDir + "/" + h1 + "-source/");
     auto * canonA = mkStoreString(h1);
     EXPECT_EQ(call(*nonCanon, *canonA), std::strong_ordering::less);

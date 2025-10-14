@@ -3,6 +3,7 @@
 #include <boost/unordered/unordered_flat_set.hpp>
 
 #include "nix/cmd/command.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/expr/eval.hh"
 #include "run.hh"
 #include "nix/util/strings.hh"
@@ -88,16 +89,18 @@ struct CmdShell : InstallablesCommand, MixEnvironment
             if (!done.insert(path).second)
                 continue;
 
-            auto binDir = state->storeFS->resolveSymlinks(CanonPath(store->printStorePath(path)) / "bin");
+            auto binDir =
+                state->systemEnvironment->storeFS->resolveSymlinks(CanonPath(store->printStorePath(path)) / "bin");
             if (!store->isInStore(binDir.abs()))
                 throw Error("path '%s' is not in the Nix store", binDir);
 
             pathAdditions.push_back(binDir.abs());
 
-            auto propPath = state->storeFS->resolveSymlinks(
+            auto propPath = state->systemEnvironment->storeFS->resolveSymlinks(
                 CanonPath(store->printStorePath(path)) / "nix-support" / "propagated-user-env-packages");
-            if (auto st = state->storeFS->maybeLstat(propPath); st && st->type == SourceAccessor::tRegular) {
-                for (auto & p : tokenizeString<Strings>(state->storeFS->readFile(propPath)))
+            if (auto st = state->systemEnvironment->storeFS->maybeLstat(propPath);
+                st && st->type == SourceAccessor::tRegular) {
+                for (auto & p : tokenizeString<Strings>(state->systemEnvironment->storeFS->readFile(propPath)))
                     todo.push(store->parseStorePath(p));
             }
         }

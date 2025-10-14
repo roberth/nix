@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "nix/expr/environment/system.hh"
 
 #include "nix/expr/source-root.hh"
 #include "nix/expr/tests/libexpr.hh"
@@ -210,7 +211,7 @@ TEST_F(ComparePathsForOrderingTest, systemInsideStoreDirFallsThroughToMaterialis
        ordering in both directions. */
     auto sysRoot = mkRoot(SourceRootKind::System);
     auto copRoot = mkRoot(SourceRootKind::Copyable);
-    auto sysInside = std::string{state.store->storeDir} + "/foo-thing";
+    auto sysInside = std::string{state.systemEnvironment->store->storeDir} + "/foo-thing";
     auto * sys = mkPathPtr(sysRoot, sysInside);
     auto * cop = mkPathPtr(copRoot, "/");
     auto fwd = call(*sys, *cop);

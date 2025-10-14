@@ -4,6 +4,7 @@
 #include "nix/expr/source-root.hh"
 #include "nix/util/diagnose.hh"
 #include "nix/util/memo.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/util/mounted-source-accessor.hh"
 #include "nix/fetchers/attrs.hh"
 #include "nix/fetchers/fetch-settings.hh"
@@ -37,7 +38,8 @@ RootedPath EvalState::rootedPath(std::string_view path)
 
 SourcePath EvalState::storePath(const StorePath & path)
 {
-    return {rootFS, CanonPath{store->printStorePath(path)}};
+    // FIXME: do not use systemEnvironment
+    return {rootFS, CanonPath{systemEnvironment->store->printStorePath(path)}};
 }
 
 std::optional<std::string> EvalState::allocSourceUnpinnedId(SourceRoot & root)
@@ -98,14 +100,14 @@ void EvalState::ensureLazyPathCopied(const StorePath & path)
     if (settings.isReadOnly())
         return;
 
-    auto mount = storeFS->getMount(CanonPath(store->printStorePath(path)));
+    auto mount = systemEnvironment->storeFS->getMount(CanonPath(systemEnvironment->store->printStorePath(path)));
     if (!mount)
         return;
 
     /* TODO: We could memoise this in-memory if necessary. */
     auto storePath = fetchToStore(
         fetchSettings,
-        *store,
+        *systemEnvironment->store,
         SourcePath{ref(mount)},
         /* Force a copy. mountInput does a dryRun to just calculate the storePath and narHash. */
         FetchMode::Copy,
@@ -118,8 +120,8 @@ void EvalState::ensureLazyPathCopied(const StorePath & path)
         throw Error(
             (unsigned int) 102,
             "store path ('%1%') was hashed to avoid a full copy at first, but upon reading it again, the contents have changed ('%2%'), so we can not proceed. Make sure files do not change during evaluation",
-            store->printStorePath(path),
-            store->printStorePath(storePath));
+            systemEnvironment->store->printStorePath(path),
+            systemEnvironment->store->printStorePath(storePath));
     }
 }
 
@@ -177,7 +179,9 @@ void EvalState::lockInput(fetchers::Input & input, const fetchers::Input & origi
                     diagnose(fetchSettings.lintFetchWholeSourceToStore, [&](bool fatal) -> std::optional<Error> {
                         return Error("computing narHash for fetched input '%s' walks the source tree", inputName);
                     });
-                    return fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, inputName).second;
+                    return fetchToStore2(
+                               fetchSettings, *systemEnvironment->store, accessor, FetchMode::DryRun, inputName)
+                        .second;
                 }();
                 if (originalNarHash && narHash != *originalNarHash)
                     throw Error(
@@ -212,7 +216,9 @@ EvalState::mountInput(fetchers::Input & input, const fetchers::Input & originalI
          if eval ends with this storePath in the string context. */
     auto [storePath, narHash] = [&]() -> std::pair<StorePath, Hash> {
         if (originalInput.getNarHash()) {
-            auto [sp, narHash] = fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, input.getName());
+            // FIXME: do not use systemEnvironment
+            auto [sp, narHash] =
+                fetchToStore2(fetchSettings, *systemEnvironment->store, accessor, FetchMode::DryRun, input.getName());
             if (narHash != *originalInput.getNarHash())
                 throw Error(
                     (unsigned int) 102,
@@ -226,14 +232,15 @@ EvalState::mountInput(fetchers::Input & input, const fetchers::Input & originalI
         auto narHash = input.getNarHash();
         assert(narHash);
         return {
-            store->makeFixedOutputPathFromCA(
+            systemEnvironment->store->makeFixedOutputPathFromCA(
                 input.getName(),
                 ContentAddressWithReferences::fromParts(ContentAddressMethod::Raw::NixArchive, *narHash, {})),
             *narHash};
     }();
 
     allowPath(storePath); // FIXME: should just whitelist the entire virtual store
-    storeFS->mount(CanonPath(store->printStorePath(storePath)), [acc = accessor]() { return acc; });
+    systemEnvironment->storeFS->mount(
+        CanonPath(systemEnvironment->store->printStorePath(storePath)), [acc = accessor]() { return acc; });
 
     /* Pre-populate the SourcePath→(StorePath, Hash) cache so coerceToString
        of a path-typed `input.outPath` (at the accessor's root) returns

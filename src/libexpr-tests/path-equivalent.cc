@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "nix/expr/environment/system.hh"
 
 #include "nix/expr/source-root.hh"
 #include "nix/expr/tests/libexpr.hh"
@@ -91,7 +92,7 @@ protected:
        materialising to that store path. */
     Value * mkStoreString(std::string_view hash, std::string_view subpath = "")
     {
-        std::string s = std::string{state.store->storeDir} + "/" + std::string{hash} + "-source";
+        std::string s = std::string{state.systemEnvironment->store->storeDir} + "/" + std::string{hash} + "-source";
         if (!subpath.empty())
             s += subpath;
         return mkStringVal(s);
@@ -103,10 +104,11 @@ protected:
        accessor via `storeFS->getMount`. */
     void mountAtStorePath(std::string_view hash, ref<MemorySourceAccessor> accessor)
     {
-        auto pathStr = std::string{state.store->storeDir} + "/" + std::string{hash} + "-source";
-        auto sp = state.store->parseStorePath(pathStr);
-        state.storeFS->mount(
-            CanonPath(state.store->printStorePath(sp)), [accessor]() { return accessor.cast<SourceAccessor>(); });
+        auto pathStr = std::string{state.systemEnvironment->store->storeDir} + "/" + std::string{hash} + "-source";
+        auto sp = state.systemEnvironment->store->parseStorePath(pathStr);
+        state.systemEnvironment->storeFS->mount(
+            CanonPath(state.systemEnvironment->store->printStorePath(sp)),
+            [accessor]() { return accessor.cast<SourceAccessor>(); });
     }
 
     /* In-memory accessor with a single marker file so that two
@@ -337,7 +339,7 @@ TEST_F(PathEquivalentTest, copyableRejectsMismatchedSubpath)
        on the store side). */
     auto root = mkRoot(SourceRootKind::Copyable);
     auto * pathElem = mkElem(mkPathVal(root, "/modules/foo.nix"));
-    auto storeDir = state.store->storeDir;
+    auto storeDir = state.systemEnvironment->store->storeDir;
     /* Synthesize a syntactically valid store path with a bogus
        subpath. Use a plausible-shape hash + name. We don't need
        the on-disk path to exist for the *reject* branch — that
@@ -524,7 +526,7 @@ TEST_F(PathEquivalentCopyableFSTest, copyableUnmountedStorePathThrows)
        either direction. `EvalState::storePathAccessor` surfaces
        this as `InvalidPath`; `compareForToStringEquivalence`
        decorates it with the operation context. */
-    auto storeDir = state.store->storeDir;
+    auto storeDir = state.systemEnvironment->store->storeDir;
     auto root = mkRoot(SourceRootKind::Copyable);
     auto * pathElem = mkElem(mkPathVal(root, "/modules/foo.nix"));
     auto * stringElem = mkElem(mkStringVal(storeDir + "/00000000000000000000000000000000-source/modules/foo.nix"));

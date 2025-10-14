@@ -42,6 +42,8 @@ namespace nix {
 constexpr size_t maxPrimOpArity = 8;
 
 class Store;
+class Environment;
+class SystemEnvironment;
 class Evaluator;
 class Object;
 
@@ -380,12 +382,27 @@ public:
     RepairFlag repair;
 
     /**
-     * The accessor corresponding to `store`.
+     * Environment for evaluation I/O operations.
      */
-    const ref<MountedSourceAccessor> storeFS;
+    ref<Environment> environment;
+
+    /**
+     * System environment (deprecated: use environment interface instead).
+     * @deprecated Direct access to SystemEnvironment will be removed.
+     */
+    [[deprecated("Use this->environment interface instead, or keep your own reference to the system environment")]]
+    ref<SystemEnvironment> systemEnvironment;
 
     /**
      * The accessor for the root filesystem.
+     *
+     * (convenience reference to `environment`'s rootfs)
+     *
+     * Kept public on the lazy-paths base: lazy-paths' `flake.cc` reads
+     * `state.rootFS` directly for accessor-identity comparison. The
+     * eval-cache-next intent of routing this through
+     * `this->environment->fsRoot()` was aspirational and predates that
+     * use; the simpler reconciliation is to leave the API alone.
      */
     const ref<SourceAccessor> rootFS;
 
@@ -456,17 +473,8 @@ public:
         ref<SourceAccessor> accessor, SourceRootKind kind, std::optional<std::string> unpinnedId = std::nullopt);
 
     const SourcePath derivationInternal;
+
     const SourcePath importedDrvToDerivation;
-
-    /**
-     * Store used to materialise .drv files.
-     */
-    const ref<Store> store;
-
-    /**
-     * Store used to build stuff.
-     */
-    const ref<Store> buildStore;
 
     const ref<fetchers::InputCache> inputCache;
 
@@ -711,6 +719,7 @@ public:
         const fetchers::Settings & fetchSettings,
         const EvalSettings & settings,
         std::shared_ptr<Store> buildStore = nullptr);
+
     ~EvalState();
 
     /**

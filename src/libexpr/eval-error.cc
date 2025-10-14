@@ -1,12 +1,13 @@
 #include "nix/expr/eval-error.hh"
 #include "nix/expr/eval.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/expr/value.hh"
 #include "nix/store/store-api.hh"
 
 namespace nix {
 
 InvalidPathError::InvalidPathError(EvalState & state, const StorePath & path)
-    : CloneableError(state, "path '%s' is not valid", state.store->printStorePath(path))
+    : CloneableError(state, "path '%s' is not valid", state.systemEnvironment->store->printStorePath(path))
     , path{path}
 {
 }

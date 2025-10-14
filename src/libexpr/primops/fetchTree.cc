@@ -1,5 +1,6 @@
 #include "nix/expr/value.hh"
 #include "nix/fetchers/attrs.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/expr/primops.hh"
 #include "nix/expr/eval-inline.hh"
 #include "nix/expr/eval-settings.hh"
@@ -329,7 +330,9 @@ static void fetchTree(
     }
 
     if (!state.settings.pureEval && !input.isDirect() && experimentalFeatureSettings.isEnabled(Xp::Flakes))
-        input = lookupInRegistries(state.fetchSettings, *state.store, input, fetchers::UseRegistries::Limited).first;
+        input = lookupInRegistries(
+                    state.fetchSettings, *state.systemEnvironment->store, input, fetchers::UseRegistries::Limited)
+                    .first;
 
     if (state.settings.pureEval && !input.isLocked(state.fetchSettings)) {
         if (input.getNarHash())
@@ -354,8 +357,8 @@ static void fetchTree(
             throw Error("input '%s' is not allowed to use the '__final' attribute", input.to_string());
     }
 
-    auto cachedInput =
-        state.inputCache->getAccessor(state.fetchSettings, *state.store, input, fetchers::UseRegistries::No);
+    auto cachedInput = state.inputCache->getAccessor(
+        state.fetchSettings, *state.systemEnvironment->store, input, fetchers::UseRegistries::No);
 
     if (lazy) {
         /* When the input is already locked, mount the predicted
@@ -634,15 +637,16 @@ static void fetch(
             attrs.emplace("__final", Explicit<bool>{true});
         }
         auto input = fetchers::Input::fromAttrs(state.fetchSettings, std::move(attrs));
-        auto cachedInput =
-            state.inputCache->getAccessor(state.fetchSettings, *state.store, input, fetchers::UseRegistries::No);
+        auto cachedInput = state.inputCache->getAccessor(
+            state.fetchSettings, *state.systemEnvironment->store, input, fetchers::UseRegistries::No);
         auto storePath = state.mountInput(cachedInput.lockedInput, input, cachedInput.accessor());
         state.mkStorePathString(storePath, v);
     } else {
-        auto storePath = fetchers::downloadFile(*state.store, state.fetchSettings, *url, name).storePath;
+        auto storePath =
+            fetchers::downloadFile(*state.systemEnvironment->store, state.fetchSettings, *url, name).storePath;
         if (expectedHash) {
             auto hash = hashPath(
-                            {state.store->requireStoreObjectAccessor(storePath)},
+                            {state.systemEnvironment->store->requireStoreObjectAccessor(storePath)},
                             FileSerialisationMethod::Flat,
                             HashAlgorithm::SHA256)
                             .hash;
