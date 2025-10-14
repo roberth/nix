@@ -156,7 +156,6 @@ sources = files(
   'coarse-eval-cache-cursor-object.cc',
   'coarse-eval-cache.cc',
   'diagnose.cc',
-  'environment.cc',
   'environment/system.cc',
   'eval-cache.cc',
   'eval-error.cc',

@@ -248,12 +248,32 @@ EvalState::EvalState(
     const fetchers::Settings & fetchSettings,
     const EvalSettings & settings,
     std::shared_ptr<Store> buildStore)
+    : EvalState(
+          lookupPathFromArguments, fetchSettings, settings, make_ref<SystemEnvironment>(settings, store, buildStore))
+{
+}
+
+EvalState::EvalState(
+    const LookupPath & lookupPathFromArguments,
+    const fetchers::Settings & fetchSettings,
+    const EvalSettings & settings,
+    ref<SystemEnvironment> systemEnvironment)
+    : EvalState(lookupPathFromArguments, fetchSettings, settings, systemEnvironment, systemEnvironment)
+{
+}
+
+EvalState::EvalState(
+    const LookupPath & lookupPathFromArguments,
+    const fetchers::Settings & fetchSettings,
+    const EvalSettings & settings,
+    ref<Environment> environment,
+    ref<SystemEnvironment> systemEnvironment)
     : fetchSettings{fetchSettings}
     , settings{settings}
     , symbols(StaticEvalSymbols::staticSymbolTable())
     , repair(NoRepair)
-    , environment(makeSystemEnvironment(settings, store, buildStore))
-    , systemEnvironment(environment.cast<SystemEnvironment>())
+    , environment(environment)
+    , systemEnvironment(systemEnvironment)
     , rootFS(environment->fsRoot())
     , corepkgsFS(make_ref<MemorySourceAccessor>())
     , internalFS(make_ref<MemorySourceAccessor>())
