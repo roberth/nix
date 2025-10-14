@@ -1,5 +1,6 @@
 #include "nix/store/derivations.hh"
 #include "nix/store/downstream-placeholder.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/expr/eval-inline.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-settings.hh"
@@ -67,6 +68,7 @@ std::string EvalState::realiseString(Value & s, StorePathSet * storePathsOutMayb
     return nix::rewriteStrings(rawStr, rewrites);
 }
 
+// FIXME: move into SystemEnvironment?
 StringMap EvalState::realiseContext(const NixStringContext & context, StorePathSet * maybePathsOut, bool isIFD)
 {
     std::vector<DerivedPath::Built> drvs;
@@ -74,7 +76,7 @@ StringMap EvalState::realiseContext(const NixStringContext & context, StorePathS
 
     for (auto & c : context) {
         auto ensureValid = [&](const StorePath & p) {
-            if (!store->isValidPath(p))
+            if (!systemEnvironment->store->isValidPath(p))
                 error<InvalidPathError>(p).debugThrow();
         };
         std::visit(
@@ -109,11 +111,13 @@ StringMap EvalState::realiseContext(const NixStringContext & context, StorePathS
         if (!settings.enableImportFromDerivation)
             error<IFDError>(
                 "cannot build '%1%' during evaluation because the option 'allow-import-from-derivation' is disabled",
-                drvs.begin()->to_string(*store))
+                drvs.begin()->to_string(*systemEnvironment->store))
                 .debugThrow();
 
         if (settings.traceImportFromDerivation)
-            warn("built '%1%' during evaluation due to an import from derivation", drvs.begin()->to_string(*store));
+            warn(
+                "built '%1%' during evaluation due to an import from derivation",
+                drvs.begin()->to_string(*systemEnvironment->store));
     }
 
     /* Build/substitute the context. */
@@ -121,12 +125,12 @@ StringMap EvalState::realiseContext(const NixStringContext & context, StorePathS
     buildReqs.reserve(drvs.size());
     for (auto & d : drvs)
         buildReqs.emplace_back(DerivedPath{d});
-    buildStore->buildPaths(buildReqs, bmNormal, store);
+    systemEnvironment->buildStore->buildPaths(buildReqs, bmNormal, systemEnvironment->store);
 
     StorePathSet outputsToCopyAndAllow;
 
     for (auto & drv : drvs) {
-        auto outputs = resolveDerivedPath(*buildStore, drv, &*store);
+        auto outputs = resolveDerivedPath(*systemEnvironment->buildStore, drv, &*systemEnvironment->store);
         for (auto & [outputName, outputPath] : outputs) {
             outputsToCopyAndAllow.insert(outputPath);
             if (maybePathsOut)
@@ -141,13 +145,13 @@ StringMap EvalState::realiseContext(const NixStringContext & context, StorePathS
                             .output = outputName,
                         })
                         .render(),
-                    buildStore->printStorePath(outputPath));
+                    systemEnvironment->buildStore->printStorePath(outputPath));
             }
         }
     }
 
-    if (store != buildStore)
-        copyClosure(*buildStore, *store, outputsToCopyAndAllow);
+    if (systemEnvironment->store != systemEnvironment->buildStore)
+        copyClosure(*systemEnvironment->buildStore, *systemEnvironment->store, outputsToCopyAndAllow);
 
     if (isIFD) {
         /* Allow access to the output closures of this derivation. */
@@ -202,7 +206,7 @@ static void mkOutputString(
             .drvPath = makeConstantStorePathRef(drvPath),
             .output = o.first,
         },
-        o.second.path(*state.store, Derivation::nameFromPath(drvPath), o.first));
+        o.second.path(*state.systemEnvironment->store, Derivation::nameFromPath(drvPath), o.first));
 }
 
 /**
@@ -218,7 +222,7 @@ void derivationToValue(
     EvalState & state, const PosIdx pos, const SourcePath & path, const StorePath & storePath, Value & v)
 {
     auto path2 = path.path.abs();
-    Derivation drv = state.store->readDerivation(storePath);
+    Derivation drv = state.systemEnvironment->store->readDerivation(storePath);
     auto attrs = state.buildBindings(3 + drv.outputs.size());
     attrs.alloc(state.s.drvPath)
         .mkString(
@@ -296,10 +300,10 @@ static void import(EvalState & state, const PosIdx pos, Value & vPath, Value * v
 
     // FIXME
     auto isValidDerivationInStore = [&]() -> std::optional<StorePath> {
-        if (!state.store->isStorePath(path2))
+        if (!state.systemEnvironment->store->isStorePath(path2))
             return std::nullopt;
-        auto storePath = state.store->parseStorePath(path2);
-        if (!(state.store->isValidPath(storePath) && isDerivation(path2)))
+        auto storePath = state.systemEnvironment->store->parseStorePath(path2);
+        if (!(state.systemEnvironment->store->isValidPath(storePath) && isDerivation(path2)))
             return std::nullopt;
         return storePath;
     };
@@ -1215,7 +1219,7 @@ static void prim_getEnv(EvalState & state, const PosIdx pos, Value ** args, Valu
 {
     std::string name(
         state.forceStringNoCtx(*args[0], pos, "while evaluating the first argument passed to builtins.getEnv"));
-    v.mkString(state.settings.restrictEval || state.settings.pureEval ? "" : getEnv(name).value_or(""), state.mem);
+    v.mkString(state.environment->getEnv(name).value_or(""), state.mem);
 }
 
 static RegisterPrimOp primop_getEnv({
@@ -1715,11 +1719,12 @@ static void derivationStrictInternal(EvalState & state, std::string_view drvName
                 [&](const NixStringContextElem::DrvDeep & d) {
                     /* !!! This doesn't work if readOnlyMode is set. */
                     StorePathSet refs;
-                    state.store->computeFSClosure(d.drvPath, refs);
+                    state.systemEnvironment->store->computeFSClosure(d.drvPath, refs);
                     for (auto & j : refs) {
                         drv.inputSrcs.insert(j);
                         if (j.isDerivation()) {
-                            drv.inputDrvs.map[j].value = state.store->readDerivation(j).outputNames();
+                            drv.inputDrvs.map[j].value =
+                                state.systemEnvironment->store->readDerivation(j).outputNames();
                         }
                     }
                 },
@@ -1772,7 +1777,8 @@ static void derivationStrictInternal(EvalState & state, std::string_view drvName
                 },
         };
 
-        drv.env["out"] = state.store->printStorePath(dof.path(*state.store, drvName, "out"));
+        drv.env["out"] =
+            state.systemEnvironment->store->printStorePath(dof.path(*state.systemEnvironment->store, drvName, "out"));
         drv.outputs.insert_or_assign("out", std::move(dof));
     }
 
@@ -1814,7 +1820,7 @@ static void derivationStrictInternal(EvalState & state, std::string_view drvName
             drv.outputs.insert_or_assign(i, DerivationOutput::Deferred{});
         }
 
-        drv.fillInOutputPaths(*state.store);
+        drv.fillInOutputPaths(*state.systemEnvironment->store);
     }
 
     /* Write the resulting term into the Nix store directory.
@@ -1822,9 +1828,9 @@ static void derivationStrictInternal(EvalState & state, std::string_view drvName
        Unless we are in read-only mode, that is, in which case we do not
        write anything. Users commonly do this to speed up evaluation in
        contexts where they don't actually want to build anything. */
-    auto drvPath =
-        settings.readOnlyMode ? computeStorePath(*state.store, drv) : state.store->writeDerivation(drv, state.repair);
-    auto drvPathS = state.store->printStorePath(drvPath);
+    auto drvPath = settings.readOnlyMode ? computeStorePath(*state.systemEnvironment->store, drv)
+                                         : state.systemEnvironment->store->writeDerivation(drv, state.repair);
+    auto drvPathS = state.systemEnvironment->store->printStorePath(drvPath);
 
     printMsg(lvlChatty, "instantiated '%1%' -> '%2%'", drvName, drvPathS);
 
@@ -1832,7 +1838,7 @@ static void derivationStrictInternal(EvalState & state, std::string_view drvName
        case we don't actually write store derivations, so we can't
        read them later. */
     {
-        auto h = hashDerivationModulo(*state.store, drv, false);
+        auto h = hashDerivationModulo(*state.systemEnvironment->store, drv, false);
         drvHashes.insert_or_assign(drvPath, std::move(h));
     }
 
@@ -1933,13 +1939,13 @@ static void prim_storePath(EvalState & state, const PosIdx pos, Value ** args, V
     /* Resolve symlinks in ‘path’, unless ‘path’ itself is a symlink
        directly in the store.  The latter condition is necessary so
        e.g. nix-push does the right thing. */
-    if (!state.store->isStorePath(path.abs()))
+    if (!state.systemEnvironment->store->isStorePath(path.abs()))
         path = CanonPath(canonPath(path.abs(), true).string());
-    if (!state.store->isInStore(path.abs()))
+    if (!state.systemEnvironment->store->isInStore(path.abs()))
         state.error<EvalError>("path '%1%' is not in the Nix store", path).atPos(pos).debugThrow();
-    auto path2 = state.store->toStorePath(path.abs()).first;
+    auto path2 = state.systemEnvironment->store->toStorePath(path.abs()).first;
     if (!settings.readOnlyMode)
-        state.store->ensurePath(path2);
+        state.systemEnvironment->store->ensurePath(path2);
     context.insert(NixStringContextElem::Opaque{.path = path2});
     v.mkString(path.abs(), context, state.mem);
 }
@@ -2089,9 +2095,11 @@ static void prim_readFile(EvalState & state, const PosIdx pos, Value ** args, Va
             .atPos(pos)
             .debugThrow();
     StorePathSet refs;
-    if (state.store->isInStore(path.path.abs())) {
+    if (state.systemEnvironment->store->isInStore(path.path.abs())) {
         try {
-            refs = state.store->queryPathInfo(state.store->toStorePath(path.path.abs()).first)->references;
+            refs = state.systemEnvironment->store
+                       ->queryPathInfo(state.systemEnvironment->store->toStorePath(path.path.abs()).first)
+                       ->references;
         } catch (Error &) { // FIXME: should be InvalidPathError
         }
         // Re-scan references to filter down to just the ones that actually occur in the file.
@@ -2679,7 +2687,7 @@ static void prim_toFile(EvalState & state, const PosIdx pos, Value ** args, Valu
                 .debugThrow();
     }
 
-    auto storePath = settings.readOnlyMode ? state.store->makeFixedOutputPathFromCA(
+    auto storePath = settings.readOnlyMode ? state.systemEnvironment->store->makeFixedOutputPathFromCA(
                                                  name,
                                                  TextInfo{
                                                      .hash = hashString(HashAlgorithm::SHA256, contents),
@@ -2687,7 +2695,7 @@ static void prim_toFile(EvalState & state, const PosIdx pos, Value ** args, Valu
                                                  })
                                            : ({
                                                  StringSource s{contents};
-                                                 state.store->addToStoreFromDump(
+                                                 state.systemEnvironment->store->addToStoreFromDump(
                                                      s,
                                                      name,
                                                      FileSerialisationMethod::Flat,
@@ -2813,14 +2821,15 @@ static void addPath(
     try {
         StorePathSet refs;
 
-        if (path.accessor == state.rootFS && state.store->isInStore(path.path.abs()) && !context.empty()) {
+        if (path.accessor == state.systemEnvironment->rootFSAccessor
+            && state.systemEnvironment->store->isInStore(path.path.abs()) && !context.empty()) {
             // FIXME: handle CA derivation outputs (where path needs to
             // be rewritten to the actual output).
             auto rewrites = state.realiseContext(context);
             path = {path.accessor, CanonPath(rewriteStrings(path.path.abs(), rewrites))};
-            auto [storePath, subPath] = state.store->toStorePath(path.path.abs());
+            auto [storePath, subPath] = state.systemEnvironment->store->toStorePath(path.path.abs());
             try {
-                refs = state.store->queryPathInfo(storePath)->references;
+                refs = state.systemEnvironment->store->queryPathInfo(storePath)->references;
             } catch (Error &) { // FIXME: should be InvalidPathError
             }
         }
@@ -2834,21 +2843,21 @@ static void addPath(
 
         std::optional<StorePath> expectedStorePath;
         if (expectedHash)
-            expectedStorePath = state.store->makeFixedOutputPathFromCA(
+            expectedStorePath = state.systemEnvironment->store->makeFixedOutputPathFromCA(
                 name, ContentAddressWithReferences::fromParts(method, *expectedHash, {refs}));
 
-        if (!expectedHash || !state.store->isValidPath(*expectedStorePath)) {
+        if (!expectedHash || !state.systemEnvironment->store->isValidPath(*expectedStorePath)) {
             // FIXME: support refs in fetchToStore()?
             auto dstPath = refs.empty() ? fetchToStore(
                                               state.fetchSettings,
-                                              *state.store,
+                                              *state.systemEnvironment->store,
                                               path.resolveSymlinks(),
                                               settings.readOnlyMode ? FetchMode::DryRun : FetchMode::Copy,
                                               name,
                                               method,
                                               filter.get(),
                                               state.repair)
-                                        : state.store->addToStore(
+                                        : state.systemEnvironment->store->addToStore(
                                               name,
                                               path.resolveSymlinks(),
                                               method,
@@ -5317,7 +5326,8 @@ void EvalState::createBaseEnv(const EvalSettings & evalSettings)
         )",
         });
 
-    v.mkString(store->storeDir, mem);
+    // FIXME
+    v.mkString(systemEnvironment->store->storeDir, mem);
     addConstant(
         "__storeDir",
         v,

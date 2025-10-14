@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include "nix/expr/eval-settings.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/util/memory-source-accessor.hh"
 
 #include "nix/expr/tests/libexpr.hh"
@@ -756,7 +757,7 @@ TEST_F(PrimOpTest, langVersion)
 TEST_F(PrimOpTest, storeDir)
 {
     auto v = eval("builtins.storeDir");
-    ASSERT_THAT(v, IsStringEq(state.store->storeDir));
+    ASSERT_THAT(v, IsStringEq(state.systemEnvironment->store->storeDir));
 }
 
 TEST_F(PrimOpTest, nixVersion)
