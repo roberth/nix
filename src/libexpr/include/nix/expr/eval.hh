@@ -510,6 +510,14 @@ private:
      */
     const ref<RegexCache> regexCache;
 
+private:
+    // Helper to support the legacy EvalState constructor
+    EvalState(
+        const LookupPath & _lookupPath,
+        const fetchers::Settings & fetchSettings,
+        const EvalSettings & settings,
+        ref<SystemEnvironment> systemEnvironment);
+
 public:
 
     /**
@@ -525,6 +533,14 @@ public:
         const fetchers::Settings & fetchSettings,
         const EvalSettings & settings,
         std::shared_ptr<Store> buildStore = nullptr);
+
+    EvalState(
+        // TODO move lookupPath and/or individual lookups to environment
+        const LookupPath & _lookupPath,
+        const fetchers::Settings & fetchSettings,
+        const EvalSettings & settings,
+        ref<Environment> environment,
+        ref<SystemEnvironment> systemEnvironment);
 
     ~EvalState();
 
