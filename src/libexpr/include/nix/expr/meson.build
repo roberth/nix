@@ -14,6 +14,8 @@ headers = [ config_pub_h ] + files(
   'coarse-eval-cache.hh',
   'counter.hh',
   'diagnose.hh',
+  'environment.hh',
+  'environment/system.hh',
   'eval-cache.hh',
   'eval-error.hh',
   'eval-gc.hh',

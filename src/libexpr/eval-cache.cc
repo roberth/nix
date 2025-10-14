@@ -1,4 +1,5 @@
 #include "nix/util/users.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/expr/eval-cache.hh"
 #include "nix/expr/coarse-eval-cache-cursor-object.hh"
 #include "nix/expr/evaluation-helpers.hh"
@@ -353,14 +354,14 @@ makeAttrDb(const StoreDirConfig & cfg, std::filesystem::path dbPath, SymbolTable
 
 EvalCache::EvalCache(
     std::optional<std::reference_wrapper<const Hash>> useCache, EvalState & state, RootLoader rootLoader)
-    : db(useCache ? makeAttrDb(*state.store, *useCache, state.symbols) : nullptr)
+    : db(useCache ? makeAttrDb(*state.systemEnvironment->store, *useCache, state.symbols) : nullptr)
     , state(state)
     , rootLoader(rootLoader)
 {
 }
 
 EvalCache::EvalCache(std::optional<std::filesystem::path> dbPath, EvalState & state, RootLoader rootLoader)
-    : db(dbPath ? makeAttrDb(*state.store, *dbPath, state.symbols) : nullptr)
+    : db(dbPath ? makeAttrDb(*state.systemEnvironment->store, *dbPath, state.symbols) : nullptr)
     , state(state)
     , rootLoader(rootLoader)
 {
@@ -656,7 +657,7 @@ string_t AttrCursor::getStringWithContext()
                             [&](const NixStringContextElem::Opaque & o) -> const StorePath & { return o.path; },
                         },
                         c.raw);
-                    if (!root->state.store->isValidPath(path)) {
+                    if (!root->state.systemEnvironment->store->isValidPath(path)) {
                         valid = false;
                         break;
                     }
@@ -801,7 +802,8 @@ bool AttrCursor::isDerivation()
 
 StorePath AttrCursor::forceDerivation()
 {
-    return expr::helpers::forceDerivation(*root->state.toEvaluatorCompat(), *toObjectCompat(), *root->state.store);
+    return expr::helpers::forceDerivation(
+        *root->state.toEvaluatorCompat(), *toObjectCompat(), *root->state.systemEnvironment->store);
 }
 
 ref<nix::Object> AttrCursor::toObjectCompat()

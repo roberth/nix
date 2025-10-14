@@ -846,9 +846,9 @@ EVALUATOR_TEST(Object_defeatCache_WorksWithStringsWithContext, {
     ASSERT_NE(value, nullptr);
     EXPECT_EQ((*value)->type(), nString);
     // The string should have context (derivation path)
-    // context() returns a Context* with size() method
-    ASSERT_NE((*value)->context(), nullptr);
-    EXPECT_GT((*value)->context()->size(), 0u);
+    // context() returns a pointer to Context struct, or nullptr if no context
+    EXPECT_NE((*value)->context(), nullptr);
+    EXPECT_GT((*value)->context()->size(), 0);
 })
 
 // Instantiate tests for each implementation

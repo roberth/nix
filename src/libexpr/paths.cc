@@ -1,5 +1,6 @@
 #include "nix/store/store-api.hh"
 #include "nix/expr/eval.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/util/mounted-source-accessor.hh"
 #include "nix/fetchers/fetch-to-store.hh"
 
@@ -17,17 +18,20 @@ SourcePath EvalState::rootPath(std::string_view path)
 
 SourcePath EvalState::storePath(const StorePath & path)
 {
-    return {rootFS, CanonPath{store->printStorePath(path)}};
+    // FIXME: do not use systemEnvironment
+    return {rootFS, CanonPath{systemEnvironment->store->printStorePath(path)}};
 }
 
 StorePath
 EvalState::mountInput(fetchers::Input & input, const fetchers::Input & originalInput, ref<SourceAccessor> accessor)
 {
-    auto [storePath, narHash] = fetchToStore2(fetchSettings, *store, accessor, FetchMode::Copy, input.getName());
+    // FIXME: do not use systemEnvironment
+    auto [storePath, narHash] =
+        fetchToStore2(fetchSettings, *systemEnvironment->store, accessor, FetchMode::Copy, input.getName());
 
     allowPath(storePath); // FIXME: should just whitelist the entire virtual store
 
-    storeFS->mount(CanonPath(store->printStorePath(storePath)), accessor);
+    systemEnvironment->storeFS->mount(CanonPath(systemEnvironment->store->printStorePath(storePath)), accessor);
 
     input.attrs.insert_or_assign("narHash", narHash.to_string(HashFormat::SRI, true));
 
