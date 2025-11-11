@@ -58,19 +58,38 @@ struct MercurialUnlockedInput : MercurialInputBase
  */
 struct MercurialLockedInput : MercurialInputBase
 {
-    Hash rev;
+    std::optional<std::string> ref; // Branch/tag name
+    std::optional<Hash> rev;        // Commit hash (optional for dirty trees)
     std::optional<uint64_t> revCount;
     LockingMetadata locking;
 
+    // Constructor for locked input with rev
     MercurialLockedInput(
         const Settings & settings,
         std::string url,
+        std::string ref,
         Hash rev,
-        std::optional<std::string> name = std::nullopt,
-        std::optional<uint64_t> revCount = std::nullopt)
+        uint64_t revCount,
+        LockingMetadata locking,
+        std::optional<std::string> name = std::nullopt)
         : MercurialInputBase(settings, std::move(url), std::move(name))
+        , ref(std::move(ref))
         , rev(std::move(rev))
         , revCount(revCount)
+        , locking(std::move(locking))
+    {
+    }
+
+    // Constructor for locked input without rev (dirty tree)
+    MercurialLockedInput(
+        const Settings & settings,
+        std::string url,
+        std::string ref,
+        LockingMetadata locking,
+        std::optional<std::string> name = std::nullopt)
+        : MercurialInputBase(settings, std::move(url), std::move(name))
+        , ref(std::move(ref))
+        , locking(std::move(locking))
     {
     }
 };
@@ -85,12 +104,15 @@ struct MercurialFinalInput : MercurialLockedInput
     MercurialFinalInput(
         const Settings & settings,
         std::string url,
+        std::string ref,
         Hash rev,
-        Hash narHash,
-        std::optional<std::string> name = std::nullopt,
-        std::optional<uint64_t> revCount = std::nullopt)
-        : MercurialLockedInput(settings, std::move(url), std::move(rev), std::move(name), revCount)
-        , finalization(std::move(narHash))
+        uint64_t revCount,
+        LockingMetadata locking,
+        FinalizationData finalization,
+        std::optional<std::string> name = std::nullopt)
+        : MercurialLockedInput(
+              settings, std::move(url), std::move(ref), std::move(rev), revCount, std::move(locking), std::move(name))
+        , finalization(std::move(finalization))
     {
     }
 };

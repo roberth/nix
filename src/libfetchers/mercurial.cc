@@ -1,4 +1,5 @@
 #include "nix/fetchers/fetchers.hh"
+#include "nix/fetchers/mercurial-typed.hh"
 #include "nix/util/processes.hh"
 #include "nix/util/users.hh"
 #include "nix/fetchers/cache.hh"
@@ -324,16 +325,222 @@ struct MercurialInputScheme : InputScheme
         return makeResult(infoAttrs, std::move(storePath));
     }
 
-    std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & _input) const override
+    /**
+     * Typed method: Lock a MercurialUnlockedInput to a MercurialLockedInput.
+     * This is the primary implementation using typed inputs.
+     */
+    std::pair<ref<SourceAccessor>, MercurialLockedInput>
+    lockTyped(ref<Store> store, const MercurialUnlockedInput & input) const
     {
-        Input input(_input);
+        auto origRev = input.rev;
 
-        auto storePath = fetchToStore(store, input);
+        auto name = input.getName();
+
+        auto url = parseURL(input.url);
+        bool isLocal = url.scheme == "file";
+        auto actualUrl = isLocal ? renderUrlPathEnsureLegal(url.path) : input.url;
+
+        // Handle dirty local working tree
+        std::optional<std::string> resolvedRef = input.ref;
+        if (!input.ref && !input.rev && isLocal && pathExists(actualUrl + "/.hg")) {
+            bool clean = runHg({"status", "-R", actualUrl, "--modified", "--added", "--removed"}) == "";
+
+            if (!clean) {
+                if (!input.settings->allowDirty)
+                    throw Error("Mercurial tree '%s' is unclean", actualUrl);
+
+                if (input.settings->warnDirty)
+                    warn("Mercurial tree '%s' is unclean", actualUrl);
+
+                resolvedRef = chomp(runHg({"branch", "-R", actualUrl}));
+
+                auto files = tokenizeString<StringSet>(
+                    runHg({"status", "-R", actualUrl, "--clean", "--modified", "--added", "--no-status", "--print0"}),
+                    "\0"s);
+
+                Path actualPath(absPath(actualUrl));
+
+                PathFilter filter = [&](const Path & p) -> bool {
+                    assert(hasPrefix(p, actualPath));
+                    std::string file(p, actualPath.size() + 1);
+
+                    auto st = lstat(p);
+
+                    if (S_ISDIR(st.st_mode)) {
+                        auto prefix = file + "/";
+                        auto i = files.lower_bound(prefix);
+                        return i != files.end() && hasPrefix(*i, prefix);
+                    }
+
+                    return files.count(file);
+                };
+
+                auto storePath = store->addToStore(
+                    name,
+                    {getFSSourceAccessor(), CanonPath(actualPath)},
+                    ContentAddressMethod::Raw::NixArchive,
+                    HashAlgorithm::SHA256,
+                    {},
+                    filter);
+
+                auto accessor = store->requireStoreObjectAccessor(storePath);
+                accessor->setPathDisplay("«hg:" + input.url + "»");
+
+                // Return locked input with ref but no rev (dirty tree)
+                LockingMetadata locking;
+                locking.lastModified = 0; // Not available for dirty tree
+                MercurialLockedInput locked(*input.settings, input.url, *resolvedRef, locking);
+                locked.name = input.name;
+
+                return {accessor, std::move(locked)};
+            }
+        }
+
+        // Set default ref if not specified
+        if (!resolvedRef)
+            resolvedRef = "default";
+
+        // Look up rev from cache if we have a ref
+        std::optional<Hash> resolvedRev = input.rev;
+        Cache::Key refToRevKey{"hgRefToRev", {{"url", actualUrl}, {"ref", *resolvedRef}}};
+
+        if (!resolvedRev) {
+            if (auto res = input.settings->getCache()->lookupWithTTL(refToRevKey))
+                resolvedRev = getRevAttr(*res, "rev");
+        }
+
+        // Check cache for store path if we have a rev
+        if (resolvedRev) {
+            if (resolvedRev->algo != HashAlgorithm::SHA1)
+                throw Error(
+                    "Hash '%s' is not supported by Mercurial. Only sha1 is supported.",
+                    resolvedRev->to_string(HashFormat::Base16, true));
+
+            Cache::Key revInfoKey{
+                "hgRev", {{"store", store->storeDir}, {"name", name}, {"rev", resolvedRev->gitRev()}}};
+
+            if (auto res = input.settings->getCache()->lookupStorePath(revInfoKey, *store)) {
+                auto accessor = store->requireStoreObjectAccessor(res->storePath);
+                accessor->setPathDisplay("«hg:" + input.url + "?ref=" + *resolvedRef + "»");
+
+                LockingMetadata locking;
+                locking.lastModified = 0;
+                MercurialLockedInput locked(
+                    *input.settings,
+                    input.url,
+                    *resolvedRef,
+                    *resolvedRev,
+                    getIntAttr(res->value, "revCount"),
+                    locking);
+                locked.name = input.name;
+
+                return {accessor, std::move(locked)};
+            }
+        }
+
+        // Clone/pull repository
+        Path cacheDir =
+            fmt("%s/hg/%s",
+                getCacheDir(),
+                hashString(HashAlgorithm::SHA256, actualUrl).to_string(HashFormat::Nix32, false));
+
+        if (!(resolvedRev && pathExists(cacheDir)
+              && runProgram(hgOptions({"log", "-R", cacheDir, "-r", resolvedRev->gitRev(), "--template", "1"})).second
+                     == "1")) {
+            Activity act(*logger, lvlTalkative, actUnknown, fmt("fetching Mercurial repository '%s'", actualUrl));
+
+            if (pathExists(cacheDir)) {
+                try {
+                    runHg({"pull", "-R", cacheDir, "--", actualUrl});
+                } catch (ExecError & e) {
+                    auto transJournal = cacheDir + "/.hg/store/journal";
+                    if (pathExists(transJournal)) {
+                        runHg({"recover", "-R", cacheDir});
+                        runHg({"pull", "-R", cacheDir, "--", actualUrl});
+                    } else {
+                        throw ExecError(e.status, "'hg pull' %s", statusToString(e.status));
+                    }
+                }
+            } else {
+                createDirs(dirOf(cacheDir));
+                runHg({"clone", "--noupdate", "--", actualUrl, cacheDir});
+            }
+        }
+
+        // Fetch the remote rev or ref
+        auto tokens = tokenizeString<std::vector<std::string>>(runHg(
+            {"log",
+             "-R",
+             cacheDir,
+             "-r",
+             resolvedRev ? resolvedRev->gitRev() : *resolvedRef,
+             "--template",
+             "{node} {rev} {branch}"}));
+        assert(tokens.size() == 3);
+
+        auto rev = Hash::parseAny(tokens[0], HashAlgorithm::SHA1);
+        auto revCount = std::stoull(tokens[1]);
+        auto ref = tokens[2];
+
+        // Check cache again now that we have the rev
+        Cache::Key revInfoKey{"hgRev", {{"store", store->storeDir}, {"name", name}, {"rev", rev.gitRev()}}};
+        if (auto res = input.settings->getCache()->lookupStorePath(revInfoKey, *store)) {
+            auto accessor = store->requireStoreObjectAccessor(res->storePath);
+            accessor->setPathDisplay("«hg:" + input.url + "?ref=" + ref + "»");
+
+            LockingMetadata locking;
+            locking.lastModified = 0;
+            MercurialLockedInput locked(*input.settings, input.url, ref, rev, revCount, locking);
+            locked.name = input.name;
+
+            return {accessor, std::move(locked)};
+        }
+
+        // Archive and add to store
+        Path tmpDir = createTempDir();
+        AutoDelete delTmpDir(tmpDir, true);
+
+        runHg({"archive", "-R", cacheDir, "-r", rev.gitRev(), tmpDir});
+
+        deletePath(tmpDir + "/.hg_archival.txt");
+
+        auto storePath = store->addToStore(name, {getFSSourceAccessor(), CanonPath(tmpDir)});
+
+        Attrs infoAttrs({{"revCount", (uint64_t) revCount}});
+
+        if (!origRev)
+            input.settings->getCache()->upsert(refToRevKey, {{"rev", rev.gitRev()}});
+
+        input.settings->getCache()->upsert(revInfoKey, *store, infoAttrs, storePath);
+
         auto accessor = store->requireStoreObjectAccessor(storePath);
+        accessor->setPathDisplay("«hg:" + input.url + "?ref=" + ref + "»");
 
-        accessor->setPathDisplay("«" + input.to_string() + "»");
+        LockingMetadata locking;
+        locking.lastModified = 0;
+        MercurialLockedInput locked(*input.settings, input.url, ref, rev, revCount, locking);
+        locked.name = input.name;
 
-        return {accessor, input};
+        return {accessor, std::move(locked)};
+    }
+
+    /**
+     * Wrapper method for backward compatibility with Input/Attrs API.
+     * Delegates to typed lockTyped() method.
+     */
+    std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & input) const override
+    {
+        // Boundary conversion: Input (Attrs) → MercurialUnlockedInput (typed)
+        auto unlocked = mercurialInputFromAttrs(*input.settings, input.attrs);
+
+        // Delegate to typed method (pure typed logic, no Attrs!)
+        auto [accessor, locked] = lockTyped(store, unlocked);
+
+        // Boundary conversion: MercurialLockedInput (typed) → Input (Attrs)
+        Input result(input); // Copy to preserve scheme and other fields
+        result.attrs = mercurialInputToAttrs(locked);
+
+        return {accessor, std::move(result)};
     }
 
     bool isLocked(const Input & input) const override

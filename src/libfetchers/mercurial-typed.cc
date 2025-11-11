@@ -45,12 +45,17 @@ Attrs mercurialInputToAttrs(const MercurialLockedInput & input)
     if (input.name)
         attrs.insert_or_assign("name", *input.name);
 
-    attrs.insert_or_assign("rev", input.rev.gitRev());
+    if (input.ref)
+        attrs.insert_or_assign("ref", *input.ref);
+
+    if (input.rev)
+        attrs.insert_or_assign("rev", input.rev->gitRev());
 
     if (input.revCount)
         attrs.insert_or_assign("revCount", *input.revCount);
 
-    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
+    if (input.locking.lastModified != 0)
+        attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
 
     return attrs;
 }
@@ -65,7 +70,11 @@ Attrs mercurialInputToAttrs(const MercurialFinalInput & input)
     if (input.name)
         attrs.insert_or_assign("name", *input.name);
 
-    attrs.insert_or_assign("rev", input.rev.gitRev());
+    if (input.ref)
+        attrs.insert_or_assign("ref", *input.ref);
+
+    if (input.rev)
+        attrs.insert_or_assign("rev", input.rev->gitRev());
 
     if (input.revCount)
         attrs.insert_or_assign("revCount", *input.revCount);
