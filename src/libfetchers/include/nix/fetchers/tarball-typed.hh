@@ -18,8 +18,12 @@ struct TarballInputBase : InputBase
     std::optional<std::string> name;
     std::optional<bool> unpack; // Whether to unpack the tarball
 
-    TarballInputBase(const Settings & settings, std::string url, std::optional<std::string> name = std::nullopt)
-        : InputBase(settings, "tarball")
+    TarballInputBase(
+        const Settings & settings,
+        std::string_view type,
+        std::string url,
+        std::optional<std::string> name = std::nullopt)
+        : InputBase(settings, type)
         , url(std::move(url))
         , name(std::move(name))
     {
@@ -29,7 +33,11 @@ struct TarballInputBase : InputBase
     {
         if (name)
             return *name;
-        return "tarball:" + url;
+        // For file:// URLs, just return "source" to avoid invalid store path names
+        // For other URLs, use type:url pattern
+        if (url.starts_with("file://"))
+            return "source";
+        return std::string{type} + ":" + url;
     }
 };
 
@@ -43,8 +51,12 @@ struct TarballUnlockedInput : TarballInputBase
     std::optional<uint64_t> revCount;
     std::optional<time_t> lastModified;
 
-    TarballUnlockedInput(const Settings & settings, std::string url, std::optional<std::string> name = std::nullopt)
-        : TarballInputBase(settings, std::move(url), std::move(name))
+    TarballUnlockedInput(
+        const Settings & settings,
+        std::string_view type,
+        std::string url,
+        std::optional<std::string> name = std::nullopt)
+        : TarballInputBase(settings, type, std::move(url), std::move(name))
     {
     }
 };
@@ -58,6 +70,7 @@ struct TarballLockedInput : TarballInputBase
     std::optional<std::string> etag;
     std::optional<std::string> immutableUrl;
     LockingMetadata locking;
+    std::optional<Hash> treeHash; // Git tree hash for tarball cache
 
     // Optional Git metadata for git archives
     std::optional<std::string> rev;
@@ -65,13 +78,16 @@ struct TarballLockedInput : TarballInputBase
 
     TarballLockedInput(
         const Settings & settings,
+        std::string_view type,
         std::string url,
         std::string effectiveUrl,
         LockingMetadata locking,
+        std::optional<Hash> treeHash = std::nullopt,
         std::optional<std::string> name = std::nullopt)
-        : TarballInputBase(settings, std::move(url), std::move(name))
+        : TarballInputBase(settings, type, std::move(url), std::move(name))
         , effectiveUrl(std::move(effectiveUrl))
         , locking(std::move(locking))
+        , treeHash(std::move(treeHash))
     {
     }
 };
@@ -85,12 +101,21 @@ struct TarballFinalInput : TarballLockedInput
 
     TarballFinalInput(
         const Settings & settings,
+        std::string_view type,
         std::string url,
         std::string effectiveUrl,
         LockingMetadata locking,
+        std::optional<Hash> treeHash,
         FinalizationData finalization,
         std::optional<std::string> name = std::nullopt)
-        : TarballLockedInput(settings, std::move(url), std::move(effectiveUrl), std::move(locking), std::move(name))
+        : TarballLockedInput(
+              settings,
+              type,
+              std::move(url),
+              std::move(effectiveUrl),
+              std::move(locking),
+              std::move(treeHash),
+              std::move(name))
         , finalization(std::move(finalization))
     {
     }

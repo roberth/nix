@@ -5,10 +5,11 @@ namespace nix::fetchers {
 
 TarballUnlockedInput tarballInputFromAttrs(const Settings & settings, const Attrs & attrs)
 {
+    auto type = getStrAttr(attrs, "type");
     auto url = getStrAttr(attrs, "url");
     auto name = maybeGetStrAttr(attrs, "name");
 
-    TarballUnlockedInput input(settings, url, name);
+    TarballUnlockedInput input(settings, type, url, name);
 
     if (auto unpack = maybeGetBoolAttr(attrs, "unpack"))
         input.unpack = *unpack;
@@ -29,7 +30,7 @@ Attrs tarballInputToAttrs(const TarballUnlockedInput & input)
 {
     Attrs attrs;
 
-    attrs.insert_or_assign("type", "tarball");
+    attrs.insert_or_assign("type", input.type);
     attrs.insert_or_assign("url", input.url);
 
     if (input.name)
@@ -54,7 +55,7 @@ Attrs tarballInputToAttrs(const TarballLockedInput & input)
 {
     Attrs attrs;
 
-    attrs.insert_or_assign("type", "tarball");
+    attrs.insert_or_assign("type", input.type);
     attrs.insert_or_assign("url", input.url);
 
     if (input.name)
@@ -84,7 +85,7 @@ Attrs tarballInputToAttrs(const TarballFinalInput & input)
 {
     Attrs attrs;
 
-    attrs.insert_or_assign("type", "tarball");
+    attrs.insert_or_assign("type", input.type);
     attrs.insert_or_assign("url", input.url);
 
     if (input.name)

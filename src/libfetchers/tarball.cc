@@ -1,4 +1,5 @@
 #include "nix/fetchers/tarball.hh"
+#include "nix/fetchers/tarball-typed.hh"
 #include "nix/fetchers/fetchers.hh"
 #include "nix/fetchers/cache.hh"
 #include "nix/store/filetransfer.hh"
@@ -340,24 +341,61 @@ struct FileInputScheme : CurlInputScheme
                                                : (!requireTree && !hasTarballExtension(url)));
     }
 
-    std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & _input) const override
+    /**
+     * Typed method: Lock a TarballUnlockedInput (type="file") to a TarballLockedInput.
+     * For files, we download directly to the store and get the narHash.
+     */
+    std::pair<ref<SourceAccessor>, TarballFinalInput>
+    lockTyped(ref<Store> store, const TarballUnlockedInput & input) const
     {
-        auto input(_input);
-
         /* Unlike TarballInputScheme, this stores downloaded files in
            the Nix store directly, since there is little deduplication
            benefit in using the Git cache for single big files like
            tarballs. */
-        auto file = downloadFile(store, *input.settings, getStrAttr(input.attrs, "url"), input.getName());
+        auto file = downloadFile(store, *input.settings, input.url, input.getName());
 
         auto narHash = store->queryPathInfo(file.storePath)->narHash;
-        input.attrs.insert_or_assign("narHash", narHash.to_string(HashFormat::SRI, true));
+
+        // File inputs go directly to final state (no intermediate locked state)
+        LockingMetadata locking;
+        // downloadFile doesn't return lastModified, so use 0
+        locking.lastModified = 0;
+
+        FinalizationData finalization(narHash);
+        TarballFinalInput finalInput(
+            *input.settings,
+            "file",
+            input.url,
+            file.effectiveUrl, // effectiveUrl after redirects
+            locking,
+            std::nullopt, // No treeHash for file inputs
+            finalization,
+            input.name);
 
         auto accessor = ref{store->getFSAccessor(file.storePath)};
 
-        accessor->setPathDisplay("«" + input.to_string() + "»");
+        accessor->setPathDisplay("«" + input.url + "»");
 
-        return {accessor, input};
+        return {accessor, std::move(finalInput)};
+    }
+
+    /**
+     * Wrapper method for backward compatibility with Input/Attrs API.
+     * Delegates to typed lockTyped() method.
+     */
+    std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & input) const override
+    {
+        // Boundary conversion: Input (Attrs) → TarballUnlockedInput (typed)
+        auto unlocked = tarballInputFromAttrs(*input.settings, input.attrs);
+
+        // Delegate to typed method (goes directly to final state)
+        auto [accessor, finalInput] = lockTyped(store, unlocked);
+
+        // Boundary conversion: TarballFinalInput (typed) → Input (Attrs)
+        Input result(input); // Copy to preserve scheme and other fields
+        result.attrs = tarballInputToAttrs(finalInput);
+
+        return {accessor, std::move(result)};
     }
 };
 
@@ -377,32 +415,80 @@ struct TarballInputScheme : CurlInputScheme
                                                : (requireTree || hasTarballExtension(url)));
     }
 
-    std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & _input) const override
+    /**
+     * Typed method: Lock a TarballUnlockedInput to a TarballLockedInput.
+     * This is the primary implementation using typed inputs.
+     */
+    std::pair<ref<SourceAccessor>, TarballLockedInput>
+    lockTyped(ref<Store> store, const TarballUnlockedInput & input) const
     {
-        auto input(_input);
+        auto result = downloadTarball_(*input.settings, input.url, {}, "«tarball:" + input.url + "»");
 
-        auto result =
-            downloadTarball_(*input.settings, getStrAttr(input.attrs, "url"), {}, "«" + input.to_string() + "»");
+        // Handle immutableUrl redirect
+        TarballUnlockedInput finalInput = input;
+        std::string effectiveUrl = input.url;
 
         if (result.immutableUrl) {
             auto immutableInput = Input::fromURL(*input.settings, *result.immutableUrl);
-            // FIXME: would be nice to support arbitrary flakerefs
-            // here, e.g. git flakes.
             if (immutableInput.getType() != "tarball")
                 throw Error("tarball 'Link' headers that redirect to non-tarball URLs are not supported");
-            input = immutableInput;
+
+            // Convert to typed input
+            finalInput = tarballInputFromAttrs(*input.settings, immutableInput.attrs);
+            effectiveUrl = *result.immutableUrl;
         }
 
-        if (result.lastModified && !input.attrs.contains("lastModified"))
-            input.attrs.insert_or_assign("lastModified", uint64_t(result.lastModified));
+        // Construct locked input
+        LockingMetadata locking(result.lastModified);
+        TarballLockedInput locked(
+            *input.settings, "tarball", finalInput.url, effectiveUrl, locking, result.treeHash, finalInput.name);
 
-        input.attrs.insert_or_assign(
-            "narHash",
-            input.settings->getTarballCache()
-                ->treeHashToNarHash(*input.settings, result.treeHash)
-                .to_string(HashFormat::SRI, true));
+        // Copy over optional metadata if present
+        locked.rev = finalInput.rev;
+        locked.revCount = finalInput.revCount;
+        locked.unpack = finalInput.unpack;
 
-        return {result.accessor, input};
+        return {result.accessor, std::move(locked)};
+    }
+
+    /**
+     * Wrapper method for backward compatibility with Input/Attrs API.
+     * Delegates to typed lockTyped() method.
+     */
+    std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & input) const override
+    {
+        // Boundary conversion: Input (Attrs) → TarballUnlockedInput (typed)
+        auto unlocked = tarballInputFromAttrs(*input.settings, input.attrs);
+
+        // Delegate to typed method (pure typed logic, no Attrs!)
+        auto [accessor, locked] = lockTyped(store, unlocked);
+
+        // Compute narHash from treeHash to create final input
+        auto narHash = input.settings->getTarballCache()->treeHashToNarHash(*input.settings, *locked.treeHash);
+
+        FinalizationData finalization(narHash);
+        TarballFinalInput finalInput(
+            *input.settings,
+            "tarball",
+            locked.url,
+            locked.effectiveUrl,
+            locked.locking,
+            locked.treeHash,
+            finalization,
+            locked.name);
+
+        // Copy over optional metadata
+        finalInput.rev = locked.rev;
+        finalInput.revCount = locked.revCount;
+        finalInput.unpack = locked.unpack;
+        finalInput.etag = locked.etag;
+        finalInput.immutableUrl = locked.immutableUrl;
+
+        // Boundary conversion: TarballFinalInput (typed) → Input (Attrs)
+        Input result(input); // Copy to preserve scheme and other fields
+        result.attrs = tarballInputToAttrs(finalInput);
+
+        return {accessor, std::move(result)};
     }
 
     std::optional<std::string> getFingerprint(ref<Store> store, const Input & input) const override
