@@ -49,14 +49,6 @@ struct Input
     Attrs attrs;
 
     /**
-     * Optional typed input storage.
-     * When present, provides type-safe access to input data.
-     * Stores AnyTypedInput (from typed-input-variant.hh) using std::any for type erasure.
-     * Gradually being adopted alongside attrs for backward compatibility.
-     */
-    std::optional<std::any> typedInput;
-
-    /**
      * Cached result of getFingerprint().
      */
     mutable std::optional<std::optional<std::string>> cachedFingerprint;
