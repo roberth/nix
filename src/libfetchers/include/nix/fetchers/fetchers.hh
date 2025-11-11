@@ -8,7 +8,9 @@
 #include "nix/fetchers/attrs.hh"
 #include "nix/util/url.hh"
 
+#include <any>
 #include <memory>
+#include <optional>
 #include <nlohmann/json_fwd.hpp>
 
 #include "nix/util/ref.hh"
@@ -45,6 +47,14 @@ struct Input
 
     std::shared_ptr<InputScheme> scheme; // note: can be null
     Attrs attrs;
+
+    /**
+     * Optional typed input storage.
+     * When present, provides type-safe access to input data.
+     * Stores AnyTypedInput (from typed-input-variant.hh) using std::any for type erasure.
+     * Gradually being adopted alongside attrs for backward compatibility.
+     */
+    std::optional<std::any> typedInput;
 
     /**
      * Cached result of getFingerprint().
