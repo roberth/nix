@@ -185,7 +185,7 @@ struct PathInputScheme : InputScheme
         auto [accessor, locked] = lockTyped(store, unlocked);
 
         // Boundary conversion: PathLockedInput (typed) → Input (Attrs)
-        Input result(*input.settings);
+        Input result(input); // Copy to preserve scheme and other fields
         result.attrs = pathInputToAttrs(locked);
 
         return {accessor, std::move(result)};
