@@ -39,44 +39,45 @@ Attrs pathInputToAttrs(const PathUnlockedInput & input)
     return attrs;
 }
 
-Attrs pathInputToAttrs(const PathLockedInput & input)
+Attrs PathLockedInput::toAttrs() const
 {
     Attrs attrs;
     attrs.insert_or_assign("type", "path");
-    attrs.insert_or_assign("path", input.path.string());
+    attrs.insert_or_assign("path", path.string());
 
-    if (input.rev)
-        attrs.insert_or_assign("rev", *input.rev);
-    if (input.revCount)
-        attrs.insert_or_assign("revCount", *input.revCount);
-    if (input.narHash)
-        attrs.insert_or_assign("narHash", input.narHash->to_string(HashFormat::SRI, true));
+    if (rev)
+        attrs.insert_or_assign("rev", *rev);
+    if (revCount)
+        attrs.insert_or_assign("revCount", *revCount);
+    if (narHash)
+        attrs.insert_or_assign("narHash", narHash->to_string(HashFormat::SRI, true));
 
     // Locking metadata
-    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
+    attrs.insert_or_assign("lastModified", uint64_t(locking.lastModified));
+
+    return attrs;
+}
+
+Attrs pathInputToAttrs(const PathLockedInput & input)
+{
+    return input.toAttrs();
+}
+
+Attrs PathFinalInput::toAttrs() const
+{
+    // Get all locked-state attributes from parent
+    auto attrs = PathLockedInput::toAttrs();
+
+    // Overwrite narHash with the actual finalized one
+    attrs.insert_or_assign("narHash", finalization.narHash.to_string(HashFormat::SRI, true));
+    attrs.insert_or_assign("__final", Explicit<bool>(true));
 
     return attrs;
 }
 
 Attrs pathInputToAttrs(const PathFinalInput & input)
 {
-    Attrs attrs;
-    attrs.insert_or_assign("type", "path");
-    attrs.insert_or_assign("path", input.path.string());
-
-    if (input.rev)
-        attrs.insert_or_assign("rev", *input.rev);
-    if (input.revCount)
-        attrs.insert_or_assign("revCount", *input.revCount);
-
-    // Locking metadata
-    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
-
-    // Finalization data
-    attrs.insert_or_assign("narHash", input.finalization.narHash.to_string(HashFormat::SRI, true));
-    attrs.insert_or_assign("__final", Explicit<bool>(true));
-
-    return attrs;
+    return input.toAttrs();
 }
 
 } // namespace nix::fetchers

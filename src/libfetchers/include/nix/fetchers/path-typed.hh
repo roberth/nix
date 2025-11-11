@@ -63,6 +63,11 @@ struct PathLockedInput : PathInputBase
         , locking(std::move(locking))
     {
     }
+
+    /**
+     * Serialize to Attrs for boundary conversion.
+     */
+    virtual Attrs toAttrs() const;
 };
 
 /**
@@ -79,6 +84,11 @@ struct PathFinalInput : PathLockedInput
         , finalization(std::move(finalization))
     {
     }
+
+    /**
+     * Serialize to Attrs including final-state attributes.
+     */
+    Attrs toAttrs() const override;
 };
 
 using PathInputStates = InputStates<PathUnlockedInput, PathLockedInput, PathFinalInput>;
