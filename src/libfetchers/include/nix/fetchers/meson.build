@@ -11,6 +11,7 @@ headers = files(
   'git-typed.hh',
   'git-utils.hh',
   'github-typed.hh',
+  'indirect-typed.hh',
   'input-cache.hh',
   'mercurial-typed.hh',
   'registry.hh',
