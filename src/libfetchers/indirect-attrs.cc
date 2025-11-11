@@ -1,4 +1,4 @@
-#include "nix/fetchers/indirect-typed.hh"
+#include "nix/fetchers/indirect-attrs.hh"
 #include "nix/fetchers/attrs.hh"
 
 namespace nix::fetchers {

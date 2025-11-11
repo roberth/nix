@@ -1,5 +1,5 @@
 #include "nix/fetchers/fetchers.hh"
-#include "nix/fetchers/path-typed.hh"
+#include "nix/fetchers/path-attrs.hh"
 #include "nix/store/store-api.hh"
 #include "nix/util/archive.hh"
 #include "nix/fetchers/cache.hh"

@@ -1,4 +1,4 @@
-#include "nix/fetchers/github-typed.hh"
+#include "nix/fetchers/github-attrs.hh"
 #include "nix/fetchers/attrs.hh"
 
 namespace nix::fetchers {

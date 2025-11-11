@@ -6,7 +6,7 @@
 #include "nix/util/url-parts.hh"
 #include "nix/util/git.hh"
 #include "nix/fetchers/fetchers.hh"
-#include "nix/fetchers/github-typed.hh"
+#include "nix/fetchers/github-attrs.hh"
 #include "nix/fetchers/fetch-settings.hh"
 #include "nix/fetchers/tarball.hh"
 #include "nix/util/tarfile.hh"

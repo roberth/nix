@@ -1,4 +1,4 @@
-#include "nix/fetchers/tarball-typed.hh"
+#include "nix/fetchers/tarball-attrs.hh"
 #include "nix/fetchers/attrs.hh"
 
 namespace nix::fetchers {

@@ -1,6 +1,6 @@
 #include "nix/util/error.hh"
 #include "nix/fetchers/fetchers.hh"
-#include "nix/fetchers/git-typed.hh"
+#include "nix/fetchers/git-attrs.hh"
 #include "nix/util/users.hh"
 #include "nix/fetchers/cache.hh"
 #include "nix/store/globals.hh"

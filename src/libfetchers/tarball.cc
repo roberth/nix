@@ -1,5 +1,5 @@
 #include "nix/fetchers/tarball.hh"
-#include "nix/fetchers/tarball-typed.hh"
+#include "nix/fetchers/tarball-attrs.hh"
 #include "nix/fetchers/fetchers.hh"
 #include "nix/fetchers/cache.hh"
 #include "nix/store/filetransfer.hh"

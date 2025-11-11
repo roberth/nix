@@ -2,12 +2,12 @@
 ///@file
 
 #include "nix/fetchers/typed-inputs.hh"
-#include "nix/fetchers/path-typed.hh"
-#include "nix/fetchers/git-typed.hh"
-#include "nix/fetchers/tarball-typed.hh"
-#include "nix/fetchers/github-typed.hh"
-#include "nix/fetchers/mercurial-typed.hh"
-#include "nix/fetchers/indirect-typed.hh"
+#include "nix/fetchers/path-attrs.hh"
+#include "nix/fetchers/git-attrs.hh"
+#include "nix/fetchers/tarball-attrs.hh"
+#include "nix/fetchers/github-attrs.hh"
+#include "nix/fetchers/mercurial-attrs.hh"
+#include "nix/fetchers/indirect-attrs.hh"
 
 #include <variant>
 #include <optional>

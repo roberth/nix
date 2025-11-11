@@ -1,5 +1,5 @@
 #include "nix/fetchers/fetchers.hh"
-#include "nix/fetchers/mercurial-typed.hh"
+#include "nix/fetchers/mercurial-attrs.hh"
 #include "nix/util/processes.hh"
 #include "nix/util/users.hh"
 #include "nix/fetchers/cache.hh"

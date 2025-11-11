@@ -1,4 +1,4 @@
-#include "nix/fetchers/mercurial-typed.hh"
+#include "nix/fetchers/mercurial-attrs.hh"
 #include "nix/fetchers/attrs.hh"
 
 namespace nix::fetchers {
