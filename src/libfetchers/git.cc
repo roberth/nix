@@ -803,28 +803,52 @@ struct GitInputScheme : InputScheme
                     submoduleRev.gitRev(),
                     resolved);
 
-                // Create submodule input recursively (still needs to use fromAttrs for now)
-                fetchers::Attrs attrs;
-                attrs.insert_or_assign("type", "git");
-                attrs.insert_or_assign("url", resolved);
+                // Create typed submodule input
+                // If the resolved URL doesn't have a scheme, it's a local path - prepend file://
+                std::string resolvedUrlStr = resolved;
+                if (resolvedUrlStr.find("://") == std::string::npos) {
+                    resolvedUrlStr = "file://" + resolved;
+                }
+                auto resolvedUrl = parseURL(resolvedUrlStr);
+
+                // Determine ref for submodule
+                std::optional<std::string> submoduleRef;
                 if (submodule.branch != "") {
                     // A special value of . is used to indicate that the name of the branch in the submodule
                     // should be the same name as the current branch in the current repository.
                     // https://git-scm.com/docs/gitmodules
                     if (submodule.branch == ".") {
-                        attrs.insert_or_assign("ref", ref);
+                        submoduleRef = ref;
                     } else {
-                        attrs.insert_or_assign("ref", submodule.branch);
+                        submoduleRef = submodule.branch;
                     }
                 }
-                attrs.insert_or_assign("rev", submoduleRev.gitRev());
-                attrs.insert_or_assign("exportIgnore", Explicit<bool>{exportIgnore});
-                attrs.insert_or_assign("submodules", Explicit<bool>{true});
-                attrs.insert_or_assign("lfs", Explicit<bool>{smudgeLfs});
-                attrs.insert_or_assign("allRefs", Explicit<bool>{true});
-                auto submoduleInput = fetchers::Input::fromAttrs(*input.settings, std::move(attrs));
-                auto [submoduleAccessor, submoduleInput2] = submoduleInput.getAccessor(store);
-                submoduleAccessor->setPathDisplay("«" + submoduleInput.to_string() + "»");
+
+                // Create GitUnlockedInput for submodule
+                GitUnlockedInput submoduleInput(
+                    *input.settings,
+                    std::move(resolvedUrl),
+                    submoduleRef,
+                    submoduleRev, // rev is known
+                    false,        // shallow
+                    true,         // submodules (recursive)
+                    smudgeLfs,    // lfs
+                    exportIgnore, // exportIgnore
+                    true          // allRefs
+                );
+
+                // Recursively lock the submodule (typed!)
+                auto [submoduleAccessor, submoduleLocked] =
+                    lockTyped(store, submoduleInput, std::make_shared<GitInputScheme>());
+
+                // Build display string from locked input
+                auto displayUrl = submoduleLocked.url;
+                if (submoduleLocked.ref)
+                    displayUrl.query.insert_or_assign("ref", *submoduleLocked.ref);
+                if (submoduleLocked.rev)
+                    displayUrl.query.insert_or_assign("rev", submoduleLocked.rev->gitRev());
+                submoduleAccessor->setPathDisplay("«git+" + displayUrl.to_string() + "»");
+
                 mounts.insert_or_assign(submodule.path, submoduleAccessor);
             }
 
