@@ -624,9 +624,13 @@ struct GitInputScheme : InputScheme
 
     /**
      * Typed version: Verify commit from GitUnlockedInput.
+     * Takes the resolved rev as a separate parameter since input.rev may be unset.
      */
-    void
-    verifyCommit(const GitUnlockedInput & input, std::shared_ptr<GitRepo> repo, const std::string & displayStr) const
+    void verifyCommit(
+        const GitUnlockedInput & input,
+        std::shared_ptr<GitRepo> repo,
+        const std::optional<Hash> & rev,
+        const std::string & displayStr) const
     {
         std::vector<fetchers::PublicKey> publicKeys;
         if (input.publicKey)
@@ -638,8 +642,8 @@ struct GitInputScheme : InputScheme
         auto verifyCommit = input.verifyCommit.value_or(!publicKeys.empty());
 
         if (verifyCommit) {
-            if (input.rev && repo)
-                repo->verifyCommit(*input.rev, publicKeys);
+            if (rev && repo)
+                repo->verifyCommit(*rev, publicKeys);
             else
                 throw Error("commit verification is required for Git repository '%s', but it's dirty", displayStr);
         }
@@ -651,7 +655,7 @@ struct GitInputScheme : InputScheme
     void verifyCommit(const Input & input, std::shared_ptr<GitRepo> repo) const
     {
         auto typed = gitInputFromAttrs(*input.settings, input.attrs);
-        verifyCommit(typed, repo, input.to_string());
+        verifyCommit(typed, repo, input.getRev(), input.to_string());
     }
 
     /**
@@ -781,7 +785,7 @@ struct GitInputScheme : InputScheme
             displayUrl.query.insert_or_assign("ref", *input.ref);
         displayUrl.query.insert_or_assign("rev", resolvedRev.gitRev());
         auto displayStr = "git+" + displayUrl.to_string();
-        verifyCommit(input, repo, displayStr);
+        verifyCommit(input, repo, resolvedRev, displayStr);
 
         bool exportIgnore = input.exportIgnore;
         bool smudgeLfs = input.lfs;
@@ -959,7 +963,7 @@ struct GitInputScheme : InputScheme
             }
 
             auto displayStr = "git+" + input.url.to_string();
-            verifyCommit(input, repo, displayStr);
+            verifyCommit(input, repo, headRev, displayStr);
 
             lastModified = repoInfo.workdirInfo.headRev
                                ? getLastModified(*input.settings, repoInfo, repoPath, *repoInfo.workdirInfo.headRev)
@@ -973,7 +977,7 @@ struct GitInputScheme : InputScheme
             }
 
             auto displayStr = "git+" + input.url.to_string();
-            verifyCommit(input, nullptr, displayStr);
+            verifyCommit(input, nullptr, repoInfo.workdirInfo.headRev, displayStr);
 
             lastModified = repoInfo.workdirInfo.headRev
                                ? getLastModified(*input.settings, repoInfo, repoPath, *repoInfo.workdirInfo.headRev)
