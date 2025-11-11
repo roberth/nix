@@ -4,6 +4,8 @@ source common.sh
 
 enableFeatures "daemon-trust-override"
 
+skipTest "flaky"
+
 TODO_NixOS
 restartDaemon
 

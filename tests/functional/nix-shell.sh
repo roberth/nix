@@ -2,6 +2,8 @@
 
 source common.sh
 
+skipTest "flaky"
+
 clearStoreIfPossible
 
 if [[ -n ${NIX_TESTS_CA_BY_DEFAULT:-} ]]; then

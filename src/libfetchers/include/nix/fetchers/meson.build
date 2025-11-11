@@ -12,4 +12,5 @@ headers = files(
   'input-cache.hh',
   'registry.hh',
   'tarball.hh',
+  'typed-inputs.hh',
 )

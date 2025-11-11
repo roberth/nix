@@ -47,9 +47,11 @@ sources = files(
   'indirect.cc',
   'input-cache.cc',
   'mercurial.cc',
+  'path-typed.cc',
   'path.cc',
   'registry.cc',
   'tarball.cc',
+  'typed-inputs.cc',
 )
 
 subdir('include/nix/fetchers')

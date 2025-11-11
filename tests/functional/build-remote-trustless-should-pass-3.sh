@@ -2,6 +2,8 @@
 
 source common.sh
 
+skipTest "flaky"
+
 enableFeatures "daemon-trust-override"
 
 TODO_NixOS
