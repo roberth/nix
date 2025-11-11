@@ -233,9 +233,6 @@ struct GitInputScheme : InputScheme
         Input input{settings};
         input.attrs = attrs;
         input.attrs["url"] = fixGitURL(getStrAttr(attrs, "url")).to_string();
-        getShallowAttr(input);
-        getSubmodulesAttr(input);
-        getAllRefsAttr(input);
         return input;
     }
 
@@ -254,7 +251,7 @@ struct GitInputScheme : InputScheme
             url.query.insert_or_assign("lfs", "1");
         if (getSubmodulesAttr(input))
             url.query.insert_or_assign("submodules", "1");
-        if (maybeGetBoolAttr(input.attrs, "exportIgnore").value_or(false))
+        if (getExportIgnoreAttr(input))
             url.query.insert_or_assign("exportIgnore", "1");
         if (maybeGetBoolAttr(input.attrs, "verifyCommit").value_or(false))
             url.query.insert_or_assign("verifyCommit", "1");

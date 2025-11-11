@@ -204,15 +204,6 @@ struct GitArchiveInputScheme : InputScheme
         return {};
     }
 
-    Headers
-    makeHeadersWithAuthTokens(const fetchers::Settings & settings, const std::string & host, const Input & input) const
-    {
-        auto owner = getStrAttr(input.attrs, "owner");
-        auto repo = getStrAttr(input.attrs, "repo");
-        auto hostAndPath = fmt("%s/%s/%s", host, owner, repo);
-        return makeHeadersWithAuthTokens(settings, host, hostAndPath);
-    }
-
     Headers makeHeadersWithAuthTokens(
         const fetchers::Settings & settings, const std::string & host, const std::string & hostAndPath) const
     {
@@ -334,29 +325,6 @@ struct GitArchiveInputScheme : InputScheme
 #endif
 
         return {rev, tarballInfo};
-    }
-
-    /**
-     * Legacy version: delegates to typed version.
-     */
-    std::pair<Input, TarballInfo> downloadArchive(ref<Store> store, Input input) const
-    {
-        // Convert to typed input
-        auto type = getStrAttr(input.attrs, "type");
-        GitHubUnlockedInput typedInput = (type == "github")   ? githubInputFromAttrs(*input.settings, input.attrs)
-                                         : (type == "gitlab") ? gitlabInputFromAttrs(*input.settings, input.attrs)
-                                         : (type == "sourcehut")
-                                             ? githubInputFromAttrs(*input.settings, input.attrs)
-                                             : throw Error("unsupported git archive type: %s", type);
-
-        // Call typed version
-        auto [rev, tarballInfo] = downloadArchiveTyped(store, typedInput);
-
-        // Update input attrs with resolved rev (remove ref, add rev)
-        input.attrs.erase("ref");
-        input.attrs.insert_or_assign("rev", rev.gitRev());
-
-        return {std::move(input), tarballInfo};
     }
 
     /**
