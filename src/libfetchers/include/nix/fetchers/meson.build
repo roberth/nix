@@ -8,6 +8,7 @@ headers = files(
   'fetchers.hh',
   'filtering-source-accessor.hh',
   'git-lfs-fetch.hh',
+  'git-typed.hh',
   'git-utils.hh',
   'input-cache.hh',
   'registry.hh',

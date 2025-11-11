@@ -41,6 +41,7 @@ sources = files(
   'fetchers.cc',
   'filtering-source-accessor.cc',
   'git-lfs-fetch.cc',
+  'git-typed.cc',
   'git-utils.cc',
   'git.cc',
   'github.cc',
