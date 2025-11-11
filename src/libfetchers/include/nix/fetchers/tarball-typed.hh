@@ -90,6 +90,11 @@ struct TarballLockedInput : TarballInputBase
         , treeHash(std::move(treeHash))
     {
     }
+
+    /**
+     * Serialize to Attrs for boundary conversion.
+     */
+    virtual Attrs toAttrs() const;
 };
 
 /**
@@ -119,6 +124,11 @@ struct TarballFinalInput : TarballLockedInput
         , finalization(std::move(finalization))
     {
     }
+
+    /**
+     * Serialize to Attrs including final-state attributes.
+     */
+    Attrs toAttrs() const override;
 };
 
 using TarballInputStates = InputStates<TarballUnlockedInput, TarballLockedInput, TarballFinalInput>;

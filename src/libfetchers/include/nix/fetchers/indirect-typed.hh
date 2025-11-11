@@ -63,6 +63,11 @@ struct IndirectLockedInput : IndirectInputBase
         , rev(std::move(rev))
     {
     }
+
+    /**
+     * Serialize to Attrs for boundary conversion.
+     */
+    virtual Attrs toAttrs() const;
 };
 
 /**
@@ -77,6 +82,11 @@ struct IndirectFinalInput : IndirectLockedInput
         , finalization(std::move(narHash))
     {
     }
+
+    /**
+     * Serialize to Attrs including final-state attributes.
+     */
+    Attrs toAttrs() const override;
 };
 
 // Convenience type alias

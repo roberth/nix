@@ -82,6 +82,11 @@ struct GitHubLockedInput : GitHubInputBase
         , treeHash(std::move(treeHash))
     {
     }
+
+    /**
+     * Serialize to Attrs for boundary conversion.
+     */
+    virtual Attrs toAttrs() const;
 };
 
 /**
@@ -105,6 +110,11 @@ struct GitHubFinalInput : GitHubLockedInput
         , finalization(std::move(narHash))
     {
     }
+
+    /**
+     * Serialize to Attrs including final-state attributes.
+     */
+    Attrs toAttrs() const override;
 };
 
 // Convenience type aliases for GitHub

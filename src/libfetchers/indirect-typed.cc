@@ -31,33 +31,39 @@ Attrs indirectInputToAttrs(const IndirectUnlockedInput & input)
     return attrs;
 }
 
-Attrs indirectInputToAttrs(const IndirectLockedInput & input)
+Attrs IndirectLockedInput::toAttrs() const
 {
     Attrs attrs;
 
     attrs.insert_or_assign("type", "indirect");
-    attrs.insert_or_assign("id", input.id);
+    attrs.insert_or_assign("id", id);
 
-    attrs.insert_or_assign("rev", input.rev.gitRev());
-    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
+    attrs.insert_or_assign("rev", rev.gitRev());
+    attrs.insert_or_assign("lastModified", uint64_t(locking.lastModified));
 
     return attrs;
 }
 
-Attrs indirectInputToAttrs(const IndirectFinalInput & input)
+Attrs IndirectFinalInput::toAttrs() const
 {
-    Attrs attrs;
+    // Get all locked-state attributes from parent
+    auto attrs = IndirectLockedInput::toAttrs();
 
-    attrs.insert_or_assign("type", "indirect");
-    attrs.insert_or_assign("id", input.id);
-
-    attrs.insert_or_assign("rev", input.rev.gitRev());
-
-    attrs.insert_or_assign("narHash", input.finalization.narHash.to_string(HashFormat::SRI, true));
-
+    // Add final-specific attributes
+    attrs.insert_or_assign("narHash", finalization.narHash.to_string(HashFormat::SRI, true));
     attrs.insert_or_assign("__final", Explicit<bool>(true));
 
     return attrs;
+}
+
+Attrs indirectInputToAttrs(const IndirectLockedInput & input)
+{
+    return input.toAttrs();
+}
+
+Attrs indirectInputToAttrs(const IndirectFinalInput & input)
+{
+    return input.toAttrs();
 }
 
 } // namespace nix::fetchers

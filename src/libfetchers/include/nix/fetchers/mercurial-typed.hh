@@ -92,6 +92,11 @@ struct MercurialLockedInput : MercurialInputBase
         , locking(std::move(locking))
     {
     }
+
+    /**
+     * Serialize to Attrs for boundary conversion.
+     */
+    virtual Attrs toAttrs() const;
 };
 
 /**
@@ -115,6 +120,11 @@ struct MercurialFinalInput : MercurialLockedInput
         , finalization(std::move(finalization))
     {
     }
+
+    /**
+     * Serialize to Attrs including final-state attributes.
+     */
+    Attrs toAttrs() const override;
 };
 
 // Convenience type alias

@@ -35,55 +35,51 @@ Attrs mercurialInputToAttrs(const MercurialUnlockedInput & input)
     return attrs;
 }
 
-Attrs mercurialInputToAttrs(const MercurialLockedInput & input)
+Attrs MercurialLockedInput::toAttrs() const
 {
     Attrs attrs;
 
     attrs.insert_or_assign("type", "hg");
-    attrs.insert_or_assign("url", input.url);
+    attrs.insert_or_assign("url", url);
 
-    if (input.name)
-        attrs.insert_or_assign("name", *input.name);
+    if (name)
+        attrs.insert_or_assign("name", *name);
 
-    if (input.ref)
-        attrs.insert_or_assign("ref", *input.ref);
+    if (ref)
+        attrs.insert_or_assign("ref", *ref);
 
-    if (input.rev)
-        attrs.insert_or_assign("rev", input.rev->gitRev());
+    if (rev)
+        attrs.insert_or_assign("rev", rev->gitRev());
 
-    if (input.revCount)
-        attrs.insert_or_assign("revCount", *input.revCount);
+    if (revCount)
+        attrs.insert_or_assign("revCount", *revCount);
 
-    if (input.locking.lastModified != 0)
-        attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
+    if (locking.lastModified != 0)
+        attrs.insert_or_assign("lastModified", uint64_t(locking.lastModified));
+
+    return attrs;
+}
+
+Attrs mercurialInputToAttrs(const MercurialLockedInput & input)
+{
+    return input.toAttrs();
+}
+
+Attrs MercurialFinalInput::toAttrs() const
+{
+    // Get all locked-state attributes from parent
+    auto attrs = MercurialLockedInput::toAttrs();
+
+    // Add final-specific attributes
+    attrs.insert_or_assign("narHash", finalization.narHash.to_string(HashFormat::SRI, true));
+    attrs.insert_or_assign("__final", Explicit<bool>(true));
 
     return attrs;
 }
 
 Attrs mercurialInputToAttrs(const MercurialFinalInput & input)
 {
-    Attrs attrs;
-
-    attrs.insert_or_assign("type", "hg");
-    attrs.insert_or_assign("url", input.url);
-
-    if (input.name)
-        attrs.insert_or_assign("name", *input.name);
-
-    if (input.ref)
-        attrs.insert_or_assign("ref", *input.ref);
-
-    if (input.rev)
-        attrs.insert_or_assign("rev", input.rev->gitRev());
-
-    if (input.revCount)
-        attrs.insert_or_assign("revCount", *input.revCount);
-
-    attrs.insert_or_assign("narHash", input.finalization.narHash.to_string(HashFormat::SRI, true));
-
-    attrs.insert_or_assign("__final", Explicit<bool>(true));
-
-    return attrs;
+    return input.toAttrs();
 }
 
 } // namespace nix::fetchers

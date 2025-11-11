@@ -37,49 +37,47 @@ Attrs githubInputToAttrs(const GitHubUnlockedInput & input)
     return attrs;
 }
 
-Attrs githubInputToAttrs(const GitHubLockedInput & input)
+Attrs GitHubLockedInput::toAttrs() const
 {
     Attrs attrs;
 
-    attrs.insert_or_assign("type", "github");
-    attrs.insert_or_assign("owner", input.owner);
-    attrs.insert_or_assign("repo", input.repo);
+    attrs.insert_or_assign("type", std::string{type});
+    attrs.insert_or_assign("owner", owner);
+    attrs.insert_or_assign("repo", repo);
 
-    if (input.host)
-        attrs.insert_or_assign("host", *input.host);
+    if (host)
+        attrs.insert_or_assign("host", *host);
 
-    attrs.insert_or_assign("rev", input.rev.gitRev());
+    attrs.insert_or_assign("rev", rev.gitRev());
 
-    if (input.treeHash)
-        attrs.insert_or_assign("treeHash", input.treeHash->gitRev());
+    if (treeHash)
+        attrs.insert_or_assign("treeHash", treeHash->gitRev());
 
-    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
+    attrs.insert_or_assign("lastModified", uint64_t(locking.lastModified));
 
     return attrs;
 }
 
-Attrs githubInputToAttrs(const GitHubFinalInput & input)
+Attrs GitHubFinalInput::toAttrs() const
 {
-    Attrs attrs;
+    // Get all locked-state attributes from parent
+    auto attrs = GitHubLockedInput::toAttrs();
 
-    attrs.insert_or_assign("type", "github");
-    attrs.insert_or_assign("owner", input.owner);
-    attrs.insert_or_assign("repo", input.repo);
-
-    if (input.host)
-        attrs.insert_or_assign("host", *input.host);
-
-    attrs.insert_or_assign("rev", input.rev.gitRev());
-
-    if (input.treeHash)
-        attrs.insert_or_assign("treeHash", input.treeHash->gitRev());
-
-    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
-    attrs.insert_or_assign("narHash", input.finalization.narHash.to_string(HashFormat::SRI, true));
-
+    // Add final-specific attributes
+    attrs.insert_or_assign("narHash", finalization.narHash.to_string(HashFormat::SRI, true));
     attrs.insert_or_assign("__final", Explicit<bool>(true));
 
     return attrs;
+}
+
+Attrs githubInputToAttrs(const GitHubLockedInput & input)
+{
+    return input.toAttrs();
+}
+
+Attrs githubInputToAttrs(const GitHubFinalInput & input)
+{
+    return input.toAttrs();
 }
 
 GitLabUnlockedInput gitlabInputFromAttrs(const Settings & settings, const Attrs & attrs)
@@ -118,47 +116,12 @@ Attrs gitlabInputToAttrs(const GitLabUnlockedInput & input)
 
 Attrs gitlabInputToAttrs(const GitLabLockedInput & input)
 {
-    Attrs attrs;
-
-    attrs.insert_or_assign("type", "gitlab");
-    attrs.insert_or_assign("owner", input.owner);
-    attrs.insert_or_assign("repo", input.repo);
-
-    if (input.host)
-        attrs.insert_or_assign("host", *input.host);
-
-    attrs.insert_or_assign("rev", input.rev.gitRev());
-
-    if (input.treeHash)
-        attrs.insert_or_assign("treeHash", input.treeHash->gitRev());
-
-    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
-
-    return attrs;
+    return input.toAttrs();
 }
 
 Attrs gitlabInputToAttrs(const GitLabFinalInput & input)
 {
-    Attrs attrs;
-
-    attrs.insert_or_assign("type", "gitlab");
-    attrs.insert_or_assign("owner", input.owner);
-    attrs.insert_or_assign("repo", input.repo);
-
-    if (input.host)
-        attrs.insert_or_assign("host", *input.host);
-
-    attrs.insert_or_assign("rev", input.rev.gitRev());
-
-    if (input.treeHash)
-        attrs.insert_or_assign("treeHash", input.treeHash->gitRev());
-
-    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
-    attrs.insert_or_assign("narHash", input.finalization.narHash.to_string(HashFormat::SRI, true));
-
-    attrs.insert_or_assign("__final", Explicit<bool>(true));
-
-    return attrs;
+    return input.toAttrs();
 }
 
 } // namespace nix::fetchers
