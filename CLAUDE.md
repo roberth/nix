@@ -13,11 +13,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Outer boundary**: `Input` class with `Attrs` exists only at API surface for backward compatibility
 - **No `Attrs` manipulation inside libfetchers** except at conversion points
 
-**Current Status**: Phase 3 complete (all fetcher types modeled), Phase 4 in progress (integration)
+**Current Status**: Phase 4 COMPLETE ✅ - All fetchers use typed inputs internally
 
 **Key Documentation**:
 - `doc/libfetchers-typing-plan.md` - Complete architectural plan and migration strategy
-- `doc/libfetchers-implementation-status.md` - Current progress tracking
+- `doc/libfetchers-phase4-complete.md` - Phase 4 completion summary (latest)
+- `doc/libfetchers-implementation-status.md` - Historical progress tracking
 
 ## Development Commands
 
