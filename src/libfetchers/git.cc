@@ -784,9 +784,7 @@ struct GitInputScheme : InputScheme
         auto displayStr = "git+" + displayUrl.to_string();
         verifyCommit(input, repo, resolvedRev, displayStr);
 
-        bool exportIgnore = input.exportIgnore;
-        bool smudgeLfs = input.lfs;
-        auto accessor = repo->getAccessor(resolvedRev, exportIgnore, "«" + displayStr + "»", smudgeLfs);
+        auto accessor = repo->getAccessor(resolvedRev, input.exportIgnore, "«" + displayStr + "»", input.lfs);
 
         /* If the repo has submodules, fetch them and return a mounted
            input accessor consisting of the accessor for the top-level
@@ -794,7 +792,7 @@ struct GitInputScheme : InputScheme
         if (input.submodules) {
             std::map<CanonPath, nix::ref<SourceAccessor>> mounts;
 
-            for (auto & [submodule, submoduleRev] : repo->getSubmodules(resolvedRev, exportIgnore)) {
+            for (auto & [submodule, submoduleRev] : repo->getSubmodules(resolvedRev, input.exportIgnore)) {
                 auto resolved = repo->resolveSubmoduleUrl(submodule.url);
                 debug(
                     "Git submodule %s: %s %s %s -> %s",
@@ -830,12 +828,12 @@ struct GitInputScheme : InputScheme
                     *input.settings,
                     std::move(resolvedUrl),
                     submoduleRef,
-                    submoduleRev, // rev is known
-                    false,        // shallow
-                    true,         // submodules (recursive)
-                    smudgeLfs,    // lfs
-                    exportIgnore, // exportIgnore
-                    true          // allRefs
+                    submoduleRev,       // rev is known
+                    false,              // shallow
+                    true,               // submodules (recursive)
+                    input.lfs,          // lfs
+                    input.exportIgnore, // exportIgnore
+                    true                // allRefs
                 );
 
                 // Recursively lock the submodule (typed!)
@@ -901,10 +899,8 @@ struct GitInputScheme : InputScheme
 
         auto repo = GitRepo::openRepo(repoPath, false, false);
 
-        auto exportIgnore = input.exportIgnore;
-
         ref<SourceAccessor> accessor =
-            repo->getAccessor(repoInfo.workdirInfo, exportIgnore, makeNotAllowedError(repoPath));
+            repo->getAccessor(repoInfo.workdirInfo, input.exportIgnore, makeNotAllowedError(repoPath));
 
         /* If the repo has submodules, return a mounted input accessor
            consisting of the accessor for the top-level repo and the
@@ -917,7 +913,7 @@ struct GitInputScheme : InputScheme
                 fetchers::Attrs attrs;
                 attrs.insert_or_assign("type", "git");
                 attrs.insert_or_assign("url", submodulePath.string());
-                attrs.insert_or_assign("exportIgnore", Explicit<bool>{exportIgnore});
+                attrs.insert_or_assign("exportIgnore", Explicit<bool>{input.exportIgnore});
                 attrs.insert_or_assign("submodules", Explicit<bool>{true});
                 // TODO: fall back to getAccessorFromCommit-like fetch when submodules aren't checked out
                 // attrs.insert_or_assign("allRefs", Explicit<bool>{ true });
