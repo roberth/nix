@@ -10,6 +10,7 @@ headers = files(
   'git-lfs-fetch.hh',
   'git-typed.hh',
   'git-utils.hh',
+  'github-typed.hh',
   'input-cache.hh',
   'registry.hh',
   'tarball-typed.hh',

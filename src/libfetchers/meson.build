@@ -44,6 +44,7 @@ sources = files(
   'git-typed.cc',
   'git-utils.cc',
   'git.cc',
+  'github-typed.cc',
   'github.cc',
   'indirect.cc',
   'input-cache.cc',
