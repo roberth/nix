@@ -12,6 +12,7 @@ headers = files(
   'git-utils.hh',
   'github-typed.hh',
   'input-cache.hh',
+  'mercurial-typed.hh',
   'registry.hh',
   'tarball-typed.hh',
   'tarball.hh',

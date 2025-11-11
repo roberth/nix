@@ -48,6 +48,7 @@ sources = files(
   'github.cc',
   'indirect.cc',
   'input-cache.cc',
+  'mercurial-typed.cc',
   'mercurial.cc',
   'path-typed.cc',
   'path.cc',
