@@ -33,7 +33,7 @@ GitUnlockedInput gitInputFromAttrs(const Settings & settings, const Attrs & attr
 
     // Parse dirty state (for working directory inputs)
     if (auto dirtyRevStr = maybeGetStrAttr(attrs, "dirtyRev"))
-        input.dirtyRev = Hash::parseAny(*dirtyRevStr, HashAlgorithm::SHA1);
+        input.dirtyRev = *dirtyRevStr;
     if (auto dirtyShortRev = maybeGetStrAttr(attrs, "dirtyShortRev"))
         input.dirtyShortRev = *dirtyShortRev;
 
@@ -87,7 +87,7 @@ Attrs gitInputToAttrs(const GitUnlockedInput & input)
         attrs.insert_or_assign("name", *input.name);
 
     if (input.dirtyRev)
-        attrs.insert_or_assign("dirtyRev", input.dirtyRev->gitRev());
+        attrs.insert_or_assign("dirtyRev", *input.dirtyRev);
 
     if (input.dirtyShortRev)
         attrs.insert_or_assign("dirtyShortRev", *input.dirtyShortRev);

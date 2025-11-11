@@ -946,7 +946,7 @@ struct GitInputScheme : InputScheme
 
             // Copy dirty fields if present
             if (locked.dirtyRev)
-                typedLocked.dirtyRev = locked.dirtyRev->gitRev();
+                typedLocked.dirtyRev = *locked.dirtyRev;
             if (locked.dirtyShortRev)
                 typedLocked.dirtyShortRev = *locked.dirtyShortRev;
 
@@ -969,6 +969,12 @@ struct GitInputScheme : InputScheme
         // Boundary conversion: GitLockedInput (typed) → Input (Attrs)
         Input result(input); // Copy to preserve scheme and other fields
         result.attrs = gitInputToAttrs(locked);
+
+        // Preserve final-state attrs if they were in the original input
+        if (auto narHash = input.getNarHash())
+            result.attrs.insert_or_assign("narHash", narHash->to_string(HashFormat::SRI, true));
+        if (input.isFinal())
+            result.attrs.insert_or_assign("__final", Explicit<bool>(true));
 
         return {accessor, std::move(result)};
     }

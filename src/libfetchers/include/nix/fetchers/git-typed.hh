@@ -70,8 +70,8 @@ struct GitUnlockedInput : GitInputBase
     std::optional<Hash> rev; // Specific commit hash, if known
 
     // For working directory inputs (when a local Git repo has uncommitted changes)
-    std::optional<Hash> dirtyRev;
-    std::optional<std::string> dirtyShortRev;
+    std::optional<std::string> dirtyRev;      // Full hash with "-dirty" suffix
+    std::optional<std::string> dirtyShortRev; // Short hash with "-dirty" suffix
 
     GitUnlockedInput(
         const Settings & settings,
