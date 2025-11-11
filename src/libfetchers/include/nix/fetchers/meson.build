@@ -12,6 +12,7 @@ headers = files(
   'git-utils.hh',
   'input-cache.hh',
   'registry.hh',
+  'tarball-typed.hh',
   'tarball.hh',
   'typed-inputs.hh',
 )
