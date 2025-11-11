@@ -775,7 +775,12 @@ struct GitInputScheme : InputScheme
 
         printTalkative("using revision %s of repo '%s'", resolvedRev.gitRev(), repoInfo.locationToArg());
 
-        auto displayStr = "git+" + input.url.to_string();
+        // Build display string with ref and rev parameters
+        auto displayUrl = input.url;
+        if (input.ref)
+            displayUrl.query.insert_or_assign("ref", *input.ref);
+        displayUrl.query.insert_or_assign("rev", resolvedRev.gitRev());
+        auto displayStr = "git+" + displayUrl.to_string();
         verifyCommit(input, repo, displayStr);
 
         bool exportIgnore = input.exportIgnore;
