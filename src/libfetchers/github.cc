@@ -234,8 +234,24 @@ struct GitArchiveInputScheme : InputScheme
         std::optional<Hash> treeHash;
     };
 
+    /**
+     * Typed version: Get rev and treeHash for a ref.
+     */
+    virtual RefInfo getRevFromRefTyped(nix::ref<Store> store, const GitHubUnlockedInput & input) const = 0;
+
+    /**
+     * Legacy version.
+     */
     virtual RefInfo getRevFromRef(nix::ref<Store> store, const Input & input) const = 0;
 
+    /**
+     * Typed version: Get download URL for a locked input.
+     */
+    virtual DownloadUrl getDownloadUrlTyped(const GitHubUnlockedInput & input, const Hash & rev) const = 0;
+
+    /**
+     * Legacy version.
+     */
     virtual DownloadUrl getDownloadUrl(const Input & input) const = 0;
 
     struct TarballInfo
@@ -244,42 +260,46 @@ struct GitArchiveInputScheme : InputScheme
         time_t lastModified;
     };
 
-    std::pair<Input, TarballInfo> downloadArchive(ref<Store> store, Input input) const
+    /**
+     * Typed version: Resolve ref to rev and download archive.
+     * Returns resolved rev and TarballInfo.
+     */
+    std::pair<Hash, TarballInfo> downloadArchiveTyped(ref<Store> store, const GitHubUnlockedInput & input) const
     {
-        if (!maybeGetStrAttr(input.attrs, "ref"))
-            input.attrs.insert_or_assign("ref", "HEAD");
+        // Use provided ref or default to HEAD
+        auto ref = input.ref ? *input.ref : "HEAD";
 
         std::optional<Hash> upstreamTreeHash;
 
-        auto rev = input.getRev();
-        if (!rev) {
-            auto refInfo = getRevFromRef(store, input);
+        // Resolve ref to rev if not already known
+        Hash rev = input.rev.value_or(Hash(HashAlgorithm::SHA1)); // Will be set below
+        if (!input.rev) {
+            auto refInfo = getRevFromRefTyped(store, input);
             rev = refInfo.rev;
             upstreamTreeHash = refInfo.treeHash;
-            debug("HEAD revision for '%s' is %s", input.to_string(), refInfo.rev.gitRev());
+            debug("HEAD revision for 'github:%s/%s' is %s", input.owner, input.repo, refInfo.rev.gitRev());
+        } else {
+            rev = *input.rev;
         }
-
-        input.attrs.erase("ref");
-        input.attrs.insert_or_assign("rev", rev->gitRev());
 
         auto cache = input.settings->getCache();
 
-        Cache::Key treeHashKey{"gitRevToTreeHash", {{"rev", rev->gitRev()}}};
-        Cache::Key lastModifiedKey{"gitRevToLastModified", {{"rev", rev->gitRev()}}};
+        Cache::Key treeHashKey{"gitRevToTreeHash", {{"rev", rev.gitRev()}}};
+        Cache::Key lastModifiedKey{"gitRevToLastModified", {{"rev", rev.gitRev()}}};
 
         if (auto treeHashAttrs = cache->lookup(treeHashKey)) {
             if (auto lastModifiedAttrs = cache->lookup(lastModifiedKey)) {
                 auto treeHash = getRevAttr(*treeHashAttrs, "treeHash");
                 auto lastModified = getIntAttr(*lastModifiedAttrs, "lastModified");
                 if (input.settings->getTarballCache()->hasObject(treeHash))
-                    return {std::move(input), TarballInfo{.treeHash = treeHash, .lastModified = (time_t) lastModified}};
+                    return {rev, TarballInfo{.treeHash = treeHash, .lastModified = (time_t) lastModified}};
                 else
                     debug("Git tree with hash '%s' has disappeared from the cache, refetching...", treeHash.gitRev());
             }
         }
 
         /* Stream the tarball into the tarball cache. */
-        auto url = getDownloadUrl(input);
+        auto url = getDownloadUrlTyped(input, rev);
 
         auto source = sinkToSource([&](Sink & sink) {
             FileTransferRequest req(url.url);
@@ -288,7 +308,7 @@ struct GitArchiveInputScheme : InputScheme
         });
 
         auto act = std::make_unique<Activity>(
-            *logger, lvlInfo, actUnknown, fmt("unpacking '%s' into the Git cache", input.to_string()));
+            *logger, lvlInfo, actUnknown, fmt("unpacking 'github:%s/%s' into the Git cache", input.owner, input.repo));
 
         TarArchive archive{*source};
         auto tarballCache = input.settings->getTarballCache();
@@ -307,11 +327,34 @@ struct GitArchiveInputScheme : InputScheme
 #if 0
         if (upstreamTreeHash != tarballInfo.treeHash)
             warn(
-                "Git tree hash mismatch for revision '%s' of '%s': "
+                "Git tree hash mismatch for revision '%s' of 'github:%s/%s': "
                 "expected '%s', got '%s'. "
                 "This can happen if the Git repository uses submodules.",
-                rev->gitRev(), input.to_string(), upstreamTreeHash->gitRev(), tarballInfo.treeHash.gitRev());
+                rev.gitRev(), input.owner, input.repo, upstreamTreeHash->gitRev(), tarballInfo.treeHash.gitRev());
 #endif
+
+        return {rev, tarballInfo};
+    }
+
+    /**
+     * Legacy version: delegates to typed version.
+     */
+    std::pair<Input, TarballInfo> downloadArchive(ref<Store> store, Input input) const
+    {
+        // Convert to typed input
+        auto type = getStrAttr(input.attrs, "type");
+        GitHubUnlockedInput typedInput = (type == "github")   ? githubInputFromAttrs(*input.settings, input.attrs)
+                                         : (type == "gitlab") ? gitlabInputFromAttrs(*input.settings, input.attrs)
+                                         : (type == "sourcehut")
+                                             ? githubInputFromAttrs(*input.settings, input.attrs)
+                                             : throw Error("unsupported git archive type: %s", type);
+
+        // Call typed version
+        auto [rev, tarballInfo] = downloadArchiveTyped(store, typedInput);
+
+        // Update input attrs with resolved rev (remove ref, add rev)
+        input.attrs.erase("ref");
+        input.attrs.insert_or_assign("rev", rev.gitRev());
 
         return {std::move(input), tarballInfo};
     }
@@ -323,17 +366,10 @@ struct GitArchiveInputScheme : InputScheme
     std::pair<ref<SourceAccessor>, GitHubLockedInput>
     lockTyped(ref<Store> store, const GitHubUnlockedInput & input) const
     {
-        // Convert to Input for downloadArchive (temporary, until downloadArchive is also typed)
-        Input tempInput(*input.settings);
-        tempInput.attrs = githubInputToAttrs(input);
+        // Call typed downloadArchive
+        auto [rev, tarballInfo] = downloadArchiveTyped(store, input);
 
-        // Use existing downloadArchive logic
-        auto [resultInput, tarballInfo] = downloadArchive(store, tempInput);
-
-        // Extract rev from result
-        auto rev = *resultInput.getRev();
-
-        // Construct new locked input (immutable pattern)
+        // Construct locked input
         LockingMetadata locking;
         locking.lastModified = tarballInfo.lastModified;
 
@@ -342,7 +378,7 @@ struct GitArchiveInputScheme : InputScheme
         locked.locking = locking;
 
         auto accessor = input.settings->getTarballCache()->getAccessor(
-            tarballInfo.treeHash, false, "«github:" + input.owner + "/" + input.repo + "»");
+            tarballInfo.treeHash, false, "«" + std::string(input.type) + ":" + input.owner + "/" + input.repo + "»");
 
         return {accessor, std::move(locked)};
     }
@@ -429,17 +465,21 @@ struct GitHubInputScheme : GitArchiveInputScheme
         return getStrAttr(input.attrs, "repo");
     }
 
-    RefInfo getRevFromRef(nix::ref<Store> store, const Input & input) const override
+    /**
+     * Typed version: Get rev and treeHash for a ref from GitHub API.
+     */
+    RefInfo getRevFromRefTyped(nix::ref<Store> store, const GitHubUnlockedInput & input) const override
     {
-        auto host = getHost(input);
+        auto host = input.host.value_or("github.com");
+        auto ref = input.ref.value_or("HEAD");
         auto url = fmt(
             host == "github.com" ? "https://api.%s/repos/%s/%s/commits/%s" : "https://%s/api/v3/repos/%s/%s/commits/%s",
             host,
-            getOwner(input),
-            getRepo(input),
-            *input.getRef());
+            input.owner,
+            input.repo,
+            ref);
 
-        Headers headers = makeHeadersWithAuthTokens(*input.settings, host, input);
+        Headers headers = makeHeadersWithAuthTokens(*input.settings, host, input.owner + "/" + input.repo);
 
         auto downloadResult = downloadFile(store, *input.settings, url, "source", headers);
         auto json = nlohmann::json::parse(
@@ -450,11 +490,23 @@ struct GitHubInputScheme : GitArchiveInputScheme
             .treeHash = Hash::parseAny(std::string{json["commit"]["tree"]["sha"]}, HashAlgorithm::SHA1)};
     }
 
-    DownloadUrl getDownloadUrl(const Input & input) const override
+    /**
+     * Legacy version: delegates to typed version.
+     */
+    RefInfo getRevFromRef(nix::ref<Store> store, const Input & input) const override
     {
-        auto host = getHost(input);
+        GitHubUnlockedInput typed = githubInputFromAttrs(*input.settings, input.attrs);
+        return getRevFromRefTyped(store, typed);
+    }
 
-        Headers headers = makeHeadersWithAuthTokens(*input.settings, host, input);
+    /**
+     * Typed version: Get download URL for a GitHub tarball.
+     */
+    DownloadUrl getDownloadUrlTyped(const GitHubUnlockedInput & input, const Hash & rev) const override
+    {
+        auto host = input.host.value_or("github.com");
+
+        Headers headers = makeHeadersWithAuthTokens(*input.settings, host, input.owner + "/" + input.repo);
 
         // If we have no auth headers then we default to the public archive
         // urls so we do not run into rate limits.
@@ -462,10 +514,19 @@ struct GitHubInputScheme : GitArchiveInputScheme
                             : headers.empty()    ? "https://%s/%s/%s/archive/%s.tar.gz"
                                                  : "https://api.%s/repos/%s/%s/tarball/%s";
 
-        const auto url =
-            fmt(urlFmt, host, getOwner(input), getRepo(input), input.getRev()->to_string(HashFormat::Base16, false));
+        const auto url = fmt(urlFmt, host, input.owner, input.repo, rev.to_string(HashFormat::Base16, false));
 
         return DownloadUrl{parseURL(url), headers};
+    }
+
+    /**
+     * Legacy version: delegates to typed version.
+     */
+    DownloadUrl getDownloadUrl(const Input & input) const override
+    {
+        GitHubUnlockedInput typed = githubInputFromAttrs(*input.settings, input.attrs);
+        auto rev = *input.getRev();
+        return getDownloadUrlTyped(typed, rev);
     }
 
     void clone(const Input & input, const Path & destDir) const override
@@ -503,18 +564,18 @@ struct GitLabInputScheme : GitArchiveInputScheme
         return std::make_pair(token.substr(0, fldsplit), token.substr(fldsplit + 1));
     }
 
-    RefInfo getRevFromRef(nix::ref<Store> store, const Input & input) const override
+    /**
+     * Typed version: Get rev from GitLab API.
+     */
+    RefInfo getRevFromRefTyped(nix::ref<Store> store, const GitHubUnlockedInput & input) const override
     {
-        auto host = maybeGetStrAttr(input.attrs, "host").value_or("gitlab.com");
+        auto host = input.host.value_or("gitlab.com");
+        auto ref = input.ref.value_or("HEAD");
         // See rate limiting note below
-        auto url =
-            fmt("https://%s/api/v4/projects/%s%%2F%s/repository/commits?ref_name=%s",
-                host,
-                getStrAttr(input.attrs, "owner"),
-                getStrAttr(input.attrs, "repo"),
-                *input.getRef());
+        auto url = fmt(
+            "https://%s/api/v4/projects/%s%%2F%s/repository/commits?ref_name=%s", host, input.owner, input.repo, ref);
 
-        Headers headers = makeHeadersWithAuthTokens(*input.settings, host, input);
+        Headers headers = makeHeadersWithAuthTokens(*input.settings, host, input.owner + "/" + input.repo);
 
         auto downloadResult = downloadFile(store, *input.settings, url, "source", headers);
         auto json = nlohmann::json::parse(
@@ -530,23 +591,45 @@ struct GitLabInputScheme : GitArchiveInputScheme
         }
     }
 
-    DownloadUrl getDownloadUrl(const Input & input) const override
+    /**
+     * Legacy version: delegates to typed version.
+     */
+    RefInfo getRevFromRef(nix::ref<Store> store, const Input & input) const override
+    {
+        GitHubUnlockedInput typed = gitlabInputFromAttrs(*input.settings, input.attrs);
+        return getRevFromRefTyped(store, typed);
+    }
+
+    /**
+     * Typed version: Get download URL for GitLab tarball.
+     */
+    DownloadUrl getDownloadUrlTyped(const GitHubUnlockedInput & input, const Hash & rev) const override
     {
         // This endpoint has a rate limit threshold that may be
         // server-specific and vary based whether the user is
         // authenticated via an accessToken or not, but the usual rate
         // is 10 reqs/sec/ip-addr.  See
         // https://docs.gitlab.com/ee/user/gitlab_com/index.html#gitlabcom-specific-rate-limits
-        auto host = maybeGetStrAttr(input.attrs, "host").value_or("gitlab.com");
+        auto host = input.host.value_or("gitlab.com");
         auto url =
             fmt("https://%s/api/v4/projects/%s%%2F%s/repository/archive.tar.gz?sha=%s",
                 host,
-                getStrAttr(input.attrs, "owner"),
-                getStrAttr(input.attrs, "repo"),
-                input.getRev()->to_string(HashFormat::Base16, false));
+                input.owner,
+                input.repo,
+                rev.to_string(HashFormat::Base16, false));
 
-        Headers headers = makeHeadersWithAuthTokens(*input.settings, host, input);
+        Headers headers = makeHeadersWithAuthTokens(*input.settings, host, input.owner + "/" + input.repo);
         return DownloadUrl{parseURL(url), headers};
+    }
+
+    /**
+     * Legacy version: delegates to typed version.
+     */
+    DownloadUrl getDownloadUrl(const Input & input) const override
+    {
+        GitHubUnlockedInput typed = gitlabInputFromAttrs(*input.settings, input.attrs);
+        auto rev = *input.getRev();
+        return getDownloadUrlTyped(typed, rev);
     }
 
     void clone(const Input & input, const Path & destDir) const override
@@ -578,18 +661,20 @@ struct SourceHutInputScheme : GitArchiveInputScheme
         // Once it is implemented, however, should work as expected.
     }
 
-    RefInfo getRevFromRef(nix::ref<Store> store, const Input & input) const override
+    /**
+     * Typed version: Get rev from SourceHut.
+     */
+    RefInfo getRevFromRefTyped(nix::ref<Store> store, const GitHubUnlockedInput & input) const override
     {
         // TODO: In the future, when the sourcehut graphql API is implemented for mercurial
         // and with anonymous access, this method should use it instead.
 
-        auto ref = *input.getRef();
+        auto ref = input.ref.value_or("HEAD");
 
-        auto host = maybeGetStrAttr(input.attrs, "host").value_or("git.sr.ht");
-        auto base_url =
-            fmt("https://%s/%s/%s", host, getStrAttr(input.attrs, "owner"), getStrAttr(input.attrs, "repo"));
+        auto host = input.host.value_or("git.sr.ht");
+        auto base_url = fmt("https://%s/%s/%s", host, input.owner, input.repo);
 
-        Headers headers = makeHeadersWithAuthTokens(*input.settings, host, input);
+        Headers headers = makeHeadersWithAuthTokens(*input.settings, host, input.owner + "/" + input.repo);
 
         std::string refUri;
         if (ref == "HEAD") {
@@ -598,7 +683,7 @@ struct SourceHutInputScheme : GitArchiveInputScheme
 
             auto remoteLine = git::parseLsRemoteLine(getLine(contents).first);
             if (!remoteLine) {
-                throw BadURL("in '%d', couldn't resolve HEAD ref '%d'", input.to_string(), ref);
+                throw BadURL("in 'sourcehut:%s/%s', couldn't resolve HEAD ref '%s'", input.owner, input.repo, ref);
             }
             refUri = remoteLine->target;
         } else {
@@ -620,23 +705,45 @@ struct SourceHutInputScheme : GitArchiveInputScheme
         }
 
         if (!id)
-            throw BadURL("in '%d', couldn't find ref '%d'", input.to_string(), ref);
+            throw BadURL("in 'sourcehut:%s/%s', couldn't find ref '%s'", input.owner, input.repo, ref);
 
         return RefInfo{.rev = Hash::parseAny(*id, HashAlgorithm::SHA1)};
     }
 
-    DownloadUrl getDownloadUrl(const Input & input) const override
+    /**
+     * Legacy version: delegates to typed version.
+     */
+    RefInfo getRevFromRef(nix::ref<Store> store, const Input & input) const override
     {
-        auto host = maybeGetStrAttr(input.attrs, "host").value_or("git.sr.ht");
+        GitHubUnlockedInput typed = githubInputFromAttrs(*input.settings, input.attrs);
+        return getRevFromRefTyped(store, typed);
+    }
+
+    /**
+     * Typed version: Get download URL for SourceHut tarball.
+     */
+    DownloadUrl getDownloadUrlTyped(const GitHubUnlockedInput & input, const Hash & rev) const override
+    {
+        auto host = input.host.value_or("git.sr.ht");
         auto url =
             fmt("https://%s/%s/%s/archive/%s.tar.gz",
                 host,
-                getStrAttr(input.attrs, "owner"),
-                getStrAttr(input.attrs, "repo"),
-                input.getRev()->to_string(HashFormat::Base16, false));
+                input.owner,
+                input.repo,
+                rev.to_string(HashFormat::Base16, false));
 
-        Headers headers = makeHeadersWithAuthTokens(*input.settings, host, input);
+        Headers headers = makeHeadersWithAuthTokens(*input.settings, host, input.owner + "/" + input.repo);
         return DownloadUrl{parseURL(url), headers};
+    }
+
+    /**
+     * Legacy version: delegates to typed version.
+     */
+    DownloadUrl getDownloadUrl(const Input & input) const override
+    {
+        GitHubUnlockedInput typed = githubInputFromAttrs(*input.settings, input.attrs);
+        auto rev = *input.getRev();
+        return getDownloadUrlTyped(typed, rev);
     }
 
     void clone(const Input & input, const Path & destDir) const override
