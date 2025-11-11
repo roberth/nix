@@ -14,6 +14,7 @@ headers = files(
   'indirect-typed.hh',
   'input-cache.hh',
   'mercurial-typed.hh',
+  'path-typed.hh',
   'registry.hh',
   'tarball-typed.hh',
   'tarball.hh',

@@ -1,4 +1,4 @@
-#include "path-typed.hh"
+#include "nix/fetchers/path-typed.hh"
 #include "nix/fetchers/attrs.hh"
 
 namespace nix::fetchers {
