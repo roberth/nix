@@ -6,6 +6,7 @@
 #include "nix/util/url-parts.hh"
 #include "nix/util/git.hh"
 #include "nix/fetchers/fetchers.hh"
+#include "nix/fetchers/github-typed.hh"
 #include "nix/fetchers/fetch-settings.hh"
 #include "nix/fetchers/tarball.hh"
 #include "nix/util/tarfile.hh"
@@ -315,19 +316,64 @@ struct GitArchiveInputScheme : InputScheme
         return {std::move(input), tarballInfo};
     }
 
+    /**
+     * Typed method: Lock a GitHubUnlockedInput to a GitHubLockedInput.
+     * This is the primary implementation using typed inputs.
+     */
+    std::pair<ref<SourceAccessor>, GitHubLockedInput>
+    lockTyped(ref<Store> store, const GitHubUnlockedInput & input) const
+    {
+        // Convert to Input for downloadArchive (temporary, until downloadArchive is also typed)
+        Input tempInput(*input.settings);
+        tempInput.attrs = githubInputToAttrs(input);
+
+        // Use existing downloadArchive logic
+        auto [resultInput, tarballInfo] = downloadArchive(store, tempInput);
+
+        // Extract rev from result
+        auto rev = *resultInput.getRev();
+
+        // Construct new locked input (immutable pattern)
+        LockingMetadata locking;
+        locking.lastModified = tarballInfo.lastModified;
+
+        GitHubLockedInput locked(
+            *input.settings, input.type, input.owner, input.repo, rev, input.host, tarballInfo.treeHash);
+        locked.locking = locking;
+
+        auto accessor = input.settings->getTarballCache()->getAccessor(
+            tarballInfo.treeHash, false, "«github:" + input.owner + "/" + input.repo + "»");
+
+        return {accessor, std::move(locked)};
+    }
+
     std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & _input) const override
     {
-        auto [input, tarballInfo] = downloadArchive(store, _input);
+        // Check if this is GitHub or GitLab
+        auto type = getStrAttr(_input.attrs, "type");
 
-#if 0
-        input.attrs.insert_or_assign("treeHash", tarballInfo.treeHash.gitRev());
-#endif
-        input.attrs.insert_or_assign("lastModified", uint64_t(tarballInfo.lastModified));
+        if (type == "github") {
+            // Boundary conversion: Input (Attrs) → GitHubUnlockedInput (typed)
+            auto unlocked = githubInputFromAttrs(*_input.settings, _input.attrs);
 
-        auto accessor =
-            input.settings->getTarballCache()->getAccessor(tarballInfo.treeHash, false, "«" + input.to_string() + "»");
+            // Delegate to typed method (pure typed logic)
+            auto [accessor, locked] = lockTyped(store, unlocked);
 
-        return {accessor, input};
+            // Boundary conversion: GitHubLockedInput (typed) → Input (Attrs)
+            Input result(_input); // Copy to preserve scheme
+            result.attrs = githubInputToAttrs(locked);
+
+            return {accessor, std::move(result)};
+        } else {
+            // GitLab - convert similarly
+            auto unlocked = gitlabInputFromAttrs(*_input.settings, _input.attrs);
+            auto [accessor, locked] = lockTyped(store, unlocked);
+
+            Input result(_input);
+            result.attrs = gitlabInputToAttrs(locked);
+
+            return {accessor, std::move(result)};
+        }
     }
 
     bool isLocked(const Input & input) const override
