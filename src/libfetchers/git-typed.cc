@@ -115,117 +115,81 @@ Attrs gitInputToAttrs(const GitUnlockedInput & input)
     return attrs;
 }
 
-Attrs gitInputToAttrs(const GitLockedInput & input)
+Attrs GitLockedInput::toAttrs() const
 {
     Attrs attrs;
 
     attrs.insert_or_assign("type", "git");
-    attrs.insert_or_assign("url", input.url.to_string());
+    attrs.insert_or_assign("url", url.to_string());
 
-    if (input.ref)
-        attrs.insert_or_assign("ref", *input.ref);
+    if (ref)
+        attrs.insert_or_assign("ref", *ref);
 
-    if (input.rev)
-        attrs.insert_or_assign("rev", input.rev->gitRev());
+    if (rev)
+        attrs.insert_or_assign("rev", rev->gitRev());
 
-    if (input.shallow)
+    if (shallow)
         attrs.insert_or_assign("shallow", Explicit<bool>(true));
 
-    if (input.submodules)
+    if (submodules)
         attrs.insert_or_assign("submodules", Explicit<bool>(true));
 
-    if (input.lfs)
+    if (lfs)
         attrs.insert_or_assign("lfs", Explicit<bool>(true));
 
-    if (input.exportIgnore)
+    if (exportIgnore)
         attrs.insert_or_assign("exportIgnore", Explicit<bool>(true));
 
-    if (input.allRefs)
+    if (allRefs)
         attrs.insert_or_assign("allRefs", Explicit<bool>(true));
 
-    if (input.name)
-        attrs.insert_or_assign("name", *input.name);
+    if (name)
+        attrs.insert_or_assign("name", *name);
 
-    if (input.revCount)
-        attrs.insert_or_assign("revCount", *input.revCount);
+    if (revCount)
+        attrs.insert_or_assign("revCount", *revCount);
 
-    if (input.dirtyRev)
-        attrs.insert_or_assign("dirtyRev", *input.dirtyRev);
+    if (dirtyRev)
+        attrs.insert_or_assign("dirtyRev", *dirtyRev);
 
-    if (input.dirtyShortRev)
-        attrs.insert_or_assign("dirtyShortRev", *input.dirtyShortRev);
+    if (dirtyShortRev)
+        attrs.insert_or_assign("dirtyShortRev", *dirtyShortRev);
 
-    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
+    attrs.insert_or_assign("lastModified", uint64_t(locking.lastModified));
 
     // Verified fetches attributes
-    if (input.verifyCommit)
-        attrs.insert_or_assign("verifyCommit", Explicit<bool>(*input.verifyCommit));
-    if (input.keytype)
-        attrs.insert_or_assign("keytype", *input.keytype);
-    if (input.publicKey)
-        attrs.insert_or_assign("publicKey", *input.publicKey);
-    if (input.publicKeys && !input.publicKeys->empty())
-        attrs.insert_or_assign("publicKeys", publicKeys_to_string(*input.publicKeys));
+    if (verifyCommit)
+        attrs.insert_or_assign("verifyCommit", Explicit<bool>(*verifyCommit));
+    if (keytype)
+        attrs.insert_or_assign("keytype", *keytype);
+    if (publicKey)
+        attrs.insert_or_assign("publicKey", *publicKey);
+    if (publicKeys && !publicKeys->empty())
+        attrs.insert_or_assign("publicKeys", publicKeys_to_string(*publicKeys));
+
+    return attrs;
+}
+
+Attrs gitInputToAttrs(const GitLockedInput & input)
+{
+    return input.toAttrs();
+}
+
+Attrs GitFinalInput::toAttrs() const
+{
+    // Get all locked-state attributes from parent
+    auto attrs = GitLockedInput::toAttrs();
+
+    // Add final-specific attributes
+    attrs.insert_or_assign("narHash", finalization.narHash.to_string(HashFormat::SRI, true));
+    attrs.insert_or_assign("__final", Explicit<bool>(true));
 
     return attrs;
 }
 
 Attrs gitInputToAttrs(const GitFinalInput & input)
 {
-    Attrs attrs;
-
-    attrs.insert_or_assign("type", "git");
-    attrs.insert_or_assign("url", input.url.to_string());
-
-    if (input.ref)
-        attrs.insert_or_assign("ref", *input.ref);
-
-    if (input.rev)
-        attrs.insert_or_assign("rev", input.rev->gitRev());
-
-    if (input.shallow)
-        attrs.insert_or_assign("shallow", Explicit<bool>(true));
-
-    if (input.submodules)
-        attrs.insert_or_assign("submodules", Explicit<bool>(true));
-
-    if (input.lfs)
-        attrs.insert_or_assign("lfs", Explicit<bool>(true));
-
-    if (input.exportIgnore)
-        attrs.insert_or_assign("exportIgnore", Explicit<bool>(true));
-
-    if (input.allRefs)
-        attrs.insert_or_assign("allRefs", Explicit<bool>(true));
-
-    if (input.name)
-        attrs.insert_or_assign("name", *input.name);
-
-    if (input.revCount)
-        attrs.insert_or_assign("revCount", *input.revCount);
-
-    if (input.dirtyRev)
-        attrs.insert_or_assign("dirtyRev", *input.dirtyRev);
-
-    if (input.dirtyShortRev)
-        attrs.insert_or_assign("dirtyShortRev", *input.dirtyShortRev);
-
-    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
-    attrs.insert_or_assign("narHash", input.finalization.narHash.to_string(HashFormat::SRI, true));
-
-    // Verified fetches attributes
-    if (input.verifyCommit)
-        attrs.insert_or_assign("verifyCommit", Explicit<bool>(*input.verifyCommit));
-    if (input.keytype)
-        attrs.insert_or_assign("keytype", *input.keytype);
-    if (input.publicKey)
-        attrs.insert_or_assign("publicKey", *input.publicKey);
-    if (input.publicKeys && !input.publicKeys->empty())
-        attrs.insert_or_assign("publicKeys", publicKeys_to_string(*input.publicKeys));
-
-    attrs.insert_or_assign("__final", Explicit<bool>(true));
-
-    return attrs;
+    return input.toAttrs();
 }
 
 } // namespace nix::fetchers

@@ -143,6 +143,11 @@ struct GitLockedInput : GitInputBase
         , locking(std::move(locking))
     {
     }
+
+    /**
+     * Serialize to Attrs for boundary conversion back to legacy Input type.
+     */
+    virtual Attrs toAttrs() const;
 };
 
 /**
@@ -183,6 +188,11 @@ struct GitFinalInput : GitLockedInput
         , finalization(std::move(finalization))
     {
     }
+
+    /**
+     * Serialize to Attrs including final-state attributes.
+     */
+    Attrs toAttrs() const override;
 };
 
 /**
@@ -197,7 +207,10 @@ GitUnlockedInput gitInputFromAttrs(const Settings & settings, const Attrs & attr
 
 /**
  * Convert from typed Git inputs to Attrs (for backward compatibility).
- * Overloaded for all three states.
+ *
+ * Note: GitUnlockedInput serialization exists for completeness but is rarely used
+ * in practice - we typically only serialize locked/final inputs back to Attrs.
+ * The locked and final versions delegate to their toAttrs() methods.
  */
 Attrs gitInputToAttrs(const GitUnlockedInput & input);
 Attrs gitInputToAttrs(const GitLockedInput & input);
