@@ -115,7 +115,8 @@ Attrs gitInputToAttrs(const GitLockedInput & input)
     if (input.ref)
         attrs.insert_or_assign("ref", *input.ref);
 
-    attrs.insert_or_assign("rev", input.rev.gitRev());
+    if (input.rev)
+        attrs.insert_or_assign("rev", input.rev->gitRev());
 
     if (input.shallow)
         attrs.insert_or_assign("shallow", Explicit<bool>(true));
@@ -137,6 +138,12 @@ Attrs gitInputToAttrs(const GitLockedInput & input)
 
     if (input.revCount)
         attrs.insert_or_assign("revCount", *input.revCount);
+
+    if (input.dirtyRev)
+        attrs.insert_or_assign("dirtyRev", *input.dirtyRev);
+
+    if (input.dirtyShortRev)
+        attrs.insert_or_assign("dirtyShortRev", *input.dirtyShortRev);
 
     attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
 
@@ -163,7 +170,8 @@ Attrs gitInputToAttrs(const GitFinalInput & input)
     if (input.ref)
         attrs.insert_or_assign("ref", *input.ref);
 
-    attrs.insert_or_assign("rev", input.rev.gitRev());
+    if (input.rev)
+        attrs.insert_or_assign("rev", input.rev->gitRev());
 
     if (input.shallow)
         attrs.insert_or_assign("shallow", Explicit<bool>(true));
@@ -185,6 +193,12 @@ Attrs gitInputToAttrs(const GitFinalInput & input)
 
     if (input.revCount)
         attrs.insert_or_assign("revCount", *input.revCount);
+
+    if (input.dirtyRev)
+        attrs.insert_or_assign("dirtyRev", *input.dirtyRev);
+
+    if (input.dirtyShortRev)
+        attrs.insert_or_assign("dirtyShortRev", *input.dirtyShortRev);
 
     attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
     attrs.insert_or_assign("narHash", input.finalization.narHash.to_string(HashFormat::SRI, true));

@@ -102,17 +102,20 @@ struct GitUnlockedInput : GitInputBase
 /**
  * Locked Git input - has a specific revision and metadata about that revision.
  * This is the state after resolving a ref to a specific commit.
+ * For dirty workdirs, rev may be absent but dirtyRev/dirtyShortRev are set.
  */
 struct GitLockedInput : GitInputBase
 {
-    Hash rev;                         // Specific commit hash (now required)
-    std::optional<uint64_t> revCount; // Number of commits (only if not shallow)
-    LockingMetadata locking;          // Contains lastModified
+    std::optional<Hash> rev;                  // Specific commit hash (absent for dirty workdirs)
+    std::optional<uint64_t> revCount;         // Number of commits (only if not shallow)
+    LockingMetadata locking;                  // Contains lastModified
+    std::optional<std::string> dirtyRev;      // For dirty workdirs
+    std::optional<std::string> dirtyShortRev; // For dirty workdirs
 
     GitLockedInput(
         const Settings & settings,
         ParsedURL url,
-        Hash rev,
+        std::optional<Hash> rev,
         LockingMetadata locking,
         std::optional<std::string> ref = std::nullopt,
         std::optional<uint64_t> revCount = std::nullopt,
@@ -150,7 +153,7 @@ struct GitFinalInput : GitLockedInput
     GitFinalInput(
         const Settings & settings,
         ParsedURL url,
-        Hash rev,
+        std::optional<Hash> rev,
         LockingMetadata locking,
         FinalizationData finalization,
         std::optional<std::string> ref = std::nullopt,

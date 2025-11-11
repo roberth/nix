@@ -1,5 +1,6 @@
 #include "nix/util/error.hh"
 #include "nix/fetchers/fetchers.hh"
+#include "nix/fetchers/git-typed.hh"
 #include "nix/util/users.hh"
 #include "nix/fetchers/cache.hh"
 #include "nix/store/globals.hh"
@@ -881,26 +882,95 @@ struct GitInputScheme : InputScheme
         return {accessor, std::move(input)};
     }
 
-    std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & _input) const override
+    /**
+     * Typed method: Lock a GitUnlockedInput to a GitLockedInput.
+     * This is the primary implementation using typed inputs.
+     */
+    std::pair<ref<SourceAccessor>, GitLockedInput>
+    lockTyped(ref<Store> store, const GitUnlockedInput & input, std::shared_ptr<InputScheme> scheme) const
     {
-        Input input(_input);
+        // Create temporary Input for compatibility with existing helper functions
+        Input tempInput(*input.settings);
+        tempInput.scheme = scheme; // Needed for logging/display in helper functions
+        tempInput.attrs = gitInputToAttrs(input);
 
-        auto repoInfo = getRepoInfo(input);
+        auto repoInfo = getRepoInfo(tempInput);
 
-        if (getExportIgnoreAttr(input) && getSubmodulesAttr(input)) {
-            /* In this situation, we don't have a git CLI behavior that we can copy.
-               `git archive` does not support submodules, so it is unclear whether
-               rules from the parent should affect the submodule or not.
-               When git may eventually implement this, we need Nix to match its
-               behavior. */
+        if (input.exportIgnore && input.submodules) {
             throw UnimplementedError("exportIgnore and submodules are not supported together yet");
         }
 
-        auto [accessor, final] = input.getRef() || input.getRev() || !repoInfo.getPath()
-                                     ? getAccessorFromCommit(store, repoInfo, std::move(input))
-                                     : getAccessorFromWorkdir(store, repoInfo, std::move(input));
+        // Decide which path to take: commit or workdir
+        bool useCommitPath = input.ref || input.rev || !repoInfo.getPath();
 
-        return {accessor, std::move(final)};
+        if (useCommitPath) {
+            // Use commit path - resolve ref/rev and fetch if needed
+            auto [accessor, lockedInput] = getAccessorFromCommit(store, repoInfo, std::move(tempInput));
+
+            // Convert result back to typed
+            auto locked = gitInputFromAttrs(*input.settings, lockedInput.attrs);
+            auto typedLocked = GitLockedInput(
+                *input.settings,
+                input.url,
+                locked.rev,
+                LockingMetadata(getIntAttr(lockedInput.attrs, "lastModified")),
+                locked.ref,
+                maybeGetIntAttr(lockedInput.attrs, "revCount"),
+                input.shallow,
+                input.submodules,
+                input.lfs,
+                input.exportIgnore,
+                input.allRefs,
+                input.name);
+
+            return {accessor, std::move(typedLocked)};
+        } else {
+            // Use workdir path - get accessor from local working directory
+            auto [accessor, lockedInput] = getAccessorFromWorkdir(store, repoInfo, std::move(tempInput));
+
+            // Convert result back to typed
+            auto locked = gitInputFromAttrs(*input.settings, lockedInput.attrs);
+            auto typedLocked = GitLockedInput(
+                *input.settings,
+                input.url,
+                locked.rev,
+                LockingMetadata(getIntAttr(lockedInput.attrs, "lastModified")),
+                locked.ref,
+                maybeGetIntAttr(lockedInput.attrs, "revCount"),
+                input.shallow,
+                input.submodules,
+                input.lfs,
+                input.exportIgnore,
+                input.allRefs,
+                input.name);
+
+            // Copy dirty fields if present
+            if (locked.dirtyRev)
+                typedLocked.dirtyRev = locked.dirtyRev->gitRev();
+            if (locked.dirtyShortRev)
+                typedLocked.dirtyShortRev = *locked.dirtyShortRev;
+
+            return {accessor, std::move(typedLocked)};
+        }
+    }
+
+    /**
+     * Wrapper method for backward compatibility with Input/Attrs API.
+     * Delegates to typed lockTyped() method.
+     */
+    std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & input) const override
+    {
+        // Boundary conversion: Input (Attrs) → GitUnlockedInput (typed)
+        auto unlocked = gitInputFromAttrs(*input.settings, input.attrs);
+
+        // Delegate to typed method (pure typed logic, no Attrs!)
+        auto [accessor, locked] = lockTyped(store, unlocked, input.scheme);
+
+        // Boundary conversion: GitLockedInput (typed) → Input (Attrs)
+        Input result(input); // Copy to preserve scheme and other fields
+        result.attrs = gitInputToAttrs(locked);
+
+        return {accessor, std::move(result)};
     }
 
     std::optional<std::string> getFingerprint(ref<Store> store, const Input & input) const override
