@@ -15,17 +15,12 @@ struct IndirectInputBase : InputBase
     std::string id;
 
     IndirectInputBase(const Settings & settings, std::string id)
-        : InputBase(settings, "indirect")
+        : InputBase(settings)
         , id(std::move(id))
     {
     }
 
     virtual ~IndirectInputBase() = default;
-
-    std::string getName() const override
-    {
-        return id;
-    }
 };
 
 /**

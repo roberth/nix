@@ -352,7 +352,9 @@ struct FileInputScheme : CurlInputScheme
            the Nix store directly, since there is little deduplication
            benefit in using the Git cache for single big files like
            tarballs. */
-        auto file = downloadFile(store, *input.settings, input.url, input.getName());
+        auto name =
+            input.name ? *input.name : (input.url.starts_with("file://") ? std::string("source") : "file:" + input.url);
+        auto file = downloadFile(store, *input.settings, input.url, name);
 
         auto narHash = store->queryPathInfo(file.storePath)->narHash;
 

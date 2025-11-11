@@ -44,7 +44,7 @@ struct GitInputBase : InputBase
         bool exportIgnore = false,
         bool allRefs = false,
         std::optional<std::string> name = std::nullopt)
-        : InputBase(settings, "git")
+        : InputBase(settings)
         , url(std::move(url))
         , ref(std::move(ref))
         , shallow(shallow)
@@ -54,13 +54,6 @@ struct GitInputBase : InputBase
         , allRefs(allRefs)
         , name(std::move(name))
     {
-    }
-
-    std::string getName() const override
-    {
-        if (name)
-            return *name;
-        return "git:" + url.to_string();
     }
 };
 

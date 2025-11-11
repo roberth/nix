@@ -15,14 +15,9 @@ struct PathInputBase : InputBase
     std::filesystem::path path;
 
     PathInputBase(const Settings & settings, std::filesystem::path path)
-        : InputBase(settings, "path")
+        : InputBase(settings)
         , path(std::move(path))
     {
-    }
-
-    std::string getName() const override
-    {
-        return "path:" + path.string();
     }
 };
 

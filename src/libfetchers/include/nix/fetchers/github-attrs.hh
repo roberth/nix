@@ -12,6 +12,7 @@ namespace nix::fetchers {
  */
 struct GitHubInputBase : InputBase
 {
+    std::string_view type; // "github", "gitlab", or "sourcehut"
     std::string owner;
     std::string repo;
     std::optional<std::string> host;
@@ -22,7 +23,8 @@ struct GitHubInputBase : InputBase
         std::string owner,
         std::string repo,
         std::optional<std::string> host = std::nullopt)
-        : InputBase(settings, type)
+        : InputBase(settings)
+        , type(type)
         , owner(std::move(owner))
         , repo(std::move(repo))
         , host(std::move(host))
@@ -30,11 +32,6 @@ struct GitHubInputBase : InputBase
     }
 
     virtual ~GitHubInputBase() = default;
-
-    std::string getName() const override
-    {
-        return owner + "/" + repo;
-    }
 };
 
 /**

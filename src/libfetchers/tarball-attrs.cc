@@ -30,7 +30,7 @@ Attrs tarballInputToAttrs(const TarballUnlockedInput & input)
 {
     Attrs attrs;
 
-    attrs.insert_or_assign("type", input.type);
+    attrs.insert_or_assign("type", std::string{input.type});
     attrs.insert_or_assign("url", input.url);
 
     if (input.name)
@@ -55,7 +55,7 @@ Attrs TarballLockedInput::toAttrs() const
 {
     Attrs attrs;
 
-    attrs.insert_or_assign("type", type);
+    attrs.insert_or_assign("type", std::string{type});
     attrs.insert_or_assign("url", url);
 
     if (name)

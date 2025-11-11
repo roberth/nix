@@ -56,7 +56,6 @@ sources = files(
   'registry.cc',
   'tarball-attrs.cc',
   'tarball.cc',
-  'typed-inputs.cc',
 )
 
 subdir('include/nix/fetchers')

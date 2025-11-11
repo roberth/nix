@@ -19,19 +19,11 @@ struct Settings;
 struct InputBase
 {
     const Settings * settings;
-    std::string type; // "git", "github", "tarball", "path", etc.
 
-    InputBase(const Settings & settings, std::string_view type)
+    InputBase(const Settings & settings)
         : settings{&settings}
-        , type{type}
     {
     }
-
-    /**
-     * Get a human-readable name for this input.
-     * Used for display purposes and error messages.
-     */
-    virtual std::string getName() const;
 };
 
 /**

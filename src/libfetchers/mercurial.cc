@@ -164,7 +164,7 @@ struct MercurialInputScheme : InputScheme
     {
         auto origRev = input.rev;
 
-        auto name = input.getName();
+        auto name = input.name.value_or("hg");
 
         auto url = parseURL(input.url);
         bool isLocal = url.scheme == "file";

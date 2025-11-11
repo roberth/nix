@@ -157,7 +157,7 @@ struct PathInputScheme : InputScheme
             fmt("path:%s", store->queryPathInfo(*storePath)->narHash.to_string(HashFormat::SRI, true));
         input.settings->getCache()->upsert(
             makeFetchToStoreCacheKey(
-                input.getName(), *accessor->fingerprint, ContentAddressMethod::Raw::NixArchive, "/"),
+                "path:" + input.path.string(), *accessor->fingerprint, ContentAddressMethod::Raw::NixArchive, "/"),
             *store,
             {},
             *storePath);

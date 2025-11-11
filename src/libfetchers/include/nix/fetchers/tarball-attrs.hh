@@ -14,6 +14,7 @@ namespace nix::fetchers {
  */
 struct TarballInputBase : InputBase
 {
+    std::string_view type; // "tarball" or "file"
     std::string url;
     std::optional<std::string> name;
     std::optional<bool> unpack; // Whether to unpack the tarball
@@ -23,21 +24,11 @@ struct TarballInputBase : InputBase
         std::string_view type,
         std::string url,
         std::optional<std::string> name = std::nullopt)
-        : InputBase(settings, type)
+        : InputBase(settings)
+        , type(type)
         , url(std::move(url))
         , name(std::move(name))
     {
-    }
-
-    std::string getName() const override
-    {
-        if (name)
-            return *name;
-        // For file:// URLs, just return "source" to avoid invalid store path names
-        // For other URLs, use type:url pattern
-        if (url.starts_with("file://"))
-            return "source";
-        return std::string{type} + ":" + url;
     }
 };
 

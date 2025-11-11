@@ -16,20 +16,13 @@ struct MercurialInputBase : InputBase
     std::optional<std::string> name;
 
     MercurialInputBase(const Settings & settings, std::string url, std::optional<std::string> name = std::nullopt)
-        : InputBase(settings, "hg")
+        : InputBase(settings)
         , url(std::move(url))
         , name(std::move(name))
     {
     }
 
     virtual ~MercurialInputBase() = default;
-
-    std::string getName() const override
-    {
-        if (name)
-            return *name;
-        return InputBase::getName();
-    }
 };
 
 /**
