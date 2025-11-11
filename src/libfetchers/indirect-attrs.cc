@@ -12,7 +12,7 @@ IndirectUnlockedInput indirectInputFromAttrs(const Settings & settings, const At
     if (auto revStr = maybeGetStrAttr(attrs, "rev"))
         rev = Hash::parseAny(*revStr, HashAlgorithm::SHA1);
 
-    return IndirectUnlockedInput(settings, id, ref, rev);
+    return IndirectUnlockedInput(id, ref, rev);
 }
 
 Attrs indirectInputToAttrs(const IndirectUnlockedInput & input)

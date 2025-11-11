@@ -13,20 +13,6 @@ namespace nix::fetchers {
 struct Settings;
 
 /**
- * Base class for all typed inputs.
- * Contains fields common to all input types.
- */
-struct InputBase
-{
-    const Settings * settings;
-
-    InputBase(const Settings & settings)
-        : settings{&settings}
-    {
-    }
-};
-
-/**
  * Metadata added when an input is locked.
  * Common across all input types.
  */
@@ -78,16 +64,13 @@ struct InputStates
  * Concepts for compile-time validation of typed input hierarchies.
  */
 template<typename T>
-concept IsInputBase = std::is_base_of_v<InputBase, T>;
-
-template<typename T>
-concept IsUnlockedInput = IsInputBase<T> && requires(T t) {
+concept IsUnlockedInput = requires(T t) {
     // Unlocked inputs may have optional identifying information
     typename T::type;
 };
 
 template<typename T>
-concept IsLockedInput = IsInputBase<T> && requires(T t) {
+concept IsLockedInput = requires(T t) {
     // Locked inputs must have locking metadata
     { t.locking } -> std::convertible_to<LockingMetadata>;
 };

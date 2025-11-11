@@ -346,7 +346,7 @@ struct FileInputScheme : CurlInputScheme
      * For files, we download directly to the store and get the narHash.
      */
     std::pair<ref<SourceAccessor>, TarballFinalInput>
-    lockTyped(ref<Store> store, const TarballUnlockedInput & input) const
+    lockTyped(ref<Store> store, const Settings & settings, const TarballUnlockedInput & input) const
     {
         /* Unlike TarballInputScheme, this stores downloaded files in
            the Nix store directly, since there is little deduplication
@@ -354,7 +354,7 @@ struct FileInputScheme : CurlInputScheme
            tarballs. */
         auto name =
             input.name ? *input.name : (input.url.starts_with("file://") ? std::string("source") : "file:" + input.url);
-        auto file = downloadFile(store, *input.settings, input.url, name);
+        auto file = downloadFile(store, settings, input.url, name);
 
         auto narHash = store->queryPathInfo(file.storePath)->narHash;
 
@@ -365,7 +365,6 @@ struct FileInputScheme : CurlInputScheme
 
         FinalizationData finalization(narHash);
         TarballFinalInput finalInput(
-            *input.settings,
             "file",
             input.url,
             file.effectiveUrl, // effectiveUrl after redirects
@@ -391,7 +390,7 @@ struct FileInputScheme : CurlInputScheme
         auto unlocked = tarballInputFromAttrs(*input.settings, input.attrs);
 
         // Delegate to typed method (goes directly to final state)
-        auto [accessor, finalInput] = lockTyped(store, unlocked);
+        auto [accessor, finalInput] = lockTyped(store, *input.settings, unlocked);
 
         // Boundary conversion: TarballFinalInput (typed) → Input (Attrs)
         Input result(input); // Copy to preserve scheme and other fields
@@ -422,28 +421,27 @@ struct TarballInputScheme : CurlInputScheme
      * This is the primary implementation using typed inputs.
      */
     std::pair<ref<SourceAccessor>, TarballLockedInput>
-    lockTyped(ref<Store> store, const TarballUnlockedInput & input) const
+    lockTyped(ref<Store> store, const Settings & settings, const TarballUnlockedInput & input) const
     {
-        auto result = downloadTarball_(*input.settings, input.url, {}, "«tarball:" + input.url + "»");
+        auto result = downloadTarball_(settings, input.url, {}, "«tarball:" + input.url + "»");
 
         // Handle immutableUrl redirect
         TarballUnlockedInput finalInput = input;
         std::string effectiveUrl = input.url;
 
         if (result.immutableUrl) {
-            auto immutableInput = Input::fromURL(*input.settings, *result.immutableUrl);
+            auto immutableInput = Input::fromURL(settings, *result.immutableUrl);
             if (immutableInput.getType() != "tarball")
                 throw Error("tarball 'Link' headers that redirect to non-tarball URLs are not supported");
 
             // Convert to typed input
-            finalInput = tarballInputFromAttrs(*input.settings, immutableInput.attrs);
+            finalInput = tarballInputFromAttrs(settings, immutableInput.attrs);
             effectiveUrl = *result.immutableUrl;
         }
 
         // Construct locked input
         LockingMetadata locking(result.lastModified);
-        TarballLockedInput locked(
-            *input.settings, "tarball", finalInput.url, effectiveUrl, locking, result.treeHash, finalInput.name);
+        TarballLockedInput locked("tarball", finalInput.url, effectiveUrl, locking, result.treeHash, finalInput.name);
 
         // Copy over optional metadata if present
         locked.rev = finalInput.rev;
@@ -463,21 +461,14 @@ struct TarballInputScheme : CurlInputScheme
         auto unlocked = tarballInputFromAttrs(*input.settings, input.attrs);
 
         // Delegate to typed method (pure typed logic, no Attrs!)
-        auto [accessor, locked] = lockTyped(store, unlocked);
+        auto [accessor, locked] = lockTyped(store, *input.settings, unlocked);
 
         // Compute narHash from treeHash to create final input
         auto narHash = input.settings->getTarballCache()->treeHashToNarHash(*input.settings, *locked.treeHash);
 
         FinalizationData finalization(narHash);
         TarballFinalInput finalInput(
-            *input.settings,
-            "tarball",
-            locked.url,
-            locked.effectiveUrl,
-            locked.locking,
-            locked.treeHash,
-            finalization,
-            locked.name);
+            "tarball", locked.url, locked.effectiveUrl, locked.locking, locked.treeHash, finalization, locked.name);
 
         // Copy over optional metadata
         finalInput.rev = locked.rev;

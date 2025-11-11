@@ -160,7 +160,7 @@ struct MercurialInputScheme : InputScheme
      * This is the primary implementation using typed inputs.
      */
     std::pair<ref<SourceAccessor>, MercurialLockedInput>
-    lockTyped(ref<Store> store, const MercurialUnlockedInput & input) const
+    lockTyped(ref<Store> store, const Settings & settings, const MercurialUnlockedInput & input) const
     {
         auto origRev = input.rev;
 
@@ -176,10 +176,10 @@ struct MercurialInputScheme : InputScheme
             bool clean = runHg({"status", "-R", actualUrl, "--modified", "--added", "--removed"}) == "";
 
             if (!clean) {
-                if (!input.settings->allowDirty)
+                if (!settings.allowDirty)
                     throw Error("Mercurial tree '%s' is unclean", actualUrl);
 
-                if (input.settings->warnDirty)
+                if (settings.warnDirty)
                     warn("Mercurial tree '%s' is unclean", actualUrl);
 
                 resolvedRef = chomp(runHg({"branch", "-R", actualUrl}));
@@ -219,7 +219,7 @@ struct MercurialInputScheme : InputScheme
                 // Return locked input with ref but no rev (dirty tree)
                 LockingMetadata locking;
                 locking.lastModified = 0; // Not available for dirty tree
-                MercurialLockedInput locked(*input.settings, input.url, *resolvedRef, locking);
+                MercurialLockedInput locked(input.url, *resolvedRef, locking);
                 locked.name = input.name;
 
                 return {accessor, std::move(locked)};
@@ -235,7 +235,7 @@ struct MercurialInputScheme : InputScheme
         Cache::Key refToRevKey{"hgRefToRev", {{"url", actualUrl}, {"ref", *resolvedRef}}};
 
         if (!resolvedRev) {
-            if (auto res = input.settings->getCache()->lookupWithTTL(refToRevKey))
+            if (auto res = settings.getCache()->lookupWithTTL(refToRevKey))
                 resolvedRev = getRevAttr(*res, "rev");
         }
 
@@ -249,19 +249,14 @@ struct MercurialInputScheme : InputScheme
             Cache::Key revInfoKey{
                 "hgRev", {{"store", store->storeDir}, {"name", name}, {"rev", resolvedRev->gitRev()}}};
 
-            if (auto res = input.settings->getCache()->lookupStorePath(revInfoKey, *store)) {
+            if (auto res = settings.getCache()->lookupStorePath(revInfoKey, *store)) {
                 auto accessor = store->requireStoreObjectAccessor(res->storePath);
                 accessor->setPathDisplay("«hg:" + input.url + "?ref=" + *resolvedRef + "»");
 
                 LockingMetadata locking;
                 locking.lastModified = 0;
                 MercurialLockedInput locked(
-                    *input.settings,
-                    input.url,
-                    *resolvedRef,
-                    *resolvedRev,
-                    getIntAttr(res->value, "revCount"),
-                    locking);
+                    input.url, *resolvedRef, *resolvedRev, getIntAttr(res->value, "revCount"), locking);
                 locked.name = input.name;
 
                 return {accessor, std::move(locked)};
@@ -314,13 +309,13 @@ struct MercurialInputScheme : InputScheme
 
         // Check cache again now that we have the rev
         Cache::Key revInfoKey{"hgRev", {{"store", store->storeDir}, {"name", name}, {"rev", rev.gitRev()}}};
-        if (auto res = input.settings->getCache()->lookupStorePath(revInfoKey, *store)) {
+        if (auto res = settings.getCache()->lookupStorePath(revInfoKey, *store)) {
             auto accessor = store->requireStoreObjectAccessor(res->storePath);
             accessor->setPathDisplay("«hg:" + input.url + "?ref=" + ref + "»");
 
             LockingMetadata locking;
             locking.lastModified = 0;
-            MercurialLockedInput locked(*input.settings, input.url, ref, rev, revCount, locking);
+            MercurialLockedInput locked(input.url, ref, rev, revCount, locking);
             locked.name = input.name;
 
             return {accessor, std::move(locked)};
@@ -339,16 +334,16 @@ struct MercurialInputScheme : InputScheme
         Attrs infoAttrs({{"revCount", (uint64_t) revCount}});
 
         if (!origRev)
-            input.settings->getCache()->upsert(refToRevKey, {{"rev", rev.gitRev()}});
+            settings.getCache()->upsert(refToRevKey, {{"rev", rev.gitRev()}});
 
-        input.settings->getCache()->upsert(revInfoKey, *store, infoAttrs, storePath);
+        settings.getCache()->upsert(revInfoKey, *store, infoAttrs, storePath);
 
         auto accessor = store->requireStoreObjectAccessor(storePath);
         accessor->setPathDisplay("«hg:" + input.url + "?ref=" + ref + "»");
 
         LockingMetadata locking;
         locking.lastModified = 0;
-        MercurialLockedInput locked(*input.settings, input.url, ref, rev, revCount, locking);
+        MercurialLockedInput locked(input.url, ref, rev, revCount, locking);
         locked.name = input.name;
 
         return {accessor, std::move(locked)};
@@ -364,7 +359,7 @@ struct MercurialInputScheme : InputScheme
         auto unlocked = mercurialInputFromAttrs(*input.settings, input.attrs);
 
         // Delegate to typed method (pure typed logic, no Attrs!)
-        auto [accessor, locked] = lockTyped(store, unlocked);
+        auto [accessor, locked] = lockTyped(store, *input.settings, unlocked);
 
         // Boundary conversion: MercurialLockedInput (typed) → Input (Attrs)
         Input result(input); // Copy to preserve scheme and other fields

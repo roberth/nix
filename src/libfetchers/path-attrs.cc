@@ -6,7 +6,7 @@ namespace nix::fetchers {
 PathUnlockedInput pathInputFromAttrs(const Settings & settings, const Attrs & attrs)
 {
     auto path = getStrAttr(attrs, "path");
-    PathUnlockedInput input(settings, path);
+    PathUnlockedInput input(path);
 
     // Optional fake tree info attributes
     if (auto rev = maybeGetStrAttr(attrs, "rev"))

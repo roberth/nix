@@ -31,7 +31,7 @@ GitUnlockedInput gitInputFromAttrs(const Settings & settings, const Attrs & attr
     auto name = maybeGetStrAttr(attrs, "name");
 
     // Create the unlocked input
-    GitUnlockedInput input(settings, std::move(url), ref, rev, shallow, submodules, lfs, exportIgnore, allRefs, name);
+    GitUnlockedInput input(std::move(url), ref, rev, shallow, submodules, lfs, exportIgnore, allRefs, name);
 
     // Parse dirty state (for working directory inputs)
     if (auto dirtyRevStr = maybeGetStrAttr(attrs, "dirtyRev"))

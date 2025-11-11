@@ -17,7 +17,7 @@ struct PublicKey;
 /**
  * Base class for all Git input types, containing common attributes.
  */
-struct GitInputBase : InputBase
+struct GitInputBase
 {
     ParsedURL url;
     std::optional<std::string> ref; // Branch or tag name
@@ -35,7 +35,6 @@ struct GitInputBase : InputBase
     std::optional<std::vector<PublicKey>> publicKeys;
 
     GitInputBase(
-        const Settings & settings,
         ParsedURL url,
         std::optional<std::string> ref = std::nullopt,
         bool shallow = false,
@@ -44,8 +43,7 @@ struct GitInputBase : InputBase
         bool exportIgnore = false,
         bool allRefs = false,
         std::optional<std::string> name = std::nullopt)
-        : InputBase(settings)
-        , url(std::move(url))
+        : url(std::move(url))
         , ref(std::move(ref))
         , shallow(shallow)
         , submodules(submodules)
@@ -70,7 +68,6 @@ struct GitUnlockedInput : GitInputBase
     std::optional<std::string> dirtyShortRev; // Short hash with "-dirty" suffix
 
     GitUnlockedInput(
-        const Settings & settings,
         ParsedURL url,
         std::optional<std::string> ref = std::nullopt,
         std::optional<Hash> rev = std::nullopt,
@@ -80,16 +77,7 @@ struct GitUnlockedInput : GitInputBase
         bool exportIgnore = false,
         bool allRefs = false,
         std::optional<std::string> name = std::nullopt)
-        : GitInputBase(
-              settings,
-              std::move(url),
-              std::move(ref),
-              shallow,
-              submodules,
-              lfs,
-              exportIgnore,
-              allRefs,
-              std::move(name))
+        : GitInputBase(std::move(url), std::move(ref), shallow, submodules, lfs, exportIgnore, allRefs, std::move(name))
         , rev(std::move(rev))
     {
     }
@@ -109,7 +97,6 @@ struct GitLockedInput : GitInputBase
     std::optional<std::string> dirtyShortRev; // For dirty workdirs
 
     GitLockedInput(
-        const Settings & settings,
         ParsedURL url,
         std::optional<Hash> rev,
         LockingMetadata locking,
@@ -121,16 +108,7 @@ struct GitLockedInput : GitInputBase
         bool exportIgnore = false,
         bool allRefs = false,
         std::optional<std::string> name = std::nullopt)
-        : GitInputBase(
-              settings,
-              std::move(url),
-              std::move(ref),
-              shallow,
-              submodules,
-              lfs,
-              exportIgnore,
-              allRefs,
-              std::move(name))
+        : GitInputBase(std::move(url), std::move(ref), shallow, submodules, lfs, exportIgnore, allRefs, std::move(name))
         , rev(std::move(rev))
         , revCount(revCount)
         , locking(std::move(locking))
@@ -152,7 +130,6 @@ struct GitFinalInput : GitLockedInput
     FinalizationData finalization;
 
     GitFinalInput(
-        const Settings & settings,
         ParsedURL url,
         std::optional<Hash> rev,
         LockingMetadata locking,
@@ -166,7 +143,6 @@ struct GitFinalInput : GitLockedInput
         bool allRefs = false,
         std::optional<std::string> name = std::nullopt)
         : GitLockedInput(
-              settings,
               std::move(url),
               std::move(rev),
               std::move(locking),

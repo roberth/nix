@@ -659,8 +659,8 @@ struct GitInputScheme : InputScheme
      * Typed version: Get accessor from a specific commit.
      * Returns GitLockedInput with resolved ref and rev.
      */
-    std::pair<ref<SourceAccessor>, GitLockedInput>
-    getAccessorFromCommit(ref<Store> store, RepoInfo & repoInfo, const GitUnlockedInput & input) const
+    std::pair<ref<SourceAccessor>, GitLockedInput> getAccessorFromCommit(
+        ref<Store> store, const Settings & settings, RepoInfo & repoInfo, const GitUnlockedInput & input) const
     {
         assert(!repoInfo.workdirInfo.isDirty);
 
@@ -769,10 +769,10 @@ struct GitInputScheme : InputScheme
 
         // FIXME: check whether rev is an ancestor of ref?
 
-        auto lastModified = getLastModified(*input.settings, repoInfo, repoDir, resolvedRev);
+        auto lastModified = getLastModified(settings, repoInfo, repoDir, resolvedRev);
         std::optional<uint64_t> revCount;
         if (!input.shallow)
-            revCount = getRevCount(*input.settings, repoInfo, repoDir, resolvedRev);
+            revCount = getRevCount(settings, repoInfo, repoDir, resolvedRev);
 
         printTalkative("using revision %s of repo '%s'", resolvedRev.gitRev(), repoInfo.locationToArg());
 
@@ -825,7 +825,6 @@ struct GitInputScheme : InputScheme
 
                 // Create GitUnlockedInput for submodule
                 GitUnlockedInput submoduleInput(
-                    *input.settings,
                     std::move(resolvedUrl),
                     submoduleRef,
                     submoduleRev,       // rev is known
@@ -838,7 +837,7 @@ struct GitInputScheme : InputScheme
 
                 // Recursively lock the submodule (typed!)
                 auto [submoduleAccessor, submoduleLocked] =
-                    lockTyped(store, submoduleInput, std::make_shared<GitInputScheme>());
+                    lockTyped(store, settings, submoduleInput, std::make_shared<GitInputScheme>());
 
                 // Build display string from locked input
                 auto displayUrl = submoduleLocked.url;
@@ -861,7 +860,6 @@ struct GitInputScheme : InputScheme
 
         // Build the locked input
         GitLockedInput locked(
-            *input.settings,
             input.url,
             resolvedRev,
             LockingMetadata(lastModified),
@@ -887,8 +885,8 @@ struct GitInputScheme : InputScheme
      * Typed version: Get accessor from working directory.
      * Returns GitLockedInput, possibly with dirty state.
      */
-    std::pair<ref<SourceAccessor>, GitLockedInput>
-    getAccessorFromWorkdir(ref<Store> store, RepoInfo & repoInfo, const GitUnlockedInput & input) const
+    std::pair<ref<SourceAccessor>, GitLockedInput> getAccessorFromWorkdir(
+        ref<Store> store, const Settings & settings, RepoInfo & repoInfo, const GitUnlockedInput & input) const
     {
         auto repoPath = repoInfo.getPath().value();
 
@@ -918,7 +916,7 @@ struct GitInputScheme : InputScheme
                 // TODO: fall back to getAccessorFromCommit-like fetch when submodules aren't checked out
                 // attrs.insert_or_assign("allRefs", Explicit<bool>{ true });
 
-                auto submoduleInput = fetchers::Input::fromAttrs(*input.settings, std::move(attrs));
+                auto submoduleInput = fetchers::Input::fromAttrs(settings, std::move(attrs));
                 auto [submoduleAccessor, submoduleInput2] = submoduleInput.getAccessor(store);
                 submoduleAccessor->setPathDisplay("«" + submoduleInput.to_string() + "»");
 
@@ -952,17 +950,17 @@ struct GitInputScheme : InputScheme
             rev = headRev;
 
             if (!input.shallow) {
-                revCount = headRev == nullRev ? 0 : getRevCount(*input.settings, repoInfo, repoPath, headRev);
+                revCount = headRev == nullRev ? 0 : getRevCount(settings, repoInfo, repoPath, headRev);
             }
 
             auto displayStr = "git+" + input.url.to_string();
             verifyCommit(input, repo, headRev, displayStr);
 
             lastModified = repoInfo.workdirInfo.headRev
-                               ? getLastModified(*input.settings, repoInfo, repoPath, *repoInfo.workdirInfo.headRev)
+                               ? getLastModified(settings, repoInfo, repoPath, *repoInfo.workdirInfo.headRev)
                                : 0;
         } else {
-            repoInfo.warnDirty(*input.settings);
+            repoInfo.warnDirty(settings);
 
             if (repoInfo.workdirInfo.headRev) {
                 dirtyRev = repoInfo.workdirInfo.headRev->gitRev() + "-dirty";
@@ -973,13 +971,12 @@ struct GitInputScheme : InputScheme
             verifyCommit(input, nullptr, repoInfo.workdirInfo.headRev, displayStr);
 
             lastModified = repoInfo.workdirInfo.headRev
-                               ? getLastModified(*input.settings, repoInfo, repoPath, *repoInfo.workdirInfo.headRev)
+                               ? getLastModified(settings, repoInfo, repoPath, *repoInfo.workdirInfo.headRev)
                                : 0;
         }
 
         // Build the locked input
         GitLockedInput locked(
-            *input.settings,
             input.url,
             rev, // May be absent for dirty workdirs
             LockingMetadata(lastModified),
@@ -1009,8 +1006,11 @@ struct GitInputScheme : InputScheme
      * Typed method: Lock a GitUnlockedInput to a GitLockedInput.
      * This is the primary implementation using typed inputs.
      */
-    std::pair<ref<SourceAccessor>, GitLockedInput>
-    lockTyped(ref<Store> store, const GitUnlockedInput & input, std::shared_ptr<InputScheme> scheme) const
+    std::pair<ref<SourceAccessor>, GitLockedInput> lockTyped(
+        ref<Store> store,
+        const Settings & settings,
+        const GitUnlockedInput & input,
+        std::shared_ptr<InputScheme> scheme) const
     {
         // Use typed getRepoInfo (no conversion needed!)
         auto repoInfo = getRepoInfo(input);
@@ -1024,10 +1024,10 @@ struct GitInputScheme : InputScheme
 
         if (useCommitPath) {
             // Use typed commit path - no conversions!
-            return getAccessorFromCommit(store, repoInfo, input);
+            return getAccessorFromCommit(store, settings, repoInfo, input);
         } else {
             // Use typed workdir path - no conversions!
-            return getAccessorFromWorkdir(store, repoInfo, input);
+            return getAccessorFromWorkdir(store, settings, repoInfo, input);
         }
     }
 
@@ -1041,7 +1041,7 @@ struct GitInputScheme : InputScheme
         auto unlocked = gitInputFromAttrs(*input.settings, input.attrs);
 
         // Delegate to typed method (pure typed logic, no Attrs!)
-        auto [accessor, locked] = lockTyped(store, unlocked, input.scheme);
+        auto [accessor, locked] = lockTyped(store, *input.settings, unlocked, input.scheme);
 
         // Boundary conversion: GitLockedInput (typed) → Input (Attrs)
         Input result(input); // Copy to preserve scheme and other fields

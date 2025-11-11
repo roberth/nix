@@ -13,7 +13,7 @@ MercurialUnlockedInput mercurialInputFromAttrs(const Settings & settings, const 
     if (auto revStr = maybeGetStrAttr(attrs, "rev"))
         rev = Hash::parseAny(*revStr, HashAlgorithm::SHA1);
 
-    return MercurialUnlockedInput(settings, url, name, ref, rev);
+    return MercurialUnlockedInput(url, name, ref, rev);
 }
 
 Attrs mercurialInputToAttrs(const MercurialUnlockedInput & input)

@@ -10,13 +10,12 @@ namespace nix::fetchers {
  * Base class for Indirect typed inputs, shared across all three states.
  * Indirect inputs are resolved via the flake registry (e.g., "nixpkgs" -> actual Git URL).
  */
-struct IndirectInputBase : InputBase
+struct IndirectInputBase
 {
     std::string id;
 
-    IndirectInputBase(const Settings & settings, std::string id)
-        : InputBase(settings)
-        , id(std::move(id))
+    IndirectInputBase(std::string id)
+        : id(std::move(id))
     {
     }
 
@@ -32,11 +31,8 @@ struct IndirectUnlockedInput : IndirectInputBase
     std::optional<Hash> rev;
 
     IndirectUnlockedInput(
-        const Settings & settings,
-        std::string id,
-        std::optional<std::string> ref = std::nullopt,
-        std::optional<Hash> rev = std::nullopt)
-        : IndirectInputBase(settings, std::move(id))
+        std::string id, std::optional<std::string> ref = std::nullopt, std::optional<Hash> rev = std::nullopt)
+        : IndirectInputBase(std::move(id))
         , ref(std::move(ref))
         , rev(std::move(rev))
     {
@@ -53,8 +49,8 @@ struct IndirectLockedInput : IndirectInputBase
     Hash rev;
     LockingMetadata locking;
 
-    IndirectLockedInput(const Settings & settings, std::string id, Hash rev)
-        : IndirectInputBase(settings, std::move(id))
+    IndirectLockedInput(std::string id, Hash rev)
+        : IndirectInputBase(std::move(id))
         , rev(std::move(rev))
     {
     }
@@ -72,8 +68,8 @@ struct IndirectFinalInput : IndirectLockedInput
 {
     FinalizationData finalization;
 
-    IndirectFinalInput(const Settings & settings, std::string id, Hash rev, Hash narHash)
-        : IndirectLockedInput(settings, std::move(id), std::move(rev))
+    IndirectFinalInput(std::string id, Hash rev, Hash narHash)
+        : IndirectLockedInput(std::move(id), std::move(rev))
         , finalization(std::move(narHash))
     {
     }

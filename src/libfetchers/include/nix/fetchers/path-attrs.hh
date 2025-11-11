@@ -10,13 +10,12 @@ namespace nix::fetchers {
  * Base attributes for path inputs.
  * Path inputs reference local filesystem paths.
  */
-struct PathInputBase : InputBase
+struct PathInputBase
 {
     std::filesystem::path path;
 
-    PathInputBase(const Settings & settings, std::filesystem::path path)
-        : InputBase(settings)
-        , path(std::move(path))
+    PathInputBase(std::filesystem::path path)
+        : path(std::move(path))
     {
     }
 };
@@ -33,8 +32,8 @@ struct PathUnlockedInput : PathInputBase
     std::optional<uint64_t> lastModified;
     std::optional<Hash> narHash;
 
-    PathUnlockedInput(const Settings & settings, std::filesystem::path path)
-        : PathInputBase(settings, std::move(path))
+    PathUnlockedInput(std::filesystem::path path)
+        : PathInputBase(std::move(path))
     {
     }
 };
@@ -53,8 +52,8 @@ struct PathLockedInput : PathInputBase
     // Locking metadata
     LockingMetadata locking;
 
-    PathLockedInput(const Settings & settings, std::filesystem::path path, LockingMetadata locking)
-        : PathInputBase(settings, std::move(path))
+    PathLockedInput(std::filesystem::path path, LockingMetadata locking)
+        : PathInputBase(std::move(path))
         , locking(std::move(locking))
     {
     }
@@ -73,9 +72,8 @@ struct PathFinalInput : PathLockedInput
 {
     FinalizationData finalization;
 
-    PathFinalInput(
-        const Settings & settings, std::filesystem::path path, LockingMetadata locking, FinalizationData finalization)
-        : PathLockedInput(settings, std::move(path), std::move(locking))
+    PathFinalInput(std::filesystem::path path, LockingMetadata locking, FinalizationData finalization)
+        : PathLockedInput(std::move(path), std::move(locking))
         , finalization(std::move(finalization))
     {
     }

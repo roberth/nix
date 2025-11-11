@@ -14,7 +14,7 @@ GitHubUnlockedInput githubInputFromAttrs(const Settings & settings, const Attrs 
     if (auto revStr = maybeGetStrAttr(attrs, "rev"))
         rev = Hash::parseAny(*revStr, HashAlgorithm::SHA1);
 
-    return GitHubUnlockedInput(settings, "github", owner, repo, host, ref, rev);
+    return GitHubUnlockedInput("github", owner, repo, host, ref, rev);
 }
 
 Attrs githubInputToAttrs(const GitHubUnlockedInput & input)
@@ -91,7 +91,7 @@ GitLabUnlockedInput gitlabInputFromAttrs(const Settings & settings, const Attrs 
     if (auto revStr = maybeGetStrAttr(attrs, "rev"))
         rev = Hash::parseAny(*revStr, HashAlgorithm::SHA1);
 
-    return GitLabUnlockedInput(settings, "gitlab", owner, repo, host, ref, rev);
+    return GitLabUnlockedInput("gitlab", owner, repo, host, ref, rev);
 }
 
 Attrs gitlabInputToAttrs(const GitLabUnlockedInput & input)

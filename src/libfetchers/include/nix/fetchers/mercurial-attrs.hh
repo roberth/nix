@@ -10,14 +10,13 @@ namespace nix::fetchers {
 /**
  * Base class for Mercurial typed inputs, shared across all three states.
  */
-struct MercurialInputBase : InputBase
+struct MercurialInputBase
 {
     std::string url;
     std::optional<std::string> name;
 
-    MercurialInputBase(const Settings & settings, std::string url, std::optional<std::string> name = std::nullopt)
-        : InputBase(settings)
-        , url(std::move(url))
+    MercurialInputBase(std::string url, std::optional<std::string> name = std::nullopt)
+        : url(std::move(url))
         , name(std::move(name))
     {
     }
@@ -34,12 +33,11 @@ struct MercurialUnlockedInput : MercurialInputBase
     std::optional<Hash> rev;
 
     MercurialUnlockedInput(
-        const Settings & settings,
         std::string url,
         std::optional<std::string> name = std::nullopt,
         std::optional<std::string> ref = std::nullopt,
         std::optional<Hash> rev = std::nullopt)
-        : MercurialInputBase(settings, std::move(url), std::move(name))
+        : MercurialInputBase(std::move(url), std::move(name))
         , ref(std::move(ref))
         , rev(std::move(rev))
     {
@@ -58,14 +56,13 @@ struct MercurialLockedInput : MercurialInputBase
 
     // Constructor for locked input with rev
     MercurialLockedInput(
-        const Settings & settings,
         std::string url,
         std::string ref,
         Hash rev,
         uint64_t revCount,
         LockingMetadata locking,
         std::optional<std::string> name = std::nullopt)
-        : MercurialInputBase(settings, std::move(url), std::move(name))
+        : MercurialInputBase(std::move(url), std::move(name))
         , ref(std::move(ref))
         , rev(std::move(rev))
         , revCount(revCount)
@@ -75,12 +72,8 @@ struct MercurialLockedInput : MercurialInputBase
 
     // Constructor for locked input without rev (dirty tree)
     MercurialLockedInput(
-        const Settings & settings,
-        std::string url,
-        std::string ref,
-        LockingMetadata locking,
-        std::optional<std::string> name = std::nullopt)
-        : MercurialInputBase(settings, std::move(url), std::move(name))
+        std::string url, std::string ref, LockingMetadata locking, std::optional<std::string> name = std::nullopt)
+        : MercurialInputBase(std::move(url), std::move(name))
         , ref(std::move(ref))
         , locking(std::move(locking))
     {
@@ -100,7 +93,6 @@ struct MercurialFinalInput : MercurialLockedInput
     FinalizationData finalization;
 
     MercurialFinalInput(
-        const Settings & settings,
         std::string url,
         std::string ref,
         Hash rev,
@@ -109,7 +101,7 @@ struct MercurialFinalInput : MercurialLockedInput
         FinalizationData finalization,
         std::optional<std::string> name = std::nullopt)
         : MercurialLockedInput(
-              settings, std::move(url), std::move(ref), std::move(rev), revCount, std::move(locking), std::move(name))
+              std::move(url), std::move(ref), std::move(rev), revCount, std::move(locking), std::move(name))
         , finalization(std::move(finalization))
     {
     }

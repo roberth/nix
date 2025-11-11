@@ -12,20 +12,15 @@ namespace nix::fetchers {
 /**
  * Base class for tarball/file inputs.
  */
-struct TarballInputBase : InputBase
+struct TarballInputBase
 {
     std::string_view type; // "tarball" or "file"
     std::string url;
     std::optional<std::string> name;
     std::optional<bool> unpack; // Whether to unpack the tarball
 
-    TarballInputBase(
-        const Settings & settings,
-        std::string_view type,
-        std::string url,
-        std::optional<std::string> name = std::nullopt)
-        : InputBase(settings)
-        , type(type)
+    TarballInputBase(std::string_view type, std::string url, std::optional<std::string> name = std::nullopt)
+        : type(type)
         , url(std::move(url))
         , name(std::move(name))
     {
@@ -42,12 +37,8 @@ struct TarballUnlockedInput : TarballInputBase
     std::optional<uint64_t> revCount;
     std::optional<time_t> lastModified;
 
-    TarballUnlockedInput(
-        const Settings & settings,
-        std::string_view type,
-        std::string url,
-        std::optional<std::string> name = std::nullopt)
-        : TarballInputBase(settings, type, std::move(url), std::move(name))
+    TarballUnlockedInput(std::string_view type, std::string url, std::optional<std::string> name = std::nullopt)
+        : TarballInputBase(type, std::move(url), std::move(name))
     {
     }
 };
@@ -68,14 +59,13 @@ struct TarballLockedInput : TarballInputBase
     std::optional<uint64_t> revCount;
 
     TarballLockedInput(
-        const Settings & settings,
         std::string_view type,
         std::string url,
         std::string effectiveUrl,
         LockingMetadata locking,
         std::optional<Hash> treeHash = std::nullopt,
         std::optional<std::string> name = std::nullopt)
-        : TarballInputBase(settings, type, std::move(url), std::move(name))
+        : TarballInputBase(type, std::move(url), std::move(name))
         , effectiveUrl(std::move(effectiveUrl))
         , locking(std::move(locking))
         , treeHash(std::move(treeHash))
@@ -96,7 +86,6 @@ struct TarballFinalInput : TarballLockedInput
     FinalizationData finalization;
 
     TarballFinalInput(
-        const Settings & settings,
         std::string_view type,
         std::string url,
         std::string effectiveUrl,
@@ -105,13 +94,7 @@ struct TarballFinalInput : TarballLockedInput
         FinalizationData finalization,
         std::optional<std::string> name = std::nullopt)
         : TarballLockedInput(
-              settings,
-              type,
-              std::move(url),
-              std::move(effectiveUrl),
-              std::move(locking),
-              std::move(treeHash),
-              std::move(name))
+              type, std::move(url), std::move(effectiveUrl), std::move(locking), std::move(treeHash), std::move(name))
         , finalization(std::move(finalization))
     {
     }

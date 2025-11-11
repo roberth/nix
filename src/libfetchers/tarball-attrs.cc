@@ -9,7 +9,7 @@ TarballUnlockedInput tarballInputFromAttrs(const Settings & settings, const Attr
     auto url = getStrAttr(attrs, "url");
     auto name = maybeGetStrAttr(attrs, "name");
 
-    TarballUnlockedInput input(settings, type, url, name);
+    TarballUnlockedInput input(type, url, name);
 
     if (auto unpack = maybeGetBoolAttr(attrs, "unpack"))
         input.unpack = *unpack;

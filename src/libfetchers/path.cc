@@ -129,7 +129,8 @@ struct PathInputScheme : InputScheme
      * Typed method: Lock a PathUnlockedInput to a PathLockedInput.
      * This is the primary implementation using typed inputs.
      */
-    std::pair<ref<SourceAccessor>, PathLockedInput> lockTyped(ref<Store> store, const PathUnlockedInput & input) const
+    std::pair<ref<SourceAccessor>, PathLockedInput>
+    lockTyped(ref<Store> store, const Settings & settings, const PathUnlockedInput & input) const
     {
         auto absPath = getAbsPath(input.path);
 
@@ -155,7 +156,7 @@ struct PathInputScheme : InputScheme
         auto info = store->queryPathInfo(*storePath);
         accessor->fingerprint =
             fmt("path:%s", store->queryPathInfo(*storePath)->narHash.to_string(HashFormat::SRI, true));
-        input.settings->getCache()->upsert(
+        settings.getCache()->upsert(
             makeFetchToStoreCacheKey(
                 "path:" + input.path.string(), *accessor->fingerprint, ContentAddressMethod::Raw::NixArchive, "/"),
             *store,
@@ -167,7 +168,7 @@ struct PathInputScheme : InputScheme
         // Use provided lastModified if available, otherwise use mtime
         locking.lastModified = input.lastModified.value_or(mtime);
 
-        PathLockedInput locked(*input.settings, input.path, locking);
+        PathLockedInput locked(input.path, locking);
 
         return {accessor, std::move(locked)};
     }
@@ -182,7 +183,7 @@ struct PathInputScheme : InputScheme
         auto unlocked = pathInputFromAttrs(*input.settings, input.attrs);
 
         // Delegate to typed method (pure typed logic, no Attrs!)
-        auto [accessor, locked] = lockTyped(store, unlocked);
+        auto [accessor, locked] = lockTyped(store, *input.settings, unlocked);
 
         // Boundary conversion: PathLockedInput (typed) → Input (Attrs)
         Input result(input); // Copy to preserve scheme and other fields

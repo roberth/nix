@@ -10,7 +10,7 @@ namespace nix::fetchers {
  * Base class for GitHub/GitLab typed inputs, shared across all three states.
  * These fetchers download tarballs from git hosting API endpoints.
  */
-struct GitHubInputBase : InputBase
+struct GitHubInputBase
 {
     std::string_view type; // "github", "gitlab", or "sourcehut"
     std::string owner;
@@ -18,13 +18,8 @@ struct GitHubInputBase : InputBase
     std::optional<std::string> host;
 
     GitHubInputBase(
-        const Settings & settings,
-        std::string_view type,
-        std::string owner,
-        std::string repo,
-        std::optional<std::string> host = std::nullopt)
-        : InputBase(settings)
-        , type(type)
+        std::string_view type, std::string owner, std::string repo, std::optional<std::string> host = std::nullopt)
+        : type(type)
         , owner(std::move(owner))
         , repo(std::move(repo))
         , host(std::move(host))
@@ -43,14 +38,13 @@ struct GitHubUnlockedInput : GitHubInputBase
     std::optional<Hash> rev;
 
     GitHubUnlockedInput(
-        const Settings & settings,
         std::string_view type,
         std::string owner,
         std::string repo,
         std::optional<std::string> host = std::nullopt,
         std::optional<std::string> ref = std::nullopt,
         std::optional<Hash> rev = std::nullopt)
-        : GitHubInputBase(settings, type, std::move(owner), std::move(repo), std::move(host))
+        : GitHubInputBase(type, std::move(owner), std::move(repo), std::move(host))
         , ref(std::move(ref))
         , rev(std::move(rev))
     {
@@ -67,14 +61,13 @@ struct GitHubLockedInput : GitHubInputBase
     std::optional<Hash> treeHash;
 
     GitHubLockedInput(
-        const Settings & settings,
         std::string_view type,
         std::string owner,
         std::string repo,
         Hash rev,
         std::optional<std::string> host = std::nullopt,
         std::optional<Hash> treeHash = std::nullopt)
-        : GitHubInputBase(settings, type, std::move(owner), std::move(repo), std::move(host))
+        : GitHubInputBase(type, std::move(owner), std::move(repo), std::move(host))
         , rev(std::move(rev))
         , treeHash(std::move(treeHash))
     {
@@ -94,7 +87,6 @@ struct GitHubFinalInput : GitHubLockedInput
     FinalizationData finalization;
 
     GitHubFinalInput(
-        const Settings & settings,
         std::string_view type,
         std::string owner,
         std::string repo,
@@ -103,7 +95,7 @@ struct GitHubFinalInput : GitHubLockedInput
         std::optional<std::string> host = std::nullopt,
         std::optional<Hash> treeHash = std::nullopt)
         : GitHubLockedInput(
-              settings, type, std::move(owner), std::move(repo), std::move(rev), std::move(host), std::move(treeHash))
+              type, std::move(owner), std::move(repo), std::move(rev), std::move(host), std::move(treeHash))
         , finalization(std::move(narHash))
     {
     }
