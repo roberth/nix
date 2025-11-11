@@ -1,4 +1,5 @@
 #include "nix/fetchers/fetchers.hh"
+#include "nix/fetchers/path-typed.hh"
 #include "nix/store/store-api.hh"
 #include "nix/util/archive.hh"
 #include "nix/fetchers/cache.hh"
@@ -116,12 +117,21 @@ struct PathInputScheme : InputScheme
         throw Error("cannot fetch input '%s' because it uses a relative path", input.to_string());
     }
 
-    std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & _input) const override
+    std::filesystem::path getAbsPath(const std::filesystem::path & path) const
     {
-        Input input(_input);
-        auto path = getStrAttr(input.attrs, "path");
+        if (isAbsolute(path.string()))
+            return canonPath(path.string());
 
-        auto absPath = getAbsPath(input);
+        throw Error("cannot fetch path '%s' because it is a relative path", path);
+    }
+
+    /**
+     * Typed method: Lock a PathUnlockedInput to a PathLockedInput.
+     * This is the primary implementation using typed inputs.
+     */
+    std::pair<ref<SourceAccessor>, PathLockedInput> lockTyped(ref<Store> store, const PathUnlockedInput & input) const
+    {
+        auto absPath = getAbsPath(input.path);
 
         // FIXME: check whether access to 'path' is allowed.
         auto storePath = store->maybeParseStorePath(absPath.string());
@@ -152,12 +162,33 @@ struct PathInputScheme : InputScheme
             {},
             *storePath);
 
-        /* Trust the lastModified value supplied by the user, if
-           any. It's not a "secure" attribute so we don't care. */
-        if (!input.getLastModified())
-            input.attrs.insert_or_assign("lastModified", uint64_t(mtime));
+        // Construct new locked input (immutable pattern)
+        LockingMetadata locking;
+        // Use provided lastModified if available, otherwise use mtime
+        locking.lastModified = input.lastModified.value_or(mtime);
 
-        return {accessor, std::move(input)};
+        PathLockedInput locked(*input.settings, input.path, locking);
+
+        return {accessor, std::move(locked)};
+    }
+
+    /**
+     * Wrapper method for backward compatibility with Input/Attrs API.
+     * Delegates to typed lockTyped() method.
+     */
+    std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & input) const override
+    {
+        // Boundary conversion: Input (Attrs) → PathUnlockedInput (typed)
+        auto unlocked = pathInputFromAttrs(*input.settings, input.attrs);
+
+        // Delegate to typed method (pure typed logic, no Attrs!)
+        auto [accessor, locked] = lockTyped(store, unlocked);
+
+        // Boundary conversion: PathLockedInput (typed) → Input (Attrs)
+        Input result(*input.settings);
+        result.attrs = pathInputToAttrs(locked);
+
+        return {accessor, std::move(result)};
     }
 
     std::optional<ExperimentalFeature> experimentalFeature() const override
