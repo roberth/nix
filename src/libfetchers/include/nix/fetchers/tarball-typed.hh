@@ -104,8 +104,10 @@ using TarballInputStates = InputStates<TarballUnlockedInput, TarballLockedInput,
 TarballUnlockedInput tarballInputFromAttrs(const Settings & settings, const Attrs & attrs);
 
 /**
- * Convert from typed tarball input to Attrs.
+ * Convert from typed tarball inputs to Attrs (for all states).
  */
+Attrs tarballInputToAttrs(const TarballUnlockedInput & input);
+Attrs tarballInputToAttrs(const TarballLockedInput & input);
 Attrs tarballInputToAttrs(const TarballFinalInput & input);
 
 } // namespace nix::fetchers

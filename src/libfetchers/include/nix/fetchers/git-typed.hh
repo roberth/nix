@@ -190,8 +190,11 @@ using GitInputStates = InputStates<GitUnlockedInput, GitLockedInput, GitFinalInp
 GitUnlockedInput gitInputFromAttrs(const Settings & settings, const Attrs & attrs);
 
 /**
- * Convert from typed Git input to Attrs (for backward compatibility).
+ * Convert from typed Git inputs to Attrs (for backward compatibility).
+ * Overloaded for all three states.
  */
+Attrs gitInputToAttrs(const GitUnlockedInput & input);
+Attrs gitInputToAttrs(const GitLockedInput & input);
 Attrs gitInputToAttrs(const GitFinalInput & input);
 
 } // namespace nix::fetchers

@@ -112,6 +112,8 @@ using GitHubInputStates = InputStates<GitHubUnlockedInput, GitHubLockedInput, Gi
 
 // Conversion functions for backward compatibility
 GitHubUnlockedInput githubInputFromAttrs(const Settings & settings, const Attrs & attrs);
+Attrs githubInputToAttrs(const GitHubUnlockedInput & input);
+Attrs githubInputToAttrs(const GitHubLockedInput & input);
 Attrs githubInputToAttrs(const GitHubFinalInput & input);
 
 // GitLab uses the same structure as GitHub
@@ -121,6 +123,8 @@ using GitLabFinalInput = GitHubFinalInput;
 using GitLabInputStates = InputStates<GitLabUnlockedInput, GitLabLockedInput, GitLabFinalInput>;
 
 GitLabUnlockedInput gitlabInputFromAttrs(const Settings & settings, const Attrs & attrs);
+Attrs gitlabInputToAttrs(const GitLabUnlockedInput & input);
+Attrs gitlabInputToAttrs(const GitLabLockedInput & input);
 Attrs gitlabInputToAttrs(const GitLabFinalInput & input);
 
 } // namespace nix::fetchers

@@ -4,7 +4,12 @@
 
 ## Overview
 
-This document tracks the progress of adding type-safe input structures to libfetchers, replacing the dynamic `Attrs`-based system with a compile-time verified three-state pattern (Unlocked → Locked → Final).
+This document tracks the progress of adding type-safe input structures to libfetchers. The goal is to use accurate types throughout libfetchers internals, relegating the dynamically typed `Input` (with `Attrs`) to the outer API boundary completely.
+
+**Architectural Goal**:
+- **Inner boundary**: All libfetchers internals use typed inputs exclusively
+- **Outer boundary**: `Input` class with `Attrs` exists only at API surface for backward compatibility
+- **Type system**: Three-state pattern (Unlocked → Locked → Final) enforced at compile time
 
 ## Completed Work
 
@@ -116,16 +121,22 @@ This document tracks the progress of adding type-safe input structures to libfet
 
 ## Future Phases (Not Yet Started)
 
-### ⏳ Phase 4: Core Infrastructure Integration
-**Goal**: Update existing code to use typed inputs internally
+### ⏳ Phase 4: Core Infrastructure - Inner Boundary Migration
+**Goal**: Use typed inputs exclusively inside libfetchers, with `Input`/`Attrs` only at API boundary
+
+**Architectural Principle**:
+- Fetcher internals work exclusively with typed inputs
+- No `Attrs` manipulation inside libfetchers except at conversion points
+- `Input` class becomes thin adapter that converts at the boundary
 
 **Key Changes Needed**:
-- Modify `Input` class to wrap typed inputs instead of `Attrs`
-- Update `InputScheme` methods to work with typed inputs
-- Ensure backward compatibility with existing `Attrs` APIs during transition
-- Add runtime type checking where needed
+- Add typed virtual methods to `InputScheme` as primary interface
+- Refactor fetcher implementations (git.cc, etc.) to use typed inputs internally
+- Remove all `insert_or_assign` on attrs from fetcher internals
+- `Input` class delegates to typed methods, converting at entry/exit
+- State transitions become function returns, not mutations
 
-**Estimated Impact**: High - Requires careful migration of existing code
+**Estimated Impact**: High - Fundamental architecture shift, but types guide the way
 
 ---
 
@@ -177,7 +188,7 @@ When integrating typed inputs (Phases 4-5):
 
 ## Benefits Achieved So Far
 
-### 1. Type Safety
+### 1. Type Safety Foundation
 Compile-time guarantees about:
 - What fields exist at each state
 - Valid state transitions
@@ -189,16 +200,18 @@ Types clearly show:
 - The fetching process flow
 - State transitions during locking
 
-### 3. Better Error Messages
-Future work will enable:
-- Compile-time errors instead of runtime
-- Clear messages about missing required fields
-- Better IDE support and autocomplete
+### 3. Clear Architecture
+Separation of concerns:
+- Types for behavior (typed inputs)
+- Serialization for persistence (Attrs)
+- Boundary clearly defined
 
-### 4. Easier Maintenance
-- Clear contracts between components
-- Easier to add new fetcher types
-- Safer refactoring with compiler help
+### 4. Future Benefits
+When fully integrated:
+- Compile-time errors instead of runtime
+- No `Attrs` manipulation in fetcher internals
+- Better IDE support and autocomplete
+- Easier maintenance with compiler guidance
 
 ---
 
@@ -218,22 +231,34 @@ Future work will enable:
 
 Phase 3 is complete! **All libfetchers behavior is now modeled with types**. The types coexist with the existing `Attrs`-based system and provide compile-time verification of state transitions.
 
-To begin using these types in production code, start Phase 4:
+To begin Phase 4 (Inner Boundary Migration):
 
-1. **Add typed input storage to Input class**
-   - Add `std::any typedInput` member to store the actual typed input
-   - Add methods to safely cast to specific types
-   - Maintain backward compatibility with `Attrs`
+1. **✅ DONE: Add typed input storage and conversion utilities**
+   - Added `std::optional<std::any> typedInput` to Input class
+   - Created typed-input-variant.hh with polymorphic variant types
+   - Created typed-input-accessor.cc with conversion functions
+   - Status: Built but not yet integrated into production code
 
-2. **Update InputScheme interface**
-   - Add methods that work with typed inputs
-   - Keep existing `Attrs` methods for compatibility
-   - Gradually migrate implementations
+2. **TODO: Refactor InputScheme interface**
+   - Add typed virtual methods as primary interface:
+     ```cpp
+     virtual std::pair<ref<SourceAccessor>, GitLockedInput>
+         lock(ref<Store>, const GitUnlockedInput &) const = 0;
+     ```
+   - Old `Attrs`-based methods become wrappers that convert
+   - All internal operations use typed inputs
 
-3. **Add conversion helpers**
-   - Create utilities to convert between `Attrs` and typed inputs
-   - Ensure roundtrip conversions preserve all data
-   - Add validation for state transitions
+3. **TODO: Refactor fetcher implementations**
+   - Update git.cc, github.cc, etc. to work with typed inputs internally
+   - Remove all `insert_or_assign` on attrs from internals
+   - State transitions become function returns, not mutations
+   - `Attrs` manipulation only at boundary (in wrapper methods)
+
+4. **TODO: Update Input class to delegate**
+   - Convert `Attrs` → typed input on entry
+   - Delegate to typed InputScheme methods
+   - Convert typed input → `Attrs` on exit (if needed)
+   - Public API remains unchanged
 
 ---
 

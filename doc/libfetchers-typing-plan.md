@@ -7,7 +7,7 @@ The libfetchers library currently suffers from poor type safety due to:
 2. **Heavy mutation** - Input objects are mutated during locking/fetching
 3. **Unclear state transitions** - No clear distinction between unlocked, locked, and final inputs
 
-This document proposes an incremental refactoring plan to introduce static types while maintaining backward compatibility and keeping tests passing at each step.
+This document proposes an incremental refactoring plan to introduce static types throughout libfetchers, relegating the dynamically typed `Input` (with `Attrs`) to the outer API boundary completely. The goal is compile-time verified types for all internal operations, with backward compatibility maintained at the edges.
 
 ## Current Architecture Problems
 
@@ -117,6 +117,24 @@ Different input schemes have completely different attribute sets:
 - After final: `+narHash`, `+__final`
 
 **Problem:** Currently all stored as untyped `Attrs`, making it impossible to know what's available.
+
+## Architecture Vision
+
+### Inner vs Outer Boundaries
+
+**Inner Boundary (libfetchers internals)**:
+- All operations use typed inputs (`GitLockedInput`, `PathFinalInput`, etc.)
+- Compile-time verification of state transitions
+- Type-safe function signatures
+- No `Attrs` manipulation
+
+**Outer Boundary (libfetchers API)**:
+- `Input` class with `Attrs` exists only for backward compatibility
+- Immediately converts to typed inputs on entry
+- Converts back to `Attrs` only when returning to caller
+- Eventually this boundary moves outward to libflake/libcmd
+
+**Goal**: Typed inputs everywhere internally, with `Input`/`Attrs` only at the interface for legacy compatibility.
 
 ## Proposed Type Hierarchy
 
@@ -469,57 +487,74 @@ The key insight: **we cannot do this all at once**. The code is intricate and ti
 - All fetcher-specific tests pass
 - Full test suite still passes
 
-### Phase 4: Core Infrastructure
+### Phase 4: Core Infrastructure - Inner Boundary Migration
 
-**Goal:** Update core libfetchers infrastructure to use typed inputs.
+**Goal:** Update core libfetchers infrastructure to use typed inputs internally, with `Input`/`Attrs` only at the API boundary.
+
+**Architectural Principle:**
+- **Internal operations**: Work exclusively with typed inputs
+- **External API**: `Input` class serves as adapter, converting at the boundary
+- **No `Attrs` manipulation inside libfetchers** except at conversion points
 
 **Components to update:**
 
-1. **Input class** (`fetchers.hh:35-184`):
-   - Currently holds `Attrs attrs`
-   - Refactor to hold `AnyInput` variant
-   - Keep `toAttrs()` for serialization
-   - Maintain backward compatibility with existing callers
+1. **InputScheme base class** (`fetchers.hh:195-268`):
+   - Add typed virtual methods as the primary interface
+   - Methods accept and return typed inputs directly
+   - Old `Attrs`-based methods become thin wrappers that convert
+   - Example:
+     ```cpp
+     // New: Primary interface (typed)
+     virtual std::pair<ref<SourceAccessor>, GitLockedInput>
+         lock(ref<Store>, const GitUnlockedInput &) const = 0;
 
-2. **InputScheme base class** (`fetchers.hh:195-268`):
-   - Add typed virtual methods alongside existing ones
-   - Deprecate (but don't remove) Attrs-based methods
-   - Provide default implementations that convert
+     // Old: Compatibility wrapper (converts at boundary)
+     std::pair<ref<SourceAccessor>, Input>
+         getAccessor(ref<Store>, const Input &) const final;
+     ```
 
-3. **checkLocks()** (`fetchers.cc:232-298`):
-   - Currently works on Attrs
-   - Overload for typed inputs
-   - Can use `std::visit` for type-safe validation
+2. **Fetcher implementations** (git.cc, github.cc, etc.):
+   - Refactor internal logic to work with typed inputs
+   - Remove all `insert_or_assign` on attrs
+   - State transitions become function returns, not mutations
+   - Keep conversion helpers for the Input-based wrappers
 
-4. **Cache** (`cache.hh`):
-   - Currently stores `Attrs → Attrs` mappings
-   - Can keep using Attrs for now (serialization format)
-   - Internal conversion to typed inputs for validation
+3. **Input class** (`fetchers.hh:35-184`):
+   - Remains as thin adapter at the boundary
+   - Stores both `Attrs` (for serialization) and `typedInput` (for operations)
+   - Public API unchanged for backward compatibility
+   - Internally delegates to typed input operations
+
+4. **checkLocks()** (`fetchers.cc:232-298`):
+   - Primary implementation works on typed inputs
+   - Uses `std::visit` for type-safe validation
+   - Old `Attrs`-based version converts and delegates
+
+5. **Cache** (`cache.hh`):
+   - Continues using `Attrs` for serialization (disk format)
+   - Converts to typed inputs for validation
+   - Internal operations use typed inputs
 
 **Steps:**
 
-1. Create `Input2` class as prototype:
-   ```cpp
-   struct Input2 {
-       const Settings * settings;
-       AnyInput input;  // variant of typed inputs
+1. Add typed virtual methods to InputScheme base class
 
-       // Conversion
-       static Input2 fromInput(const Input & old);
-       Input toInput() const;
-   };
-   ```
+2. Implement typed methods in each fetcher (git.cc, path.cc, etc.)
+   - Work directly with typed inputs
+   - No `Attrs` manipulation internally
 
-2. Add parallel code paths using `Input2`
+3. Update Input class to delegate to typed methods
+   - Convert on entry: `Attrs` → typed input
+   - Perform operation with typed inputs
+   - Convert on exit: typed input → `Attrs` (if needed)
 
-3. Gradually migrate call sites
-
-4. Once all call sites migrated, rename `Input2` → `Input`
+4. Gradually remove `Attrs` manipulation from fetcher internals
 
 **Success criteria:**
-- Core infrastructure uses typed inputs
+- Fetcher internals use only typed inputs
+- `Attrs` manipulation only at Input class boundary
 - All tests pass
-- Serialization still works (via Attrs round-trip)
+- No change to public API behavior
 
 ### Phase 5: Integration Points
 
@@ -718,7 +753,7 @@ TEST(GitInput, UnlockedToLocked) {
 
 ### Compile-Time Safety
 
-**Before (with Attrs):**
+**Before (with Attrs everywhere):**
 ```cpp
 // Can typo attribute names
 auto ref = maybeGetStrAttr(attrs, "rfe");  // Typo! Should be "ref"
@@ -730,17 +765,18 @@ auto revCount = getStrAttr(attrs, "revCount");  // Should be getIntAttr!
 auto rev = maybeGetStrAttr(attrs, "rev");  // Is rev always present? Sometimes? Never?
 ```
 
-**After (with typed inputs):**
+**After (typed inputs internally, Attrs at boundary only):**
 ```cpp
-// Typos caught at compile time
+// Inside libfetchers - compile-time safety
 auto ref = input.ref;  // Won't compile if typo'd
-
-// Types enforced
 auto revCount = input.revCount;  // Type is std::optional<uint64_t>
-
-// State tracked in type system
 auto rev = locked.rev;  // Type is Hash (required on locked inputs)
-auto rev2 = unlocked.rev;  // Type is optional<Hash> (may not exist)
+
+// At API boundary - conversion happens once
+Input apiInput = Input::fromAttrs(settings, attrs);  // Validates and converts
+auto typed = getTypedInput(apiInput);  // Extract typed input
+// ... all operations use typed ...
+auto result = typedInputToAttrs(typedResult);  // Convert back only at exit
 ```
 
 ### Clear State Transitions
@@ -824,24 +860,34 @@ Many errors move from runtime to compile time:
 After completion, we should have:
 
 1. **Type Safety**
-   - Zero uses of `insert_or_assign` on input attrs
+   - **Zero uses of `insert_or_assign` on input attrs inside libfetchers**
    - All input state tracked in type system
    - Compile-time prevention of state errors
+   - `Attrs` manipulation only at API boundary for conversion
 
-2. **Clarity**
-   - Clear unlocked/locked/final distinction
-   - Explicit state transitions in type signatures
+2. **Clear Boundaries**
+   - **Inner boundary**: All libfetchers internals use typed inputs exclusively
+   - **Outer boundary**: `Input` class with `Attrs` only at API surface
+   - Conversion happens exactly once on entry/exit
+   - No mixed Attrs/typed code paths internally
+
+3. **Clarity**
+   - Clear unlocked/locked/final distinction in types
+   - Explicit state transitions in function signatures
    - Self-documenting code via types
+   - Function signatures reveal exactly what happens
 
-3. **Testing**
+4. **Testing**
    - All existing tests still pass
    - New typed input tests added
    - No regressions in functionality or performance
+   - Tests can use typed inputs directly
 
-4. **Maintainability**
-   - Easier to add new fetchers (clear template to follow)
-   - Easier to understand input lifecycle
-   - Fewer runtime surprises
+5. **Maintainability**
+   - Easier to add new fetchers (clear typed template to follow)
+   - Easier to understand input lifecycle (follow the types)
+   - Fewer runtime surprises (compiler catches errors)
+   - Clear separation of concerns (types vs serialization)
 
 ## Open Questions
 

@@ -15,6 +15,35 @@ IndirectUnlockedInput indirectInputFromAttrs(const Settings & settings, const At
     return IndirectUnlockedInput(settings, id, ref, rev);
 }
 
+Attrs indirectInputToAttrs(const IndirectUnlockedInput & input)
+{
+    Attrs attrs;
+
+    attrs.insert_or_assign("type", "indirect");
+    attrs.insert_or_assign("id", input.id);
+
+    if (input.ref)
+        attrs.insert_or_assign("ref", *input.ref);
+
+    if (input.rev)
+        attrs.insert_or_assign("rev", input.rev->gitRev());
+
+    return attrs;
+}
+
+Attrs indirectInputToAttrs(const IndirectLockedInput & input)
+{
+    Attrs attrs;
+
+    attrs.insert_or_assign("type", "indirect");
+    attrs.insert_or_assign("id", input.id);
+
+    attrs.insert_or_assign("rev", input.rev.gitRev());
+    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
+
+    return attrs;
+}
+
 Attrs indirectInputToAttrs(const IndirectFinalInput & input)
 {
     Attrs attrs;

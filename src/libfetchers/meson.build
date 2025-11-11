@@ -56,6 +56,7 @@ sources = files(
   'registry.cc',
   'tarball-typed.cc',
   'tarball.cc',
+  'typed-input-accessor.cc',
   'typed-inputs.cc',
 )
 

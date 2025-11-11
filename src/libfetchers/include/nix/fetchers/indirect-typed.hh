@@ -84,6 +84,8 @@ using IndirectInputStates = InputStates<IndirectUnlockedInput, IndirectLockedInp
 
 // Conversion functions for backward compatibility
 IndirectUnlockedInput indirectInputFromAttrs(const Settings & settings, const Attrs & attrs);
+Attrs indirectInputToAttrs(const IndirectUnlockedInput & input);
+Attrs indirectInputToAttrs(const IndirectLockedInput & input);
 Attrs indirectInputToAttrs(const IndirectFinalInput & input);
 
 } // namespace nix::fetchers

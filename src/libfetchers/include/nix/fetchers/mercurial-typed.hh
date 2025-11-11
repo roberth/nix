@@ -100,6 +100,8 @@ using MercurialInputStates = InputStates<MercurialUnlockedInput, MercurialLocked
 
 // Conversion functions for backward compatibility
 MercurialUnlockedInput mercurialInputFromAttrs(const Settings & settings, const Attrs & attrs);
+Attrs mercurialInputToAttrs(const MercurialUnlockedInput & input);
+Attrs mercurialInputToAttrs(const MercurialLockedInput & input);
 Attrs mercurialInputToAttrs(const MercurialFinalInput & input);
 
 } // namespace nix::fetchers

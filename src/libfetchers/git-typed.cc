@@ -55,6 +55,104 @@ GitUnlockedInput gitInputFromAttrs(const Settings & settings, const Attrs & attr
     return input;
 }
 
+Attrs gitInputToAttrs(const GitUnlockedInput & input)
+{
+    Attrs attrs;
+
+    attrs.insert_or_assign("type", "git");
+    attrs.insert_or_assign("url", input.url.to_string());
+
+    if (input.ref)
+        attrs.insert_or_assign("ref", *input.ref);
+
+    if (input.rev)
+        attrs.insert_or_assign("rev", input.rev->gitRev());
+
+    if (input.shallow)
+        attrs.insert_or_assign("shallow", Explicit<bool>(true));
+
+    if (input.submodules)
+        attrs.insert_or_assign("submodules", Explicit<bool>(true));
+
+    if (input.lfs)
+        attrs.insert_or_assign("lfs", Explicit<bool>(true));
+
+    if (input.exportIgnore)
+        attrs.insert_or_assign("exportIgnore", Explicit<bool>(true));
+
+    if (input.allRefs)
+        attrs.insert_or_assign("allRefs", Explicit<bool>(true));
+
+    if (input.name)
+        attrs.insert_or_assign("name", *input.name);
+
+    if (input.dirtyRev)
+        attrs.insert_or_assign("dirtyRev", input.dirtyRev->gitRev());
+
+    if (input.dirtyShortRev)
+        attrs.insert_or_assign("dirtyShortRev", *input.dirtyShortRev);
+
+    // Verified fetches attributes
+    if (input.verifyCommit)
+        attrs.insert_or_assign("verifyCommit", Explicit<bool>(*input.verifyCommit));
+    if (input.keytype)
+        attrs.insert_or_assign("keytype", *input.keytype);
+    if (input.publicKey)
+        attrs.insert_or_assign("publicKey", *input.publicKey);
+    if (input.publicKeys && !input.publicKeys->empty())
+        attrs.insert_or_assign("publicKeys", input.publicKeys->at(0));
+
+    return attrs;
+}
+
+Attrs gitInputToAttrs(const GitLockedInput & input)
+{
+    Attrs attrs;
+
+    attrs.insert_or_assign("type", "git");
+    attrs.insert_or_assign("url", input.url.to_string());
+
+    if (input.ref)
+        attrs.insert_or_assign("ref", *input.ref);
+
+    attrs.insert_or_assign("rev", input.rev.gitRev());
+
+    if (input.shallow)
+        attrs.insert_or_assign("shallow", Explicit<bool>(true));
+
+    if (input.submodules)
+        attrs.insert_or_assign("submodules", Explicit<bool>(true));
+
+    if (input.lfs)
+        attrs.insert_or_assign("lfs", Explicit<bool>(true));
+
+    if (input.exportIgnore)
+        attrs.insert_or_assign("exportIgnore", Explicit<bool>(true));
+
+    if (input.allRefs)
+        attrs.insert_or_assign("allRefs", Explicit<bool>(true));
+
+    if (input.name)
+        attrs.insert_or_assign("name", *input.name);
+
+    if (input.revCount)
+        attrs.insert_or_assign("revCount", *input.revCount);
+
+    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
+
+    // Verified fetches attributes
+    if (input.verifyCommit)
+        attrs.insert_or_assign("verifyCommit", Explicit<bool>(*input.verifyCommit));
+    if (input.keytype)
+        attrs.insert_or_assign("keytype", *input.keytype);
+    if (input.publicKey)
+        attrs.insert_or_assign("publicKey", *input.publicKey);
+    if (input.publicKeys && !input.publicKeys->empty())
+        attrs.insert_or_assign("publicKeys", input.publicKeys->at(0));
+
+    return attrs;
+}
+
 Attrs gitInputToAttrs(const GitFinalInput & input)
 {
     Attrs attrs;

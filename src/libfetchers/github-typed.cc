@@ -17,6 +17,47 @@ GitHubUnlockedInput githubInputFromAttrs(const Settings & settings, const Attrs 
     return GitHubUnlockedInput(settings, "github", owner, repo, host, ref, rev);
 }
 
+Attrs githubInputToAttrs(const GitHubUnlockedInput & input)
+{
+    Attrs attrs;
+
+    attrs.insert_or_assign("type", "github");
+    attrs.insert_or_assign("owner", input.owner);
+    attrs.insert_or_assign("repo", input.repo);
+
+    if (input.host)
+        attrs.insert_or_assign("host", *input.host);
+
+    if (input.ref)
+        attrs.insert_or_assign("ref", *input.ref);
+
+    if (input.rev)
+        attrs.insert_or_assign("rev", input.rev->gitRev());
+
+    return attrs;
+}
+
+Attrs githubInputToAttrs(const GitHubLockedInput & input)
+{
+    Attrs attrs;
+
+    attrs.insert_or_assign("type", "github");
+    attrs.insert_or_assign("owner", input.owner);
+    attrs.insert_or_assign("repo", input.repo);
+
+    if (input.host)
+        attrs.insert_or_assign("host", *input.host);
+
+    attrs.insert_or_assign("rev", input.rev.gitRev());
+
+    if (input.treeHash)
+        attrs.insert_or_assign("treeHash", input.treeHash->gitRev());
+
+    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
+
+    return attrs;
+}
+
 Attrs githubInputToAttrs(const GitHubFinalInput & input)
 {
     Attrs attrs;
@@ -53,6 +94,47 @@ GitLabUnlockedInput gitlabInputFromAttrs(const Settings & settings, const Attrs 
         rev = Hash::parseAny(*revStr, HashAlgorithm::SHA1);
 
     return GitLabUnlockedInput(settings, "gitlab", owner, repo, host, ref, rev);
+}
+
+Attrs gitlabInputToAttrs(const GitLabUnlockedInput & input)
+{
+    Attrs attrs;
+
+    attrs.insert_or_assign("type", "gitlab");
+    attrs.insert_or_assign("owner", input.owner);
+    attrs.insert_or_assign("repo", input.repo);
+
+    if (input.host)
+        attrs.insert_or_assign("host", *input.host);
+
+    if (input.ref)
+        attrs.insert_or_assign("ref", *input.ref);
+
+    if (input.rev)
+        attrs.insert_or_assign("rev", input.rev->gitRev());
+
+    return attrs;
+}
+
+Attrs gitlabInputToAttrs(const GitLabLockedInput & input)
+{
+    Attrs attrs;
+
+    attrs.insert_or_assign("type", "gitlab");
+    attrs.insert_or_assign("owner", input.owner);
+    attrs.insert_or_assign("repo", input.repo);
+
+    if (input.host)
+        attrs.insert_or_assign("host", *input.host);
+
+    attrs.insert_or_assign("rev", input.rev.gitRev());
+
+    if (input.treeHash)
+        attrs.insert_or_assign("treeHash", input.treeHash->gitRev());
+
+    attrs.insert_or_assign("lastModified", uint64_t(input.locking.lastModified));
+
+    return attrs;
 }
 
 Attrs gitlabInputToAttrs(const GitLabFinalInput & input)

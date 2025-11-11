@@ -1,0 +1,13 @@
+{
+    "permissions": {
+        "allow": [
+            "Bash(meson test -C build:*)",
+            "Bash(meson compile -C build:*)",
+            "Bash(git add:*)",
+            "Bash(git reset --:*)",
+            "Bash(git commit:*)"
+        ],
+        "deny": [],
+        "ask": []
+    }
+}
