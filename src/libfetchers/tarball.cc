@@ -342,11 +342,11 @@ struct FileInputScheme : CurlInputScheme
     }
 
     /**
-     * Typed method: Lock a TarballUnlockedInput (type="file") to a TarballLockedInput.
+     * Lock a TarballUnlockedInput (type="file") to a TarballLockedInput.
      * For files, we download directly to the store and get the narHash.
      */
     std::pair<ref<SourceAccessor>, TarballFinalInput>
-    lockTyped(ref<Store> store, const Settings & settings, const TarballUnlockedInput & input) const
+    lock(ref<Store> store, const Settings & settings, const TarballUnlockedInput & input) const
     {
         /* Unlike TarballInputScheme, this stores downloaded files in
            the Nix store directly, since there is little deduplication
@@ -381,8 +381,8 @@ struct FileInputScheme : CurlInputScheme
     }
 
     /**
-     * Wrapper method for backward compatibility with Input/Attrs API.
-     * Delegates to typed lockTyped() method.
+     * External API: Boundary between Input (Attrs) and typed inputs.
+     * Delegates to lock() method.
      */
     std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & input) const override
     {
@@ -390,7 +390,7 @@ struct FileInputScheme : CurlInputScheme
         auto unlocked = tarballInputFromAttrs(*input.settings, input.attrs);
 
         // Delegate to typed method (goes directly to final state)
-        auto [accessor, finalInput] = lockTyped(store, *input.settings, unlocked);
+        auto [accessor, finalInput] = lock(store, *input.settings, unlocked);
 
         // Boundary conversion: TarballFinalInput (typed) → Input (Attrs)
         Input result(input); // Copy to preserve scheme and other fields
@@ -417,11 +417,11 @@ struct TarballInputScheme : CurlInputScheme
     }
 
     /**
-     * Typed method: Lock a TarballUnlockedInput to a TarballLockedInput.
+     * Lock a TarballUnlockedInput to a TarballLockedInput.
      * This is the primary implementation using typed inputs.
      */
     std::pair<ref<SourceAccessor>, TarballLockedInput>
-    lockTyped(ref<Store> store, const Settings & settings, const TarballUnlockedInput & input) const
+    lock(ref<Store> store, const Settings & settings, const TarballUnlockedInput & input) const
     {
         auto result = downloadTarball_(settings, input.url, {}, "«tarball:" + input.url + "»");
 
@@ -452,8 +452,8 @@ struct TarballInputScheme : CurlInputScheme
     }
 
     /**
-     * Wrapper method for backward compatibility with Input/Attrs API.
-     * Delegates to typed lockTyped() method.
+     * External API: Boundary between Input (Attrs) and typed inputs.
+     * Delegates to lock() method.
      */
     std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & input) const override
     {
@@ -461,7 +461,7 @@ struct TarballInputScheme : CurlInputScheme
         auto unlocked = tarballInputFromAttrs(*input.settings, input.attrs);
 
         // Delegate to typed method (pure typed logic, no Attrs!)
-        auto [accessor, locked] = lockTyped(store, *input.settings, unlocked);
+        auto [accessor, locked] = lock(store, *input.settings, unlocked);
 
         // Compute narHash from treeHash to create final input
         auto narHash = input.settings->getTarballCache()->treeHashToNarHash(*input.settings, *locked.treeHash);

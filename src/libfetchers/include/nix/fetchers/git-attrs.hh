@@ -116,7 +116,7 @@ struct GitLockedInput : GitInputBase
     }
 
     /**
-     * Serialize to Attrs for boundary conversion back to legacy Input type.
+     * Serialize to Attrs for boundary conversion back to Input (Attrs-based API).
      */
     virtual Attrs toAttrs() const;
 };

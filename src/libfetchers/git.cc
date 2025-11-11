@@ -436,7 +436,7 @@ struct GitInputScheme : InputScheme
     }
 
     /**
-     * Typed version: Get repository info from GitUnlockedInput.
+     * Get repository info from GitUnlockedInput.
      */
     RepoInfo getRepoInfo(const GitUnlockedInput & input) const
     {
@@ -536,8 +536,7 @@ struct GitInputScheme : InputScheme
     }
 
     /**
-     * Legacy version: Get repository info from Input (kept for compatibility).
-     * Delegates to typed version.
+     * External API: Get repository info from Input.
      */
     RepoInfo getRepoInfo(const Input & input) const
     {
@@ -620,7 +619,7 @@ struct GitInputScheme : InputScheme
     }
 
     /**
-     * Typed version: Verify commit from GitUnlockedInput.
+     * Verify commit from GitUnlockedInput.
      * Takes the resolved rev as a separate parameter since input.rev may be unset.
      */
     void verifyCommit(
@@ -647,16 +646,7 @@ struct GitInputScheme : InputScheme
     }
 
     /**
-     * Legacy version: delegates to typed version.
-     */
-    void verifyCommit(const Input & input, std::shared_ptr<GitRepo> repo) const
-    {
-        auto typed = gitInputFromAttrs(*input.settings, input.attrs);
-        verifyCommit(typed, repo, input.getRev(), input.to_string());
-    }
-
-    /**
-     * Typed version: Get accessor from a specific commit.
+     * Get accessor from a specific commit.
      * Returns GitLockedInput with resolved ref and rev.
      */
     std::pair<ref<SourceAccessor>, GitLockedInput> getAccessorFromCommit(
@@ -837,7 +827,7 @@ struct GitInputScheme : InputScheme
 
                 // Recursively lock the submodule (typed!)
                 auto [submoduleAccessor, submoduleLocked] =
-                    lockTyped(store, settings, submoduleInput, std::make_shared<GitInputScheme>());
+                    lock(store, settings, submoduleInput, std::make_shared<GitInputScheme>());
 
                 // Build display string from locked input
                 auto displayUrl = submoduleLocked.url;
@@ -882,7 +872,7 @@ struct GitInputScheme : InputScheme
     }
 
     /**
-     * Typed version: Get accessor from working directory.
+     * Get accessor from working directory.
      * Returns GitLockedInput, possibly with dirty state.
      */
     std::pair<ref<SourceAccessor>, GitLockedInput> getAccessorFromWorkdir(
@@ -1003,10 +993,10 @@ struct GitInputScheme : InputScheme
     }
 
     /**
-     * Typed method: Lock a GitUnlockedInput to a GitLockedInput.
+     * Lock a GitUnlockedInput to a GitLockedInput.
      * This is the primary implementation using typed inputs.
      */
-    std::pair<ref<SourceAccessor>, GitLockedInput> lockTyped(
+    std::pair<ref<SourceAccessor>, GitLockedInput> lock(
         ref<Store> store,
         const Settings & settings,
         const GitUnlockedInput & input,
@@ -1032,8 +1022,8 @@ struct GitInputScheme : InputScheme
     }
 
     /**
-     * Wrapper method for backward compatibility with Input/Attrs API.
-     * Delegates to typed lockTyped() method.
+     * External API: Boundary between Input (Attrs) and typed inputs.
+     * Delegates to lock() method.
      */
     std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & input) const override
     {
@@ -1041,7 +1031,7 @@ struct GitInputScheme : InputScheme
         auto unlocked = gitInputFromAttrs(*input.settings, input.attrs);
 
         // Delegate to typed method (pure typed logic, no Attrs!)
-        auto [accessor, locked] = lockTyped(store, *input.settings, unlocked, input.scheme);
+        auto [accessor, locked] = lock(store, *input.settings, unlocked, input.scheme);
 
         // Boundary conversion: GitLockedInput (typed) → Input (Attrs)
         Input result(input); // Copy to preserve scheme and other fields

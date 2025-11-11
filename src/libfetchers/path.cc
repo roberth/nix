@@ -126,11 +126,11 @@ struct PathInputScheme : InputScheme
     }
 
     /**
-     * Typed method: Lock a PathUnlockedInput to a PathLockedInput.
+     * Lock a PathUnlockedInput to a PathLockedInput.
      * This is the primary implementation using typed inputs.
      */
     std::pair<ref<SourceAccessor>, PathLockedInput>
-    lockTyped(ref<Store> store, const Settings & settings, const PathUnlockedInput & input) const
+    lock(ref<Store> store, const Settings & settings, const PathUnlockedInput & input) const
     {
         auto absPath = getAbsPath(input.path);
 
@@ -174,8 +174,8 @@ struct PathInputScheme : InputScheme
     }
 
     /**
-     * Wrapper method for backward compatibility with Input/Attrs API.
-     * Delegates to typed lockTyped() method.
+     * External API: Boundary between Input (Attrs) and typed inputs.
+     * Delegates to lock() method.
      */
     std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & input) const override
     {
@@ -183,7 +183,7 @@ struct PathInputScheme : InputScheme
         auto unlocked = pathInputFromAttrs(*input.settings, input.attrs);
 
         // Delegate to typed method (pure typed logic, no Attrs!)
-        auto [accessor, locked] = lockTyped(store, *input.settings, unlocked);
+        auto [accessor, locked] = lock(store, *input.settings, unlocked);
 
         // Boundary conversion: PathLockedInput (typed) → Input (Attrs)
         Input result(input); // Copy to preserve scheme and other fields
