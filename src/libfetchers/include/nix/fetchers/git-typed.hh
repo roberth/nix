@@ -11,6 +11,9 @@
 
 namespace nix::fetchers {
 
+// Forward declaration for verified fetches support
+struct PublicKey;
+
 /**
  * Base class for all Git input types, containing common attributes.
  */
@@ -29,7 +32,7 @@ struct GitInputBase : InputBase
     std::optional<bool> verifyCommit;
     std::optional<std::string> keytype;
     std::optional<std::string> publicKey;
-    std::optional<std::vector<std::string>> publicKeys;
+    std::optional<std::vector<PublicKey>> publicKeys;
 
     GitInputBase(
         const Settings & settings,

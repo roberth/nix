@@ -637,7 +637,7 @@ struct GitInputScheme : InputScheme
             publicKeys.push_back({.type = input.keytype.value_or("ssh-ed25519"), .key = *input.publicKey});
         if (input.publicKeys)
             for (auto & key : *input.publicKeys)
-                publicKeys.push_back({.type = input.keytype.value_or("ssh-ed25519"), .key = key});
+                publicKeys.push_back(key);
 
         auto verifyCommit = input.verifyCommit.value_or(!publicKeys.empty());
 

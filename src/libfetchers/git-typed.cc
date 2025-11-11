@@ -1,6 +1,8 @@
 #include "nix/fetchers/git-typed.hh"
 #include "nix/fetchers/attrs.hh"
+#include "nix/fetchers/fetchers.hh"
 #include "nix/util/url.hh"
+#include "nix/util/json-utils.hh"
 
 namespace nix::fetchers {
 
@@ -47,9 +49,17 @@ GitUnlockedInput gitInputFromAttrs(const Settings & settings, const Attrs & attr
 
     // Parse publicKeys array
     if (auto publicKeysStr = maybeGetStrAttr(attrs, "publicKeys")) {
-        // For now, we store the raw string; a full implementation would parse it
-        // This matches the existing code structure
-        input.publicKeys = std::vector<std::string>{*publicKeysStr};
+        auto pubKeysJson = nlohmann::json::parse(*publicKeysStr);
+        auto & pubKeys = getArray(pubKeysJson);
+        std::vector<PublicKey> keys;
+
+        for (auto & keyJson : pubKeys) {
+            PublicKey key = keyJson;
+            keys.push_back(key);
+        }
+
+        if (!keys.empty())
+            input.publicKeys = keys;
     }
 
     return input;
@@ -100,7 +110,7 @@ Attrs gitInputToAttrs(const GitUnlockedInput & input)
     if (input.publicKey)
         attrs.insert_or_assign("publicKey", *input.publicKey);
     if (input.publicKeys && !input.publicKeys->empty())
-        attrs.insert_or_assign("publicKeys", input.publicKeys->at(0));
+        attrs.insert_or_assign("publicKeys", publicKeys_to_string(*input.publicKeys));
 
     return attrs;
 }
@@ -155,7 +165,7 @@ Attrs gitInputToAttrs(const GitLockedInput & input)
     if (input.publicKey)
         attrs.insert_or_assign("publicKey", *input.publicKey);
     if (input.publicKeys && !input.publicKeys->empty())
-        attrs.insert_or_assign("publicKeys", input.publicKeys->at(0));
+        attrs.insert_or_assign("publicKeys", publicKeys_to_string(*input.publicKeys));
 
     return attrs;
 }
@@ -211,7 +221,7 @@ Attrs gitInputToAttrs(const GitFinalInput & input)
     if (input.publicKey)
         attrs.insert_or_assign("publicKey", *input.publicKey);
     if (input.publicKeys && !input.publicKeys->empty())
-        attrs.insert_or_assign("publicKeys", input.publicKeys->at(0));
+        attrs.insert_or_assign("publicKeys", publicKeys_to_string(*input.publicKeys));
 
     attrs.insert_or_assign("__final", Explicit<bool>(true));
 
