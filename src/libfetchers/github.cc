@@ -349,31 +349,27 @@ struct GitArchiveInputScheme : InputScheme
 
     std::pair<ref<SourceAccessor>, Input> getAccessor(ref<Store> store, const Input & _input) const override
     {
-        // Check if this is GitHub or GitLab
+        // All git archive types (github, gitlab, sourcehut) share the same structure
         auto type = getStrAttr(_input.attrs, "type");
 
-        if (type == "github") {
-            // Boundary conversion: Input (Attrs) → GitHubUnlockedInput (typed)
-            auto unlocked = githubInputFromAttrs(*_input.settings, _input.attrs);
+        // Boundary conversion: Input (Attrs) → GitHubUnlockedInput (typed)
+        // Note: GitLab and SourceHut use the same typed structures via type aliases
+        GitHubUnlockedInput unlocked = (type == "github")      ? githubInputFromAttrs(*_input.settings, _input.attrs)
+                                       : (type == "gitlab")    ? gitlabInputFromAttrs(*_input.settings, _input.attrs)
+                                       : (type == "sourcehut") ? githubInputFromAttrs(*_input.settings, _input.attrs)
+                                                               : throw Error("unsupported git archive type: %s", type);
 
-            // Delegate to typed method (pure typed logic)
-            auto [accessor, locked] = lockTyped(store, unlocked);
+        // Delegate to typed method (pure typed logic)
+        auto [accessor, locked] = lockTyped(store, unlocked);
 
-            // Boundary conversion: GitHubLockedInput (typed) → Input (Attrs)
-            Input result(_input); // Copy to preserve scheme
-            result.attrs = githubInputToAttrs(locked);
+        // Boundary conversion: GitHubLockedInput (typed) → Input (Attrs)
+        Input result(_input); // Copy to preserve scheme
+        result.attrs = (type == "github")      ? githubInputToAttrs(locked)
+                       : (type == "gitlab")    ? gitlabInputToAttrs(locked)
+                       : (type == "sourcehut") ? githubInputToAttrs(locked)
+                                               : throw Error("unsupported git archive type: %s", type);
 
-            return {accessor, std::move(result)};
-        } else {
-            // GitLab - convert similarly
-            auto unlocked = gitlabInputFromAttrs(*_input.settings, _input.attrs);
-            auto [accessor, locked] = lockTyped(store, unlocked);
-
-            Input result(_input);
-            result.attrs = gitlabInputToAttrs(locked);
-
-            return {accessor, std::move(result)};
-        }
+        return {accessor, std::move(result)};
     }
 
     bool isLocked(const Input & input) const override
