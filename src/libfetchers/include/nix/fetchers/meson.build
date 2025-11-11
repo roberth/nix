@@ -18,5 +18,6 @@ headers = files(
   'registry.hh',
   'tarball-typed.hh',
   'tarball.hh',
+  'typed-input-variant.hh',
   'typed-inputs.hh',
 )
