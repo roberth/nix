@@ -32,11 +32,39 @@ nix_eval_for_docs_common = nix_for_docs + [
 ]
 nix_eval_for_docs = nix_eval_for_docs_common + '--raw'
 
+# Explicitly depend on the nix executable and relevant libraries to ensure
+# they are rebuilt before running doc generation commands. Since nix is
+# dynamically linked to these libraries, the executable itself won't rebuild
+# when library sources change, so we must depend on the library targets directly.
+nix_subproject = subproject('nix')
+nix_exe = nix_subproject.get_variable('this_exe')
+libutil_subproject = subproject('libutil')
+libutil_lib = libutil_subproject.get_variable('this_library')
+libstore_subproject = subproject('libstore')
+libstore_lib = libstore_subproject.get_variable('this_library')
+libfetchers_subproject = subproject('libfetchers')
+libfetchers_lib = libfetchers_subproject.get_variable('this_library')
+libexpr_subproject = subproject('libexpr')
+libexpr_lib = libexpr_subproject.get_variable('this_library')
+libmain_subproject = subproject('libmain')
+libmain_lib = libmain_subproject.get_variable('this_library')
+libcmd_subproject = subproject('libcmd')
+libcmd_lib = libcmd_subproject.get_variable('this_library')
+
 conf_file_json = custom_target(
   command : nix_for_docs + [ 'config', 'show', '--json' ],
   capture : true,
   output : 'conf-file.json',
   env : nix_env_for_docs,
+  depends : [
+    nix_exe,
+    libutil_lib,
+    libstore_lib,
+    libfetchers_lib,
+    libexpr_lib,
+    libmain_lib,
+    libcmd_lib,
+  ],
 )
 
 language_json = custom_target(
@@ -44,6 +72,7 @@ language_json = custom_target(
   output : 'language.json',
   capture : true,
   env : nix_env_for_docs,
+  depends : [ nix_exe, libexpr_lib ],
 )
 
 nix3_cli_json = custom_target(
@@ -51,6 +80,7 @@ nix3_cli_json = custom_target(
   capture : true,
   output : 'nix.json',
   env : nix_env_for_docs,
+  depends : [ nix_exe, libcmd_lib, libstore_lib, libfetchers_lib ],
 )
 
 generate_manual_deps = files(
