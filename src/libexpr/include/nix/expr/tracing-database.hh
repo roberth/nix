@@ -80,6 +80,11 @@ public:
      * Returns absolute paths of all files that were read during that trace.
      */
     std::vector<std::string> getTracedFilePaths(const std::filesystem::path & tracePath) const;
+
+    /**
+     * Parse a trace file into typed trace entries.
+     */
+    std::vector<trace::TraceEntry> parseTraceFile(const std::filesystem::path & tracePath) const;
 };
 
 } // namespace nix

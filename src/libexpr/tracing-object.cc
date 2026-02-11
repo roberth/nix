@@ -52,10 +52,10 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     auto result = inner->maybeGetAttr(name);
     if (result) {
         auto type = result->getType();
-        traceFile.logResult(valueId, trace::ResultType{objectTypeToString(type)});
+        traceFile.logResult(valueId, trace::ResultMaybeType{objectTypeToString(type)});
         return std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), traceFile, valueId));
     }
-    // No result logged for missing attribute - the cache can infer this from absence
+    traceFile.logResult(valueId, trace::ResultMaybeType{std::nullopt});
     return nullptr;
 }
 
@@ -77,10 +77,12 @@ std::string TracingObject::getStringIgnoreContext()
 
 std::pair<std::string, NixStringContext> TracingObject::getStringWithContext()
 {
-    // For now, we trace only the string value, not the context
-    auto valueId = traceFile.logQuery(trace::QueryGetString{valueNum});
+    auto valueId = traceFile.logQuery(trace::QueryGetStringWithContext{valueNum});
     auto result = inner->getStringWithContext();
-    traceFile.logResult(valueId, trace::ResultString{result.first});
+    std::vector<std::string> ctx;
+    for (const auto & elem : result.second)
+        ctx.push_back(elem.to_string());
+    traceFile.logResult(valueId, trace::ResultStringWithContext{result.first, std::move(ctx)});
     return result;
 }
 

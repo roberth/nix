@@ -46,6 +46,7 @@ headers = [ config_pub_h ] + files(
   'tracing-environment.hh',
   'tracing-evaluator.hh',
   'tracing-object.hh',
+  'tracing-replay-evaluator.hh',
   'tracing-source-accessor.hh',
   'value-to-json.hh',
   'value-to-xml.hh',

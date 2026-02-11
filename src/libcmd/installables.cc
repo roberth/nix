@@ -21,7 +21,9 @@
 #include "nix/expr/eval-cache.hh"
 #include "nix/expr/coarse-eval-cache.hh"
 #include "nix/expr/interpreter.hh"
+#include "nix/expr/tracing-database.hh"
 #include "nix/expr/tracing-evaluator.hh"
+#include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/util/url.hh"
 #include "nix/fetchers/registry.hh"
 #include "nix/store/build-result.hh"
@@ -500,12 +502,11 @@ Installables SourceExprCommand::parseInstallables(ref<Store> store, std::vector<
         auto state = getEvalState();
 
         // Create the evaluator (TracingEvaluator if tracing is enabled)
-        ref<Evaluator> evaluator = [&]() -> ref<Evaluator> {
-            auto interp = make_ref<Interpreter>(state);
-            if (auto db = getTracingDatabase())
-                return make_ref<TracingEvaluator>(*state->environment->getTraceFile(), interp, *db);
-            return interp;
-        }();
+        ref<Evaluator> evaluator = make_ref<Interpreter>(state);
+        if (auto db = getTracingDatabase()) {
+            evaluator = make_ref<TracingEvaluator>(*state->environment->getTraceFile(), evaluator, *db);
+            evaluator = make_ref<TracingReplayEvaluator>(evaluator, *db);
+        }
 
         // Evaluate via the Evaluator (TracingEvaluator logs ready first)
         ref<Object> rootObject = [&]() -> ref<Object> {
