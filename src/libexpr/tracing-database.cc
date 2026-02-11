@@ -10,13 +10,10 @@
 namespace nix {
 
 TraceFile::TraceFile(std::filesystem::path path, std::function<void()> onClose)
-    : path(path)
-    , file(path, std::ios::out | std::ios::trunc)
+    : path(std::move(path))
     , onClose(std::move(onClose))
 {
-    if (!file.is_open())
-        throw Error("failed to open trace file: %s", path.string());
-    file << "[\n";
+    // File creation is deferred until the first log entry
 }
 
 TraceFile::~TraceFile()
@@ -24,13 +21,25 @@ TraceFile::~TraceFile()
     if (file.is_open()) {
         file << "]\n";
         file.close();
+        // Only update symlink if the trace was actually written
         if (onClose)
             onClose();
     }
 }
 
+void TraceFile::ensureOpen()
+{
+    if (file.is_open())
+        return;
+    file.open(path, std::ios::out | std::ios::trunc);
+    if (!file.is_open())
+        throw Error("failed to open trace file: %s", path.string());
+    file << "[\n";
+}
+
 void TraceFile::log(const nlohmann::json & entry)
 {
+    ensureOpen();
     if (!first)
         file << ",\n";
     first = false;

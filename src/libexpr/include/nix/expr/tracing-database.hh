@@ -13,6 +13,7 @@ namespace nix {
 
 /**
  * A single trace session that logs JSON entries to a file.
+ * File creation is lazy - the file is only created when the first entry is logged.
  */
 class TraceFile
 {
@@ -21,6 +22,11 @@ class TraceFile
     bool first = true;
     uint64_t nextValueNum = 0;
     std::function<void()> onClose;
+
+    /**
+     * Ensure the trace file is open, creating it lazily on first write.
+     */
+    void ensureOpen();
 
 public:
     explicit TraceFile(std::filesystem::path path, std::function<void()> onClose = {});
