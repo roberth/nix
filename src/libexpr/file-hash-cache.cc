@@ -5,8 +5,6 @@
 #include "nix/util/logging.hh"
 #include "nix/util/users.hh"
 
-#include <sys/stat.h>
-
 namespace nix {
 
 static const char * schema = R"sql(
@@ -44,12 +42,13 @@ FileHashCache::FileHashCache()
 
 FileHashCache::~FileHashCache() = default;
 
-static std::optional<time_t> getMtime(const std::filesystem::path & path)
+static std::optional<int64_t> getMtime(const std::filesystem::path & path)
 {
-    struct stat st;
-    if (stat(path.c_str(), &st) != 0)
+    std::error_code ec;
+    auto mtime = std::filesystem::last_write_time(path, ec);
+    if (ec)
         return std::nullopt;
-    return st.st_mtime;
+    return mtime.time_since_epoch().count();
 }
 
 std::optional<Hash> FileHashCache::lookup(const std::filesystem::path & path)
@@ -63,7 +62,7 @@ std::optional<Hash> FileHashCache::lookup(const std::filesystem::path & path)
     if (!query.next())
         return std::nullopt;
 
-    auto cachedMtime = static_cast<time_t>(query.getInt(0));
+    auto cachedMtime = query.getInt(0);
     if (cachedMtime != *currentMtime) {
         debug("file hash cache: mtime changed for %s", path.string());
         return std::nullopt;
@@ -88,7 +87,7 @@ Hash FileHashCache::getHash(const std::filesystem::path & path)
         throw Error("cannot stat file '%s'", path.string());
 
     auto state(_state->lock());
-    state->insertHash.use()(path.string())(static_cast<int64_t>(*mtime))(hash.to_string(HashFormat::SRI, true)).exec();
+    state->insertHash.use()(path.string()) (*mtime)(hash.to_string(HashFormat::SRI, true)).exec();
 
     return hash;
 }
