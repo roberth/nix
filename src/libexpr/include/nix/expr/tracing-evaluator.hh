@@ -17,6 +17,10 @@ class TracingEvaluator : public Evaluator
 {
     TraceFile & traceFile;
     ref<Evaluator> inner;
+    TracingDatabase & db;
+    bool preloaded = false;
+
+    void ensurePreloaded();
 
 public:
     /**
