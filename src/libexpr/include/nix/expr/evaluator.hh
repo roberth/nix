@@ -154,6 +154,15 @@ public:
      * @param basePath The base path for relative imports
      */
     virtual ref<Object> evalExpr(const std::string & expr, const SourcePath & basePath) = 0;
+
+    /**
+     * Get the underlying EvalState, if this evaluator has one.
+     * Returns nullptr for evaluators that don't wrap an EvalState.
+     */
+    virtual class EvalState * getEvalState()
+    {
+        return nullptr;
+    }
 };
 
 } // namespace nix

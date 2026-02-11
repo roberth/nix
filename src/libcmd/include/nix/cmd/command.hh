@@ -105,6 +105,11 @@ struct EvalCommand : virtual StoreCommand, MixEvalArgs
 
     ref<EvalState> getEvalState();
 
+    TracingDatabase * getTracingDatabase()
+    {
+        return tracingDb.get();
+    }
+
 private:
     std::shared_ptr<Store> evalStore;
 

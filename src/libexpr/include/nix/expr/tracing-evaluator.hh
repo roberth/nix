@@ -7,6 +7,7 @@ namespace nix {
 
 class Store;
 class TraceFile;
+class TracingDatabase;
 
 namespace fetchers {
 struct Settings;
@@ -18,7 +19,13 @@ class TracingEvaluator : public Evaluator
     ref<Evaluator> inner;
 
 public:
-    TracingEvaluator(TraceFile & traceFile, ref<Evaluator> inner);
+    /**
+     * Create a tracing evaluator.
+     * @param traceFile The trace file to log to
+     * @param inner The wrapped evaluator
+     * @param db Tracing database for preloading from previous traces
+     */
+    TracingEvaluator(TraceFile & traceFile, ref<Evaluator> inner, TracingDatabase & db);
 
     bool isReadOnly() const override;
     Store & getStore() override;

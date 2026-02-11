@@ -1,5 +1,7 @@
 #include "nix/expr/tracing-source-accessor.hh"
 
+#include <iostream>
+
 namespace nix {
 
 TracingSourceAccessor::TracingSourceAccessor(
@@ -7,6 +9,27 @@ TracingSourceAccessor::TracingSourceAccessor(
     : inner(inner)
     , logFn(std::move(logFn))
 {
+}
+
+SpeculativeReadResult TracingSourceAccessor::readSpeculatively(const CanonPath & path)
+{
+    auto contents = inner->readFile(path);
+    auto hash = hashString(HashAlgorithm::SHA256, contents);
+    auto pathStr = path.abs();
+
+    // Capture what we need for deferred trace emission
+    auto emitTrace = [logFn = this->logFn, pathStr, hash]() {
+        trace::Response<trace::FileReadRequest> trace{
+            .request = {.absPath = pathStr},
+            .response = {.contentHash = hash},
+        };
+        logFn(trace);
+    };
+
+    return SpeculativeReadResult{
+        .contents = std::move(contents),
+        .emitTrace = std::move(emitTrace),
+    };
 }
 
 std::string TracingSourceAccessor::readFile(const CanonPath & path)

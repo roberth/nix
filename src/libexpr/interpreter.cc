@@ -40,4 +40,9 @@ ref<Object> Interpreter::evalExpr(const std::string & expr, const SourcePath & b
     return make_ref<InterpreterObject>(*evalState, allocRootValue(v));
 }
 
+EvalState * Interpreter::getEvalState()
+{
+    return &*evalState;
+}
+
 } // namespace nix

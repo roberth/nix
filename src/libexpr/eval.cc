@@ -1063,6 +1063,34 @@ struct ExprParseFile : Expr, gc
     }
 };
 
+/**
+ * Wrapper Expr for speculatively pre-parsed files.
+ * When evaluated, emits the deferred trace and delegates to the inner Expr.
+ */
+struct ExprSpeculativeParseTrigger : Expr, gc
+{
+    Expr * inner;
+    std::function<void()> emitTrace;
+
+    ExprSpeculativeParseTrigger(Expr * inner, std::function<void()> emitTrace)
+        : inner(inner)
+        , emitTrace(std::move(emitTrace))
+    {
+    }
+
+    void eval(EvalState & state, Env & env, Value & v) override
+    {
+        // Emissions deduplicated by fileEvalCache and thunk state transition
+        emitTrace();
+        inner->eval(state, env, v);
+    }
+
+    PosIdx getPos() const override
+    {
+        return inner->getPos();
+    }
+};
+
 void EvalState::evalFile(const SourcePath & path, Value & v, bool mustBeTrivial)
 {
     auto resolvedPath = getConcurrent(*importResolutionCache, path);
@@ -1105,6 +1133,22 @@ void EvalState::resetFileCache()
     importResolutionCache->clear();
     fileEvalCache->clear();
     inputCache->clear();
+}
+
+void EvalState::insertPreloadedParsedFile(const SourcePath & path, Expr * expr, std::function<void()> emitTrace)
+{
+    auto wrapper = new ExprSpeculativeParseTrigger(expr, std::move(emitTrace));
+    fileEvalCache->try_emplace_and_cvisit(
+        path,
+        nullptr,
+        [&](auto & i) {
+            auto v = allocValue();
+            v->mkThunk(&baseEnv, wrapper);
+            i.second = v;
+        },
+        [&](auto &) {
+            // Shouldn't happen as long as eval is single threaded
+        });
 }
 
 void EvalState::eval(Expr * e, Value & v)

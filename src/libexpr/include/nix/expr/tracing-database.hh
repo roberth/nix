@@ -4,6 +4,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <vector>
 
 #include <nlohmann/json_fwd.hpp>
 
@@ -18,9 +20,10 @@ class TraceFile
     std::ofstream file;
     bool first = true;
     uint64_t nextValueNum = 0;
+    std::function<void()> onClose;
 
 public:
-    explicit TraceFile(std::filesystem::path path);
+    explicit TraceFile(std::filesystem::path path, std::function<void()> onClose = {});
     ~TraceFile();
 
     void log(const nlohmann::json & entry);
@@ -60,6 +63,23 @@ public:
 
     std::filesystem::path tracesDir() const;
     std::filesystem::path newTraceFile();
+
+    /**
+     * Update the "latest.json" symlink to point to the given trace file.
+     * Should be called after a trace is complete.
+     */
+    void updateLatestSymlink(const std::filesystem::path & tracePath);
+
+    /**
+     * Get the path to the latest trace file, if one exists.
+     */
+    std::optional<std::filesystem::path> latestTraceFile() const;
+
+    /**
+     * Read file paths from a trace file.
+     * Returns absolute paths of all files that were read during that trace.
+     */
+    std::vector<std::string> getTracedFilePaths(const std::filesystem::path & tracePath) const;
 };
 
 } // namespace nix

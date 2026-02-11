@@ -502,8 +502,8 @@ Installables SourceExprCommand::parseInstallables(ref<Store> store, std::vector<
         // Create the evaluator (TracingEvaluator if tracing is enabled)
         ref<Evaluator> evaluator = [&]() -> ref<Evaluator> {
             auto interp = make_ref<Interpreter>(state);
-            if (auto traceFile = state->environment->getTraceFile())
-                return make_ref<TracingEvaluator>(*traceFile, interp);
+            if (auto db = getTracingDatabase())
+                return make_ref<TracingEvaluator>(*state->environment->getTraceFile(), interp, *db);
             return interp;
         }();
 
