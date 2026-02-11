@@ -33,4 +33,14 @@ const fetchers::Settings & CoarseEvalCache::getFetchSettings()
     return state->fetchSettings;
 }
 
+ref<Object> CoarseEvalCache::evalFile(const SourcePath & path, const std::string & displayPath)
+{
+    throw Error("CoarseEvalCache::evalFile is not supported; use getRoot() for flakes");
+}
+
+ref<Object> CoarseEvalCache::evalExpr(const std::string & expr, const SourcePath & basePath)
+{
+    throw Error("CoarseEvalCache::evalExpr is not supported; use getRoot() for flakes");
+}
+
 } // namespace nix

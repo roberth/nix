@@ -245,7 +245,7 @@ EvalState::EvalState(
     , repair(NoRepair)
     , environment(environment)
     , systemEnvironment(systemEnvironment)
-    , rootFS(systemEnvironment->fsRoot())
+    , rootFS(environment->fsRoot())
     , corepkgsFS(make_ref<MemorySourceAccessor>())
     , internalFS(make_ref<MemorySourceAccessor>())
     , derivationInternal{internalFS->addFile(
@@ -296,7 +296,7 @@ EvalState::EvalState(
     }
 
     /* Allow access to all paths in the search path. */
-    if (rootFS.dynamic_pointer_cast<AllowListSourceAccessor>())
+    if (rootFS->asAllowListSourceAccessor())
         for (auto & i : lookupPath.elements)
             resolveLookupPathPath(i.path, true);
 
@@ -325,21 +325,21 @@ EvalState::~EvalState() {}
 
 void EvalState::allowPathLegacy(const Path & path)
 {
-    if (auto rootFS2 = rootFS.dynamic_pointer_cast<AllowListSourceAccessor>())
+    if (auto rootFS2 = rootFS->asAllowListSourceAccessor())
         rootFS2->allowPrefix(CanonPath(path));
 }
 
 void EvalState::allowPath(const StorePath & storePath)
 {
     // FIXME: this should generally be handled within SystemEnvironment as a consequence of other operations only.
-    if (auto rootFS2 = rootFS.dynamic_pointer_cast<AllowListSourceAccessor>())
+    if (auto rootFS2 = rootFS->asAllowListSourceAccessor())
         rootFS2->allowPrefix(CanonPath(systemEnvironment->store->printStorePath(storePath)));
 }
 
 void EvalState::allowClosure(const StorePath & storePath)
 {
     // FIXME: this should generally be handled within SystemEnvironment as a consequence of other operations only.
-    if (!rootFS.dynamic_pointer_cast<AllowListSourceAccessor>())
+    if (!rootFS->asAllowListSourceAccessor())
         return;
 
     StorePathSet closure;
@@ -394,13 +394,13 @@ void EvalState::checkURI(const std::string & uri)
     /* If the URI is a path, then check it against allowedPaths as
        well. */
     if (isAbsolute(uri)) {
-        if (auto rootFS2 = rootFS.dynamic_pointer_cast<AllowListSourceAccessor>())
+        if (auto rootFS2 = rootFS->asAllowListSourceAccessor())
             rootFS2->checkAccess(CanonPath(uri));
         return;
     }
 
     if (hasPrefix(uri, "file://")) {
-        if (auto rootFS2 = rootFS.dynamic_pointer_cast<AllowListSourceAccessor>())
+        if (auto rootFS2 = rootFS->asAllowListSourceAccessor())
             rootFS2->checkAccess(CanonPath(uri.substr(7)));
         return;
     }

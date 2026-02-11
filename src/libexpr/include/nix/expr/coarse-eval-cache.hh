@@ -44,6 +44,10 @@ public:
     Store & getStore() override;
 
     const fetchers::Settings & getFetchSettings() override;
+
+    ref<Object> evalFile(const SourcePath & path, const std::string & displayPath) override;
+
+    ref<Object> evalExpr(const std::string & expr, const SourcePath & basePath) override;
 };
 
 } // namespace nix

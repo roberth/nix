@@ -7,6 +7,10 @@
 #include "nix/store/local-fs-store.hh"
 #include "nix/store/derivations.hh"
 #include "nix/expr/nixexpr.hh"
+#include "nix/expr/environment/system.hh"
+#include "nix/expr/tracing-database.hh"
+#include "nix/expr/tracing-environment.hh"
+#include "nix/expr/tracing-evaluator.hh"
 #include "nix/store/profiles.hh"
 #include "nix/cmd/repl.hh"
 #include "nix/util/strings.hh"
@@ -125,8 +129,19 @@ ref<Store> EvalCommand::getEvalStore()
 ref<EvalState> EvalCommand::getEvalState()
 {
     if (!evalState) {
-        evalState = std::allocate_shared<EvalState>(
-            traceable_allocator<EvalState>(), lookupPath, getEvalStore(), fetchSettings, evalSettings, getStore());
+        // TODO: always use Evaluator interface. This will vastly simplify the
+        //       CLI evaluator wiring.
+        if (evalSettings.useTracingEvalCache) {
+            tracingDb = std::make_unique<TracingDatabase>();
+            traceFile = std::make_unique<TraceFile>(tracingDb->newTraceFile());
+            auto sysEnv = make_ref<SystemEnvironment>(evalSettings, getEvalStore(), getStore());
+            auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *traceFile);
+            evalState = std::allocate_shared<EvalState>(
+                traceable_allocator<EvalState>(), lookupPath, fetchSettings, evalSettings, tracingEnv, sysEnv);
+        } else {
+            evalState = std::allocate_shared<EvalState>(
+                traceable_allocator<EvalState>(), lookupPath, getEvalStore(), fetchSettings, evalSettings, getStore());
+        }
 
         evalState->repair = repair;
 

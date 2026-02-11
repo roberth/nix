@@ -13,8 +13,7 @@
 #include "nix/main/shared.hh"
 #include "nix/flake/flake.hh"
 #include "nix/expr/eval-cache.hh"
-#include "nix/expr/interpreter.hh"
-#include "nix/expr/interpreter-object.hh"
+#include "nix/expr/evaluation-helpers.hh"
 #include "nix/util/url.hh"
 #include "nix/fetchers/registry.hh"
 #include "nix/store/build-result.hh"
@@ -28,13 +27,14 @@ namespace nix {
 
 InstallableAttrPath::InstallableAttrPath(
     ref<EvalState> state,
+    ref<Evaluator> evaluator,
     SourceExprCommand & cmd,
-    Value * v,
+    ref<Object> rootObject,
     const std::string & attrPath,
     ExtendedOutputsSpec extendedOutputsSpec)
-    : InstallableValue(state, make_ref<Interpreter>(state))
+    : InstallableValue(state, evaluator)
     , cmd(cmd)
-    , v(allocRootValue(v))
+    , rootObject(rootObject)
     , attrPath(attrPath)
     , extendedOutputsSpec(std::move(extendedOutputsSpec))
 {
@@ -42,6 +42,7 @@ InstallableAttrPath::InstallableAttrPath(
 
 std::pair<Value *, PosIdx> InstallableAttrPath::toValue(EvalState & state)
 {
+    auto v = rootObject->defeatCache();
     auto [vRes, pos] = findAlongAttrPath(state, attrPath, *cmd.getAutoArgs(state), **v);
     state.forceValue(*vRes, pos);
     return {vRes, pos};
@@ -49,83 +50,70 @@ std::pair<Value *, PosIdx> InstallableAttrPath::toValue(EvalState & state)
 
 DerivedPathsWithInfo InstallableAttrPath::toDerivedPaths()
 {
-    auto [v, pos] = toValue(*state);
+    auto root = getRootObject();
 
-    if (std::optional derivedPathWithInfo =
-            trySinglePathToDerivedPaths(*v, pos, fmt("while evaluating the attribute '%s'", attrPath))) {
-        return {*derivedPathWithInfo};
+    auto attrPaths = attrPath.empty() ? std::vector<std::string>{""} : std::vector<std::string>{attrPath};
+    auto attrResult = expr::helpers::tryAttrPaths(*root, attrPaths, *state);
+    if (!attrResult) {
+        throw Error(attrResult.getSuggestions(), "attribute '%s' not found", attrPath);
     }
 
-    Bindings & autoArgs = *cmd.getAutoArgs(*state);
+    auto [attr, resolvedPath] = *attrResult;
 
-    PackageInfos packageInfos;
-    getDerivations(*state, *v, "", autoArgs, packageInfos, false);
+    if (!expr::helpers::isDerivation(*attr)) {
+        if (auto derivedPath = expr::helpers::trySinglePathToDerivedPath(
+                *evaluator, *attr, fmt("while evaluating the attribute '%s'", attrPath))) {
+            return {{
+                .path = *derivedPath,
+                .info = make_ref<ExtraPathInfo>(),
+            }};
+        } else {
+            auto v = attr->defeatCache();
+            throw Error("attribute '%s' is not a derivation or path but %s", attrPath, showType(**v));
+        }
+    }
 
-    // Backward compatibility hack: group results by drvPath. This
-    // helps keep .all output together.
-    std::map<StorePath, OutputsSpec> byDrvPath;
+    auto drvPath = expr::helpers::forceDerivation(*evaluator, *attr, evaluator->getStore());
 
-    for (auto & packageInfo : packageInfos) {
-        auto drvPath = packageInfo.queryDrvPath();
-        if (!drvPath)
-            throw Error("'%s' is not a derivation", what());
-
-        auto newOutputs = std::visit(
-            overloaded{
-                [&](const ExtendedOutputsSpec::Default & d) -> OutputsSpec {
-                    StringSet outputsToInstall;
-                    for (auto & output : packageInfo.queryOutputs(false, true))
-                        outputsToInstall.insert(output.first);
-                    if (outputsToInstall.empty())
-                        outputsToInstall.insert("out");
-                    return OutputsSpec::Names{std::move(outputsToInstall)};
-                },
-                [&](const ExtendedOutputsSpec::Explicit & e) -> OutputsSpec { return e; },
+    return {{
+        .path =
+            DerivedPath::Built{
+                .drvPath = makeConstantStorePathRef(std::move(drvPath)),
+                .outputs = std::visit(
+                    overloaded{
+                        [&](const ExtendedOutputsSpec::Default & d) -> OutputsSpec {
+                            auto outputsToInstall = expr::helpers::getDerivationOutputs(*attr);
+                            return OutputsSpec::Names{std::move(outputsToInstall)};
+                        },
+                        [&](const ExtendedOutputsSpec::Explicit & e) -> OutputsSpec { return e; },
+                    },
+                    extendedOutputsSpec.raw),
             },
-            extendedOutputsSpec.raw);
-
-        auto [iter, didInsert] = byDrvPath.emplace(*drvPath, newOutputs);
-
-        if (!didInsert)
-            iter->second = iter->second.union_(newOutputs);
-    }
-
-    DerivedPathsWithInfo res;
-    for (auto & [drvPath, outputs] : byDrvPath)
-        res.push_back({
-            .path =
-                DerivedPath::Built{
-                    .drvPath = makeConstantStorePathRef(drvPath),
-                    .outputs = outputs,
-                },
-            .info = make_ref<ExtraPathInfoValue>(ExtraPathInfoValue::Value{
-                .extendedOutputsSpec = outputs,
-                /* FIXME: reconsider backwards compatibility above
-                   so we can fill in this info. */
-            }),
-        });
-
-    return res;
+        .info = make_ref<ExtraPathInfoValue>(ExtraPathInfoValue::Value{
+            .attrPath = attrPath,
+            .extendedOutputsSpec = extendedOutputsSpec,
+        }),
+    }};
 }
 
 ref<Object> InstallableAttrPath::getRootObject()
 {
-    // For InstallableAttrPath, we use the Interpreter evaluator
-    // and wrap the value in an InterpreterObject
-    return make_ref<InterpreterObject>(*state, v);
+    return rootObject;
 }
 
 InstallableAttrPath InstallableAttrPath::parse(
     ref<EvalState> state,
+    ref<Evaluator> evaluator,
     SourceExprCommand & cmd,
-    Value * v,
+    ref<Object> rootObject,
     std::string_view prefix,
     ExtendedOutputsSpec extendedOutputsSpec)
 {
     return {
         state,
+        evaluator,
         cmd,
-        v,
+        rootObject,
         prefix == "." ? "" : std::string{prefix},
         std::move(extendedOutputsSpec),
     };

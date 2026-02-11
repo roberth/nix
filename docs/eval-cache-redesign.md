@@ -23,11 +23,11 @@ Each trace records the specific files read, their content hashes, and the result
 
 ## Definitions
 
-- **Message**: An in-memory object representing a request or response exchanged between the evaluator and environment interfaces (e.g., `READ_FILE`, `FILE_CONTENT`). These are passed as direct function calls, not serialized.
+- **Message**: An in-memory object representing an event in the evaluation trace. There are two kinds: (1) **Environment messages** are request/response pairs for evaluator-initiated I/O (file reads, env vars). (2) **User messages** are queries and results for user-initiated operations, linked by value handles. Messages are passed as direct function calls, not serialized.
 
 - **Idempotence**: A message is idempotent if repeating the same request within an evaluation context always returns the same response. This follows from Nix's purity model.
 
-- **Handle**: An identifier (like `v0`, `v1`) used in messages to refer to values or resources during evaluation.
+- **Handle**: An identifier (like `v0`, `v1`) used in messages to refer to values during evaluation. Each user query allocates a new handle, and the corresponding result references the same handle. Handles enable linking queries to results and referencing parent values in subsequent queries (e.g., `{query: {getAttr: "foo", from: 0}, v: 1}` accesses an attribute of value `v0`).
 
 - **Content addressing / Flattening**: Converting handles to content-based identifiers (likely merkle hashes) so that two handles referring to the same content are considered equivalent across evaluations.
 
@@ -126,28 +126,57 @@ This means the cache can check applicability by:
 
 ### Message Protocol
 
-The evaluator initiates conversation by asking what to do. It does this whenever it is "done"—including when it has just started. The `READY()` message may be useful for segmenting traces if needed (this is uncertain).
+There are two kinds of messages in the trace:
+
+1. **Environment messages**: Request/response pairs for evaluator-initiated I/O (file reads, environment variables, `builtins.import`, etc.). These are "transparent" to the user—they happen as side effects of evaluation.
+
+2. **User messages**: Query and result as separate messages for user-initiated operations. Each query allocates a value handle `v` that links it to its eventual result.
+
+The key insight is that all messages flow through a single stream, but we explicitly distinguish their kinds. Environment messages are paired (request immediately followed by response), while user queries and results are separated—environment messages may occur between a query and its result.
+
+**Value handles**: Each user query allocates a new `v` number. This handle identifies the value being computed and links the query to its result. Child values (e.g., from attribute access) get their own handles, enabling structured replay.
+
+**Result types**: Results include type information since we evaluate to WHNF. This enables the cache to know what operations are valid on a cached value without re-evaluating.
 
 **Example message flow:**
 
-```
-Evaluator → Environment: READY()
-Environment → Evaluator: EVAL_FILE(path="/path/default.nix", accessor_handle=src0, value_out_handle=v0)
-Evaluator → Environment: READ_FILE(path="/path/default.nix", accessor_handle=src0)
-Environment → Evaluator: FILE_CONTENT(path="/path/default.nix" accessor_handle=src0, content=<bytes>)
-Evaluator → Environment: READ_FILE(path="/path/lib.nix", accessor_handle=v0)
-Environment → Evaluator: FILE_CONTENT(path="/path/lib.nix", accessor_handle=v0, content=<bytes>)
-... (more file reads as evaluation proceeds)
-Evaluator → Environment: VALUE_RESULT(value_handle=v0, type=ATTRSET)
-Evaluator → Environment: READY()  // perhaps, or implied by VALUE_RESULT
-Environment → Evaluator: EVAL_ATTR(value_handle=v0, attr="hello", value_out_handle=v1)
-Evaluator → Environment: READ_FILE(path="/path/hello.nix", accessor_handle=src0)
-Environment → Evaluator: FILE_CONTENT(path="/path/hello.nix", accessor_handle=v0, content=<bytes>)
-Evaluator → Environment: VALUE_RESULT(handle=v1, type=ATTRSET)
-...
+```json
+// User initiates evaluation of an expression
+{query: {expr: "(import ./foo.nix).bar", baseDir: "/home/user/project"}, v: 0}
+
+// Environment messages: file reads triggered by import
+{request: {absPath: "/home/user/project/foo.nix"}}
+{response: {contentHash: "sha256-abc123..."}}
+
+{request: {absPath: "/home/user/project/lib.nix"}}
+{response: {contentHash: "sha256-def456..."}}
+
+// Evaluation of root expression complete
+{result: {type: "attrset"}, v: 0}
+
+// User requests attribute access on v0
+{query: {getAttr: "bar", from: 0}, v: 1}
+
+// More environment messages if bar triggers imports
+{request: {absPath: "/home/user/project/bar.nix"}}
+{response: {contentHash: "sha256-789ghi..."}}
+
+// Attribute access complete
+{result: {type: "attrset"}, v: 1}
+
+// User requests string value (e.g., drvPath)
+{query: {getAttr: "drvPath", from: 1}, v: 2}
+{result: {type: "string", value: "/nix/store/..."}, v: 2}
 ```
 
-This shows the context extension pattern: after the evaluator reports it has an attrset, the environment requests evaluation of a specific attribute, and evaluation continues in that extended context.
+For file imports (using `-f`):
+```json
+{query: {import: "/home/user/project/default.nix"}, v: 0}
+// ... environment messages ...
+{result: {type: "attrset"}, v: 0}
+```
+
+This structure preserves enough information for replay: the cache can match queries to their results via `v`, verify environment responses via content hashes, and reconstruct the evaluation without re-running the interpreter.
 
 ## Design Details
 
@@ -290,6 +319,14 @@ This phase is exploratory: starting by unifying the existing cache and evaluator
 3. Tune granularity of cache entries
 4. Address performance-sensitive decisions from Open Questions
 
+## Scope Limitations
+
+### Flakes and Store Path Dependencies
+
+Testing and prototyping with flakes is scoped out for the initial implementation. Flake evaluation embeds store paths (e.g., `/nix/store/0yj36irhwn225ywy1saz0gf5wr2ciz50-source`) directly into traces, making cache hits effectively impossible after unrelated changes to the flake source. Addressing this requires a notion of abstract paths, as well as a solution to the lack of lazy paths, which is a significant challenge in itself.
+
+For initial prototyping, non-flake Nix expressions (e.g., `nix build -f`) provide a simpler environment where file paths are stable and cache hits are achievable.
+
 ## Open Questions
 
 1. **Handle equivalence**: In more dynamic or non-deterministic usage, handles will be created in a different order.
@@ -358,6 +395,25 @@ This is implementable behind the `SourceAccessor` interface whereas the new eval
 
 These optimizations apply independently to the `Interpreter` component, and can improve its performance.
 Optimizations within the `Interpreter` generally do not affect the caching strategy.
+
+## Testing
+
+To test the tracing eval cache prototype:
+
+```bash
+# Clear any existing traces
+rm ~/.cache/nix/eval-tracing-v0/traces/*.json 2>/dev/null
+
+# Run a build with tracing enabled
+./build/src/nix/nix build --dry-run \
+  --experimental-features 'nix-command flakes tracing-eval-cache' \
+  --option tracing-eval-cache true \
+  --impure \
+  --expr '(import <nixpkgs> {}).hello'
+
+# View the trace
+cat ~/.cache/nix/eval-tracing-v0/traces/*.json
+```
 
 ## References
 

@@ -9,6 +9,7 @@
 namespace nix {
 
 struct Sink;
+struct AllowListSourceAccessor;
 
 /**
  * Note there is a decent chance this type soon goes away because the problem is solved another way.
@@ -208,6 +209,15 @@ struct SourceAccessor : std::enable_shared_from_this<SourceAccessor>
     virtual std::optional<time_t> getLastModified()
     {
         return std::nullopt;
+    }
+
+    /**
+     * If this is an AllowListSourceAccessor (or wraps one), return a
+     * pointer to it. Used for access control in pure evaluation mode.
+     */
+    virtual AllowListSourceAccessor * asAllowListSourceAccessor()
+    {
+        return nullptr;
     }
 };
 

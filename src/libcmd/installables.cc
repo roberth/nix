@@ -20,6 +20,8 @@
 #include "nix/flake/flake.hh"
 #include "nix/expr/eval-cache.hh"
 #include "nix/expr/coarse-eval-cache.hh"
+#include "nix/expr/interpreter.hh"
+#include "nix/expr/tracing-evaluator.hh"
 #include "nix/util/url.hh"
 #include "nix/fetchers/registry.hh"
 #include "nix/store/build-result.hh"
@@ -496,25 +498,34 @@ Installables SourceExprCommand::parseInstallables(ref<Store> store, std::vector<
         }
 
         auto state = getEvalState();
-        auto vFile = state->allocValue();
 
-        if (file == "-") {
-            auto e = state->parseStdin();
-            state->eval(e, *vFile);
-        } else if (file) {
-            auto dir = absPath(getCommandBaseDir());
-            state->evalFile(lookupFileArg(*state, *file, &dir), *vFile);
-        } else {
-            Path dir = absPath(getCommandBaseDir());
-            auto e = state->parseExprFromString(*expr, state->rootPath(dir));
-            state->eval(e, *vFile);
-        }
+        // Create the evaluator (TracingEvaluator if tracing is enabled)
+        ref<Evaluator> evaluator = [&]() -> ref<Evaluator> {
+            auto interp = make_ref<Interpreter>(state);
+            if (auto traceFile = state->environment->getTraceFile())
+                return make_ref<TracingEvaluator>(*traceFile, interp);
+            return interp;
+        }();
+
+        // Evaluate via the Evaluator (TracingEvaluator logs ready first)
+        ref<Object> rootObject = [&]() -> ref<Object> {
+            if (file == "-") {
+                std::string stdinContent = drainFD(STDIN_FILENO);
+                return evaluator->evalExpr(stdinContent, state->rootPath(absPath(getCommandBaseDir())));
+            } else if (file) {
+                auto dir = absPath(getCommandBaseDir());
+                auto path = lookupFileArg(*state, *file, &dir);
+                return evaluator->evalFile(path, *file);
+            } else {
+                return evaluator->evalExpr(*expr, state->rootPath(absPath(getCommandBaseDir())));
+            }
+        }();
 
         for (auto & s : ss) {
             auto [prefix, extendedOutputsSpec] = ExtendedOutputsSpec::parse(s);
             result.push_back(
                 make_ref<InstallableAttrPath>(InstallableAttrPath::parse(
-                    state, *this, vFile, std::move(prefix), std::move(extendedOutputsSpec))));
+                    state, evaluator, *this, rootObject, std::move(prefix), std::move(extendedOutputsSpec))));
         }
 
     } else {

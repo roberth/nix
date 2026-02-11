@@ -82,6 +82,11 @@ struct AllowListSourceAccessor : public FilteringSourceAccessor
         MakeNotAllowedError && makeNotAllowedError);
 
     using FilteringSourceAccessor::FilteringSourceAccessor;
+
+    AllowListSourceAccessor * asAllowListSourceAccessor() override
+    {
+        return this;
+    }
 };
 
 /**

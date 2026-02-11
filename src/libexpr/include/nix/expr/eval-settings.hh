@@ -265,6 +265,20 @@ struct EvalSettings : Config
             Intermediate results are not cached.
         )"};
 
+    Setting<bool> useTracingEvalCache{
+        this,
+        false,
+        "tracing-eval-cache",
+        R"(
+            Whether to use the fine-grained tracing evaluation cache.
+            When enabled, this overrides the coarse-grained `eval-cache` and records
+            detailed traces of all environment I/O operations during evaluation.
+            This is experimental and primarily useful for development and debugging.
+        )",
+        {},
+        true,
+        Xp::TracingEvalCache};
+
     Setting<bool> ignoreExceptionsDuringTry{
         this,
         false,

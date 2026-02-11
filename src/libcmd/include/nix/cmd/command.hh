@@ -16,9 +16,12 @@ extern std::string programPath;
 extern char ** savedArgv;
 
 class EvalState;
+class Evaluator;
 struct Pos;
 class Store;
 struct LocalFSStore;
+class TraceFile;
+class TracingDatabase;
 
 static constexpr Command::Category catHelp = -1;
 static constexpr Command::Category catSecondary = 100;
@@ -106,6 +109,9 @@ private:
     std::shared_ptr<Store> evalStore;
 
     std::shared_ptr<EvalState> evalState;
+
+    std::unique_ptr<TracingDatabase> tracingDb;
+    std::unique_ptr<TraceFile> traceFile;
 };
 
 /**

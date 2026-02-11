@@ -25,7 +25,7 @@ struct ExperimentalFeatureDetails
  * feature, we either have no issue at all if few features are not added
  * at the end of the list, or a proper merge conflict if they are.
  */
-constexpr size_t numXpFeatures = 1 + static_cast<size_t>(Xp::BLAKE3Hashes);
+constexpr size_t numXpFeatures = 1 + static_cast<size_t>(Xp::TracingEvalCache);
 
 constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails = {{
     {
@@ -318,6 +318,17 @@ constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails
         .name = "blake3-hashes",
         .description = R"(
             Enables support for BLAKE3 hashes.
+        )",
+        .trackingUrl = "",
+    },
+    {
+        .tag = Xp::TracingEvalCache,
+        .name = "tracing-eval-cache",
+        .description = R"(
+            Enables the fine-grained tracing evaluation cache.
+            When enabled, all environment I/O operations during evaluation are
+            traced for fine-grained dependency tracking and caching.
+            This is experimental and primarily useful for development.
         )",
         .trackingUrl = "",
     },

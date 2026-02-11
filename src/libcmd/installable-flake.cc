@@ -14,6 +14,7 @@
 #include "nix/store/store-api.hh"
 #include "nix/main/shared.hh"
 #include "nix/flake/flake.hh"
+#include "nix/expr/environment.hh"
 #include "nix/expr/eval-cache.hh"
 #include "nix/expr/coarse-eval-cache.hh"
 #include "nix/util/url.hh"
@@ -158,7 +159,11 @@ std::pair<Value *, PosIdx> InstallableFlake::toValue(EvalState & state)
 
 std::vector<ref<eval_cache::AttrCursor>> InstallableFlake::getCursors(EvalState & state)
 {
-    auto evalCache = openEvalCache(state, getLockedFlake());
+    // When tracing, create a non-persistent eval cache to avoid polluting the coarse cache
+    auto evalCache =
+        state.environment->getTraceFile()
+            ? std::make_shared<eval_cache::EvalCache>(std::nullopt, state, [&]() { return toValue(state).first; })
+            : openEvalCache(state, getLockedFlake());
 
     auto root = evalCache->getRoot();
 
@@ -186,7 +191,9 @@ std::vector<ref<eval_cache::AttrCursor>> InstallableFlake::getCursors(EvalState 
 
 ref<Object> InstallableFlake::getRootObject()
 {
-    // openEvalCache is memoized in state.evalCaches by fingerprint
+    if (state->environment->getTraceFile()) {
+        throw Error("tracing eval cache is not yet supported for flakes; use -f/--file or --expr instead");
+    }
     auto evalCache = openEvalCache(*state, getLockedFlake());
     return coarseEvalCache->getRoot(evalCache);
 }

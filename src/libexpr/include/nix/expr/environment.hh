@@ -14,6 +14,8 @@ struct SourceAccessor;
 class Store;
 struct EvalSettings;
 
+class TraceFile;
+
 /**
  * Environment interface for evaluation I/O operations.
  *
@@ -38,6 +40,15 @@ public:
      * @return Optional value (nullopt if not set)
      */
     virtual std::optional<std::string> getEnv(const std::string & name) = 0;
+
+    /**
+     * Get the trace file if this environment is tracing.
+     * @return Pointer to TraceFile, or nullptr if not tracing
+     */
+    virtual TraceFile * getTraceFile()
+    {
+        return nullptr;
+    }
 };
 
 } // namespace nix

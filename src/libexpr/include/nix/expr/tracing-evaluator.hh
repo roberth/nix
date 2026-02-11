@@ -1,32 +1,30 @@
 #pragma once
-/**
- * @file
- * Interpreter implementation of the Evaluator interface.
- */
 
 #include "nix/expr/evaluator.hh"
-#include "nix/expr/eval.hh"
+#include "nix/util/ref.hh"
 
 namespace nix {
 
-/**
- * Evaluator implementation that wraps EvalState.
- */
-class Interpreter : public Evaluator
+class Store;
+class TraceFile;
+
+namespace fetchers {
+struct Settings;
+}
+
+class TracingEvaluator : public Evaluator
 {
-    ref<EvalState> evalState;
+    TraceFile & traceFile;
+    ref<Evaluator> inner;
 
 public:
-    explicit Interpreter(ref<EvalState> evalState);
+    TracingEvaluator(TraceFile & traceFile, ref<Evaluator> inner);
 
     bool isReadOnly() const override;
-
     Store & getStore() override;
-
     const fetchers::Settings & getFetchSettings() override;
 
     ref<Object> evalFile(const SourcePath & path, const std::string & displayPath) override;
-
     ref<Object> evalExpr(const std::string & expr, const SourcePath & basePath) override;
 };
 
