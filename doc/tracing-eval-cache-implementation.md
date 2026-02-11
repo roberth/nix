@@ -1,6 +1,6 @@
 # Tracing Eval Cache Implementation
 
-This document describes the implementation architecture for the tracing evaluation cache prototype, as implemented in the last two commits of the `eval-cache` branch.
+This document describes the implementation architecture for the tracing evaluation cache prototype.
 
 For the high-level design rationale, see `docs/eval-cache-redesign.md`.
 For the `Evaluator` and `Object` interfaces, see `doc/evaluator-architecture.md`.
@@ -9,6 +9,11 @@ For the `Evaluator` and `Object` interfaces, see `doc/evaluator-architecture.md`
 
 The tracing eval cache records all I/O operations during evaluation to enable fine-grained cache invalidation. The implementation follows a **decorator pattern**: each tracing component wraps an inner component, intercepting operations to record them before delegating.
 
+There are two main flows:
+
+1. **Recording** (`TracingEvaluator` → `TracingObject`): Records a trace during evaluation
+2. **Replay** (`TracingReplayEvaluator` → `TracingReplayObject`): Replays cached results from a previous trace
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        User (nix build)                         │
@@ -16,9 +21,18 @@ The tracing eval cache records all I/O operations during evaluation to enable fi
                                 │
                                 ▼
 ┌─────────────────────────────────────────────────────────────────┐
+│                   TracingReplayEvaluator                        │
+│  - Looks up queries in QueryIndex from previous trace           │
+│  - Validates file hashes via FileHashCache                      │
+│  - Validates env vars match recorded values                     │
+│  - Falls back to TracingEvaluator on cache miss                 │
+└─────────────────────────────────────────────────────────────────┘
+                                │ (on miss)
+                                ▼
+┌─────────────────────────────────────────────────────────────────┐
 │                      TracingEvaluator                           │
 │  - Logs user queries (evalFile, evalExpr) to TraceFile          │
-│  - Preloads files from previous trace on construction           │
+│  - Lazily preloads files from previous trace on first eval      │
 │  - Wraps returned Objects in TracingObject                      │
 └─────────────────────────────────────────────────────────────────┘
                                 │
@@ -77,18 +91,41 @@ Manages trace file storage in `~/.cache/nix/eval-tracing-v0/traces/`.
 - `latestTraceFile()` - Get path to most recent trace
 - `getTracedFilePaths()` - Extract file paths from a trace (for preloading)
 
+### TracingReplayEvaluator (`tracing-replay-evaluator.hh`)
+
+Wraps an `Evaluator` to replay cached results from a previous trace.
+
+**Lookup**: Uses `QueryIndex` for O(1) query lookup in the trace.
+
+**Validation**: Before returning a cached result:
+1. Validates file content hashes via `FileHashCache`
+2. Validates environment variables match recorded values
+3. Only returns cached results if all validations pass
+
+**Fallback**: On cache miss or validation failure, delegates to the inner evaluator (typically `TracingEvaluator`) and marks the cache as invalidated.
+
+### TracingReplayObject (`tracing-replay-object.hh`)
+
+Wraps cached trace data to implement the `Object` interface.
+
+Each `TracingReplayObject` holds a value handle and a lazy fallback function. Operations like `maybeGetAttr()`, `getString()`, etc. look up results in the trace index. On cache miss, the fallback is activated to get the real object.
+
+**Store validation**: For `getStringWithContext()`, validates that context store paths still exist before returning cached results.
+
 ### TracingEvaluator (`tracing-evaluator.hh`)
 
-Wraps an `Evaluator` to trace user queries.
+Wraps an `Evaluator` to trace user queries (recording side).
 
 **Tracing**: Logs `QueryImport` / `QueryExpr` before evaluation, logs `ResultType` after, returns `TracingObject` wrappers.
 
-**Preloading**: On construction, reads the previous trace and preloads files:
+**Lazy Preloading**: Defers file preloading to the first `evalFile`/`evalExpr` call via `ensurePreloaded()`:
 
 1. Get file paths from `TracingDatabase::getTracedFilePaths()`
 2. Read file contents in parallel using `ThreadPool`
 3. Parse files sequentially (EvalState parsing is not thread-safe)
 4. Insert into `fileEvalCache` wrapped in `ExprSpeculativeParseTrigger`
+
+This avoids unnecessary I/O when `TracingReplayEvaluator` can satisfy all queries from cache.
 
 ### TracingObject (`tracing-object.hh`)
 
@@ -158,10 +195,45 @@ DECLARE_TRACE_PAIR(GetEnvRequest, GetEnvResponse)
 // Query/result pairs for user operations
 DECLARE_QUERY_RESULT(QueryImport, ResultType)
 DECLARE_QUERY_RESULT(QueryExpr, ResultType)
-DECLARE_QUERY_RESULT(QueryGetAttr, ResultType)
+DECLARE_QUERY_RESULT(QueryGetAttr, ResultMaybeType)  // nullopt for missing attrs
 DECLARE_QUERY_RESULT(QueryGetString, ResultString)
+DECLARE_QUERY_RESULT(QueryGetStringWithContext, ResultStringWithContext)
 // ... etc
 ```
+
+### QueryIndex (`trace-types.hh`)
+
+Provides O(1) lookup for queries in a parsed trace. Built by scanning the trace once and indexing queries by their content.
+
+```cpp
+class QueryIndex {
+    std::map<QueryVariant, IndexEntry> index;
+public:
+    explicit QueryIndex(const std::vector<TraceEntry> & trace);
+
+    template<typename Q>
+    std::optional<IndexEntry> lookup(const Q & query) const;
+};
+```
+
+Only queries with matching results are indexed (incomplete traces are rejected).
+
+## FileHashCache (`file-hash-cache.hh`)
+
+SQLite-backed cache mapping file paths to their SHA-256 content hashes. Uses mtime to detect when cached entries need revalidation.
+
+```cpp
+class FileHashCache {
+    Hash getHash(const std::filesystem::path & path);      // Get or compute
+    std::optional<Hash> lookup(const std::filesystem::path & path);  // Lookup only
+    void invalidate(const std::filesystem::path & path);   // Clear entry
+};
+```
+
+Stored in `~/.cache/nix/file-hash-cache.sqlite` with schema:
+- `path` (text, primary key)
+- `mtime` (integer, from `std::filesystem::last_write_time`)
+- `hash` (text, SRI format)
 
 ## Speculative Preloading
 
@@ -208,9 +280,13 @@ nix build --dry-run \
   -f default.nix hello
 ```
 
+**Current status**:
+- Replay is implemented via `TracingReplayEvaluator` and `TracingReplayObject`
+- File hash validation via `FileHashCache`
+- Environment variable validation
+
 **Not implemented**:
-- Flakes not yet supported (embedded store paths make cache hits impossible)
-- Replay not yet implemented (tracing only)
+- Flakes not yet supported (embedded store paths make cache hits challenging)
 
 **Opportunities**:
 - Multi-threaded parsing
@@ -228,10 +304,15 @@ nix build --dry-run \
 
 | File | Description |
 |------|-------------|
-| `src/libexpr/include/nix/expr/trace-types.hh` | Trace entry type definitions |
+| `src/libexpr/include/nix/expr/trace-types.hh` | Trace entry type definitions, QueryIndex |
 | `src/libexpr/include/nix/expr/tracing-database.hh` | TraceFile and TracingDatabase |
-| `src/libexpr/include/nix/expr/tracing-evaluator.hh` | TracingEvaluator |
-| `src/libexpr/include/nix/expr/tracing-object.hh` | TracingObject |
+| `src/libexpr/include/nix/expr/tracing-evaluator.hh` | TracingEvaluator (recording) |
+| `src/libexpr/include/nix/expr/tracing-replay-evaluator.hh` | TracingReplayEvaluator (replay) |
+| `src/libexpr/include/nix/expr/tracing-object.hh` | TracingObject (recording) |
+| `src/libexpr/include/nix/expr/tracing-replay-object.hh` | TracingReplayObject (replay) |
 | `src/libexpr/include/nix/expr/tracing-environment.hh` | TracingEnvironment |
 | `src/libexpr/include/nix/expr/tracing-source-accessor.hh` | TracingSourceAccessor |
-| `src/libexpr/tracing-*.cc` | Implementations |
+| `src/libexpr/include/nix/expr/file-hash-cache.hh` | FileHashCache |
+| `src/libexpr/tracing-*.cc`, `file-hash-cache.cc` | Implementations |
+| `src/libexpr-tests/trace-types.cc` | Trace types unit tests |
+| `src/libexpr-tests/file-hash-cache.cc` | FileHashCache unit tests |
