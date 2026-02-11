@@ -131,7 +131,7 @@ ref<EvalState> EvalCommand::getEvalState()
     if (!evalState) {
         // TODO: always use Evaluator interface. This will vastly simplify the
         //       CLI evaluator wiring.
-        if (evalSettings.useTracingEvalCache) {
+        if (evalSettings.tracingEvalCache) {
             tracingDb = std::make_unique<TracingDatabase>();
             auto tracePath = tracingDb->newTraceFile();
             traceFile = std::make_unique<TraceFile>(

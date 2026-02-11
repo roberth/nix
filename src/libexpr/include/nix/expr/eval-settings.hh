@@ -265,7 +265,7 @@ struct EvalSettings : Config
             Intermediate results are not cached.
         )"};
 
-    Setting<bool> useTracingEvalCache{
+    Setting<bool> tracingEvalCache{
         this,
         false,
         "tracing-eval-cache",
