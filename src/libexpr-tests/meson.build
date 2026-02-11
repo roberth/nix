@@ -53,6 +53,7 @@ sources = files(
   'eval.cc',
   'evaluation-helpers.cc',
   'evaluator.cc',
+  'file-hash-cache.cc',
   'json.cc',
   'main.cc',
   'nix_api_expr.cc',

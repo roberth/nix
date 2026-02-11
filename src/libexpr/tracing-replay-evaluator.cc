@@ -14,9 +14,12 @@ bool TracingReplayEvaluator::validateEnvTo(size_t targetPos)
         bool valid = std::visit(
             overloaded{
                 [&](const trace::Response<trace::FileReadRequest> & r) {
-                    // TODO: validate file content hash matches
-                    // For now, assume valid
-                    debug("replay: validating file read %s", r.request.absPath);
+                    auto currentHash = hashCache.getHash(r.request.absPath);
+                    if (currentHash != r.response.contentHash) {
+                        debug("replay invalidated: file %s changed", r.request.absPath);
+                        return false;
+                    }
+                    debug("replay: validated file read %s", r.request.absPath);
                     return true;
                 },
                 [&](const trace::Response<trace::GetEnvRequest> & r) {
