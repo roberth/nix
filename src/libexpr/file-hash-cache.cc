@@ -26,7 +26,7 @@ struct FileHashCache::State
 FileHashCache::FileHashCache()
     : _state(std::make_unique<Sync<State>>())
 {
-    auto cacheDir = std::filesystem::path(getCacheDir()) / "nix";
+    auto cacheDir = std::filesystem::path(getCacheDir());
     createDirs(cacheDir);
     auto dbPath = cacheDir / "file-hash-cache.sqlite";
 
