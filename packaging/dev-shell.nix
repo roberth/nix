@@ -127,6 +127,7 @@ pkgs.nixComponents2.nix-util.overrideAttrs (
             pkgs.buildPackages.shellcheck
             pkgs.buildPackages.include-what-you-use
             pkgs.buildPackages.gdb
+            pkgs.buildPackages.sqlite
           ]
           ++ lib.optional (stdenv.cc.isClang && stdenv.hostPlatform == stdenv.buildPlatform) (
             lib.hiPrio pkgs.buildPackages.clang-tools
