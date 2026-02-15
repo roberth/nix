@@ -1,5 +1,4 @@
 #include "nix/expr/tracing-object.hh"
-#include "nix/expr/tracing-database.hh"
 #include "nix/expr/trace-types.hh"
 
 #include <nlohmann/json.hpp>
@@ -34,103 +33,116 @@ static std::string objectTypeToString(ObjectType type)
     }
 }
 
-TracingObject::TracingObject(ref<Object> inner, TraceFile & traceFile, uint64_t valueNum)
+TracingObject::TracingObject(
+    ref<Object> inner, TracingWriter & writer, uint64_t valueNum, std::optional<TriePosition> triePos)
     : inner(inner)
-    , traceFile(traceFile)
+    , writer(writer)
     , valueNum(valueNum)
+    , triePos(triePos)
 {
 }
 
-ref<TracingObject> TracingObject::create(ref<Object> inner, TraceFile & traceFile, uint64_t valueNum)
+ref<TracingObject>
+TracingObject::create(ref<Object> inner, TracingWriter & writer, uint64_t valueNum, std::optional<TriePosition> triePos)
 {
-    return ref<TracingObject>(std::shared_ptr<TracingObject>(new TracingObject(inner, traceFile, valueNum)));
+    return ref<TracingObject>(std::shared_ptr<TracingObject>(new TracingObject(inner, writer, valueNum, triePos)));
 }
 
 std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
 {
-    auto valueId = traceFile.logQuery(trace::QueryGetAttr{name, valueNum});
+    auto parentHash = triePos ? triePos->queryHashStr : "";
+    auto [valueId, _] = writer.logQuery(trace::QueryGetAttr{name, parentHash}, triePos);
     auto result = inner->maybeGetAttr(name);
     if (result) {
         auto type = result->getType();
-        traceFile.logResult(valueId, trace::ResultMaybeType{objectTypeToString(type)});
-        return std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), traceFile, valueId));
+        auto childTriePos = writer.logResult(valueId, trace::ResultMaybeType{objectTypeToString(type)});
+        return std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
     }
-    traceFile.logResult(valueId, trace::ResultMaybeType{std::nullopt});
+    writer.logResult(valueId, trace::ResultMaybeType{std::nullopt});
     return nullptr;
 }
 
 std::vector<std::string> TracingObject::getAttrNames()
 {
-    auto valueId = traceFile.logQuery(trace::QueryGetAttrNames{valueNum});
+    auto parentHash = triePos ? triePos->queryHashStr : "";
+    auto [valueId, _] = writer.logQuery(trace::QueryGetAttrNames{parentHash}, triePos);
     auto result = inner->getAttrNames();
-    traceFile.logResult(valueId, trace::ResultListOfStrings{result});
+    writer.logResult(valueId, trace::ResultListOfStrings{result});
     return result;
 }
 
 std::string TracingObject::getStringIgnoreContext()
 {
-    auto valueId = traceFile.logQuery(trace::QueryGetString{valueNum});
+    auto parentHash = triePos ? triePos->queryHashStr : "";
+    auto [valueId, _] = writer.logQuery(trace::QueryGetString{parentHash}, triePos);
     auto result = inner->getStringIgnoreContext();
-    traceFile.logResult(valueId, trace::ResultString{result});
+    writer.logResult(valueId, trace::ResultString{result});
     return result;
 }
 
 std::pair<std::string, NixStringContext> TracingObject::getStringWithContext()
 {
-    auto valueId = traceFile.logQuery(trace::QueryGetStringWithContext{valueNum});
+    auto parentHash = triePos ? triePos->queryHashStr : "";
+    auto [valueId, _] = writer.logQuery(trace::QueryGetStringWithContext{parentHash}, triePos);
     auto result = inner->getStringWithContext();
     std::vector<std::string> ctx;
     for (const auto & elem : result.second)
         ctx.push_back(elem.to_string());
-    traceFile.logResult(valueId, trace::ResultStringWithContext{result.first, std::move(ctx)});
+    writer.logResult(valueId, trace::ResultStringWithContext{result.first, std::move(ctx)});
     return result;
 }
 
 SourcePath TracingObject::getPath()
 {
-    auto valueId = traceFile.logQuery(trace::QueryGetPath{valueNum});
+    auto parentHash = triePos ? triePos->queryHashStr : "";
+    auto [valueId, _] = writer.logQuery(trace::QueryGetPath{parentHash}, triePos);
     auto result = inner->getPath();
-    traceFile.logResult(valueId, trace::ResultPath{result.path.abs()});
+    writer.logResult(valueId, trace::ResultPath{result.path.abs()});
     return result;
 }
 
 bool TracingObject::getBool(std::string_view errorCtx)
 {
-    auto valueId = traceFile.logQuery(trace::QueryGetBool{valueNum});
+    auto parentHash = triePos ? triePos->queryHashStr : "";
+    auto [valueId, _] = writer.logQuery(trace::QueryGetBool{parentHash}, triePos);
     auto result = inner->getBool(errorCtx);
-    traceFile.logResult(valueId, trace::ResultBool{result});
+    writer.logResult(valueId, trace::ResultBool{result});
     return result;
 }
 
 NixInt TracingObject::getInt(std::string_view errorCtx)
 {
-    auto valueId = traceFile.logQuery(trace::QueryGetInt{valueNum});
+    auto parentHash = triePos ? triePos->queryHashStr : "";
+    auto [valueId, _] = writer.logQuery(trace::QueryGetInt{parentHash}, triePos);
     auto result = inner->getInt(errorCtx);
-    traceFile.logResult(valueId, trace::ResultInt{result.value});
+    writer.logResult(valueId, trace::ResultInt{result.value});
     return result;
 }
 
 std::vector<std::string> TracingObject::getListOfStringsNoCtx()
 {
-    auto valueId = traceFile.logQuery(trace::QueryGetListOfStrings{valueNum});
+    auto parentHash = triePos ? triePos->queryHashStr : "";
+    auto [valueId, _] = writer.logQuery(trace::QueryGetListOfStrings{parentHash}, triePos);
     auto result = inner->getListOfStringsNoCtx();
-    traceFile.logResult(valueId, trace::ResultListOfStrings{result});
+    writer.logResult(valueId, trace::ResultListOfStrings{result});
     return result;
 }
 
 ObjectType TracingObject::getTypeLazy()
 {
-    auto valueId = traceFile.logQuery(trace::QueryGetType{valueNum});
+    auto parentHash = triePos ? triePos->queryHashStr : "";
+    auto [valueId, _] = writer.logQuery(trace::QueryGetType{parentHash}, triePos);
     auto result = inner->getTypeLazy();
-    traceFile.logResult(valueId, trace::ResultType{objectTypeToString(result)});
+    writer.logResult(valueId, trace::ResultType{objectTypeToString(result)});
     return result;
 }
 
 ObjectType TracingObject::getType()
 {
-    auto valueId = traceFile.logQuery(trace::QueryGetType{valueNum});
+    auto parentHash = triePos ? triePos->queryHashStr : "";
+    auto [valueId, _] = writer.logQuery(trace::QueryGetType{parentHash}, triePos);
     auto result = inner->getType();
-    traceFile.logResult(valueId, trace::ResultType{objectTypeToString(result)});
+    writer.logResult(valueId, trace::ResultType{objectTypeToString(result)});
     return result;
 }
 

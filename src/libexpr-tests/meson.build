@@ -63,6 +63,7 @@ sources = files(
   'primops.cc',
   'search-path.cc',
   'trace-types.cc',
+  'tracing-index.cc',
   'trivial.cc',
   'value/context.cc',
   'value/print.cc',

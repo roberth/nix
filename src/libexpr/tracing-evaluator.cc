@@ -1,7 +1,9 @@
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-database.hh"
+#include "nix/expr/tracing-index.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-source-accessor.hh"
+#include "nix/expr/tracing-writer.hh"
 #include "nix/expr/trace-types.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/environment.hh"
@@ -40,8 +42,8 @@ static std::string objectTypeToString(ObjectType type)
     }
 }
 
-TracingEvaluator::TracingEvaluator(TraceFile & traceFile, ref<Evaluator> inner, TracingDatabase & db)
-    : traceFile(traceFile)
+TracingEvaluator::TracingEvaluator(TracingWriter & writer, ref<Evaluator> inner, TracingDatabase & db)
+    : writer(writer)
     , inner(inner)
     , db(db)
 {
@@ -134,21 +136,21 @@ const fetchers::Settings & TracingEvaluator::getFetchSettings()
 ref<Object> TracingEvaluator::evalFile(const SourcePath & path, const std::string & displayPath)
 {
     ensurePreloaded();
-    auto v = traceFile.logQuery(trace::QueryImport{displayPath});
+    auto [v, _] = writer.logRootQuery(trace::QueryImport{displayPath});
     auto result = inner->evalFile(path, displayPath);
     auto type = result->getType();
-    traceFile.logResult(v, trace::ResultType{objectTypeToString(type)});
-    return TracingObject::create(result, traceFile, v);
+    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)});
+    return TracingObject::create(result, writer, v, triePos);
 }
 
 ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const SourcePath & basePath)
 {
     ensurePreloaded();
-    auto v = traceFile.logQuery(trace::QueryExpr{expr, basePath.path.abs()});
+    auto [v, _] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
     auto result = inner->evalExpr(expr, basePath);
     auto type = result->getType();
-    traceFile.logResult(v, trace::ResultType{objectTypeToString(type)});
-    return TracingObject::create(result, traceFile, v);
+    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)});
+    return TracingObject::create(result, writer, v, triePos);
 }
 
 } // namespace nix

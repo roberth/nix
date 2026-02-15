@@ -22,6 +22,8 @@ class Store;
 struct LocalFSStore;
 class TraceFile;
 class TracingDatabase;
+class TracingIndex;
+class TracingWriter;
 
 static constexpr Command::Category catHelp = -1;
 static constexpr Command::Category catSecondary = 100;
@@ -110,6 +112,16 @@ struct EvalCommand : virtual StoreCommand, MixEvalArgs
         return tracingDb.get();
     }
 
+    TracingIndex * getTracingIndex()
+    {
+        return tracingIndex.get();
+    }
+
+    TracingWriter * getTracingWriter()
+    {
+        return tracingWriter.get();
+    }
+
 private:
     std::shared_ptr<Store> evalStore;
 
@@ -117,6 +129,8 @@ private:
 
     std::unique_ptr<TracingDatabase> tracingDb;
     std::unique_ptr<TraceFile> traceFile;
+    std::unique_ptr<TracingIndex> tracingIndex;
+    std::unique_ptr<TracingWriter> tracingWriter;
 };
 
 /**

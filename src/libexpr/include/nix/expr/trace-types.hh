@@ -280,12 +280,13 @@ DECLARE_QUERY_RESULT(QueryImport, ResultType)
 
 /**
  * Get an attribute from a value.
+ * `from` is the parent object's queryHash (Merkle identity).
  */
 struct QueryGetAttr
 {
     static constexpr std::string_view tag = "getAttr";
     std::string name;
-    uint64_t from;
+    std::string from;
     auto operator<=>(const QueryGetAttr &) const = default;
 };
 
@@ -293,11 +294,12 @@ DECLARE_QUERY_RESULT(QueryGetAttr, ResultMaybeType)
 
 /**
  * Get the string value (ignoring context).
+ * `from` is the parent object's queryHash (Merkle identity).
  */
 struct QueryGetString
 {
     static constexpr std::string_view tag = "getString";
-    uint64_t from;
+    std::string from;
     auto operator<=>(const QueryGetString &) const = default;
 };
 
@@ -305,11 +307,12 @@ DECLARE_QUERY_RESULT(QueryGetString, ResultString)
 
 /**
  * Get the string value with context.
+ * `from` is the parent object's queryHash (Merkle identity).
  */
 struct QueryGetStringWithContext
 {
     static constexpr std::string_view tag = "getStringWithContext";
-    uint64_t from;
+    std::string from;
     auto operator<=>(const QueryGetStringWithContext &) const = default;
 };
 
@@ -317,11 +320,12 @@ DECLARE_QUERY_RESULT(QueryGetStringWithContext, ResultStringWithContext)
 
 /**
  * Get attribute names from an attrset.
+ * `from` is the parent object's queryHash (Merkle identity).
  */
 struct QueryGetAttrNames
 {
     static constexpr std::string_view tag = "getAttrNames";
-    uint64_t from;
+    std::string from;
     auto operator<=>(const QueryGetAttrNames &) const = default;
 };
 
@@ -329,11 +333,12 @@ DECLARE_QUERY_RESULT(QueryGetAttrNames, ResultListOfStrings)
 
 /**
  * Get the type of a value.
+ * `from` is the parent object's queryHash (Merkle identity).
  */
 struct QueryGetType
 {
     static constexpr std::string_view tag = "getType";
-    uint64_t from;
+    std::string from;
     auto operator<=>(const QueryGetType &) const = default;
 };
 
@@ -341,11 +346,12 @@ DECLARE_QUERY_RESULT(QueryGetType, ResultType)
 
 /**
  * Get a boolean value.
+ * `from` is the parent object's queryHash (Merkle identity).
  */
 struct QueryGetBool
 {
     static constexpr std::string_view tag = "getBool";
-    uint64_t from;
+    std::string from;
     auto operator<=>(const QueryGetBool &) const = default;
 };
 
@@ -353,11 +359,12 @@ DECLARE_QUERY_RESULT(QueryGetBool, ResultBool)
 
 /**
  * Get an integer value.
+ * `from` is the parent object's queryHash (Merkle identity).
  */
 struct QueryGetInt
 {
     static constexpr std::string_view tag = "getInt";
-    uint64_t from;
+    std::string from;
     auto operator<=>(const QueryGetInt &) const = default;
 };
 
@@ -365,11 +372,12 @@ DECLARE_QUERY_RESULT(QueryGetInt, ResultInt)
 
 /**
  * Get a list of strings (no context).
+ * `from` is the parent object's queryHash (Merkle identity).
  */
 struct QueryGetListOfStrings
 {
     static constexpr std::string_view tag = "getListOfStrings";
-    uint64_t from;
+    std::string from;
     auto operator<=>(const QueryGetListOfStrings &) const = default;
 };
 
@@ -377,11 +385,12 @@ DECLARE_QUERY_RESULT(QueryGetListOfStrings, ResultListOfStrings)
 
 /**
  * Get a path value.
+ * `from` is the parent object's queryHash (Merkle identity).
  */
 struct QueryGetPath
 {
     static constexpr std::string_view tag = "getPath";
-    uint64_t from;
+    std::string from;
     auto operator<=>(const QueryGetPath &) const = default;
 };
 

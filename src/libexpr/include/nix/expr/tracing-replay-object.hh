@@ -1,25 +1,26 @@
 #pragma once
 
 #include "nix/expr/evaluator.hh"
-#include "nix/expr/trace-types.hh"
+#include "nix/expr/tracing-writer.hh"
 
 #include <functional>
-#include <vector>
 
 namespace nix {
 
 class Store;
+class TracingReplayEvaluator;
 
 /**
- * Object that returns cached results from a trace, with lazy fallback
+ * Object that returns cached results from the trie index, with lazy fallback
  * to the inner evaluator when cache misses occur.
+ *
+ * Objects are only created for validated trie positions. Child lookups
+ * perform incremental validation from the child back to the current position.
  */
 class TracingReplayObject : public Object
 {
-    Store & store;
-    const std::vector<trace::TraceEntry> & trace;
-    const trace::QueryIndex & index;
-    uint64_t valueNum;
+    TracingReplayEvaluator & evaluator;
+    TriePosition triePos;
 
     /**
      * Lazy fallback: produces the real Object from the inner evaluator.
@@ -31,19 +32,29 @@ class TracingReplayObject : public Object
     ref<Object> ensureInner() const;
 
     /**
-     * Look up a query result using the index and ResultOf type family.
-     * Returns the result payload, or nullopt on miss (logged at debug level).
+     * Look up a query result using the trie index.
+     * Uses temporal child queries (for getAttrNames, getString, etc.).
+     * Validates dependencies before returning cached results.
+     * Returns the result payload, or nullopt on miss.
      */
-    template<typename Q>
-    std::optional<typename trace::ResultOf<Q>::Type> lookupResult(const Q & query) const;
+    template<typename Q, typename R>
+    std::optional<R> lookupResult(const Q & query) const;
+
+    /**
+     * Look up a structural child query (for getAttr).
+     * Uses structural parent relationship to find attributes.
+     * Validates dependencies before returning cached results.
+     * Returns the result payload and child position, or nullopt on miss.
+     */
+    template<typename Q, typename R>
+    std::optional<std::pair<R, TriePosition>> lookupStructuralChild(const Q & query) const;
 
 public:
+    /**
+     * Create a replay object for a validated trie position.
+     */
     TracingReplayObject(
-        Store & store,
-        const std::vector<trace::TraceEntry> & trace,
-        const trace::QueryIndex & index,
-        uint64_t valueNum,
-        std::function<ref<Object>()> getInner);
+        TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner);
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

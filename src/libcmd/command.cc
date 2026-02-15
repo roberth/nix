@@ -11,6 +11,8 @@
 #include "nix/expr/tracing-database.hh"
 #include "nix/expr/tracing-environment.hh"
 #include "nix/expr/tracing-evaluator.hh"
+#include "nix/expr/tracing-index.hh"
+#include "nix/expr/tracing-writer.hh"
 #include "nix/store/profiles.hh"
 #include "nix/cmd/repl.hh"
 #include "nix/util/strings.hh"
@@ -133,11 +135,13 @@ ref<EvalState> EvalCommand::getEvalState()
         //       CLI evaluator wiring.
         if (evalSettings.tracingEvalCache) {
             tracingDb = std::make_unique<TracingDatabase>();
+            tracingIndex = std::make_unique<TracingIndex>();
             auto tracePath = tracingDb->newTraceFile();
             traceFile = std::make_unique<TraceFile>(
                 tracePath, [this, tracePath]() { tracingDb->updateLatestSymlink(tracePath); });
+            tracingWriter = std::make_unique<TracingWriter>(*traceFile, tracingIndex.get());
             auto sysEnv = make_ref<SystemEnvironment>(evalSettings, getEvalStore(), getStore());
-            auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *traceFile);
+            auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *tracingWriter);
             evalState = std::allocate_shared<EvalState>(
                 traceable_allocator<EvalState>(), lookupPath, fetchSettings, evalSettings, tracingEnv, sysEnv);
         } else {

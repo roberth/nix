@@ -10,29 +10,27 @@
 
 namespace nix {
 
-class TraceFile;
+class TracingWriter;
 
 /**
  * Environment wrapper that records all operations as traces.
  *
  * Wraps another Environment and logs all I/O operations for later replay.
+ * Uses TracingWriter to record to both JSON trace and trie index.
  */
 class TracingEnvironment : public Environment
 {
     ref<Environment> inner;
-    TraceFile & traceFile;
+    TracingWriter & writer;
     ref<TracingSourceAccessor> tracingAccessor;
 
 public:
-    TracingEnvironment(ref<Environment> inner, TraceFile & traceFile);
+    TracingEnvironment(ref<Environment> inner, TracingWriter & writer);
 
     ref<SourceAccessor> fsRoot() override;
     std::optional<std::string> getEnv(const std::string & name) override;
 
-    TraceFile * getTraceFile() override
-    {
-        return &traceFile;
-    }
+    TraceFile * getTraceFile() override;
 };
 
 } // namespace nix

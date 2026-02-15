@@ -181,6 +181,7 @@ sources = files(
   'tracing-database.cc',
   'tracing-environment.cc',
   'tracing-evaluator.cc',
+  'tracing-index.cc',
   'tracing-object.cc',
   'tracing-replay-evaluator.cc',
   'tracing-replay-object.cc',

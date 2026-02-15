@@ -9,8 +9,6 @@
 #include "nix/util/ref.hh"
 #include "nix/util/hash.hh"
 
-#include <nlohmann/json.hpp>
-
 #include <functional>
 
 namespace nix {
@@ -27,6 +25,11 @@ struct SpeculativeReadResult
 };
 
 /**
+ * Callback type for logging file read responses.
+ */
+using FileReadLogFn = std::function<void(const trace::Response<trace::FileReadRequest> &)>;
+
+/**
  * SourceAccessor wrapper that traces file read operations.
  *
  * Wraps another SourceAccessor and logs all file reads with content hashes.
@@ -34,10 +37,10 @@ struct SpeculativeReadResult
 class TracingSourceAccessor : public SourceAccessor
 {
     ref<SourceAccessor> inner;
-    std::function<void(const nlohmann::json &)> logFn;
+    FileReadLogFn logFn;
 
 public:
-    TracingSourceAccessor(ref<SourceAccessor> inner, std::function<void(const nlohmann::json &)> logFn);
+    TracingSourceAccessor(ref<SourceAccessor> inner, FileReadLogFn logFn);
 
     /**
      * Read file speculatively without emitting a trace.

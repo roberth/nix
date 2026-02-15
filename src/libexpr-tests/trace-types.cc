@@ -85,7 +85,7 @@ TEST(TraceTypes, QueryImportRoundtrip)
 TEST(TraceTypes, QueryGetAttrRoundtrip)
 {
     Query<QueryGetAttr> original{
-        .query = {.name = "hello", .from = 5},
+        .query = {.name = "hello", .from = "parent-hash-5"},
         .v = 6,
     };
     auto json = nlohmann::json(original);
@@ -171,7 +171,7 @@ TEST(TraceTypes, FullTraceRoundtrip)
             .v = 0,
         },
         Query<QueryGetAttr>{
-            .query = {.name = "bar", .from = 0},
+            .query = {.name = "bar", .from = "parent-hash-0"},
             .v = 1,
         },
         Result<ResultType>{
@@ -179,7 +179,7 @@ TEST(TraceTypes, FullTraceRoundtrip)
             .v = 1,
         },
         Query<QueryGetAttrNames>{
-            .query = {.from = 1},
+            .query = {.from = "parent-hash-1"},
             .v = 2,
         },
         Result<ResultListOfStrings>{
@@ -187,7 +187,7 @@ TEST(TraceTypes, FullTraceRoundtrip)
             .v = 2,
         },
         Query<QueryGetAttr>{
-            .query = {.name = "x", .from = 1},
+            .query = {.name = "x", .from = "parent-hash-1"},
             .v = 3,
         },
         Result<ResultType>{
@@ -195,7 +195,7 @@ TEST(TraceTypes, FullTraceRoundtrip)
             .v = 3,
         },
         Query<QueryGetString>{
-            .query = {.from = 3},
+            .query = {.from = "parent-hash-3"},
             .v = 4,
         },
         Result<ResultString>{
@@ -203,7 +203,7 @@ TEST(TraceTypes, FullTraceRoundtrip)
             .v = 4,
         },
         Query<QueryGetType>{
-            .query = {.from = 1},
+            .query = {.from = "parent-hash-1"},
             .v = 5,
         },
         Result<ResultType>{
@@ -211,7 +211,7 @@ TEST(TraceTypes, FullTraceRoundtrip)
             .v = 5,
         },
         Query<QueryGetBool>{
-            .query = {.from = 6},
+            .query = {.from = "parent-hash-6"},
             .v = 7,
         },
         Result<ResultBool>{
@@ -219,7 +219,7 @@ TEST(TraceTypes, FullTraceRoundtrip)
             .v = 7,
         },
         Query<QueryGetInt>{
-            .query = {.from = 8},
+            .query = {.from = "parent-hash-8"},
             .v = 9,
         },
         Result<ResultInt>{
@@ -227,7 +227,7 @@ TEST(TraceTypes, FullTraceRoundtrip)
             .v = 9,
         },
         Query<QueryGetPath>{
-            .query = {.from = 10},
+            .query = {.from = "parent-hash-10"},
             .v = 11,
         },
         Result<ResultPath>{
@@ -235,7 +235,7 @@ TEST(TraceTypes, FullTraceRoundtrip)
             .v = 11,
         },
         Query<QueryGetListOfStrings>{
-            .query = {.from = 12},
+            .query = {.from = "parent-hash-12"},
             .v = 13,
         },
         Result<ResultListOfStrings>{
@@ -289,7 +289,7 @@ TEST(TraceTypes, CorrelateTrace)
             .v = 0,
         },
         Query<QueryGetAttrNames>{
-            .query = {.from = 0},
+            .query = {.from = "parent-hash-0"},
             .v = 1,
         },
         Result<ResultListOfStrings>{
@@ -297,7 +297,7 @@ TEST(TraceTypes, CorrelateTrace)
             .v = 1,
         },
         Query<QueryGetAttr>{
-            .query = {.name = "x", .from = 0},
+            .query = {.name = "x", .from = "parent-hash-0"},
             .v = 2,
         },
         Result<ResultMaybeType>{

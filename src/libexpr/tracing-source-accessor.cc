@@ -4,8 +4,7 @@
 
 namespace nix {
 
-TracingSourceAccessor::TracingSourceAccessor(
-    ref<SourceAccessor> inner, std::function<void(const nlohmann::json &)> logFn)
+TracingSourceAccessor::TracingSourceAccessor(ref<SourceAccessor> inner, FileReadLogFn logFn)
     : inner(inner)
     , logFn(std::move(logFn))
 {
@@ -19,11 +18,11 @@ SpeculativeReadResult TracingSourceAccessor::readSpeculatively(const CanonPath &
 
     // Capture what we need for deferred trace emission
     auto emitTrace = [logFn = this->logFn, pathStr, hash]() {
-        trace::Response<trace::FileReadRequest> trace{
+        trace::Response<trace::FileReadRequest> resp{
             .request = {.absPath = pathStr},
             .response = {.contentHash = hash},
         };
-        logFn(trace);
+        logFn(resp);
     };
 
     return SpeculativeReadResult{
@@ -37,11 +36,11 @@ std::string TracingSourceAccessor::readFile(const CanonPath & path)
     auto contents = inner->readFile(path);
     auto hash = hashString(HashAlgorithm::SHA256, contents);
 
-    trace::Response<trace::FileReadRequest> trace{
+    trace::Response<trace::FileReadRequest> resp{
         .request = {.absPath = path.abs()},
         .response = {.contentHash = hash},
     };
-    logFn(trace);
+    logFn(resp);
 
     return contents;
 }
