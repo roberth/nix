@@ -611,6 +611,28 @@ TEST_F(EvaluatorHelpersTest, autoCall_ResultIsEager)
     EXPECT_THROW(autoCall(evaluator, ref<Object>(obj), args), Error);
 }
 
+TEST_F(EvaluatorHelpersTest, autoCall_IsLazy)
+{
+    // Arguments should not be evaluated if not used
+    // nix-instantiate --eval --arg x 'throw "a"' --expr '{ ... }: "hi"' => "hi"
+    auto obj = evalExpression("{ ... }: \"hi\"");
+    ObjectAttrMap args;
+    // Use evalExpressionLazy to create a thunk that isn't forced yet
+    args.insert_or_assign("x", evalExpressionLazy("throw \"unused arg\""));
+    // This should NOT throw - the arg is not used
+    auto result = expr::helpers::autoCall(evaluator, ref<Object>(obj), args);
+    EXPECT_EQ(result->getType(), nString);
+    EXPECT_EQ(result->getStringIgnoreContext(), "hi");
+}
+
+TEST_F(EvaluatorHelpersTest, autoCall_ParsingIsStrict)
+{
+    // Parsing is strict - syntax errors throw immediately
+    // nix-instantiate --eval --arg x 'throw "' --expr '{ ... }: "hi"' => syntax error
+    // Syntax error in argument should throw during parsing, not evaluation
+    EXPECT_THROW(evalExpressionLazy("throw \""), ParseError);
+}
+
 TEST_F(EvaluatorHelpersTest, autoApply_MissingArg)
 {
     auto obj = evalExpression("{ a }: a");
