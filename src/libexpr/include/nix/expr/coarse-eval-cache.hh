@@ -52,6 +52,8 @@ public:
 
     ref<Object> evalExpr(const std::string & expr, const SourcePath & basePath) override;
 
+    ref<Object> evalExprLazy(const std::string & expr, const SourcePath & basePath) override;
+
     ref<Object> mkString(const std::string & s) override;
 
     ref<Object> mkAttrs(const std::map<std::string, ref<Object>> & attrs) override;
