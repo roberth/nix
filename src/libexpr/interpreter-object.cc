@@ -1,4 +1,5 @@
 #include "nix/expr/interpreter-object.hh"
+#include "nix/expr/nixexpr.hh"
 
 namespace nix {
 
@@ -156,6 +157,24 @@ RootValue InterpreterObject::defeatCache()
 {
     // For InterpreterObject, we already have the Value, just return it
     return value;
+}
+
+std::optional<FunctionInfo> InterpreterObject::getFunctionInfo()
+{
+    state.forceValue(**value, noPos);
+    if (!(*value)->isLambda())
+        return std::nullopt;
+
+    auto formals = (*value)->lambda().fun->getFormals();
+    if (!formals)
+        return std::nullopt;
+
+    FunctionInfo info;
+    info.ellipsis = formals->ellipsis;
+    for (const auto & formal : formals->formals) {
+        info.formals.emplace(std::string(state.symbols[formal.name]), formal.def != nullptr);
+    }
+    return info;
 }
 
 } // namespace nix
