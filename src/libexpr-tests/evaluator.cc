@@ -907,6 +907,72 @@ EVALUATOR_TEST(Evaluator_mkAttrs_NestedAttrsets, {
     EXPECT_EQ(xObj->getStringIgnoreContext(), "nested");
 })
 
+// Test Object::getFunctionInfo - function reflection
+EVALUATOR_TEST(Object_getFunctionInfo_SimpleLambda, {
+    // Simple lambda without formals: x: x + 1
+    auto obj = evalExpression("x: x + 1");
+    EXPECT_EQ(obj->getType(), nFunction);
+    // Simple lambdas don't have formals
+    auto info = obj->getFunctionInfo();
+    EXPECT_FALSE(info.has_value());
+})
+
+EVALUATOR_TEST(Object_getFunctionInfo_WithFormals, {
+    // Lambda with formals: { a, b }: a + b
+    auto obj = evalExpression("{ a, b }: a + b");
+    EXPECT_EQ(obj->getType(), nFunction);
+    auto info = obj->getFunctionInfo();
+    ASSERT_TRUE(info.has_value());
+    EXPECT_FALSE(info->ellipsis);
+    EXPECT_EQ(info->formals.size(), 2);
+    // Check both formals are present without defaults
+    EXPECT_THAT(
+        info->formals, ::testing::UnorderedElementsAre(::testing::Pair("a", false), ::testing::Pair("b", false)));
+})
+
+EVALUATOR_TEST(Object_getFunctionInfo_WithEllipsis, {
+    // Lambda with formals and ellipsis: { a, ... }: a
+    auto obj = evalExpression("{ a, ... }: a");
+    EXPECT_EQ(obj->getType(), nFunction);
+    auto info = obj->getFunctionInfo();
+    ASSERT_TRUE(info.has_value());
+    EXPECT_TRUE(info->ellipsis);
+    EXPECT_EQ(info->formals.size(), 1);
+    EXPECT_TRUE(info->formals.contains("a"));
+    EXPECT_FALSE(info->formals.at("a")); // no default
+})
+
+EVALUATOR_TEST(Object_getFunctionInfo_NotAFunction, {
+    // Not a function
+    auto obj = evalExpression("42");
+    EXPECT_EQ(obj->getType(), nInt);
+    auto info = obj->getFunctionInfo();
+    EXPECT_FALSE(info.has_value());
+})
+
+EVALUATOR_TEST(Object_getFunctionInfo_WithArgName, {
+    // Lambda with arg name and formals: args@{ x, y }: x + y
+    auto obj = evalExpression("args@{ x, y }: x + y");
+    EXPECT_EQ(obj->getType(), nFunction);
+    auto info = obj->getFunctionInfo();
+    ASSERT_TRUE(info.has_value());
+    EXPECT_FALSE(info->ellipsis);
+    EXPECT_THAT(
+        info->formals, ::testing::UnorderedElementsAre(::testing::Pair("x", false), ::testing::Pair("y", false)));
+})
+
+EVALUATOR_TEST(Object_getFunctionInfo_WithDefaults, {
+    // Lambda with some defaults: { a, b ? 42 }: a + b
+    auto obj = evalExpression("{ a, b ? 42 }: a + b");
+    EXPECT_EQ(obj->getType(), nFunction);
+    auto info = obj->getFunctionInfo();
+    ASSERT_TRUE(info.has_value());
+    EXPECT_FALSE(info->ellipsis);
+    EXPECT_EQ(info->formals.size(), 2);
+    EXPECT_THAT(
+        info->formals, ::testing::UnorderedElementsAre(::testing::Pair("a", false), ::testing::Pair("b", true)));
+})
+
 // Instantiate tests for each implementation
 INSTANTIATE_TEST_SUITE_P(
     EvaluatorImplementations,

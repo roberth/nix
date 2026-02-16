@@ -50,6 +50,8 @@ public:
     ObjectType getType() override;
 
     RootValue defeatCache() override;
+
+    std::optional<FunctionInfo> getFunctionInfo() override;
 };
 
 } // namespace nix

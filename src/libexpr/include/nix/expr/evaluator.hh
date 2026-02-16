@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "nix/store/path.hh"
@@ -22,6 +23,18 @@ class Store;
 namespace fetchers {
 struct Settings;
 }
+
+/**
+ * Information about a function's formal arguments.
+ * Returned by Object::getFunctionInfo() for lambda values with formals.
+ */
+struct FunctionInfo
+{
+    /** Formal arguments: name -> hasDefault */
+    std::map<std::string, bool> formals;
+    /** Whether the function accepts extra arguments (...) */
+    bool ellipsis;
+};
 
 /**
  * Representation of a Nix language value or potential value.
@@ -154,6 +167,16 @@ public:
      * @return A RootValue containing the forced Value
      */
     virtual RootValue defeatCache() = 0;
+
+    /**
+     * Get information about a function's formal arguments.
+     * Returns nullopt if:
+     * - This is not a lambda (use getType() to check)
+     * - This is a simple lambda without formals (e.g., `x: x + 1`)
+     *
+     * Returns FunctionInfo for lambdas with formals (e.g., `{ a, b, ... }: a + b`)
+     */
+    virtual std::optional<FunctionInfo> getFunctionInfo() = 0;
 };
 
 /**
