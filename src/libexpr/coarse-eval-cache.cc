@@ -46,4 +46,14 @@ ref<Object> CoarseEvalCache::evalExpr(const std::string & expr, const SourcePath
     return inner->evalExpr(expr, basePath);
 }
 
+ref<Object> CoarseEvalCache::mkString(const std::string & s)
+{
+    return inner->mkString(s);
+}
+
+ref<Object> CoarseEvalCache::mkAttrs(const std::map<std::string, ref<Object>> & attrs)
+{
+    return inner->mkAttrs(attrs);
+}
+
 } // namespace nix

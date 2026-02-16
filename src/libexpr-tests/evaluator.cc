@@ -775,6 +775,62 @@ EVALUATOR_TEST(Object_defeatCache_WorksWithStringsWithContext, {
     EXPECT_GT((*value)->context()->size(), 0u);
 })
 
+// Test Evaluator::mkString - construct a string Object
+EVALUATOR_TEST(Evaluator_mkString_CreatesString, {
+    auto obj = evaluator->mkString("hello world");
+    EXPECT_EQ(obj->getType(), nString);
+    EXPECT_EQ(obj->getStringIgnoreContext(), "hello world");
+})
+
+EVALUATOR_TEST(Evaluator_mkString_EmptyString, {
+    auto obj = evaluator->mkString("");
+    EXPECT_EQ(obj->getType(), nString);
+    EXPECT_EQ(obj->getStringIgnoreContext(), "");
+})
+
+EVALUATOR_TEST(Evaluator_mkString_WithSpecialChars, {
+    auto obj = evaluator->mkString("line1\nline2\ttab");
+    EXPECT_EQ(obj->getStringIgnoreContext(), "line1\nline2\ttab");
+})
+
+// Type alias for mkAttrs tests (template brackets confuse macros)
+using ObjectAttrMap = std::map<std::string, ref<Object>>;
+
+// Test Evaluator::mkAttrs - construct an attrset Object
+EVALUATOR_TEST(Evaluator_mkAttrs_CreatesAttrset, {
+    ObjectAttrMap attrs;
+    attrs.insert_or_assign("foo", evaluator->mkString("bar"));
+    attrs.insert_or_assign("baz", evaluator->mkString("qux"));
+    auto obj = evaluator->mkAttrs(attrs);
+    EXPECT_EQ(obj->getType(), nAttrs);
+    auto fooAttr = obj->maybeGetAttr("foo");
+    ASSERT_NE(fooAttr, nullptr);
+    EXPECT_EQ(fooAttr->getStringIgnoreContext(), "bar");
+    auto bazAttr = obj->maybeGetAttr("baz");
+    ASSERT_NE(bazAttr, nullptr);
+    EXPECT_EQ(bazAttr->getStringIgnoreContext(), "qux");
+})
+
+EVALUATOR_TEST(Evaluator_mkAttrs_EmptyAttrset, {
+    ObjectAttrMap attrs;
+    auto obj = evaluator->mkAttrs(attrs);
+    EXPECT_EQ(obj->getType(), nAttrs);
+    EXPECT_EQ(obj->getAttrNames().size(), 0);
+})
+
+EVALUATOR_TEST(Evaluator_mkAttrs_NestedAttrsets, {
+    ObjectAttrMap inner;
+    inner.insert_or_assign("x", evaluator->mkString("nested"));
+    ObjectAttrMap outer;
+    outer.insert_or_assign("inner", evaluator->mkAttrs(inner));
+    auto obj = evaluator->mkAttrs(outer);
+    auto innerObj = obj->maybeGetAttr("inner");
+    ASSERT_NE(innerObj, nullptr);
+    auto xObj = innerObj->maybeGetAttr("x");
+    ASSERT_NE(xObj, nullptr);
+    EXPECT_EQ(xObj->getStringIgnoreContext(), "nested");
+})
+
 // Instantiate tests for each implementation
 INSTANTIATE_TEST_SUITE_P(
     EvaluatorImplementations,
