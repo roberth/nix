@@ -502,25 +502,28 @@ Installables SourceExprCommand::parseInstallables(ref<Store> store, std::vector<
         }
 
         auto state = getEvalState();
-        auto vFile = state->allocValue();
 
-        if (file == "-") {
-            auto e = state->parseStdin();
-            state->eval(e, *vFile);
-        } else if (file) {
-            auto dir = absPath(getCommandBaseDir());
-            state->evalFile(lookupFileArg(*state, file->string(), &dir), *vFile);
-        } else {
-            auto dir = absPath(getCommandBaseDir());
-            auto e = state->parseExprFromString(*expr, state->rootPath(dir.string()));
-            state->eval(e, *vFile);
-        }
+        ref<Evaluator> evaluator = state->toEvaluatorCompat();
+
+        // Evaluate via the Evaluator to get a ref<Object>
+        ref<Object> rootObject = [&]() -> ref<Object> {
+            if (file == "-") {
+                std::string stdinContent = drainFD(STDIN_FILENO);
+                return evaluator->evalExpr(stdinContent, state->rootPath(absPath(getCommandBaseDir()).string()));
+            } else if (file) {
+                auto dir = absPath(getCommandBaseDir());
+                auto path = lookupFileArg(*state, file->string(), &dir);
+                return evaluator->evalFile(path, file->string());
+            } else {
+                return evaluator->evalExpr(*expr, state->rootPath(absPath(getCommandBaseDir()).string()));
+            }
+        }();
 
         for (auto & s : ss) {
             auto [prefix, extendedOutputsSpec] = ExtendedOutputsSpec::parse(s);
             result.push_back(
                 make_ref<InstallableAttrPath>(InstallableAttrPath::parse(
-                    state, *this, vFile, std::move(prefix), std::move(extendedOutputsSpec))));
+                    state, evaluator, *this, rootObject, std::move(prefix), std::move(extendedOutputsSpec))));
         }
 
     } else {

@@ -1,6 +1,7 @@
 #include "nix/expr/coarse-eval-cache.hh"
 #include "nix/expr/coarse-eval-cache-cursor-object.hh"
 #include "nix/expr/eval-cache.hh"
+#include "nix/util/logging.hh"
 
 namespace nix {
 
@@ -28,6 +29,21 @@ Store & CoarseEvalCache::getStore()
 const fetchers::Settings & CoarseEvalCache::getFetchSettings()
 {
     return inner->getFetchSettings();
+}
+
+// CoarseEvalCache only supports initialization through flakes (via getRoot).
+// For evalFile/evalExpr, fall back to direct evaluation without caching.
+
+ref<Object> CoarseEvalCache::evalFile(const SourcePath & path, const std::string & displayPath)
+{
+    debug("CoarseEvalCache::evalFile falling back to direct evaluation for '%s'", displayPath);
+    return inner->evalFile(path, displayPath);
+}
+
+ref<Object> CoarseEvalCache::evalExpr(const std::string & expr, const SourcePath & basePath)
+{
+    debug("CoarseEvalCache::evalExpr falling back to direct evaluation");
+    return inner->evalExpr(expr, basePath);
 }
 
 } // namespace nix

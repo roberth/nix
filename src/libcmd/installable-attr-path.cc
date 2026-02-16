@@ -13,8 +13,7 @@
 #include "nix/main/shared.hh"
 #include "nix/flake/flake.hh"
 #include "nix/expr/eval-cache.hh"
-#include "nix/expr/interpreter.hh"
-#include "nix/expr/interpreter-object.hh"
+#include "nix/expr/evaluator.hh"
 #include "nix/util/url.hh"
 #include "nix/fetchers/registry.hh"
 #include "nix/store/build-result.hh"
@@ -28,13 +27,14 @@ namespace nix {
 
 InstallableAttrPath::InstallableAttrPath(
     ref<EvalState> state,
+    ref<Evaluator> evaluator,
     SourceExprCommand & cmd,
-    Value * v,
+    ref<Object> rootObject,
     const std::string & attrPath,
     ExtendedOutputsSpec extendedOutputsSpec)
-    : InstallableValue(state, make_ref<Interpreter>(state))
+    : InstallableValue(state, evaluator)
     , cmd(cmd)
-    , v(allocRootValue(v))
+    , rootObject(rootObject)
     , attrPath(attrPath)
     , extendedOutputsSpec(std::move(extendedOutputsSpec))
 {
@@ -42,6 +42,7 @@ InstallableAttrPath::InstallableAttrPath(
 
 std::pair<Value *, PosIdx> InstallableAttrPath::toValue(EvalState & state)
 {
+    auto v = rootObject->defeatCache();
     auto [vRes, pos] = findAlongAttrPath(state, attrPath, *cmd.getAutoArgs(state), **v);
     state.forceValue(*vRes, pos);
     return {vRes, pos};
@@ -110,22 +111,22 @@ DerivedPathsWithInfo InstallableAttrPath::toDerivedPaths()
 
 ref<Object> InstallableAttrPath::getRootObject()
 {
-    // For InstallableAttrPath, we use the Interpreter evaluator
-    // and wrap the value in an InterpreterObject
-    return make_ref<InterpreterObject>(*state, v);
+    return rootObject;
 }
 
 InstallableAttrPath InstallableAttrPath::parse(
     ref<EvalState> state,
+    ref<Evaluator> evaluator,
     SourceExprCommand & cmd,
-    Value * v,
+    ref<Object> rootObject,
     std::string_view prefix,
     ExtendedOutputsSpec extendedOutputsSpec)
 {
     return {
         state,
+        evaluator,
         cmd,
-        v,
+        rootObject,
         prefix == "." ? "" : std::string{prefix},
         std::move(extendedOutputsSpec),
     };
