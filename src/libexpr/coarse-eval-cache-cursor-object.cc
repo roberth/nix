@@ -2,6 +2,7 @@
 #include "nix/expr/environment/system.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/interpreter-object.hh"
+#include "nix/expr/nixexpr.hh"
 #include "nix/store/store-api.hh"
 
 namespace nix {
@@ -153,6 +154,25 @@ RootValue CoarseEvalCacheCursorObject::defeatCache()
 {
     // Force evaluation and return the actual Value, bypassing the lossy cache
     return allocRootValue(&cursor->forceValue());
+}
+
+std::optional<FunctionInfo> CoarseEvalCacheCursorObject::getFunctionInfo()
+{
+    // Functions are not cached, so we need to force evaluation
+    auto & v = cursor->forceValue();
+    if (!v.isLambda())
+        return std::nullopt;
+
+    auto formals = v.lambda().fun->getFormals();
+    if (!formals)
+        return std::nullopt;
+
+    FunctionInfo info;
+    info.ellipsis = formals->ellipsis;
+    for (const auto & formal : formals->formals) {
+        info.formals.emplace(std::string(cursor->root->state.symbols[formal.name]), formal.def != nullptr);
+    }
+    return info;
 }
 
 } // namespace nix
