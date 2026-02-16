@@ -396,6 +396,103 @@ EVALUATOR_TEST(Object_getInt_IncludesErrorContext, {
     }
 })
 
+// Test Object::getFloat
+EVALUATOR_TEST(Object_getFloat_ReturnsFloat, {
+    auto obj = evalExpression("3.14");
+    EXPECT_DOUBLE_EQ(obj->getFloat(""), 3.14);
+})
+
+EVALUATOR_TEST(Object_getFloat_ReturnsNegativeFloat, {
+    auto obj = evalExpression("-2.5");
+    EXPECT_DOUBLE_EQ(obj->getFloat(""), -2.5);
+})
+
+EVALUATOR_TEST(Object_getFloat_ThrowsWhenNotAFloat, {
+    auto obj = evalExpression("42");
+    try {
+        obj->getFloat("");
+        FAIL();
+    } catch (const Error & e) {
+        EXPECT_THAT(
+            e.what(),
+            ::testing::AnyOf(
+                nix::testing::HasSubstrIgnoreANSIMatcher("expected a float but found an integer"),
+                nix::testing::HasSubstrIgnoreANSIMatcher("'' is not a float")));
+    }
+})
+
+EVALUATOR_TEST(Object_getFloat_IncludesErrorContext, {
+    auto obj = evalExpression("\"not a float\"");
+    try {
+        obj->getFloat("while evaluating some_float_context");
+        FAIL();
+    } catch (const Error & e) {
+        EXPECT_THAT(e.what(), nix::testing::HasSubstrIgnoreANSIMatcher("some_float_context"));
+    }
+})
+
+// Test Object::getListSize
+EVALUATOR_TEST(Object_getListSize_ReturnsSize, {
+    auto obj = evalExpression("[1 2 3 4 5]");
+    EXPECT_EQ(obj->getListSize(), 5);
+})
+
+EVALUATOR_TEST(Object_getListSize_ReturnsZeroForEmptyList, {
+    auto obj = evalExpression("[]");
+    EXPECT_EQ(obj->getListSize(), 0);
+})
+
+EVALUATOR_TEST(Object_getListSize_ThrowsWhenNotAList, {
+    auto obj = evalExpression("42");
+    try {
+        obj->getListSize();
+        FAIL();
+    } catch (const Error & e) {
+        EXPECT_THAT(e.what(), nix::testing::HasSubstrIgnoreANSIMatcher("expected a list but found an integer"));
+    }
+})
+
+// Test Object::getListElem
+EVALUATOR_TEST(Object_getListElem_ReturnsElement, {
+    auto obj = evalExpression("[\"first\" \"second\" \"third\"]");
+    auto elem0 = obj->getListElem(0);
+    auto elem1 = obj->getListElem(1);
+    auto elem2 = obj->getListElem(2);
+    EXPECT_EQ(elem0->getStringIgnoreContext(), "first");
+    EXPECT_EQ(elem1->getStringIgnoreContext(), "second");
+    EXPECT_EQ(elem2->getStringIgnoreContext(), "third");
+})
+
+EVALUATOR_TEST(Object_getListElem_WorksWithMixedTypes, {
+    auto obj = evalExpression("[42 \"hello\" true]");
+    auto elem0 = obj->getListElem(0);
+    auto elem1 = obj->getListElem(1);
+    auto elem2 = obj->getListElem(2);
+    EXPECT_EQ(elem0->getInt("").value, 42);
+    EXPECT_EQ(elem1->getStringIgnoreContext(), "hello");
+    EXPECT_TRUE(elem2->getBool(""));
+})
+
+EVALUATOR_TEST(Object_getListElem_ThrowsWhenIndexOutOfBounds, {
+    auto obj = evalExpression("[1 2 3]");
+    try {
+        obj->getListElem(5);
+        FAIL();
+    } catch (const Error & e) {
+        EXPECT_THAT(e.what(), nix::testing::HasSubstrIgnoreANSIMatcher("list index 5 is out of bounds"));
+    }
+})
+
+EVALUATOR_TEST(Object_getListElem_ThrowsWhenNotAList, {
+    auto obj = evalExpression("42");
+    try {
+        obj->getListElem(0);
+        FAIL();
+    } catch (const Error & e) {
+        EXPECT_THAT(e.what(), nix::testing::HasSubstrIgnoreANSIMatcher("expected a list but found an integer"));
+    }
+})
+
 // Test Object::getListOfStringsNoCtx
 EVALUATOR_TEST(Object_getListOfStringsNoCtx_ReturnsListOfStrings, {
     auto obj = evalExpression("[\"foo\" \"bar\" \"baz\"]");
@@ -431,6 +528,24 @@ EVALUATOR_TEST(Object_getListOfStringsNoCtx_ThrowsWhenListContainsNonString, {
             ::testing::AnyOf(
                 nix::testing::HasSubstrIgnoreANSIMatcher("value is an integer while a string was expected"),
                 nix::testing::HasSubstrIgnoreANSIMatcher("expected a string but found an integer")));
+    }
+})
+
+EVALUATOR_TEST(Object_getListOfStringsNoCtx_ThrowsWhenStringHasContext, {
+    auto obj = evalExpression(R"(
+        let drv = derivation { name = "test"; system = "x86_64-linux"; builder = "/bin/sh"; };
+        in [ "foo" "${drv}" "bar" ]
+    )");
+    try {
+        obj->getListOfStringsNoCtx();
+        FAIL();
+    } catch (const Error & e) {
+        // All implementations produce this exact message format
+        EXPECT_THAT(e.what(), nix::testing::HasSubstrIgnoreANSIMatcher("the string '/nix/store/"));
+        EXPECT_THAT(
+            e.what(), nix::testing::HasSubstrIgnoreANSIMatcher("' is not allowed to refer to a store path (such as '"));
+        EXPECT_THAT(e.what(), nix::testing::HasSubstrIgnoreANSIMatcher("-test.drv"));
+        EXPECT_THAT(e.what(), nix::testing::HasSubstrIgnoreANSIMatcher("while evaluating a list element at index 1"));
     }
 })
 

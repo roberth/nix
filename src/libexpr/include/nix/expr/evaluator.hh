@@ -91,14 +91,45 @@ public:
     virtual NixInt getInt(std::string_view errorCtx = "") = 0;
 
     /**
+     * Get the float value.
+     * Throws an error if not a float.
+     * @param errorCtx Context for error messages (optional)
+     *
+     * Not supported by coarse evaluation cache. It falls back to evaluation.
+     */
+    virtual NixFloat getFloat(std::string_view errorCtx = "") = 0;
+
+    /**
+     * Get the number of elements in this list.
+     * Throws an error if not a list.
+     *
+     * Not supported by coarse evaluation cache. It falls back to evaluation, so consider
+     * `getListOfStringsNoCtx` if applicable.
+     */
+    virtual size_t getListSize() = 0;
+
+    /**
+     * Get a list element by index.
+     * Throws an error if not a list or if index is out of bounds.
+     *
+     * @param index The 0-based index of the element
+     * @return The element as an Object
+     *
+     * Not supported by coarse evaluation cache. It falls back to evaluation, so consider
+     * `getListOfStringsNoCtx` if applicable.
+     */
+    virtual std::shared_ptr<Object> getListElem(size_t index) = 0;
+
+    /**
      * Get a list of strings, ensuring none have context.
      * Throws an error if not a list, if any element is not a string, or if any string has context.
      * @return A vector of strings without context
      *
-     * Design note: this should probably not have been a primitive, but CoarseEvalCache *does* treat it that way,
-     * forcing our hand.
+     * Default implementation uses getListSize(), getListElem(), and getStringWithContext().
+     * Subclasses may override this (e.g., CoarseEvalCache supports this, but not
+     * the generalized list operations).
      */
-    virtual std::vector<std::string> getListOfStringsNoCtx() = 0;
+    virtual std::vector<std::string> getListOfStringsNoCtx();
 
     /**
      * Get the type of this object without forcing evaluation.
