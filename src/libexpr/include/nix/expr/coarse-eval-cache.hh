@@ -48,6 +48,10 @@ public:
     Store & getStore() override;
 
     const fetchers::Settings & getFetchSettings() override;
+
+    ref<Object> evalFile(const RootedPath & path, const std::string & displayPath) override;
+
+    ref<Object> evalExpr(const std::string & expr, const RootedPath & basePath) override;
 };
 
 } // namespace nix

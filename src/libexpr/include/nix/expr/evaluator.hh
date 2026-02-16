@@ -184,6 +184,20 @@ public:
      * Get the fetch settings for this evaluator.
      */
     virtual const fetchers::Settings & getFetchSettings() = 0;
+
+    /**
+     * Evaluate a file and return the root Object.
+     * @param path The source path to evaluate
+     * @param displayPath The path string for display/logging (original CLI arg)
+     */
+    virtual ref<Object> evalFile(const RootedPath & path, const std::string & displayPath) = 0;
+
+    /**
+     * Evaluate an expression string and return the root Object.
+     * @param expr The expression to evaluate
+     * @param basePath The base path for relative imports
+     */
+    virtual ref<Object> evalExpr(const std::string & expr, const RootedPath & basePath) = 0;
 };
 
 } // namespace nix
