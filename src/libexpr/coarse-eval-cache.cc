@@ -56,4 +56,9 @@ ref<Object> CoarseEvalCache::mkAttrs(const std::map<std::string, ref<Object>> & 
     return inner->mkAttrs(attrs);
 }
 
+ref<Object> CoarseEvalCache::apply(ref<Object> fn, ref<Object> arg)
+{
+    return inner->apply(fn, arg);
+}
+
 } // namespace nix
