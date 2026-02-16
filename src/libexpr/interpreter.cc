@@ -40,4 +40,24 @@ ref<Object> Interpreter::evalExpr(const std::string & expr, const SourcePath & b
     return make_ref<InterpreterObject>(*evalState, allocRootValue(v));
 }
 
+ref<Object> Interpreter::mkString(const std::string & s)
+{
+    auto v = evalState->allocValue();
+    v->mkString(s, evalState->mem);
+    return make_ref<InterpreterObject>(*evalState, allocRootValue(v));
+}
+
+ref<Object> Interpreter::mkAttrs(const std::map<std::string, ref<Object>> & attrs)
+{
+    auto v = evalState->allocValue();
+    auto bindings = evalState->buildBindings(attrs.size());
+    for (const auto & [name, obj] : attrs) {
+        // TODO: make lazy
+        auto attrValue = obj->defeatCache();
+        bindings.insert(evalState->symbols.create(name), *attrValue);
+    }
+    v->mkAttrs(bindings.finish());
+    return make_ref<InterpreterObject>(*evalState, allocRootValue(v));
+}
+
 } // namespace nix

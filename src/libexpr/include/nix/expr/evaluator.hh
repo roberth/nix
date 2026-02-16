@@ -4,6 +4,7 @@
  * Abstract Evaluator interface for Nix expression evaluation.
  */
 
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -192,6 +193,20 @@ public:
      * @param basePath The base path for relative imports
      */
     virtual ref<Object> evalExpr(const std::string & expr, const SourcePath & basePath) = 0;
+
+    /**
+     * Construct a string Object.
+     * @param s The string value
+     * @return An Object representing the string
+     */
+    virtual ref<Object> mkString(const std::string & s) = 0;
+
+    /**
+     * Construct an attrset Object from a map of string to Object.
+     * @param attrs The attributes as a map
+     * @return An Object representing the attrset
+     */
+    virtual ref<Object> mkAttrs(const std::map<std::string, ref<Object>> & attrs) = 0;
 };
 
 } // namespace nix
