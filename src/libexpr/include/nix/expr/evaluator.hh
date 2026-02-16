@@ -230,6 +230,14 @@ public:
      * @return An Object representing the attrset
      */
     virtual ref<Object> mkAttrs(const std::map<std::string, ref<Object>> & attrs) = 0;
+
+    /**
+     * Apply a function to an argument.
+     * @param fn The function Object (must be a lambda)
+     * @param arg The argument Object
+     * @return The result of calling fn with arg
+     */
+    virtual ref<Object> apply(ref<Object> fn, ref<Object> arg) = 0;
 };
 
 } // namespace nix

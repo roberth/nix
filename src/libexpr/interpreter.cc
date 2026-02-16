@@ -60,4 +60,14 @@ ref<Object> Interpreter::mkAttrs(const std::map<std::string, ref<Object>> & attr
     return make_ref<InterpreterObject>(*evalState, allocRootValue(v));
 }
 
+ref<Object> Interpreter::apply(ref<Object> fn, ref<Object> arg)
+{
+    auto fnValue = fn->defeatCache();
+    auto argValue = arg->defeatCache();
+    auto result = evalState->allocValue();
+    // Create a lazy application thunk - evaluation happens when forced
+    result->mkApp(*fnValue, *argValue);
+    return make_ref<InterpreterObject>(*evalState, allocRootValue(result));
+}
+
 } // namespace nix
