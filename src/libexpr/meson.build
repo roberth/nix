@@ -164,6 +164,7 @@ sources = files(
   'eval-settings.cc',
   'eval.cc',
   'evaluation-helpers.cc',
+  'expr-from-object.cc',
   'file-hash-cache.cc',
   'function-trace.cc',
   'get-drvs.cc',

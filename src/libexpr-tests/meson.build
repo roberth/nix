@@ -53,6 +53,7 @@ sources = files(
   'eval.cc',
   'evaluation-helpers.cc',
   'evaluator.cc',
+  'expr-from-object.cc',
   'file-hash-cache.cc',
   'json.cc',
   'main.cc',
