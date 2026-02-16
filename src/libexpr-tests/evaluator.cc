@@ -973,6 +973,65 @@ EVALUATOR_TEST(Object_getFunctionInfo_WithDefaults, {
         info->formals, ::testing::UnorderedElementsAre(::testing::Pair("a", false), ::testing::Pair("b", true)));
 })
 
+// Test Evaluator::apply - function application
+EVALUATOR_TEST(Evaluator_apply_SimpleLambda, {
+    // Simple lambda: x: x + 1, applied to 5
+    auto fn = evalExpression("x: x + 1");
+    auto arg = evalExpression("5");
+    auto result = evaluator->apply(ref<Object>(fn), ref<Object>(arg));
+    EXPECT_EQ(result->getType(), nInt);
+    EXPECT_EQ(result->getInt(), NixInt(6));
+})
+
+EVALUATOR_TEST(Evaluator_apply_WithFormals, {
+    // Lambda with formals: { a, b }: a + b
+    auto fn = evalExpression("{ a, b }: a + b");
+    ObjectAttrMap attrs;
+    attrs.insert_or_assign("a", evaluator->mkString("hello"));
+    attrs.insert_or_assign("b", evaluator->mkString(" world"));
+    auto arg = evaluator->mkAttrs(attrs);
+    auto result = evaluator->apply(ref<Object>(fn), arg);
+    EXPECT_EQ(result->getType(), nString);
+    EXPECT_EQ(result->getStringIgnoreContext(), "hello world");
+})
+
+EVALUATOR_TEST(Evaluator_apply_WithEllipsis, {
+    // Lambda with ellipsis: { a, ... }: a
+    auto fn = evalExpression("{ a, ... }: a");
+    ObjectAttrMap attrs;
+    attrs.insert_or_assign("a", evaluator->mkString("value"));
+    attrs.insert_or_assign("extra", evaluator->mkString("ignored"));
+    auto arg = evaluator->mkAttrs(attrs);
+    auto result = evaluator->apply(ref<Object>(fn), arg);
+    EXPECT_EQ(result->getType(), nString);
+    EXPECT_EQ(result->getStringIgnoreContext(), "value");
+})
+
+EVALUATOR_TEST(Evaluator_apply_Curried, {
+    // Curried function: a: b: a + b
+    auto fn = evalExpression("a: b: a + b");
+    auto arg1 = evalExpression("10");
+    auto partial = evaluator->apply(ref<Object>(fn), ref<Object>(arg1));
+    EXPECT_EQ(partial->getType(), nFunction);
+    auto arg2 = evalExpression("20");
+    auto result = evaluator->apply(partial, ref<Object>(arg2));
+    EXPECT_EQ(result->getType(), nInt);
+    EXPECT_EQ(result->getInt(), NixInt(30));
+})
+
+EVALUATOR_TEST(Evaluator_apply_IsLazy, {
+    // apply should be lazy - constructing the result Object should not throw
+    // even if the result would throw when forced
+    auto fn = evalExpression("x: throw \"error\"");
+    auto arg = evalExpression("42");
+    // This should NOT throw - apply is lazy
+    auto result = evaluator->apply(ref<Object>(fn), ref<Object>(arg));
+    // The result is a thunk until forced
+    EXPECT_EQ(result->getTypeLazy(), nThunk);
+    // Only when we force it should we get the error
+    EXPECT_THROW(result->getType(), Error);
+})
+
 // Instantiate tests for each implementation
 INSTANTIATE_TEST_SUITE_P(
     EvaluatorImplementations,

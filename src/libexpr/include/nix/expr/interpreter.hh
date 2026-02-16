@@ -32,6 +32,8 @@ public:
     ref<Object> mkString(const std::string & s) override;
 
     ref<Object> mkAttrs(const std::map<std::string, ref<Object>> & attrs) override;
+
+    ref<Object> apply(ref<Object> fn, ref<Object> arg) override;
 };
 
 } // namespace nix
