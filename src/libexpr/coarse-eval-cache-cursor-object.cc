@@ -1,5 +1,6 @@
 #include "nix/expr/coarse-eval-cache-cursor-object.hh"
 #include "nix/expr/eval.hh"
+#include "nix/expr/interpreter-object.hh"
 #include "nix/store/store-api.hh"
 
 namespace nix {
@@ -91,6 +92,43 @@ NixInt CoarseEvalCacheCursorObject::getInt(std::string_view errorCtx)
     }
 }
 
+NixFloat CoarseEvalCacheCursorObject::getFloat(std::string_view errorCtx)
+{
+    try {
+        // Floats are not cached by EvalCache, so we need to force evaluation
+        auto & v = cursor->forceValue();
+        if (v.type() != nFloat)
+            cursor->root->state.error<TypeError>("expected a float but found %1%", showType(v)).debugThrow();
+        return v.fpoint();
+    } catch (Error & e) {
+        if (!errorCtx.empty())
+            e.addTrace({}, errorCtx);
+        throw;
+    }
+}
+
+size_t CoarseEvalCacheCursorObject::getListSize()
+{
+    // General lists caching is unimplemented for CoarseEvalCache, so we need to force evaluation
+    auto & v = cursor->forceValue();
+    if (!v.isList())
+        cursor->root->state.error<TypeError>("expected a list but found %1%", showType(v)).debugThrow();
+    return v.listSize();
+}
+
+std::shared_ptr<Object> CoarseEvalCacheCursorObject::getListElem(size_t index)
+{
+    // General lists caching is unimplemented for CoarseEvalCache, so we need to force evaluation
+    auto & v = cursor->forceValue();
+    if (!v.isList())
+        cursor->root->state.error<TypeError>("expected a list but found %1%", showType(v)).debugThrow();
+    if (index >= v.listSize())
+        cursor->root->state.error<EvalError>("list index %1% is out of bounds", index).debugThrow();
+    // List elements are not cached as AttrCursors, so wrap as InterpreterObject
+    return std::make_shared<InterpreterObject>(cursor->root->state, allocRootValue(v.listView()[index]));
+}
+
+// Override default: uses cached value directly
 std::vector<std::string> CoarseEvalCacheCursorObject::getListOfStringsNoCtx()
 {
     return cursor->getListOfStrings();

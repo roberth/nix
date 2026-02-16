@@ -37,6 +37,12 @@ public:
 
     NixInt getInt(std::string_view errorCtx) override;
 
+    NixFloat getFloat(std::string_view errorCtx) override;
+
+    size_t getListSize() override;
+
+    std::shared_ptr<Object> getListElem(size_t index) override;
+
     std::vector<std::string> getListOfStringsNoCtx() override;
 
     ObjectType getTypeLazy() override;

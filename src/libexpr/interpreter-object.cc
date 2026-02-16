@@ -93,6 +93,37 @@ NixInt InterpreterObject::getInt(std::string_view errorCtx)
     return state.forceInt(**value, noPos, errorCtx);
 }
 
+NixFloat InterpreterObject::getFloat(std::string_view errorCtx)
+{
+    // Avoid adding empty trace when errorCtx is not provided
+    if (errorCtx.empty()) {
+        state.forceValue(**value, noPos);
+        if ((*value)->type() != nFloat)
+            state.error<TypeError>("expected a float but found %1%", showType(**value)).debugThrow();
+        return (*value)->fpoint();
+    }
+    return state.forceFloat(**value, noPos, errorCtx);
+}
+
+size_t InterpreterObject::getListSize()
+{
+    state.forceValue(**value, noPos);
+    if (!(*value)->isList())
+        state.error<TypeError>("expected a list but found %1%", showType(**value)).debugThrow();
+    return (*value)->listSize();
+}
+
+std::shared_ptr<Object> InterpreterObject::getListElem(size_t index)
+{
+    state.forceValue(**value, noPos);
+    if (!(*value)->isList())
+        state.error<TypeError>("expected a list but found %1%", showType(**value)).debugThrow();
+    if (index >= (*value)->listSize())
+        state.error<EvalError>("list index %1% is out of bounds", index).debugThrow();
+    return std::make_shared<InterpreterObject>(state, allocRootValue((*value)->listView()[index]));
+}
+
+// Override default for efficiency: avoids wrapper objects and provides better error messages
 std::vector<std::string> InterpreterObject::getListOfStringsNoCtx()
 {
     state.forceValue(**value, noPos);

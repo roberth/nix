@@ -166,6 +166,7 @@ sources = files(
   'eval-profiler.cc',
   'eval-settings.cc',
   'eval.cc',
+  'evaluator.cc',
   'function-trace.cc',
   'get-drvs.cc',
   'interpreter-object.cc',
