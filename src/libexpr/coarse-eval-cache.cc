@@ -46,6 +46,11 @@ ref<Object> CoarseEvalCache::evalExpr(const std::string & expr, const SourcePath
     return inner->evalExpr(expr, basePath);
 }
 
+ref<Object> CoarseEvalCache::evalExprLazy(const std::string & expr, const SourcePath & basePath)
+{
+    return inner->evalExprLazy(expr, basePath);
+}
+
 ref<Object> CoarseEvalCache::mkString(const std::string & s)
 {
     return inner->mkString(s);

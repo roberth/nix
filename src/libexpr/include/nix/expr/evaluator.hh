@@ -219,6 +219,14 @@ public:
     virtual ref<Object> evalExpr(const std::string & expr, const SourcePath & basePath) = 0;
 
     /**
+     * Parse an expression string and return a lazy thunk Object.
+     * The expression is not evaluated until the Object is forced.
+     * @param expr The expression to parse
+     * @param basePath The base path for relative imports
+     */
+    virtual ref<Object> evalExprLazy(const std::string & expr, const SourcePath & basePath) = 0;
+
+    /**
      * Construct a string Object.
      * @param s The string value
      * @return An Object representing the string

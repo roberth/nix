@@ -40,6 +40,14 @@ ref<Object> Interpreter::evalExpr(const std::string & expr, const SourcePath & b
     return make_ref<InterpreterObject>(*evalState, allocRootValue(v));
 }
 
+ref<Object> Interpreter::evalExprLazy(const std::string & expr, const SourcePath & basePath)
+{
+    auto v = evalState->allocValue();
+    auto e = evalState->parseExprFromString(expr, basePath);
+    evalState->mkThunk_(*v, e);
+    return make_ref<InterpreterObject>(*evalState, allocRootValue(v));
+}
+
 ref<Object> Interpreter::mkString(const std::string & s)
 {
     auto v = evalState->allocValue();
