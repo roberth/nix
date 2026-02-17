@@ -61,4 +61,9 @@ ref<Object> CoarseEvalCache::apply(ref<Object> fn, ref<Object> arg)
     return inner->apply(fn, arg);
 }
 
+EvalState & CoarseEvalCache::getEvalState()
+{
+    return inner->getEvalState();
+}
+
 } // namespace nix
