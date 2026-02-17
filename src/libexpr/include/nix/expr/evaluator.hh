@@ -19,6 +19,7 @@
 namespace nix {
 
 class Store;
+class EvalState;
 
 namespace fetchers {
 struct Settings;
@@ -238,6 +239,12 @@ public:
      * @return The result of calling fn with arg
      */
     virtual ref<Object> apply(ref<Object> fn, ref<Object> arg) = 0;
+
+    /**
+     * Get the underlying EvalState.
+     * All Evaluator implementations ultimately wrap an EvalState.
+     */
+    virtual EvalState & getEvalState() = 0;
 };
 
 } // namespace nix
