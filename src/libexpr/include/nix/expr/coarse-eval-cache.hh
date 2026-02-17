@@ -57,6 +57,8 @@ public:
     ref<Object> mkAttrs(const std::map<std::string, ref<Object>> & attrs) override;
 
     ref<Object> apply(ref<Object> fn, ref<Object> arg) override;
+
+    EvalState & getEvalState() override;
 };
 
 } // namespace nix

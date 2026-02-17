@@ -70,4 +70,9 @@ ref<Object> Interpreter::apply(ref<Object> fn, ref<Object> arg)
     return make_ref<InterpreterObject>(*evalState, allocRootValue(result));
 }
 
+EvalState & Interpreter::getEvalState()
+{
+    return *evalState;
+}
+
 } // namespace nix
