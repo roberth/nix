@@ -1,4 +1,8 @@
 #include "nix/expr/evaluation-helpers.hh"
+#include "nix/util/error.hh"
+#include "nix/expr/eval.hh"
+#include "nix/store/globals.hh"
+#include "nix/store/store-api.hh"
 
 namespace nix::expr::helpers {
 
@@ -17,6 +21,40 @@ bool isDerivation(Object & obj)
 
     auto typeStr = typeAttr->getStringIgnoreContext();
     return typeStr == "derivation";
+}
+
+// AttrCursor::forceDerivation() delegates here via toObjectCompat().
+// PackageInfo::requireDrvPath() stays separate: different interface (memoization, optional return).
+StorePath forceDerivation(Evaluator & evaluator, Object & obj, Store & store)
+{
+    auto drvPathAttr = obj.maybeGetAttr("drvPath");
+    if (!drvPathAttr) {
+        throw Error("derivation does not contain a 'drvPath' attribute");
+    }
+
+    // getStringWithContext() handles regeneration of GC'd derivations:
+    // it checks if cached paths are valid, and if not, calls forceValue() to re-evaluate.
+    // See also: ForceDerivationRegenTest in force-derivation-regen.cc
+    auto [drvPathStr, context] = drvPathAttr->getStringWithContext();
+
+    StorePath drvPath = store.parseStorePath(drvPathStr);
+
+    try {
+        drvPath.requireDerivation();
+    } catch (Error & e) {
+        e.addTrace({}, "while evaluating the 'drvPath' attribute of a derivation");
+        throw;
+    }
+
+    /* Port from lazy-paths' `AttrCursor::forceDerivation` (HEAD prior to
+       this commit). The Value-path version added an explicit
+       `addTempRoot` to pin the derivation against GC between cache
+       lookup and use; the helper inherits that responsibility now that
+       the cursor delegates. */
+    if (!settings.readOnlyMode)
+        store.addTempRoot(drvPath);
+
+    return drvPath;
 }
 
 } // namespace nix::expr::helpers

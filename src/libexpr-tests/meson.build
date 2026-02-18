@@ -59,6 +59,7 @@ sources = files(
   'eval.cc',
   'evaluation-helpers.cc',
   'evaluator.cc',
+  'force-derivation-regen.cc',
   'is-path-equivalent.cc',
   'json.cc',
   'lazy-fetcher-attr.cc',

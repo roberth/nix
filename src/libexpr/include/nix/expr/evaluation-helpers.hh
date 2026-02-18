@@ -5,6 +5,7 @@
  */
 
 #include "nix/expr/evaluator.hh"
+#include "nix/store/store-api.hh"
 
 namespace nix::expr::helpers {
 
@@ -22,5 +23,20 @@ namespace nix::expr::helpers {
  * @return true if the object is a derivation, false otherwise
  */
 bool isDerivation(Object & obj);
+
+/**
+ * Force evaluation of a derivation and return its store path.
+ *
+ * Similar implementations exist in AttrCursor::forceDerivation() and
+ * PackageInfo::queryDrvPath(). This version operates on the Object interface.
+ *
+ * @param evaluator The Evaluator to check read-only mode
+ * @param obj The Object representing the derivation (must have type = "derivation")
+ * @param store The store to parse and validate the derivation path
+ * @return The store path of the derivation
+ * @throws Error if drvPath attribute is missing, not a derivation path,
+ *         or the derivation doesn't exist in store (unless read-only mode)
+ */
+StorePath forceDerivation(Evaluator & evaluator, Object & obj, Store & store);
 
 } // namespace nix::expr::helpers
