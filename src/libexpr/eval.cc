@@ -2446,6 +2446,8 @@ std::string_view EvalState::forceStringNoCtx(Value & v, const PosIdx pos, std::s
     return s;
 }
 
+// Intentional duplication: see expr::helpers::isDerivation(Object &) for Object version.
+// This version stays for hot-path callers to avoid Object overhead.
 bool EvalState::isDerivation(Value & v)
 {
     if (v.type() != nAttrs)
