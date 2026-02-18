@@ -761,6 +761,11 @@ public:
     /**
      * @return true iff the value `v` denotes a derivation (i.e. a
      * set with attribute `type = "derivation"`).
+     *
+     * Intentional duplication: expr::helpers::isDerivation(Object &) is
+     * semantically equivalent but uses Object interface. This version stays
+     * for hot-path callers (eqValues, print.cc, etc.) to avoid Object overhead
+     * (symbol interning, heap allocation, GC root).
      */
     bool isDerivation(Value & v);
 

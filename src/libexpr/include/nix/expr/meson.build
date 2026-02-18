@@ -22,6 +22,7 @@ headers = [ config_pub_h ] + files(
   'eval-profiler.hh',
   'eval-settings.hh',
   'eval.hh',
+  'evaluation-helpers.hh',
   'evaluator.hh',
   'function-trace.hh',
   'gc-small-vector.hh',
