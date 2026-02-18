@@ -2,6 +2,7 @@
 #include "nix/util/error.hh"
 #include "nix/expr/attr-path.hh"
 #include "nix/expr/eval.hh"
+#include "nix/util/util.hh"
 
 namespace nix::expr::helpers {
 
@@ -180,6 +181,65 @@ https://nix.dev/manual/nix/stable/language/syntax.html#functions.)",
 
     auto argObj = evaluator.mkAttrs(callArgs);
     return evaluator.apply(obj, argObj);
+}
+
+OrSuggestions<ref<Object>> findAlongAttrPathWithAutoCall(
+    Evaluator & evaluator,
+    ref<Object> obj,
+    const std::string & attrPathStr,
+    const std::vector<std::string> & attrPath,
+    const std::map<std::string, ref<Object>> & autoArgs)
+{
+    ref<Object> current = obj;
+
+    for (const auto & attr : attrPath) {
+        // Auto-call at each step (matches original: autoCallFunction before navigation)
+        current = autoCall(evaluator, current, autoArgs);
+
+        // Is attr an index (integer) or a normal attribute name?
+        auto attrIndex = string2Int<unsigned int>(attr);
+
+        if (!attrIndex) {
+            // Navigate to attribute
+            auto type = current->getType();
+            if (type != nAttrs)
+                throw Error(
+                    "the expression selected by the selection path '%1%' should be a set but is %2%",
+                    attrPathStr,
+                    showType(type));
+
+            if (attr.empty())
+                throw Error("empty attribute name in selection path '%1%'", attrPathStr);
+
+            auto next = current->maybeGetAttr(attr);
+            if (!next) {
+                // Generate suggestions for the missing attribute
+                auto attrNames = current->getAttrNames();
+                StringSet strAttrNames;
+                for (auto & name : attrNames)
+                    strAttrNames.insert(name);
+
+                return OrSuggestions<ref<Object>>::failed(Suggestions::bestMatches(strAttrNames, attr));
+            }
+            current = ref<Object>(next);
+        } else {
+            // Navigate to list index
+            auto type = current->getType();
+            if (type != nList)
+                throw Error(
+                    "the expression selected by the selection path '%1%' should be a list but is %2%",
+                    attrPathStr,
+                    showType(type));
+
+            auto listSize = current->getListSize();
+            if (*attrIndex >= listSize)
+                throw Error("list index %1% in selection path '%2%' is out of range", *attrIndex, attrPathStr);
+
+            current = ref<Object>(current->getListElem(*attrIndex));
+        }
+    }
+
+    return OrSuggestions<ref<Object>>(current);
 }
 
 } // namespace nix::expr::helpers
