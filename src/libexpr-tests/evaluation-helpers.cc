@@ -648,4 +648,122 @@ TEST_F(EvaluatorHelpersTest, autoApply_MissingArgWithSomeProvided)
     EXPECT_THROW(autoApply(evaluator, ref<Object>(obj), args), Error);
 }
 
+TEST_F(EvaluatorHelpersTest, autoCall_ReturnsAttrset)
+{
+    // Verify autoCall correctly handles a function that returns an attrset
+    auto obj = evalExpression("{ x }: { nested = x.value; }");
+    ObjectAttrMap valueAttrs;
+    valueAttrs.insert_or_assign("value", evaluator.mkString("hello"));
+    auto argValue = evaluator.mkAttrs(valueAttrs);
+    ObjectAttrMap args;
+    args.insert_or_assign("x", argValue);
+    auto result = expr::helpers::autoCall(evaluator, ref<Object>(obj), args);
+    // Should return attrset { nested = "hello"; }
+    EXPECT_EQ(result->getType(), nAttrs);
+    auto nested = result->maybeGetAttr("nested");
+    ASSERT_NE(nested, nullptr);
+    EXPECT_EQ(nested->getStringIgnoreContext(), "hello");
+}
+
+// Tests for findAlongAttrPathWithAutoCall
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPathWithAutoCall_Simple)
+{
+    auto obj = evalExpression("{ foo = { bar = 42; }; }");
+    ObjectAttrMap args;
+    auto result =
+        expr::helpers::findAlongAttrPathWithAutoCall(evaluator, ref<Object>(obj), "foo.bar", {"foo", "bar"}, args);
+    ASSERT_TRUE(result);
+    EXPECT_EQ((*result)->getInt(), NixInt(42));
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPathWithAutoCall_WithAutoCall)
+{
+    // Auto-call at each step: { x }: { nested = x.value; } with arg x={value="hello"}
+    // Uses formals so autoCall will call the function
+    auto obj = evalExpression("{ x }: { nested = x.value; }");
+    ObjectAttrMap valueAttrs;
+    valueAttrs.insert_or_assign("value", evaluator.mkString("hello"));
+    auto argValue = evaluator.mkAttrs(valueAttrs);
+    ObjectAttrMap args;
+    args.insert_or_assign("x", argValue);
+    auto result = expr::helpers::findAlongAttrPathWithAutoCall(evaluator, ref<Object>(obj), "nested", {"nested"}, args);
+    ASSERT_TRUE(result);
+    EXPECT_EQ((*result)->getStringIgnoreContext(), "hello");
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPathWithAutoCall_NestedAutoCall)
+{
+    // Nested auto-call: function returns attrset with value computed from another arg
+    // Navigate through multiple levels with auto-calling at each step
+    auto obj = evalExpression("{ x }: { inner = { y }: { result = y.foo; }; }");
+    ObjectAttrMap emptyAttrs;
+    auto xArg = evaluator.mkAttrs(emptyAttrs);
+    ObjectAttrMap yAttrs;
+    yAttrs.insert_or_assign("foo", evaluator.mkString("nested"));
+    auto yArg = evaluator.mkAttrs(yAttrs);
+    ObjectAttrMap args;
+    args.insert_or_assign("x", xArg);
+    args.insert_or_assign("y", yArg);
+    // Navigate to inner.result:
+    // 1. Auto-call { x }: ... with args -> { inner = { y }: { result = y.foo; }; }
+    // 2. Get inner -> { y }: { result = y.foo; }
+    // 3. Auto-call { y }: ... with args -> { result = "nested"; }
+    // 4. Get result -> "nested"
+    auto result = expr::helpers::findAlongAttrPathWithAutoCall(
+        evaluator, ref<Object>(obj), "inner.result", {"inner", "result"}, args);
+    ASSERT_TRUE(result);
+    EXPECT_EQ((*result)->getStringIgnoreContext(), "nested");
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPathWithAutoCall_MissingAttr)
+{
+    auto obj = evalExpression("{ foo = 1; }");
+    ObjectAttrMap args;
+    auto result = expr::helpers::findAlongAttrPathWithAutoCall(evaluator, ref<Object>(obj), "bar", {"bar"}, args);
+    EXPECT_FALSE(result);
+    // Should have suggestions
+    auto suggestions = result.getSuggestions();
+    EXPECT_FALSE(suggestions.suggestions.empty());
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPathWithAutoCall_ListIndex)
+{
+    auto obj = evalExpression("{ items = [ \"a\" \"b\" \"c\" ]; }");
+    ObjectAttrMap args;
+    auto result =
+        expr::helpers::findAlongAttrPathWithAutoCall(evaluator, ref<Object>(obj), "items.1", {"items", "1"}, args);
+    ASSERT_TRUE(result);
+    EXPECT_EQ((*result)->getStringIgnoreContext(), "b");
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPathWithAutoCall_TypeErrorNotSet)
+{
+    // Trying to navigate into a string should throw type error
+    auto obj = evalExpression("\"not a set\"");
+    ObjectAttrMap args;
+    EXPECT_THROW(expr::helpers::findAlongAttrPathWithAutoCall(evaluator, ref<Object>(obj), "foo", {"foo"}, args), Error)
+        << "Should throw when navigating into non-attrset";
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPathWithAutoCall_TypeErrorNotList)
+{
+    // Trying to index into an attrset should throw type error
+    auto obj = evalExpression("{ foo = 1; }");
+    ObjectAttrMap args;
+    EXPECT_THROW(
+        expr::helpers::findAlongAttrPathWithAutoCall(evaluator, ref<Object>(obj), "foo.0", {"foo", "0"}, args), Error)
+        << "Should throw when indexing non-list";
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPathWithAutoCall_ListIndexOutOfRange)
+{
+    auto obj = evalExpression("{ items = [ \"a\" \"b\" ]; }");
+    ObjectAttrMap args;
+    EXPECT_THROW(
+        expr::helpers::findAlongAttrPathWithAutoCall(evaluator, ref<Object>(obj), "items.5", {"items", "5"}, args),
+        Error)
+        << "Should throw when list index is out of range";
+}
+
 } // namespace nix::expr::helpers

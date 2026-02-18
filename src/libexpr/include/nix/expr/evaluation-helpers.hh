@@ -110,4 +110,25 @@ inline ref<Object> autoCall(Evaluator & evaluator, ref<Object> obj, const std::m
     return result;
 }
 
+/**
+ * Navigate an attribute path with auto-calling at each step.
+ *
+ * This is the Object-based equivalent of findAlongAttrPath from attr-path.cc,
+ * which auto-calls functions at each level of navigation.
+ *
+ * @param evaluator The Evaluator for auto-calling
+ * @param obj The root object to start navigation from
+ * @param attrPathStr The original attribute path string (for error messages)
+ * @param attrPath The parsed attribute path to follow (e.g., ["packages", "x86_64-linux", "hello"])
+ * @param autoArgs Arguments to pass when auto-calling
+ * @return The object at the end of the path, or Suggestions if attribute not found
+ * @throws Error if a non-attrset/list is encountered where one was expected, or list index out of range
+ */
+OrSuggestions<ref<Object>> findAlongAttrPathWithAutoCall(
+    Evaluator & evaluator,
+    ref<Object> obj,
+    const std::string & attrPathStr,
+    const std::vector<std::string> & attrPath,
+    const std::map<std::string, ref<Object>> & autoArgs);
+
 } // namespace nix::expr::helpers
