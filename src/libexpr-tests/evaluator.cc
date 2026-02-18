@@ -5,10 +5,8 @@
 
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/interpreter.hh"
-#include "nix/expr/interpreter-object.hh"
 #include "nix/expr/provenance-object.hh"
 #include "nix/expr/coarse-eval-cache.hh"
-#include "nix/expr/coarse-eval-cache-cursor-object.hh"
 #include "nix/expr/eval-cache.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-settings.hh"
@@ -71,18 +69,27 @@ protected:
 
     bool isInterpreter() const
     {
-        return GetParam() == "Interpreter";
+        auto impl = GetParam();
+        return impl == "Interpreter" || impl == "InterpreterWithProvenance";
     }
 
     bool isCoarseCache() const
     {
         auto impl = GetParam();
-        return impl == "CoarseEvalCache" || impl == "CoarseEvalCacheWithPersistence";
+        return impl == "CoarseEvalCache" || impl == "CoarseEvalCacheWithPersistence"
+               || impl == "CoarseEvalCacheWithPersistenceWithProvenance";
     }
 
     bool isCoarseCacheWithPersistence() const
     {
-        return GetParam() == "CoarseEvalCacheWithPersistence";
+        auto impl = GetParam();
+        return impl == "CoarseEvalCacheWithPersistence" || impl == "CoarseEvalCacheWithPersistenceWithProvenance";
+    }
+
+    bool hasProvenanceLayer() const
+    {
+        auto impl = GetParam();
+        return impl == "InterpreterWithProvenance" || impl == "CoarseEvalCacheWithPersistenceWithProvenance";
     }
 
     EvaluatorTest()
@@ -98,13 +105,19 @@ protected:
         auto state = make_ref<EvalState>(LookupPath{}, store, fetchSettings, evalSettings, nullptr);
         evalStateForTestSetupOnly = state;
 
-        auto implementation = GetParam();
-        if (implementation == "Interpreter") {
-            evaluator = std::make_shared<Interpreter>(state);
-        } else if (implementation == "CoarseEvalCache" || implementation == "CoarseEvalCacheWithPersistence") {
-            evaluator = std::make_shared<CoarseEvalCache>(make_ref<Interpreter>(state));
+        std::shared_ptr<Evaluator> baseEvaluator;
+        if (isInterpreter()) {
+            baseEvaluator = std::make_shared<Interpreter>(state);
+        } else if (isCoarseCache()) {
+            baseEvaluator = std::make_shared<CoarseEvalCache>(make_ref<Interpreter>(state));
         } else {
-            throw std::runtime_error("Unknown evaluator implementation: " + implementation);
+            throw std::runtime_error("Unknown evaluator implementation: " + GetParam());
+        }
+
+        if (hasProvenanceLayer()) {
+            evaluator = std::make_shared<ProvenanceEvaluator>(ref<Evaluator>(baseEvaluator));
+        } else {
+            evaluator = baseEvaluator;
         }
     }
 
@@ -133,24 +146,51 @@ protected:
         }
     }
 
+    /**
+     * For Interpreter, delegates to the evaluator (which handles provenance wrapping).
+     * For CoarseEvalCache, creates cache instances to test cursor object behavior.
+     */
     ref<Object> evalExpression(const std::string & expr)
     {
+        if (isInterpreter()) {
+            return evaluator->evalExpr(expr, evaluator->getEvalState().rootPath(CanonPath::root));
+        }
+
+        // CoarseEvalCache is designed for flake initialization via getRoot(EvalCache),
+        // so evalExpr() falls back to Interpreter without caching. We manually create
+        // cache instances here to test CoarseEvalCacheCursorObject's caching behavior.
         auto & state = *evalStateForTestSetupOnly;
         auto e = state.parseExprFromString(expr, state.rootPath(CanonPath::root));
         auto v = state.allocValue();
         state.eval(e, *v);
 
-        auto implementation = GetParam();
-        if (implementation == "Interpreter") {
-            return make_ref<InterpreterObject>(state, allocRootValue(v));
-        } else if (implementation == "CoarseEvalCache") {
-            auto cache = std::make_shared<eval_cache::EvalCache>(std::nullopt, state, [v]() { return v; });
-            return make_ref<CoarseEvalCacheCursorObject>(cache->getRoot());
-        } else if (implementation == "CoarseEvalCacheWithPersistence") {
-            auto cache = std::make_shared<eval_cache::EvalCache>(getTestCachePath(), state, [v]() { return v; });
-            return make_ref<CoarseEvalCacheCursorObject>(cache->getRoot());
+        ref<Object> result = [&]() -> ref<Object> {
+            if (isCoarseCache() && !isCoarseCacheWithPersistence()) {
+                auto cache = std::make_shared<eval_cache::EvalCache>(std::nullopt, state, [v]() { return v; });
+                return cache->getRoot()->toObjectCompat();
+            } else if (isCoarseCacheWithPersistence()) {
+                auto cache = std::make_shared<eval_cache::EvalCache>(getTestCachePath(), state, [v]() { return v; });
+                return cache->getRoot()->toObjectCompat();
+            } else {
+                throw std::runtime_error("Unknown evaluator implementation: " + GetParam());
+            }
+        }();
+
+        if (hasProvenanceLayer()) {
+            result = make_ref<ProvenanceObject>(result, state);
         }
-        throw std::runtime_error("Unknown implementation");
+        return result;
+    }
+
+    /**
+     * Parse a Nix expression and return a lazy thunk Object (not evaluated).
+     *
+     * WARNING: Avoid if possible, because CoarseEvalCache does not support this
+     *          and falls back to Interpreter. You're not testing CoarseEvalCache then.
+     */
+    ref<Object> evalExpressionLazy(const std::string & expr)
+    {
+        return evaluator->evalExprLazy(expr, evaluator->getEvalState().rootPath(CanonPath::root));
     }
 
     /**
@@ -1009,7 +1049,12 @@ EVALUATOR_TEST(ProvenanceObject_NestedNavigation, {
 INSTANTIATE_TEST_SUITE_P(
     EvaluatorImplementations,
     EvaluatorTest,
-    ::testing::Values("Interpreter", "CoarseEvalCache", "CoarseEvalCacheWithPersistence"),
+    ::testing::Values(
+        "Interpreter",
+        "CoarseEvalCache",
+        "CoarseEvalCacheWithPersistence",
+        "InterpreterWithProvenance",
+        "CoarseEvalCacheWithPersistenceWithProvenance"),
     [](const ::testing::TestParamInfo<std::string> & info) { return info.param; });
 
 } // namespace nix::expr
