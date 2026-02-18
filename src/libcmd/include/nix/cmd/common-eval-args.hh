@@ -7,6 +7,7 @@
 #include "nix/expr/search-path.hh"
 #include "nix/expr/eval-settings.hh"
 #include "nix/store/store-reference.hh"
+#include "nix/expr/evaluator.hh"
 
 #include <filesystem>
 
@@ -53,6 +54,11 @@ struct MixEvalArgs : virtual Args, virtual MixRepair
     MixEvalArgs();
 
     Bindings * getAutoArgs(EvalState & state);
+
+    /**
+     * Get auto-arguments as Objects for use with expr::helpers::autoCall.
+     */
+    std::map<std::string, ref<Object>> getAutoArgsAsObjects(Evaluator & evaluator, EvalState & state);
 
     LookupPath lookupPath;
 
