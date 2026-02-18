@@ -1,6 +1,7 @@
 #include "nix/util/users.hh"
 #include "nix/expr/eval-cache.hh"
 #include "nix/expr/coarse-eval-cache-cursor-object.hh"
+#include "nix/expr/evaluation-helpers.hh"
 #include "nix/store/sqlite.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-inline.hh"
@@ -800,18 +801,7 @@ bool AttrCursor::isDerivation()
 
 StorePath AttrCursor::forceDerivation()
 {
-    auto aDrvPath = getAttr(root->state.s.drvPath);
-    auto drvPath = root->state.store->parseStorePath(aDrvPath->getString());
-    drvPath.requireDerivation();
-    if (!root->state.store->isValidPath(drvPath) && !settings.readOnlyMode) {
-        /* The eval cache contains 'drvPath', but the actual path has
-           been garbage-collected. So force it to be regenerated. */
-        aDrvPath->forceValue();
-        if (!root->state.store->isValidPath(drvPath))
-            throw Error(
-                "don't know how to recreate store derivation '%s'!", root->state.store->printStorePath(drvPath));
-    }
-    return drvPath;
+    return expr::helpers::forceDerivation(*root->state.toEvaluatorCompat(), *toObjectCompat(), *root->state.store);
 }
 
 ref<nix::Object> AttrCursor::toObjectCompat()

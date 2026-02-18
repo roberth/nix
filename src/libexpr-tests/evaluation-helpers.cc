@@ -91,4 +91,81 @@ TEST_F(EvaluatorHelpersTest, isDerivation_ReturnsFalseWhenTypeIsNotString)
     EXPECT_FALSE(isDerivation(*obj));
 }
 
+// Tests for forceDerivation helper
+TEST_F(EvaluatorHelpersTest, forceDerivation_ReturnsDerivationPath)
+{
+    auto expr = state.parseExprFromString(
+        "derivation { name = \"test\"; system = \"x86_64-linux\"; builder = \"/bin/sh\"; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto drvPath = forceDerivation(evaluator, *obj, *store);
+
+    // Check that we got a derivation path
+    EXPECT_TRUE(drvPath.isDerivation());
+    // The path should end with .drv
+    auto pathStr = store->printStorePath(drvPath);
+    EXPECT_TRUE(pathStr.ends_with(".drv"));
+    // The path should contain the name "test"
+    EXPECT_TRUE(pathStr.find("test") != std::string::npos);
+}
+
+TEST_F(EvaluatorHelpersTest, forceDerivation_ThrowsWhenMissingDrvPath)
+{
+    auto v = makeAttrs({{"name", "test"}, {"type", "derivation"}});
+    auto obj = state.toObjectCompat(*v);
+
+    try {
+        forceDerivation(evaluator, *obj, *store);
+        FAIL() << "Expected Error to be thrown";
+    } catch (const Error & e) {
+        EXPECT_THAT(e.what(), ::testing::HasSubstr("derivation does not contain a 'drvPath' attribute"));
+    }
+}
+
+TEST_F(EvaluatorHelpersTest, forceDerivation_ThrowsWhenInvalidDrvPath)
+{
+    // builtins.toFile returns a store path string that doesn't end in .drv
+    auto expr = state.parseExprFromString(
+        R"({
+            type = "derivation";
+            drvPath = builtins.toFile "not-a-drv" "content";
+        })",
+        state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    try {
+        forceDerivation(evaluator, *obj, *store);
+        FAIL() << "Expected Error to be thrown";
+    } catch (const Error & e) {
+        EXPECT_THAT(e.what(), ::testing::HasSubstr("while evaluating the 'drvPath' attribute of a derivation"));
+    }
+}
+
+TEST_F(EvaluatorHelpersTest, forceDerivation_ThrowsWhenDrvPathNotString)
+{
+    auto v = state.allocValue();
+    auto bindings = state.buildBindings(2);
+    auto vType = state.allocValue();
+    vType->mkString("derivation", state.mem);
+    bindings.insert(state.symbols.create("type"), vType);
+    auto vDrvPath = state.allocValue();
+    vDrvPath->mkInt(42);
+    bindings.insert(state.symbols.create("drvPath"), vDrvPath);
+    v->mkAttrs(bindings.finish());
+
+    auto obj = state.toObjectCompat(*v);
+
+    try {
+        forceDerivation(evaluator, *obj, *store);
+        FAIL() << "Expected Error to be thrown";
+    } catch (const Error & e) {
+        EXPECT_THAT(
+            e.what(), nix::testing::HasSubstrIgnoreANSIMatcher("value is an integer while a string was expected"));
+    }
+}
+
 } // namespace nix::expr::helpers

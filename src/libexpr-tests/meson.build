@@ -53,6 +53,7 @@ sources = files(
   'eval.cc',
   'evaluation-helpers.cc',
   'evaluator.cc',
+  'force-derivation-regen.cc',
   'json.cc',
   'main.cc',
   'nix_api_expr.cc',

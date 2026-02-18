@@ -663,6 +663,7 @@ EVALUATOR_TEST(Object_getType_nExternal, {
 })
 
 // Test Object::getStringWithContext
+// See also: ForceDerivationRegenTest in force-derivation-regen.cc (tests GC'd path regeneration)
 EVALUATOR_TEST(Object_getStringWithContext_PlainString, {
     auto obj = evalExpression("\"hello world\"");
     auto result = obj->getStringWithContext();
