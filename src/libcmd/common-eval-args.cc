@@ -178,6 +178,27 @@ Bindings * MixEvalArgs::getAutoArgs(EvalState & state)
     return res.finish();
 }
 
+std::map<std::string, ref<Object>> MixEvalArgs::getAutoArgsAsObjects(Evaluator & evaluator, EvalState & state)
+{
+    std::map<std::string, ref<Object>> result;
+    for (auto & [name, arg] : autoArgs) {
+        ref<Object> obj = std::visit(
+            overloaded{
+                [&](const AutoArgExpr & arg) -> ref<Object> {
+                    auto basePath = compatibilitySettings.nixShellShebangArgumentsRelativeToScript
+                                        ? state.rootPath(absPath(getCommandBaseDir()).string())
+                                        : state.rootPath(".");
+                    return evaluator.evalExprLazy(arg.expr, basePath);
+                },
+                [&](const AutoArgString & arg) -> ref<Object> { return evaluator.mkString(arg.s); },
+                [&](const AutoArgFile & arg) -> ref<Object> { return evaluator.mkString(readFile(arg.path.string())); },
+                [&](const AutoArgStdin & arg) -> ref<Object> { return evaluator.mkString(readFile(STDIN_FILENO)); }},
+            arg);
+        result.insert_or_assign(name, obj);
+    }
+    return result;
+}
+
 SourcePath lookupFileArg(EvalState & state, std::string_view s, const std::filesystem::path * baseDir)
 {
     if (EvalSettings::isPseudoUrl(s)) {
