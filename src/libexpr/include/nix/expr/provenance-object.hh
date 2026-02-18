@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file
- * ProvenanceObject - Object wrapper that tracks navigation provenance for position lookup.
+ * ProvenanceObject - Object wrapper that tracks attribute path for position lookup.
  */
 
 #include "nix/expr/evaluator.hh"
@@ -9,7 +9,7 @@
 namespace nix {
 
 /**
- * Object wrapper that tracks how we navigated to this object.
+ * Object wrapper that tracks the attribute path used to reach this object.
  *
  * Stores parent + attribute name so that getPos() can compute the
  * attribute binding position lazily (by defeating parent's cache).
@@ -76,6 +76,11 @@ public:
      * Defeats parent's cache if needed.
      */
     PosIdx getPos() override;
+
+    /**
+     * Get the attribute path by walking up the parent chain.
+     */
+    std::optional<std::vector<std::string>> getAttrPath() override;
 
     /**
      * Get the inner Object (for direct access when provenance not needed).

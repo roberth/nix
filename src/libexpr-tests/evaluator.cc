@@ -92,6 +92,12 @@ protected:
         return impl == "InterpreterWithProvenance" || impl == "CoarseEvalCacheWithPersistenceWithProvenance";
     }
 
+    /** True if Object provides provenance features (getAttrPath, etc.) */
+    bool implementsProvenance() const
+    {
+        return isCoarseCache() || hasProvenanceLayer();
+    }
+
     EvaluatorTest()
         : LibStoreTest(openStore("dummy://?read-only=false"))
     {
@@ -1043,6 +1049,38 @@ EVALUATOR_TEST(ProvenanceObject_NestedNavigation, {
     EXPECT_NE(a->getPos(), noPos);
     EXPECT_NE(b->getPos(), noPos);
     EXPECT_NE(c->getPos(), noPos);
+})
+
+// Test Object::getAttrPath returns the navigation path
+EVALUATOR_TEST(Object_getAttrPath_RootIsEmpty, {
+    auto obj = evalExpression("{ a = 1; }");
+    auto path = obj->getAttrPath();
+    if (implementsProvenance()) {
+        ASSERT_TRUE(path.has_value());
+        EXPECT_TRUE(path->empty());
+    } else {
+        // Interpreter without provenance doesn't track paths
+        EXPECT_FALSE(path.has_value());
+    }
+})
+
+EVALUATOR_TEST(Object_getAttrPath_TracksNavigation, {
+    auto obj = evalExpression("{ a = { b = { c = 123; }; }; }");
+    auto a = obj->maybeGetAttr("a");
+    ASSERT_NE(a, nullptr);
+    auto b = a->maybeGetAttr("b");
+    ASSERT_NE(b, nullptr);
+    auto c = b->maybeGetAttr("c");
+    ASSERT_NE(c, nullptr);
+
+    if (implementsProvenance()) {
+        auto path = c->getAttrPath();
+        ASSERT_TRUE(path.has_value());
+        EXPECT_EQ(*path, (std::vector<std::string>{"a", "b", "c"}));
+    } else {
+        // Interpreter without provenance doesn't track paths
+        EXPECT_FALSE(c->getAttrPath().has_value());
+    }
 })
 
 // Instantiate tests for each implementation
