@@ -175,4 +175,15 @@ std::optional<FunctionInfo> CoarseEvalCacheCursorObject::getFunctionInfo()
     return info;
 }
 
+std::optional<std::vector<std::string>> CoarseEvalCacheCursorObject::getAttrPath()
+{
+    auto attrPath = cursor->getAttrPath();
+    std::vector<std::string> result;
+    result.reserve(attrPath.size());
+    for (auto & sym : attrPath) {
+        result.push_back(std::string(cursor->root->state.symbols[sym]));
+    }
+    return result;
+}
+
 } // namespace nix

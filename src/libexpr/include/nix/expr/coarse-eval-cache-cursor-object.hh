@@ -50,6 +50,8 @@ public:
     RootValue defeatCache() override;
 
     std::optional<FunctionInfo> getFunctionInfo() override;
+
+    std::optional<std::vector<std::string>> getAttrPath() override;
 };
 
 } // namespace nix

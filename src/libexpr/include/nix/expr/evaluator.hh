@@ -185,11 +185,22 @@ public:
     /**
      * Get the source position where this object was defined.
      * Returns noPos if position is unknown (e.g., not tracked, or cached without position).
-     * Position is available when navigating with ProvenanceObject::maybeGetAttr.
+     * Implemented by ProvenanceObject.
      */
     virtual PosIdx getPos()
     {
         return noPos;
+    }
+
+    /**
+     * Get the attribute path used to reach this object.
+     * Returns nullopt if the path is unknown (e.g., not tracked).
+     * Returns empty vector for root objects.
+     * Implemented by ProvenanceObject and CoarseEvalCacheCursorObject.
+     */
+    virtual std::optional<std::vector<std::string>> getAttrPath()
+    {
+        return std::nullopt;
     }
 };
 
