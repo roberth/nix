@@ -147,13 +147,33 @@ ref<Object> autoApply(Evaluator & evaluator, ref<Object> obj, const std::map<std
             if (it != args.end()) {
                 callArgs.insert(*it);
             } else if (!hasDefault) {
-                throw Error(
-                    "cannot evaluate a function that has an argument without a value ('%1%')\n\n"
-                    "Nix attempted to evaluate a function as a top level expression; in\n"
-                    "this case it must have its arguments supplied either by default\n"
-                    "values, or passed explicitly with '--arg' or '--argstr'. See\n"
-                    "https://nix.dev/manual/nix/stable/language/syntax.html#functions.",
-                    formalName);
+                // Get full error info via defeatCache
+                auto value = obj->defeatCache();
+                auto & state = evaluator.getEvalState();
+                auto lambda = (*value)->lambda();
+                auto formals = lambda.fun->getFormals();
+                // Find the formal's position
+                PosIdx formalPos = noPos;
+                if (formals) {
+                    for (auto & f : formals->formals) {
+                        if (state.symbols[f.name] == formalName) {
+                            formalPos = f.pos;
+                            break;
+                        }
+                    }
+                }
+                state
+                    .error<MissingArgumentError>(
+                        R"(cannot evaluate a function that has an argument without a value ('%1%')
+
+Nix attempted to evaluate a function as a top level expression; in
+this case it must have its arguments supplied either by default
+values, or passed explicitly with '--arg' or '--argstr'. See
+https://nix.dev/manual/nix/stable/language/syntax.html#functions.)",
+                        formalName)
+                    .atPos(formalPos)
+                    .withFrame(*lambda.env, *lambda.fun)
+                    .debugThrow();
             }
         }
     }
