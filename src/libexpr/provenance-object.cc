@@ -124,6 +124,17 @@ PosIdx ProvenanceObject::getPos()
     return attr ? attr->pos : noPos;
 }
 
+std::optional<std::vector<std::string>> ProvenanceObject::getAttrPath()
+{
+    std::vector<std::string> path;
+    for (auto current = this; current != nullptr; current = current->parent.get()) {
+        if (!current->attrName.empty())
+            path.push_back(current->attrName);
+    }
+    std::reverse(path.begin(), path.end());
+    return path;
+}
+
 // --- ProvenanceEvaluator ---
 
 ProvenanceEvaluator::ProvenanceEvaluator(ref<Evaluator> inner)
