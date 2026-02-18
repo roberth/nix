@@ -13,6 +13,7 @@
 #include "nix/expr/value/context.hh"
 #include "nix/expr/value.hh"
 #include "nix/expr/object-type.hh"
+#include "nix/util/pos-idx.hh"
 #include "nix/util/ref.hh"
 #include "nix/util/source-path.hh"
 
@@ -178,6 +179,18 @@ public:
      * Returns FunctionInfo for lambdas with formals (e.g., `{ a, b, ... }: a + b`)
      */
     virtual std::optional<FunctionInfo> getFunctionInfo() = 0;
+
+    // --- Provenance methods (optional, for error reporting) ---
+
+    /**
+     * Get the source position where this object was defined.
+     * Returns noPos if position is unknown (e.g., not tracked, or cached without position).
+     * Position is available when navigating with ProvenanceObject::maybeGetAttr.
+     */
+    virtual PosIdx getPos()
+    {
+        return noPos;
+    }
 };
 
 /**

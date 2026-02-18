@@ -6,6 +6,7 @@
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/interpreter.hh"
 #include "nix/expr/interpreter-object.hh"
+#include "nix/expr/provenance-object.hh"
 #include "nix/expr/coarse-eval-cache.hh"
 #include "nix/expr/coarse-eval-cache-cursor-object.hh"
 #include "nix/expr/eval-cache.hh"
@@ -1030,6 +1031,54 @@ EVALUATOR_TEST(Evaluator_apply_IsLazy, {
     EXPECT_EQ(result->getTypeLazy(), nThunk);
     // Only when we force it should we get the error
     EXPECT_THROW(result->getType(), Error);
+})
+
+// Test ProvenanceObject, wrapping the other evaluators
+EVALUATOR_TEST(ProvenanceObject_RootHasNoPos, {
+    auto obj = evalExpression("{ foo = 42; }");
+    auto provObj = std::make_shared<ProvenanceObject>(ref<Object>(obj), evaluator->getEvalState());
+    EXPECT_EQ(provObj->getPos(), noPos) << "Root ProvenanceObject should have noPos";
+})
+
+EVALUATOR_TEST(ProvenanceObject_DelegatesGetType, {
+    auto obj = evalExpression("{ foo = 42; }");
+    auto provObj = std::make_shared<ProvenanceObject>(ref<Object>(obj), evaluator->getEvalState());
+    EXPECT_EQ(provObj->getType(), nAttrs);
+})
+
+EVALUATOR_TEST(ProvenanceObject_MaybeGetAttrDelegates, {
+    auto obj = evalExpression("{ foo = 42; }");
+    auto provObj = std::make_shared<ProvenanceObject>(ref<Object>(obj), evaluator->getEvalState());
+    auto foo = provObj->maybeGetAttr("foo");
+    ASSERT_NE(foo, nullptr);
+    EXPECT_EQ(foo->getType(), nInt);
+    EXPECT_EQ(foo->getInt(), NixInt(42));
+})
+
+EVALUATOR_TEST(ProvenanceObject_ChildHasPosition, {
+    auto obj = evalExpression("{ foo = 42; }");
+    auto provObj = std::make_shared<ProvenanceObject>(ref<Object>(obj), evaluator->getEvalState());
+    auto foo = provObj->maybeGetAttr("foo");
+    ASSERT_NE(foo, nullptr);
+    // After navigating via maybeGetAttr, getPos() should return the attr position
+    auto pos = foo->getPos();
+    EXPECT_NE(pos, noPos) << "Child should have position from attr lookup";
+})
+
+EVALUATOR_TEST(ProvenanceObject_NestedNavigation, {
+    auto obj = evalExpression("{ a = { b = { c = 123; }; }; }");
+    auto provObj = std::make_shared<ProvenanceObject>(ref<Object>(obj), evaluator->getEvalState());
+    auto a = provObj->maybeGetAttr("a");
+    ASSERT_NE(a, nullptr);
+    auto b = a->maybeGetAttr("b");
+    ASSERT_NE(b, nullptr);
+    auto c = b->maybeGetAttr("c");
+    ASSERT_NE(c, nullptr);
+    EXPECT_EQ(c->getInt(), NixInt(123));
+    // Each level should have position
+    EXPECT_NE(a->getPos(), noPos);
+    EXPECT_NE(b->getPos(), noPos);
+    EXPECT_NE(c->getPos(), noPos);
 })
 
 // Instantiate tests for each implementation

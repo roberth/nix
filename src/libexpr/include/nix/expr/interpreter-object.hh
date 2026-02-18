@@ -53,6 +53,8 @@ public:
     RootValue defeatCache() override;
 
     std::optional<FunctionInfo> getFunctionInfo() override;
+
+    PosIdx getPos() override;
 };
 
 } // namespace nix
