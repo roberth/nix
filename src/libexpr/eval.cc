@@ -2,6 +2,7 @@
 #include "nix/expr/eval-error.hh"
 #include "nix/expr/environment.hh"
 #include "nix/expr/eval-settings.hh"
+#include "nix/expr/evaluation-helpers.hh"
 #include "nix/expr/interpreter.hh"
 #include "nix/expr/interpreter-object.hh"
 #include "nix/expr/primops.hh"
@@ -1782,56 +1783,21 @@ void EvalState::incrFunctionCall(ExprLambda * fun)
 
 void EvalState::autoCallFunction(const Bindings & args, Value & fun, Value & res)
 {
-    auto pos = fun.determinePos(noPos);
+    auto interpreter = toEvaluatorCompat();
+    auto funObj = toObjectCompat(fun);
 
-    forceValue(fun, pos);
-
-    if (fun.type() == nAttrs) {
-        auto found = fun.attrs()->get(s.functor);
-        if (found) {
-            Value * v = allocValue();
-            callFunction(*found->value, fun, *v, pos);
-            forceValue(*v, pos);
-            return autoCallFunction(args, *v, res);
-        }
+    // Convert Bindings to map<string, ref<Object>>
+    std::map<std::string, ref<Object>> argsMap;
+    for (auto & attr : args) {
+        argsMap.emplace(std::string(symbols[attr.name]), toObjectCompat(*attr.value));
     }
 
-    if (!fun.isLambda() || !fun.lambda().fun->getFormals()) {
-        res = fun;
-        return;
-    }
-    auto formals = fun.lambda().fun->getFormals();
+    // Delegate to Object-based autoCall (eager - forces the result)
+    auto resultObj = expr::helpers::autoCall(*interpreter, funObj, argsMap);
 
-    auto attrs = buildBindings(std::max(static_cast<uint32_t>(formals->formals.size()), args.size()));
-
-    if (formals->ellipsis) {
-        // If the formals have an ellipsis (eg the function accepts extra args) pass
-        // all available automatic arguments (which includes arguments specified on
-        // the command line via --arg/--argstr)
-        for (auto & v : args)
-            attrs.insert(v);
-    } else {
-        // Otherwise, only pass the arguments that the function accepts
-        for (auto & i : formals->formals) {
-            auto j = args.get(i.name);
-            if (j) {
-                attrs.insert(*j);
-            } else if (!i.def) {
-                error<MissingArgumentError>(
-                    R"(cannot evaluate a function that has an argument without a value ('%1%')
-Nix attempted to evaluate a function as a top level expression; in
-this case it must have its arguments supplied either by default
-values, or passed explicitly with '--arg' or '--argstr'. See
-https://nix.dev/manual/nix/stable/language/syntax.html#functions.)",
-                    symbols[i.name])
-                    .atPos(i.pos)
-                    .withFrame(*fun.lambda().env, *fun.lambda().fun)
-                    .debugThrow();
-            }
-        }
-    }
-
-    callFunction(fun, allocValue()->mkAttrs(attrs), res, pos);
+    // Extract the Value from the result
+    auto resultValue = resultObj->defeatCache();
+    res = **resultValue;
 }
 
 void ExprWith::eval(EvalState & state, Env & env, Value & v)
