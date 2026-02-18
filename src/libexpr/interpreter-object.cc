@@ -178,4 +178,9 @@ std::optional<FunctionInfo> InterpreterObject::getFunctionInfo()
     return info;
 }
 
+PosIdx InterpreterObject::getPos()
+{
+    return pos;
+}
+
 } // namespace nix
