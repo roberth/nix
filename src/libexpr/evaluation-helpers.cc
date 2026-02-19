@@ -47,4 +47,29 @@ StorePath forceDerivation(Evaluator & evaluator, Object & obj, Store & store)
     return drvPath;
 }
 
+StringSet getDerivationOutputs(Object & obj)
+{
+    StringSet outputsToInstall;
+
+    if (auto aOutputSpecified = obj.maybeGetAttr("outputSpecified")) {
+        if (aOutputSpecified->getBool("while checking outputSpecified")) {
+            if (auto aOutputName = obj.maybeGetAttr("outputName")) {
+                if (aOutputName->getType() == nString) {
+                    outputsToInstall = {aOutputName->getStringIgnoreContext()};
+                }
+            }
+        }
+    } else if (auto aMeta = obj.maybeGetAttr("meta")) {
+        if (auto aOutputsToInstall = aMeta->maybeGetAttr("outputsToInstall")) {
+            for (auto & s : aOutputsToInstall->getListOfStringsNoCtx())
+                outputsToInstall.insert(s);
+        }
+    }
+
+    if (outputsToInstall.empty())
+        outputsToInstall.insert("out");
+
+    return outputsToInstall;
+}
+
 } // namespace nix::expr::helpers
