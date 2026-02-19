@@ -42,6 +42,8 @@ namespace nix {
 constexpr size_t maxPrimOpArity = 8;
 
 class Store;
+class Evaluator;
+class Object;
 
 namespace fetchers {
 struct Settings;
@@ -514,6 +516,31 @@ public:
      * A cache for evaluation caches, so as to reuse the same root value if possible
      */
     std::map<const Hash, ref<eval_cache::EvalCache>> evalCaches;
+
+    /**
+     * Weak reference to the Evaluator wrapping this EvalState.
+     * Weak to avoid a reference cycle (Interpreter holds ref<EvalState>).
+     *
+     * @deprecated Transitional bridge for migrating Value-based code to Object-based.
+     * Remove once all callers use Evaluator/Object directly.
+     */
+    std::weak_ptr<Evaluator> evaluatorCompat;
+
+    /**
+     * Get (or create) an Evaluator wrapping this EvalState.
+     *
+     * @deprecated Transitional bridge for migrating Value-based code to Object-based.
+     * Callers should eventually receive an Evaluator from their constructor instead.
+     */
+    ref<Evaluator> toEvaluatorCompat();
+
+    /**
+     * Wrap a Value as an Object.
+     *
+     * @deprecated Transitional bridge for migrating Value-based code to Object-based.
+     * Callers should eventually receive Objects from Evaluator methods instead.
+     */
+    ref<Object> toObjectCompat(Value & v);
 
     /* Set of accessor pairs known to be NAR-inequivalent, populated
        by `accessorsEquivalent` when any of its decisive probes (root

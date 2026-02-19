@@ -1,5 +1,6 @@
 #include "nix/util/users.hh"
 #include "nix/expr/eval-cache.hh"
+#include "nix/expr/coarse-eval-cache-cursor-object.hh"
 #include "nix/store/sqlite.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-inline.hh"
@@ -816,6 +817,11 @@ StorePath AttrCursor::forceDerivation()
         }
     }
     return drvPath;
+}
+
+ref<nix::Object> AttrCursor::toObjectCompat()
+{
+    return make_ref<CoarseEvalCacheCursorObject>(ref<AttrCursor>(shared_from_this()));
 }
 
 } // namespace nix::eval_cache
