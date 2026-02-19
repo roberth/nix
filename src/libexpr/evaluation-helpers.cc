@@ -1,5 +1,6 @@
 #include "nix/expr/evaluation-helpers.hh"
 #include "nix/util/error.hh"
+#include "nix/expr/attr-path.hh"
 #include "nix/expr/eval.hh"
 
 namespace nix::expr::helpers {
@@ -90,6 +91,29 @@ OrSuggestions<std::shared_ptr<Object>> findAlongAttrPath(Object & obj, const std
     }
 
     return current;
+}
+
+OrSuggestions<std::pair<std::shared_ptr<Object>, std::string>>
+tryAttrPaths(Object & obj, const std::vector<std::string> & attrPaths, EvalState & state)
+{
+    Suggestions suggestions;
+
+    for (auto & attrPath : attrPaths) {
+        auto attrPathSymbols = AttrPath::parse(state, attrPath);
+        std::vector<std::string> attrPathStrings;
+        for (const auto & sym : attrPathSymbols) {
+            attrPathStrings.push_back(std::string(state.symbols[sym]));
+        }
+
+        auto objResult = findAlongAttrPath(obj, attrPathStrings);
+        if (objResult) {
+            return std::make_pair(*objResult, attrPath);
+        } else {
+            suggestions += objResult.getSuggestions();
+        }
+    }
+
+    return OrSuggestions<std::pair<std::shared_ptr<Object>, std::string>>::failed(suggestions);
 }
 
 } // namespace nix::expr::helpers

@@ -405,4 +405,101 @@ TEST_F(EvaluatorHelpersTest, findAlongAttrPath_SuggestsForNestedTypo)
     EXPECT_TRUE(foundMatch);
 }
 
+// Tests for tryAttrPaths helper
+TEST_F(EvaluatorHelpersTest, tryAttrPaths_FindsFirstPath)
+{
+    auto expr = state.parseExprFromString("{ a = 1; b = 2; c = 3; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = tryAttrPaths(*obj, {"a"}, state);
+    ASSERT_TRUE(result);
+
+    auto [foundObj, path] = *result;
+    EXPECT_EQ(path, "a");
+    EXPECT_EQ(foundObj->getInt("").value, 1);
+}
+
+TEST_F(EvaluatorHelpersTest, tryAttrPaths_TriesMultiplePaths)
+{
+    auto expr = state.parseExprFromString("{ a = { b = 42; }; c = 99; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = tryAttrPaths(*obj, {"x.y", "a.b"}, state);
+    ASSERT_TRUE(result);
+
+    auto [foundObj, path] = *result;
+    EXPECT_EQ(path, "a.b");
+    EXPECT_EQ(foundObj->getInt("").value, 42);
+}
+
+TEST_F(EvaluatorHelpersTest, tryAttrPaths_ReturnsFirstSuccess)
+{
+    auto expr = state.parseExprFromString("{ a = 1; b = 2; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = tryAttrPaths(*obj, {"a", "b"}, state);
+    ASSERT_TRUE(result);
+
+    auto [foundObj, path] = *result;
+    EXPECT_EQ(path, "a");
+    EXPECT_EQ(foundObj->getInt("").value, 1);
+}
+
+TEST_F(EvaluatorHelpersTest, tryAttrPaths_FailsWhenNoneFound)
+{
+    auto expr = state.parseExprFromString("{ a = 1; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = tryAttrPaths(*obj, {"x", "y", "z"}, state);
+    EXPECT_FALSE(result);
+}
+
+TEST_F(EvaluatorHelpersTest, tryAttrPaths_AccumulatesSuggestions)
+{
+    auto expr = state.parseExprFromString("{ abc = 1; abd = 2; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = tryAttrPaths(*obj, {"abx", "aby"}, state);
+    ASSERT_FALSE(result);
+
+    auto suggestions = result.getSuggestions();
+    EXPECT_GT(suggestions.suggestions.size(), 0);
+}
+
+TEST_F(EvaluatorHelpersTest, tryAttrPaths_HandlesNestedPaths)
+{
+    auto expr = state.parseExprFromString("{ a = { b = { c = 123; }; }; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = tryAttrPaths(*obj, {"a.b.c"}, state);
+    ASSERT_TRUE(result);
+
+    auto [foundObj, path] = *result;
+    EXPECT_EQ(path, "a.b.c");
+    EXPECT_EQ(foundObj->getInt("").value, 123);
+}
+
+TEST_F(EvaluatorHelpersTest, tryAttrPaths_EmptyPathList)
+{
+    auto expr = state.parseExprFromString("{ a = 1; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = tryAttrPaths(*obj, {}, state);
+    EXPECT_FALSE(result);
+}
+
 } // namespace nix::expr::helpers
