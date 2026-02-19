@@ -11,7 +11,8 @@
 
 namespace nix {
 class CoarseEvalCacheCursorObject;
-}
+class Object;
+} // namespace nix
 
 namespace nix::eval_cache {
 
@@ -195,6 +196,14 @@ public:
      * Force creation of the .drv file in the Nix store.
      */
     StorePath forceDerivation();
+
+    /**
+     * Wrap this AttrCursor as an Object.
+     *
+     * @deprecated Transitional bridge for migrating AttrCursor-based code to Object-based.
+     * Callers should eventually receive Objects from Evaluator methods instead.
+     */
+    ref<nix::Object> toObjectCompat();
 };
 
 } // namespace nix::eval_cache
