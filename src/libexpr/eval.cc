@@ -1,6 +1,8 @@
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-error.hh"
 #include "nix/expr/eval-settings.hh"
+#include "nix/expr/interpreter.hh"
+#include "nix/expr/interpreter-object.hh"
 #include "nix/expr/primops.hh"
 #include "nix/expr/print-options.hh"
 #include "nix/expr/symbol-table.hh"
@@ -367,6 +369,20 @@ EvalState::EvalState(
 }
 
 EvalState::~EvalState() {}
+
+ref<Evaluator> EvalState::toEvaluatorCompat()
+{
+    if (auto eval = evaluatorCompat.lock())
+        return ref<Evaluator>(eval);
+    auto eval = make_ref<Interpreter>(ref<EvalState>(shared_from_this()));
+    evaluatorCompat = eval.get_ptr();
+    return eval;
+}
+
+ref<Object> EvalState::toObjectCompat(Value & v)
+{
+    return make_ref<InterpreterObject>(*this, allocRootValue(&v));
+}
 
 void EvalState::allowPathLegacy(const std::string & path)
 {
