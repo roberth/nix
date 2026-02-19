@@ -39,4 +39,22 @@ bool isDerivation(Object & obj);
  */
 StorePath forceDerivation(Evaluator & evaluator, Object & obj, Store & store);
 
+/**
+ * Get the outputs to install for a derivation based on its metadata.
+ *
+ * The logic follows this priority:
+ * 1. If outputSpecified = true, use outputName attribute
+ * 2. Otherwise, if meta.outputsToInstall exists, use that list
+ * 3. Otherwise, default to ["out"]
+ *
+ * Note: This does NOT validate that the returned output names actually exist
+ * in the derivation. Validation happens downstream when building. This is
+ * intentional for the flake use case where malformed derivations fail at build
+ * time. For stricter validation (as needed by nix-env), use PackageInfo::queryOutputs.
+ *
+ * @param obj The Object representing a derivation
+ * @return Set of output names to install
+ */
+StringSet getDerivationOutputs(Object & obj);
+
 } // namespace nix::expr::helpers
