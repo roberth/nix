@@ -276,4 +276,133 @@ TEST_F(EvaluatorHelpersTest, getDerivationOutputs_OutputSpecifiedFalseUsesMeta)
     EXPECT_TRUE(outputs.count("out"));
 }
 
+// Tests for findAlongAttrPath helper
+TEST_F(EvaluatorHelpersTest, findAlongAttrPath_EmptyPath)
+{
+    auto v = makeAttrs({{"foo", "bar"}});
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = findAlongAttrPath(*obj, {});
+
+    EXPECT_TRUE(result);
+    EXPECT_EQ(result->get(), &*obj);
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPath_SingleAttribute)
+{
+    auto v = state.allocValue();
+    auto bindings = state.buildBindings(1);
+    auto vNested = state.allocValue();
+    vNested->mkString("value", state.mem);
+    bindings.insert(state.symbols.create("foo"), vNested);
+    v->mkAttrs(bindings.finish());
+
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = findAlongAttrPath(*obj, {"foo"});
+
+    ASSERT_TRUE(result);
+    EXPECT_EQ((*result)->getStringIgnoreContext(), "value");
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPath_NestedAttributes)
+{
+    auto expr = state.parseExprFromString("{ a = { b = { c = \"deep\"; }; }; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = findAlongAttrPath(*obj, {"a", "b", "c"});
+
+    ASSERT_TRUE(result);
+    EXPECT_EQ((*result)->getStringIgnoreContext(), "deep");
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPath_AttributeNotFound)
+{
+    auto v = makeAttrs({{"foo", "bar"}});
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = findAlongAttrPath(*obj, {"missing"});
+
+    EXPECT_FALSE(result);
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPath_MidPathNotFound)
+{
+    auto expr = state.parseExprFromString("{ a = { b = \"value\"; }; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = findAlongAttrPath(*obj, {"a", "missing", "c"});
+
+    EXPECT_FALSE(result);
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPath_NotAnAttrSet)
+{
+    auto v = makeString("not an attrset");
+    auto obj = state.toObjectCompat(*v);
+
+    EXPECT_THROW(findAlongAttrPath(*obj, {"foo"}), Error);
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPath_MidPathNotAnAttrSet)
+{
+    auto expr = state.parseExprFromString("{ a = \"string\"; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    EXPECT_THROW(findAlongAttrPath(*obj, {"a", "b"}), Error);
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPath_SuggestsCloseMatch)
+{
+    auto expr = state.parseExprFromString("{ foo = \"value\"; bar = \"other\"; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = findAlongAttrPath(*obj, {"fo"});
+
+    EXPECT_FALSE(result);
+    auto suggestions = result.getSuggestions();
+    EXPECT_FALSE(suggestions.suggestions.empty());
+
+    bool foundFoo = false;
+    for (const auto & suggestion : suggestions.suggestions) {
+        if (suggestion.suggestion == "foo") {
+            foundFoo = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundFoo);
+}
+
+TEST_F(EvaluatorHelpersTest, findAlongAttrPath_SuggestsForNestedTypo)
+{
+    auto expr =
+        state.parseExprFromString("{ a = { b = { baz = \"value\"; bar = \"other\"; }; }; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto result = findAlongAttrPath(*obj, {"a", "b", "bz"});
+
+    EXPECT_FALSE(result);
+    auto suggestions = result.getSuggestions();
+    EXPECT_FALSE(suggestions.suggestions.empty());
+
+    bool foundMatch = false;
+    for (const auto & suggestion : suggestions.suggestions) {
+        if (suggestion.suggestion == "baz" || suggestion.suggestion == "bar") {
+            foundMatch = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundMatch);
+}
+
 } // namespace nix::expr::helpers
