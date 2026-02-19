@@ -6,6 +6,7 @@
 
 #include "nix/expr/evaluator.hh"
 #include "nix/store/store-api.hh"
+#include "nix/util/suggestions.hh"
 
 namespace nix::expr::helpers {
 
@@ -56,5 +57,16 @@ StorePath forceDerivation(Evaluator & evaluator, Object & obj, Store & store);
  * @return Set of output names to install
  */
 StringSet getDerivationOutputs(Object & obj);
+
+/**
+ * Navigate an attribute path through nested attrsets.
+ *
+ * Does not auto-call functors or functions.
+ *
+ * @param obj The root object to start navigation from
+ * @param attrPath The attribute path to follow (e.g., ["packages", "x86_64-linux", "hello"])
+ * @return The object at the end of the path, or suggestions if attribute not found
+ */
+OrSuggestions<std::shared_ptr<Object>> findAlongAttrPath(Object & obj, const std::vector<std::string> & attrPath);
 
 } // namespace nix::expr::helpers

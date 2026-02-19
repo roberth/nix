@@ -72,4 +72,24 @@ StringSet getDerivationOutputs(Object & obj)
     return outputsToInstall;
 }
 
+OrSuggestions<std::shared_ptr<Object>> findAlongAttrPath(Object & obj, const std::vector<std::string> & attrPath)
+{
+    std::shared_ptr<Object> current = obj.shared_from_this();
+
+    for (const auto & attrName : attrPath) {
+        auto next = current->maybeGetAttr(attrName);
+        if (!next) {
+            auto attrNames = current->getAttrNames();
+            StringSet strAttrNames;
+            for (auto & name : attrNames)
+                strAttrNames.insert(name);
+
+            return OrSuggestions<std::shared_ptr<Object>>::failed(Suggestions::bestMatches(strAttrNames, attrName));
+        }
+        current = next;
+    }
+
+    return current;
+}
+
 } // namespace nix::expr::helpers
