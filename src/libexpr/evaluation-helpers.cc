@@ -116,4 +116,50 @@ tryAttrPaths(Object & obj, const std::vector<std::string> & attrPaths, EvalState
     return OrSuggestions<std::pair<std::shared_ptr<Object>, std::string>>::failed(suggestions);
 }
 
+ref<Object> autoApply(Evaluator & evaluator, ref<Object> obj, const std::map<std::string, ref<Object>> & args)
+{
+    auto type = obj->getType();
+
+    // Handle __functor attrsets
+    if (type == nAttrs) {
+        auto functor = obj->maybeGetAttr("__functor");
+        if (functor) {
+            auto result = evaluator.apply(ref<Object>(functor), obj);
+            return autoApply(evaluator, result, args);
+        }
+    }
+
+    // Not a function, or function without formals - return as-is
+    auto funcInfo = obj->getFunctionInfo();
+    if (type != nFunction || !funcInfo) {
+        return obj;
+    }
+
+    std::map<std::string, ref<Object>> callArgs;
+
+    if (funcInfo->ellipsis) {
+        // With ellipsis: pass all provided args
+        callArgs = args;
+    } else {
+        // Without ellipsis: only pass args matching formal names
+        for (const auto & [formalName, hasDefault] : funcInfo->formals) {
+            auto it = args.find(formalName);
+            if (it != args.end()) {
+                callArgs.insert(*it);
+            } else if (!hasDefault) {
+                throw Error(
+                    "cannot evaluate a function that has an argument without a value ('%1%')\n\n"
+                    "Nix attempted to evaluate a function as a top level expression; in\n"
+                    "this case it must have its arguments supplied either by default\n"
+                    "values, or passed explicitly with '--arg' or '--argstr'. See\n"
+                    "https://nix.dev/manual/nix/stable/language/syntax.html#functions.",
+                    formalName);
+            }
+        }
+    }
+
+    auto argObj = evaluator.mkAttrs(callArgs);
+    return evaluator.apply(obj, argObj);
+}
+
 } // namespace nix::expr::helpers

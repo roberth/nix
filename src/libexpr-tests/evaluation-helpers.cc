@@ -8,6 +8,8 @@
 
 namespace nix::expr::helpers {
 
+using ObjectAttrMap = std::map<std::string, ref<Object>>;
+
 class EvaluatorHelpersTest : public LibExprTest
 {
 protected:
@@ -18,6 +20,22 @@ protected:
     }
 
     Interpreter evaluator;
+
+    ref<Object> evalExpression(const std::string & expr)
+    {
+        auto e = state.parseExprFromString(expr, state.rootPath(CanonPath::root));
+        auto v = state.allocValue();
+        state.eval(e, *v);
+        return state.toObjectCompat(*v);
+    }
+
+    ref<Object> evalExpressionLazy(const std::string & expr)
+    {
+        auto e = state.parseExprFromString(expr, state.rootPath(CanonPath::root));
+        auto v = state.allocValue();
+        state.mkThunk_(*v, e);
+        return state.toObjectCompat(*v);
+    }
 
     Value * makeAttrs(const std::map<std::string, std::string> & attrs)
     {
@@ -500,6 +518,112 @@ TEST_F(EvaluatorHelpersTest, tryAttrPaths_EmptyPathList)
 
     auto result = tryAttrPaths(*obj, {}, state);
     EXPECT_FALSE(result);
+}
+
+// Tests for autoApply/autoCall helpers
+TEST_F(EvaluatorHelpersTest, autoApply_NonFunction)
+{
+    // Non-function values pass through unchanged
+    auto obj = evalExpression("42");
+    ObjectAttrMap args;
+    auto result = autoApply(evaluator, ref<Object>(obj), args);
+    EXPECT_EQ(result->getType(), nInt);
+    EXPECT_EQ(result->getInt(), NixInt(42));
+}
+
+TEST_F(EvaluatorHelpersTest, autoApply_SimpleLambda)
+{
+    // Simple lambdas (no formals) pass through unchanged
+    auto obj = evalExpression("x: x + 1");
+    ObjectAttrMap args;
+    auto result = autoApply(evaluator, ref<Object>(obj), args);
+    EXPECT_EQ(result->getType(), nFunction);
+}
+
+TEST_F(EvaluatorHelpersTest, autoApply_WithFormals)
+{
+    auto obj = evalExpression("{ a, b }: a + b");
+    ObjectAttrMap args;
+    args.insert_or_assign("a", evaluator.mkString("hello"));
+    args.insert_or_assign("b", evaluator.mkString(" world"));
+    auto result = autoApply(evaluator, ref<Object>(obj), args);
+    EXPECT_EQ(result->getType(), nString);
+    EXPECT_EQ(result->getStringIgnoreContext(), "hello world");
+}
+
+TEST_F(EvaluatorHelpersTest, autoApply_WithEllipsis)
+{
+    auto obj = evalExpression("{ a, ... }: a");
+    ObjectAttrMap args;
+    args.insert_or_assign("a", evaluator.mkString("value"));
+    args.insert_or_assign("extra", evaluator.mkString("also passed"));
+    auto result = autoApply(evaluator, ref<Object>(obj), args);
+    EXPECT_EQ(result->getType(), nString);
+    EXPECT_EQ(result->getStringIgnoreContext(), "value");
+}
+
+TEST_F(EvaluatorHelpersTest, autoApply_OnlyMatchingArgs)
+{
+    auto obj = evalExpression("{ a }: a");
+    ObjectAttrMap args;
+    args.insert_or_assign("a", evaluator.mkString("value"));
+    args.insert_or_assign("extra", evaluator.mkString("not passed"));
+    auto result = autoApply(evaluator, ref<Object>(obj), args);
+    EXPECT_EQ(result->getType(), nString);
+    EXPECT_EQ(result->getStringIgnoreContext(), "value");
+}
+
+TEST_F(EvaluatorHelpersTest, autoApply_DefaultArgs)
+{
+    auto obj = evalExpression("{ a, b ? \"default\" }: a + b");
+    ObjectAttrMap args;
+    args.insert_or_assign("a", evaluator.mkString("hello"));
+    auto result = autoApply(evaluator, ref<Object>(obj), args);
+    EXPECT_EQ(result->getType(), nString);
+    EXPECT_EQ(result->getStringIgnoreContext(), "hellodefault");
+}
+
+TEST_F(EvaluatorHelpersTest, autoApply_Functor)
+{
+    // __functor is applied with self, returning the inner function
+    auto obj = evalExpression("{ __functor = self: x: self.value + x; value = 10; }");
+    ObjectAttrMap args;
+    auto result = autoApply(evaluator, ref<Object>(obj), args);
+    EXPECT_EQ(result->getType(), nFunction);
+}
+
+TEST_F(EvaluatorHelpersTest, autoApply_ResultIsLazy)
+{
+    // autoApply returns a thunk - not forced until getType()
+    auto obj = evalExpression("{ a }: throw \"should not be called yet\"");
+    ObjectAttrMap args;
+    args.insert_or_assign("a", evaluator.mkString("value"));
+    auto result = autoApply(evaluator, ref<Object>(obj), args);
+    EXPECT_EQ(result->getTypeLazy(), nThunk);
+    EXPECT_THROW(result->getType(), Error);
+}
+
+TEST_F(EvaluatorHelpersTest, autoCall_ResultIsEager)
+{
+    auto obj = evalExpression("{ a }: throw \"called immediately\"");
+    ObjectAttrMap args;
+    args.insert_or_assign("a", evaluator.mkString("value"));
+    EXPECT_THROW(autoCall(evaluator, ref<Object>(obj), args), Error);
+}
+
+TEST_F(EvaluatorHelpersTest, autoApply_MissingArg)
+{
+    auto obj = evalExpression("{ a }: a");
+    ObjectAttrMap args;
+    EXPECT_THROW(autoApply(evaluator, ref<Object>(obj), args), Error);
+}
+
+TEST_F(EvaluatorHelpersTest, autoApply_MissingArgWithSomeProvided)
+{
+    auto obj = evalExpression("{ a, b, c ? 3 }: a + b + c");
+    ObjectAttrMap args;
+    args.insert_or_assign("a", ref<Object>(evalExpression("1")));
+    EXPECT_THROW(autoApply(evaluator, ref<Object>(obj), args), Error);
 }
 
 } // namespace nix::expr::helpers
