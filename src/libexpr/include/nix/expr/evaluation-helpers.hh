@@ -80,4 +80,34 @@ OrSuggestions<std::shared_ptr<Object>> findAlongAttrPath(Object & obj, const std
 OrSuggestions<std::pair<std::shared_ptr<Object>, std::string>>
 tryAttrPaths(Object & obj, const std::vector<std::string> & attrPaths, EvalState & state);
 
+/**
+ * Auto-apply a function with the provided arguments.
+ *
+ * `obj` is evaluated to determine its type and formals, but the application
+ * itself is lazy (returns a thunk). `args` values are not forced.
+ *
+ * - If the object is an attrset with __functor, apply it with itself and recurse
+ * - If it's not a lambda or has no formals (e.g., x: ...), return as-is
+ * - If it has formals with ellipsis, pass all provided args
+ * - If it has formals without ellipsis, pass only matching args
+ *
+ * @param evaluator The Evaluator for constructing values
+ * @param obj The Object to potentially auto-apply
+ * @param args Map of argument names to Objects (from --arg/--argstr)
+ * @return The result after auto-applying, or the original object if not callable
+ */
+ref<Object> autoApply(Evaluator & evaluator, ref<Object> obj, const std::map<std::string, ref<Object>> & args);
+
+/**
+ * Auto-call a function with the provided arguments (strict).
+ *
+ * Like autoApply, but forces the call before returning.
+ */
+inline ref<Object> autoCall(Evaluator & evaluator, ref<Object> obj, const std::map<std::string, ref<Object>> & args)
+{
+    auto result = autoApply(evaluator, obj, args);
+    result->getType(); // force
+    return result;
+}
+
 } // namespace nix::expr::helpers
