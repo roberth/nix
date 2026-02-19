@@ -69,4 +69,15 @@ StringSet getDerivationOutputs(Object & obj);
  */
 OrSuggestions<std::shared_ptr<Object>> findAlongAttrPath(Object & obj, const std::vector<std::string> & attrPath);
 
+/**
+ * Try multiple attribute paths and return the first one that succeeds.
+ *
+ * @param obj The root object to start navigation from
+ * @param attrPaths List of attribute paths to try (as strings, will be parsed)
+ * @param state EvalState for parsing attribute paths
+ * @return A pair of (found object, actual path used), or suggestions if none found
+ */
+OrSuggestions<std::pair<std::shared_ptr<Object>, std::string>>
+tryAttrPaths(Object & obj, const std::vector<std::string> & attrPaths, EvalState & state);
+
 } // namespace nix::expr::helpers
