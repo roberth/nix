@@ -168,4 +168,112 @@ TEST_F(EvaluatorHelpersTest, forceDerivation_ThrowsWhenDrvPathNotString)
     }
 }
 
+TEST_F(EvaluatorHelpersTest, getDerivationOutputs_ReturnsDefaultOut)
+{
+    auto expr = state.parseExprFromString(
+        "derivation { name = \"test\"; system = \"x86_64-linux\"; builder = \"/bin/sh\"; }", state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto outputs = getDerivationOutputs(*obj);
+
+    EXPECT_EQ(outputs.size(), 1);
+    EXPECT_TRUE(outputs.count("out"));
+}
+
+TEST_F(EvaluatorHelpersTest, getDerivationOutputs_ReturnsOutputsToInstallFromMeta)
+{
+    auto expr = state.parseExprFromString(
+        R"(
+        (derivation {
+            name = "test";
+            system = "x86_64-linux";
+            builder = "/bin/sh";
+        }) // { meta = { outputsToInstall = [ "bin" "dev" ]; }; }
+    )",
+        state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto outputs = getDerivationOutputs(*obj);
+
+    EXPECT_EQ(outputs.size(), 2);
+    EXPECT_TRUE(outputs.count("bin"));
+    EXPECT_TRUE(outputs.count("dev"));
+}
+
+TEST_F(EvaluatorHelpersTest, getDerivationOutputs_ReturnsOutputNameWhenOutputSpecified)
+{
+    auto expr = state.parseExprFromString(
+        R"(
+        (derivation {
+            name = "test";
+            system = "x86_64-linux";
+            builder = "/bin/sh";
+        }) // { outputSpecified = true; outputName = "custom"; }
+    )",
+        state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto outputs = getDerivationOutputs(*obj);
+
+    EXPECT_EQ(outputs.size(), 1);
+    EXPECT_TRUE(outputs.count("custom"));
+}
+
+TEST_F(EvaluatorHelpersTest, getDerivationOutputs_PrefersOutputSpecifiedOverMeta)
+{
+    auto expr = state.parseExprFromString(
+        R"(
+        (derivation {
+            name = "test";
+            system = "x86_64-linux";
+            builder = "/bin/sh";
+        }) // {
+            outputSpecified = true;
+            outputName = "preferred";
+            meta = { outputsToInstall = [ "ignored" ]; };
+        }
+    )",
+        state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto outputs = getDerivationOutputs(*obj);
+
+    EXPECT_EQ(outputs.size(), 1);
+    EXPECT_TRUE(outputs.count("preferred"));
+    EXPECT_FALSE(outputs.count("ignored"));
+}
+
+TEST_F(EvaluatorHelpersTest, getDerivationOutputs_OutputSpecifiedFalseUsesMeta)
+{
+    auto expr = state.parseExprFromString(
+        R"(
+        (derivation {
+            name = "test";
+            system = "x86_64-linux";
+            builder = "/bin/sh";
+        }) // {
+            outputSpecified = false;
+            meta = { outputsToInstall = [ "ignored" ]; };
+        }
+    )",
+        state.rootPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    auto outputs = getDerivationOutputs(*obj);
+
+    // outputSpecified=false blocks meta check due to else-if, defaults to "out"
+    EXPECT_EQ(outputs.size(), 1);
+    EXPECT_TRUE(outputs.count("out"));
+}
+
 } // namespace nix::expr::helpers
