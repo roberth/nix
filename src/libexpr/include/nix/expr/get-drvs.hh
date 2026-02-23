@@ -110,11 +110,6 @@ std::optional<PackageInfo> getDerivation(EvalState & state, Value & v, bool igno
 
 /**
  * Recursively find all derivations in a value.
- *
- * Deduplicates derivations by value identity (Bindings pointer), avoiding
- * duplicates like `rec { x = drv; y = x; }`. Note that only derivation
- * attrsets are deduplicated, not package sets (attrsets that contain
- * derivations), so cyclic package sets would still cause infinite recursion.
  */
 void getDerivations(
     EvalState & state,
