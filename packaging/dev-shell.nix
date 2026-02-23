@@ -319,6 +319,7 @@ nixComponents.callPackage (
               pkgs.buildPackages.nixfmt-rfc-style
               pkgs.buildPackages.shellcheck
               pkgs.buildPackages.include-what-you-use
+              pkgs.buildPackages.sqlite
             ]
             ++ lib.optional stdenv.hostPlatform.isUnix pkgs.buildPackages.gdb
             ++ lib.optional (stdenv.cc.isClang && stdenv.hostPlatform == stdenv.buildPlatform) (
