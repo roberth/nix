@@ -5,6 +5,7 @@
  */
 
 #include "nix/expr/evaluator.hh"
+#include "nix/store/derived-path.hh"
 #include "nix/store/store-api.hh"
 #include "nix/util/suggestions.hh"
 
@@ -24,6 +25,24 @@ namespace nix::expr::helpers {
  * @return true if the object is a derivation, false otherwise
  */
 bool isDerivation(Object & obj);
+
+/**
+ * Coerce an Object to a `SingleDerivedPath`.
+ *
+ * The object must be a string with exactly one context element, which is
+ * either `NixStringContextElem::Opaque` or `NixStringContextElem::Built`.
+ * The string must match the canonical rendering of the derived path.
+ *
+ * Intentional duplication: EvalState::coerceToSingleDerivedPath(PosIdx, Value &, ...)
+ * is semantically equivalent but operates on Value directly. That version stays
+ * for callers that work with raw Values. This version is for Object interface users.
+ *
+ * @param obj The Object to coerce (must be a string); obj.getPos() is used for error traces
+ * @param evaluator The Evaluator for store access and error reporting
+ * @param errorCtx Context string for error messages
+ * @return The SingleDerivedPath extracted from the string's context
+ */
+SingleDerivedPath coerceToSingleDerivedPath(Object & obj, Evaluator & evaluator, std::string_view errorCtx);
 
 /**
  * Force evaluation of a derivation and return its store path.

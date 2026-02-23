@@ -1589,6 +1589,12 @@ public:
 
     DocComment getDocCommentForPos(PosIdx pos);
 
+    /**
+     * Render a `SingleDerivedPath` as the string that a Nix string value
+     * containing that path would evaluate to.
+     */
+    std::string mkSingleDerivedPathStringRaw(const SingleDerivedPath & p);
+
 private:
 
     /**
@@ -1599,12 +1605,6 @@ private:
         const SingleDerivedPath::Built & b,
         std::optional<StorePath> optStaticOutputPath,
         const ExperimentalFeatureSettings & xpSettings = experimentalFeatureSettings);
-
-    /**
-     * Like `mkSingleDerivedPathStringRaw` but just creates a raw string
-     * Value, which would also have a string context.
-     */
-    std::string mkSingleDerivedPathStringRaw(const SingleDerivedPath & p);
 
     Counter nrLookups;
     Counter nrAvoided;
