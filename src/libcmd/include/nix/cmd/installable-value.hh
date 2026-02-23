@@ -138,25 +138,6 @@ protected:
      * matched the above criteria.
      */
     std::optional<DerivedPathWithInfo> trySinglePathToDerivedPaths(Object & obj, std::string_view errorCtx);
-
-    /**
-     * @deprecated Use Object overload instead.
-     *
-     * Handles either a plain path, or a string with a single string
-     * context elem in the right format. The latter case is handled by
-     * `EvalState::coerceToDerivedPath()`; see it for details.
-     *
-     * @param v Value that is hopefully a string or path per the above.
-     *
-     * @param pos Position of value to aid with diagnostics.
-     *
-     * @param errorCtx Arbitrary message for use in potential error message when something is wrong with `v`.
-     *
-     * @result A derived path (with empty info, for now) if the value
-     * matched the above criteria.
-     */
-    std::optional<DerivedPathWithInfo>
-    trySinglePathToDerivedPaths(Value & v, const PosIdx pos, std::string_view errorCtx);
 };
 
 } // namespace nix
