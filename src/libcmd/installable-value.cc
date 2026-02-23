@@ -87,11 +87,4 @@ InstallableValue::trySinglePathToDerivedPaths(Object & obj, std::string_view err
         return std::nullopt;
 }
 
-std::optional<DerivedPathWithInfo>
-InstallableValue::trySinglePathToDerivedPaths(Value & v, const PosIdx pos, std::string_view errorCtx)
-{
-    auto obj = state->toObjectCompat(v);
-    return trySinglePathToDerivedPaths(*obj, errorCtx);
-}
-
 } // namespace nix

@@ -100,13 +100,11 @@ DerivedPathsWithInfo InstallableFlake::toDerivedPaths()
 
     if (!expr::helpers::isDerivation(*attr)) {
 
-        // FIXME: use eval cache?
-        auto v = attr->defeatCache();
-
-        if (std::optional derivedPathWithInfo = trySinglePathToDerivedPaths(
-                **v, noPos, fmt("while evaluating the flake output attribute '%s'", attrPath))) {
+        if (auto derivedPathWithInfo =
+                trySinglePathToDerivedPaths(*attr, fmt("while evaluating the flake output attribute '%s'", attrPath))) {
             return {*derivedPathWithInfo};
         } else {
+            auto v = attr->defeatCache();
             throw Error(
                 "expected flake output attribute '%s' to be a derivation or path but found %s: %s",
                 attrPath,
