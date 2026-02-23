@@ -52,8 +52,9 @@ DerivedPathsWithInfo InstallableAttrPath::toDerivedPaths()
 {
     auto [v, pos] = toValue(*state);
 
-    if (std::optional derivedPathWithInfo =
-            trySinglePathToDerivedPaths(*v, pos, fmt("while evaluating the attribute '%s'", attrPath))) {
+    auto obj = state->toObjectCompat(*v);
+    if (auto derivedPathWithInfo =
+            trySinglePathToDerivedPaths(*obj, fmt("while evaluating the attribute '%s'", attrPath))) {
         return {*derivedPathWithInfo};
     }
 
