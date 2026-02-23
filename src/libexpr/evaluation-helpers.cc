@@ -23,6 +23,61 @@ bool isDerivation(Object & obj)
     return typeStr == "derivation";
 }
 
+// Intentional duplication: see EvalState::coerceToSingleDerivedPath(PosIdx, Value &, ...) for Value version.
+// That version stays for callers that work with raw Values; this version is for Object interface users.
+SingleDerivedPath coerceToSingleDerivedPath(Object & obj, Evaluator & evaluator, std::string_view errorCtx)
+{
+    auto & state = evaluator.getEvalState();
+    auto [s, context] = obj.getStringWithContext();
+
+    if (context.size() != 1)
+        state
+            .error<EvalError>(
+                "string '%s' has %d entries in its context. It should only have exactly one entry", s, context.size())
+            .withTrace(obj.getPos(), errorCtx)
+            .debugThrow();
+
+    auto derivedPath = std::visit(
+        overloaded{
+            [&](NixStringContextElem::Opaque && o) -> SingleDerivedPath { return std::move(o); },
+            [&](NixStringContextElem::DrvDeep &&) -> SingleDerivedPath {
+                state
+                    .error<EvalError>(
+                        "string '%s' has a context which refers to a complete source and binary closure. This is not supported at this time",
+                        s)
+                    .withTrace(obj.getPos(), errorCtx)
+                    .debugThrow();
+            },
+            [&](NixStringContextElem::Built && b) -> SingleDerivedPath { return std::move(b); },
+        },
+        ((NixStringContextElem &&) *context.begin()).raw);
+
+    auto sExpected = state.mkSingleDerivedPathStringRaw(derivedPath);
+    if (s != sExpected) {
+        std::visit(
+            overloaded{
+                [&](const SingleDerivedPath::Opaque & o) {
+                    state.error<EvalError>("path string '%s' has context with the different path '%s'", s, sExpected)
+                        .withTrace(obj.getPos(), errorCtx)
+                        .debugThrow();
+                },
+                [&](const SingleDerivedPath::Built & b) {
+                    state
+                        .error<EvalError>(
+                            "string '%s' has context with the output '%s' from derivation '%s', but the string is not the right placeholder for this derivation output. It should be '%s'",
+                            s,
+                            b.output,
+                            b.drvPath->to_string(evaluator.getStore()),
+                            sExpected)
+                        .withTrace(obj.getPos(), errorCtx)
+                        .debugThrow();
+                }},
+            derivedPath.raw());
+    }
+
+    return derivedPath;
+}
+
 // AttrCursor::forceDerivation() delegates here via toObjectCompat().
 // PackageInfo::requireDrvPath() stays separate: different interface (memoization, optional return).
 StorePath forceDerivation(Evaluator & evaluator, Object & obj, Store & store)
