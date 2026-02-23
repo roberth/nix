@@ -1,6 +1,8 @@
 #include "nix/cmd/installable-value.hh"
 #include "nix/expr/environment/system.hh"
+#include "nix/expr/eval.hh"
 #include "nix/expr/eval-cache.hh"
+#include "nix/expr/evaluation-helpers.hh"
 #include "nix/fetchers/fetch-to-store.hh"
 
 namespace nix {
@@ -41,11 +43,11 @@ ref<InstallableValue> InstallableValue::require(ref<Installable> installable)
 }
 
 std::optional<DerivedPathWithInfo>
-InstallableValue::trySinglePathToDerivedPaths(Value & v, const PosIdx pos, std::string_view errorCtx)
+InstallableValue::trySinglePathToDerivedPaths(Object & obj, std::string_view errorCtx)
 {
-    if (v.type() == nPath) {
+    if (obj.getType() == nPath) {
         auto storePath =
-            fetchToStore(state->fetchSettings, *state->systemEnvironment->store, v.path(), FetchMode::Copy);
+            fetchToStore(state->fetchSettings, *state->systemEnvironment->store, obj.getPath(), FetchMode::Copy);
         return {{
             .path =
                 DerivedPath::Opaque{
@@ -55,15 +57,41 @@ InstallableValue::trySinglePathToDerivedPaths(Value & v, const PosIdx pos, std::
         }};
     }
 
-    else if (v.type() == nString) {
+    else if (obj.getType() == nString) {
+        auto [s, context] = obj.getStringWithContext();
+
+        if (context.empty()) {
+            // The coarse eval cache lossily stores nPath values as context-less
+            // store path strings. Defeat the cache to recover the true type.
+            auto v = obj.defeatCache();
+            if ((**v).type() == nPath) {
+                auto storePath =
+                    fetchToStore(state->fetchSettings, *state->systemEnvironment->store, (**v).path(), FetchMode::Copy);
+                return {{
+                    .path =
+                        DerivedPath::Opaque{
+                            .path = std::move(storePath),
+                        },
+                    .info = make_ref<ExtraPathInfo>(),
+                }};
+            }
+        }
+
         return {{
-            .path = DerivedPath::fromSingle(state->coerceToSingleDerivedPath(pos, v, errorCtx)),
+            .path = DerivedPath::fromSingle(expr::helpers::coerceToSingleDerivedPath(obj, *evaluator, errorCtx)),
             .info = make_ref<ExtraPathInfo>(),
         }};
     }
 
     else
         return std::nullopt;
+}
+
+std::optional<DerivedPathWithInfo>
+InstallableValue::trySinglePathToDerivedPaths(Value & v, const PosIdx pos, std::string_view errorCtx)
+{
+    auto obj = state->toObjectCompat(v);
+    return trySinglePathToDerivedPaths(*obj, errorCtx);
 }
 
 } // namespace nix
