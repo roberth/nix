@@ -4,6 +4,7 @@
 #include "nix/expr/eval.hh"
 #include "nix/store/path.hh"
 
+#include <memory>
 #include <string>
 #include <map>
 
@@ -32,11 +33,14 @@ private:
      */
     bool failed = false;
 
-    const Bindings *attrs = nullptr, *meta = nullptr;
+    /**
+     * Nullable: null when constructed from a store path (no Nix expression
+     * to evaluate, fields are populated directly).
+     */
+    std::shared_ptr<Object> attrs;
+    std::shared_ptr<Object> meta;
 
-    const Bindings * getMeta();
-
-    bool checkMeta(Value & v);
+    std::shared_ptr<Object> getMetaObj();
 
 public:
     /**
@@ -46,7 +50,7 @@ public:
 
     PackageInfo(EvalState & state)
         : state(&state) {};
-    PackageInfo(EvalState & state, std::string attrPath, const Bindings * attrs);
+    PackageInfo(EvalState & state, std::string attrPath, std::shared_ptr<Object> attrs);
     PackageInfo(EvalState & state, ref<Store> store, const std::string & drvPathWithOutputs);
 
     std::string queryName() const;

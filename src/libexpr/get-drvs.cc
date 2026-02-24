@@ -1,5 +1,8 @@
 #include "nix/expr/get-drvs.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/expr/eval-inline.hh"
+#include "nix/expr/evaluator.hh"
+#include "nix/expr/print.hh"
 #include "nix/store/derivations.hh"
 #include "nix/store/store-api.hh"
 #include "nix/store/path-with-outputs.hh"
@@ -9,9 +12,9 @@
 
 namespace nix {
 
-PackageInfo::PackageInfo(EvalState & state, std::string attrPath, const Bindings * attrs)
+PackageInfo::PackageInfo(EvalState & state, std::string attrPath, std::shared_ptr<Object> attrs)
     : state(&state)
-    , attrs(attrs)
+    , attrs(std::move(attrs))
     , attrPath(std::move(attrPath))
 {
 }
@@ -45,10 +48,15 @@ PackageInfo::PackageInfo(EvalState & state, ref<Store> store, const std::string 
 std::string PackageInfo::queryName() const
 {
     if (name == "" && attrs) {
-        auto i = attrs->get(state->s.name);
+        auto i = attrs->maybeGetAttr("name");
         if (!i)
             state->error<TypeError>("derivation name missing").debugThrow();
-        name = state->forceStringNoCtx(*i->value, noPos, "while evaluating the 'name' attribute of a derivation");
+        try {
+            name = i->getStringWithoutContext();
+        } catch (Error & e) {
+            e.addTrace(nullptr, "while evaluating the 'name' attribute of a derivation");
+            throw;
+        }
     }
     return name;
 }
@@ -56,10 +64,17 @@ std::string PackageInfo::queryName() const
 std::string PackageInfo::querySystem() const
 {
     if (system == "" && attrs) {
-        auto i = attrs->get(state->s.system);
-        system =
-            !i ? "unknown"
-               : state->forceStringNoCtx(*i->value, i->pos, "while evaluating the 'system' attribute of a derivation");
+        auto i = attrs->maybeGetAttr("system");
+        if (!i) {
+            system = "unknown";
+        } else {
+            try {
+                system = i->getStringWithoutContext();
+            } catch (Error & e) {
+                e.addTrace(state->positions[i->getPos()], "while evaluating the 'system' attribute of a derivation");
+                throw;
+            }
+        }
     }
     return system;
 }
@@ -67,17 +82,20 @@ std::string PackageInfo::querySystem() const
 std::optional<StorePath> PackageInfo::queryDrvPath() const
 {
     if (!drvPath && attrs) {
-        if (auto i = attrs->get(state->s.drvPath)) {
-            NixStringContext context;
-            auto found = state->coerceToStorePath(
-                i->pos, *i->value, context, "while evaluating the 'drvPath' attribute of a derivation");
+        if (auto i = attrs->maybeGetAttr("drvPath")) {
             try {
-                found.requireDerivation();
+                auto [s, context] = i->getStringWithContext();
+                auto & store = *state->systemEnvironment->store;
+                if (auto storePath = store.maybeParseStorePath(s)) {
+                    storePath->requireDerivation();
+                    drvPath = {std::move(*storePath)};
+                } else {
+                    state->error<EvalError>("path '%1%' is not in the Nix store", s).debugThrow();
+                }
             } catch (Error & e) {
-                e.addTrace(state->positions[i->pos], "while evaluating the 'drvPath' attribute of a derivation");
+                e.addTrace(state->positions[i->getPos()], "while evaluating the 'drvPath' attribute of a derivation");
                 throw;
             }
-            drvPath = {std::move(found)};
         } else
             drvPath = {std::nullopt};
     }
@@ -94,46 +112,98 @@ StorePath PackageInfo::requireDrvPath() const
 StorePath PackageInfo::queryOutPath() const
 {
     if (!outPath && attrs) {
-        auto i = attrs->get(state->s.outPath);
-        NixStringContext context;
-        if (i)
-            outPath = state->coerceToStorePath(
-                i->pos, *i->value, context, "while evaluating the output path of a derivation");
+        if (auto i = attrs->maybeGetAttr("outPath")) {
+            try {
+                auto [s, context] = i->getStringWithContext();
+                auto & store = *state->systemEnvironment->store;
+                if (auto storePath = store.maybeParseStorePath(s))
+                    outPath = std::move(*storePath);
+                else
+                    state->error<EvalError>("path '%1%' is not in the Nix store", s).debugThrow();
+            } catch (Error & e) {
+                e.addTrace(state->positions[i->getPos()], "while evaluating the output path of a derivation");
+                throw;
+            }
+        }
     }
     if (!outPath)
         throw Error("derivation does not have attribute 'outPath'");
     return *outPath;
 }
 
+static bool checkMeta(EvalState & state, Object & obj);
+
 PackageInfo::Outputs PackageInfo::queryOutputs(bool withPaths, bool onlyOutputsToInstall)
 {
     if (outputs.empty()) {
-        /* Get the ‘outputs’ list. */
-        const Attr * i;
-        if (attrs && (i = attrs->get(state->s.outputs))) {
-            state->forceList(*i->value, i->pos, "while evaluating the 'outputs' attribute of a derivation");
+        /* Get the 'outputs' list. */
+        auto i = attrs ? attrs->maybeGetAttr("outputs") : nullptr;
+        if (i) {
+            /* Force the list type. */
+            if (i->getType() != nList) {
+                try {
+                    auto val = i->defeatCache();
+                    state
+                        ->error<TypeError>(
+                            "expected a list but found %1%: %2%",
+                            showType(**val),
+                            ValuePrinter(*state, **val, errorPrintOptions))
+                        .debugThrow();
+                } catch (Error & e) {
+                    e.addTrace(
+                        state->positions[i->getPos()], "while evaluating the 'outputs' attribute of a derivation");
+                    throw;
+                }
+            }
 
-            /* For each output... */
-            for (auto elem : i->value->listView()) {
-                std::string output(
-                    state->forceStringNoCtx(*elem, i->pos, "while evaluating the name of an output of a derivation"));
+            /* Iterate output names manually for per-element error traces. */
+            auto listSize = i->getListSize();
+            for (size_t idx = 0; idx < listSize; idx++) {
+                auto elem = i->getListElem(idx);
+                std::string output;
+                try {
+                    output = elem->getStringWithoutContext();
+                } catch (Error & e) {
+                    e.addTrace(state->positions[i->getPos()], "while evaluating the name of an output of a derivation");
+                    throw;
+                }
 
                 if (withPaths) {
                     /* Evaluate the corresponding set. */
-                    auto out = attrs->get(state->symbols.create(output));
+                    auto out = attrs->maybeGetAttr(output);
                     if (!out)
                         continue; // FIXME: throw error?
-                    state->forceAttrs(*out->value, i->pos, "while evaluating an output of a derivation");
+                    if (out->getType() != nAttrs) {
+                        try {
+                            auto val = out->defeatCache();
+                            state
+                                ->error<TypeError>(
+                                    "expected a set but found %1%: %2%",
+                                    showType(**val),
+                                    ValuePrinter(*state, **val, errorPrintOptions))
+                                .debugThrow();
+                        } catch (Error & e) {
+                            e.addTrace(state->positions[i->getPos()], "while evaluating an output of a derivation");
+                            throw;
+                        }
+                    }
 
-                    /* And evaluate its ‘outPath’ attribute. */
-                    auto outPath = out->value->attrs()->get(state->s.outPath);
-                    if (!outPath)
+                    /* And evaluate its 'outPath' attribute. */
+                    auto outPathObj = out->maybeGetAttr("outPath");
+                    if (!outPathObj)
                         continue; // FIXME: throw error?
-                    NixStringContext context;
-                    outputs.emplace(
-                        output,
-                        state->coerceToStorePath(
-                            outPath->pos, *outPath->value, context, "while evaluating an output path of a derivation"));
+                    try {
+                        auto [s, context] = outPathObj->getStringWithContext();
+                        auto & store = *state->systemEnvironment->store;
+                        if (auto storePath = store.maybeParseStorePath(s))
+                            outputs.emplace(output, std::move(*storePath));
+                        else
+                            state->error<EvalError>("path '%1%' is not in the Nix store", s).debugThrow();
+                    } catch (Error & e) {
+                        e.addTrace(
+                            state->positions[outPathObj->getPos()], "while evaluating an output path of a derivation");
+                        throw;
+                    }
                 } else
                     outputs.emplace(output, std::nullopt);
             }
@@ -144,102 +214,131 @@ PackageInfo::Outputs PackageInfo::queryOutputs(bool withPaths, bool onlyOutputsT
     if (!onlyOutputsToInstall || !attrs)
         return outputs;
 
-    const Attr * i;
-    if (attrs && (i = attrs->get(state->s.outputSpecified))
-        && state->forceBool(*i->value, i->pos, "while evaluating the 'outputSpecified' attribute of a derivation")) {
-        Outputs result;
-        auto out = outputs.find(queryOutputName());
-        if (out == outputs.end())
-            throw Error("derivation does not have output '%s'", queryOutputName());
-        result.insert(*out);
-        return result;
+    /* If outputSpecified is set and true, use the specified output. */
+    if (auto aOutputSpecified = attrs->maybeGetAttr("outputSpecified")) {
+        if (aOutputSpecified->getBool("while evaluating the 'outputSpecified' attribute of a derivation")) {
+            std::string sOutputName = queryOutputName();
+            auto out = outputs.find(sOutputName);
+            if (out == outputs.end())
+                throw Error("derivation does not have output '%s'", sOutputName);
+            return Outputs{*out};
+        }
     }
 
-    else {
-        /* Check for `meta.outputsToInstall` and return `outputs` reduced to that. */
-        const Value * outTI = queryMeta("outputsToInstall");
-        if (!outTI)
-            return outputs;
-        auto errMsg = Error("this derivation has bad 'meta.outputsToInstall'");
-        /* ^ this shows during `nix-env -i` right under the bad derivation */
-        if (!outTI->isList())
-            throw errMsg;
-        Outputs result;
-        for (auto elem : outTI->listView()) {
-            if (elem->type() != nString)
-                throw errMsg;
-            auto out = outputs.find(elem->string_view());
-            if (out == outputs.end())
-                throw errMsg;
-            result.insert(*out);
+    /* Check for `meta.outputsToInstall` and return `outputs` reduced to that. */
+    auto meta = getMetaObj();
+    if (meta) {
+        if (auto outTI = meta->maybeGetAttr("outputsToInstall")) {
+            if (checkMeta(*state, *outTI)) {
+                auto errMsg = Error("this derivation has bad 'meta.outputsToInstall'");
+                if (outTI->getType() != nList)
+                    throw errMsg;
+
+                Outputs result;
+                for (size_t i = 0; i < outTI->getListSize(); i++) {
+                    auto elem = outTI->getListElem(i);
+                    if (elem->getType() != nString)
+                        throw errMsg;
+                    auto name = elem->getStringWithoutContext();
+                    auto out = outputs.find(name);
+                    if (out == outputs.end())
+                        throw errMsg;
+                    result.insert(*out);
+                }
+                return result;
+            }
         }
-        return result;
     }
+
+    return outputs;
 }
 
 std::string PackageInfo::queryOutputName() const
 {
     if (outputName == "" && attrs) {
-        auto i = attrs->get(state->s.outputName);
-        outputName =
-            i ? state->forceStringNoCtx(*i->value, noPos, "while evaluating the output name of a derivation") : "";
+        auto i = attrs->maybeGetAttr("outputName");
+        if (!i) {
+            outputName = "";
+        } else {
+            try {
+                outputName = i->getStringWithoutContext();
+            } catch (Error & e) {
+                e.addTrace(nullptr, "while evaluating the output name of a derivation");
+                throw;
+            }
+        }
     }
     return outputName;
 }
 
-const Bindings * PackageInfo::getMeta()
+std::shared_ptr<Object> PackageInfo::getMetaObj()
 {
     if (meta)
         return meta;
     if (!attrs)
-        return 0;
-    auto a = attrs->get(state->s.meta);
-    if (!a)
-        return 0;
-    state->forceAttrs(*a->value, a->pos, "while evaluating the 'meta' attribute of a derivation");
-    meta = a->value->attrs();
+        return nullptr;
+    auto metaObj = attrs->maybeGetAttr("meta");
+    if (!metaObj)
+        return nullptr;
+    if (metaObj->getType() != nAttrs) {
+        try {
+            auto val = metaObj->defeatCache();
+            state
+                ->error<TypeError>(
+                    "expected a set but found %1%: %2%",
+                    showType(**val),
+                    ValuePrinter(*state, **val, errorPrintOptions))
+                .debugThrow();
+        } catch (Error & e) {
+            e.addTrace(state->positions[metaObj->getPos()], "while evaluating the 'meta' attribute of a derivation");
+            throw;
+        }
+    }
+    meta = metaObj;
     return meta;
 }
 
 StringSet PackageInfo::queryMetaNames()
 {
     StringSet res;
-    if (!getMeta())
+    auto meta = getMetaObj();
+    if (!meta)
         return res;
-    for (auto & i : *meta)
-        res.emplace(state->symbols[i.name]);
+    for (auto & name : meta->getAttrNames())
+        res.emplace(name);
     return res;
 }
 
-bool PackageInfo::checkMeta(Value & v)
+static bool checkMeta(EvalState & state, Object & obj)
 {
-    auto _level = state->addCallDepth(v.determinePos(noPos));
+    auto _level = state.addCallDepth(obj.getPos());
 
-    state->forceValue(v, v.determinePos(noPos));
-    if (v.type() == nList) {
-        for (auto elem : v.listView())
-            if (!checkMeta(*elem))
+    auto type = obj.getType();
+    if (type == nList) {
+        for (size_t i = 0; i < obj.getListSize(); i++)
+            if (!checkMeta(state, *obj.getListElem(i)))
                 return false;
         return true;
-    } else if (v.type() == nAttrs) {
-        if (v.attrs()->get(state->s.outPath))
+    } else if (type == nAttrs) {
+        if (obj.maybeGetAttr("outPath"))
             return false;
-        for (auto & i : *v.attrs())
-            if (!checkMeta(*i.value))
+        for (auto & name : obj.getAttrNames())
+            if (!checkMeta(state, *obj.maybeGetAttr(name)))
                 return false;
         return true;
     } else
-        return v.type() == nInt || v.type() == nBool || v.type() == nString || v.type() == nFloat;
+        return type == nInt || type == nBool || type == nString || type == nFloat;
 }
 
 Value * PackageInfo::queryMeta(const std::string & name)
 {
-    if (!getMeta())
+    auto meta = getMetaObj();
+    if (!meta)
         return 0;
-    auto a = meta->get(state->symbols.create(name));
-    if (!a || !checkMeta(*a->value))
+    auto attr = meta->maybeGetAttr(name);
+    if (!attr || !checkMeta(*state, *attr))
         return 0;
-    return a->value;
+    return *attr->defeatCache();
 }
 
 std::string PackageInfo::queryMetaString(const std::string & name)
@@ -302,16 +401,20 @@ bool PackageInfo::queryMetaBool(const std::string & name, bool def)
 
 void PackageInfo::setMeta(const std::string & name, Value * v)
 {
-    getMeta();
-    auto attrs = state->buildBindings(1 + (meta ? meta->size() : 0));
+    auto oldMeta = getMetaObj();
+    auto bindings = state->buildBindings(1 + (oldMeta ? oldMeta->getAttrNames().size() : 0));
     auto sym = state->symbols.create(name);
-    if (meta)
-        for (auto i : *meta)
-            if (i.name != sym)
-                attrs.insert(i);
+    if (oldMeta) {
+        for (auto & attrName : oldMeta->getAttrNames()) {
+            if (attrName != name)
+                bindings.insert(state->symbols.create(attrName), *oldMeta->maybeGetAttr(attrName)->defeatCache());
+        }
+    }
     if (v)
-        attrs.insert(sym, v);
-    meta = attrs.finish();
+        bindings.insert(sym, v);
+    auto metaVal = state->allocValue();
+    metaVal->mkAttrs(bindings.finish());
+    meta = state->toObjectCompat(*metaVal);
 }
 
 /* Evaluate value `v'.  If it evaluates to a set of type `derivation',
@@ -326,7 +429,10 @@ static bool getDerivation(
         if (!state.isDerivation(v))
             return true;
 
-        PackageInfo drv(state, attrPath, v.attrs());
+        auto attrsVal = state.allocValue();
+        // FIXME: get rid of raw Value &, avoid these crimes: const_cast and copying
+        attrsVal->mkAttrs(const_cast<Bindings *>(v.attrs()));
+        PackageInfo drv(state, attrPath, state.toObjectCompat(*attrsVal));
 
         drv.queryName();
 
