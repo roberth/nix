@@ -3,26 +3,27 @@
 
 namespace nix {
 
-InterpreterObject::InterpreterObject(EvalState & state, RootValue value)
+InterpreterObject::InterpreterObject(EvalState & state, RootValue value, PosIdx pos)
     : state(state)
     , value(value)
+    , pos(pos)
 {
 }
 
 std::shared_ptr<Object> InterpreterObject::maybeGetAttr(const std::string & name)
 {
-    state.forceValue(**value, noPos);
+    state.forceValue(**value, pos);
     if ((*value)->type() != nAttrs)
         return nullptr;
     auto attr = (*value)->attrs()->get(state.symbols.create(name));
     if (!attr)
         return nullptr;
-    return std::make_shared<InterpreterObject>(state, allocRootValue(attr->value));
+    return std::make_shared<InterpreterObject>(state, allocRootValue(attr->value), attr->pos);
 }
 
 std::vector<std::string> InterpreterObject::getAttrNames()
 {
-    state.forceValue(**value, noPos);
+    state.forceValue(**value, pos);
     if ((*value)->type() != nAttrs)
         state.error<TypeError>("expected an attribute set but found %s", showType(**value)).debugThrow();
 
@@ -35,7 +36,7 @@ std::vector<std::string> InterpreterObject::getAttrNames()
 
 std::string InterpreterObject::getStringIgnoreContext()
 {
-    state.forceValue(**value, noPos);
+    state.forceValue(**value, pos);
     if ((*value)->type() != nString)
         state.error<TypeError>("value is %1% while a string was expected", showType(**value)).debugThrow();
     return (*value)->c_str();
@@ -43,7 +44,7 @@ std::string InterpreterObject::getStringIgnoreContext()
 
 std::pair<std::string, NixStringContext> InterpreterObject::getStringWithContext()
 {
-    state.forceValue(**value, noPos);
+    state.forceValue(**value, pos);
     if ((*value)->type() != nString)
         state.error<TypeError>("value is %1% while a string was expected", showType(**value)).debugThrow();
 
@@ -64,7 +65,7 @@ std::string InterpreterObject::getStringWithoutContext()
 
 SourcePath InterpreterObject::getPath()
 {
-    state.forceValue(**value, noPos);
+    state.forceValue(**value, pos);
     if ((*value)->type() != nPath)
         state.error<TypeError>("expected a path but found %1%", showType(**value)).debugThrow();
     return (*value)->path();
@@ -74,41 +75,41 @@ bool InterpreterObject::getBool(std::string_view errorCtx)
 {
     // Avoid adding empty trace when errorCtx is not provided
     if (errorCtx.empty()) {
-        state.forceValue(**value, noPos);
+        state.forceValue(**value, pos);
         if ((*value)->type() != nBool)
             state.error<TypeError>("expected a Boolean but found %1%", showType(**value)).debugThrow();
         return (*value)->boolean();
     }
-    return state.forceBool(**value, noPos, errorCtx);
+    return state.forceBool(**value, pos, errorCtx);
 }
 
 NixInt InterpreterObject::getInt(std::string_view errorCtx)
 {
     // Avoid adding empty trace when errorCtx is not provided
     if (errorCtx.empty()) {
-        state.forceValue(**value, noPos);
+        state.forceValue(**value, pos);
         if ((*value)->type() != nInt)
             state.error<TypeError>("expected an integer but found %1%", showType(**value)).debugThrow();
         return (*value)->integer();
     }
-    return state.forceInt(**value, noPos, errorCtx);
+    return state.forceInt(**value, pos, errorCtx);
 }
 
 NixFloat InterpreterObject::getFloat(std::string_view errorCtx)
 {
     // Avoid adding empty trace when errorCtx is not provided
     if (errorCtx.empty()) {
-        state.forceValue(**value, noPos);
+        state.forceValue(**value, pos);
         if ((*value)->type() != nFloat)
             state.error<TypeError>("expected a float but found %1%", showType(**value)).debugThrow();
         return (*value)->fpoint();
     }
-    return state.forceFloat(**value, noPos, errorCtx);
+    return state.forceFloat(**value, pos, errorCtx);
 }
 
 size_t InterpreterObject::getListSize()
 {
-    state.forceValue(**value, noPos);
+    state.forceValue(**value, pos);
     if (!(*value)->isList())
         state.error<TypeError>("expected a list but found %1%", showType(**value)).debugThrow();
     return (*value)->listSize();
@@ -116,7 +117,7 @@ size_t InterpreterObject::getListSize()
 
 std::shared_ptr<Object> InterpreterObject::getListElem(size_t index)
 {
-    state.forceValue(**value, noPos);
+    state.forceValue(**value, pos);
     if (!(*value)->isList())
         state.error<TypeError>("expected a list but found %1%", showType(**value)).debugThrow();
     if (index >= (*value)->listSize())
@@ -127,7 +128,7 @@ std::shared_ptr<Object> InterpreterObject::getListElem(size_t index)
 // Override default for efficiency: avoids wrapper objects and provides better error messages
 std::vector<std::string> InterpreterObject::getListOfStringsNoCtx()
 {
-    state.forceValue(**value, noPos);
+    state.forceValue(**value, pos);
     if (!(*value)->isList())
         state.error<TypeError>("expected a list but found %s", showType(**value)).debugThrow();
 
@@ -149,7 +150,7 @@ ObjectType InterpreterObject::getTypeLazy()
 
 ObjectType InterpreterObject::getType()
 {
-    state.forceValue(**value, noPos);
+    state.forceValue(**value, pos);
     return (*value)->type();
 }
 
@@ -161,7 +162,7 @@ RootValue InterpreterObject::defeatCache()
 
 std::optional<FunctionInfo> InterpreterObject::getFunctionInfo()
 {
-    state.forceValue(**value, noPos);
+    state.forceValue(**value, pos);
     if (!(*value)->isLambda())
         return std::nullopt;
 
