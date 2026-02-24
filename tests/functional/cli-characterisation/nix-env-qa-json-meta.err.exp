@@ -2,8 +2,8 @@ error:
        … while querying the derivation named 'infinite-meta-1.0'
 
        error: stack overflow; max-call-depth exceeded
-       at /pwd/cli-characterisation/infinite-meta.nix:3:7:
+       at /pwd/cli-characterisation/infinite-meta.nix:3:17:
             2| let
             3|   x = { inherit x; };
-             |       ^
+             |                 ^
             4| in
