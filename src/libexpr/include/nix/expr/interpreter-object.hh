@@ -17,9 +17,10 @@ class InterpreterObject : public Object
 {
     EvalState & state;
     RootValue value;
+    PosIdx pos;
 
 public:
-    InterpreterObject(EvalState & state, RootValue value);
+    InterpreterObject(EvalState & state, RootValue value, PosIdx pos = noPos);
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
 
