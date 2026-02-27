@@ -1,0 +1,1 @@
+1 nix-env -f ./cli-characterisation/bad-output-type.nix -qa --json --out-path
