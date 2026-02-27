@@ -1,0 +1,1 @@
+1 nix-env -f ./cli-characterisation/output-name-with-context.nix -qa --json --out-path

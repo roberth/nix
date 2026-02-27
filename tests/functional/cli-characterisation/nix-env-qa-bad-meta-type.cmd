@@ -1,0 +1,1 @@
+1 nix-env -f ./cli-characterisation/bad-meta-type.nix -qa --json --meta

@@ -1,0 +1,11 @@
+error:
+       … while querying the derivation named 'output-name-with-context-1.0'
+
+       … while evaluating the name of an output of a derivation
+         at /pwd/cli-characterisation/output-name-with-context.nix:12:3:
+           11|   outPath = builtins.toFile "out" "";
+           12|   outputs = [ "${normal}" ];
+             |   ^
+           13| }
+
+       error: the string '/test-root/store/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-normal-1.0' is not allowed to refer to a store path (such as '/test-root/store/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-normal-1.0.drv^out')
