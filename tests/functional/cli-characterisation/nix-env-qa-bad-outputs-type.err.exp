@@ -1,0 +1,11 @@
+error:
+       … while querying the derivation named 'bad-outputs-type-1.0'
+
+       … while evaluating the 'outputs' attribute of a derivation
+         at /pwd/cli-characterisation/bad-outputs-type.nix:5:3:
+            4|   outPath = builtins.toFile "out" "";
+            5|   outputs = "out"; # should be a list
+             |   ^
+            6| }
+
+       error: expected a list but found a string: "out"

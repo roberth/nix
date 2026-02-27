@@ -1,0 +1,11 @@
+error:
+       … while querying the derivation named 'bad-outpath-1.0'
+
+       … while evaluating the output path of a derivation
+         at /pwd/cli-characterisation/bad-outpath.nix:4:3:
+            3|   name = "bad-outpath-1.0";
+            4|   outPath = "not-a-store-path";
+             |   ^
+            5| }
+
+       error: path 'not-a-store-path' is not in the Nix store
