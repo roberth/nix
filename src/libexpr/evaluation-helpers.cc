@@ -268,13 +268,14 @@ OrSuggestions<ref<Object>> findAlongAttrPathWithAutoCall(
 
             auto next = current->maybeGetAttr(attr);
             if (!next) {
-                // Generate suggestions for the missing attribute
                 auto attrNames = current->getAttrNames();
                 StringSet strAttrNames;
                 for (auto & name : attrNames)
                     strAttrNames.insert(name);
 
-                return OrSuggestions<ref<Object>>::failed(Suggestions::bestMatches(strAttrNames, attr));
+                auto suggestions = Suggestions::bestMatches(strAttrNames, attr);
+                throw AttrPathNotFound(
+                    suggestions, "attribute '%1%' in selection path '%2%' not found", attr, attrPathStr);
             }
             current = ref<Object>(next);
         } else {

@@ -68,14 +68,8 @@ findAlongAttrPath(EvalState & state, const std::string & attrPath, Bindings & au
     Strings tokens = parseAttrPath(attrPath);
     std::vector<std::string> attrPathVec(tokens.begin(), tokens.end());
 
-    auto result = expr::helpers::findAlongAttrPathWithAutoCall(*evaluator, rootObj, attrPath, attrPathVec, autoArgsObj);
-
-    if (!result) {
-        auto & suggestions = result.getSuggestions();
-        throw AttrPathNotFound(suggestions, "attribute '%1%' not found in selection path '%2%'", attrPath, attrPath);
-    }
-
-    auto obj = *result;
+    // findAlongAttrPathWithAutoCall throws AttrPathNotFound on missing attributes
+    auto obj = *expr::helpers::findAlongAttrPathWithAutoCall(*evaluator, rootObj, attrPath, attrPathVec, autoArgsObj);
     return {*obj->defeatCache(), obj->getPos()};
 }
 
