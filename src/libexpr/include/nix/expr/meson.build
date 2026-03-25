@@ -51,6 +51,7 @@ headers = [ config_pub_h ] + files(
   'trace-types.hh',
   'tracing-environment.hh',
   'tracing-evaluator.hh',
+  'tracing-index.hh',
   'tracing-object.hh',
   'tracing-replay-evaluator.hh',
   'tracing-replay-object.hh',
