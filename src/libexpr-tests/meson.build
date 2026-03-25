@@ -60,6 +60,7 @@ sources = files(
   'evaluation-helpers.cc',
   'evaluator.cc',
   'expr-from-object.cc',
+  'file-hash-cache.cc',
   'force-derivation-regen.cc',
   'is-path-equivalent.cc',
   'json.cc',

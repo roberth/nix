@@ -171,6 +171,7 @@ sources = files(
   'evaluation-helpers.cc',
   'evaluator.cc',
   'expr-from-object.cc',
+  'file-hash-cache.cc',
   'function-trace.cc',
   'get-drvs.cc',
   'interpreter-object.cc',

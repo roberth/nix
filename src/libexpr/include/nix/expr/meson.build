@@ -27,6 +27,7 @@ headers = [ config_pub_h ] + files(
   'evaluator.hh',
   'expr-from-object.hh',
   'fetch-tree.hh',
+  'file-hash-cache.hh',
   'function-trace.hh',
   'gc-small-vector.hh',
   'get-drvs.hh',
