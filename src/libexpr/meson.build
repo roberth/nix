@@ -180,6 +180,7 @@ sources = files(
   'print.cc',
   'provenance-object.cc',
   'search-path.cc',
+  'trace-types.cc',
   'value-to-json.cc',
   'value-to-xml.cc',
   'value.cc',

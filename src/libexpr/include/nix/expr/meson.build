@@ -45,6 +45,7 @@ headers = [ config_pub_h ] + files(
   'search-path.hh',
   'static-string-data.hh',
   'symbol-table.hh',
+  'trace-types.hh',
   'value-to-json.hh',
   'value-to-xml.hh',
   'value.hh',
