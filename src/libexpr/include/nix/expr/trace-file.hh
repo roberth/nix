@@ -6,6 +6,7 @@
  */
 
 #include "nix/expr/trace-sink.hh"
+#include "nix/expr/trace-types.hh"
 
 #include <filesystem>
 #include <fstream>
@@ -51,6 +52,12 @@ public:
 
     /** Create a new unique trace file path and update the latest symlink. */
     std::filesystem::path newTraceFile();
+
+    /** Get the path to the most recent trace file, if any. */
+    std::optional<std::filesystem::path> latestTraceFile() const;
+
+    /** Parse a trace file into typed trace entries. */
+    std::vector<trace::TraceEntry> parseTraceFile(const std::filesystem::path & tracePath) const;
 };
 
 } // namespace nix

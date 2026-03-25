@@ -66,6 +66,7 @@ sources = files(
   'trace-file.cc',
   'trace-types.cc',
   'tracing-evaluator.cc',
+  'tracing-replay-evaluator.cc',
   'trivial.cc',
   'value/context.cc',
   'value/print.cc',
