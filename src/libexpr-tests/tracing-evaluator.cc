@@ -195,7 +195,7 @@ TEST_F(TracingEvaluatorTest, MissingAttrTracesNull)
     // Should have query and a null-type result
     ASSERT_GE(sink->entries.size(), 2u);
     auto & result = sink->entries[1];
-    EXPECT_TRUE(result.at("result").at("type").is_null());
+    EXPECT_TRUE(result.at("result").at("attrType").is_null());
 }
 
 TEST_F(TracingEvaluatorTest, DefeatCacheDoesNotTrace)

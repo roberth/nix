@@ -206,4 +206,103 @@ TEST(TraceTypes, ResultWrapperRoundTrip)
     EXPECT_EQ(r.v, r2.v);
 }
 
+// ---------------------------------------------------------------------------
+// Tag constants
+// ---------------------------------------------------------------------------
+
+TEST(TraceTypes, QueryTagConstants)
+{
+    EXPECT_EQ(QueryExpr::tag, "expr");
+    EXPECT_EQ(QueryImport::tag, "import");
+    EXPECT_EQ(QueryGetAttr::tag, "getAttr");
+    EXPECT_EQ(QueryGetString::tag, "getString");
+    EXPECT_EQ(QueryGetStringWithContext::tag, "getStringWithContext");
+    EXPECT_EQ(QueryGetAttrNames::tag, "getAttrNames");
+    EXPECT_EQ(QueryGetType::tag, "getType");
+    EXPECT_EQ(QueryGetBool::tag, "getBool");
+    EXPECT_EQ(QueryGetInt::tag, "getInt");
+    EXPECT_EQ(QueryGetFloat::tag, "getFloat");
+    EXPECT_EQ(QueryGetListOfStrings::tag, "getListOfStrings");
+    EXPECT_EQ(QueryGetListSize::tag, "getListSize");
+    EXPECT_EQ(QueryGetListElem::tag, "getListElem");
+    EXPECT_EQ(QueryGetPath::tag, "getPath");
+    EXPECT_EQ(FileReadRequest::tag, "fileRead");
+    EXPECT_EQ(GetEnvRequest::tag, "getEnv");
+}
+
+// ---------------------------------------------------------------------------
+// Query comparison operators
+// ---------------------------------------------------------------------------
+
+TEST(TraceTypes, QueryExprComparison)
+{
+    QueryExpr a{"1 + 1", "/"};
+    QueryExpr b{"1 + 1", "/"};
+    QueryExpr c{"2 + 2", "/"};
+    EXPECT_EQ(a, b);
+    EXPECT_NE(a, c);
+    EXPECT_TRUE(a < c || c < a); // strict weak ordering
+}
+
+TEST(TraceTypes, QueryGetAttrComparison)
+{
+    QueryGetAttr a{"name", 1};
+    QueryGetAttr b{"name", 1};
+    QueryGetAttr c{"other", 1};
+    QueryGetAttr d{"name", 2};
+    EXPECT_EQ(a, b);
+    EXPECT_NE(a, c);
+    EXPECT_NE(a, d);
+}
+
+// ---------------------------------------------------------------------------
+// Response type tag in JSON
+// ---------------------------------------------------------------------------
+
+TEST(TraceTypes, ResponseHasTypeTag)
+{
+    auto h = Hash::parseSRI("sha256-n4bQgYhMfWWaL+qgxVrQFaO/TxsrC4Is0V1sFbDwCgg=");
+    Response<FileReadRequest> r{
+        .request = FileReadRequest{"/file"},
+        .response = FileReadResponse{h},
+    };
+    json j;
+    to_json(j, r);
+    EXPECT_EQ(j.at("type"), "fileRead");
+}
+
+TEST(TraceTypes, ResponseEnvHasTypeTag)
+{
+    Response<GetEnvRequest> r{
+        .request = GetEnvRequest{"HOME"},
+        .response = GetEnvResponse{"/home/user"},
+    };
+    json j;
+    to_json(j, r);
+    EXPECT_EQ(j.at("type"), "getEnv");
+}
+
+// ---------------------------------------------------------------------------
+// ResultMaybeType uses "attrType" JSON field
+// ---------------------------------------------------------------------------
+
+TEST(TraceTypes, ResultMaybeTypeUsesAttrTypeField)
+{
+    ResultMaybeType r{std::optional<std::string>{"set"}};
+    json j;
+    to_json(j, r);
+    EXPECT_TRUE(j.contains("attrType"));
+    EXPECT_FALSE(j.contains("type"));
+    EXPECT_EQ(j.at("attrType"), "set");
+}
+
+TEST(TraceTypes, ResultMaybeTypeNullUsesAttrTypeField)
+{
+    ResultMaybeType r{std::nullopt};
+    json j;
+    to_json(j, r);
+    EXPECT_TRUE(j.contains("attrType"));
+    EXPECT_TRUE(j.at("attrType").is_null());
+}
+
 } // namespace nix::trace
