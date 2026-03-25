@@ -17,6 +17,7 @@ headers = [ config_pub_h ] + files(
   'environment.hh',
   'environment/system.hh',
   'eval-cache.hh',
+  'expr-from-object.hh',
   'eval-error.hh',
   'eval-gc.hh',
   'eval-inline.hh',
