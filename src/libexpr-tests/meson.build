@@ -77,6 +77,7 @@ sources = files(
   'search-path.cc',
   'source-root.cc',
   'trace-types.cc',
+  'tracing-evaluator.cc',
   'trivial.cc',
   'value/context.cc',
   'value/print.cc',
