@@ -1,7 +1,7 @@
 #pragma once
 
 #include "nix/expr/evaluator.hh"
-#include "nix/expr/trace-sink.hh"
+#include "nix/expr/tracing-writer.hh"
 #include "nix/util/ref.hh"
 
 namespace nix {
@@ -9,22 +9,26 @@ namespace nix {
 class TracingDatabase;
 
 /**
- * Evaluator decorator that logs all queries and results to a TraceSink.
+ * Evaluator decorator that logs all queries and results via TracingWriter.
  * Wraps returned Objects in TracingObject to continue tracing through
  * attribute access and value extraction.
  */
 class TracingEvaluator : public Evaluator
 {
-    TraceSink & sink;
+    TracingWriter & writer;
     ref<Evaluator> inner;
+    TracingDatabase * db;
+    bool preloaded = false;
+
+    void ensurePreloaded();
 
 public:
     /**
-     * @param sink The trace sink to log to
+     * @param writer The tracing writer (logs to both JSON and optionally trie)
      * @param inner The wrapped evaluator
      * @param db Optional tracing database for preloading from previous traces
      */
-    TracingEvaluator(TraceSink & sink, ref<Evaluator> inner, TracingDatabase * db = nullptr);
+    TracingEvaluator(TracingWriter & writer, ref<Evaluator> inner, TracingDatabase * db = nullptr);
 
     bool isReadOnly() const override;
     Store & getStore() override;

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "nix/expr/evaluator.hh"
-#include "nix/expr/trace-sink.hh"
+#include "nix/expr/tracing-writer.hh"
 #include "nix/util/ref.hh"
 
 #include <optional>
@@ -10,19 +10,24 @@
 namespace nix {
 
 /**
- * Object decorator that logs all value access operations to a TraceSink.
- * Each TracingObject has a value handle linking it to its query in the trace.
+ * Object wrapper that logs all operations to a trace file and optionally
+ * to a trie index via TracingWriter.
  */
 class TracingObject : public Object
 {
     ref<Object> inner;
-    TraceSink & sink;
+    TracingWriter & writer;
     uint64_t valueNum;
+    std::optional<TriePosition> triePos;
 
-    TracingObject(ref<Object> inner, TraceSink & sink, uint64_t valueNum);
+    TracingObject(ref<Object> inner, TracingWriter & writer, uint64_t valueNum, std::optional<TriePosition> triePos);
 
 public:
-    static ref<TracingObject> create(ref<Object> inner, TraceSink & sink, uint64_t valueNum);
+    static ref<TracingObject> create(
+        ref<Object> inner,
+        TracingWriter & writer,
+        uint64_t valueNum,
+        std::optional<TriePosition> triePos = std::nullopt);
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

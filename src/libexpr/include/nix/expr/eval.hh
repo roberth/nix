@@ -46,6 +46,7 @@ class Environment;
 class SystemEnvironment;
 class Evaluator;
 class Object;
+class TracingWriter;
 
 namespace fetchers {
 struct Settings;
@@ -533,6 +534,7 @@ public:
      * Remove once all callers use Evaluator/Object directly.
      */
     std::weak_ptr<Evaluator> evaluatorCompat;
+    std::unique_ptr<TracingWriter> tracingWriter;
 
     /**
      * Get (or create) an Evaluator wrapping this EvalState.
