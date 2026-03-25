@@ -58,4 +58,34 @@ std::filesystem::path TracingDatabase::newTraceFile()
     return tracePath;
 }
 
+std::optional<std::filesystem::path> TracingDatabase::latestTraceFile() const
+{
+    auto latestLink = basePath / "latest.json";
+    if (!std::filesystem::exists(latestLink))
+        return std::nullopt;
+
+    auto target = std::filesystem::read_symlink(latestLink);
+    if (!std::filesystem::exists(target))
+        return std::nullopt;
+
+    return target;
+}
+
+std::vector<trace::TraceEntry> TracingDatabase::parseTraceFile(const std::filesystem::path & tracePath) const
+{
+    std::vector<trace::TraceEntry> entries;
+
+    std::ifstream file(tracePath);
+    if (!file.is_open())
+        throw Error("could not open trace file: %s", tracePath.string());
+
+    auto json = nlohmann::json::parse(file);
+    for (const auto & j : json) {
+        if (auto entry = trace::parseTraceEntry(j))
+            entries.push_back(std::move(*entry));
+    }
+
+    return entries;
+}
+
 } // namespace nix
