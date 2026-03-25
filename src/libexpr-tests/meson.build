@@ -63,6 +63,7 @@ sources = files(
   'nix_api_value_internal.cc',
   'primops.cc',
   'search-path.cc',
+  'trace-file.cc',
   'trace-types.cc',
   'tracing-evaluator.cc',
   'trivial.cc',

@@ -180,6 +180,7 @@ sources = files(
   'print.cc',
   'provenance-object.cc',
   'search-path.cc',
+  'trace-file.cc',
   'trace-types.cc',
   'tracing-environment.cc',
   'tracing-evaluator.cc',
