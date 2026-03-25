@@ -170,6 +170,7 @@ sources = files(
   'eval.cc',
   'evaluation-helpers.cc',
   'evaluator.cc',
+  'expr-from-object.cc',
   'function-trace.cc',
   'get-drvs.cc',
   'interpreter-object.cc',
