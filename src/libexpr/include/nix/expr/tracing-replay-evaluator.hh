@@ -2,46 +2,69 @@
 
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/file-hash-cache.hh"
-#include "nix/expr/trace-types.hh"
+#include "nix/expr/tracing-index.hh"
+#include "nix/expr/tracing-writer.hh"
 #include "nix/util/ref.hh"
 
+#include <set>
 #include <vector>
 
 namespace nix {
 
-class TracingDatabase;
+class TracingIndex;
+struct ResponseNode;
 
 /**
- * Evaluator that replays cached results from a previous trace.
+ * Evaluator that replays cached results from the tracing index.
  *
- * On each evalFile/evalExpr call, checks if the operation matches
- * a cached entry in the loaded trace. If so, returns a
- * TracingReplayObject that serves results from cache. Otherwise,
- * defers to the inner evaluator.
- *
- * Environment interactions (file reads, env vars) between queries
- * are validated before returning cached results.
+ * Uses the TracingIndex trie to look up cached query results via cascading
+ * lookup (temporal → structural → shortcut). On cache miss, defers to the
+ * inner evaluator.
  */
 class TracingReplayEvaluator : public Evaluator
 {
     ref<Evaluator> inner;
-    TracingDatabase & db;
+    TracingIndex & tracingIndex;
     FileHashCache hashCache;
 
-    std::vector<trace::TraceEntry> trace;
-    std::optional<trace::QueryIndex> index;
-    size_t cursor = 0;
-    bool invalidated = false;
+    /**
+     * Set of nodes whose dependencies have been validated.
+     * Enables O(n) incremental validation instead of O(n²) per-query.
+     */
+    std::set<NodeHash> validatedNodes;
 
     /**
-     * Validate all environment interactions (file reads, env lookups)
-     * between the cursor and the target position. Returns true if all
-     * validations pass; false if any fail (caller should invalidate).
+     * Try to find a cached result using the tracing index.
+     * Returns nullopt on miss, or (resultPayload, triePosition) on hit.
      */
-    bool validateEnvTo(size_t targetPos);
+    template<typename Q>
+    std::optional<std::pair<std::string, TriePosition>> lookup(const Q & query);
 
 public:
-    TracingReplayEvaluator(ref<Evaluator> inner, TracingDatabase & db);
+    TracingReplayEvaluator(
+        ref<Evaluator> inner, TracingIndex & tracingIndex, std::filesystem::path hashCacheDbPath = {});
+
+    /**
+     * Validate a vector of response nodes against current environment.
+     */
+    bool validateResponses(const std::vector<ResponseNode> & responses);
+
+    /**
+     * Validate dependencies from root to queryNodeHash (full validation).
+     * Used for shortcut lookups (strategy 3).
+     */
+    bool validateDependencies(const NodeHash & queryNodeHash);
+
+    /**
+     * Validate dependencies incrementally from nearest validated node.
+     * Used for trie/structural lookups (strategies 1 & 2).
+     */
+    bool validateToValidatedNode(const NodeHash & queryNodeHash);
+
+    void markValidated(const NodeHash & nodeHash);
+    bool isValidated(const NodeHash & nodeHash) const;
+
+    TracingIndex & getTracingIndex() { return tracingIndex; }
 
     bool isReadOnly() const override;
     Store & getStore() override;

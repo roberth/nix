@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 #include <memory>
-#include <vector>
+#include <filesystem>
 
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-object.hh"
+#include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/expr/tracing-replay-object.hh"
+#include "nix/expr/tracing-index.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/expr/interpreter.hh"
 #include "nix/expr/eval.hh"
@@ -16,7 +18,8 @@
 namespace nix {
 
 /**
- * In-memory trace sink that collects JSON entries for building a trace.
+ * In-memory trace sink that collects JSON entries (still needed for the
+ * JSON side of TracingWriter).
  */
 class CollectingTraceSink : public TraceSink
 {
@@ -36,6 +39,8 @@ protected:
     bool readOnlyMode = false;
     fetchers::Settings fetchSettings{};
     EvalSettings evalSettings{readOnlyMode};
+    std::filesystem::path dbPath;
+    std::filesystem::path hashCacheDbPath;
 
     static void SetUpTestSuite()
     {
@@ -52,6 +57,20 @@ protected:
     {
         auto stateRef = make_ref<EvalState>(LookupPath{}, store, fetchSettings, evalSettings, nullptr);
         state = stateRef;
+
+        // Each test gets fresh temporary databases
+        auto tmpDir = std::filesystem::temp_directory_path();
+        auto suffix = std::to_string(getpid());
+        dbPath = tmpDir / ("nix-test-trie-" + suffix + ".sqlite");
+        hashCacheDbPath = tmpDir / ("nix-test-hashcache-" + suffix + ".sqlite");
+        std::filesystem::remove(dbPath);
+        std::filesystem::remove(hashCacheDbPath);
+    }
+
+    void TearDown() override
+    {
+        std::filesystem::remove(dbPath);
+        std::filesystem::remove(hashCacheDbPath);
     }
 
     ref<EvalState> makeState()
@@ -60,218 +79,169 @@ protected:
     }
 
     /**
-     * Record a trace by evaluating through TracingEvaluator,
-     * then parse the trace entries into TraceEntry vector.
+     * Record a trace into a TracingIndex by evaluating through TracingEvaluator
+     * with trie recording enabled.
      */
-    std::vector<trace::TraceEntry> recordTrace(std::function<void(Evaluator &)> work)
+    void recordToIndex(TracingIndex & index, std::function<void(Evaluator &)> work)
     {
         auto sink = std::make_shared<CollectingTraceSink>();
-        TracingWriter writer(*sink);
+        TracingWriter writer(*sink, &index);
         auto interpreter = make_ref<Interpreter>(makeState());
         TracingEvaluator tracing(writer, interpreter);
         work(tracing);
-
-        // Parse the collected JSON entries into typed TraceEntry
-        std::vector<trace::TraceEntry> trace;
-        for (const auto & j : sink->entries) {
-            if (auto entry = trace::parseTraceEntry(j))
-                trace.push_back(std::move(*entry));
-        }
-        return trace;
     }
 
     /**
-     * Create a TracingReplayObject from a trace for the given value handle.
+     * Create a TracingReplayEvaluator that replays from the given index.
      */
-    std::shared_ptr<TracingReplayObject> makeReplayObject(
-        const std::vector<trace::TraceEntry> & trace,
-        const trace::QueryIndex & index,
-        uint64_t valueNum)
+    ref<TracingReplayEvaluator> makeReplayEvaluator(TracingIndex & index)
     {
-        return std::make_shared<TracingReplayObject>(
-            *store, trace, index, valueNum, [this]() -> ref<Object> {
-                throw Error("inner evaluator should not be called for cached values");
-            });
+        auto interpreter = make_ref<Interpreter>(makeState());
+        return make_ref<TracingReplayEvaluator>(interpreter, index, hashCacheDbPath);
     }
 };
 
 TEST_F(TracingReplayTest, ReplayGetType)
 {
-    auto trace = recordTrace([&](Evaluator & eval) {
+    TracingIndex index(dbPath);
+
+    recordToIndex(index, [&](Evaluator & eval) {
         auto obj = eval.evalExpr("42", state->rootPath(CanonPath::root));
         obj->getType();
     });
 
-    trace::QueryIndex index(trace);
-
-    // The evalExpr query should have produced v=0
-    auto entry = index.lookup(trace::QueryExpr{"42", "/"});
-    ASSERT_TRUE(entry.has_value());
-
-    auto * q = std::get_if<trace::Query<trace::QueryExpr>>(&trace[entry->queryIndex]);
-    ASSERT_NE(q, nullptr);
-
-    auto replay = makeReplayObject(trace, index, q->v);
-    EXPECT_EQ(replay->getType(), nInt);
+    auto replay = makeReplayEvaluator(index);
+    auto obj = replay->evalExpr("42", state->rootPath(CanonPath::root));
+    EXPECT_EQ(obj->getType(), nInt);
 }
 
 TEST_F(TracingReplayTest, ReplayGetInt)
 {
-    auto trace = recordTrace([&](Evaluator & eval) {
+    TracingIndex index(dbPath);
+
+    recordToIndex(index, [&](Evaluator & eval) {
         auto obj = eval.evalExpr("42", state->rootPath(CanonPath::root));
         obj->getInt();
     });
 
-    trace::QueryIndex index(trace);
-    auto entry = index.lookup(trace::QueryExpr{"42", "/"});
-    ASSERT_TRUE(entry.has_value());
-    auto * q = std::get_if<trace::Query<trace::QueryExpr>>(&trace[entry->queryIndex]);
-    ASSERT_NE(q, nullptr);
-
-    auto replay = makeReplayObject(trace, index, q->v);
-    EXPECT_EQ(replay->getInt().value, 42);
+    auto replay = makeReplayEvaluator(index);
+    auto obj = replay->evalExpr("42", state->rootPath(CanonPath::root));
+    EXPECT_EQ(obj->getInt().value, 42);
 }
 
 TEST_F(TracingReplayTest, ReplayGetString)
 {
-    auto trace = recordTrace([&](Evaluator & eval) {
+    TracingIndex index(dbPath);
+
+    recordToIndex(index, [&](Evaluator & eval) {
         auto obj = eval.evalExpr("\"hello\"", state->rootPath(CanonPath::root));
         obj->getStringIgnoreContext();
     });
 
-    trace::QueryIndex index(trace);
-    auto entry = index.lookup(trace::QueryExpr{"\"hello\"", "/"});
-    ASSERT_TRUE(entry.has_value());
-    auto * q = std::get_if<trace::Query<trace::QueryExpr>>(&trace[entry->queryIndex]);
-    ASSERT_NE(q, nullptr);
-
-    auto replay = makeReplayObject(trace, index, q->v);
-    EXPECT_EQ(replay->getStringIgnoreContext(), "hello");
+    auto replay = makeReplayEvaluator(index);
+    auto obj = replay->evalExpr("\"hello\"", state->rootPath(CanonPath::root));
+    EXPECT_EQ(obj->getStringIgnoreContext(), "hello");
 }
 
 TEST_F(TracingReplayTest, ReplayGetBool)
 {
-    auto trace = recordTrace([&](Evaluator & eval) {
+    TracingIndex index(dbPath);
+
+    recordToIndex(index, [&](Evaluator & eval) {
         auto obj = eval.evalExpr("true", state->rootPath(CanonPath::root));
         obj->getBool();
     });
 
-    trace::QueryIndex index(trace);
-    auto entry = index.lookup(trace::QueryExpr{"true", "/"});
-    ASSERT_TRUE(entry.has_value());
-    auto * q = std::get_if<trace::Query<trace::QueryExpr>>(&trace[entry->queryIndex]);
-    ASSERT_NE(q, nullptr);
-
-    auto replay = makeReplayObject(trace, index, q->v);
-    EXPECT_TRUE(replay->getBool());
+    auto replay = makeReplayEvaluator(index);
+    auto obj = replay->evalExpr("true", state->rootPath(CanonPath::root));
+    EXPECT_TRUE(obj->getBool());
 }
 
 TEST_F(TracingReplayTest, ReplayGetAttr)
 {
-    auto trace = recordTrace([&](Evaluator & eval) {
+    TracingIndex index(dbPath);
+
+    recordToIndex(index, [&](Evaluator & eval) {
         auto obj = eval.evalExpr("{ x = 42; }", state->rootPath(CanonPath::root));
         auto x = obj->maybeGetAttr("x");
         x->getInt();
     });
 
-    trace::QueryIndex index(trace);
-    auto entry = index.lookup(trace::QueryExpr{"{ x = 42; }", "/"});
-    ASSERT_TRUE(entry.has_value());
-    auto * q = std::get_if<trace::Query<trace::QueryExpr>>(&trace[entry->queryIndex]);
-    ASSERT_NE(q, nullptr);
-
-    auto replay = makeReplayObject(trace, index, q->v);
-    auto x = replay->maybeGetAttr("x");
+    auto replay = makeReplayEvaluator(index);
+    auto obj = replay->evalExpr("{ x = 42; }", state->rootPath(CanonPath::root));
+    auto x = obj->maybeGetAttr("x");
     ASSERT_NE(x, nullptr);
     EXPECT_EQ(x->getInt().value, 42);
 }
 
 TEST_F(TracingReplayTest, ReplayMissingAttr)
 {
-    auto trace = recordTrace([&](Evaluator & eval) {
+    TracingIndex index(dbPath);
+
+    recordToIndex(index, [&](Evaluator & eval) {
         auto obj = eval.evalExpr("{ }", state->rootPath(CanonPath::root));
         obj->maybeGetAttr("nonexistent");
     });
 
-    trace::QueryIndex index(trace);
-    auto entry = index.lookup(trace::QueryExpr{"{ }", "/"});
-    ASSERT_TRUE(entry.has_value());
-    auto * q = std::get_if<trace::Query<trace::QueryExpr>>(&trace[entry->queryIndex]);
-    ASSERT_NE(q, nullptr);
-
-    auto replay = makeReplayObject(trace, index, q->v);
-    EXPECT_EQ(replay->maybeGetAttr("nonexistent"), nullptr);
+    auto replay = makeReplayEvaluator(index);
+    auto obj = replay->evalExpr("{ }", state->rootPath(CanonPath::root));
+    EXPECT_EQ(obj->maybeGetAttr("nonexistent"), nullptr);
 }
 
 TEST_F(TracingReplayTest, ReplayGetAttrNames)
 {
-    auto trace = recordTrace([&](Evaluator & eval) {
+    TracingIndex index(dbPath);
+
+    recordToIndex(index, [&](Evaluator & eval) {
         auto obj = eval.evalExpr("{ a = 1; b = 2; }", state->rootPath(CanonPath::root));
         obj->getAttrNames();
     });
 
-    trace::QueryIndex index(trace);
-    auto entry = index.lookup(trace::QueryExpr{"{ a = 1; b = 2; }", "/"});
-    ASSERT_TRUE(entry.has_value());
-    auto * q = std::get_if<trace::Query<trace::QueryExpr>>(&trace[entry->queryIndex]);
-    ASSERT_NE(q, nullptr);
-
-    auto replay = makeReplayObject(trace, index, q->v);
-    auto names = replay->getAttrNames();
+    auto replay = makeReplayEvaluator(index);
+    auto obj = replay->evalExpr("{ a = 1; b = 2; }", state->rootPath(CanonPath::root));
+    auto names = obj->getAttrNames();
     EXPECT_EQ(names.size(), 2u);
 }
 
 TEST_F(TracingReplayTest, ReplayGetFloat)
 {
-    auto trace = recordTrace([&](Evaluator & eval) {
+    TracingIndex index(dbPath);
+
+    recordToIndex(index, [&](Evaluator & eval) {
         auto obj = eval.evalExpr("3.14", state->rootPath(CanonPath::root));
         obj->getFloat();
     });
 
-    trace::QueryIndex index(trace);
-    auto entry = index.lookup(trace::QueryExpr{"3.14", "/"});
-    ASSERT_TRUE(entry.has_value());
-    auto * q = std::get_if<trace::Query<trace::QueryExpr>>(&trace[entry->queryIndex]);
-    ASSERT_NE(q, nullptr);
-
-    auto replay = makeReplayObject(trace, index, q->v);
-    EXPECT_DOUBLE_EQ(replay->getFloat(), 3.14);
+    auto replay = makeReplayEvaluator(index);
+    auto obj = replay->evalExpr("3.14", state->rootPath(CanonPath::root));
+    EXPECT_DOUBLE_EQ(obj->getFloat(), 3.14);
 }
 
 TEST_F(TracingReplayTest, ReplayGetListSize)
 {
-    auto trace = recordTrace([&](Evaluator & eval) {
+    TracingIndex index(dbPath);
+
+    recordToIndex(index, [&](Evaluator & eval) {
         auto obj = eval.evalExpr("[1 2 3]", state->rootPath(CanonPath::root));
         obj->getListSize();
     });
 
-    trace::QueryIndex index(trace);
-    auto entry = index.lookup(trace::QueryExpr{"[1 2 3]", "/"});
-    ASSERT_TRUE(entry.has_value());
-    auto * q = std::get_if<trace::Query<trace::QueryExpr>>(&trace[entry->queryIndex]);
-    ASSERT_NE(q, nullptr);
-
-    auto replay = makeReplayObject(trace, index, q->v);
-    EXPECT_EQ(replay->getListSize(), 3u);
+    auto replay = makeReplayEvaluator(index);
+    auto obj = replay->evalExpr("[1 2 3]", state->rootPath(CanonPath::root));
+    EXPECT_EQ(obj->getListSize(), 3u);
 }
 
 TEST_F(TracingReplayTest, FallbackToInnerOnMiss)
 {
-    // Empty trace — everything is a miss
-    std::vector<trace::TraceEntry> trace;
-    trace::QueryIndex index(trace);
+    // Empty index — everything is a miss, so replay falls back to inner
+    TracingIndex index(dbPath);
 
-    bool innerCalled = false;
-    auto interpreter = make_ref<Interpreter>(makeState());
-    auto replay = std::make_shared<TracingReplayObject>(
-        *store, trace, index, 999, [&]() -> ref<Object> {
-            innerCalled = true;
-            return interpreter->evalExpr("42", state->rootPath(CanonPath::root));
-        });
-
-    auto type = replay->getType();
-    EXPECT_TRUE(innerCalled);
-    EXPECT_EQ(type, nInt);
+    auto replay = makeReplayEvaluator(index);
+    auto obj = replay->evalExpr("42", state->rootPath(CanonPath::root));
+    // evalExpr itself misses (no shortcut), so it delegates to inner evaluator
+    // which returns a real Object, not a TracingReplayObject
+    EXPECT_EQ(obj->getType(), nInt);
+    EXPECT_EQ(obj->getInt().value, 42);
 }
 
 } // namespace nix

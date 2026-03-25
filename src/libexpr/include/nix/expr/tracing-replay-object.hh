@@ -1,49 +1,50 @@
 #pragma once
 
 #include "nix/expr/evaluator.hh"
-#include "nix/expr/trace-types.hh"
+#include "nix/expr/tracing-writer.hh"
 
 #include <functional>
-#include <vector>
 
 namespace nix {
 
 class Store;
+class TracingReplayEvaluator;
 
 /**
- * Object that returns cached results from a trace, with lazy fallback
+ * Object that returns cached results from the trie index, with lazy fallback
  * to the inner evaluator when cache misses occur.
+ *
+ * Uses cascading lookup: temporal children → structural children → shortcuts.
+ * Objects are only created for validated trie positions. Child lookups
+ * perform incremental validation from the child back to the current position.
  */
 class TracingReplayObject : public Object
 {
-    Store & store;
-    const std::vector<trace::TraceEntry> & trace;
-    const trace::QueryIndex & index;
-    uint64_t valueNum;
+    TracingReplayEvaluator & evaluator;
+    TriePosition triePos;
 
-    /**
-     * Lazy fallback: produces the real Object from the inner evaluator.
-     * Called on first cache miss.
-     */
     std::function<ref<Object>()> getInner;
     mutable std::optional<ref<Object>> inner;
 
     ref<Object> ensureInner() const;
 
     /**
-     * Look up a query result using the index and ResultOf type family.
-     * Returns the result payload, or nullopt on miss.
+     * Cascading lookup for leaf results (getString, getBool, etc.).
+     * Tries temporal → structural → shortcut strategies.
      */
-    template<typename Q>
-    std::optional<typename trace::ResultOf<Q>::Type> lookupResult(const Q & query) const;
+    template<typename Q, typename R>
+    std::optional<R> lookupResult(const Q & query) const;
+
+    /**
+     * Cascading lookup for structural children (getAttr, getListElem).
+     * Returns the result payload and child TriePosition for further traversal.
+     */
+    template<typename Q, typename R>
+    std::optional<std::pair<R, TriePosition>> lookupStructuralChild(const Q & query) const;
 
 public:
     TracingReplayObject(
-        Store & store,
-        const std::vector<trace::TraceEntry> & trace,
-        const trace::QueryIndex & index,
-        uint64_t valueNum,
-        std::function<ref<Object>()> getInner);
+        TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner);
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
