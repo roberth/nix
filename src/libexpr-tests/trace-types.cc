@@ -102,7 +102,7 @@ TEST(TraceTypes, QueryExprRoundTrip)
 
 TEST(TraceTypes, QueryWrapperRoundTrip)
 {
-    Query<QueryGetAttr> q{.query = QueryGetAttr{"name", 42}, .v = 99};
+    Query<QueryGetAttr> q{.query = QueryGetAttr{"name", "42"}, .v = 99};
     json j;
     to_json(j, q);
     Query<QueryGetAttr> q2;
@@ -176,7 +176,7 @@ TEST(TraceTypes, ResultListSizeRoundTrip)
 
 TEST(TraceTypes, QueryGetListElemRoundTrip)
 {
-    QueryGetListElem q{99, 5};
+    QueryGetListElem q{"99", 5};
     json j;
     to_json(j, q);
     QueryGetListElem q2;
@@ -187,7 +187,7 @@ TEST(TraceTypes, QueryGetListElemRoundTrip)
 
 TEST(TraceTypes, QueryGetFloatRoundTrip)
 {
-    QueryGetFloat q{77};
+    QueryGetFloat q{"77"};
     json j;
     to_json(j, q);
     QueryGetFloat q2;
@@ -246,10 +246,10 @@ TEST(TraceTypes, QueryExprComparison)
 
 TEST(TraceTypes, QueryGetAttrComparison)
 {
-    QueryGetAttr a{"name", 1};
-    QueryGetAttr b{"name", 1};
-    QueryGetAttr c{"other", 1};
-    QueryGetAttr d{"name", 2};
+    QueryGetAttr a{"name", "1"};
+    QueryGetAttr b{"name", "1"};
+    QueryGetAttr c{"other", "1"};
+    QueryGetAttr d{"name", "2"};
     EXPECT_EQ(a, b);
     EXPECT_NE(a, c);
     EXPECT_NE(a, d);
@@ -474,7 +474,7 @@ TEST(TraceTypes, FullTraceRoundTrip)
             .v = 0,
         },
         Query<QueryGetAttr>{
-            .query = {.name = "x", .from = 0},
+            .query = {.name = "x", .from = "0"},
             .v = 1,
         },
         Result<ResultMaybeType>{
@@ -482,7 +482,7 @@ TEST(TraceTypes, FullTraceRoundTrip)
             .v = 1,
         },
         Query<QueryGetInt>{
-            .query = {.from = 1},
+            .query = {.from = "1"},
             .v = 2,
         },
         Result<ResultInt>{
@@ -527,7 +527,7 @@ TEST(TraceTypes, CorrelateTrace)
             .v = 0,
         },
         Query<QueryGetAttr>{
-            .query = {.name = "x", .from = 0},
+            .query = {.name = "x", .from = "0"},
             .v = 1,
         },
         Result<ResultMaybeType>{
@@ -564,7 +564,7 @@ TEST(TraceTypes, QueryIndexLookup)
             .v = 0,
         },
         Query<QueryGetAttr>{
-            .query = {.name = "foo", .from = 0},
+            .query = {.name = "foo", .from = "0"},
             .v = 1,
         },
         Result<ResultMaybeType>{
@@ -580,7 +580,7 @@ TEST(TraceTypes, QueryIndexLookup)
     EXPECT_EQ(e1->queryIndex, 0u);
     EXPECT_EQ(e1->resultIndex, 1u);
 
-    auto e2 = idx.lookup(QueryGetAttr{"foo", 0});
+    auto e2 = idx.lookup(QueryGetAttr{"foo", "0"});
     ASSERT_TRUE(e2.has_value());
     EXPECT_EQ(e2->queryIndex, 2u);
     EXPECT_EQ(e2->resultIndex, 3u);

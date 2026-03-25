@@ -78,7 +78,7 @@ std::optional<typename trace::ResultOf<Q>::Type> TracingReplayObject::lookupResu
 
 std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & name)
 {
-    trace::QueryGetAttr query{name, valueNum};
+    trace::QueryGetAttr query{name, std::to_string(valueNum)};
     auto entry = index.lookup(query);
 
     if (!entry) {
@@ -105,14 +105,14 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
 
 std::vector<std::string> TracingReplayObject::getAttrNames()
 {
-    if (auto r = lookupResult(trace::QueryGetAttrNames{valueNum}))
+    if (auto r = lookupResult(trace::QueryGetAttrNames{std::to_string(valueNum)}))
         return r->values;
     return ensureInner()->getAttrNames();
 }
 
 std::string TracingReplayObject::getStringIgnoreContext()
 {
-    if (auto r = lookupResult(trace::QueryGetString{valueNum}))
+    if (auto r = lookupResult(trace::QueryGetString{std::to_string(valueNum)}))
         return r->value;
     return ensureInner()->getStringIgnoreContext();
 }
@@ -125,7 +125,7 @@ std::string TracingReplayObject::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> TracingReplayObject::getStringWithContext()
 {
-    if (auto r = lookupResult(trace::QueryGetStringWithContext{valueNum})) {
+    if (auto r = lookupResult(trace::QueryGetStringWithContext{std::to_string(valueNum)})) {
         NixStringContext ctx;
         for (const auto & s : r->context)
             ctx.insert(NixStringContextElem::parse(s));
@@ -163,35 +163,35 @@ SourcePath TracingReplayObject::getPath()
 
 bool TracingReplayObject::getBool(std::string_view errorCtx)
 {
-    if (auto r = lookupResult(trace::QueryGetBool{valueNum}))
+    if (auto r = lookupResult(trace::QueryGetBool{std::to_string(valueNum)}))
         return r->value;
     return ensureInner()->getBool(errorCtx);
 }
 
 NixInt TracingReplayObject::getInt(std::string_view errorCtx)
 {
-    if (auto r = lookupResult(trace::QueryGetInt{valueNum}))
+    if (auto r = lookupResult(trace::QueryGetInt{std::to_string(valueNum)}))
         return NixInt{r->value};
     return ensureInner()->getInt(errorCtx);
 }
 
 NixFloat TracingReplayObject::getFloat(std::string_view errorCtx)
 {
-    if (auto r = lookupResult(trace::QueryGetFloat{valueNum}))
+    if (auto r = lookupResult(trace::QueryGetFloat{std::to_string(valueNum)}))
         return r->value;
     return ensureInner()->getFloat(errorCtx);
 }
 
 size_t TracingReplayObject::getListSize()
 {
-    if (auto r = lookupResult(trace::QueryGetListSize{valueNum}))
+    if (auto r = lookupResult(trace::QueryGetListSize{std::to_string(valueNum)}))
         return r->size;
     return ensureInner()->getListSize();
 }
 
 std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
 {
-    trace::QueryGetListElem query{valueNum, idx};
+    trace::QueryGetListElem query{std::to_string(valueNum), idx};
     auto entry = index.lookup(query);
 
     if (!entry)
@@ -207,7 +207,7 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
 
 std::vector<std::string> TracingReplayObject::getListOfStringsNoCtx()
 {
-    if (auto r = lookupResult(trace::QueryGetListOfStrings{valueNum}))
+    if (auto r = lookupResult(trace::QueryGetListOfStrings{std::to_string(valueNum)}))
         return r->values;
     return ensureInner()->getListOfStringsNoCtx();
 }
@@ -219,7 +219,7 @@ ObjectType TracingReplayObject::getTypeLazy()
 
 ObjectType TracingReplayObject::getType()
 {
-    if (auto r = lookupResult(trace::QueryGetType{valueNum}))
+    if (auto r = lookupResult(trace::QueryGetType{std::to_string(valueNum)}))
         return stringToObjectType(r->type);
     return ensureInner()->getType();
 }
