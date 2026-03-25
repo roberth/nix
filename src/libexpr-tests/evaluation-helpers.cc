@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
+#include "nix/expr/attr-path.hh"
 #include "nix/expr/evaluation-helpers.hh"
 #include "nix/expr/interpreter.hh"
 #include "nix/expr/tests/libexpr.hh"
@@ -720,11 +721,10 @@ TEST_F(EvaluatorHelpersTest, findAlongAttrPathWithAutoCall_MissingAttr)
 {
     auto obj = evalExpression("{ foo = 1; }");
     ObjectAttrMap args;
-    auto result = expr::helpers::findAlongAttrPathWithAutoCall(evaluator, ref<Object>(obj), "bar", {"bar"}, args);
-    EXPECT_FALSE(result);
-    // Should have suggestions
-    auto suggestions = result.getSuggestions();
-    EXPECT_FALSE(suggestions.suggestions.empty());
+    // Missing attribute now throws AttrPathNotFound with suggestions
+    EXPECT_THROW(
+        expr::helpers::findAlongAttrPathWithAutoCall(evaluator, ref<Object>(obj), "bar", {"bar"}, args),
+        AttrPathNotFound);
 }
 
 TEST_F(EvaluatorHelpersTest, findAlongAttrPathWithAutoCall_ListIndex)
