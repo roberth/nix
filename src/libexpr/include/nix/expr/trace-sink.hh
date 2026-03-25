@@ -20,7 +20,7 @@ class TraceSink
     uint64_t nextValueNum = 0;
 
 public:
-    virtual ~TraceSink() = default;
+    virtual ~TraceSink();
 
     /** Log a raw JSON trace entry. */
     virtual void log(const nlohmann::json & entry) = 0;

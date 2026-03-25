@@ -1,4 +1,14 @@
+#include "nix/expr/trace-sink.hh"
 #include "nix/expr/trace-types.hh"
+
+namespace nix {
+
+/* Out-of-line virtual destructor so the abstract base gets a key
+   function — without it, clang's `-Wweak-vtables` reports the vtable
+   as emitted in every TU. */
+TraceSink::~TraceSink() = default;
+
+} // namespace nix
 
 namespace nix::trace {
 
