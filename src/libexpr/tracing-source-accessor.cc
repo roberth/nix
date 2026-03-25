@@ -1,11 +1,10 @@
 #include "nix/expr/tracing-source-accessor.hh"
-#include "nix/expr/trace-types.hh"
 
 namespace nix {
 
-TracingSourceAccessor::TracingSourceAccessor(ref<SourceAccessor> inner, TraceSink & sink)
+TracingSourceAccessor::TracingSourceAccessor(ref<SourceAccessor> inner, FileReadLogFn logFn)
     : inner(inner)
-    , sink(sink)
+    , logFn(std::move(logFn))
 {
 }
 
@@ -15,12 +14,12 @@ SpeculativeReadResult TracingSourceAccessor::readSpeculatively(const CanonPath &
     auto hash = hashString(HashAlgorithm::SHA256, contents);
     auto pathStr = path.abs();
 
-    auto & sinkRef = this->sink;
-    auto emitTrace = [&sinkRef, pathStr, hash]() {
-        sinkRef.logEnvResponse(trace::Response<trace::FileReadRequest>{
+    auto emitTrace = [logFn = this->logFn, pathStr, hash]() {
+        trace::Response<trace::FileReadRequest> resp{
             .request = {.absPath = pathStr},
             .response = {.contentHash = hash},
-        });
+        };
+        logFn(resp);
     };
 
     return SpeculativeReadResult{
@@ -35,10 +34,11 @@ void TracingSourceAccessor::readFile(const CanonPath & path, Sink & destSink, fu
     auto contents = inner->readFile(path);
     auto hash = hashString(HashAlgorithm::SHA256, contents);
 
-    sink.logEnvResponse(trace::Response<trace::FileReadRequest>{
+    trace::Response<trace::FileReadRequest> resp{
         .request = {.absPath = path.abs()},
         .response = {.contentHash = hash},
-    });
+    };
+    logFn(resp);
 
     sizeCallback(contents.size());
     destSink(contents);

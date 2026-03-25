@@ -12,6 +12,7 @@
 #include "nix/expr/environment/system.hh"
 #include "nix/expr/trace-file.hh"
 #include "nix/expr/tracing-environment.hh"
+#include "nix/expr/tracing-writer.hh"
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/store/profiles.hh"
 #include "nix/cmd/repl.hh"
@@ -176,8 +177,9 @@ ref<EvalState> EvalCommand::getEvalState()
             traceFile = std::make_unique<TraceFile>(tracePath, [this, tracePath]() {
                 tracingDb->updateLatestSymlink(tracePath);
             });
+            tracingWriter = std::make_unique<TracingWriter>(*traceFile);
             auto sysEnv = make_ref<SystemEnvironment>(evalSettings, getEvalStore(), getStore());
-            auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *traceFile);
+            auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *tracingWriter);
             evalState = std::allocate_shared<EvalState>(
                 traceable_allocator<EvalState>(), lookupPath, fetchSettings, evalSettings, tracingEnv, sysEnv);
         } else {

@@ -22,6 +22,7 @@ class Store;
 struct LocalFSStore;
 class TraceFile;
 class TracingDatabase;
+class TracingWriter;
 
 static constexpr Command::Category catHelp = -1;
 static constexpr Command::Category catSecondary = 100;
@@ -127,6 +128,7 @@ private:
 
     std::unique_ptr<TracingDatabase> tracingDb;
     std::unique_ptr<TraceFile> traceFile;
+    std::unique_ptr<TracingWriter> tracingWriter;
 };
 
 /**

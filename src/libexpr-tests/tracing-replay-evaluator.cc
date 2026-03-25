@@ -5,6 +5,7 @@
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-replay-object.hh"
+#include "nix/expr/tracing-writer.hh"
 #include "nix/expr/interpreter.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-settings.hh"
@@ -65,8 +66,9 @@ protected:
     std::vector<trace::TraceEntry> recordTrace(std::function<void(Evaluator &)> work)
     {
         auto sink = std::make_shared<CollectingTraceSink>();
+        TracingWriter writer(*sink);
         auto interpreter = make_ref<Interpreter>(makeState());
-        TracingEvaluator tracing(*sink, interpreter);
+        TracingEvaluator tracing(writer, interpreter);
         work(tracing);
 
         // Parse the collected JSON entries into typed TraceEntry

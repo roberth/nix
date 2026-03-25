@@ -30,10 +30,19 @@ static std::string objectTypeToString(ObjectType type)
     return "unknown";
 }
 
-TracingEvaluator::TracingEvaluator(TraceSink & sink, ref<Evaluator> inner, TracingDatabase * db)
-    : sink(sink)
+TracingEvaluator::TracingEvaluator(TracingWriter & writer, ref<Evaluator> inner, TracingDatabase * db)
+    : writer(writer)
     , inner(inner)
+    , db(db)
 {
+}
+
+void TracingEvaluator::ensurePreloaded()
+{
+    if (preloaded)
+        return;
+    preloaded = true;
+
     if (!db)
         return;
 
@@ -60,7 +69,7 @@ TracingEvaluator::TracingEvaluator(TraceSink & sink, ref<Evaluator> inner, Traci
         SpeculativeReadResult result;
     };
 
-    Sync<std::vector<PreloadedFile>> preloaded;
+    Sync<std::vector<PreloadedFile>> preloadedFiles;
 
     ThreadPool pool;
     for (const auto & pathStr : filePaths) {
@@ -68,7 +77,7 @@ TracingEvaluator::TracingEvaluator(TraceSink & sink, ref<Evaluator> inner, Traci
             try {
                 auto canonPath = CanonPath(pathStr);
                 auto result = tracingAccessor->readSpeculatively(canonPath);
-                preloaded.lock()->push_back(PreloadedFile{
+                preloadedFiles.lock()->push_back(PreloadedFile{
                     .path = std::move(canonPath),
                     .result = std::move(result),
                 });
@@ -85,7 +94,7 @@ TracingEvaluator::TracingEvaluator(TraceSink & sink, ref<Evaluator> inner, Traci
     }
 
     // Parse sequentially (EvalState parsing is not thread-safe)
-    for (auto & file : *preloaded.lock()) {
+    for (auto & file : *preloadedFiles.lock()) {
         try {
             auto sourcePath = SourcePath{accessor, file.path};
             auto expr = evalState.parseExprFromString(std::move(file.result.contents), sourcePath.parent());
@@ -118,33 +127,35 @@ EvalState & TracingEvaluator::getEvalState()
 
 ref<Object> TracingEvaluator::evalFile(const SourcePath & path, const std::string & displayPath)
 {
-    auto v = sink.logQuery(trace::QueryImport{displayPath});
+    ensurePreloaded();
+    auto [v, _] = writer.logRootQuery(trace::QueryImport{displayPath});
     auto result = inner->evalFile(path, displayPath);
     auto type = result->getType();
-    sink.logResult(v, trace::ResultType{objectTypeToString(type)});
-    return TracingObject::create(result, sink, v);
+    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)});
+    return TracingObject::create(result, writer, v, triePos);
 }
 
 ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const SourcePath & basePath)
 {
-    auto v = sink.logQuery(trace::QueryExpr{expr, basePath.path.abs()});
+    ensurePreloaded();
+    auto [v, _] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
     auto result = inner->evalExpr(expr, basePath);
     auto type = result->getType();
-    sink.logResult(v, trace::ResultType{objectTypeToString(type)});
-    return TracingObject::create(result, sink, v);
+    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)});
+    return TracingObject::create(result, writer, v, triePos);
 }
 
 ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const SourcePath & basePath)
 {
-    auto v = sink.logQuery(trace::QueryExpr{expr, basePath.path.abs()});
+    ensurePreloaded();
+    auto [v, _] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
     auto result = inner->evalExprLazy(expr, basePath);
     // Lazy: don't force type yet, just wrap
-    return TracingObject::create(result, sink, v);
+    return TracingObject::create(result, writer, v);
 }
 
 ref<Object> TracingEvaluator::mkString(const std::string & s)
 {
-    // Construction operations don't need tracing — they produce known values
     return inner->mkString(s);
 }
 
@@ -155,10 +166,9 @@ ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> &
 
 ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
-    // Function application: the result is traced via the returned Object
     auto result = inner->apply(fn, arg);
-    auto v = sink.allocValue();
-    return TracingObject::create(result, sink, v);
+    auto v = writer.getSink().allocValue();
+    return TracingObject::create(result, writer, v);
 }
 
 } // namespace nix

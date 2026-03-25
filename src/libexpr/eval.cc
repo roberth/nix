@@ -356,8 +356,10 @@ ref<Evaluator> EvalState::toEvaluatorCompat()
     if (auto eval = evaluatorCompat.lock())
         return ref<Evaluator>(eval);
     ref<Evaluator> eval = make_ref<Interpreter>(ref<EvalState>(shared_from_this()));
-    if (auto * sink = environment->getTraceSink())
-        eval = make_ref<TracingEvaluator>(*sink, eval);
+    if (auto * sink = environment->getTraceSink()) {
+        tracingWriter = std::make_unique<TracingWriter>(*sink);
+        eval = make_ref<TracingEvaluator>(*tracingWriter, eval);
+    }
     evaluatorCompat = eval.get_ptr();
     return eval;
 }

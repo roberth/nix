@@ -4,6 +4,7 @@
 
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-object.hh"
+#include "nix/expr/tracing-writer.hh"
 #include "nix/expr/interpreter.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-settings.hh"
@@ -32,6 +33,7 @@ class TracingEvaluatorTest : public LibStoreTest
 protected:
     std::shared_ptr<EvalState> state;
     std::shared_ptr<MemoryTraceSink> sink;
+    std::unique_ptr<TracingWriter> writer;
     std::shared_ptr<TracingEvaluator> evaluator;
     bool readOnlyMode = false;
     fetchers::Settings fetchSettings{};
@@ -53,8 +55,9 @@ protected:
         auto stateRef = make_ref<EvalState>(LookupPath{}, store, fetchSettings, evalSettings, nullptr);
         state = stateRef;
         sink = std::make_shared<MemoryTraceSink>();
+        writer = std::make_unique<TracingWriter>(*sink);
         auto interpreter = make_ref<Interpreter>(stateRef);
-        evaluator = std::make_shared<TracingEvaluator>(*sink, interpreter);
+        evaluator = std::make_shared<TracingEvaluator>(*writer, interpreter);
     }
 };
 

@@ -4,7 +4,7 @@
  * Combined trace writer that logs to both JSON (TraceFile) and trie (TracingIndex).
  */
 
-#include "nix/expr/trace-file.hh"
+#include "nix/expr/trace-sink.hh"
 #include "nix/expr/tracing-index.hh"
 
 #include <optional>
@@ -30,14 +30,14 @@ struct TriePosition
  */
 class TracingWriter
 {
-    TraceFile & traceFile;
+    TraceSink & sink;
     TracingIndex * index; // nullptr if trie recording disabled
     std::optional<NodeHash> afterHash;
     std::optional<QueryHash> currentQueryHash; // queryHash of most recent query (for logResult)
 
 public:
-    TracingWriter(TraceFile & traceFile, TracingIndex * index = nullptr)
-        : traceFile(traceFile)
+    TracingWriter(TraceSink & sink, TracingIndex * index = nullptr)
+        : sink(sink)
         , index(index)
     {
     }
@@ -49,7 +49,7 @@ public:
     template<typename Q>
     std::pair<uint64_t, std::optional<TriePosition>> logRootQuery(const Q & query)
     {
-        auto valueNum = traceFile.logQuery(query);
+        auto valueNum = sink.logQuery(query);
 
         if (!index)
             return {valueNum, std::nullopt};
@@ -72,7 +72,7 @@ public:
     std::pair<uint64_t, std::optional<TriePosition>>
     logQuery(const Q & query, const std::optional<TriePosition> & parent)
     {
-        auto valueNum = traceFile.logQuery(query);
+        auto valueNum = sink.logQuery(query);
 
         if (!index)
             return {valueNum, std::nullopt};
@@ -93,7 +93,7 @@ public:
     template<typename Req>
     void logResponse(const trace::Response<Req> & resp)
     {
-        traceFile.log(nlohmann::json(resp));
+        sink.log(nlohmann::json(resp));
 
         if (!index || !afterHash)
             return;
@@ -110,7 +110,7 @@ public:
     template<typename R>
     std::optional<TriePosition> logResult(uint64_t valueNum, const R & result)
     {
-        traceFile.logResult(valueNum, result);
+        sink.logResult(valueNum, result);
 
         if (!index || !afterHash || !currentQueryHash)
             return std::nullopt;
@@ -127,11 +127,11 @@ public:
     }
 
     /**
-     * Get underlying TraceFile for compatibility.
+     * Get underlying TraceSink for compatibility.
      */
-    TraceFile & getTraceFile()
+    TraceSink & getSink()
     {
-        return traceFile;
+        return sink;
     }
 
     /**

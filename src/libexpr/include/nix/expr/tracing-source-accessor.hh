@@ -4,7 +4,7 @@
  * TracingSourceAccessor - SourceAccessor wrapper that records file access traces.
  */
 
-#include "nix/expr/trace-sink.hh"
+#include "nix/expr/trace-types.hh"
 #include "nix/util/source-accessor.hh"
 #include "nix/util/hash.hh"
 #include "nix/util/ref.hh"
@@ -25,6 +25,11 @@ struct SpeculativeReadResult
 };
 
 /**
+ * Callback type for logging file read responses.
+ */
+using FileReadLogFn = std::function<void(const trace::Response<trace::FileReadRequest> &)>;
+
+/**
  * SourceAccessor wrapper that traces file read operations with content hashes.
  * Other operations (pathExists, lstat, readDirectory, etc.) delegate without
  * tracing — they don't affect evaluation results, only file dispatch.
@@ -32,10 +37,10 @@ struct SpeculativeReadResult
 class TracingSourceAccessor : public SourceAccessor
 {
     ref<SourceAccessor> inner;
-    TraceSink & sink;
+    FileReadLogFn logFn;
 
 public:
-    TracingSourceAccessor(ref<SourceAccessor> inner, TraceSink & sink);
+    TracingSourceAccessor(ref<SourceAccessor> inner, FileReadLogFn logFn);
 
     /**
      * Read file speculatively without emitting a trace.

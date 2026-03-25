@@ -22,150 +22,163 @@ static std::string objectTypeToString(ObjectType type)
     return "unknown";
 }
 
-TracingObject::TracingObject(ref<Object> inner, TraceSink & sink, uint64_t valueNum)
+TracingObject::TracingObject(
+    ref<Object> inner, TracingWriter & writer, uint64_t valueNum, std::optional<TriePosition> triePos)
     : inner(inner)
-    , sink(sink)
+    , writer(writer)
     , valueNum(valueNum)
+    , triePos(triePos)
 {
 }
 
-ref<TracingObject> TracingObject::create(ref<Object> inner, TraceSink & sink, uint64_t valueNum)
+ref<TracingObject>
+TracingObject::create(ref<Object> inner, TracingWriter & writer, uint64_t valueNum, std::optional<TriePosition> triePos)
 {
-    return ref<TracingObject>(std::shared_ptr<TracingObject>(new TracingObject(inner, sink, valueNum)));
+    return ref<TracingObject>(std::shared_ptr<TracingObject>(new TracingObject(inner, writer, valueNum, triePos)));
 }
 
 std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
 {
-    auto valueId = sink.logQuery(trace::QueryGetAttr{name, std::to_string(valueNum)});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetAttr{name, parentHash}, triePos);
     auto result = inner->maybeGetAttr(name);
     if (result) {
         auto type = result->getType();
-        sink.logResult(valueId, trace::ResultMaybeType{objectTypeToString(type)});
-        return std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), sink, valueId));
+        auto childTriePos = writer.logResult(valueId, trace::ResultMaybeType{objectTypeToString(type)});
+        return std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
     }
-    sink.logResult(valueId, trace::ResultMaybeType{std::nullopt});
+    writer.logResult(valueId, trace::ResultMaybeType{std::nullopt});
     return nullptr;
 }
 
 std::vector<std::string> TracingObject::getAttrNames()
 {
-    auto valueId = sink.logQuery(trace::QueryGetAttrNames{std::to_string(valueNum)});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetAttrNames{parentHash}, triePos);
     auto result = inner->getAttrNames();
-    sink.logResult(valueId, trace::ResultListOfStrings{result});
+    writer.logResult(valueId, trace::ResultListOfStrings{result});
     return result;
 }
 
 std::string TracingObject::getStringIgnoreContext()
 {
-    auto valueId = sink.logQuery(trace::QueryGetString{std::to_string(valueNum)});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetString{parentHash}, triePos);
     auto result = inner->getStringIgnoreContext();
-    sink.logResult(valueId, trace::ResultString{result});
+    writer.logResult(valueId, trace::ResultString{result});
     return result;
 }
 
 std::string TracingObject::getStringWithoutContext()
 {
-    auto valueId = sink.logQuery(trace::QueryGetString{std::to_string(valueNum)});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetString{parentHash}, triePos);
     auto result = inner->getStringWithoutContext();
-    sink.logResult(valueId, trace::ResultString{result});
+    writer.logResult(valueId, trace::ResultString{result});
     return result;
 }
 
 std::pair<std::string, NixStringContext> TracingObject::getStringWithContext()
 {
-    auto valueId = sink.logQuery(trace::QueryGetStringWithContext{std::to_string(valueNum)});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetStringWithContext{parentHash}, triePos);
     auto result = inner->getStringWithContext();
-    // Serialize context elements as strings
     std::vector<std::string> ctxStrings;
     for (auto & elem : result.second)
         ctxStrings.push_back(elem.to_string());
-    sink.logResult(valueId, trace::ResultStringWithContext{result.first, std::move(ctxStrings)});
+    writer.logResult(valueId, trace::ResultStringWithContext{result.first, std::move(ctxStrings)});
     return result;
 }
 
 SourcePath TracingObject::getPath()
 {
-    auto valueId = sink.logQuery(trace::QueryGetPath{std::to_string(valueNum)});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetPath{parentHash}, triePos);
     auto result = inner->getPath();
-    sink.logResult(valueId, trace::ResultPath{result.path.abs()});
+    writer.logResult(valueId, trace::ResultPath{result.path.abs()});
     return result;
 }
 
 bool TracingObject::getBool(std::string_view errorCtx)
 {
-    auto valueId = sink.logQuery(trace::QueryGetBool{std::to_string(valueNum)});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetBool{parentHash}, triePos);
     auto result = inner->getBool(errorCtx);
-    sink.logResult(valueId, trace::ResultBool{result});
+    writer.logResult(valueId, trace::ResultBool{result});
     return result;
 }
 
 NixInt TracingObject::getInt(std::string_view errorCtx)
 {
-    auto valueId = sink.logQuery(trace::QueryGetInt{std::to_string(valueNum)});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetInt{parentHash}, triePos);
     auto result = inner->getInt(errorCtx);
-    sink.logResult(valueId, trace::ResultInt{result.value});
+    writer.logResult(valueId, trace::ResultInt{result.value});
     return result;
 }
 
 NixFloat TracingObject::getFloat(std::string_view errorCtx)
 {
-    auto valueId = sink.logQuery(trace::QueryGetFloat{std::to_string(valueNum)});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetFloat{parentHash}, triePos);
     auto result = inner->getFloat(errorCtx);
-    sink.logResult(valueId, trace::ResultFloat{result});
+    writer.logResult(valueId, trace::ResultFloat{result});
     return result;
 }
 
 size_t TracingObject::getListSize()
 {
-    auto valueId = sink.logQuery(trace::QueryGetListSize{std::to_string(valueNum)});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetListSize{parentHash}, triePos);
     auto result = inner->getListSize();
-    sink.logResult(valueId, trace::ResultListSize{result});
+    writer.logResult(valueId, trace::ResultListSize{result});
     return result;
 }
 
 std::shared_ptr<Object> TracingObject::getListElem(size_t index)
 {
-    auto valueId = sink.logQuery(trace::QueryGetListElem{std::to_string(valueNum), index});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetListElem{parentHash, index}, triePos);
     auto result = inner->getListElem(index);
     auto type = result->getType();
-    sink.logResult(valueId, trace::ResultType{objectTypeToString(type)});
-    return std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), sink, valueId));
+    auto childTriePos = writer.logResult(valueId, trace::ResultType{objectTypeToString(type)});
+    return std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
 }
 
 std::vector<std::string> TracingObject::getListOfStringsNoCtx()
 {
-    auto valueId = sink.logQuery(trace::QueryGetListOfStrings{std::to_string(valueNum)});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetListOfStrings{parentHash}, triePos);
     auto result = inner->getListOfStringsNoCtx();
-    sink.logResult(valueId, trace::ResultListOfStrings{result});
+    writer.logResult(valueId, trace::ResultListOfStrings{result});
     return result;
 }
 
 ObjectType TracingObject::getTypeLazy()
 {
-    // getTypeLazy doesn't force — trace but note it may return nThunk
-    auto valueId = sink.logQuery(trace::QueryGetType{std::to_string(valueNum)});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetType{parentHash}, triePos);
     auto result = inner->getTypeLazy();
-    sink.logResult(valueId, trace::ResultType{objectTypeToString(result)});
+    writer.logResult(valueId, trace::ResultType{objectTypeToString(result)});
     return result;
 }
 
 ObjectType TracingObject::getType()
 {
-    auto valueId = sink.logQuery(trace::QueryGetType{std::to_string(valueNum)});
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetType{parentHash}, triePos);
     auto result = inner->getType();
-    sink.logResult(valueId, trace::ResultType{objectTypeToString(result)});
+    writer.logResult(valueId, trace::ResultType{objectTypeToString(result)});
     return result;
 }
 
 RootValue TracingObject::defeatCache()
 {
-    // defeatCache bypasses tracing — it's for escaping to raw Values
     return inner->defeatCache();
 }
 
 std::optional<FunctionInfo> TracingObject::getFunctionInfo()
 {
-    // Delegate without tracing — function reflection is metadata, not evaluation
     return inner->getFunctionInfo();
 }
 
