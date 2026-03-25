@@ -181,6 +181,8 @@ sources = files(
   'provenance-object.cc',
   'search-path.cc',
   'trace-types.cc',
+  'tracing-evaluator.cc',
+  'tracing-object.cc',
   'value-to-json.cc',
   'value-to-xml.cc',
   'value.cc',

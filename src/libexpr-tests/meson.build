@@ -64,6 +64,7 @@ sources = files(
   'primops.cc',
   'search-path.cc',
   'trace-types.cc',
+  'tracing-evaluator.cc',
   'trivial.cc',
   'value/context.cc',
   'value/print.cc',
