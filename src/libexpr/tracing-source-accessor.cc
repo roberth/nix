@@ -9,6 +9,26 @@ TracingSourceAccessor::TracingSourceAccessor(ref<SourceAccessor> inner, TraceSin
 {
 }
 
+SpeculativeReadResult TracingSourceAccessor::readSpeculatively(const CanonPath & path)
+{
+    auto contents = inner->readFile(path);
+    auto hash = hashString(HashAlgorithm::SHA256, contents);
+    auto pathStr = path.abs();
+
+    auto & sinkRef = this->sink;
+    auto emitTrace = [&sinkRef, pathStr, hash]() {
+        sinkRef.logEnvResponse(trace::Response<trace::FileReadRequest>{
+            .request = {.absPath = pathStr},
+            .response = {.contentHash = hash},
+        });
+    };
+
+    return SpeculativeReadResult{
+        .contents = std::move(contents),
+        .emitTrace = std::move(emitTrace),
+    };
+}
+
 void TracingSourceAccessor::readFile(const CanonPath & path, Sink & destSink, fun<void(uint64_t)> sizeCallback)
 {
     // Read via string to compute content hash

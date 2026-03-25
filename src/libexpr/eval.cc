@@ -1165,6 +1165,49 @@ void EvalState::resetFileCache()
     positions.clear();
 }
 
+/**
+ * Wrapper Expr for speculatively pre-parsed files.
+ * When evaluated, emits the deferred trace and delegates to the inner Expr.
+ */
+struct ExprSpeculativeParseTrigger : Expr, gc
+{
+    Expr * inner;
+    std::function<void()> emitTrace;
+
+    ExprSpeculativeParseTrigger(Expr * inner, std::function<void()> emitTrace)
+        : inner(inner)
+        , emitTrace(std::move(emitTrace))
+    {
+    }
+
+    void eval(EvalState & state, Env & env, Value & v) override
+    {
+        emitTrace();
+        inner->eval(state, env, v);
+    }
+
+    PosIdx getPos() const override
+    {
+        return inner->getPos();
+    }
+};
+
+void EvalState::insertPreloadedParsedFile(const SourcePath & path, Expr * expr, std::function<void()> emitTrace)
+{
+    auto wrapper = new ExprSpeculativeParseTrigger(expr, std::move(emitTrace));
+    fileEvalCache->try_emplace_and_cvisit(
+        path,
+        nullptr,
+        [&](auto & i) {
+            auto v = allocValue();
+            v->mkThunk(&baseEnv, wrapper);
+            i.second = v;
+        },
+        [&](auto &) {
+            // Already cached — speculative parse came too late
+        });
+}
+
 void EvalState::eval(Expr * e, Value & v)
 {
     e->eval(*this, baseEnv, v);

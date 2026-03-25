@@ -6,6 +6,8 @@
 
 namespace nix {
 
+class TracingDatabase;
+
 /**
  * Evaluator decorator that logs all queries and results to a TraceSink.
  * Wraps returned Objects in TracingObject to continue tracing through
@@ -17,7 +19,12 @@ class TracingEvaluator : public Evaluator
     ref<Evaluator> inner;
 
 public:
-    TracingEvaluator(TraceSink & sink, ref<Evaluator> inner);
+    /**
+     * @param sink The trace sink to log to
+     * @param inner The wrapped evaluator
+     * @param db Optional tracing database for preloading from previous traces
+     */
+    TracingEvaluator(TraceSink & sink, ref<Evaluator> inner, TracingDatabase * db = nullptr);
 
     bool isReadOnly() const override;
     Store & getStore() override;
