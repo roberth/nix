@@ -70,14 +70,14 @@ void from_json(const nlohmann::json & j, ResultType & r)
 void to_json(nlohmann::json & j, const ResultMaybeType & r)
 {
     if (r.type)
-        j = nlohmann::json{{"type", *r.type}};
+        j = nlohmann::json{{"attrType", *r.type}};
     else
-        j = nlohmann::json{{"type", nullptr}};
+        j = nlohmann::json{{"attrType", nullptr}};
 }
 
 void from_json(const nlohmann::json & j, ResultMaybeType & r)
 {
-    auto & v = j.at("type");
+    auto & v = j.at("attrType");
     if (v.is_null())
         r.type = std::nullopt;
     else
@@ -171,7 +171,7 @@ void from_json(const nlohmann::json & j, ResultListSize & r)
 
 void to_json(nlohmann::json & j, const QueryExpr & q)
 {
-    j = nlohmann::json{{"query", "expr"}, {"params", {{"expr", q.expr}, {"baseDir", q.baseDir}}}};
+    j = nlohmann::json{{"query", QueryExpr::tag}, {"params", {{"expr", q.expr}, {"baseDir", q.baseDir}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryExpr & q)
@@ -182,7 +182,7 @@ void from_json(const nlohmann::json & j, QueryExpr & q)
 
 void to_json(nlohmann::json & j, const QueryImport & q)
 {
-    j = nlohmann::json{{"query", "import"}, {"params", {{"path", q.path}}}};
+    j = nlohmann::json{{"query", QueryImport::tag}, {"params", {{"path", q.path}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryImport & q)
@@ -192,7 +192,7 @@ void from_json(const nlohmann::json & j, QueryImport & q)
 
 void to_json(nlohmann::json & j, const QueryGetAttr & q)
 {
-    j = nlohmann::json{{"query", "getAttr"}, {"params", {{"name", q.name}, {"from", q.from}}}};
+    j = nlohmann::json{{"query", QueryGetAttr::tag}, {"params", {{"name", q.name}, {"from", q.from}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetAttr & q)
@@ -203,7 +203,7 @@ void from_json(const nlohmann::json & j, QueryGetAttr & q)
 
 void to_json(nlohmann::json & j, const QueryGetString & q)
 {
-    j = nlohmann::json{{"query", "getString"}, {"params", {{"from", q.from}}}};
+    j = nlohmann::json{{"query", QueryGetString::tag}, {"params", {{"from", q.from}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetString & q)
@@ -213,7 +213,7 @@ void from_json(const nlohmann::json & j, QueryGetString & q)
 
 void to_json(nlohmann::json & j, const QueryGetStringWithContext & q)
 {
-    j = nlohmann::json{{"query", "getStringWithContext"}, {"params", {{"from", q.from}}}};
+    j = nlohmann::json{{"query", QueryGetStringWithContext::tag}, {"params", {{"from", q.from}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetStringWithContext & q)
@@ -223,7 +223,7 @@ void from_json(const nlohmann::json & j, QueryGetStringWithContext & q)
 
 void to_json(nlohmann::json & j, const QueryGetAttrNames & q)
 {
-    j = nlohmann::json{{"query", "getAttrNames"}, {"params", {{"from", q.from}}}};
+    j = nlohmann::json{{"query", QueryGetAttrNames::tag}, {"params", {{"from", q.from}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetAttrNames & q)
@@ -233,7 +233,7 @@ void from_json(const nlohmann::json & j, QueryGetAttrNames & q)
 
 void to_json(nlohmann::json & j, const QueryGetType & q)
 {
-    j = nlohmann::json{{"query", "getType"}, {"params", {{"from", q.from}}}};
+    j = nlohmann::json{{"query", QueryGetType::tag}, {"params", {{"from", q.from}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetType & q)
@@ -243,7 +243,7 @@ void from_json(const nlohmann::json & j, QueryGetType & q)
 
 void to_json(nlohmann::json & j, const QueryGetBool & q)
 {
-    j = nlohmann::json{{"query", "getBool"}, {"params", {{"from", q.from}}}};
+    j = nlohmann::json{{"query", QueryGetBool::tag}, {"params", {{"from", q.from}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetBool & q)
@@ -253,7 +253,7 @@ void from_json(const nlohmann::json & j, QueryGetBool & q)
 
 void to_json(nlohmann::json & j, const QueryGetInt & q)
 {
-    j = nlohmann::json{{"query", "getInt"}, {"params", {{"from", q.from}}}};
+    j = nlohmann::json{{"query", QueryGetInt::tag}, {"params", {{"from", q.from}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetInt & q)
@@ -263,7 +263,7 @@ void from_json(const nlohmann::json & j, QueryGetInt & q)
 
 void to_json(nlohmann::json & j, const QueryGetFloat & q)
 {
-    j = nlohmann::json{{"query", "getFloat"}, {"params", {{"from", q.from}}}};
+    j = nlohmann::json{{"query", QueryGetFloat::tag}, {"params", {{"from", q.from}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetFloat & q)
@@ -273,7 +273,7 @@ void from_json(const nlohmann::json & j, QueryGetFloat & q)
 
 void to_json(nlohmann::json & j, const QueryGetListOfStrings & q)
 {
-    j = nlohmann::json{{"query", "getListOfStrings"}, {"params", {{"from", q.from}}}};
+    j = nlohmann::json{{"query", QueryGetListOfStrings::tag}, {"params", {{"from", q.from}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetListOfStrings & q)
@@ -283,7 +283,7 @@ void from_json(const nlohmann::json & j, QueryGetListOfStrings & q)
 
 void to_json(nlohmann::json & j, const QueryGetListSize & q)
 {
-    j = nlohmann::json{{"query", "getListSize"}, {"params", {{"from", q.from}}}};
+    j = nlohmann::json{{"query", QueryGetListSize::tag}, {"params", {{"from", q.from}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetListSize & q)
@@ -293,7 +293,7 @@ void from_json(const nlohmann::json & j, QueryGetListSize & q)
 
 void to_json(nlohmann::json & j, const QueryGetListElem & q)
 {
-    j = nlohmann::json{{"query", "getListElem"}, {"params", {{"from", q.from}, {"index", q.index}}}};
+    j = nlohmann::json{{"query", QueryGetListElem::tag}, {"params", {{"from", q.from}, {"index", q.index}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetListElem & q)
@@ -304,7 +304,7 @@ void from_json(const nlohmann::json & j, QueryGetListElem & q)
 
 void to_json(nlohmann::json & j, const QueryGetPath & q)
 {
-    j = nlohmann::json{{"query", "getPath"}, {"params", {{"from", q.from}}}};
+    j = nlohmann::json{{"query", QueryGetPath::tag}, {"params", {{"from", q.from}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetPath & q)

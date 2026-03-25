@@ -48,7 +48,7 @@ struct Response
 template<typename T>
 void to_json(nlohmann::json & j, const Response<T> & r)
 {
-    j = nlohmann::json{{"request", r.request}, {"response", r.response}};
+    j = nlohmann::json{{"type", T::tag}, {"request", r.request}, {"response", r.response}};
 }
 
 template<typename T>
@@ -75,6 +75,7 @@ void from_json(const nlohmann::json & j, Response<T> & r)
 
 struct FileReadRequest
 {
+    static constexpr std::string_view tag = "fileRead";
     std::string absPath;
 };
 
@@ -91,6 +92,7 @@ DECLARE_TRACE_PAIR(FileReadRequest, FileReadResponse)
 
 struct GetEnvRequest
 {
+    static constexpr std::string_view tag = "getEnv";
     std::string name;
 };
 
@@ -241,101 +243,129 @@ struct ResultListSize
 /** Evaluate an expression string. */
 struct QueryExpr
 {
+    static constexpr std::string_view tag = "expr";
     std::string expr;
     std::string baseDir;
+    auto operator<=>(const QueryExpr &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryExpr, ResultType)
 
 /** Import/evaluate a file. */
 struct QueryImport
 {
+    static constexpr std::string_view tag = "import";
     std::string path;
+    auto operator<=>(const QueryImport &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryImport, ResultType)
 
 /** Get an attribute from a value. */
 struct QueryGetAttr
 {
+    static constexpr std::string_view tag = "getAttr";
     std::string name;
     uint64_t from;
+    auto operator<=>(const QueryGetAttr &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetAttr, ResultMaybeType)
 
 /** Get the string value (ignoring context). */
 struct QueryGetString
 {
+    static constexpr std::string_view tag = "getString";
     uint64_t from;
+    auto operator<=>(const QueryGetString &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetString, ResultString)
 
 /** Get string with context. */
 struct QueryGetStringWithContext
 {
+    static constexpr std::string_view tag = "getStringWithContext";
     uint64_t from;
+    auto operator<=>(const QueryGetStringWithContext &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetStringWithContext, ResultStringWithContext)
 
 /** Get attribute names from an attrset. */
 struct QueryGetAttrNames
 {
+    static constexpr std::string_view tag = "getAttrNames";
     uint64_t from;
+    auto operator<=>(const QueryGetAttrNames &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetAttrNames, ResultListOfStrings)
 
 /** Get the type of a value. */
 struct QueryGetType
 {
+    static constexpr std::string_view tag = "getType";
     uint64_t from;
+    auto operator<=>(const QueryGetType &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetType, ResultType)
 
 /** Get a boolean value. */
 struct QueryGetBool
 {
+    static constexpr std::string_view tag = "getBool";
     uint64_t from;
+    auto operator<=>(const QueryGetBool &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetBool, ResultBool)
 
 /** Get an integer value. */
 struct QueryGetInt
 {
+    static constexpr std::string_view tag = "getInt";
     uint64_t from;
+    auto operator<=>(const QueryGetInt &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetInt, ResultInt)
 
 /** Get a float value. */
 struct QueryGetFloat
 {
+    static constexpr std::string_view tag = "getFloat";
     uint64_t from;
+    auto operator<=>(const QueryGetFloat &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetFloat, ResultFloat)
 
 /** Get a list of strings (no context). */
 struct QueryGetListOfStrings
 {
+    static constexpr std::string_view tag = "getListOfStrings";
     uint64_t from;
+    auto operator<=>(const QueryGetListOfStrings &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetListOfStrings, ResultListOfStrings)
 
 /** Get the number of list elements. */
 struct QueryGetListSize
 {
+    static constexpr std::string_view tag = "getListSize";
     uint64_t from;
+    auto operator<=>(const QueryGetListSize &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetListSize, ResultListSize)
 
 /** Get a list element by index. */
 struct QueryGetListElem
 {
+    static constexpr std::string_view tag = "getListElem";
     uint64_t from;
     size_t index;
+    auto operator<=>(const QueryGetListElem &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetListElem, ResultType)
 
 /** Get a path value. */
 struct QueryGetPath
 {
+    static constexpr std::string_view tag = "getPath";
     uint64_t from;
+    auto operator<=>(const QueryGetPath &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetPath, ResultPath)
 
