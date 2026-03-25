@@ -880,6 +880,13 @@ public:
     void resetFileCache();
 
     /**
+     * Insert a speculatively parsed file into the file eval cache.
+     * When the file is demanded during evaluation, emitTrace is called
+     * to emit the deferred file read trace.
+     */
+    void insertPreloadedParsedFile(const SourcePath & path, Expr * expr, std::function<void()> emitTrace);
+
+    /**
      * Look up a file in the search path.
      */
     RootedPath findFile(const std::string_view path);

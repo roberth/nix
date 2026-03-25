@@ -8,9 +8,10 @@
 
 namespace nix {
 
-TraceFile::TraceFile(std::filesystem::path path)
+TraceFile::TraceFile(std::filesystem::path path, std::function<void()> onClose)
     : path(std::move(path))
     , file(this->path, std::ios::out | std::ios::trunc)
+    , onClose(std::move(onClose))
 {
     if (!file.is_open())
         throw Error("failed to open trace file: %s", this->path.string());
@@ -22,6 +23,8 @@ TraceFile::~TraceFile()
     if (file.is_open()) {
         file << "\n]\n";
         file.close();
+        if (onClose)
+            onClose();
     }
 }
 
@@ -48,14 +51,14 @@ std::filesystem::path TracingDatabase::tracesDir() const
 std::filesystem::path TracingDatabase::newTraceFile()
 {
     auto hash = Hash::random(HashAlgorithm::SHA256);
-    auto tracePath = tracesDir() / (hash.to_string(HashFormat::Nix32, false) + ".json");
+    return tracesDir() / (hash.to_string(HashFormat::Nix32, false) + ".json");
+}
 
-    // Update symlink to point to the latest trace
+void TracingDatabase::updateLatestSymlink(const std::filesystem::path & tracePath)
+{
     auto latestLink = basePath / "latest.json";
     std::filesystem::remove(latestLink);
     std::filesystem::create_symlink(tracePath, latestLink);
-
-    return tracePath;
 }
 
 std::optional<std::filesystem::path> TracingDatabase::latestTraceFile() const
@@ -86,6 +89,30 @@ std::vector<trace::TraceEntry> TracingDatabase::parseTraceFile(const std::filesy
     }
 
     return entries;
+}
+
+std::vector<std::string> TracingDatabase::getTracedFilePaths(const std::filesystem::path & tracePath) const
+{
+    std::vector<std::string> paths;
+
+    std::ifstream file(tracePath);
+    if (!file.is_open())
+        return paths;
+
+    try {
+        auto json = nlohmann::json::parse(file);
+        for (const auto & entry : json) {
+            if (entry.contains("request") && entry["request"].contains("absPath")) {
+                auto path = entry["request"]["absPath"].get<std::string>();
+                if (path.ends_with(".nix"))
+                    paths.push_back(std::move(path));
+            }
+        }
+    } catch (...) {
+        // Ignore parse errors
+    }
+
+    return paths;
 }
 
 } // namespace nix
