@@ -159,6 +159,7 @@ sources = files(
   'diagnose.cc',
   'environment/system.cc',
   'eval-cache.cc',
+  'file-hash-cache.cc',
   'eval-error.cc',
   'eval-gc.cc',
   'eval-profiler-settings.cc',

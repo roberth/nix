@@ -1,6 +1,7 @@
 #pragma once
 
 #include "nix/expr/evaluator.hh"
+#include "nix/expr/file-hash-cache.hh"
 #include "nix/expr/trace-types.hh"
 #include "nix/util/ref.hh"
 
@@ -25,6 +26,7 @@ class TracingReplayEvaluator : public Evaluator
 {
     ref<Evaluator> inner;
     TracingDatabase & db;
+    FileHashCache hashCache;
 
     std::vector<trace::TraceEntry> trace;
     std::optional<trace::QueryIndex> index;
