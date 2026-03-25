@@ -1,4 +1,7 @@
 #include "nix/expr/trace-types.hh"
+#include "nix/util/logging.hh"
+
+#include <map>
 
 namespace nix::trace {
 
@@ -310,6 +313,280 @@ void to_json(nlohmann::json & j, const QueryGetPath & q)
 void from_json(const nlohmann::json & j, QueryGetPath & q)
 {
     j.at("params").at("from").get_to(q.from);
+}
+
+// ---------------------------------------------------------------------------
+// parseTraceEntry
+// ---------------------------------------------------------------------------
+
+namespace {
+
+template<typename T>
+std::optional<TraceEntry> tryParseQuery(std::string_view type, const nlohmann::json & j)
+{
+    if (type == T::tag) {
+        Query<T> e;
+        from_json(j, e);
+        return e;
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
+{
+    // Environment message: has "type", "request" and "response"
+    if (j.contains("type") && j.contains("request") && j.contains("response")) {
+        auto type = j["type"].get<std::string_view>();
+
+        if (type == FileReadRequest::tag) {
+            return Response<FileReadRequest>{
+                .request = {.absPath = j["request"]["absPath"].get<std::string>()},
+                .response = {.contentHash = Hash::parseSRI(j["response"]["contentHash"].get<std::string>())},
+            };
+        }
+        if (type == GetEnvRequest::tag) {
+            GetEnvRequest req;
+            from_json(j["request"], req);
+            GetEnvResponse resp;
+            from_json(j["response"], resp);
+            return Response<GetEnvRequest>{req, resp};
+        }
+        return std::nullopt;
+    }
+
+    // Query: has "query" and "v"
+    if (j.contains("query") && j.contains("v")) {
+        auto & q = j["query"];
+        if (!q.contains("query"))
+            return std::nullopt;
+        auto type = q["query"].get<std::string_view>();
+
+        if (auto r = tryParseQuery<QueryExpr>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryImport>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryGetAttr>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryGetString>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryGetStringWithContext>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryGetAttrNames>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryGetType>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryGetBool>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryGetInt>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryGetFloat>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryGetListOfStrings>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryGetListSize>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryGetListElem>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryGetPath>(type, j))
+            return r;
+        return std::nullopt;
+    }
+
+    // Result: has "result" and "v"
+    if (j.contains("result") && j.contains("v")) {
+        auto & r = j["result"];
+        if (r.contains("type")) {
+            Result<ResultType> e;
+            from_json(j, e);
+            return e;
+        }
+        if (r.contains("attrType")) {
+            Result<ResultMaybeType> e;
+            from_json(j, e);
+            return e;
+        }
+        if (r.contains("size")) {
+            Result<ResultListSize> e;
+            from_json(j, e);
+            return e;
+        }
+        if (r.contains("values")) {
+            Result<ResultListOfStrings> e;
+            from_json(j, e);
+            return e;
+        }
+        if (r.contains("path")) {
+            Result<ResultPath> e;
+            from_json(j, e);
+            return e;
+        }
+        // String with context before plain string
+        if (r.contains("value") && r.contains("context")) {
+            Result<ResultStringWithContext> e;
+            from_json(j, e);
+            return e;
+        }
+        if (r.contains("value")) {
+            auto & val = r["value"];
+            if (val.is_string()) {
+                Result<ResultString> e;
+                from_json(j, e);
+                return e;
+            }
+            if (val.is_boolean()) {
+                Result<ResultBool> e;
+                from_json(j, e);
+                return e;
+            }
+            if (val.is_number_integer()) {
+                Result<ResultInt> e;
+                from_json(j, e);
+                return e;
+            }
+            if (val.is_number_float()) {
+                Result<ResultFloat> e;
+                from_json(j, e);
+                return e;
+            }
+        }
+        return std::nullopt;
+    }
+
+    return std::nullopt;
+}
+
+// ---------------------------------------------------------------------------
+// correlateTrace
+// ---------------------------------------------------------------------------
+
+namespace {
+
+template<typename T>
+constexpr size_t resultTypeIndex()
+{
+    if constexpr (std::is_same_v<T, ResultType>)
+        return 0;
+    else if constexpr (std::is_same_v<T, ResultMaybeType>)
+        return 1;
+    else if constexpr (std::is_same_v<T, ResultString>)
+        return 2;
+    else if constexpr (std::is_same_v<T, ResultInt>)
+        return 3;
+    else if constexpr (std::is_same_v<T, ResultFloat>)
+        return 4;
+    else if constexpr (std::is_same_v<T, ResultBool>)
+        return 5;
+    else if constexpr (std::is_same_v<T, ResultPath>)
+        return 6;
+    else if constexpr (std::is_same_v<T, ResultListOfStrings>)
+        return 7;
+    else if constexpr (std::is_same_v<T, ResultStringWithContext>)
+        return 8;
+    else if constexpr (std::is_same_v<T, ResultListSize>)
+        return 9;
+    else
+        return ~size_t(0);
+}
+
+template<typename QueryPayload>
+constexpr size_t queryResultTypeIndex()
+{
+    return resultTypeIndex<typename ResultOf<QueryPayload>::Type>();
+}
+
+} // namespace
+
+std::vector<CorrelatedTraceEntry> correlateTrace(const std::vector<TraceEntry> & trace)
+{
+    // Build map from (result_type_index, v) to trace index
+    std::map<std::pair<size_t, uint64_t>, size_t> resultIndex;
+    for (size_t i = 0; i < trace.size(); ++i) {
+        std::visit(
+            [&](const auto & entry) {
+                if constexpr (requires {
+                                  entry.result;
+                                  entry.v;
+                              }) {
+                    using ResultPayload = std::decay_t<decltype(entry.result)>;
+                    auto key = std::make_pair(resultTypeIndex<ResultPayload>(), entry.v);
+                    resultIndex[key] = i;
+                }
+            },
+            trace[i]);
+    }
+
+    // Transform queries to completed queries
+    std::vector<CorrelatedTraceEntry> result;
+    result.reserve(trace.size());
+
+    for (const auto & entry : trace) {
+        std::visit(
+            [&](const auto & e) {
+                if constexpr (requires {
+                                  e.query;
+                                  e.v;
+                              }) {
+                    using QueryPayload = std::decay_t<decltype(e.query)>;
+                    CompletedQuery<QueryPayload> completed;
+                    completed.query = e.query;
+                    completed.v = e.v;
+                    auto key = std::make_pair(queryResultTypeIndex<QueryPayload>(), e.v);
+                    auto it = resultIndex.find(key);
+                    completed.resultIndex = (it != resultIndex.end()) ? it->second : 0;
+                    result.push_back(completed);
+                } else {
+                    result.push_back(e);
+                }
+            },
+            entry);
+    }
+
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// QueryIndex
+// ---------------------------------------------------------------------------
+
+QueryIndex::QueryIndex(const std::vector<TraceEntry> & trace)
+{
+    // First pass: build result index (result_type_index, v) -> trace index
+    std::map<std::pair<size_t, uint64_t>, size_t> resultLookup;
+    for (size_t i = 0; i < trace.size(); ++i) {
+        std::visit(
+            [&](const auto & entry) {
+                if constexpr (requires {
+                                  entry.result;
+                                  entry.v;
+                              }) {
+                    using ResultPayload = std::decay_t<decltype(entry.result)>;
+                    auto key = std::make_pair(resultTypeIndex<ResultPayload>(), entry.v);
+                    resultLookup[key] = i;
+                }
+            },
+            trace[i]);
+    }
+
+    // Second pass: index queries (only those with matching results)
+    for (size_t i = 0; i < trace.size(); ++i) {
+        std::visit(
+            [&](const auto & entry) {
+                if constexpr (requires {
+                                  entry.query;
+                                  entry.v;
+                              }) {
+                    using Q = std::decay_t<decltype(entry.query)>;
+                    auto key = std::make_pair(queryResultTypeIndex<Q>(), entry.v);
+                    auto it = resultLookup.find(key);
+                    if (it != resultLookup.end()) {
+                        index[entry.query] = IndexEntry{i, it->second};
+                    }
+                }
+            },
+            trace[i]);
+    }
 }
 
 } // namespace nix::trace

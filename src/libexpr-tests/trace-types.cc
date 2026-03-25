@@ -305,4 +305,304 @@ TEST(TraceTypes, ResultMaybeTypeNullUsesAttrTypeField)
     EXPECT_TRUE(j.at("attrType").is_null());
 }
 
+// ---------------------------------------------------------------------------
+// parseTraceEntry round-trips
+// ---------------------------------------------------------------------------
+
+TEST(TraceTypes, ParseFileReadResponse)
+{
+    Response<FileReadRequest> original{
+        .request = {.absPath = "/foo/bar.nix"},
+        .response =
+            {.contentHash =
+                 Hash::parseAny("sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", HashAlgorithm::SHA256)},
+    };
+    auto j = json(original);
+    auto parsed = parseTraceEntry(j);
+    ASSERT_TRUE(parsed.has_value());
+    auto * r = std::get_if<Response<FileReadRequest>>(&*parsed);
+    ASSERT_NE(r, nullptr);
+    EXPECT_EQ(r->request.absPath, original.request.absPath);
+    EXPECT_EQ(r->response.contentHash, original.response.contentHash);
+}
+
+TEST(TraceTypes, ParseGetEnvResponse)
+{
+    Response<GetEnvRequest> original{
+        .request = {.name = "HOME"},
+        .response = {.value = "/home/user"},
+    };
+    auto j = json(original);
+    auto parsed = parseTraceEntry(j);
+    ASSERT_TRUE(parsed.has_value());
+    auto * r = std::get_if<Response<GetEnvRequest>>(&*parsed);
+    ASSERT_NE(r, nullptr);
+    EXPECT_EQ(r->request.name, "HOME");
+    EXPECT_EQ(r->response.value, "/home/user");
+}
+
+TEST(TraceTypes, ParseGetEnvResponseNullopt)
+{
+    Response<GetEnvRequest> original{
+        .request = {.name = "NONEXISTENT"},
+        .response = {.value = std::nullopt},
+    };
+    auto j = json(original);
+    auto parsed = parseTraceEntry(j);
+    ASSERT_TRUE(parsed.has_value());
+    auto * r = std::get_if<Response<GetEnvRequest>>(&*parsed);
+    ASSERT_NE(r, nullptr);
+    EXPECT_EQ(r->response.value, std::nullopt);
+}
+
+TEST(TraceTypes, ParseQueryExpr)
+{
+    Query<QueryExpr> original{
+        .query = {.expr = "1 + 1", .baseDir = "/home/user"},
+        .v = 42,
+    };
+    auto j = json(original);
+    auto parsed = parseTraceEntry(j);
+    ASSERT_TRUE(parsed.has_value());
+    auto * q = std::get_if<Query<QueryExpr>>(&*parsed);
+    ASSERT_NE(q, nullptr);
+    EXPECT_EQ(q->query.expr, "1 + 1");
+    EXPECT_EQ(q->v, 42u);
+}
+
+TEST(TraceTypes, ParseResultType)
+{
+    Result<ResultType> original{
+        .result = {.type = "set"},
+        .v = 0,
+    };
+    auto j = json(original);
+    auto parsed = parseTraceEntry(j);
+    ASSERT_TRUE(parsed.has_value());
+    auto * r = std::get_if<Result<ResultType>>(&*parsed);
+    ASSERT_NE(r, nullptr);
+    EXPECT_EQ(r->result.type, "set");
+}
+
+TEST(TraceTypes, ParseResultMaybeType)
+{
+    Result<ResultMaybeType> original{
+        .result = {.type = "int"},
+        .v = 5,
+    };
+    auto j = json(original);
+    auto parsed = parseTraceEntry(j);
+    ASSERT_TRUE(parsed.has_value());
+    auto * r = std::get_if<Result<ResultMaybeType>>(&*parsed);
+    ASSERT_NE(r, nullptr);
+    ASSERT_TRUE(r->result.type.has_value());
+    EXPECT_EQ(*r->result.type, "int");
+}
+
+TEST(TraceTypes, ParseResultFloat)
+{
+    Result<ResultFloat> original{
+        .result = {.value = 3.14},
+        .v = 7,
+    };
+    auto j = json(original);
+    auto parsed = parseTraceEntry(j);
+    ASSERT_TRUE(parsed.has_value());
+    auto * r = std::get_if<Result<ResultFloat>>(&*parsed);
+    ASSERT_NE(r, nullptr);
+    EXPECT_DOUBLE_EQ(r->result.value, 3.14);
+}
+
+TEST(TraceTypes, ParseResultListSize)
+{
+    Result<ResultListSize> original{
+        .result = {.size = 42},
+        .v = 3,
+    };
+    auto j = json(original);
+    auto parsed = parseTraceEntry(j);
+    ASSERT_TRUE(parsed.has_value());
+    auto * r = std::get_if<Result<ResultListSize>>(&*parsed);
+    ASSERT_NE(r, nullptr);
+    EXPECT_EQ(r->result.size, 42u);
+}
+
+TEST(TraceTypes, ParseResultStringWithContext)
+{
+    Result<ResultStringWithContext> original{
+        .result = {.value = "hello", .context = {"ctx1", "ctx2"}},
+        .v = 4,
+    };
+    auto j = json(original);
+    auto parsed = parseTraceEntry(j);
+    ASSERT_TRUE(parsed.has_value());
+    auto * r = std::get_if<Result<ResultStringWithContext>>(&*parsed);
+    ASSERT_NE(r, nullptr);
+    EXPECT_EQ(r->result.value, "hello");
+    EXPECT_EQ(r->result.context, (std::vector<std::string>{"ctx1", "ctx2"}));
+}
+
+TEST(TraceTypes, ParseUnrecognizedReturnsNullopt)
+{
+    auto j = json{{"unknown", "data"}};
+    EXPECT_FALSE(parseTraceEntry(j).has_value());
+}
+
+// ---------------------------------------------------------------------------
+// Full trace round-trip
+// ---------------------------------------------------------------------------
+
+TEST(TraceTypes, FullTraceRoundTrip)
+{
+    std::vector<TraceEntry> original = {
+        Response<FileReadRequest>{
+            .request = {.absPath = "/foo/bar.nix"},
+            .response =
+                {.contentHash =
+                     Hash::parseAny("sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", HashAlgorithm::SHA256)},
+        },
+        Response<GetEnvRequest>{
+            .request = {.name = "HOME"},
+            .response = {.value = "/home/user"},
+        },
+        Query<QueryExpr>{
+            .query = {.expr = "{ x = 1; }", .baseDir = "/"},
+            .v = 0,
+        },
+        Result<ResultType>{
+            .result = {.type = "set"},
+            .v = 0,
+        },
+        Query<QueryGetAttr>{
+            .query = {.name = "x", .from = 0},
+            .v = 1,
+        },
+        Result<ResultMaybeType>{
+            .result = {.type = "int"},
+            .v = 1,
+        },
+        Query<QueryGetInt>{
+            .query = {.from = 1},
+            .v = 2,
+        },
+        Result<ResultInt>{
+            .result = {.value = 42},
+            .v = 2,
+        },
+    };
+
+    // Serialize to JSON array
+    json jsonArray = json::array();
+    for (const auto & entry : original) {
+        std::visit([&](const auto & e) { jsonArray.push_back(json(e)); }, entry);
+    }
+
+    // Parse back
+    std::vector<TraceEntry> roundtripped;
+    for (const auto & j : jsonArray) {
+        auto parsed = parseTraceEntry(j);
+        ASSERT_TRUE(parsed.has_value()) << "Failed to parse: " << j.dump();
+        roundtripped.push_back(std::move(*parsed));
+    }
+
+    ASSERT_EQ(original.size(), roundtripped.size());
+    for (size_t i = 0; i < original.size(); ++i) {
+        EXPECT_EQ(original[i].index(), roundtripped[i].index()) << "Type mismatch at index " << i;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// correlateTrace
+// ---------------------------------------------------------------------------
+
+TEST(TraceTypes, CorrelateTrace)
+{
+    std::vector<TraceEntry> trace = {
+        Query<QueryExpr>{
+            .query = {.expr = "{ x = 1; }", .baseDir = "/"},
+            .v = 0,
+        },
+        Result<ResultType>{
+            .result = {.type = "set"},
+            .v = 0,
+        },
+        Query<QueryGetAttr>{
+            .query = {.name = "x", .from = 0},
+            .v = 1,
+        },
+        Result<ResultMaybeType>{
+            .result = {.type = "int"},
+            .v = 1,
+        },
+    };
+
+    auto correlated = correlateTrace(trace);
+    ASSERT_EQ(correlated.size(), 4u);
+
+    auto * q0 = std::get_if<CompletedQuery<QueryExpr>>(&correlated[0]);
+    ASSERT_NE(q0, nullptr);
+    EXPECT_EQ(q0->resultIndex, 1u);
+
+    auto * q2 = std::get_if<CompletedQuery<QueryGetAttr>>(&correlated[2]);
+    ASSERT_NE(q2, nullptr);
+    EXPECT_EQ(q2->resultIndex, 3u);
+}
+
+// ---------------------------------------------------------------------------
+// QueryIndex
+// ---------------------------------------------------------------------------
+
+TEST(TraceTypes, QueryIndexLookup)
+{
+    std::vector<TraceEntry> trace = {
+        Query<QueryExpr>{
+            .query = {.expr = "42", .baseDir = "/"},
+            .v = 0,
+        },
+        Result<ResultType>{
+            .result = {.type = "int"},
+            .v = 0,
+        },
+        Query<QueryGetAttr>{
+            .query = {.name = "foo", .from = 0},
+            .v = 1,
+        },
+        Result<ResultMaybeType>{
+            .result = {.type = "set"},
+            .v = 1,
+        },
+    };
+
+    QueryIndex idx(trace);
+
+    auto e1 = idx.lookup(QueryExpr{"42", "/"});
+    ASSERT_TRUE(e1.has_value());
+    EXPECT_EQ(e1->queryIndex, 0u);
+    EXPECT_EQ(e1->resultIndex, 1u);
+
+    auto e2 = idx.lookup(QueryGetAttr{"foo", 0});
+    ASSERT_TRUE(e2.has_value());
+    EXPECT_EQ(e2->queryIndex, 2u);
+    EXPECT_EQ(e2->resultIndex, 3u);
+
+    // Miss
+    auto e3 = idx.lookup(QueryExpr{"999", "/"});
+    EXPECT_FALSE(e3.has_value());
+}
+
+TEST(TraceTypes, QueryIndexSkipsOrphanedQueries)
+{
+    std::vector<TraceEntry> trace = {
+        Query<QueryExpr>{
+            .query = {.expr = "orphan", .baseDir = "/"},
+            .v = 99,
+        },
+        // No matching result for v=99
+    };
+
+    QueryIndex idx(trace);
+    auto e = idx.lookup(QueryExpr{"orphan", "/"});
+    EXPECT_FALSE(e.has_value());
+}
+
 } // namespace nix::trace

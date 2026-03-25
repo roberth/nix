@@ -18,8 +18,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include <map>
 #include <optional>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace nix::trace {
@@ -368,5 +370,169 @@ struct QueryGetPath
     auto operator<=>(const QueryGetPath &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetPath, ResultPath)
+
+// ---------------------------------------------------------------------------
+// CompletedQuery: a query correlated with its result
+// ---------------------------------------------------------------------------
+
+/**
+ * A query that has been correlated with its result.
+ */
+template<typename T>
+struct CompletedQuery : Query<T>
+{
+    /**
+     * Index into the trace where the corresponding Result lives.
+     * 0 indicates unresolved (no matching result found).
+     */
+    size_t resultIndex;
+};
+
+// ---------------------------------------------------------------------------
+// Trace entry variant (for parsing and indexing)
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper to apply a wrapper template to multiple types.
+ */
+template<template<typename> class Wrapper, typename... Ts>
+using ApplyWrapper = std::variant<Wrapper<Ts>...>;
+
+/**
+ * All environment request types.
+ */
+template<template<typename> class F>
+using EnvRequests = ApplyWrapper<F, FileReadRequest, GetEnvRequest>;
+
+/**
+ * All query payload types.
+ */
+template<template<typename> class F>
+using Queries = ApplyWrapper<
+    F,
+    QueryExpr,
+    QueryImport,
+    QueryGetAttr,
+    QueryGetString,
+    QueryGetStringWithContext,
+    QueryGetAttrNames,
+    QueryGetType,
+    QueryGetBool,
+    QueryGetInt,
+    QueryGetFloat,
+    QueryGetListOfStrings,
+    QueryGetListSize,
+    QueryGetListElem,
+    QueryGetPath>;
+
+/**
+ * All result payload types.
+ */
+template<template<typename> class F>
+using Results = ApplyWrapper<
+    F,
+    ResultType,
+    ResultMaybeType,
+    ResultString,
+    ResultInt,
+    ResultFloat,
+    ResultBool,
+    ResultPath,
+    ResultListOfStrings,
+    ResultStringWithContext,
+    ResultListSize>;
+
+namespace detail {
+
+template<typename... Variants>
+struct CombineVariants;
+
+template<typename... Ts>
+struct CombineVariants<std::variant<Ts...>>
+{
+    using type = std::variant<Ts...>;
+};
+
+template<typename... Ts, typename... Us, typename... Rest>
+struct CombineVariants<std::variant<Ts...>, std::variant<Us...>, Rest...>
+{
+    using type = typename CombineVariants<std::variant<Ts..., Us...>, Rest...>::type;
+};
+
+} // namespace detail
+
+/**
+ * Combined trace entry type containing all Response, Query, and Result variants.
+ */
+using TraceEntry = detail::CombineVariants<EnvRequests<Response>, Queries<Query>, Results<Result>>::type;
+
+/**
+ * Trace entry with queries correlated to their results.
+ */
+using CorrelatedTraceEntry =
+    detail::CombineVariants<EnvRequests<Response>, Queries<CompletedQuery>, Results<Result>>::type;
+
+/**
+ * Parse a JSON entry into a typed TraceEntry.
+ * Returns nullopt if the entry type is not recognized.
+ */
+std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j);
+
+/**
+ * Correlate queries with their results.
+ * Builds a map from value handle to result index, then transforms
+ * Query<T> entries into CompletedQuery<T> with the result index.
+ */
+std::vector<CorrelatedTraceEntry> correlateTrace(const std::vector<TraceEntry> & trace);
+
+// ---------------------------------------------------------------------------
+// Query index for O(1) lookup
+// ---------------------------------------------------------------------------
+
+/**
+ * Query and result index pair.
+ */
+struct IndexEntry
+{
+    size_t queryIndex;
+    size_t resultIndex;
+};
+
+/**
+ * Variant of all query payload types (for use as map key).
+ */
+using QueryVariant = std::variant<
+    QueryExpr,
+    QueryImport,
+    QueryGetAttr,
+    QueryGetString,
+    QueryGetStringWithContext,
+    QueryGetAttrNames,
+    QueryGetType,
+    QueryGetBool,
+    QueryGetInt,
+    QueryGetFloat,
+    QueryGetListOfStrings,
+    QueryGetListSize,
+    QueryGetListElem,
+    QueryGetPath>;
+
+/**
+ * Index for fast query lookup in a trace.
+ */
+class QueryIndex
+{
+    std::map<QueryVariant, IndexEntry> index;
+
+public:
+    explicit QueryIndex(const std::vector<TraceEntry> & trace);
+
+    template<typename Q>
+    std::optional<IndexEntry> lookup(const Q & q) const
+    {
+        auto it = index.find(q);
+        return it != index.end() ? std::optional{it->second} : std::nullopt;
+    }
+};
 
 } // namespace nix::trace
