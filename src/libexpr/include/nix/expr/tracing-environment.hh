@@ -29,6 +29,7 @@ public:
 
     ref<SourceAccessor> fsRoot() override;
     std::optional<std::string> getEnv(const std::string & name) override;
+    TraceSink * getTraceSink() override { return &sink; }
 };
 
 } // namespace nix

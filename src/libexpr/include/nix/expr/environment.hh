@@ -19,6 +19,8 @@ struct EvalSettings;
  *
  * This interface abstracts external state access needed during evaluation.
  */
+class TraceSink;
+
 class Environment
 {
 public:
@@ -38,6 +40,12 @@ public:
      * @return Optional value (nullopt if not set)
      */
     virtual std::optional<std::string> getEnv(const std::string & name) = 0;
+
+    /**
+     * Get the trace sink, if tracing is enabled.
+     * @return Pointer to TraceSink, or nullptr if not tracing
+     */
+    virtual TraceSink * getTraceSink() { return nullptr; }
 };
 
 } // namespace nix

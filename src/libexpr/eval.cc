@@ -5,6 +5,7 @@
 #include "nix/expr/evaluation-helpers.hh"
 #include "nix/expr/interpreter.hh"
 #include "nix/expr/interpreter-object.hh"
+#include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/primops.hh"
 #include "nix/expr/print-options.hh"
 #include "nix/expr/symbol-table.hh"
@@ -354,7 +355,9 @@ ref<Evaluator> EvalState::toEvaluatorCompat()
 {
     if (auto eval = evaluatorCompat.lock())
         return ref<Evaluator>(eval);
-    auto eval = make_ref<Interpreter>(ref<EvalState>(shared_from_this()));
+    ref<Evaluator> eval = make_ref<Interpreter>(ref<EvalState>(shared_from_this()));
+    if (auto * sink = environment->getTraceSink())
+        eval = make_ref<TracingEvaluator>(*sink, eval);
     evaluatorCompat = eval.get_ptr();
     return eval;
 }
