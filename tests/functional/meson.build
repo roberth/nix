@@ -166,6 +166,7 @@ suites = [
       'fetchClosure.sh',
       'completions.sh',
       'impure-derivations.sh',
+      'tracing-eval-cache.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
