@@ -26,7 +26,10 @@ public:
     virtual void log(const nlohmann::json & entry) = 0;
 
     /** Allocate a new value handle for tracing. */
-    uint64_t allocValue() { return nextValueNum++; }
+    uint64_t allocValue()
+    {
+        return nextValueNum++;
+    }
 
     /**
      * Log a query and return its value handle.

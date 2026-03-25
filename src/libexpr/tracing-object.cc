@@ -6,18 +6,30 @@ namespace nix {
 static std::string objectTypeToString(ObjectType type)
 {
     switch (type) {
-    case nAttrs: return "set";
-    case nList: return "list";
-    case nString: return "string";
-    case nPath: return "path";
-    case nInt: return "int";
-    case nFloat: return "float";
-    case nBool: return "bool";
-    case nNull: return "null";
-    case nFunction: return "lambda";
-    case nThunk: return "thunk";
-    case nExternal: return "external";
-    case nFailed: return "failed";
+    case nAttrs:
+        return "set";
+    case nList:
+        return "list";
+    case nString:
+        return "string";
+    case nPath:
+        return "path";
+    case nInt:
+        return "int";
+    case nFloat:
+        return "float";
+    case nBool:
+        return "bool";
+    case nNull:
+        return "null";
+    case nFunction:
+        return "lambda";
+    case nThunk:
+        return "thunk";
+    case nExternal:
+        return "external";
+    case nFailed:
+        return "failed";
     }
     return "unknown";
 }

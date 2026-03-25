@@ -174,9 +174,8 @@ ref<EvalState> EvalCommand::getEvalState()
         if (evalSettings.useTracingEvalCache) {
             tracingDb = std::make_unique<TracingDatabase>();
             auto tracePath = tracingDb->newTraceFile();
-            traceFile = std::make_unique<TraceFile>(tracePath, [this, tracePath]() {
-                tracingDb->updateLatestSymlink(tracePath);
-            });
+            traceFile = std::make_unique<TraceFile>(
+                tracePath, [this, tracePath]() { tracingDb->updateLatestSymlink(tracePath); });
             tracingWriter = std::make_unique<TracingWriter>(*traceFile);
             auto sysEnv = make_ref<SystemEnvironment>(evalSettings, getEvalStore(), getStore());
             auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *tracingWriter);

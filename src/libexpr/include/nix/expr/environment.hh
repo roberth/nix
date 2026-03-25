@@ -45,7 +45,10 @@ public:
      * Get the trace sink, if tracing is enabled.
      * @return Pointer to TraceSink, or nullptr if not tracing
      */
-    virtual TraceSink * getTraceSink() { return nullptr; }
+    virtual TraceSink * getTraceSink()
+    {
+        return nullptr;
+    }
 };
 
 } // namespace nix

@@ -33,7 +33,10 @@ public:
 
     void log(const nlohmann::json & entry) override;
 
-    const std::filesystem::path & getPath() const { return path; }
+    const std::filesystem::path & getPath() const
+    {
+        return path;
+    }
 };
 
 /**

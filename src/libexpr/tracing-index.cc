@@ -255,7 +255,7 @@ TracingIndex::insertResponse(const NodeHash & afterHash, const std::string & req
     auto nodeHash = computeResponseNodeHash(afterHash, request, response);
 
     auto state(_state->lock());
-    state->insertResponse.use()(hashToBlob(nodeHash))(hashToBlob(afterHash))(request)(response).exec();
+    state->insertResponse.use()(hashToBlob(nodeHash))(hashToBlob(afterHash))(request) (response).exec();
 
     return nodeHash;
 }
@@ -282,10 +282,11 @@ std::vector<ShortcutEntry> TracingIndex::selectShortcuts(const QueryHash & query
     auto query = state->selectShortcuts.use()(hashToBlob(queryHash));
 
     while (query.next()) {
-        result.push_back(ShortcutEntry{
-            .nodeHash = blobToHash(query.getStr(0)),
-            .createdAt = query.getInt(1),
-        });
+        result.push_back(
+            ShortcutEntry{
+                .nodeHash = blobToHash(query.getStr(0)),
+                .createdAt = query.getInt(1),
+            });
     }
 
     return result;
@@ -361,12 +362,13 @@ std::vector<QueryNode> TracingIndex::selectChildQueries(const NodeHash & resultN
     auto query = state->selectChildQueries.use()(hashToBlob(resultNodeHash));
 
     while (query.next()) {
-        result.push_back(QueryNode{
-            .nodeHash = blobToHash(query.getStr(0)),
-            .queryHash = blobToHash(query.getStr(1)),
-            .afterHash = query.isNull(2) ? std::nullopt : std::optional{blobToHash(query.getStr(2))},
-            .structuralParent = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
-        });
+        result.push_back(
+            QueryNode{
+                .nodeHash = blobToHash(query.getStr(0)),
+                .queryHash = blobToHash(query.getStr(1)),
+                .afterHash = query.isNull(2) ? std::nullopt : std::optional{blobToHash(query.getStr(2))},
+                .structuralParent = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
+            });
     }
 
     return result;
@@ -380,12 +382,13 @@ std::vector<ResponseNode> TracingIndex::selectChildResponses(const NodeHash & af
     auto query = state->selectChildResponses.use()(hashToBlob(afterHash));
 
     while (query.next()) {
-        result.push_back(ResponseNode{
-            .nodeHash = blobToHash(query.getStr(0)),
-            .afterHash = blobToHash(query.getStr(1)),
-            .request = query.getStr(2),
-            .response = query.getStr(3),
-        });
+        result.push_back(
+            ResponseNode{
+                .nodeHash = blobToHash(query.getStr(0)),
+                .afterHash = blobToHash(query.getStr(1)),
+                .request = query.getStr(2),
+                .response = query.getStr(3),
+            });
     }
 
     return result;
@@ -399,11 +402,12 @@ std::vector<ResultNode> TracingIndex::selectChildResults(const NodeHash & afterH
     auto query = state->selectChildResults.use()(hashToBlob(afterHash));
 
     while (query.next()) {
-        result.push_back(ResultNode{
-            .nodeHash = blobToHash(query.getStr(0)),
-            .afterHash = blobToHash(query.getStr(1)),
-            .payload = query.getStr(2),
-        });
+        result.push_back(
+            ResultNode{
+                .nodeHash = blobToHash(query.getStr(0)),
+                .afterHash = blobToHash(query.getStr(1)),
+                .payload = query.getStr(2),
+            });
     }
 
     return result;
@@ -418,12 +422,13 @@ TracingIndex::selectStructuralChildren(const NodeHash & structuralParent, const 
     auto query = state->selectStructuralChildren.use()(hashToBlob(structuralParent))(hashToBlob(queryHash));
 
     while (query.next()) {
-        result.push_back(QueryNode{
-            .nodeHash = blobToHash(query.getStr(0)),
-            .queryHash = blobToHash(query.getStr(1)),
-            .afterHash = query.isNull(2) ? std::nullopt : std::optional{blobToHash(query.getStr(2))},
-            .structuralParent = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
-        });
+        result.push_back(
+            QueryNode{
+                .nodeHash = blobToHash(query.getStr(0)),
+                .queryHash = blobToHash(query.getStr(1)),
+                .afterHash = query.isNull(2) ? std::nullopt : std::optional{blobToHash(query.getStr(2))},
+                .structuralParent = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
+            });
     }
 
     return result;

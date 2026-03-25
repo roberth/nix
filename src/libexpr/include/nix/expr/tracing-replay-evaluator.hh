@@ -64,7 +64,10 @@ public:
     void markValidated(const NodeHash & nodeHash);
     bool isValidated(const NodeHash & nodeHash) const;
 
-    TracingIndex & getTracingIndex() { return tracingIndex; }
+    TracingIndex & getTracingIndex()
+    {
+        return tracingIndex;
+    }
 
     bool isReadOnly() const override;
     Store & getStore() override;

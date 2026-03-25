@@ -8,9 +8,8 @@ TracingEnvironment::TracingEnvironment(ref<Environment> inner, TracingWriter & w
     : inner(inner)
     , writer(writer)
     , tracingAccessor(
-          make_ref<TracingSourceAccessor>(inner->fsRoot(), [&](const trace::Response<trace::FileReadRequest> & resp) {
-              writer.logResponse(resp);
-          }))
+          make_ref<TracingSourceAccessor>(
+              inner->fsRoot(), [&](const trace::Response<trace::FileReadRequest> & resp) { writer.logResponse(resp); }))
 {
 }
 

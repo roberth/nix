@@ -79,10 +79,11 @@ TEST_F(TraceFileTest, EnvResponseLogged)
 {
     {
         TraceFile tf(tracePath);
-        tf.logEnvResponse(trace::Response<trace::GetEnvRequest>{
-            .request = {.name = "HOME"},
-            .response = {.value = "/home/user"},
-        });
+        tf.logEnvResponse(
+            trace::Response<trace::GetEnvRequest>{
+                .request = {.name = "HOME"},
+                .response = {.value = "/home/user"},
+            });
     }
 
     auto j = readTraceFile();
