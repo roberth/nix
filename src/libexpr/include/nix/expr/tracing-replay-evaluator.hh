@@ -11,6 +11,7 @@
 
 namespace nix {
 
+class Environment;
 class TracingIndex;
 struct ResponseNode;
 
@@ -28,6 +29,13 @@ class TracingReplayEvaluator : public Evaluator
     FileHashCache hashCache;
 
     /**
+     * Environment for validating cached env var responses.
+     * Must be the "real" environment (not a tracing wrapper) to avoid
+     * recording spurious trace entries during validation.
+     */
+    Environment & validationEnv;
+
+    /**
      * Set of nodes whose dependencies have been validated.
      * Enables O(n) incremental validation instead of O(n²) per-query.
      */
@@ -41,8 +49,15 @@ class TracingReplayEvaluator : public Evaluator
     std::optional<std::pair<std::string, TriePosition>> lookup(const Q & query);
 
 public:
+    /**
+     * @param validationEnv Environment for env var validation during replay.
+     *        Must be the "real" environment (not a tracing wrapper).
+     */
     TracingReplayEvaluator(
-        ref<Evaluator> inner, TracingIndex & tracingIndex, std::filesystem::path hashCacheDbPath = {});
+        ref<Evaluator> inner,
+        TracingIndex & tracingIndex,
+        Environment & validationEnv,
+        std::filesystem::path hashCacheDbPath = {});
 
     /**
      * Validate a vector of response nodes against current environment.

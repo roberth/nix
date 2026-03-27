@@ -13,9 +13,40 @@
 #include "nix/expr/eval-settings.hh"
 #include "nix/expr/eval-gc.hh"
 #include "nix/fetchers/fetch-settings.hh"
+#include "nix/expr/tracing-environment.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/store/tests/libstore.hh"
 
 namespace nix {
+
+/**
+ * Environment wrapper that overrides specific env vars for testing.
+ */
+class OverrideEnvEnvironment : public Environment
+{
+    ref<Environment> inner;
+    std::map<std::string, std::optional<std::string>> overrides;
+
+public:
+    OverrideEnvEnvironment(ref<Environment> inner, std::map<std::string, std::optional<std::string>> overrides)
+        : inner(inner)
+        , overrides(std::move(overrides))
+    {
+    }
+
+    ref<SourceAccessor> fsRoot() override
+    {
+        return inner->fsRoot();
+    }
+
+    std::optional<std::string> getEnv(const std::string & name) override
+    {
+        auto it = overrides.find(name);
+        if (it != overrides.end())
+            return it->second;
+        return inner->getEnv(name);
+    }
+};
 
 /**
  * In-memory trace sink that collects JSON entries (still needed for the
@@ -41,6 +72,7 @@ protected:
     EvalSettings evalSettings{readOnlyMode};
     std::filesystem::path dbPath;
     std::filesystem::path hashCacheDbPath;
+    std::shared_ptr<SystemEnvironment> defaultEnv;
 
     static void SetUpTestSuite()
     {
@@ -55,6 +87,7 @@ protected:
 
     void SetUp() override
     {
+        defaultEnv = make_ref<SystemEnvironment>(evalSettings, store);
         auto stateRef = make_ref<EvalState>(LookupPath{}, store, fetchSettings, evalSettings, nullptr);
         state = stateRef;
 
@@ -78,6 +111,12 @@ protected:
         return make_ref<EvalState>(LookupPath{}, store, fetchSettings, evalSettings, nullptr);
     }
 
+    ref<EvalState> makeStateWithEnv(ref<Environment> env)
+    {
+        auto sysEnv = make_ref<SystemEnvironment>(evalSettings, store);
+        return make_ref<EvalState>(LookupPath{}, fetchSettings, evalSettings, env, sysEnv);
+    }
+
     /**
      * Record a trace into a TracingIndex by evaluating through TracingEvaluator
      * with trie recording enabled.
@@ -92,12 +131,36 @@ protected:
     }
 
     /**
+     * Record a trace using a custom Environment (wrapped in TracingEnvironment).
+     */
+    void recordToIndexWithEnv(TracingIndex & index, ref<Environment> env, std::function<void(Evaluator &)> work)
+    {
+        auto sink = std::make_shared<CollectingTraceSink>();
+        TracingWriter writer(*sink, &index);
+        auto tracingEnv = make_ref<TracingEnvironment>(env, writer);
+        auto innerState = makeStateWithEnv(tracingEnv);
+        auto interpreter = make_ref<Interpreter>(innerState);
+        TracingEvaluator tracing(writer, interpreter);
+        work(tracing);
+    }
+
+    /**
      * Create a TracingReplayEvaluator that replays from the given index.
      */
     ref<TracingReplayEvaluator> makeReplayEvaluator(TracingIndex & index)
     {
         auto interpreter = make_ref<Interpreter>(makeState());
-        return make_ref<TracingReplayEvaluator>(interpreter, index, hashCacheDbPath);
+        return make_ref<TracingReplayEvaluator>(interpreter, index, *defaultEnv, hashCacheDbPath);
+    }
+
+    /**
+     * Create a TracingReplayEvaluator with a custom Environment for validation.
+     */
+    ref<TracingReplayEvaluator> makeReplayEvaluatorWithEnv(TracingIndex & index, ref<Environment> env)
+    {
+        auto innerState = makeStateWithEnv(env);
+        auto interpreter = make_ref<Interpreter>(innerState);
+        return make_ref<TracingReplayEvaluator>(interpreter, index, *env, hashCacheDbPath);
     }
 };
 
@@ -242,6 +305,43 @@ TEST_F(TracingReplayTest, FallbackToInnerOnMiss)
     // which returns a real Object, not a TracingReplayObject
     EXPECT_EQ(obj->getType(), nInt);
     EXPECT_EQ(obj->getInt().value, 42);
+}
+
+TEST_F(TracingReplayTest, EnvVarValidationUsesEnvironment)
+{
+    // Set a real process env var, record a trace that includes it,
+    // then replay with an Environment that overrides it to a different
+    // value. Validation must go through Environment::getEnv — if it
+    // uses std::getenv, it sees the unchanged process env and wrongly
+    // considers the cache valid.
+    TracingIndex index(dbPath);
+    auto sysEnv = make_ref<SystemEnvironment>(evalSettings, store);
+
+    // Set the real process env var so std::getenv returns "recorded"
+    setenv("NIX_TEST_REPLAY_ENV", "recorded", 1);
+
+    // Record: builtins.getEnv sees "recorded" via the Environment chain
+    recordToIndexWithEnv(index, sysEnv, [&](Evaluator & eval) {
+        auto obj = eval.evalExpr("builtins.getEnv \"NIX_TEST_REPLAY_ENV\"", state->rootPath(CanonPath::root));
+        obj->getStringIgnoreContext();
+    });
+
+    // Replay with an Environment that overrides the var — but the
+    // process env still has "recorded", so std::getenv would not
+    // detect the change.
+    auto replayEnv = make_ref<OverrideEnvEnvironment>(
+        sysEnv, std::map<std::string, std::optional<std::string>>{{"NIX_TEST_REPLAY_ENV", "changed"}});
+
+    auto replay = makeReplayEvaluatorWithEnv(index, replayEnv);
+    auto obj = replay->evalExpr("builtins.getEnv \"NIX_TEST_REPLAY_ENV\"", state->rootPath(CanonPath::root));
+
+    // With the fix (validation via Environment): "changed" != "recorded"
+    // → invalidation → inner evaluator returns "changed".
+    // Without the fix (std::getenv): "recorded" == "recorded"
+    // → cache hit → stale value "recorded".
+    EXPECT_EQ(obj->getStringIgnoreContext(), "changed");
+
+    unsetenv("NIX_TEST_REPLAY_ENV");
 }
 
 } // namespace nix
