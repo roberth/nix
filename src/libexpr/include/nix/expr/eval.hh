@@ -42,7 +42,9 @@ class Environment;
 class SystemEnvironment;
 class Evaluator;
 class Object;
+class TraceSink;
 class TracingWriter;
+class TracingIndex;
 
 namespace fetchers {
 struct Settings;
@@ -483,7 +485,36 @@ public:
      * Remove once all callers use Evaluator/Object directly.
      */
     std::weak_ptr<Evaluator> evaluatorCompat;
-    std::unique_ptr<TracingWriter> tracingWriter;
+
+    /**
+     * State for builtins.cache calls.
+     *
+     * Bundles the shared TracingIndex and per-call resources that must
+     * outlive Object references returned to the outer evaluator.
+     * Destruction order matters: resources are destroyed before the
+     * TracingIndex they reference.
+     */
+    struct CacheState
+    {
+        ~CacheState();
+
+        /** Content-addressed trie shared by all cache calls. */
+        std::unique_ptr<TracingIndex> tracingIndex;
+
+        /** Per-call state that must remain alive while thunks can be forced. */
+        struct CallState
+        {
+            ref<EvalState> innerState;
+            std::shared_ptr<TraceSink> sink;
+            std::shared_ptr<TracingWriter> writer;
+            std::shared_ptr<Evaluator> recordingEval;
+            std::shared_ptr<Evaluator> replayEval;
+        };
+
+        std::vector<CallState> calls;
+    };
+
+    CacheState cacheState;
 
     /**
      * Get (or create) an Evaluator wrapping this EvalState.

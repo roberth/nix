@@ -5,7 +5,7 @@
 #include "nix/expr/evaluation-helpers.hh"
 #include "nix/expr/interpreter.hh"
 #include "nix/expr/interpreter-object.hh"
-#include "nix/expr/tracing-evaluator.hh"
+#include "nix/expr/tracing-index.hh"
 #include "nix/expr/primops.hh"
 #include "nix/expr/print-options.hh"
 #include "nix/expr/symbol-table.hh"
@@ -351,15 +351,13 @@ EvalState::EvalState(
 
 EvalState::~EvalState() {}
 
+EvalState::CacheState::~CacheState() = default;
+
 ref<Evaluator> EvalState::toEvaluatorCompat()
 {
     if (auto eval = evaluatorCompat.lock())
         return ref<Evaluator>(eval);
     ref<Evaluator> eval = make_ref<Interpreter>(ref<EvalState>(shared_from_this()));
-    if (auto * sink = environment->getTraceSink()) {
-        tracingWriter = std::make_unique<TracingWriter>(*sink);
-        eval = make_ref<TracingEvaluator>(*tracingWriter, eval);
-    }
     evaluatorCompat = eval.get_ptr();
     return eval;
 }
