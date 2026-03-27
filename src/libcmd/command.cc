@@ -12,8 +12,11 @@
 #include "nix/expr/environment/system.hh"
 #include "nix/expr/trace-file.hh"
 #include "nix/expr/tracing-environment.hh"
+#include "nix/expr/tracing-index.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/expr/tracing-evaluator.hh"
+#include "nix/expr/tracing-replay-evaluator.hh"
+#include "nix/expr/interpreter.hh"
 #include "nix/store/profiles.hh"
 #include "nix/cmd/repl.hh"
 #include "nix/util/strings.hh"
@@ -176,11 +179,21 @@ ref<EvalState> EvalCommand::getEvalState()
             auto tracePath = tracingDb->newTraceFile();
             traceFile = std::make_unique<TraceFile>(
                 tracePath, [this, tracePath]() { tracingDb->updateLatestSymlink(tracePath); });
-            tracingWriter = std::make_unique<TracingWriter>(*traceFile);
+            tracingIndex = std::make_unique<TracingIndex>();
+            tracingWriter = std::make_unique<TracingWriter>(*traceFile, tracingIndex.get());
             auto sysEnv = make_ref<SystemEnvironment>(evalSettings, getEvalStore(), getStore());
             auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *tracingWriter);
             evalState = std::allocate_shared<EvalState>(
                 traceable_allocator<EvalState>(), lookupPath, fetchSettings, evalSettings, tracingEnv, sysEnv);
+
+            // Build the evaluator stack and pre-populate evaluatorCompat
+            // so toEvaluatorCompat() finds it ready. The single TracingWriter
+            // is shared with TracingEnvironment for coherent temporal ordering.
+            ref<Evaluator> eval = make_ref<Interpreter>(ref<EvalState>(evalState));
+            eval = make_ref<TracingEvaluator>(*tracingWriter, eval);
+            eval = make_ref<TracingReplayEvaluator>(eval, *tracingIndex, *sysEnv);
+            evalState->evaluatorCompat = eval.get_ptr();
+            evaluatorCompat = eval;
         } else {
             evalState = std::allocate_shared<EvalState>(
                 traceable_allocator<EvalState>(), lookupPath, getEvalStore(), fetchSettings, evalSettings, getStore());
