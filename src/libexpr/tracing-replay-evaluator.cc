@@ -1,19 +1,23 @@
 #include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-index.hh"
+#include "nix/expr/environment.hh"
 #include "nix/util/logging.hh"
 #include "nix/util/util.hh"
 
-#include <cstdlib>
 #include <nlohmann/json.hpp>
 
 namespace nix {
 
 TracingReplayEvaluator::TracingReplayEvaluator(
-    ref<Evaluator> inner, TracingIndex & tracingIndex, std::filesystem::path hashCacheDbPath)
+    ref<Evaluator> inner,
+    TracingIndex & tracingIndex,
+    Environment & validationEnv,
+    std::filesystem::path hashCacheDbPath)
     : inner(inner)
     , tracingIndex(tracingIndex)
     , hashCache(std::move(hashCacheDbPath))
+    , validationEnv(validationEnv)
 {
 }
 
@@ -73,10 +77,7 @@ bool TracingReplayEvaluator::validateResponses(const std::vector<ResponseNode> &
                 }
             } else if (reqJson.contains("name") && respJson.contains("value")) {
                 std::string name = reqJson["name"];
-                const char * current = std::getenv(name.c_str());
-                std::optional<std::string> currentVal;
-                if (current)
-                    currentVal = current;
+                auto currentVal = validationEnv.getEnv(name);
 
                 std::optional<std::string> expectedVal;
                 if (!respJson["value"].is_null())
