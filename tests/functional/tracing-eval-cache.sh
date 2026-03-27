@@ -2,8 +2,6 @@
 
 source common.sh
 
-enableFeatures "tracing-eval-cache"
-
 # Enable tracing in nix.conf
 echo "tracing-eval-cache = true" >> "$NIX_CONF_DIR/nix.conf"
 
