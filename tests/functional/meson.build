@@ -170,6 +170,7 @@ suites = [
       'completions.sh',
       'impure-derivations.sh',
       'tracing-eval-cache.sh',
+      'builtins-cache.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
