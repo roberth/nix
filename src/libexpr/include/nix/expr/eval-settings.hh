@@ -304,10 +304,7 @@ struct EvalSettings : Config
             Whether to use the fine-grained tracing evaluation cache.
             When enabled, this records detailed traces of all environment I/O
             operations during evaluation for fine-grained dependency tracking.
-        )",
-        {},
-        true,
-        Xp::TracingEvalCache};
+        )"};
 
     Setting<bool> ignoreExceptionsDuringTry{
         this,
