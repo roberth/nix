@@ -64,6 +64,9 @@ bool TracingReplayEvaluator::isValidated(const NodeHash & nodeHash) const
 bool TracingReplayEvaluator::validateResponses(const std::vector<ResponseNode> & responses)
 {
     for (const auto & resp : responses) {
+        if (validatedNodes.count(resp.nodeHash)) {
+            continue;
+        }
         try {
             auto reqJson = nlohmann::json::parse(resp.request);
             auto respJson = nlohmann::json::parse(resp.response);
@@ -94,6 +97,7 @@ bool TracingReplayEvaluator::validateResponses(const std::vector<ResponseNode> &
             tracingCacheLog("replay: failed to parse dependency: %s", e.what());
             return false;
         }
+        validatedNodes.insert(resp.nodeHash);
     }
     return true;
 }
