@@ -191,7 +191,17 @@ RootValue TracingObject::defeatCache()
 
 std::optional<FunctionInfo> TracingObject::getFunctionInfo()
 {
-    return inner->getFunctionInfo();
+    auto parentHash = triePos ? triePos->queryHashStr : std::to_string(valueNum);
+    auto [valueId, _] = writer.logQuery(trace::QueryGetFunctionInfo{parentHash}, triePos);
+    auto result = inner->getFunctionInfo();
+    trace::ResultFunctionInfo traceResult;
+    if (result) {
+        traceResult = {.hasInfo = true, .formals = result->formals, .ellipsis = result->ellipsis};
+    } else {
+        traceResult = {.hasInfo = false};
+    }
+    writer.logResult(valueId, traceResult);
+    return result;
 }
 
 PosIdx TracingObject::getPos()
