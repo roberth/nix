@@ -145,10 +145,10 @@ ref<Object> TracingEvaluator::evalFile(const SourcePath & path, const std::strin
 {
     ensurePreloaded();
     tracingCacheLog("tracing: evalFile %s", displayPath);
-    auto [v, _] = writer.logRootQuery(trace::QueryImport{displayPath});
+    auto [v, qh] = writer.logRootQuery(trace::QueryImport{displayPath});
     auto result = inner->evalFile(path, displayPath);
     auto type = result->getType();
-    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)});
+    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
     return TracingObject::create(result, writer, v, triePos);
 }
 
@@ -156,17 +156,17 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const SourcePat
 {
     ensurePreloaded();
     tracingCacheLog("tracing: evalExpr %s", expr);
-    auto [v, _] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
+    auto [v, qh] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
     auto result = inner->evalExpr(expr, basePath);
     auto type = result->getType();
-    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)});
+    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
     return TracingObject::create(result, writer, v, triePos);
 }
 
 ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const SourcePath & basePath)
 {
     ensurePreloaded();
-    auto [v, _] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
+    auto [v, qh] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
     auto result = inner->evalExprLazy(expr, basePath);
     // Lazy: don't force type yet, just wrap
     return TracingObject::create(result, writer, v);
@@ -221,10 +221,10 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     if (fnId && argId) {
         tracingCacheLog("tracing: apply");
-        auto [v, _] = writer.logRootQuery(trace::QueryApply{*fnId, *argId});
+        auto [v, qh] = writer.logRootQuery(trace::QueryApply{*fnId, *argId});
         auto result = inner->apply(fn, arg);
         auto type = result->getType();
-        auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)});
+        auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
         return TracingObject::create(result, writer, v, triePos);
     }
 
