@@ -59,9 +59,16 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
 
     auto & cache = state.cacheState;
 
-    // Ensure shared TracingIndex exists (lazily created on first cache call).
-    if (!cache.tracingIndex)
-        cache.tracingIndex = std::make_unique<TracingIndex>();
+    // Use the root TracingIndex if available (shared with the root evaluator),
+    // otherwise create one (lazy, first cache call creates it).
+    TracingIndex * index;
+    if (state.rootTracingIndex) {
+        index = state.rootTracingIndex;
+    } else {
+        if (!cache.ownedTracingIndex)
+            cache.ownedTracingIndex = std::make_unique<TracingIndex>();
+        index = cache.ownedTracingIndex.get();
+    }
 
     // Per-call tracing infrastructure: NullTraceSink + TracingWriter → TracingIndex.
     // The TracingWriter records both queries/results and environment responses
@@ -69,7 +76,7 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     // NullTraceSink exists because TracingWriter conflates JSON tracing and trie
     // recording — see "TeeTracingWriter" in project docs for the planned fix.
     auto sink = std::make_shared<NullTraceSink>();
-    auto writer = std::make_shared<TracingWriter>(*sink, cache.tracingIndex.get());
+    auto writer = std::make_shared<TracingWriter>(*sink, index);
 
     // Create inner EvalState with TracingEnvironment wrapping the outer
     // environment so file reads flow through the outer accessor chain.
@@ -87,7 +94,7 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     // On miss, TracingEvaluator records into the trie via TracingWriter.
     ref<Evaluator> recordingEval = make_ref<TracingEvaluator>(*writer, interpreter);
     ref<Evaluator> replayEval =
-        make_ref<TracingReplayEvaluator>(recordingEval, *cache.tracingIndex, *state.environment);
+        make_ref<TracingReplayEvaluator>(recordingEval, *index, *state.environment);
 
     // Store per-call state on the outer EvalState so it outlives Object references.
     // TracingObjects and TracingReplayObjects hold raw references to these.

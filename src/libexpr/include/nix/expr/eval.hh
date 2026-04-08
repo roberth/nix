@@ -496,6 +496,14 @@ public:
     std::weak_ptr<Evaluator> evaluatorCompat;
 
     /**
+     * TracingIndex shared between the root evaluator and builtins.cache.
+     * Non-owning — lifetime managed by EvalCommand (if root tracing is
+     * enabled) or by CacheState (if only builtins.cache is used).
+     * Set by EvalCommand::getEvalState() when tracing-eval-cache is on.
+     */
+    TracingIndex * rootTracingIndex = nullptr;
+
+    /**
      * State for builtins.cache calls.
      *
      * Bundles the shared TracingIndex and per-call resources that must
@@ -507,8 +515,8 @@ public:
     {
         ~CacheState();
 
-        /** Content-addressed trie shared by all cache calls. */
-        std::unique_ptr<TracingIndex> tracingIndex;
+        /** Owned TracingIndex, used only when rootTracingIndex is null. */
+        std::unique_ptr<TracingIndex> ownedTracingIndex;
 
         /** Per-call state that must remain alive while thunks can be forced. */
         struct CallState
