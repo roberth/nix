@@ -4,6 +4,7 @@
 #include "nix/expr/value/context.hh"
 #include "nix/store/store-api.hh"
 #include "nix/util/error.hh"
+#include "nix/expr/tracing-cache-log.hh"
 #include "nix/util/logging.hh"
 #include "nix/util/util.hh"
 
@@ -50,7 +51,7 @@ TracingReplayObject::TracingReplayObject(
 ref<Object> TracingReplayObject::ensureInner() const
 {
     if (!inner) {
-        debug("replay fallback: activating inner");
+        tracingCacheLog("replay fallback: activating inner");
         inner = getInner();
     }
     return *inner;
@@ -89,7 +90,7 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
             auto results = tracingIndex.selectChildResults(current);
             if (!results.empty()) {
                 if (!evaluator.validateResponses(responsesOnPath)) {
-                    debug("replay: post-query validation failed for %s", Q::tag);
+                    tracingCacheLog("replay: post-query validation failed for %s", Q::tag);
                     return std::nullopt;
                 }
                 return results[0];
@@ -103,7 +104,7 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
             current = responses[0].nodeHash;
         }
 
-        debug("replay: no result found for %s", Q::tag);
+        tracingCacheLog("replay: no result found for %s", Q::tag);
         return std::nullopt;
     };
 
@@ -112,7 +113,7 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
             auto j = nlohmann::json::parse(resultNode.payload);
             return j.template get<R>();
         } catch (const nlohmann::json::exception & e) {
-            debug("replay: failed to parse result: %s", e.what());
+            tracingCacheLog("replay: failed to parse result: %s", e.what());
             return std::nullopt;
         }
     };
@@ -127,14 +128,14 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
         triedNodes.insert(child.nodeHash);
 
         if (!evaluator.validateToValidatedNode(child.nodeHash)) {
-            debug("replay: trie validation failed for %s", Q::tag);
+            tracingCacheLog("replay: trie validation failed for %s", Q::tag);
             continue;
         }
 
         if (auto resultNode = findAndValidateResult(child)) {
             if (auto result = parseResult(*resultNode)) {
                 evaluator.markValidated(resultNode->nodeHash);
-                debug("replay hit (trie): %s", Q::tag);
+                tracingCacheLog("replay hit (trie): %s", Q::tag);
                 return result;
             }
         }
@@ -148,14 +149,14 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
         triedNodes.insert(child.nodeHash);
 
         if (!evaluator.validateToValidatedNode(child.nodeHash)) {
-            debug("replay: structural validation failed for %s", Q::tag);
+            tracingCacheLog("replay: structural validation failed for %s", Q::tag);
             continue;
         }
 
         if (auto resultNode = findAndValidateResult(child)) {
             if (auto result = parseResult(*resultNode)) {
                 evaluator.markValidated(resultNode->nodeHash);
-                debug("replay hit (structural): %s", Q::tag);
+                tracingCacheLog("replay hit (structural): %s", Q::tag);
                 return result;
             }
         }
@@ -173,20 +174,20 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
             continue;
 
         if (!evaluator.validateDependencies(shortcut.nodeHash)) {
-            debug("replay: shortcut validation failed for %s", Q::tag);
+            tracingCacheLog("replay: shortcut validation failed for %s", Q::tag);
             continue;
         }
 
         if (auto resultNode = findAndValidateResult(*queryNode)) {
             if (auto result = parseResult(*resultNode)) {
                 evaluator.markValidated(resultNode->nodeHash);
-                debug("replay hit (shortcut): %s", Q::tag);
+                tracingCacheLog("replay hit (shortcut): %s", Q::tag);
                 return result;
             }
         }
     }
 
-    debug("replay miss: %s", Q::tag);
+    tracingCacheLog("replay miss: %s", Q::tag);
     return std::nullopt;
 }
 
@@ -209,7 +210,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
             auto results = tracingIndex.selectChildResults(current);
             if (!results.empty()) {
                 if (!evaluator.validateResponses(responsesOnPath)) {
-                    debug("replay: post-query validation failed for %s", Q::tag);
+                    tracingCacheLog("replay: post-query validation failed for %s", Q::tag);
                     return std::nullopt;
                 }
                 return results[0];
@@ -223,7 +224,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
             current = responses[0].nodeHash;
         }
 
-        debug("replay: no result found for %s", Q::tag);
+        tracingCacheLog("replay: no result found for %s", Q::tag);
         return std::nullopt;
     };
 
@@ -238,7 +239,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
             };
             return std::make_pair(result, childPos);
         } catch (const nlohmann::json::exception & e) {
-            debug("replay: failed to parse result: %s", e.what());
+            tracingCacheLog("replay: failed to parse result: %s", e.what());
             return std::nullopt;
         }
     };
@@ -253,14 +254,14 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
         triedNodes.insert(child.nodeHash);
 
         if (!evaluator.validateToValidatedNode(child.nodeHash)) {
-            debug("replay: trie validation failed for %s", Q::tag);
+            tracingCacheLog("replay: trie validation failed for %s", Q::tag);
             continue;
         }
 
         if (auto resultNode = findAndValidateResult(child)) {
             if (auto result = parseResultWithPos(*resultNode)) {
                 evaluator.markValidated(resultNode->nodeHash);
-                debug("replay hit (trie): %s", Q::tag);
+                tracingCacheLog("replay hit (trie): %s", Q::tag);
                 return result;
             }
         }
@@ -274,14 +275,14 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
         triedNodes.insert(child.nodeHash);
 
         if (!evaluator.validateToValidatedNode(child.nodeHash)) {
-            debug("replay: structural validation failed for %s", Q::tag);
+            tracingCacheLog("replay: structural validation failed for %s", Q::tag);
             continue;
         }
 
         if (auto resultNode = findAndValidateResult(child)) {
             if (auto result = parseResultWithPos(*resultNode)) {
                 evaluator.markValidated(resultNode->nodeHash);
-                debug("replay hit (structural): %s", Q::tag);
+                tracingCacheLog("replay hit (structural): %s", Q::tag);
                 return result;
             }
         }
@@ -299,20 +300,20 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
             continue;
 
         if (!evaluator.validateDependencies(shortcut.nodeHash)) {
-            debug("replay: shortcut validation failed for %s", Q::tag);
+            tracingCacheLog("replay: shortcut validation failed for %s", Q::tag);
             continue;
         }
 
         if (auto resultNode = findAndValidateResult(*queryNode)) {
             if (auto result = parseResultWithPos(*resultNode)) {
                 evaluator.markValidated(resultNode->nodeHash);
-                debug("replay hit (shortcut): %s", Q::tag);
+                tracingCacheLog("replay hit (shortcut): %s", Q::tag);
                 return result;
             }
         }
     }
 
-    debug("replay miss: %s", Q::tag);
+    tracingCacheLog("replay miss: %s", Q::tag);
     return std::nullopt;
 }
 
@@ -323,11 +324,11 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
 
     if (auto result = lookupStructuralChild<trace::QueryGetAttr, trace::ResultMaybeType>(query)) {
         if (!result->first.type) {
-            debug("replay hit: getAttr '%s' -> missing", name);
+            tracingCacheLog("replay hit: getAttr '%s' -> missing", name);
             return nullptr;
         }
 
-        debug("replay hit: getAttr '%s' -> found", name);
+        tracingCacheLog("replay hit: getAttr '%s' -> found", name);
         return std::make_shared<TracingReplayObject>(
             evaluator, result->second, [this, name]() { return ref<Object>(ensureInner()->maybeGetAttr(name)); });
     }
@@ -380,7 +381,7 @@ std::pair<std::string, NixStringContext> TracingReplayObject::getStringWithConte
                 },
                 elem.raw);
             if (!store.isValidPath(path)) {
-                debug("replay miss: context path %s no longer valid", store.printStorePath(path));
+                tracingCacheLog("replay miss: context path %s no longer valid", store.printStorePath(path));
                 return ensureInner()->getStringWithContext();
             }
         }
@@ -432,7 +433,7 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
     trace::QueryGetListElem query{parentHash, idx};
 
     if (auto result = lookupStructuralChild<trace::QueryGetListElem, trace::ResultType>(query)) {
-        debug("replay hit: getListElem %d", idx);
+        tracingCacheLog("replay hit: getListElem %d", idx);
         return std::make_shared<TracingReplayObject>(
             evaluator, result->second, [this, idx]() { return ref<Object>(ensureInner()->getListElem(idx)); });
     }
