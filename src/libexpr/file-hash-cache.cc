@@ -35,7 +35,7 @@ FileHashCache::FileHashCache(std::filesystem::path dbPath)
     }
 
     auto state(_state->lock());
-    state->db = SQLite(dbPath, {.mode = SQLiteOpenMode::Normal});
+    state->db = SQLite(dbPath, {.mode = SQLiteOpenMode::Normal, .useWAL = true});
     state->db.isCache();
     state->db.exec(schema);
 
