@@ -193,6 +193,7 @@ ref<EvalState> EvalCommand::getEvalState()
             eval = make_ref<TracingEvaluator>(*tracingWriter, eval);
             eval = make_ref<TracingReplayEvaluator>(eval, *tracingIndex, *sysEnv);
             evalState->evaluatorCompat = eval.get_ptr();
+            evalState->rootTracingIndex = tracingIndex.get();
             evaluatorCompat = eval;
         } else {
             evalState = std::allocate_shared<EvalState>(
