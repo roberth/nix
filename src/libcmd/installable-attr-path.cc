@@ -15,6 +15,7 @@
 #include "nix/expr/eval-cache.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/evaluation-helpers.hh"
+#include "nix/expr/environment/system.hh"
 #include "nix/util/url.hh"
 #include "nix/fetchers/registry.hh"
 #include "nix/store/build-result.hh"
@@ -74,6 +75,39 @@ DerivedPathsWithInfo InstallableAttrPath::toDerivedPaths()
     if (auto derivedPathWithInfo =
             trySinglePathToDerivedPaths(*obj, fmt("while evaluating the attribute '%s'", attrPath))) {
         return {*derivedPathWithInfo};
+    }
+
+    // Handle derivations via the Object interface (preserves replay).
+    if (expr::helpers::isDerivation(*obj)) {
+        auto drvPath = expr::helpers::forceDerivation(*evaluator, *obj, *state->systemEnvironment->store);
+        auto outputs = std::visit(
+            overloaded{
+                [&](const ExtendedOutputsSpec::Default &) -> OutputsSpec {
+                    auto outputsToInstall = expr::helpers::getDerivationOutputs(*obj);
+                    // getDerivationOutputs defaults to {"out"} when
+                    // outputsToInstall metadata is absent. Verify "out"
+                    // exists; if not, use the actual outputs.
+                    if (outputsToInstall == StringSet{"out"}) {
+                        if (auto outputsAttr = obj->maybeGetAttr("outputs")) {
+                            auto outputNames = outputsAttr->getListOfStringsNoCtx();
+                            bool hasOut =
+                                std::find(outputNames.begin(), outputNames.end(), "out") != outputNames.end();
+                            if (!hasOut)
+                                return OutputsSpec::Names{StringSet(outputNames.begin(), outputNames.end())};
+                        }
+                    }
+                    return OutputsSpec::Names{std::move(outputsToInstall)};
+                },
+                [&](const ExtendedOutputsSpec::Explicit & e) -> OutputsSpec { return e; },
+            },
+            extendedOutputsSpec.raw);
+        return {{
+            .path = DerivedPath::Built{
+                .drvPath = makeConstantStorePathRef(drvPath),
+                .outputs = outputs,
+            },
+            .info = make_ref<ExtraPathInfo>(),
+        }};
     }
 
     // Fallback: getDerivations needs a Value — fall through to toValue
