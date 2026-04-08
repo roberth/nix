@@ -14,6 +14,7 @@
 #include "nix/flake/flake.hh"
 #include "nix/expr/eval-cache.hh"
 #include "nix/expr/evaluator.hh"
+#include "nix/expr/evaluation-helpers.hh"
 #include "nix/util/url.hh"
 #include "nix/fetchers/registry.hh"
 #include "nix/store/build-result.hh"
@@ -42,26 +43,44 @@ InstallableAttrPath::InstallableAttrPath(
 
 std::pair<Value *, PosIdx> InstallableAttrPath::toValue(EvalState & state)
 {
-    auto v = rootObject->defeatCache();
-    auto [vRes, pos] = findAlongAttrPath(state, attrPath, *cmd.getAutoArgs(state), **v);
-    state.forceValue(*vRes, pos);
-    return {vRes, pos};
+    // Navigate via the Object interface to preserve replay.
+    auto autoArgs = cmd.getAutoArgs(state);
+    std::map<std::string, ref<Object>> autoArgsObj;
+    for (auto & arg : *autoArgs)
+        autoArgsObj.emplace(std::string(state.symbols[arg.name]), state.toObjectCompat(*arg.value));
+
+    auto attrPathTokens = tokenizeString<std::vector<std::string>>(attrPath, ".");
+    auto obj =
+        *expr::helpers::findAlongAttrPathWithAutoCall(*evaluator, rootObject, attrPath, attrPathTokens, autoArgsObj);
+
+    // Convert to Value at the leaf only
+    auto v = obj->defeatCache();
+    state.forceValue(**v, noPos);
+    return {*v, obj->getPos()};
 }
 
 DerivedPathsWithInfo InstallableAttrPath::toDerivedPaths()
 {
-    auto [v, pos] = toValue(*state);
+    // Navigate via the Object interface to preserve replay.
+    auto autoArgs = cmd.getAutoArgs(*state);
+    std::map<std::string, ref<Object>> autoArgsObj;
+    for (auto & arg : *autoArgs)
+        autoArgsObj.emplace(std::string(state->symbols[arg.name]), state->toObjectCompat(*arg.value));
 
-    auto obj = state->toObjectCompat(*v);
+    auto attrPathTokens = tokenizeString<std::vector<std::string>>(attrPath, ".");
+    auto obj =
+        *expr::helpers::findAlongAttrPathWithAutoCall(*evaluator, rootObject, attrPath, attrPathTokens, autoArgsObj);
+
     if (auto derivedPathWithInfo =
             trySinglePathToDerivedPaths(*obj, fmt("while evaluating the attribute '%s'", attrPath))) {
         return {*derivedPathWithInfo};
     }
 
-    Bindings & autoArgs = *cmd.getAutoArgs(*state);
+    // Fallback: getDerivations needs a Value — fall through to toValue
+    auto [v, pos] = toValue(*state);
 
     PackageInfos packageInfos;
-    getDerivations(*state, *v, "", autoArgs, packageInfos, false);
+    getDerivations(*state, *v, "", *autoArgs, packageInfos, false);
 
     // Backward compatibility hack: group results by drvPath. This
     // helps keep .all output together.
