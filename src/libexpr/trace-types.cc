@@ -57,6 +57,95 @@ void from_json(const nlohmann::json & j, GetEnvResponse & r)
 }
 
 // ---------------------------------------------------------------------------
+// Contra-query serialization
+// ---------------------------------------------------------------------------
+
+void to_json(nlohmann::json & j, const ContraQueryRequest & r)
+{
+    nlohmann::json queryJson;
+    std::visit([&](const auto & q) { queryJson = nlohmann::json{{"tag", q.tag}, {"payload", q}}; }, r.query);
+    j = nlohmann::json{{"query", queryJson}};
+}
+
+void from_json(const nlohmann::json & j, ContraQueryRequest & r)
+{
+    auto & q = j.at("query");
+    auto tag = q.at("tag").get<std::string_view>();
+    auto & payload = q.at("payload");
+
+    auto tryParse = [&]<typename T>() -> bool {
+        if (tag == T::tag) {
+            T val;
+            from_json(payload, val);
+            r.query = val;
+            return true;
+        }
+        return false;
+    };
+
+    if (tryParse.template operator()<QueryExpr>() || tryParse.template operator()<QueryImport>()
+        || tryParse.template operator()<QueryGetAttr>() || tryParse.template operator()<QueryGetString>()
+        || tryParse.template operator()<QueryGetStringWithContext>()
+        || tryParse.template operator()<QueryGetAttrNames>() || tryParse.template operator()<QueryGetType>()
+        || tryParse.template operator()<QueryGetBool>() || tryParse.template operator()<QueryGetInt>()
+        || tryParse.template operator()<QueryGetFloat>() || tryParse.template operator()<QueryGetListOfStrings>()
+        || tryParse.template operator()<QueryGetListSize>() || tryParse.template operator()<QueryGetListElem>()
+        || tryParse.template operator()<QueryGetPath>())
+        return;
+
+    throw nlohmann::json::parse_error::create(302, 0, "unknown contra-query tag: " + std::string(tag), &j);
+}
+
+void to_json(nlohmann::json & j, const ContraQueryResponse & r)
+{
+    nlohmann::json resultJson;
+    std::visit([&](const auto & res) { resultJson = res; }, r.result);
+    j = nlohmann::json{{"result", resultJson}};
+}
+
+void from_json(const nlohmann::json & j, ContraQueryResponse & r)
+{
+    // The result type is determined by context (the query determines
+    // which result type to expect). For generic deserialization we
+    // store the raw JSON — the caller can parse the specific type.
+    // For now, try common result types.
+    auto & res = j.at("result");
+
+    auto tryParse = [&]<typename T>(T *) -> bool {
+        try {
+            T val;
+            from_json(res, val);
+            r.result = val;
+            return true;
+        } catch (...) {
+            return false;
+        }
+    };
+
+    if (tryParse((ResultType *) nullptr))
+        return;
+    if (tryParse((ResultMaybeType *) nullptr))
+        return;
+    if (tryParse((ResultString *) nullptr))
+        return;
+    if (tryParse((ResultInt *) nullptr))
+        return;
+    if (tryParse((ResultFloat *) nullptr))
+        return;
+    if (tryParse((ResultBool *) nullptr))
+        return;
+    if (tryParse((ResultPath *) nullptr))
+        return;
+    if (tryParse((ResultListOfStrings *) nullptr))
+        return;
+    if (tryParse((ResultStringWithContext *) nullptr))
+        return;
+    if (tryParse((ResultListSize *) nullptr))
+        return;
+    throw nlohmann::json::parse_error::create(302, 0, "could not parse contra-query result", &j);
+}
+
+// ---------------------------------------------------------------------------
 // Result payload serialization
 // ---------------------------------------------------------------------------
 
@@ -352,6 +441,13 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
             GetEnvResponse resp;
             from_json(j["response"], resp);
             return Response<GetEnvRequest>{req, resp};
+        }
+        if (type == ContraQueryRequest::tag) {
+            ContraQueryRequest req;
+            from_json(j["request"], req);
+            ContraQueryResponse resp;
+            from_json(j["response"], resp);
+            return Response<ContraQueryRequest>{req, resp};
         }
         return std::nullopt;
     }

@@ -442,6 +442,65 @@ using Results = ApplyWrapper<
     ResultStringWithContext,
     ResultListSize>;
 
+// ---------------------------------------------------------------------------
+// Variant types for QueryVariant / ResultVariant
+// ---------------------------------------------------------------------------
+
+using QueryVariant = std::variant<
+    QueryExpr,
+    QueryImport,
+    QueryGetAttr,
+    QueryGetString,
+    QueryGetStringWithContext,
+    QueryGetAttrNames,
+    QueryGetType,
+    QueryGetBool,
+    QueryGetInt,
+    QueryGetFloat,
+    QueryGetListOfStrings,
+    QueryGetListSize,
+    QueryGetListElem,
+    QueryGetPath>;
+
+using ResultVariant = std::variant<
+    ResultType,
+    ResultMaybeType,
+    ResultString,
+    ResultInt,
+    ResultFloat,
+    ResultBool,
+    ResultPath,
+    ResultListOfStrings,
+    ResultStringWithContext,
+    ResultListSize>;
+
+// ---------------------------------------------------------------------------
+// Contra-query: query on a virtual value provided by the outer evaluator
+// ---------------------------------------------------------------------------
+
+/**
+ * A contra-query embeds an existing Query/Result pair, issued by the inner
+ * evaluator to inspect a virtual value from the outer evaluator. Uses the
+ * typed QueryVariant/ResultVariant so the trie can hash and look up the
+ * structured data.
+ */
+struct ContraQueryRequest
+{
+    static constexpr std::string_view tag = "contraQuery";
+    QueryVariant query;
+};
+
+struct ContraQueryResponse
+{
+    ResultVariant result;
+};
+
+DECLARE_TRACE_PAIR(ContraQueryRequest, ContraQueryResponse)
+
+// Update EnvRequests to include ContraQueryRequest
+template<template<typename> class F>
+using AllEnvRequests = ApplyWrapper<F, FileReadRequest, GetEnvRequest, ContraQueryRequest>;
+
 namespace detail {
 
 template<typename... Variants>
@@ -464,13 +523,13 @@ struct CombineVariants<std::variant<Ts...>, std::variant<Us...>, Rest...>
 /**
  * Combined trace entry type containing all Response, Query, and Result variants.
  */
-using TraceEntry = detail::CombineVariants<EnvRequests<Response>, Queries<Query>, Results<Result>>::type;
+using TraceEntry = detail::CombineVariants<AllEnvRequests<Response>, Queries<Query>, Results<Result>>::type;
 
 /**
  * Trace entry with queries correlated to their results.
  */
 using CorrelatedTraceEntry =
-    detail::CombineVariants<EnvRequests<Response>, Queries<CompletedQuery>, Results<Result>>::type;
+    detail::CombineVariants<AllEnvRequests<Response>, Queries<CompletedQuery>, Results<Result>>::type;
 
 /**
  * Parse a JSON entry into a typed TraceEntry.
@@ -497,25 +556,6 @@ struct IndexEntry
     size_t queryIndex;
     size_t resultIndex;
 };
-
-/**
- * Variant of all query payload types (for use as map key).
- */
-using QueryVariant = std::variant<
-    QueryExpr,
-    QueryImport,
-    QueryGetAttr,
-    QueryGetString,
-    QueryGetStringWithContext,
-    QueryGetAttrNames,
-    QueryGetType,
-    QueryGetBool,
-    QueryGetInt,
-    QueryGetFloat,
-    QueryGetListOfStrings,
-    QueryGetListSize,
-    QueryGetListElem,
-    QueryGetPath>;
 
 /**
  * Index for fast query lookup in a trace.
