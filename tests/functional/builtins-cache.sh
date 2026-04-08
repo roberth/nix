@@ -149,6 +149,72 @@ echo '{ x }: x * import ./addend.nix' > "$TEST_ROOT/fn-dep.nix"
 echo 'x: y: x + y' > "$TEST_ROOT/curried.nix"
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/curried.nix; }) 10 20') == 30 ]]
 
+# --- Nested builtins.cache with function calls ---
+
+clearCache
+
+# inner.nix: a cached module that exports a function
+echo '{ f = x: x * 10; base = 1; }' > "$TEST_ROOT/inner-mod.nix"
+
+# outer.nix: uses a nested cache call and calls inner's function
+cat > "$TEST_ROOT/outer-mod.nix" <<OUTER
+let inner = builtins.cache { import = $TEST_ROOT/inner-mod.nix; };
+in inner.f inner.base + inner.f 2
+OUTER
+
+# Nested cache: inner.f 1 * 10 = 10, inner.f 2 * 10 = 20, total = 30
+[[ $(nix eval --impure --expr 'builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }') == 30 ]]
+
+# Second eval (both layers cached)
+[[ $(nix eval --impure --expr 'builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }') == 30 ]]
+
+# Change inner module's function: x * 10 → x * 100
+sleep 1
+echo '{ f = x: x * 100; base = 1; }' > "$TEST_ROOT/inner-mod.nix"
+
+# Inner changed: 1 * 100 + 2 * 100 = 300
+[[ $(nix eval --impure --expr 'builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }') == 300 ]]
+
+# Change inner module's data without changing the function
+sleep 1
+echo '{ f = x: x * 100; base = 5; }' > "$TEST_ROOT/inner-mod.nix"
+
+# base changed: 5 * 100 + 2 * 100 = 700
+[[ $(nix eval --impure --expr 'builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }') == 700 ]]
+
+# Change outer module
+sleep 1
+cat > "$TEST_ROOT/outer-mod.nix" <<OUTER
+let inner = builtins.cache { import = $TEST_ROOT/inner-mod.nix; };
+in inner.f inner.base
+OUTER
+
+# Outer changed: just 5 * 100 = 500
+[[ $(nix eval --impure --expr 'builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }') == 500 ]]
+
+# Outer cache returns a function that wraps the inner cache
+sleep 1
+cat > "$TEST_ROOT/outer-mod.nix" <<OUTER
+let inner = builtins.cache { import = $TEST_ROOT/inner-mod.nix; };
+in x: inner.f x + inner.base
+OUTER
+
+# Call the outer cached function
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }) 3') == 305 ]]
+
+# Second call with same arg (cache hit)
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }) 3') == 305 ]]
+
+# Different arg
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }) 7') == 705 ]]
+
+# Change inner — outer function result should change
+sleep 1
+echo '{ f = x: x * 10; base = 0; }' > "$TEST_ROOT/inner-mod.nix"
+
+# 3 * 10 + 0 = 30
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }) 3') == 30 ]]
+
 # --- Inner file reads visible to outer tracing ---
 # When the outer evaluator has tracing enabled, file reads inside
 # builtins.cache must flow through the outer environment's accessor
