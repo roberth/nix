@@ -3473,7 +3473,20 @@ static RegisterPrimOp primop_catAttrs({
 static void prim_functionArgs(EvalState & state, const PosIdx pos, Value ** args, Value & v)
 {
     state.forceValue(*args[0], pos);
-    if (args[0]->isPrimOpApp() || args[0]->isPrimOp()) {
+    if (args[0]->isPrimOp()) {
+        if (auto & gfi = args[0]->primOp()->getFunctionInfo) {
+            if (auto info = gfi()) {
+                auto attrs = state.buildBindings(info->formals.size());
+                for (auto & [name, hasDefault] : info->formals)
+                    attrs.insert(state.symbols.create(name), state.getBool(hasDefault));
+                v.mkAttrs(attrs);
+                return;
+            }
+        }
+        v.mkAttrs(&Bindings::emptyBindings);
+        return;
+    }
+    if (args[0]->isPrimOpApp()) {
         v.mkAttrs(&Bindings::emptyBindings);
         return;
     }

@@ -2,6 +2,7 @@
 ///@file
 
 #include "nix/expr/attr-set.hh"
+#include "nix/expr/evaluator.hh"
 #include "nix/expr/eval-error.hh"
 #include "nix/expr/eval-profiler.hh"
 #include "nix/util/types.hh"
@@ -138,6 +139,14 @@ struct PrimOp
      * If true, this primop is not exposed to the user.
      */
     bool internal = false;
+
+    /**
+     * Optional lazy provider of function argument metadata.
+     * When set, builtins.functionArgs returns this instead of empty
+     * for unapplied primops. Not consulted for partially-applied
+     * primops (PrimOpApp) — only the first-argument formals matter.
+     */
+    std::function<std::optional<FunctionInfo>()> getFunctionInfo;
 
     /**
      * Validity check to be performed by functions that introduce primops,

@@ -6,8 +6,24 @@
 #include "nix/util/memory-source-accessor.hh"
 
 #include "nix/expr/tests/libexpr.hh"
+#include "nix/expr/primops.hh"
 
 namespace nix {
+
+// Test primop with getFunctionInfo, registered globally for functionArgs test
+static RegisterPrimOp primop_testFnInfo({
+    .name = "__testFnInfo",
+    .args = {"args", "x"},
+    .doc = "",
+    .impl = [](EvalState &, const PosIdx, Value **, Value & v) { v.mkNull(); },
+    .getFunctionInfo =
+        []() -> std::optional<FunctionInfo> {
+        return FunctionInfo{
+            .formals = {{"a", false}, {"b", true}},
+            .ellipsis = false,
+        };
+    },
+});
 class CaptureLogger : public Logger
 {
     std::ostringstream oss;
@@ -301,6 +317,36 @@ TEST_F(PrimOpTest, functionArgs)
     auto y = v.attrs()->get(createSymbol("y"));
     ASSERT_NE(y, nullptr);
     ASSERT_THAT(*y->value, IsTrue());
+}
+
+TEST_F(PrimOpTest, functionArgsOnPrimOpWithGetFunctionInfo)
+{
+    // __testFnInfo has getFunctionInfo returning { a = false; b = true; }
+    auto v = eval("builtins.functionArgs builtins.testFnInfo");
+    ASSERT_THAT(v, IsAttrsOfSize(2));
+
+    auto a = v.attrs()->get(createSymbol("a"));
+    ASSERT_NE(a, nullptr);
+    ASSERT_THAT(*a->value, IsFalse());
+
+    auto b = v.attrs()->get(createSymbol("b"));
+    ASSERT_NE(b, nullptr);
+    ASSERT_THAT(*b->value, IsTrue());
+}
+
+TEST_F(PrimOpTest, functionArgsOnRegularPrimOp)
+{
+    // A regular primop (no getFunctionInfo) still returns empty attrs
+    auto v = eval("builtins.functionArgs builtins.add");
+    ASSERT_THAT(v, IsAttrsOfSize(0));
+}
+
+TEST_F(PrimOpTest, functionArgsOnPartiallyAppliedPrimOpWithGetFunctionInfo)
+{
+    // Partially applying a primop that has getFunctionInfo returns
+    // empty attrs — getFunctionInfo is only for the unapplied case.
+    auto v = eval("builtins.functionArgs (builtins.testFnInfo {})");
+    ASSERT_THAT(v, IsAttrsOfSize(0));
 }
 
 TEST_F(PrimOpTest, mapAttrs)
