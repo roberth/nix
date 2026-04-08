@@ -16,14 +16,14 @@ static RegisterPrimOp primop_testFnInfo({
     .args = {"args", "x"},
     .doc = "",
     .impl = [](EvalState &, const PosIdx, Value **, Value & v) { v.mkNull(); },
-    .getFunctionInfo =
-        []() -> std::optional<FunctionInfo> {
+    .getFunctionInfo = []() -> std::optional<FunctionInfo> {
         return FunctionInfo{
             .formals = {{"a", false}, {"b", true}},
             .ellipsis = false,
         };
     },
 });
+
 class CaptureLogger : public Logger
 {
     std::ostringstream oss;

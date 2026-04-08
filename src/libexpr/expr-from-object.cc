@@ -69,7 +69,29 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
         break;
     }
 
-    case nFunction:
+    case nFunction: {
+        auto objPtr = obj;
+        auto * primOp = new
+#if NIX_USE_BOEHMGC
+            (GC)
+#endif
+                PrimOp{
+                    .name = "<cached-fn>",
+                    .args = {"args"},
+                    .impl =
+                        [](EvalState & state, const PosIdx pos, Value **, Value &) {
+                            state
+                                .error<TypeError>(
+                                    "cached function calls not yet implemented (see builtins.cache Step 3)")
+                                .atPos(pos)
+                                .debugThrow();
+                        },
+                    .getFunctionInfo = [objPtr]() -> std::optional<FunctionInfo> { return objPtr->getFunctionInfo(); },
+                };
+        v.mkPrimOp(primOp);
+        break;
+    }
+
     case nExternal:
     case nThunk:
     case nFailed:
