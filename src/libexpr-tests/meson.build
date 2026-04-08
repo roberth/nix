@@ -51,6 +51,7 @@ sources = files(
   'derived-path.cc',
   'error_traces.cc',
   'eval.cc',
+  'contra-object.cc',
   'evaluation-helpers.cc',
   'evaluator.cc',
   'expr-from-object.cc',
