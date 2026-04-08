@@ -90,7 +90,8 @@ void from_json(const nlohmann::json & j, ContraQueryRequest & r)
         || tryParse.template operator()<QueryGetBool>() || tryParse.template operator()<QueryGetInt>()
         || tryParse.template operator()<QueryGetFloat>() || tryParse.template operator()<QueryGetListOfStrings>()
         || tryParse.template operator()<QueryGetListSize>() || tryParse.template operator()<QueryGetListElem>()
-        || tryParse.template operator()<QueryGetPath>())
+        || tryParse.template operator()<QueryGetPath>()
+        || tryParse.template operator()<QueryGetFunctionInfo>())
         return;
 
     throw nlohmann::json::parse_error::create(302, 0, "unknown contra-query tag: " + std::string(tag), &j);
@@ -404,6 +405,28 @@ void from_json(const nlohmann::json & j, QueryGetPath & q)
     j.at("params").at("from").get_to(q.from);
 }
 
+void to_json(nlohmann::json & j, const QueryGetFunctionInfo & q)
+{
+    j = nlohmann::json{{"query", QueryGetFunctionInfo::tag}, {"params", {{"from", q.from}}}};
+}
+
+void from_json(const nlohmann::json & j, QueryGetFunctionInfo & q)
+{
+    j.at("params").at("from").get_to(q.from);
+}
+
+void to_json(nlohmann::json & j, const ResultFunctionInfo & r)
+{
+    j = nlohmann::json{{"hasInfo", r.hasInfo}, {"formals", r.formals}, {"ellipsis", r.ellipsis}};
+}
+
+void from_json(const nlohmann::json & j, ResultFunctionInfo & r)
+{
+    j.at("hasInfo").get_to(r.hasInfo);
+    j.at("formals").get_to(r.formals);
+    j.at("ellipsis").get_to(r.ellipsis);
+}
+
 // ---------------------------------------------------------------------------
 // parseTraceEntry
 // ---------------------------------------------------------------------------
@@ -487,6 +510,8 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
             return r;
         if (auto r = tryParseQuery<QueryGetPath>(type, j))
             return r;
+        if (auto r = tryParseQuery<QueryGetFunctionInfo>(type, j))
+            return r;
         return std::nullopt;
     }
 
@@ -546,6 +571,11 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
                 from_json(j, e);
                 return e;
             }
+        }
+        if (r.contains("hasInfo")) {
+            Result<ResultFunctionInfo> e;
+            from_json(j, e);
+            return e;
         }
         return std::nullopt;
     }

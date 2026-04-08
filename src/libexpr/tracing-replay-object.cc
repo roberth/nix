@@ -473,7 +473,16 @@ RootValue TracingReplayObject::defeatCache()
 
 std::optional<FunctionInfo> TracingReplayObject::getFunctionInfo()
 {
-    tracingCacheLog("replay fallback: getFunctionInfo"); return ensureInner()->getFunctionInfo();
+    auto parentHash = triePos.queryHashStr;
+    if (auto r =
+            lookupResult<trace::QueryGetFunctionInfo, trace::ResultFunctionInfo>(trace::QueryGetFunctionInfo{parentHash}))
+    {
+        if (!r->hasInfo)
+            return std::nullopt;
+        return FunctionInfo{.formals = r->formals, .ellipsis = r->ellipsis};
+    }
+    tracingCacheLog("replay fallback: getFunctionInfo");
+    return ensureInner()->getFunctionInfo();
 }
 
 } // namespace nix

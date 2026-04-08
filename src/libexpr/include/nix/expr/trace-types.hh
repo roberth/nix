@@ -371,6 +371,24 @@ struct QueryGetPath
 };
 DECLARE_QUERY_RESULT(QueryGetPath, ResultPath)
 
+/** Get function argument info (formals). */
+struct QueryGetFunctionInfo
+{
+    static constexpr std::string_view tag = "getFunctionInfo";
+    std::string from; ///< Parent object's queryHash (Merkle identity)
+    auto operator<=>(const QueryGetFunctionInfo &) const = default;
+};
+
+/** Result for getFunctionInfo: optional formals map + ellipsis. */
+struct ResultFunctionInfo
+{
+    bool hasInfo;                          ///< false if not a function with formals
+    std::map<std::string, bool> formals;  ///< name -> hasDefault (empty if !hasInfo)
+    bool ellipsis = false;
+};
+
+DECLARE_QUERY_RESULT(QueryGetFunctionInfo, ResultFunctionInfo)
+
 // ---------------------------------------------------------------------------
 // CompletedQuery: a query correlated with its result
 // ---------------------------------------------------------------------------
@@ -423,7 +441,8 @@ using Queries = ApplyWrapper<
     QueryGetListOfStrings,
     QueryGetListSize,
     QueryGetListElem,
-    QueryGetPath>;
+    QueryGetPath,
+    QueryGetFunctionInfo>;
 
 /**
  * All result payload types.
@@ -440,7 +459,8 @@ using Results = ApplyWrapper<
     ResultPath,
     ResultListOfStrings,
     ResultStringWithContext,
-    ResultListSize>;
+    ResultListSize,
+    ResultFunctionInfo>;
 
 // ---------------------------------------------------------------------------
 // Variant types for QueryVariant / ResultVariant
@@ -460,7 +480,8 @@ using QueryVariant = std::variant<
     QueryGetListOfStrings,
     QueryGetListSize,
     QueryGetListElem,
-    QueryGetPath>;
+    QueryGetPath,
+    QueryGetFunctionInfo>;
 
 using ResultVariant = std::variant<
     ResultType,
@@ -472,7 +493,8 @@ using ResultVariant = std::variant<
     ResultPath,
     ResultListOfStrings,
     ResultStringWithContext,
-    ResultListSize>;
+    ResultListSize,
+    ResultFunctionInfo>;
 
 // ---------------------------------------------------------------------------
 // Contra-query: query on a virtual value provided by the outer evaluator
