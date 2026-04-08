@@ -1,5 +1,6 @@
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-replay-evaluator.hh"
+#include "nix/expr/tracing-writer.hh"
 #include "nix/expr/tracing-index.hh"
 #include "nix/expr/value/context.hh"
 #include "nix/store/store-api.hh"
@@ -110,7 +111,7 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
 
     auto parseResult = [&](const ResultNode & resultNode) -> std::optional<R> {
         try {
-            auto j = nlohmann::json::parse(resultNode.payload);
+            auto j = cborStringToJson(resultNode.payload);
             return j.template get<R>();
         } catch (const nlohmann::json::exception & e) {
             tracingCacheLog("replay: failed to parse result: %s", e.what());
@@ -230,7 +231,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 
     auto parseResultWithPos = [&](const ResultNode & resultNode) -> std::optional<std::pair<R, TriePosition>> {
         try {
-            auto j = nlohmann::json::parse(resultNode.payload);
+            auto j = cborStringToJson(resultNode.payload);
             R result = j.template get<R>();
             auto childPos = TriePosition{
                 .resultNodeHash = resultNode.nodeHash,

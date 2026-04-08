@@ -12,6 +12,28 @@
 namespace nix {
 
 /**
+ * Serialize a JSON value to CBOR as a std::string (for trie storage).
+ */
+inline std::string jsonToCborString(const nlohmann::json & j)
+{
+    auto cbor = nlohmann::json::to_cbor(j);
+    return std::string(reinterpret_cast<const char *>(cbor.data()), cbor.size());
+}
+
+/**
+ * Parse a CBOR blob (stored as std::string) back to JSON.
+ */
+inline nlohmann::json cborStringToJson(const std::string & s)
+{
+    auto bytes = reinterpret_cast<const uint8_t *>(s.data());
+    return nlohmann::json::from_cbor(bytes, bytes + s.size());
+}
+
+} // namespace nix
+
+namespace nix {
+
+/**
  * Tracks trie position for a single value being traced.
  * Each TracingObject holds one of these to record its operations.
  */
@@ -55,7 +77,7 @@ public:
 
         auto queryHash = TracingIndex::computeQueryHash(query);
         nlohmann::json j = query;
-        auto queryNodeHash = index->insertQuery(afterHash, queryHash, j.dump());
+        auto queryNodeHash = index->insertQuery(afterHash, queryHash, jsonToCborString(j));
         afterHash = queryNodeHash;
 
         return {valueNum, queryHash};
@@ -79,7 +101,7 @@ public:
         auto queryHash = TracingIndex::computeQueryHash(query);
         nlohmann::json j = query;
         auto structuralParent = parent ? std::optional{parent->resultNodeHash} : std::nullopt;
-        auto queryNodeHash = index->insertQuery(afterHash, queryHash, j.dump(), structuralParent);
+        auto queryNodeHash = index->insertQuery(afterHash, queryHash, jsonToCborString(j), structuralParent);
         afterHash = queryNodeHash;
 
         return {valueNum, queryHash};
@@ -98,7 +120,7 @@ public:
 
         nlohmann::json reqJson = resp.request;
         nlohmann::json respJson = resp.response;
-        auto nodeHash = index->insertResponse(*afterHash, reqJson.dump(), respJson.dump());
+        auto nodeHash = index->insertResponse(*afterHash, jsonToCborString(reqJson), jsonToCborString(respJson));
         afterHash = nodeHash;
     }
 
@@ -115,7 +137,7 @@ public:
             return std::nullopt;
 
         nlohmann::json j = result;
-        auto resultNodeHash = index->insertResult(*afterHash, j.dump());
+        auto resultNodeHash = index->insertResult(*afterHash, jsonToCborString(j));
         afterHash = resultNodeHash;
 
         return TriePosition{

@@ -64,36 +64,37 @@ bool TracingReplayEvaluator::isValidated(const NodeHash & nodeHash) const
 bool TracingReplayEvaluator::validateResponses(const std::vector<ResponseNode> & responses)
 {
     for (const auto & resp : responses) {
-        if (validatedNodes.count(resp.nodeHash)) {
+        if (validatedNodes.count(resp.nodeHash))
             continue;
-        }
+
         try {
-            auto reqJson = nlohmann::json::parse(resp.request);
-            auto respJson = nlohmann::json::parse(resp.response);
+            // Parse only the request (to know what to re-execute).
+            // The response is compared as raw bytes — no parsing needed.
+            auto reqJson = cborStringToJson(resp.request);
 
-            if (reqJson.contains("absPath") && respJson.contains("contentHash")) {
+            if (reqJson.contains("absPath")) {
                 std::string path = reqJson["absPath"];
-                std::string expectedHash = respJson["contentHash"];
-
                 auto currentHash = hashCache.getHash(path);
-                if (currentHash.to_string(HashFormat::SRI, true) != expectedHash) {
+
+                // Re-serialize the current response to CBOR and compare bytes
+                nlohmann::json currentRespJson = trace::FileReadResponse{currentHash};
+                auto currentCbor = jsonToCborString(currentRespJson);
+                if (resp.response != currentCbor) {
                     tracingCacheLog("replay invalidated: file %s changed", path);
                     return false;
                 }
-            } else if (reqJson.contains("name") && respJson.contains("value")) {
+            } else if (reqJson.contains("name")) {
                 std::string name = reqJson["name"];
                 auto currentVal = validationEnv.getEnv(name);
 
-                std::optional<std::string> expectedVal;
-                if (!respJson["value"].is_null())
-                    expectedVal = respJson["value"];
-
-                if (currentVal != expectedVal) {
+                nlohmann::json currentRespJson = trace::GetEnvResponse{currentVal};
+                auto currentCbor = jsonToCborString(currentRespJson);
+                if (resp.response != currentCbor) {
                     tracingCacheLog("replay invalidated: env %s changed", name);
                     return false;
                 }
             }
-        } catch (const nlohmann::json::exception & e) {
+        } catch (const std::exception & e) {
             tracingCacheLog("replay: failed to parse dependency: %s", e.what());
             return false;
         }
