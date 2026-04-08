@@ -112,7 +112,7 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     // Evaluate eagerly — primops must not return thunks (forceValue
     // doesn't recurse into thunks-inside-thunks). Child attrset/list
     // elements are still lazy (ExprFromObject creates child thunks).
-    ExprFromObject(result.get_ptr()).eval(state, state.baseEnv, v);
+    ExprFromObject(result.get_ptr(), replayEval.get_ptr()).eval(state, state.baseEnv, v);
 }
 
 static RegisterPrimOp primop_cache({

@@ -45,8 +45,17 @@ struct ExprFromObject : ExprProxy
 {
     std::shared_ptr<Object> obj;
 
-    explicit ExprFromObject(std::shared_ptr<Object> obj)
+    /**
+     * Optional inner Evaluator for function call support.
+     * When set and the Object is a function, the PrimOp created by
+     * eval() captures this to route applications back through the
+     * inner evaluator via Evaluator::apply().
+     */
+    std::shared_ptr<Evaluator> innerEvaluator;
+
+    explicit ExprFromObject(std::shared_ptr<Object> obj, std::shared_ptr<Evaluator> innerEvaluator = nullptr)
         : obj(std::move(obj))
+        , innerEvaluator(std::move(innerEvaluator))
     {
     }
 

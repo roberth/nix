@@ -1,5 +1,6 @@
 #include "nix/expr/interpreter.hh"
 #include "nix/expr/interpreter-object.hh"
+#include "nix/expr/expr-from-object.hh"
 #include "nix/expr/eval-settings.hh"
 #include "nix/expr/environment/system.hh"
 
@@ -71,7 +72,19 @@ ref<Object> Interpreter::mkAttrs(const std::map<std::string, ref<Object>> & attr
 ref<Object> Interpreter::apply(ref<Object> fn, ref<Object> arg)
 {
     auto fnValue = fn->defeatCache();
-    auto argValue = arg->defeatCache();
+
+    // For virtual values (e.g. ContraObject), defeatCache throws.
+    // Create a thunk via ExprFromObject instead.
+    RootValue argValue;
+    try {
+        argValue = arg->defeatCache();
+    } catch (Error &) {
+        auto * thunk = evalState->allocValue();
+        auto * expr = new ExprFromObject(arg.get_ptr());
+        evalState->mkThunk_(*thunk, expr);
+        argValue = allocRootValue(thunk);
+    }
+
     auto result = evalState->allocValue();
     // Create a lazy application thunk - evaluation happens when forced
     result->mkApp(*fnValue, *argValue);
