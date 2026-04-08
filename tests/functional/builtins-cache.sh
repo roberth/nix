@@ -114,6 +114,41 @@ echo '{ x, y ? 13 }: x + y' > "$TEST_ROOT/fn.nix"
 echo 'x: x + 1' > "$TEST_ROOT/simple-fn.nix"
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/simple-fn.nix; }) 5') == 6 ]]
 
+# --- Function call: cache invalidation ---
+
+clearCache
+
+# Function that reads a transitive dependency
+echo '{ x }: x + import ./addend.nix' > "$TEST_ROOT/fn-dep.nix"
+echo '100' > "$TEST_ROOT/addend.nix"
+
+# First call: 1 + 100 = 101
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/fn-dep.nix; }) { x = 1; }') == 101 ]]
+
+# Second call with same args: should produce same result (cache hit)
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/fn-dep.nix; }) { x = 1; }') == 101 ]]
+
+# Change the transitive dependency
+sleep 1
+echo '200' > "$TEST_ROOT/addend.nix"
+
+# Function body dependency changed: 1 + 200 = 201
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/fn-dep.nix; }) { x = 1; }') == 201 ]]
+
+# Change the function itself
+sleep 1
+echo '{ x }: x * import ./addend.nix' > "$TEST_ROOT/fn-dep.nix"
+
+# Function changed: 1 * 200 = 200
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/fn-dep.nix; }) { x = 1; }') == 200 ]]
+
+# Different argument value
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/fn-dep.nix; }) { x = 3; }') == 600 ]]
+
+# Nested function: cached function returns a function
+echo 'x: y: x + y' > "$TEST_ROOT/curried.nix"
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/curried.nix; }) 10 20') == 30 ]]
+
 # --- Inner file reads visible to outer tracing ---
 # When the outer evaluator has tracing enabled, file reads inside
 # builtins.cache must flow through the outer environment's accessor
