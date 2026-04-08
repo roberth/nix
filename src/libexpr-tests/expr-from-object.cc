@@ -222,10 +222,25 @@ TEST_F(ExprFromObjectTest, Show)
     EXPECT_EQ(oss.str(), "<proxy>");
 }
 
-TEST_F(ExprFromObjectTest, FunctionThrows)
+TEST_F(ExprFromObjectTest, FunctionBecomesPrimOp)
 {
     auto obj = evalToObject("x: x + 1");
-    EXPECT_THROW(evalFromObject(obj), Error);
+    auto * v = evalFromObject(obj);
+    EXPECT_TRUE(v->isPrimOp());
+}
+
+TEST_F(ExprFromObjectTest, FunctionWithFormalsHasGetFunctionInfo)
+{
+    auto obj = evalToObject("{ a, b ? 1 }: a + b");
+    auto * v = evalFromObject(obj);
+    ASSERT_TRUE(v->isPrimOp());
+    auto * op = v->primOp();
+    ASSERT_TRUE(op->getFunctionInfo);
+    auto info = op->getFunctionInfo();
+    ASSERT_TRUE(info.has_value());
+    EXPECT_EQ(info->formals.size(), 2u);
+    EXPECT_FALSE(info->formals.at("a"));
+    EXPECT_TRUE(info->formals.at("b"));
 }
 
 } // namespace nix
