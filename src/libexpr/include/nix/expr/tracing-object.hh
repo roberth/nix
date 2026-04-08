@@ -29,6 +29,12 @@ public:
         uint64_t valueNum,
         std::optional<TriePosition> triePos = std::nullopt);
 
+    /** Get the query hash string for trie identity, if available. */
+    std::optional<std::string> getQueryHashStr() const
+    {
+        return triePos ? std::optional{triePos->queryHashStr} : std::nullopt;
+    }
+
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
     std::string getStringIgnoreContext() override;

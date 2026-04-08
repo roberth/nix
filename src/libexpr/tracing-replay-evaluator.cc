@@ -1,5 +1,6 @@
 #include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/expr/tracing-replay-object.hh"
+#include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-index.hh"
 #include "nix/expr/environment.hh"
 #include "nix/expr/tracing-cache-log.hh"
@@ -212,6 +213,27 @@ ref<Object> TracingReplayEvaluator::mkAttrs(const std::map<std::string, ref<Obje
 
 ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
+    // Try to get identity from TracingObject/TracingReplayObject
+    auto getId = [](Object & obj) -> std::optional<std::string> {
+        if (auto * to = dynamic_cast<TracingObject *>(&obj))
+            return to->getQueryHashStr();
+        if (auto * ro = dynamic_cast<TracingReplayObject *>(&obj))
+            return std::optional{ro->getTriePos().queryHashStr};
+        return std::nullopt;
+    };
+
+    auto fnId = getId(*fn);
+    auto argId = getId(*arg);
+
+    if (fnId && argId) {
+        if (auto result = lookup(trace::QueryApply{*fnId, *argId})) {
+            tracingCacheLog("replay hit: apply");
+            return make_ref<TracingReplayObject>(
+                *this, result->second, [this, fn, arg]() { return inner->apply(fn, arg); });
+        }
+        tracingCacheLog("replay miss: apply");
+    }
+
     return inner->apply(fn, arg);
 }
 

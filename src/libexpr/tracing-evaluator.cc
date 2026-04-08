@@ -1,5 +1,6 @@
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-object.hh"
+#include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-source-accessor.hh"
 #include "nix/expr/trace-file.hh"
 #include "nix/expr/trace-types.hh"
@@ -8,6 +9,7 @@
 #include "nix/util/thread-pool.hh"
 #include "nix/util/sync.hh"
 #include "nix/expr/tracing-cache-log.hh"
+#include "nix/util/hash.hh"
 #include "nix/util/logging.hh"
 
 namespace nix {
@@ -172,16 +174,62 @@ ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const Sourc
 
 ref<Object> TracingEvaluator::mkString(const std::string & s)
 {
-    return inner->mkString(s);
+    auto result = inner->mkString(s);
+    // Deterministic identity from content — no trie entry needed.
+    auto hash = hashString(HashAlgorithm::SHA256, "mkString:" + s);
+    auto hashStr = hash.to_string(HashFormat::Base16, false);
+    auto triePos = TriePosition{.resultNodeHash = hash, .afterHash = hash, .queryHashStr = hashStr};
+    auto v = writer.getSink().allocValue();
+    return TracingObject::create(result, writer, v, triePos);
 }
 
 ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> & attrs)
 {
-    return inner->mkAttrs(attrs);
+    auto result = inner->mkAttrs(attrs);
+    // Deterministic identity from attr names + child identities.
+    std::string content = "mkAttrs:";
+    for (auto & [name, obj] : attrs) {
+        content += name + "=";
+        if (auto * to = dynamic_cast<TracingObject *>(&*obj)) {
+            if (auto qh = to->getQueryHashStr())
+                content += *qh;
+        } else if (auto * ro = dynamic_cast<TracingReplayObject *>(&*obj)) {
+            content += ro->getTriePos().queryHashStr;
+        }
+        content += ",";
+    }
+    auto hash = hashString(HashAlgorithm::SHA256, content);
+    auto hashStr = hash.to_string(HashFormat::Base16, false);
+    auto triePos = TriePosition{.resultNodeHash = hash, .afterHash = hash, .queryHashStr = hashStr};
+    auto v = writer.getSink().allocValue();
+    return TracingObject::create(result, writer, v, triePos);
 }
 
 ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
+    // Get identity from TracingObject or TracingReplayObject.
+    auto getId = [](Object & obj) -> std::optional<std::string> {
+        if (auto * to = dynamic_cast<TracingObject *>(&obj))
+            return to->getQueryHashStr();
+        if (auto * ro = dynamic_cast<TracingReplayObject *>(&obj))
+            return std::optional{ro->getTriePos().queryHashStr};
+        return std::nullopt;
+    };
+
+    auto fnId = getId(*fn);
+    auto argId = getId(*arg);
+
+    if (fnId && argId) {
+        tracingCacheLog("tracing: apply");
+        auto [v, _] = writer.logRootQuery(trace::QueryApply{*fnId, *argId});
+        auto result = inner->apply(fn, arg);
+        auto type = result->getType();
+        auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)});
+        return TracingObject::create(result, writer, v, triePos);
+    }
+
+    // Can't trace: one or both objects lack trie identity
+    tracingCacheLog("tracing: apply (untraced, missing identity)");
     auto result = inner->apply(fn, arg);
     auto v = writer.getSink().allocValue();
     return TracingObject::create(result, writer, v);

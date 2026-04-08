@@ -91,7 +91,8 @@ void from_json(const nlohmann::json & j, ContraQueryRequest & r)
         || tryParse.template operator()<QueryGetFloat>() || tryParse.template operator()<QueryGetListOfStrings>()
         || tryParse.template operator()<QueryGetListSize>() || tryParse.template operator()<QueryGetListElem>()
         || tryParse.template operator()<QueryGetPath>()
-        || tryParse.template operator()<QueryGetFunctionInfo>())
+        || tryParse.template operator()<QueryGetFunctionInfo>()
+        || tryParse.template operator()<QueryApply>())
         return;
 
     throw nlohmann::json::parse_error::create(302, 0, "unknown contra-query tag: " + std::string(tag), &j);
@@ -427,6 +428,17 @@ void from_json(const nlohmann::json & j, ResultFunctionInfo & r)
     j.at("ellipsis").get_to(r.ellipsis);
 }
 
+void to_json(nlohmann::json & j, const QueryApply & q)
+{
+    j = nlohmann::json{{"query", QueryApply::tag}, {"params", {{"fn", q.fn}, {"arg", q.arg}}}};
+}
+
+void from_json(const nlohmann::json & j, QueryApply & q)
+{
+    j.at("params").at("fn").get_to(q.fn);
+    j.at("params").at("arg").get_to(q.arg);
+}
+
 // ---------------------------------------------------------------------------
 // parseTraceEntry
 // ---------------------------------------------------------------------------
@@ -511,6 +523,8 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
         if (auto r = tryParseQuery<QueryGetPath>(type, j))
             return r;
         if (auto r = tryParseQuery<QueryGetFunctionInfo>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryApply>(type, j))
             return r;
         return std::nullopt;
     }

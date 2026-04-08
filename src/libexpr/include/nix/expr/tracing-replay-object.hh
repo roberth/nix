@@ -46,6 +46,8 @@ public:
     TracingReplayObject(
         TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner);
 
+    const TriePosition & getTriePos() const { return triePos; }
+
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
     std::string getStringIgnoreContext() override;
