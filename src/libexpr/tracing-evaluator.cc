@@ -7,6 +7,7 @@
 #include "nix/expr/environment.hh"
 #include "nix/util/thread-pool.hh"
 #include "nix/util/sync.hh"
+#include "nix/expr/tracing-cache-log.hh"
 #include "nix/util/logging.hh"
 
 namespace nix {
@@ -141,6 +142,7 @@ EvalState & TracingEvaluator::getEvalState()
 ref<Object> TracingEvaluator::evalFile(const SourcePath & path, const std::string & displayPath)
 {
     ensurePreloaded();
+    tracingCacheLog("tracing: evalFile %s", displayPath);
     auto [v, _] = writer.logRootQuery(trace::QueryImport{displayPath});
     auto result = inner->evalFile(path, displayPath);
     auto type = result->getType();
@@ -151,6 +153,7 @@ ref<Object> TracingEvaluator::evalFile(const SourcePath & path, const std::strin
 ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const SourcePath & basePath)
 {
     ensurePreloaded();
+    tracingCacheLog("tracing: evalExpr %s", expr);
     auto [v, _] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
     auto result = inner->evalExpr(expr, basePath);
     auto type = result->getType();

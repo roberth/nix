@@ -7,6 +7,7 @@
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-index.hh"
 #include "nix/expr/tracing-replay-evaluator.hh"
+#include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-writer.hh"
 
 namespace nix {
@@ -105,8 +106,13 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     auto toInnerPath = [&](const SourcePath & p) { return SourcePath(innerRootFS, p.path); };
 
     // Evaluate in the replay evaluator (tries cache first, falls back to recording)
+    auto displayName = importPath ? importPath->path.abs() : *expr;
+    tracingCacheLog("builtins.cache: evaluating %s", displayName);
+
     ref<Object> result = importPath ? replayEval->evalFile(toInnerPath(*importPath), importPath->path.abs())
                                     : replayEval->evalExpr(*expr, toInnerPath(*baseDir));
+
+    tracingCacheLog("builtins.cache: done evaluating %s", displayName);
 
     // Bridge back to outer evaluator via ExprFromObject.
     // Evaluate eagerly — primops must not return thunks (forceValue

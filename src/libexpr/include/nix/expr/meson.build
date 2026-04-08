@@ -50,6 +50,7 @@ headers = [ config_pub_h ] + files(
   'trace-file.hh',
   'trace-sink.hh',
   'trace-types.hh',
+  'tracing-cache-log.hh',
   'tracing-environment.hh',
   'tracing-evaluator.hh',
   'tracing-index.hh',

@@ -2,6 +2,7 @@
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-index.hh"
 #include "nix/expr/environment.hh"
+#include "nix/expr/tracing-cache-log.hh"
 #include "nix/util/logging.hh"
 #include "nix/util/util.hh"
 
@@ -72,7 +73,7 @@ bool TracingReplayEvaluator::validateResponses(const std::vector<ResponseNode> &
 
                 auto currentHash = hashCache.getHash(path);
                 if (currentHash.to_string(HashFormat::SRI, true) != expectedHash) {
-                    debug("replay invalidated: file %s changed", path);
+                    tracingCacheLog("replay invalidated: file %s changed", path);
                     return false;
                 }
             } else if (reqJson.contains("name") && respJson.contains("value")) {
@@ -84,12 +85,12 @@ bool TracingReplayEvaluator::validateResponses(const std::vector<ResponseNode> &
                     expectedVal = respJson["value"];
 
                 if (currentVal != expectedVal) {
-                    debug("replay invalidated: env %s changed", name);
+                    tracingCacheLog("replay invalidated: env %s changed", name);
                     return false;
                 }
             }
         } catch (const nlohmann::json::exception & e) {
-            debug("replay: failed to parse dependency: %s", e.what());
+            tracingCacheLog("replay: failed to parse dependency: %s", e.what());
             return false;
         }
     }
@@ -137,7 +138,7 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
             continue;
 
         validatedNodes.insert(resultNode->nodeHash);
-        debug("replay hit: %s", Q::tag);
+        tracingCacheLog("replay hit: %s", Q::tag);
         return std::make_pair(
             resultNode->payload,
             TriePosition{
@@ -173,24 +174,24 @@ EvalState & TracingReplayEvaluator::getEvalState()
 ref<Object> TracingReplayEvaluator::evalFile(const SourcePath & path, const std::string & displayPath)
 {
     if (auto result = lookup(trace::QueryImport{displayPath})) {
-        debug("replay hit: evalFile %s", displayPath);
+        tracingCacheLog("replay hit: evalFile %s", displayPath);
         return make_ref<TracingReplayObject>(
             *this, result->second, [this, path, displayPath]() { return inner->evalFile(path, displayPath); });
     }
 
-    debug("replay miss: evalFile %s", displayPath);
+    tracingCacheLog("replay miss: evalFile %s", displayPath);
     return inner->evalFile(path, displayPath);
 }
 
 ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const SourcePath & basePath)
 {
     if (auto result = lookup(trace::QueryExpr{expr, basePath.path.abs()})) {
-        debug("replay hit: evalExpr");
+        tracingCacheLog("replay hit: evalExpr");
         return make_ref<TracingReplayObject>(
             *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); });
     }
 
-    debug("replay miss: evalExpr");
+    tracingCacheLog("replay miss: evalExpr");
     return inner->evalExpr(expr, basePath);
 }
 
