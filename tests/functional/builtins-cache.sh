@@ -107,9 +107,12 @@ echo '{ x, y ? 13 }: x + y' > "$TEST_ROOT/fn.nix"
 # A cached function should report its formals via functionArgs
 [[ $(nix eval --impure --expr 'builtins.functionArgs (builtins.cache { import = '"$TEST_ROOT"'/fn.nix; })') == '{ x = false; y = true; }' ]]
 
-# Calling the cached function is not yet supported
-expectStderr 1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/fn.nix; }) { x = 1; }' \
-    | grepQuiet "cached function calls not yet implemented"
+# Calling a cached function
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/fn.nix; }) { x = 1; }') == 14 ]]
+
+# Simple lambda
+echo 'x: x + 1' > "$TEST_ROOT/simple-fn.nix"
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/simple-fn.nix; }) 5') == 6 ]]
 
 # --- Inner file reads visible to outer tracing ---
 # When the outer evaluator has tracing enabled, file reads inside
