@@ -389,6 +389,16 @@ struct ResultFunctionInfo
 
 DECLARE_QUERY_RESULT(QueryGetFunctionInfo, ResultFunctionInfo)
 
+/** Apply a function to an argument. */
+struct QueryApply
+{
+    static constexpr std::string_view tag = "apply";
+    std::string fn;  ///< Function's queryHash identity
+    std::string arg; ///< Argument's queryHash identity
+    auto operator<=>(const QueryApply &) const = default;
+};
+DECLARE_QUERY_RESULT(QueryApply, ResultType)
+
 // ---------------------------------------------------------------------------
 // CompletedQuery: a query correlated with its result
 // ---------------------------------------------------------------------------
@@ -442,7 +452,8 @@ using Queries = ApplyWrapper<
     QueryGetListSize,
     QueryGetListElem,
     QueryGetPath,
-    QueryGetFunctionInfo>;
+    QueryGetFunctionInfo,
+    QueryApply>;
 
 /**
  * All result payload types.
@@ -481,7 +492,8 @@ using QueryVariant = std::variant<
     QueryGetListSize,
     QueryGetListElem,
     QueryGetPath,
-    QueryGetFunctionInfo>;
+    QueryGetFunctionInfo,
+    QueryApply>;
 
 using ResultVariant = std::variant<
     ResultType,
