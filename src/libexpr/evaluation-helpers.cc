@@ -185,11 +185,14 @@ ref<Object> autoApply(Evaluator & evaluator, ref<Object> obj, const std::map<std
         }
     }
 
-    // Not a function, or function without formals - return as-is
-    auto funcInfo = obj->getFunctionInfo();
-    if (type != nFunction || !funcInfo) {
+    // Not a function - return as-is
+    if (type != nFunction)
         return obj;
-    }
+
+    // Function without formals - return as-is
+    auto funcInfo = obj->getFunctionInfo();
+    if (!funcInfo)
+        return obj;
 
     std::map<std::string, ref<Object>> callArgs;
 
