@@ -149,6 +149,20 @@ echo '{ x }: x * import ./addend.nix' > "$TEST_ROOT/fn-dep.nix"
 echo 'x: y: x + y' > "$TEST_ROOT/curried.nix"
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/curried.nix; }) 10 20') == 30 ]]
 
+# --- Laziness: cached function results must not be eagerly evaluated ---
+
+echo '{ ... }: { a = throw "nope"; b = 42; }' > "$TEST_ROOT/lazy-fn.nix"
+
+# typeOf should see "set" without forcing attributes
+[[ $(nix eval --impure --expr 'builtins.typeOf ((builtins.cache { import = '"$TEST_ROOT"'/lazy-fn.nix; }) { })') == '"set"' ]]
+
+# Accessing a non-throwing attribute should work
+[[ $(nix eval --impure --expr '((builtins.cache { import = '"$TEST_ROOT"'/lazy-fn.nix; }) { }).b') == 42 ]]
+
+# The throwing attribute should only fail when accessed
+expectStderr 1 nix eval --impure --expr '((builtins.cache { import = '"$TEST_ROOT"'/lazy-fn.nix; }) { }).a' \
+    | grepQuiet "nope"
+
 # --- Nested builtins.cache with function calls ---
 
 clearCache
