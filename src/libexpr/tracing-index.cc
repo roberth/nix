@@ -56,7 +56,7 @@ CREATE INDEX IF NOT EXISTS ShortcutsQueryHash ON Shortcuts(queryHash);
 
 -- Indexes for forward traversal (temporal trie)
 CREATE INDEX IF NOT EXISTS QueriesAfter ON Queries(afterHash);
-CREATE INDEX IF NOT EXISTS ResponsesAfter ON Responses(afterHash);
+CREATE INDEX IF NOT EXISTS ResponsesAfter ON Responses(afterHash, request);
 CREATE INDEX IF NOT EXISTS ResultsAfter ON Results(afterHash);
 
 -- Index for structural lookup
@@ -79,6 +79,10 @@ struct TracingIndex::State
     SQLiteStmt getResponse;
     SQLiteStmt getResult;
     SQLiteStmt getQueryPayload;
+
+    // Single-row child lookups
+    SQLiteStmt getChildResult;
+    SQLiteStmt getChildRequests;
 
     // Select statements (0..many)
     SQLiteStmt selectShortcuts;
@@ -142,6 +146,12 @@ TracingIndex::TracingIndex(const std::filesystem::path & dbPath)
     state->getResult.create(state->db, "SELECT nodeHash, afterHash, payload FROM Results WHERE nodeHash = ?");
 
     state->getQueryPayload.create(state->db, "SELECT payload FROM QueryPayloads WHERE queryHash = ?");
+
+    // Prepare single-row child lookups
+    state->getChildResult.create(
+        state->db, "SELECT nodeHash, afterHash, payload FROM Results WHERE afterHash = ? LIMIT 1");
+    state->getChildRequests.create(
+        state->db, "SELECT DISTINCT request FROM Responses WHERE afterHash = ?");
 
     // Prepare select statements (0..many)
     state->selectShortcuts.create(
@@ -409,6 +419,34 @@ std::vector<ResultNode> TracingIndex::selectChildResults(const NodeHash & afterH
                 .payload = query.getStr(2),
             });
     }
+
+    return result;
+}
+
+std::optional<ResultNode> TracingIndex::getChildResult(const NodeHash & afterHash)
+{
+    auto state(_state->lock());
+    auto query = state->getChildResult.use()(hashToBlob(afterHash));
+
+    if (!query.next())
+        return std::nullopt;
+
+    return ResultNode{
+        .nodeHash = blobToHash(query.getStr(0)),
+        .afterHash = blobToHash(query.getStr(1)),
+        .payload = query.getStr(2),
+    };
+}
+
+std::vector<std::string> TracingIndex::getChildRequests(const NodeHash & afterHash)
+{
+    std::vector<std::string> result;
+
+    auto state(_state->lock());
+    auto query = state->getChildRequests.use()(hashToBlob(afterHash));
+
+    while (query.next())
+        result.push_back(query.getStr(0));
 
     return result;
 }

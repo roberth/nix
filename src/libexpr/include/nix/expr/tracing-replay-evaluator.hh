@@ -72,6 +72,13 @@ public:
     bool validateResponses(const std::vector<ResponseNode> & responses);
 
     /**
+     * Compute the current response for a recorded request.
+     * Reads current file hash or env var through validationEnv,
+     * serializes to CBOR. Returns nullopt on parse failure.
+     */
+    std::optional<std::string> getCurrentResponse(const std::string & requestCbor);
+
+    /**
      * Like validateResponses, but tolerates duplicate responses for the
      * same request (from multiple recordings sharing a trie prefix).
      * For each unique request, at least one response must validate.

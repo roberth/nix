@@ -217,15 +217,32 @@ public:
 
     /**
      * Select candidate child queries of a result node.
-     * Returns queries that followed this result in past traces.
+     * Returns queries that followed this result in past traces
+     * (multiple possible worlds).
      */
     std::vector<QueryNode> selectChildQueries(const NodeHash & resultNodeHash);
 
     /**
      * Select candidate child responses of a query or response node.
-     * Returns responses that followed this node in past traces.
+     * Returns responses that followed this node in past traces
+     * (multiple possible worlds — same request, different response content).
      */
     std::vector<ResponseNode> selectChildResponses(const NodeHash & afterHash);
+
+    /**
+     * Get the unique request blobs from child responses of a node.
+     * Temporally there's one request per recording; across possible worlds
+     * the request is typically the same (deterministic file access order).
+     * Returns 0 (no responses) or 1+ distinct request blobs.
+     */
+    std::vector<std::string> getChildRequests(const NodeHash & afterHash);
+
+    /**
+     * Get the child result of a node (0..1).
+     * Temporally singular; across possible worlds, identical response
+     * chains produce identical results (deterministic evaluation).
+     */
+    std::optional<ResultNode> getChildResult(const NodeHash & afterHash);
 
     /**
      * Select candidate child results of a response or query node.

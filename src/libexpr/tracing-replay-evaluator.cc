@@ -92,6 +92,28 @@ bool TracingReplayEvaluator::validateResponsesAnyMatch(const std::vector<Respons
     return true;
 }
 
+std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std::string & requestCbor)
+{
+    try {
+        auto reqJson = cborStringToJson(requestCbor);
+
+        if (reqJson.contains("absPath")) {
+            std::string path = reqJson["absPath"];
+            auto currentHash = validationEnv.getFileHash(path);
+            nlohmann::json respJson = trace::FileReadResponse{currentHash};
+            return jsonToCborString(respJson);
+        } else if (reqJson.contains("name")) {
+            std::string name = reqJson["name"];
+            auto currentVal = validationEnv.getEnv(name);
+            nlohmann::json respJson = trace::GetEnvResponse{currentVal};
+            return jsonToCborString(respJson);
+        }
+    } catch (const std::exception & e) {
+        tracingCacheLog("replay: failed to get current response: %s", e.what());
+    }
+    return std::nullopt;
+}
+
 bool TracingReplayEvaluator::validateResponses(const std::vector<ResponseNode> & responses)
 {
     for (const auto & resp : responses) {
@@ -149,28 +171,31 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
             continue;
 
         // Walk forward: Query → Response* → Result
-        // At each step, try all child responses — different recordings
-        // may have branched from the same parent node.
+        // At each step, compute the current response and look up directly.
         std::optional<ResultNode> resultNode;
         NodeHash current = shortcut.nodeHash;
         bool validPath = true;
 
         while (true) {
-            auto results = tracingIndex.selectChildResults(current);
-            if (!results.empty()) {
-                resultNode = results[0];
+            if (auto result = tracingIndex.getChildResult(current)) {
+                resultNode = result;
                 break;
             }
 
-            auto responses = tracingIndex.selectChildResponses(current);
-            if (responses.empty())
+            auto requests = tracingIndex.getChildRequests(current);
+            if (requests.empty())
                 break;
 
-            // Try each sibling response until one validates
             bool foundValid = false;
-            for (auto & resp : responses) {
-                if (validatedNodes.count(resp.nodeHash) || validateResponses({resp})) {
-                    current = resp.nodeHash;
+            for (auto & request : requests) {
+                auto currentResponse = getCurrentResponse(request);
+                if (!currentResponse)
+                    continue;
+
+                auto nodeHash = TracingIndex::computeResponseNodeHash(current, request, *currentResponse);
+                if (tracingIndex.getResponse(nodeHash)) {
+                    markValidated(nodeHash);
+                    current = nodeHash;
                     foundValid = true;
                     break;
                 }
