@@ -219,20 +219,20 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto fnId = getId(*fn);
     auto argId = getId(*arg);
 
-    if (fnId && argId) {
-        tracingCacheLog("tracing: apply");
-        auto [v, qh] = writer.logRootQuery(trace::QueryApply{*fnId, *argId});
-        auto result = inner->apply(fn, arg);
-        auto type = result->getType();
-        auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
-        return TracingObject::create(result, writer, v, triePos);
-    }
+    // Assign virtual root identities to objects without trie identity.
+    // These are values created by the Nix evaluator directly (e.g. `{}`
+    // literals) that never passed through the Evaluator interface.
+    if (!fnId)
+        fnId = "virtual:" + std::to_string(writer.getSink().allocValue());
+    if (!argId)
+        argId = "virtual:" + std::to_string(writer.getSink().allocValue());
 
-    // Can't trace: one or both objects lack trie identity
-    tracingCacheLog("tracing: apply (untraced, missing identity)");
+    tracingCacheLog("tracing: apply");
+    auto [v, qh] = writer.logRootQuery(trace::QueryApply{*fnId, *argId});
     auto result = inner->apply(fn, arg);
-    auto v = writer.getSink().allocValue();
-    return TracingObject::create(result, writer, v);
+    auto type = result->getTypeLazy();
+    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
+    return TracingObject::create(result, writer, v, triePos);
 }
 
 } // namespace nix
