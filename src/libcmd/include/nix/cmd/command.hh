@@ -126,13 +126,15 @@ struct EvalCommand : virtual StoreCommand, MixEvalArgs
 private:
     std::shared_ptr<Store> evalStore;
 
-    std::shared_ptr<EvalState> evalState;
-
+    // Destruction order: evalState must be destroyed before tracingWriter,
+    // because evalState owns TracingEnvironment which references tracingWriter.
+    // C++ destroys members in reverse declaration order.
     std::unique_ptr<TracingDatabase> tracingDb;
     std::unique_ptr<TraceFile> traceFile;
     std::unique_ptr<TracingIndex> tracingIndex;
     std::unique_ptr<TracingWriter> tracingWriter;
     std::shared_ptr<Evaluator> evaluatorCompat;
+    std::shared_ptr<EvalState> evalState;
 };
 
 /**

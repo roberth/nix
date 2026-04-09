@@ -10,6 +10,7 @@
 #include "nix/expr/interpreter.hh"
 #include "nix/expr/interpreter-object.hh"
 #include "nix/expr/tracing-index.hh"
+#include "nix/expr/tracing-source-accessor.hh"
 #include "nix/expr/primops.hh"
 #include "nix/expr/print-options.hh"
 #include "nix/expr/symbol-table.hh"
@@ -4353,7 +4354,18 @@ Expr * EvalState::parseExprFromFile(const RootedPath & path, const std::shared_p
     auto buffer = path.sourcePath().resolveSymlinks().readFile();
     // readFile hopefully have left some extra space for terminators
     buffer.append("\0\0", 2);
-    return parse(buffer.data(), buffer.size(), Pos::Origin(path), path.parent(), staticEnv);
+    /* lazy-paths: Pos::Origin takes a RootedPath. Use the
+       non-tracing accessor for error display so it doesn't depend
+       on the TracingSourceAccessor's lifetime. Swap the root for one
+       backed by the inner display accessor (same kind/id), so the
+       resulting RootedPath has the same identity but reads through
+       the non-tracing accessor. */
+    auto posPath = path;
+    if (auto * ta = dynamic_cast<TracingSourceAccessor *>(&*path.root->accessor)) {
+        auto displayRoot = getOrCreateRoot(ta->getDisplayAccessor(), path.root->kind, path.root->unpinnedId);
+        posPath = RootedPath{displayRoot, path.path};
+    }
+    return parse(buffer.data(), buffer.size(), Pos::Origin(posPath), path.parent(), staticEnv);
 }
 
 Expr * EvalState::parseExprFromString(
