@@ -110,11 +110,10 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
         auto names = obj->getAttrNames();
         auto attrs = state.buildBindings(names.size());
         for (const auto & name : names) {
-            auto childObj = obj->maybeGetAttr(name);
-            if (childObj) {
-                auto childExpr = new ExprFromObject(std::move(childObj), innerEvaluator);
-                attrs.insert(state.symbols.create(name), childExpr->maybeThunk(state, env));
-            }
+            auto * thunk = state.allocValue();
+            auto * expr = new ExprFromObjectAttr(obj, name, innerEvaluator);
+            state.mkThunk_(*thunk, expr);
+            attrs.insert(state.symbols.create(name), thunk);
         }
         v.mkAttrs(attrs);
         break;
@@ -213,6 +212,14 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
         state.error<TypeError>("ExprFromObject: cannot represent type %s", showType(type)).debugThrow();
         break;
     }
+}
+
+void ExprFromObjectAttr::eval(EvalState & state, Env & env, Value & v)
+{
+    auto childObj = parentObj->maybeGetAttr(name);
+    if (!childObj)
+        state.error<TypeError>("ExprFromObjectAttr: attribute '%s' missing", name).debugThrow();
+    ExprFromObject(std::move(childObj), innerEvaluator).eval(state, env, v);
 }
 
 } // namespace nix

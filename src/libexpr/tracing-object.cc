@@ -55,8 +55,9 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     auto [valueId, qh] = writer.logQuery(trace::QueryGetAttr{name, parentHash}, triePos);
     auto result = inner->maybeGetAttr(name);
     if (result) {
-        auto type = result->getType();
-        auto childTriePos = writer.logResult(valueId, trace::ResultMaybeType{objectTypeToString(type)}, qh);
+        // Don't call getType() here — that would force thunks and break laziness.
+        // The type is discovered later via a separate getType query on the child.
+        auto childTriePos = writer.logResult(valueId, trace::ResultMaybeType{std::string("deferred")}, qh);
         return std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
     }
     writer.logResult(valueId, trace::ResultMaybeType{std::nullopt}, qh);

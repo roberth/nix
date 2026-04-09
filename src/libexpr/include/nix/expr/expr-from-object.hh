@@ -62,4 +62,24 @@ struct ExprFromObject : ExprProxy
     void eval(EvalState & state, Env & env, Value & v) override;
 };
 
+/**
+ * Lazy attribute thunk: defers maybeGetAttr until forced.
+ */
+struct ExprFromObjectAttr : ExprProxy
+{
+    std::shared_ptr<Object> parentObj;
+    std::string name;
+    std::shared_ptr<Evaluator> innerEvaluator;
+
+    ExprFromObjectAttr(
+        std::shared_ptr<Object> parentObj, std::string name, std::shared_ptr<Evaluator> innerEvaluator)
+        : parentObj(std::move(parentObj))
+        , name(std::move(name))
+        , innerEvaluator(std::move(innerEvaluator))
+    {
+    }
+
+    void eval(EvalState & state, Env & env, Value & v) override;
+};
+
 } // namespace nix
