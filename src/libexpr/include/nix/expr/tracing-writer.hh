@@ -36,11 +36,15 @@ namespace nix {
 /**
  * Tracks trie position for a single value being traced.
  * Each TracingObject holds one of these to record its operations.
+ *
+ * Note: the temporal cursor (afterHash) is NOT stored here.
+ * During recording, TracingWriter owns it. During replay,
+ * TracingReplayEvaluator owns it. TriePosition only holds the
+ * structural identity of a value in the trie.
  */
 struct TriePosition
 {
     NodeHash resultNodeHash;  // The Result node for this value (structural parent)
-    NodeHash afterHash;       // Current temporal position (last node written)
     std::string queryHashStr; // The queryHash of the query that produced this result,
                               // as a hex string. Used by child queries to compute
                               // their queryHash (Merkle identity: child includes parent hash).
@@ -142,7 +146,6 @@ public:
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,
-            .afterHash = resultNodeHash,
             .queryHashStr = queryHash->to_string(HashFormat::Base16, false),
         };
     }
