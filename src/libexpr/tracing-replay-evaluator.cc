@@ -29,7 +29,10 @@ bool TracingReplayEvaluator::validateDependencies(const NodeHash & queryNodeHash
         return true;
 
     auto responses = tracingIndex.selectDependencies(queryNodeHash);
-    if (!validateResponses(responses))
+    // Multiple recordings may share the same query node prefix,
+    // producing responses from different sessions. Group by request
+    // and validate: at least one response per unique request must match.
+    if (!validateResponsesAnyMatch(responses))
         return false;
 
     validatedNodes.insert(queryNodeHash);
@@ -59,6 +62,36 @@ void TracingReplayEvaluator::markValidated(const NodeHash & nodeHash)
 bool TracingReplayEvaluator::isValidated(const NodeHash & nodeHash) const
 {
     return validatedNodes.count(nodeHash) > 0;
+}
+
+bool TracingReplayEvaluator::validateResponsesAnyMatch(const std::vector<ResponseNode> & responses)
+{
+    // Group responses by request. Multiple recordings from the same
+    // trie prefix produce duplicate responses for the same file/env.
+    // For each unique request, at least one response must validate.
+    std::map<std::string, bool> requestValidated; // request blob → has any match
+
+    for (const auto & resp : responses) {
+        if (validatedNodes.count(resp.nodeHash))
+            continue;
+
+        auto it = requestValidated.find(resp.request);
+        if (it != requestValidated.end() && it->second)
+            continue; // already have a valid response for this request
+
+        if (validateResponses({resp})) {
+            requestValidated[resp.request] = true;
+        } else {
+            if (requestValidated.find(resp.request) == requestValidated.end())
+                requestValidated[resp.request] = false;
+        }
+    }
+
+    for (auto & [req, valid] : requestValidated) {
+        if (!valid)
+            return false;
+    }
+    return true;
 }
 
 bool TracingReplayEvaluator::validateResponses(const std::vector<ResponseNode> & responses)
@@ -118,9 +151,11 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
             continue;
 
         // Walk forward: Query → Response* → Result
-        std::vector<ResponseNode> responsesOnPath;
+        // At each step, try all child responses — different recordings
+        // may have branched from the same parent node.
         std::optional<ResultNode> resultNode;
         NodeHash current = shortcut.nodeHash;
+        bool validPath = true;
 
         while (true) {
             auto results = tracingIndex.selectChildResults(current);
@@ -133,14 +168,22 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
             if (responses.empty())
                 break;
 
-            responsesOnPath.push_back(responses[0]);
-            current = responses[0].nodeHash;
+            // Try each sibling response until one validates
+            bool foundValid = false;
+            for (auto & resp : responses) {
+                if (validatedNodes.count(resp.nodeHash) || validateResponses({resp})) {
+                    current = resp.nodeHash;
+                    foundValid = true;
+                    break;
+                }
+            }
+            if (!foundValid) {
+                validPath = false;
+                break;
+            }
         }
 
-        if (!resultNode)
-            continue;
-
-        if (!validateResponses(responsesOnPath))
+        if (!resultNode || !validPath)
             continue;
 
         validatedNodes.insert(resultNode->nodeHash);

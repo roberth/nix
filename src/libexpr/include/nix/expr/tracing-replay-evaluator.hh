@@ -65,6 +65,13 @@ public:
     bool validateResponses(const std::vector<ResponseNode> & responses);
 
     /**
+     * Like validateResponses, but tolerates duplicate responses for the
+     * same request (from multiple recordings sharing a trie prefix).
+     * For each unique request, at least one response must validate.
+     */
+    bool validateResponsesAnyMatch(const std::vector<ResponseNode> & responses);
+
+    /**
      * Validate dependencies from root to queryNodeHash (full validation).
      * Used for shortcut lookups (strategy 3).
      */

@@ -84,25 +84,30 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
     // Walk forward from a query node through Response* to a Result node,
     // validating any responses encountered on the path.
     auto findAndValidateResult = [&](const QueryNode & child) -> std::optional<ResultNode> {
-        std::vector<ResponseNode> responsesOnPath;
         NodeHash current = child.nodeHash;
 
         while (true) {
             auto results = tracingIndex.selectChildResults(current);
-            if (!results.empty()) {
-                if (!evaluator.validateResponses(responsesOnPath)) {
-                    tracingCacheLog("replay: post-query validation failed for %s", Q::tag);
-                    return std::nullopt;
-                }
+            if (!results.empty())
                 return results[0];
-            }
 
             auto responses = tracingIndex.selectChildResponses(current);
             if (responses.empty())
                 break;
 
-            responsesOnPath.push_back(responses[0]);
-            current = responses[0].nodeHash;
+            // Try each sibling response until one validates
+            bool foundValid = false;
+            for (auto & resp : responses) {
+                if (evaluator.isValidated(resp.nodeHash) || evaluator.validateResponses({resp})) {
+                    current = resp.nodeHash;
+                    foundValid = true;
+                    break;
+                }
+            }
+            if (!foundValid) {
+                tracingCacheLog("replay: post-query validation failed for %s", Q::tag);
+                return std::nullopt;
+            }
         }
 
         tracingCacheLog("replay: no result found for %s", Q::tag);
@@ -204,25 +209,30 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
     auto queryHash = TracingIndex::computeQueryHash(query);
 
     auto findAndValidateResult = [&](const QueryNode & child) -> std::optional<ResultNode> {
-        std::vector<ResponseNode> responsesOnPath;
         NodeHash current = child.nodeHash;
 
         while (true) {
             auto results = tracingIndex.selectChildResults(current);
-            if (!results.empty()) {
-                if (!evaluator.validateResponses(responsesOnPath)) {
-                    tracingCacheLog("replay: post-query validation failed for %s", Q::tag);
-                    return std::nullopt;
-                }
+            if (!results.empty())
                 return results[0];
-            }
 
             auto responses = tracingIndex.selectChildResponses(current);
             if (responses.empty())
                 break;
 
-            responsesOnPath.push_back(responses[0]);
-            current = responses[0].nodeHash;
+            // Try each sibling response until one validates
+            bool foundValid = false;
+            for (auto & resp : responses) {
+                if (evaluator.isValidated(resp.nodeHash) || evaluator.validateResponses({resp})) {
+                    current = resp.nodeHash;
+                    foundValid = true;
+                    break;
+                }
+            }
+            if (!foundValid) {
+                tracingCacheLog("replay: post-query validation failed for %s", Q::tag);
+                return std::nullopt;
+            }
         }
 
         tracingCacheLog("replay: no result found for %s", Q::tag);
