@@ -163,6 +163,16 @@ echo '{ ... }: { a = throw "nope"; b = 42; }' > "$TEST_ROOT/lazy-fn.nix"
 expectStderr 1 nix eval --impure --expr '((builtins.cache { import = '"$TEST_ROOT"'/lazy-fn.nix; }) { }).a' \
     | grepQuiet "nope"
 
+# --- Covariant callbacks: outer functions called by inner ---
+# When the cached function receives an argument containing a function
+# (e.g. an overlay), calling that function is a covariant callback —
+# the inner evaluator calls back into the outer evaluator.
+
+echo '{ f, x }: f x' > "$TEST_ROOT/call-fn.nix"
+
+# Outer function applied inside cached function
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 10; }') == 11 ]]
+
 # --- Nested builtins.cache with function calls ---
 
 clearCache
