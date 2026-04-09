@@ -12,13 +12,9 @@
 namespace nix {
 
 TracingReplayEvaluator::TracingReplayEvaluator(
-    ref<Evaluator> inner,
-    TracingIndex & tracingIndex,
-    Environment & validationEnv,
-    std::filesystem::path hashCacheDbPath)
+    ref<Evaluator> inner, TracingIndex & tracingIndex, Environment & validationEnv)
     : inner(inner)
     , tracingIndex(tracingIndex)
-    , hashCache(std::move(hashCacheDbPath))
     , validationEnv(validationEnv)
 {
 }
@@ -107,7 +103,7 @@ bool TracingReplayEvaluator::validateResponses(const std::vector<ResponseNode> &
 
             if (reqJson.contains("absPath")) {
                 std::string path = reqJson["absPath"];
-                auto currentHash = hashCache.getHash(path);
+                auto currentHash = validationEnv.getFileHash(path);
 
                 // Re-serialize the current response to CBOR and compare bytes
                 nlohmann::json currentRespJson = trace::FileReadResponse{currentHash};

@@ -6,6 +6,7 @@
 
 #include <optional>
 #include <string>
+#include "nix/util/hash.hh"
 #include "nix/util/ref.hh"
 
 namespace nix {
@@ -40,6 +41,19 @@ public:
      * @return Optional value (nullopt if not set)
      */
     virtual std::optional<std::string> getEnv(const std::string & name) = 0;
+
+    /**
+     * Get the SHA-256 content hash of a file.
+     *
+     * Reads through the environment's accessor chain so that tracing
+     * layers can observe the access. Default implementation reads
+     * via fsRoot() and hashes the contents.
+     *
+     * TODO: currently assumes absolute paths on the root filesystem.
+     * Non-`/` source accessors (e.g. flake inputs) will need a
+     * SourcePath-based variant.
+     */
+    virtual Hash getFileHash(const std::string & path);
 
     /**
      * Get the trace sink, if tracing is enabled.

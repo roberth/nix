@@ -5,6 +5,7 @@
  */
 
 #include "nix/expr/environment.hh"
+#include "nix/expr/file-hash-cache.hh"
 #include "nix/util/mounted-source-accessor.hh"
 #include "nix/util/ref.hh"
 
@@ -54,6 +55,11 @@ public:
     ref<SourceAccessor> rootFSAccessor;
 
     /**
+     * Mtime-based file content hash cache for fast validation.
+     */
+    FileHashCache fileHashCache;
+
+    /**
      * Create a system environment based on evaluation settings and store.
      * @param settings Evaluation settings
      * @param store Reference to the Nix store
@@ -62,6 +68,7 @@ public:
     SystemEnvironment(const EvalSettings & settings, ref<Store> store, std::shared_ptr<Store> buildStore = nullptr);
 
     ref<SourceAccessor> fsRoot() override;
+    Hash getFileHash(const std::string & path) override;
     std::optional<std::string> getEnv(const std::string & name) override;
 };
 
