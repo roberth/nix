@@ -126,23 +126,26 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
 
     std::set<NodeHash> triedNodes;
 
-    // Strategy 1: Trie following — temporal children
-    auto temporalChildren = tracingIndex.selectChildQueries(triePos.resultNodeHash);
-    for (const auto & child : temporalChildren) {
-        if (child.queryHash != queryHash)
-            continue;
-        triedNodes.insert(child.nodeHash);
+    // Strategy 1: Trie following — temporal children of the evaluator's cursor
+    if (auto cursor = evaluator.getTemporalCursor()) {
+        auto temporalChildren = tracingIndex.selectChildQueries(*cursor);
+        for (const auto & child : temporalChildren) {
+            if (child.queryHash != queryHash)
+                continue;
+            triedNodes.insert(child.nodeHash);
 
-        if (!evaluator.validateToValidatedNode(child.nodeHash)) {
-            tracingCacheLog("replay: trie validation failed for %s", Q::tag);
-            continue;
-        }
+            if (!evaluator.validateToValidatedNode(child.nodeHash)) {
+                tracingCacheLog("replay: trie validation failed for %s", Q::tag);
+                continue;
+            }
 
-        if (auto resultNode = findAndValidateResult(child)) {
-            if (auto result = parseResult(*resultNode)) {
-                evaluator.markValidated(resultNode->nodeHash);
-                tracingCacheLog("replay hit (trie): %s", Q::tag);
-                return result;
+            if (auto resultNode = findAndValidateResult(child)) {
+                if (auto result = parseResult(*resultNode)) {
+                    evaluator.markValidated(resultNode->nodeHash);
+                    evaluator.setTemporalCursor(resultNode->nodeHash);
+                    tracingCacheLog("replay hit (trie): %s", Q::tag);
+                    return result;
+                }
             }
         }
     }
@@ -162,6 +165,7 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
         if (auto resultNode = findAndValidateResult(child)) {
             if (auto result = parseResult(*resultNode)) {
                 evaluator.markValidated(resultNode->nodeHash);
+                evaluator.setTemporalCursor(resultNode->nodeHash);
                 tracingCacheLog("replay hit (structural): %s", Q::tag);
                 return result;
             }
@@ -187,6 +191,7 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
         if (auto resultNode = findAndValidateResult(*queryNode)) {
             if (auto result = parseResult(*resultNode)) {
                 evaluator.markValidated(resultNode->nodeHash);
+                evaluator.setTemporalCursor(resultNode->nodeHash);
                 tracingCacheLog("replay hit (shortcut): %s", Q::tag);
                 return result;
             }
@@ -245,7 +250,6 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
             R result = j.template get<R>();
             auto childPos = TriePosition{
                 .resultNodeHash = resultNode.nodeHash,
-                .afterHash = resultNode.nodeHash,
                 .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
             };
             return std::make_pair(result, childPos);
@@ -257,23 +261,26 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 
     std::set<NodeHash> triedNodes;
 
-    // Strategy 1: Trie following — temporal children
-    auto temporalChildren = tracingIndex.selectChildQueries(triePos.resultNodeHash);
-    for (const auto & child : temporalChildren) {
-        if (child.queryHash != queryHash)
-            continue;
-        triedNodes.insert(child.nodeHash);
+    // Strategy 1: Trie following — temporal children of the evaluator's cursor
+    if (auto cursor = evaluator.getTemporalCursor()) {
+        auto temporalChildren = tracingIndex.selectChildQueries(*cursor);
+        for (const auto & child : temporalChildren) {
+            if (child.queryHash != queryHash)
+                continue;
+            triedNodes.insert(child.nodeHash);
 
-        if (!evaluator.validateToValidatedNode(child.nodeHash)) {
-            tracingCacheLog("replay: trie validation failed for %s", Q::tag);
-            continue;
-        }
+            if (!evaluator.validateToValidatedNode(child.nodeHash)) {
+                tracingCacheLog("replay: trie validation failed for %s", Q::tag);
+                continue;
+            }
 
-        if (auto resultNode = findAndValidateResult(child)) {
-            if (auto result = parseResultWithPos(*resultNode)) {
-                evaluator.markValidated(resultNode->nodeHash);
-                tracingCacheLog("replay hit (trie): %s", Q::tag);
-                return result;
+            if (auto resultNode = findAndValidateResult(child)) {
+                if (auto result = parseResultWithPos(*resultNode)) {
+                    evaluator.markValidated(resultNode->nodeHash);
+                    evaluator.setTemporalCursor(resultNode->nodeHash);
+                    tracingCacheLog("replay hit (trie): %s", Q::tag);
+                    return result;
+                }
             }
         }
     }
@@ -293,6 +300,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
         if (auto resultNode = findAndValidateResult(child)) {
             if (auto result = parseResultWithPos(*resultNode)) {
                 evaluator.markValidated(resultNode->nodeHash);
+                evaluator.setTemporalCursor(resultNode->nodeHash);
                 tracingCacheLog("replay hit (structural): %s", Q::tag);
                 return result;
             }
@@ -318,6 +326,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
         if (auto resultNode = findAndValidateResult(*queryNode)) {
             if (auto result = parseResultWithPos(*resultNode)) {
                 evaluator.markValidated(resultNode->nodeHash);
+                evaluator.setTemporalCursor(resultNode->nodeHash);
                 tracingCacheLog("replay hit (shortcut): %s", Q::tag);
                 return result;
             }

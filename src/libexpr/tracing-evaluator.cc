@@ -178,7 +178,7 @@ ref<Object> TracingEvaluator::mkString(const std::string & s)
     // Deterministic identity from content — no trie entry needed.
     auto hash = hashString(HashAlgorithm::SHA256, "mkString:" + s);
     auto hashStr = hash.to_string(HashFormat::Base16, false);
-    auto triePos = TriePosition{.resultNodeHash = hash, .afterHash = hash, .queryHashStr = hashStr};
+    auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
     return TracingObject::create(result, writer, v, triePos);
 }
@@ -200,7 +200,7 @@ ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> &
     }
     auto hash = hashString(HashAlgorithm::SHA256, content);
     auto hashStr = hash.to_string(HashFormat::Base16, false);
-    auto triePos = TriePosition{.resultNodeHash = hash, .afterHash = hash, .queryHashStr = hashStr};
+    auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
     auto v = writer.getSink().allocValue();
     return TracingObject::create(result, writer, v, triePos);
 }

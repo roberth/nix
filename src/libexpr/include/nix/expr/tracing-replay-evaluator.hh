@@ -42,6 +42,13 @@ class TracingReplayEvaluator : public Evaluator
     std::set<NodeHash> validatedNodes;
 
     /**
+     * Temporal cursor — mirrors TracingWriter::afterHash on the recording side.
+     * Advances as replay lookups succeed, enabling temporal (trie-following)
+     * strategy for subsequent queries on the same or different objects.
+     */
+    std::optional<NodeHash> temporalCursor;
+
+    /**
      * Try to find a cached result using the tracing index.
      * Returns nullopt on miss, or (resultPayload, triePosition) on hit.
      */
@@ -85,6 +92,9 @@ public:
 
     void markValidated(const NodeHash & nodeHash);
     bool isValidated(const NodeHash & nodeHash) const;
+
+    std::optional<NodeHash> getTemporalCursor() const { return temporalCursor; }
+    void setTemporalCursor(const NodeHash & nodeHash) { temporalCursor = nodeHash; }
 
     TracingIndex & getTracingIndex()
     {

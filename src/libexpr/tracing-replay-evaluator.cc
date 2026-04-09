@@ -185,12 +185,12 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
             continue;
 
         validatedNodes.insert(resultNode->nodeHash);
+        temporalCursor = resultNode->nodeHash;
         tracingCacheLog("replay hit: %s", Q::tag);
         return std::make_pair(
             resultNode->payload,
             TriePosition{
                 .resultNodeHash = resultNode->nodeHash,
-                .afterHash = resultNode->nodeHash,
                 .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
             });
     }
