@@ -71,7 +71,6 @@ protected:
     fetchers::Settings fetchSettings{};
     EvalSettings evalSettings{readOnlyMode};
     std::filesystem::path dbPath;
-    std::filesystem::path hashCacheDbPath;
     std::shared_ptr<SystemEnvironment> defaultEnv;
 
     static void SetUpTestSuite()
@@ -95,15 +94,12 @@ protected:
         auto tmpDir = std::filesystem::temp_directory_path();
         auto suffix = std::to_string(getpid());
         dbPath = tmpDir / ("nix-test-trie-" + suffix + ".sqlite");
-        hashCacheDbPath = tmpDir / ("nix-test-hashcache-" + suffix + ".sqlite");
         std::filesystem::remove(dbPath);
-        std::filesystem::remove(hashCacheDbPath);
     }
 
     void TearDown() override
     {
         std::filesystem::remove(dbPath);
-        std::filesystem::remove(hashCacheDbPath);
     }
 
     ref<EvalState> makeState()
@@ -150,7 +146,7 @@ protected:
     ref<TracingReplayEvaluator> makeReplayEvaluator(TracingIndex & index)
     {
         auto interpreter = make_ref<Interpreter>(makeState());
-        return make_ref<TracingReplayEvaluator>(interpreter, index, *defaultEnv, hashCacheDbPath);
+        return make_ref<TracingReplayEvaluator>(interpreter, index, *defaultEnv);
     }
 
     /**
@@ -160,7 +156,7 @@ protected:
     {
         auto innerState = makeStateWithEnv(env);
         auto interpreter = make_ref<Interpreter>(innerState);
-        return make_ref<TracingReplayEvaluator>(interpreter, index, *env, hashCacheDbPath);
+        return make_ref<TracingReplayEvaluator>(interpreter, index, *env);
     }
 };
 

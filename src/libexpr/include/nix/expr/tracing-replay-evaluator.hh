@@ -1,7 +1,6 @@
 #pragma once
 
 #include "nix/expr/evaluator.hh"
-#include "nix/expr/file-hash-cache.hh"
 #include "nix/expr/tracing-index.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/util/ref.hh"
@@ -26,12 +25,13 @@ class TracingReplayEvaluator : public Evaluator
 {
     ref<Evaluator> inner;
     TracingIndex & tracingIndex;
-    FileHashCache hashCache;
 
     /**
-     * Environment for validating cached env var responses.
-     * Must be the "real" environment (not a tracing wrapper) to avoid
-     * recording spurious trace entries during validation.
+     * Environment for validating cached responses during replay.
+     *
+     * File hash queries and env var lookups flow through this environment,
+     * so that outer tracing layers can observe inner replay validation
+     * reads (input-traced nesting model).
      */
     Environment & validationEnv;
 
@@ -50,14 +50,14 @@ class TracingReplayEvaluator : public Evaluator
 
 public:
     /**
-     * @param validationEnv Environment for env var validation during replay.
-     *        Must be the "real" environment (not a tracing wrapper).
+     * @param validationEnv Environment for validation during replay.
+     *        File hash and env var queries flow through this environment
+     *        so outer tracing layers observe inner reads.
      */
     TracingReplayEvaluator(
         ref<Evaluator> inner,
         TracingIndex & tracingIndex,
-        Environment & validationEnv,
-        std::filesystem::path hashCacheDbPath = {});
+        Environment & validationEnv);
 
     /**
      * Validate a vector of response nodes against current environment.

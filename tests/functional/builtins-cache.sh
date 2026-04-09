@@ -215,6 +215,36 @@ echo '{ f = x: x * 10; base = 0; }' > "$TEST_ROOT/inner-mod.nix"
 # 3 * 10 + 0 = 30
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }) 3') == 30 ]]
 
+# --- Replay validation propagates through Environment chain ---
+# Scenario: outer trie records with inner state P. On re-eval with
+# different outer files, inner replays (validates via file hashes).
+# If validation reads bypass the outer Environment, a subsequent
+# change to inner files won't invalidate the outer.
+
+clearCache
+
+echo "tracing-eval-cache = true" >> "$NIX_CONF_DIR/nix.conf"
+
+echo '{ val = import ./rv-leaf.nix; }' > "$TEST_ROOT/rv-inner.nix"
+echo '13' > "$TEST_ROOT/rv-leaf.nix"
+echo 'builtins.cache { import = '"$TEST_ROOT"'/rv-inner.nix; }' > "$TEST_ROOT/rv-outer.nix"
+
+# Run 1: evaluate outer — records both outer and inner
+[[ $(nix eval --impure -f "$TEST_ROOT/rv-outer.nix" val) == 13 ]]
+
+# Run 2: same — should replay
+[[ $(nix eval --impure -f "$TEST_ROOT/rv-outer.nix" val) == 13 ]]
+
+# Run 3: change the outer file (force outer re-record while inner replays)
+sleep 1
+echo '(builtins.cache { import = '"$TEST_ROOT"'/rv-inner.nix; })' > "$TEST_ROOT/rv-outer.nix"
+[[ $(nix eval --impure -f "$TEST_ROOT/rv-outer.nix" val) == 13 ]]
+
+# Run 4: change the inner leaf — outer must invalidate
+sleep 1
+echo '14' > "$TEST_ROOT/rv-leaf.nix"
+[[ $(nix eval --impure -f "$TEST_ROOT/rv-outer.nix" val) == 14 ]]
+
 # --- Inner file reads visible to outer tracing ---
 # When the outer evaluator has tracing enabled, file reads inside
 # builtins.cache must flow through the outer environment's accessor
@@ -280,3 +310,40 @@ echo '14' > "$TEST_ROOT/leaf.nix"
 # The outer trace must also record the leaf file read.
 nestedOuterTrace=$(readlink -f "$latestSymlink")
 grep -q '"absPath".*leaf\.nix' "$nestedOuterTrace"
+
+# --- Input-traced nesting: inner replay during outer re-record ---
+# The input-traced nesting model requires that inner file reads flow
+# through the outer environment's accessor chain, even when the inner
+# builtins.cache replays from its own trie. Without this, the outer
+# recording misses inner dependencies and serves stale results.
+#
+# Scenario:
+#   Step 1: outer=A, inner state P — both record fresh
+#   Step 2: outer=B, inner state P — outer re-records, inner replays
+#   Step 3: outer=B, inner state Q — outer replays (B unchanged),
+#           but must detect inner state change P→Q
+#
+# The bug: in step 2 the inner replay satisfies file reads from the
+# trie cache, bypassing the outer tracing environment. The outer
+# recording never sees leaf.nix, so step 3 serves the stale value.
+
+clearCache
+
+echo '{ val = import ./itn-leaf.nix; }' > "$TEST_ROOT/itn-inner.nix"
+echo '13' > "$TEST_ROOT/itn-leaf.nix"
+echo 'builtins.cache { import = '"$TEST_ROOT"'/itn-inner.nix; }' > "$TEST_ROOT/itn-outer.nix"
+
+# Step 1: outer=A, inner=P — fresh recording of both layers
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/itn-outer.nix; }).val') == 13 ]]
+
+# Step 2: outer=B, inner=P — outer re-records (file changed), inner replays
+sleep 1
+echo '(builtins.cache { import = '"$TEST_ROOT"'/itn-inner.nix; })' > "$TEST_ROOT/itn-outer.nix"
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/itn-outer.nix; }).val') == 13 ]]
+
+# Step 3: outer=B, inner=Q — outer unchanged, inner leaf changed.
+# The outer trie MUST invalidate because itn-leaf.nix is a transitive
+# dependency that should have been recorded during step 2.
+sleep 1
+echo '14' > "$TEST_ROOT/itn-leaf.nix"
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/itn-outer.nix; }).val') == 14 ]]

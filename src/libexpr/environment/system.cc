@@ -67,6 +67,11 @@ ref<SourceAccessor> SystemEnvironment::fsRoot()
     return rootFSAccessor;
 }
 
+Hash SystemEnvironment::getFileHash(const std::string & path)
+{
+    return fileHashCache.getHash(path);
+}
+
 std::optional<std::string> SystemEnvironment::getEnv(const std::string & name)
 {
     if (settings.restrictEval || settings.pureEval)

@@ -29,6 +29,7 @@ public:
     TracingEnvironment(ref<Environment> inner, TracingWriter & writer);
 
     ref<SourceAccessor> fsRoot() override;
+    Hash getFileHash(const std::string & path) override;
     std::optional<std::string> getEnv(const std::string & name) override;
     TraceSink * getTraceSink() override;
 };

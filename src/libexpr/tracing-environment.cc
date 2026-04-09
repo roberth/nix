@@ -18,6 +18,19 @@ ref<SourceAccessor> TracingEnvironment::fsRoot()
     return tracingAccessor;
 }
 
+Hash TracingEnvironment::getFileHash(const std::string & path)
+{
+    auto hash = inner->getFileHash(path);
+
+    trace::Response<trace::FileReadRequest> resp{
+        .request = {.absPath = path},
+        .response = {.contentHash = hash},
+    };
+    writer.logResponse(resp);
+
+    return hash;
+}
+
 std::optional<std::string> TracingEnvironment::getEnv(const std::string & name)
 {
     auto result = inner->getEnv(name);
