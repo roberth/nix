@@ -30,6 +30,11 @@ SpeculativeReadResult TracingSourceAccessor::readSpeculatively(const CanonPath &
 
 void TracingSourceAccessor::readFile(const CanonPath & path, Sink & destSink, fun<void(uint64_t)> sizeCallback)
 {
+    if (!enabled) {
+        inner->readFile(path, destSink, sizeCallback);
+        return;
+    }
+
     // Read via string to compute content hash
     auto contents = inner->readFile(path);
     auto hash = hashString(HashAlgorithm::SHA256, contents);

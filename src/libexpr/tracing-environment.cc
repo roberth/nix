@@ -7,10 +7,22 @@ namespace nix {
 TracingEnvironment::TracingEnvironment(ref<Environment> inner, TracingWriter & writer)
     : inner(inner)
     , writer(writer)
+    , writerAlive(std::make_shared<bool>(true))
     , tracingAccessor(
           make_ref<TracingSourceAccessor>(
-              inner->fsRoot(), [&](const trace::Response<trace::FileReadRequest> & resp) { writer.logResponse(resp); }))
+              inner->fsRoot(),
+              [alive = this->writerAlive, &writer](const trace::Response<trace::FileReadRequest> & resp) {
+                  if (!*alive)
+                      throw Error("TracingSourceAccessor: logFn called after TracingWriter destroyed");
+                  writer.logResponse(resp);
+              }))
 {
+}
+
+TracingEnvironment::~TracingEnvironment()
+{
+    *writerAlive = false;
+    tracingAccessor->disable();
 }
 
 ref<SourceAccessor> TracingEnvironment::fsRoot()

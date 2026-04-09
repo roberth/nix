@@ -6,6 +6,7 @@
 #include "nix/expr/interpreter.hh"
 #include "nix/expr/interpreter-object.hh"
 #include "nix/expr/tracing-index.hh"
+#include "nix/expr/tracing-source-accessor.hh"
 #include "nix/expr/primops.hh"
 #include "nix/expr/print-options.hh"
 #include "nix/expr/symbol-table.hh"
@@ -3208,7 +3209,12 @@ Expr * EvalState::parseExprFromFile(const SourcePath & path, const std::shared_p
     auto buffer = path.resolveSymlinks().readFile();
     // readFile hopefully have left some extra space for terminators
     buffer.append("\0\0", 2);
-    return parse(buffer.data(), buffer.size(), Pos::Origin(path), path.parent(), staticEnv);
+    // Use the non-tracing accessor for Pos origins so that error display
+    // doesn't depend on the TracingSourceAccessor's lifetime.
+    auto posPath = path;
+    if (auto * ta = dynamic_cast<TracingSourceAccessor *>(&*path.accessor))
+        posPath = SourcePath(ta->getDisplayAccessor(), path.path);
+    return parse(buffer.data(), buffer.size(), Pos::Origin(posPath), path.parent(), staticEnv);
 }
 
 Expr * EvalState::parseExprFromString(

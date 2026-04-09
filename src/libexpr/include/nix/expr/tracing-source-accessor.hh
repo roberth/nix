@@ -38,9 +38,27 @@ class TracingSourceAccessor : public SourceAccessor
 {
     ref<SourceAccessor> inner;
     FileReadLogFn logFn;
+    bool enabled = true;
 
 public:
     TracingSourceAccessor(ref<SourceAccessor> inner, FileReadLogFn logFn);
+
+    /**
+     * Stop emitting trace events. File reads still delegate to inner.
+     */
+    void disable() { enabled = false; }
+
+    /**
+     * Get the underlying non-tracing accessor, unwrapping all
+     * TracingSourceAccessor layers. Use this for Pos origins so
+     * source display doesn't depend on the tracing layer's lifetime.
+     */
+    ref<SourceAccessor> getDisplayAccessor() const
+    {
+        if (auto * ta = dynamic_cast<TracingSourceAccessor *>(&*inner))
+            return ta->getDisplayAccessor();
+        return inner;
+    }
 
     /**
      * Read file speculatively without emitting a trace.

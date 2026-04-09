@@ -99,11 +99,11 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     // Store per-call state on the outer EvalState so it outlives Object references.
     // TracingObjects and TracingReplayObjects hold raw references to these.
     cache.calls.push_back({
-        .innerState = innerState,
         .sink = sink,
         .writer = writer,
         .recordingEval = recordingEval.get_ptr(),
         .replayEval = replayEval.get_ptr(),
+        .innerState = innerState,
     });
 
     // Convert paths to use the inner EvalState's rootFS (TracingSourceAccessor)

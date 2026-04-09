@@ -23,10 +23,12 @@ class TracingEnvironment : public Environment
 {
     ref<Environment> inner;
     TracingWriter & writer;
+    std::shared_ptr<bool> writerAlive;
     ref<TracingSourceAccessor> tracingAccessor;
 
 public:
     TracingEnvironment(ref<Environment> inner, TracingWriter & writer);
+    ~TracingEnvironment();
 
     ref<SourceAccessor> fsRoot() override;
     Hash getFileHash(const std::string & path) override;

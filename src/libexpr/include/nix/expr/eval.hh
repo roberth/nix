@@ -521,11 +521,14 @@ public:
         /** Per-call state that must remain alive while thunks can be forced. */
         struct CallState
         {
-            ref<EvalState> innerState;
+            // Destruction order: innerState must be destroyed before writer,
+            // because innerState owns TracingEnvironment which references writer.
+            // C++ destroys members in reverse declaration order.
             std::shared_ptr<TraceSink> sink;
             std::shared_ptr<TracingWriter> writer;
             std::shared_ptr<Evaluator> recordingEval;
             std::shared_ptr<Evaluator> replayEval;
+            ref<EvalState> innerState;
         };
 
         std::vector<CallState> calls;
