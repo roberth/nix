@@ -33,6 +33,9 @@ public:
     ref<SourceAccessor> fsRoot() override;
     Hash getFileHash(const std::string & path) override;
     std::optional<std::string> getEnv(const std::string & name) override;
+    trace::ResultVariant ambientQuery(
+        const trace::QueryVariant & query,
+        std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve) override;
     TraceSink * getTraceSink() override;
 };
 

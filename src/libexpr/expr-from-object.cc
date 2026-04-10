@@ -1,5 +1,6 @@
 #include "nix/expr/expr-from-object.hh"
 #include "nix/expr/ambient-object.hh"
+#include "nix/expr/environment.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/interpreter-object.hh"
 
@@ -187,12 +188,18 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
                                     .debugThrow();
                             }
 
-                            // Wrap the outer argument as a AmbientObject
+                            // Wrap the outer argument as an AmbientObject.
+                            // Route queries through the inner Environment so
+                            // the TracingEnvironment records them in the trie.
                             state.forceValue(*args[0], pos);
                             auto outerArgObj = state.toObjectCompat(*args[0]);
                             auto resolver = std::make_shared<AmbientResolver>("0", outerArgObj.get_ptr());
-                            auto contraArg = make_ref<AmbientObject>(
-                                "0", [resolver](const trace::QueryVariant & q) { return resolver->query(q); });
+                            auto & innerEnv = *innerEval->getEvalState().environment;
+                            AmbientQueryFn queryFn = [resolver, &innerEnv](const trace::QueryVariant & q) {
+                                return innerEnv.ambientQuery(
+                                    q, [&](const trace::QueryVariant & q2) { return resolver->query(q2); });
+                            };
+                            auto contraArg = make_ref<AmbientObject>("0", std::move(queryFn));
 
                             // Apply the cached function to the contra argument
                             auto result = innerEval->apply(ref<Object>(objPtr), contraArg);

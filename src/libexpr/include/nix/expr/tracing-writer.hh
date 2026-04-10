@@ -131,6 +131,25 @@ public:
     }
 
     /**
+     * Log an ambient interaction as a depth=1 Query/Result pair.
+     */
+    void logAmbientInteraction(const trace::QueryVariant & query, const trace::ResultVariant & result)
+    {
+        if (!index || !afterHash)
+            return;
+
+        nlohmann::json queryJson;
+        std::visit([&](const auto & q) { queryJson = q; }, query);
+        nlohmann::json resultJson;
+        std::visit([&](const auto & r) { resultJson = r; }, result);
+
+        auto queryHash = std::visit([](const auto & q) { return TracingIndex::computeQueryHash(q); }, query);
+        auto queryNodeHash = index->insertQuery(afterHash, queryHash, jsonToCborString(queryJson), std::nullopt, /*depth=*/1);
+        auto resultNodeHash = index->insertResult(queryNodeHash, jsonToCborString(resultJson), queryNodeHash);
+        afterHash = resultNodeHash;
+    }
+
+    /**
      * Log a result and return the TriePosition for use in child queries.
      * @param queryHash The queryHash from logRootQuery or logQuery.
      */

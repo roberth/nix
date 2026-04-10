@@ -56,6 +56,15 @@ std::optional<std::string> TracingEnvironment::getEnv(const std::string & name)
     return result;
 }
 
+trace::ResultVariant TracingEnvironment::ambientQuery(
+    const trace::QueryVariant & query,
+    std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve)
+{
+    auto result = resolve(query);
+    writer.logAmbientInteraction(query, result);
+    return result;
+}
+
 TraceSink * TracingEnvironment::getTraceSink()
 {
     return &writer.getSink();
