@@ -1,4 +1,6 @@
 #include "nix/expr/ambient-object.hh"
+#include "nix/expr/source-root.hh"
+#include "nix/util/source-accessor.hh"
 
 namespace nix {
 
@@ -83,10 +85,12 @@ RootedPath AmbientObject::getPath()
     auto result = queryFn(trace::QueryGetPath{id});
     auto * r = std::get_if<trace::ResultPath>(&result);
     if (!r)
-        throw Error("contra-query getPath: unexpected result type");
-    // AmbientObject can't reconstruct a full RootedPath from just a
-    // string path — this would need the accessor. For now, throw.
-    throw Error("contra-query getPath: not yet supported");
+        throw Error("ambient getPath: unexpected result type");
+    /* lazy-paths: wrap the system-FS accessor in a one-off System
+       SourceRoot. The path came from the ambient (outer) evaluator
+       via the root FS; admitting it as System matches how
+       rootFSRoot is stamped in EvalState. */
+    return RootedPath{SourceRoot::make(getFSSourceAccessor(), SourceRootKind::System), CanonPath(r->path)};
 }
 
 bool AmbientObject::getBool(std::string_view)
