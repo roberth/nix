@@ -37,6 +37,7 @@ struct AmbientResolver
     std::map<std::string, std::shared_ptr<Object>> localObjects; // inner values passed to callbacks
     std::map<std::string, Value *> bridgedLocals; // local id → outer Value (cached for reuse)
     EvalState * outerState = nullptr; // for bridging local values to outer heap
+    std::shared_ptr<Evaluator> innerEvaluator; // for bridging local values with function support
     uint64_t nextLocalId = 0;
 
     explicit AmbientResolver(std::string rootId, std::shared_ptr<Object> rootObj)
@@ -76,22 +77,12 @@ struct AmbientResolver
                     auto fnVal = fnObj->defeatCache();
                     auto & argThunk = bridgedLocals[query.arg];
                     if (!argThunk) {
-                        // Create an AmbientObject for the local value that routes
-                        // queries back through the resolver.
-                        AmbientRegisterLocalFn regLocal = [this](std::shared_ptr<Object> obj) {
-                            for (auto & [id, existing] : localObjects)
-                                if (existing == obj)
-                                    return id;
-                            auto lid = "L" + std::to_string(nextLocalId++);
-                            localObjects[lid] = std::move(obj);
-                            return lid;
-                        };
-                        auto localAmbient = std::make_shared<AmbientObject>(
-                            query.arg,
-                            [this](const trace::QueryVariant & q) { return this->query(q); },
-                            std::move(regLocal));
+                        // Bridge the local value directly via ExprFromObject
+                        // with the inner evaluator. This ensures functions within
+                        // the local value route through the inner evaluator,
+                        // not through the ambient bridge.
                         argThunk = outerState->allocValue();
-                        auto * argExpr = new ExprFromObject(localAmbient);
+                        auto * argExpr = new ExprFromObject(argIt->second, innerEvaluator);
                         outerState->mkThunk_(*argThunk, argExpr);
                     }
 
@@ -285,6 +276,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
                             std::shared_ptr<Object> outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
                             auto resolver = std::make_shared<AmbientResolver>("0", outerArgObj);
                             resolver->outerState = &state;
+                            resolver->innerEvaluator = innerEval;
                             auto & innerEnv = *innerEval->getEvalState().environment;
                             AmbientQueryFn queryFn = [resolver, &innerEnv](const trace::QueryVariant & q) {
                                 return innerEnv.ambientQuery(

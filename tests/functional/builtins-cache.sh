@@ -191,6 +191,23 @@ expectStderr 1 nix eval --impure --expr '((builtins.cache { import = '"$TEST_ROO
 echo '{ f, x }: f x' > "$TEST_ROOT/call-fn.nix"
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 10; }') == 11 ]]
 
+# Curried ambient function with self-referential attrset (callPackageWith pattern)
+cat > "$TEST_ROOT/callpkg-fn.nix" << 'NIX'
+{ callPackageWith }:
+let
+  self = { buildPackages = self; hello = "hi"; };
+  mypkg = { buildPackages, hello }: hello;
+in callPackageWith self mypkg {}
+NIX
+[[ $(nix eval --impure --expr '
+  let callPackageWith = autoArgs: fn: args:
+    let
+      fargs = builtins.functionArgs fn;
+      allArgs = builtins.intersectAttrs fargs autoArgs // args;
+    in fn allArgs;
+  in (builtins.cache { import = '"$TEST_ROOT"'/callpkg-fn.nix; }) { inherit callPackageWith; }
+') == '"hi"' ]]
+
 # functionArgs across the cache boundary
 cat > "$TEST_ROOT/fargs-fn.nix" << 'NIX'
 { f }:
