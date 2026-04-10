@@ -1,63 +1,55 @@
 #include "nix/expr/ambient-object.hh"
+#include "nix/util/source-accessor.hh"
 
 namespace nix {
 
-// TODO: share with tracing-replay-object.cc
 static ObjectType stringToObjectType(const std::string & type)
 {
-    if (type == "set")
-        return nAttrs;
-    if (type == "list")
-        return nList;
-    if (type == "string")
-        return nString;
-    if (type == "path")
-        return nPath;
-    if (type == "int")
-        return nInt;
-    if (type == "float")
-        return nFloat;
-    if (type == "bool")
-        return nBool;
-    if (type == "null")
-        return nNull;
-    if (type == "lambda")
-        return nFunction;
+    if (type == "set") return nAttrs;
+    if (type == "list") return nList;
+    if (type == "string") return nString;
+    if (type == "path") return nPath;
+    if (type == "int") return nInt;
+    if (type == "float") return nFloat;
+    if (type == "bool") return nBool;
+    if (type == "null") return nNull;
+    if (type == "lambda") return nFunction;
     throw Error("unknown object type: %s", type);
 }
 
-AmbientObject::AmbientObject(std::string id, AmbientQueryFn queryFn, AmbientRegisterLocalFn registerLocal)
-    : id(std::move(id))
+AmbientObject::AmbientObject(int id, AmbientQueryFn queryFn, AmbientApplyFn applyFn)
+    : id(id)
     , queryFn(std::move(queryFn))
-    , registerLocal(std::move(registerLocal))
+    , applyFn(std::move(applyFn))
 {
 }
 
 std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 {
-    auto result = queryFn(trace::QueryGetAttr{name, id});
-    auto * r = std::get_if<trace::ResultMaybeType>(&result);
+    auto qr = queryFn(id, trace::QueryGetAttr{name, std::to_string(id)});
+    auto * r = std::get_if<trace::ResultMaybeType>(&qr.result);
     if (!r || !r->type)
         return nullptr;
-    // Child is structurally identified: parent id + attr name
-    return std::make_shared<AmbientObject>(id + "." + name, queryFn, registerLocal);
+    if (!qr.childId)
+        throw Error("ambient maybeGetAttr: resolver didn't return child id");
+    return std::make_shared<AmbientObject>(*qr.childId, queryFn, applyFn);
 }
 
 std::vector<std::string> AmbientObject::getAttrNames()
 {
-    auto result = queryFn(trace::QueryGetAttrNames{id});
-    auto * r = std::get_if<trace::ResultListOfStrings>(&result);
+    auto qr = queryFn(id, trace::QueryGetAttrNames{std::to_string(id)});
+    auto * r = std::get_if<trace::ResultListOfStrings>(&qr.result);
     if (!r)
-        throw Error("contra-query getAttrNames: unexpected result type");
+        throw Error("ambient getAttrNames: unexpected result type");
     return r->values;
 }
 
 std::string AmbientObject::getStringIgnoreContext()
 {
-    auto result = queryFn(trace::QueryGetString{id});
-    auto * r = std::get_if<trace::ResultString>(&result);
+    auto qr = queryFn(id, trace::QueryGetString{std::to_string(id)});
+    auto * r = std::get_if<trace::ResultString>(&qr.result);
     if (!r)
-        throw Error("contra-query getString: unexpected result type");
+        throw Error("ambient getString: unexpected result type");
     return r->value;
 }
 
@@ -68,10 +60,10 @@ std::string AmbientObject::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
 {
-    auto result = queryFn(trace::QueryGetStringWithContext{id});
-    auto * r = std::get_if<trace::ResultStringWithContext>(&result);
+    auto qr = queryFn(id, trace::QueryGetStringWithContext{std::to_string(id)});
+    auto * r = std::get_if<trace::ResultStringWithContext>(&qr.result);
     if (!r)
-        throw Error("contra-query getStringWithContext: unexpected result type");
+        throw Error("ambient getStringWithContext: unexpected result type");
     NixStringContext ctx;
     for (auto & s : r->context)
         ctx.insert(NixStringContextElem::parse(s));
@@ -80,8 +72,8 @@ std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
 
 SourcePath AmbientObject::getPath()
 {
-    auto result = queryFn(trace::QueryGetPath{id});
-    auto * r = std::get_if<trace::ResultPath>(&result);
+    auto qr = queryFn(id, trace::QueryGetPath{std::to_string(id)});
+    auto * r = std::get_if<trace::ResultPath>(&qr.result);
     if (!r)
         throw Error("ambient getPath: unexpected result type");
     return SourcePath(getFSSourceAccessor(), CanonPath(r->path));
@@ -89,45 +81,46 @@ SourcePath AmbientObject::getPath()
 
 bool AmbientObject::getBool(std::string_view)
 {
-    auto result = queryFn(trace::QueryGetBool{id});
-    auto * r = std::get_if<trace::ResultBool>(&result);
+    auto qr = queryFn(id, trace::QueryGetBool{std::to_string(id)});
+    auto * r = std::get_if<trace::ResultBool>(&qr.result);
     if (!r)
-        throw Error("contra-query getBool: unexpected result type");
+        throw Error("ambient getBool: unexpected result type");
     return r->value;
 }
 
 NixInt AmbientObject::getInt(std::string_view)
 {
-    auto result = queryFn(trace::QueryGetInt{id});
-    auto * r = std::get_if<trace::ResultInt>(&result);
+    auto qr = queryFn(id, trace::QueryGetInt{std::to_string(id)});
+    auto * r = std::get_if<trace::ResultInt>(&qr.result);
     if (!r)
-        throw Error("contra-query getInt: unexpected result type");
+        throw Error("ambient getInt: unexpected result type");
     return NixInt{r->value};
 }
 
 NixFloat AmbientObject::getFloat(std::string_view)
 {
-    auto result = queryFn(trace::QueryGetFloat{id});
-    auto * r = std::get_if<trace::ResultFloat>(&result);
+    auto qr = queryFn(id, trace::QueryGetFloat{std::to_string(id)});
+    auto * r = std::get_if<trace::ResultFloat>(&qr.result);
     if (!r)
-        throw Error("contra-query getFloat: unexpected result type");
+        throw Error("ambient getFloat: unexpected result type");
     return r->value;
 }
 
 size_t AmbientObject::getListSize()
 {
-    auto result = queryFn(trace::QueryGetListSize{id});
-    auto * r = std::get_if<trace::ResultListSize>(&result);
+    auto qr = queryFn(id, trace::QueryGetListSize{std::to_string(id)});
+    auto * r = std::get_if<trace::ResultListSize>(&qr.result);
     if (!r)
-        throw Error("contra-query getListSize: unexpected result type");
+        throw Error("ambient getListSize: unexpected result type");
     return r->size;
 }
 
 std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
 {
-    auto result = queryFn(trace::QueryGetListElem{id, index});
-    // Child is structurally identified: parent id + index
-    return std::make_shared<AmbientObject>(id + "[" + std::to_string(index) + "]", queryFn, registerLocal);
+    auto qr = queryFn(id, trace::QueryGetListElem{std::to_string(id), index});
+    if (!qr.childId)
+        throw Error("ambient getListElem: resolver didn't return child id");
+    return std::make_shared<AmbientObject>(*qr.childId, queryFn, applyFn);
 }
 
 ObjectType AmbientObject::getTypeLazy()
@@ -137,22 +130,22 @@ ObjectType AmbientObject::getTypeLazy()
 
 ObjectType AmbientObject::getType()
 {
-    auto result = queryFn(trace::QueryGetType{id});
-    auto * r = std::get_if<trace::ResultType>(&result);
+    auto qr = queryFn(id, trace::QueryGetType{std::to_string(id)});
+    auto * r = std::get_if<trace::ResultType>(&qr.result);
     if (!r)
-        throw Error("contra-query getType: unexpected result type");
+        throw Error("ambient getType: unexpected result type");
     return stringToObjectType(r->type);
 }
 
 RootValue AmbientObject::defeatCache()
 {
-    throw Error("contra-query defeatCache: not supported on virtual values");
+    throw Error("ambient defeatCache: not supported on virtual values");
 }
 
 std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
 {
-    auto result = queryFn(trace::QueryGetFunctionInfo{id});
-    auto * r = std::get_if<trace::ResultFunctionInfo>(&result);
+    auto qr = queryFn(id, trace::QueryGetFunctionInfo{std::to_string(id)});
+    auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
         return std::nullopt;
     return FunctionInfo{.formals = r->formals, .ellipsis = r->ellipsis};
@@ -168,22 +161,12 @@ std::optional<std::vector<std::string>> AmbientObject::getAttrPath()
     return std::nullopt;
 }
 
-std::shared_ptr<Object> AmbientObject::queryApply(const std::string & argId, std::shared_ptr<Object> argObj)
+std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj)
 {
-    if (!registerLocal)
-        throw Error("ambient apply: no registerLocal callback");
-
-    // Use the caller's argId directly. Only register if not already
-    // present — essential for self-referential values where the same
-    // Value is passed in recursive calls.
-    registerLocal(std::move(argObj), argId);
-    auto result = queryFn(trace::QueryApply{id, argId});
-    auto * r = std::get_if<trace::ResultType>(&result);
-    if (!r)
-        throw Error("ambient apply: unexpected result type");
-
-    auto resultId = id + ".apply(" + argId + ")";
-    return std::make_shared<AmbientObject>(resultId, queryFn, registerLocal);
+    if (!applyFn)
+        throw Error("ambient apply: no apply callback");
+    auto resultId = applyFn(id, std::move(argObj));
+    return std::make_shared<AmbientObject>(resultId, queryFn, applyFn);
 }
 
 } // namespace nix

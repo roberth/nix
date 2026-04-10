@@ -12,37 +12,47 @@
 #include "nix/expr/trace-types.hh"
 
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace nix {
 
 /**
- * Callback type for issuing contra-queries.
- * Takes a query, returns the result. The implementation is responsible
- * for recording the interaction in the trace.
+ * Response from an ambient query: the result plus an optional child id
+ * for queries that produce child Objects (getAttr, getListElem, apply).
  */
-using AmbientQueryFn = std::function<trace::ResultVariant(const trace::QueryVariant &)>;
+struct AmbientQueryResult
+{
+    trace::ResultVariant result;
+    std::optional<int> childId; // id of child Object in the resolver, if applicable
+};
 
 /**
- * Callback to register a local Object for use in ambient apply queries.
- * If id is provided, uses it (deduplicating); otherwise assigns a new one.
- * Returns the local id.
+ * Callback type for issuing ambient queries.
+ * Takes the caller's Object id and a query, returns the result.
  */
-using AmbientRegisterLocalFn = std::function<std::string(std::shared_ptr<Object>, const std::string & id)>;
+using AmbientQueryFn = std::function<AmbientQueryResult(int objectId, const trace::QueryVariant &)>;
 
 /**
- * Object implementation backed by contra-queries to the outer evaluator.
+ * Callback type for ambient function application.
+ * Takes the function's Object id and the argument Object, returns
+ * the result Object id.
+ */
+using AmbientApplyFn = std::function<int(int fnId, std::shared_ptr<Object> argObj)>;
+
+/**
+ * Object implementation backed by ambient queries to the outer evaluator.
  * Each method composes a Query, issues it via the callback, and
  * interprets the Result.
  */
 class AmbientObject : public Object
 {
-    std::string id;        ///< Identity in the ambient query `from` field
-    AmbientQueryFn queryFn; ///< Callback to issue ambient queries
-    AmbientRegisterLocalFn registerLocal; ///< Callback to register local values (may be null)
+    int id;                   ///< Integer id in the resolver
+    AmbientQueryFn queryFn;   ///< Callback to issue ambient queries
+    AmbientApplyFn applyFn;   ///< Callback for function application (may be null)
 
 public:
-    AmbientObject(std::string id, AmbientQueryFn queryFn, AmbientRegisterLocalFn registerLocal = {});
+    AmbientObject(int id, AmbientQueryFn queryFn, AmbientApplyFn applyFn = {});
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
@@ -63,12 +73,12 @@ public:
     std::optional<std::vector<std::string>> getAttrPath() override;
 
     /**
-     * Issue a QueryApply through the ambient query mechanism.
-     * Returns an AmbientObject wrapping the result.
+     * Issue a QueryApply. The resolver registers the arg and creates
+     * the lazy application. Returns an AmbientObject wrapping the result.
      */
-    std::shared_ptr<Object> queryApply(const std::string & argId, std::shared_ptr<Object> argObj);
+    std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj);
 
-    const std::string & getId() const { return id; }
+    int getId() const { return id; }
 };
 
 } // namespace nix
