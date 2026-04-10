@@ -227,6 +227,18 @@ NIX
   in ((builtins.cache { import = '"$TEST_ROOT"'/selfref-fn.nix; }) { inherit applyOverlay; }).hasVersion
 ') == true ]]
 
+# mkOverridable pattern: rattrs produces attrset without forcing its argument
+cat > "$TEST_ROOT/overridable-fn.nix" << 'NIX'
+{ mkOverridable }:
+mkOverridable (self: { name = "pkg"; version = "1.0"; override = newF: mkOverridable newF; })
+NIX
+[[ $(nix eval --impure --expr '
+  let mkOverridable = rattrs:
+    let args = rattrs (args // { extra = true; });
+    in args;
+  in ((builtins.cache { import = '"$TEST_ROOT"'/overridable-fn.nix; }) { inherit mkOverridable; }).name
+') == '"pkg"' ]]
+
 # functionArgs across the cache boundary
 cat > "$TEST_ROOT/fargs-fn.nix" << 'NIX'
 { f }:

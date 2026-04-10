@@ -86,16 +86,19 @@ struct AmbientResolver
                         outerState->mkThunk_(*argThunk, argExpr);
                     }
 
-                    // Call the function eagerly. The argument stays lazy (bridged
-                    // via AmbientObject/ExprFromObject thunk) so the fixed-point's
-                    // self-reference uses the same outer Value pointer, enabling
-                    // the Nix evaluator's cycle detection.
+                    // Create a lazy application — don't evaluate the function body.
+                    // The result is a tApp thunk on the outer heap. When the inner
+                    // evaluator later accesses the result, the outer evaluator
+                    // evaluates the body at that point (when the inner fixed-point
+                    // has progressed and self-referential values are accessible).
                     auto * resultVal = outerState->allocValue();
-                    outerState->callFunction(**fnVal, *argThunk, *resultVal, noPos);
+                    resultVal->mkApp(*fnVal, argThunk);
                     auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
                     auto resultId = query.fn + ".apply(" + query.arg + ")";
                     objects[resultId] = resultObj;
-                    return trace::ResultType{objectTypeToString(resultObj->getType())};
+                    // Return "thunk" — the inner evaluator will query the result
+                    // lazily through subsequent ambient queries.
+                    return trace::ResultType{"thunk"};
                 } else if constexpr (!requires { query.from; }) {
                     throw Error("ambient query: query type has no 'from' field");
                 } else {
@@ -272,7 +275,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
                             // Wrap the outer argument as an AmbientObject.
                             // Route queries through the inner Environment so
                             // the TracingEnvironment records them in the trie.
-                            state.forceValue(*args[0], pos);
+                            // Do NOT force args[0] — it may be self-referential.
                             std::shared_ptr<Object> outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
                             auto resolver = std::make_shared<AmbientResolver>("0", outerArgObj);
                             resolver->outerState = &state;
