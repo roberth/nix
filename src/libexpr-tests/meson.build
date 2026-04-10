@@ -48,12 +48,12 @@ subdir('nix-meson-build-support/common')
 
 sources = files(
   'accessors-equivalent.cc',
+  'ambient-object.cc',
   'attr-pos-path.cc',
   'coarse-eval-cache.cc',
   'coerce-to-rooted-path.cc',
   'compare-for-tostring-equivalence.cc',
   'concat-strings.cc',
-  'contra-object.cc',
   'cur-pos-file.cc',
   'derived-path.cc',
   'error_traces.cc',

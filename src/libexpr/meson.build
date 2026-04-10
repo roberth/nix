@@ -155,11 +155,11 @@ foreach header : [
 endforeach
 
 sources = files(
+  'ambient-object.cc',
   'attr-path.cc',
   'attr-set.cc',
   'coarse-eval-cache-cursor-object.cc',
   'coarse-eval-cache.cc',
-  'contra-object.cc',
   'environment.cc',
   'environment/system.cc',
   'eval-cache.cc',

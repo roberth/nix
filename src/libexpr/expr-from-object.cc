@@ -1,11 +1,11 @@
 #include "nix/expr/expr-from-object.hh"
-#include "nix/expr/contra-object.hh"
+#include "nix/expr/ambient-object.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/interpreter-object.hh"
 
 namespace nix {
 
-// TODO: share with tracing-object.cc, tracing-replay-object.cc, contra-object.cc
+// TODO: share with tracing-object.cc, tracing-replay-object.cc, ambient-object.cc
 static std::string objectTypeToStringExpr(ObjectType type)
 {
     switch (type) {
@@ -42,11 +42,11 @@ static std::string objectTypeToStringExpr(ObjectType type)
  * Resolves contra-queries by dispatching to the appropriate Object method,
  * registering child Objects under structurally derived ids.
  */
-struct ContraResolver
+struct AmbientResolver
 {
     std::map<std::string, std::shared_ptr<Object>> objects;
 
-    explicit ContraResolver(std::string rootId, std::shared_ptr<Object> rootObj)
+    explicit AmbientResolver(std::string rootId, std::shared_ptr<Object> rootObj)
     {
         objects[rootId] = std::move(rootObj);
     }
@@ -212,11 +212,11 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
                                     .debugThrow();
                             }
 
-                            // Wrap the outer argument as a ContraObject
+                            // Wrap the outer argument as a AmbientObject
                             state.forceValue(*args[0], pos);
                             auto outerArgObj = state.toObjectCompat(*args[0]);
-                            auto resolver = std::make_shared<ContraResolver>("0", outerArgObj.get_ptr());
-                            auto contraArg = make_ref<ContraObject>(
+                            auto resolver = std::make_shared<AmbientResolver>("0", outerArgObj.get_ptr());
+                            auto contraArg = make_ref<AmbientObject>(
                                 "0", [resolver](const trace::QueryVariant & q) { return resolver->query(q); });
 
                             // Apply the cached function to the contra argument

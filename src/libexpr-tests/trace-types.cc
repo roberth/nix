@@ -64,15 +64,15 @@ TEST(TraceTypes, GetEnvResponseEmpty)
 }
 
 // ---------------------------------------------------------------------------
-// Contra-query round-trips
+// Ambient interaction round-trips
 // ---------------------------------------------------------------------------
 
-TEST(TraceTypes, ContraQueryRequestRoundTrip)
+TEST(TraceTypes, AmbientRequestRoundTrip)
 {
-    ContraQueryRequest req{QueryGetAttr{"x", "0"}};
+    AmbientRequest req{QueryGetAttr{"x", "0"}};
     json j;
     to_json(j, req);
-    ContraQueryRequest req2{QueryGetAttr{}};
+    AmbientRequest req2{QueryGetAttr{}};
     from_json(j, req2);
     auto * q = std::get_if<QueryGetAttr>(&req2.query);
     ASSERT_NE(q, nullptr);
@@ -80,38 +80,38 @@ TEST(TraceTypes, ContraQueryRequestRoundTrip)
     EXPECT_EQ(q->from, "0");
 }
 
-TEST(TraceTypes, ContraQueryResponseRoundTrip)
+TEST(TraceTypes, AmbientResponseRoundTrip)
 {
-    ContraQueryResponse resp{ResultString{"hello"}};
+    AmbientResponse resp{ResultString{"hello"}};
     json j;
     to_json(j, resp);
-    ContraQueryResponse resp2{ResultString{}};
+    AmbientResponse resp2{ResultString{}};
     from_json(j, resp2);
     auto * r = std::get_if<ResultString>(&resp2.result);
     ASSERT_NE(r, nullptr);
     EXPECT_EQ(r->value, "hello");
 }
 
-TEST(TraceTypes, ContraQueryResponseWrapperRoundTrip)
+TEST(TraceTypes, AmbientResponseWrapperRoundTrip)
 {
-    Response<ContraQueryRequest> traced{
+    Response<AmbientRequest> traced{
         .request = {QueryGetAttr{"x", "0"}},
         .response = {ResultMaybeType{std::optional<std::string>{"nInt"}}},
     };
     json j;
     to_json(j, traced);
-    EXPECT_EQ(j["type"], "contraQuery");
+    EXPECT_EQ(j["type"], "ambientQuery");
 
-    Response<ContraQueryRequest> traced2;
+    Response<AmbientRequest> traced2;
     from_json(j, traced2);
     auto * q = std::get_if<QueryGetAttr>(&traced2.request.query);
     ASSERT_NE(q, nullptr);
     EXPECT_EQ(q->name, "x");
 }
 
-TEST(TraceTypes, ContraQueryParseTraceEntry)
+TEST(TraceTypes, AmbientQueryParseTraceEntry)
 {
-    Response<ContraQueryRequest> original{
+    Response<AmbientRequest> original{
         .request = {QueryGetString{"42"}},
         .response = {ResultString{"hello"}},
     };
@@ -120,7 +120,7 @@ TEST(TraceTypes, ContraQueryParseTraceEntry)
 
     auto parsed = parseTraceEntry(j);
     ASSERT_TRUE(parsed.has_value());
-    auto * resp = std::get_if<Response<ContraQueryRequest>>(&*parsed);
+    auto * resp = std::get_if<Response<AmbientRequest>>(&*parsed);
     ASSERT_NE(resp, nullptr);
     auto * q = std::get_if<QueryGetString>(&resp->request.query);
     ASSERT_NE(q, nullptr);
