@@ -6,6 +6,7 @@
 
 #include <optional>
 #include <string>
+#include "nix/expr/trace-types.hh"
 #include "nix/util/hash.hh"
 #include "nix/util/ref.hh"
 
@@ -54,6 +55,19 @@ public:
      * SourcePath-based variant.
      */
     virtual Hash getFileHash(const std::string & path);
+
+    /**
+     * Issue an ambient query and return the result.
+     *
+     * The default implementation just calls the provided callback directly.
+     * TracingEnvironment overrides to record the interaction as a
+     * depth-1 Query/Result pair in the trie.
+     */
+    virtual trace::ResultVariant ambientQuery(
+        const trace::QueryVariant & query, std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve)
+    {
+        return resolve(query);
+    }
 
     /**
      * Get the trace sink, if tracing is enabled.
