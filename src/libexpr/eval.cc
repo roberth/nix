@@ -4557,6 +4557,30 @@ Expr * EvalState::parse(
     const RootedPath & basePath,
     const std::shared_ptr<StaticEnv> & staticEnv)
 {
+    if (getEnv("_NIX_DISALLOW_PARSE").has_value()) {
+        /* Allow nix-internal files and string expressions (--expr);
+           block parsing of user files which should come from cache.
+           lazy-paths: origin holds RootedPath (not SourcePath) for
+           file-backed parses; project to a SourcePath string for the
+           internal-file check and the error message. */
+        bool allowed = std::holds_alternative<RootedPath>(origin)
+                       && std::get<RootedPath>(origin).sourcePath().to_string().starts_with("«nix-internal»");
+        if (!allowed) {
+            auto originStr = std::visit(
+                overloaded{
+                    [](const std::monostate &) -> std::string { return "<none>"; },
+                    [](const Pos::Stdin &) -> std::string { return "<stdin>"; },
+                    [](const Pos::String &) -> std::string { return "<string>"; },
+                    [](const RootedPath & p) -> std::string { return p.sourcePath().to_string(); },
+                },
+                origin);
+            throw Error(
+                "parsing disallowed by _NIX_DISALLOW_PARSE: %s (basePath: %s)",
+                originStr,
+                basePath.sourcePath().to_string());
+        }
+    }
+
     auto tmpDocComments = make_ref<DocCommentMap>();
 
     auto result = parseExprFromBuf(
