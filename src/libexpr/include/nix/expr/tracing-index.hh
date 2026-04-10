@@ -6,7 +6,7 @@
  * Implements the data model from doc/tracing-index-data-model.md.
  * The index stores evaluation traces in a trie structure where:
  * - Query nodes represent user queries (evalFile, getAttr, etc.)
- * - Response nodes represent environment interactions (file reads, env lookups)
+ *   depth=0 for top-level evaluation queries, depth>0 for environment events
  * - Result nodes represent the results of queries
  *
  * Nodes are identified by content hashes, making inserts idempotent.
@@ -61,18 +61,7 @@ struct QueryNode
     QueryHash queryHash;
     std::optional<NodeHash> afterHash;
     std::optional<NodeHash> structuralParent;
-    bool isEnvironment = false;
-};
-
-/**
- * A response node from the Responses table.
- */
-struct ResponseNode
-{
-    NodeHash nodeHash;
-    NodeHash afterHash;
-    std::string request;  // Serialized request
-    std::string response; // Serialized response
+    int depth = 0;
 };
 
 /**
@@ -129,13 +118,6 @@ public:
     static NodeHash computeQueryNodeHash(const std::optional<NodeHash> & afterHash, const QueryHash & queryHash);
 
     /**
-     * Compute a node hash for a response node.
-     * nodeHash = hash(afterHash, request, response)
-     */
-    static NodeHash
-    computeResponseNodeHash(const NodeHash & afterHash, const std::string & request, const std::string & response);
-
-    /**
      * Compute a node hash for a result node.
      * nodeHash = hash(afterHash, payload)
      */
@@ -161,24 +143,13 @@ public:
         const QueryHash & queryHash,
         const std::string & payload,
         const std::optional<NodeHash> & structuralParent = std::nullopt,
-        bool isEnvironment = false);
-
-    /**
-     * Insert a response node into the trie.
-     * Idempotent: duplicate inserts are ignored.
-     *
-     * @param afterHash The predecessor node (Query or Response nodeHash)
-     * @param request Serialized request
-     * @param response Serialized response
-     * @return The nodeHash of the inserted/existing response node
-     */
-    NodeHash insertResponse(const NodeHash & afterHash, const std::string & request, const std::string & response);
+        int depth = 0);
 
     /**
      * Insert a result node into the trie.
      * Idempotent: duplicate inserts are ignored.
      *
-     * @param afterHash The predecessor node (Response or Query nodeHash)
+     * @param afterHash The predecessor node (Query nodeHash or another Result)
      * @param payload Serialized result payload
      * @return The nodeHash of the inserted/existing result node
      */
@@ -207,11 +178,6 @@ public:
     std::optional<QueryNode> getQuery(const NodeHash & nodeHash);
 
     /**
-     * Get a response node by its nodeHash.
-     */
-    std::optional<ResponseNode> getResponse(const NodeHash & nodeHash);
-
-    /**
      * Get a result node by its nodeHash.
      */
     std::optional<ResultNode> getResult(const NodeHash & nodeHash);
@@ -227,21 +193,6 @@ public:
      * (multiple possible worlds).
      */
     std::vector<QueryNode> selectChildQueries(const NodeHash & resultNodeHash);
-
-    /**
-     * Select candidate child responses of a query or response node.
-     * Returns responses that followed this node in past traces
-     * (multiple possible worlds — same request, different response content).
-     */
-    std::vector<ResponseNode> selectChildResponses(const NodeHash & afterHash);
-
-    /**
-     * Get the unique request blobs from child responses of a node.
-     * Temporally there's one request per recording; across possible worlds
-     * the request is typically the same (deterministic file access order).
-     * Returns 0 (no responses) or 1+ distinct request blobs.
-     */
-    std::vector<std::string> getChildRequests(const NodeHash & afterHash);
 
     /**
      * Get the child result of a node (0..1).
@@ -270,24 +221,25 @@ public:
     std::vector<QueryNode> selectStructuralChildren(const NodeHash & structuralParent, const QueryHash & queryHash);
 
     /**
-     * Select all response nodes on the path from a query node back to root.
-     * Used for validating dependencies when replaying from a shortcut.
+     * Select all environment queries (depth > 0) on the path from a query
+     * node back to root. Used for validating dependencies when replaying
+     * from a shortcut.
      *
      * @param queryNodeHash Starting point (a Query node)
-     * @return Vector of response nodes in order from root to queryNodeHash
+     * @return Vector of (query, result) pairs in order from root to queryNodeHash
      */
-    std::vector<ResponseNode> selectDependencies(const NodeHash & queryNodeHash);
+    std::vector<std::pair<QueryNode, ResultNode>> selectDependencies(const NodeHash & queryNodeHash);
 
     /**
-     * Select response nodes on the path from a query node back to any validated node.
-     * Used for incremental validation with a set of known-valid nodes.
+     * Select environment queries on the path from a query node back to any
+     * validated node. Used for incremental validation.
      *
      * @param queryNodeHash Starting point (a Query node)
      * @param validatedNodes Set of nodes whose dependencies have been validated
-     * @param reachedValidated Output: set to true if we reached a validated node, false if we reached root
-     * @return Vector of response nodes in order from validated node (or root) to queryNodeHash
+     * @param reachedValidated Output: set to true if we reached a validated node
+     * @return Vector of (query, result) pairs from validated node (or root) to queryNodeHash
      */
-    std::vector<ResponseNode> selectDependenciesUntilValidated(
+    std::vector<std::pair<QueryNode, ResultNode>> selectDependenciesUntilValidated(
         const NodeHash & queryNodeHash, const std::set<NodeHash> & validatedNodes, bool & reachedValidated);
 
 private:

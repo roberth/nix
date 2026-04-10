@@ -26,11 +26,11 @@ bool TracingReplayEvaluator::validateDependencies(const NodeHash & queryNodeHash
     if (validatedNodes.count(queryNodeHash))
         return true;
 
-    auto responses = tracingIndex.selectDependencies(queryNodeHash);
+    auto deps = tracingIndex.selectDependencies(queryNodeHash);
     // Multiple recordings may share the same query node prefix,
-    // producing responses from different sessions. Group by request
-    // and validate: at least one response per unique request must match.
-    if (!validateResponsesAnyMatch(responses))
+    // producing deps from different sessions. Group by request
+    // and validate: at least one result per unique request must match.
+    if (!validateDepsAnyMatch(deps))
         return false;
 
     validatedNodes.insert(queryNodeHash);
@@ -43,9 +43,9 @@ bool TracingReplayEvaluator::validateToValidatedNode(const NodeHash & queryNodeH
         return true;
 
     bool reachedValidated = false;
-    auto responses = tracingIndex.selectDependenciesUntilValidated(queryNodeHash, validatedNodes, reachedValidated);
+    auto deps = tracingIndex.selectDependenciesUntilValidated(queryNodeHash, validatedNodes, reachedValidated);
 
-    if (!validateResponses(responses))
+    if (!validateDeps(deps))
         return false;
 
     validatedNodes.insert(queryNodeHash);
@@ -62,26 +62,26 @@ bool TracingReplayEvaluator::isValidated(const NodeHash & nodeHash) const
     return validatedNodes.count(nodeHash) > 0;
 }
 
-bool TracingReplayEvaluator::validateResponsesAnyMatch(const std::vector<ResponseNode> & responses)
+bool TracingReplayEvaluator::validateDepsAnyMatch(const std::vector<std::pair<QueryNode, ResultNode>> & deps)
 {
-    // Group responses by request. Multiple recordings from the same
-    // trie prefix produce duplicate responses for the same file/env.
-    // For each unique request, at least one response must validate.
-    std::map<std::string, bool> requestValidated; // request blob → has any match
+    // Group deps by query payload. Multiple recordings from the same
+    // trie prefix produce duplicate entries for the same file/env.
+    // For each unique request, at least one result must validate.
+    std::map<QueryHash, bool> requestValidated;
 
-    for (const auto & resp : responses) {
-        if (validatedNodes.count(resp.nodeHash))
+    for (const auto & [qNode, rNode] : deps) {
+        if (validatedNodes.count(rNode.nodeHash))
             continue;
 
-        auto it = requestValidated.find(resp.request);
+        auto it = requestValidated.find(qNode.queryHash);
         if (it != requestValidated.end() && it->second)
-            continue; // already have a valid response for this request
+            continue; // already have a valid result for this request
 
-        if (validateResponses({resp})) {
-            requestValidated[resp.request] = true;
+        if (validateDeps({{qNode, rNode}})) {
+            requestValidated[qNode.queryHash] = true;
         } else {
-            if (requestValidated.find(resp.request) == requestValidated.end())
-                requestValidated[resp.request] = false;
+            if (requestValidated.find(qNode.queryHash) == requestValidated.end())
+                requestValidated[qNode.queryHash] = false;
         }
     }
 
@@ -114,25 +114,29 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
     return std::nullopt;
 }
 
-bool TracingReplayEvaluator::validateResponses(const std::vector<ResponseNode> & responses)
+bool TracingReplayEvaluator::validateDeps(const std::vector<std::pair<QueryNode, ResultNode>> & deps)
 {
-    for (const auto & resp : responses) {
-        if (validatedNodes.count(resp.nodeHash))
+    for (const auto & [qNode, rNode] : deps) {
+        if (validatedNodes.count(rNode.nodeHash))
             continue;
 
         try {
-            // Parse only the request (to know what to re-execute).
-            // The response is compared as raw bytes — no parsing needed.
-            auto reqJson = cborStringToJson(resp.request);
+            // Get the query payload (request) to know what to re-execute
+            auto payloadOpt = tracingIndex.getQueryPayload(qNode.queryHash);
+            if (!payloadOpt) {
+                tracingCacheLog("replay: missing query payload for dependency");
+                return false;
+            }
+            auto reqJson = cborStringToJson(*payloadOpt);
 
+            // The result payload is the recorded response — compare as raw bytes
             if (reqJson.contains("absPath")) {
                 std::string path = reqJson["absPath"];
                 auto currentHash = validationEnv.getFileHash(path);
 
-                // Re-serialize the current response to CBOR and compare bytes
                 nlohmann::json currentRespJson = trace::FileReadResponse{currentHash};
                 auto currentCbor = jsonToCborString(currentRespJson);
-                if (resp.response != currentCbor) {
+                if (rNode.payload != currentCbor) {
                     tracingCacheLog("replay invalidated: file %s changed", path);
                     return false;
                 }
@@ -142,7 +146,7 @@ bool TracingReplayEvaluator::validateResponses(const std::vector<ResponseNode> &
 
                 nlohmann::json currentRespJson = trace::GetEnvResponse{currentVal};
                 auto currentCbor = jsonToCborString(currentRespJson);
-                if (resp.response != currentCbor) {
+                if (rNode.payload != currentCbor) {
                     tracingCacheLog("replay invalidated: env %s changed", name);
                     return false;
                 }
@@ -151,7 +155,7 @@ bool TracingReplayEvaluator::validateResponses(const std::vector<ResponseNode> &
             tracingCacheLog("replay: failed to parse dependency: %s", e.what());
             return false;
         }
-        validatedNodes.insert(resp.nodeHash);
+        validatedNodes.insert(rNode.nodeHash);
     }
     return true;
 }
@@ -170,32 +174,40 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
         if (!queryNode)
             continue;
 
-        // Walk forward: Query → Response* → Result
-        // At each step, compute the current response and look up directly.
+        // Walk forward: Query → (depth>0 Query/Result)* → Result(depth=0)
+        // At each step, validate depth>0 queries by computing the current
+        // response and comparing with the recorded result.
         std::optional<ResultNode> resultNode;
         NodeHash current = shortcut.nodeHash;
         bool validPath = true;
 
         while (true) {
+            // Check for a depth=0 result (the final answer)
             if (auto result = tracingIndex.getChildResult(current)) {
                 resultNode = result;
                 break;
             }
 
-            auto requests = tracingIndex.getChildRequests(current);
-            if (requests.empty())
-                break;
-
+            // Look for depth>0 child queries (environment events)
+            auto childQueries = tracingIndex.selectChildQueries(current);
             bool foundValid = false;
-            for (auto & request : requests) {
-                auto currentResponse = getCurrentResponse(request);
+            for (const auto & childQ : childQueries) {
+                if (childQ.depth == 0)
+                    continue;
+
+                auto payloadOpt = tracingIndex.getQueryPayload(childQ.queryHash);
+                if (!payloadOpt)
+                    continue;
+
+                auto currentResponse = getCurrentResponse(*payloadOpt);
                 if (!currentResponse)
                     continue;
 
-                auto nodeHash = TracingIndex::computeResponseNodeHash(current, request, *currentResponse);
-                if (tracingIndex.getResponse(nodeHash)) {
-                    markValidated(nodeHash);
-                    current = nodeHash;
+                // Check if there's a result matching the current response
+                auto childResult = tracingIndex.getChildResult(childQ.nodeHash);
+                if (childResult && childResult->payload == *currentResponse) {
+                    markValidated(childResult->nodeHash);
+                    current = childResult->nodeHash;
                     foundValid = true;
                     break;
                 }

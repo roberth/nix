@@ -12,7 +12,8 @@ namespace nix {
 
 class Environment;
 class TracingIndex;
-struct ResponseNode;
+struct QueryNode;
+struct ResultNode;
 
 /**
  * Evaluator that replays cached results from the tracing index.
@@ -67,9 +68,10 @@ public:
         Environment & validationEnv);
 
     /**
-     * Validate a vector of response nodes against current environment.
+     * Validate a vector of (query, result) pairs against current environment.
+     * The query payload encodes the request, the result payload encodes the response.
      */
-    bool validateResponses(const std::vector<ResponseNode> & responses);
+    bool validateDeps(const std::vector<std::pair<QueryNode, ResultNode>> & deps);
 
     /**
      * Compute the current response for a recorded request.
@@ -79,11 +81,11 @@ public:
     std::optional<std::string> getCurrentResponse(const std::string & requestCbor);
 
     /**
-     * Like validateResponses, but tolerates duplicate responses for the
+     * Like validateDeps, but tolerates duplicate entries for the
      * same request (from multiple recordings sharing a trie prefix).
-     * For each unique request, at least one response must validate.
+     * For each unique request, at least one result must validate.
      */
-    bool validateResponsesAnyMatch(const std::vector<ResponseNode> & responses);
+    bool validateDepsAnyMatch(const std::vector<std::pair<QueryNode, ResultNode>> & deps);
 
     /**
      * Validate dependencies from root to queryNodeHash (full validation).

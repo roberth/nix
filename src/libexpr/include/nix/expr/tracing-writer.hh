@@ -112,7 +112,7 @@ public:
     }
 
     /**
-     * Log a response (file read, env lookup).
+     * Log a response (file read, env lookup) as a depth=1 Query/Result pair.
      */
     template<typename Req>
     void logResponse(const trace::Response<Req> & resp)
@@ -124,8 +124,10 @@ public:
 
         nlohmann::json reqJson = resp.request;
         nlohmann::json respJson = resp.response;
-        auto nodeHash = index->insertResponse(*afterHash, jsonToCborString(reqJson), jsonToCborString(respJson));
-        afterHash = nodeHash;
+        auto queryHash = TracingIndex::computeQueryHash(resp.request);
+        auto queryNodeHash = index->insertQuery(afterHash, queryHash, jsonToCborString(reqJson), std::nullopt, /*depth=*/1);
+        auto resultNodeHash = index->insertResult(queryNodeHash, jsonToCborString(respJson), queryNodeHash);
+        afterHash = resultNodeHash;
     }
 
     /**
