@@ -8,6 +8,7 @@
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-index.hh"
 #include "nix/expr/tracing-writer.hh"
+#include "nix/expr/trace-sink.hh"
 #include "nix/expr/interpreter.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-settings.hh"
@@ -72,6 +73,8 @@ protected:
     EvalSettings evalSettings{readOnlyMode};
     std::filesystem::path dbPath;
     std::shared_ptr<SystemEnvironment> defaultEnv;
+    std::shared_ptr<CollectingTraceSink> replaySink = std::make_shared<CollectingTraceSink>();
+    std::shared_ptr<TracingWriter> replayWriter = std::make_shared<TracingWriter>(*replaySink);
 
     static void SetUpTestSuite()
     {
@@ -146,7 +149,7 @@ protected:
     ref<TracingReplayEvaluator> makeReplayEvaluator(TracingIndex & index)
     {
         auto interpreter = make_ref<Interpreter>(makeState());
-        return make_ref<TracingReplayEvaluator>(interpreter, index, *defaultEnv);
+        return make_ref<TracingReplayEvaluator>(interpreter, index, *defaultEnv, *replayWriter);
     }
 
     /**
@@ -156,7 +159,7 @@ protected:
     {
         auto innerState = makeStateWithEnv(env);
         auto interpreter = make_ref<Interpreter>(innerState);
-        return make_ref<TracingReplayEvaluator>(interpreter, index, *env);
+        return make_ref<TracingReplayEvaluator>(interpreter, index, *env, *replayWriter);
     }
 };
 
