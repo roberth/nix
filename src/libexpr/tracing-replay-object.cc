@@ -81,9 +81,8 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
     auto & tracingIndex = evaluator.getTracingIndex();
     auto queryHash = TracingIndex::computeQueryHash(query);
 
-    // Walk forward from a query node through Response* to a Result node.
-    // At each step, compute the current response for the recorded request
-    // and look up the matching response node directly.
+    // Walk forward from a query node through depth>0 Query/Result pairs
+    // to the final depth=0 Result node.
     auto findResult = [&](const QueryNode & child) -> std::optional<ResultNode> {
         NodeHash current = child.nodeHash;
 
@@ -91,20 +90,25 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
             if (auto result = tracingIndex.getChildResult(current))
                 return result;
 
-            auto requests = tracingIndex.getChildRequests(current);
-            if (requests.empty())
-                break;
-
+            // Look for depth>0 child queries (environment events)
+            auto childQueries = tracingIndex.selectChildQueries(current);
             bool foundValid = false;
-            for (auto & request : requests) {
-                auto currentResponse = evaluator.getCurrentResponse(request);
+            for (const auto & childQ : childQueries) {
+                if (childQ.depth == 0)
+                    continue;
+
+                auto payloadOpt = tracingIndex.getQueryPayload(childQ.queryHash);
+                if (!payloadOpt)
+                    continue;
+
+                auto currentResponse = evaluator.getCurrentResponse(*payloadOpt);
                 if (!currentResponse)
                     continue;
 
-                auto nodeHash = TracingIndex::computeResponseNodeHash(current, request, *currentResponse);
-                if (tracingIndex.getResponse(nodeHash)) {
-                    evaluator.markValidated(nodeHash);
-                    current = nodeHash;
+                auto childResult = tracingIndex.getChildResult(childQ.nodeHash);
+                if (childResult && childResult->payload == *currentResponse) {
+                    evaluator.markValidated(childResult->nodeHash);
+                    current = childResult->nodeHash;
                     foundValid = true;
                     break;
                 }
@@ -220,20 +224,24 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
             if (auto result = tracingIndex.getChildResult(current))
                 return result;
 
-            auto requests = tracingIndex.getChildRequests(current);
-            if (requests.empty())
-                break;
-
+            auto childQueries = tracingIndex.selectChildQueries(current);
             bool foundValid = false;
-            for (auto & request : requests) {
-                auto currentResponse = evaluator.getCurrentResponse(request);
+            for (const auto & childQ : childQueries) {
+                if (childQ.depth == 0)
+                    continue;
+
+                auto payloadOpt = tracingIndex.getQueryPayload(childQ.queryHash);
+                if (!payloadOpt)
+                    continue;
+
+                auto currentResponse = evaluator.getCurrentResponse(*payloadOpt);
                 if (!currentResponse)
                     continue;
 
-                auto nodeHash = TracingIndex::computeResponseNodeHash(current, request, *currentResponse);
-                if (tracingIndex.getResponse(nodeHash)) {
-                    evaluator.markValidated(nodeHash);
-                    current = nodeHash;
+                auto childResult = tracingIndex.getChildResult(childQ.nodeHash);
+                if (childResult && childResult->payload == *currentResponse) {
+                    evaluator.markValidated(childResult->nodeHash);
+                    current = childResult->nodeHash;
                     foundValid = true;
                     break;
                 }
