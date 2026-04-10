@@ -163,19 +163,23 @@ RootValue InterpreterObject::defeatCache()
 std::optional<FunctionInfo> InterpreterObject::getFunctionInfo()
 {
     state.forceValue(**value, pos);
-    if (!(*value)->isLambda())
-        return std::nullopt;
+    if ((*value)->isLambda()) {
+        auto formals = (*value)->lambda().fun->getFormals();
+        if (!formals)
+            return std::nullopt;
 
-    auto formals = (*value)->lambda().fun->getFormals();
-    if (!formals)
-        return std::nullopt;
-
-    FunctionInfo info;
-    info.ellipsis = formals->ellipsis;
-    for (const auto & formal : formals->formals) {
-        info.formals.emplace(std::string(state.symbols[formal.name]), formal.def != nullptr);
+        FunctionInfo info;
+        info.ellipsis = formals->ellipsis;
+        for (const auto & formal : formals->formals) {
+            info.formals.emplace(std::string(state.symbols[formal.name]), formal.def != nullptr);
+        }
+        return info;
     }
-    return info;
+    if ((*value)->isPrimOp()) {
+        if (auto & gfi = (*value)->primOp()->getFunctionInfo)
+            return gfi();
+    }
+    return std::nullopt;
 }
 
 PosIdx InterpreterObject::getPos()
