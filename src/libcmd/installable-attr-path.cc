@@ -13,6 +13,7 @@
 #include "nix/main/shared.hh"
 #include "nix/flake/flake.hh"
 #include "nix/expr/eval-cache.hh"
+#include "nix/expr/expr-from-object.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/evaluation-helpers.hh"
 #include "nix/expr/environment/system.hh"
@@ -54,10 +55,13 @@ std::pair<Value *, PosIdx> InstallableAttrPath::toValue(EvalState & state)
     auto obj =
         *expr::helpers::findAlongAttrPathWithAutoCall(*evaluator, rootObject, attrPath, attrPathTokens, autoArgsObj);
 
-    // Convert to Value at the leaf only
-    auto v = obj->defeatCache();
-    state.forceValue(**v, noPos);
-    return {*v, obj->getPos()};
+    // Bridge Object to Value via ExprFromObject to preserve replay —
+    // defeatCache would bypass the cache and trigger re-evaluation.
+    auto * v = state.allocValue();
+    auto * expr = new ExprFromObject(obj, evaluator.get_ptr());
+    state.mkThunk_(*v, expr);
+    state.forceValue(*v, noPos);
+    return {v, obj->getPos()};
 }
 
 DerivedPathsWithInfo InstallableAttrPath::toDerivedPaths()
