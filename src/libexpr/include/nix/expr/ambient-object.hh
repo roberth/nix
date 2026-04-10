@@ -1,12 +1,11 @@
 #pragma once
 /**
  * @file
- * ContraObject — Object backed by a contra-query callback.
+ * AmbientObject — Object backed by an ambient query callback.
  *
- * A virtual value provided by the outer evaluator, accessed by the inner
- * evaluator through contra-queries. Each Object method issues a
- * ContraQuery Request through the provided callback and interprets the
- * ContraResult Response.
+ * A value from the ambient (outer) evaluator, accessed by the local
+ * (inner) evaluator through ambient queries. Each Object method issues
+ * a query through the provided callback and interprets the response.
  */
 
 #include "nix/expr/evaluator.hh"
@@ -22,20 +21,20 @@ namespace nix {
  * Takes a query, returns the result. The implementation is responsible
  * for recording the interaction in the trace.
  */
-using ContraQueryFn = std::function<trace::ResultVariant(const trace::QueryVariant &)>;
+using AmbientQueryFn = std::function<trace::ResultVariant(const trace::QueryVariant &)>;
 
 /**
  * Object implementation backed by contra-queries to the outer evaluator.
  * Each method composes a Query, issues it via the callback, and
  * interprets the Result.
  */
-class ContraObject : public Object
+class AmbientObject : public Object
 {
     std::string id;        ///< Identity in the contra-query `from` field
-    ContraQueryFn queryFn; ///< Callback to issue contra-queries
+    AmbientQueryFn queryFn; ///< Callback to issue contra-queries
 
 public:
-    ContraObject(std::string id, ContraQueryFn queryFn);
+    AmbientObject(std::string id, AmbientQueryFn queryFn);
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

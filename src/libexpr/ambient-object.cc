@@ -1,4 +1,4 @@
-#include "nix/expr/contra-object.hh"
+#include "nix/expr/ambient-object.hh"
 
 namespace nix {
 
@@ -26,23 +26,23 @@ static ObjectType stringToObjectType(const std::string & type)
     throw Error("unknown object type: %s", type);
 }
 
-ContraObject::ContraObject(std::string id, ContraQueryFn queryFn)
+AmbientObject::AmbientObject(std::string id, AmbientQueryFn queryFn)
     : id(std::move(id))
     , queryFn(std::move(queryFn))
 {
 }
 
-std::shared_ptr<Object> ContraObject::maybeGetAttr(const std::string & name)
+std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 {
     auto result = queryFn(trace::QueryGetAttr{name, id});
     auto * r = std::get_if<trace::ResultMaybeType>(&result);
     if (!r || !r->type)
         return nullptr;
     // Child is structurally identified: parent id + attr name
-    return std::make_shared<ContraObject>(id + "." + name, queryFn);
+    return std::make_shared<AmbientObject>(id + "." + name, queryFn);
 }
 
-std::vector<std::string> ContraObject::getAttrNames()
+std::vector<std::string> AmbientObject::getAttrNames()
 {
     auto result = queryFn(trace::QueryGetAttrNames{id});
     auto * r = std::get_if<trace::ResultListOfStrings>(&result);
@@ -51,7 +51,7 @@ std::vector<std::string> ContraObject::getAttrNames()
     return r->values;
 }
 
-std::string ContraObject::getStringIgnoreContext()
+std::string AmbientObject::getStringIgnoreContext()
 {
     auto result = queryFn(trace::QueryGetString{id});
     auto * r = std::get_if<trace::ResultString>(&result);
@@ -60,12 +60,12 @@ std::string ContraObject::getStringIgnoreContext()
     return r->value;
 }
 
-std::string ContraObject::getStringWithoutContext()
+std::string AmbientObject::getStringWithoutContext()
 {
     return getStringIgnoreContext();
 }
 
-std::pair<std::string, NixStringContext> ContraObject::getStringWithContext()
+std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
 {
     auto result = queryFn(trace::QueryGetStringWithContext{id});
     auto * r = std::get_if<trace::ResultStringWithContext>(&result);
@@ -77,18 +77,18 @@ std::pair<std::string, NixStringContext> ContraObject::getStringWithContext()
     return {r->value, std::move(ctx)};
 }
 
-SourcePath ContraObject::getPath()
+SourcePath AmbientObject::getPath()
 {
     auto result = queryFn(trace::QueryGetPath{id});
     auto * r = std::get_if<trace::ResultPath>(&result);
     if (!r)
         throw Error("contra-query getPath: unexpected result type");
-    // ContraObject can't reconstruct a full SourcePath from just a
+    // AmbientObject can't reconstruct a full SourcePath from just a
     // string path — this would need the accessor. For now, throw.
     throw Error("contra-query getPath: not yet supported");
 }
 
-bool ContraObject::getBool(std::string_view)
+bool AmbientObject::getBool(std::string_view)
 {
     auto result = queryFn(trace::QueryGetBool{id});
     auto * r = std::get_if<trace::ResultBool>(&result);
@@ -97,7 +97,7 @@ bool ContraObject::getBool(std::string_view)
     return r->value;
 }
 
-NixInt ContraObject::getInt(std::string_view)
+NixInt AmbientObject::getInt(std::string_view)
 {
     auto result = queryFn(trace::QueryGetInt{id});
     auto * r = std::get_if<trace::ResultInt>(&result);
@@ -106,7 +106,7 @@ NixInt ContraObject::getInt(std::string_view)
     return NixInt{r->value};
 }
 
-NixFloat ContraObject::getFloat(std::string_view)
+NixFloat AmbientObject::getFloat(std::string_view)
 {
     auto result = queryFn(trace::QueryGetFloat{id});
     auto * r = std::get_if<trace::ResultFloat>(&result);
@@ -115,7 +115,7 @@ NixFloat ContraObject::getFloat(std::string_view)
     return r->value;
 }
 
-size_t ContraObject::getListSize()
+size_t AmbientObject::getListSize()
 {
     auto result = queryFn(trace::QueryGetListSize{id});
     auto * r = std::get_if<trace::ResultListSize>(&result);
@@ -124,19 +124,19 @@ size_t ContraObject::getListSize()
     return r->size;
 }
 
-std::shared_ptr<Object> ContraObject::getListElem(size_t index)
+std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
 {
     auto result = queryFn(trace::QueryGetListElem{id, index});
     // Child is structurally identified: parent id + index
-    return std::make_shared<ContraObject>(id + "[" + std::to_string(index) + "]", queryFn);
+    return std::make_shared<AmbientObject>(id + "[" + std::to_string(index) + "]", queryFn);
 }
 
-ObjectType ContraObject::getTypeLazy()
+ObjectType AmbientObject::getTypeLazy()
 {
     return getType();
 }
 
-ObjectType ContraObject::getType()
+ObjectType AmbientObject::getType()
 {
     auto result = queryFn(trace::QueryGetType{id});
     auto * r = std::get_if<trace::ResultType>(&result);
@@ -145,23 +145,23 @@ ObjectType ContraObject::getType()
     return stringToObjectType(r->type);
 }
 
-RootValue ContraObject::defeatCache()
+RootValue AmbientObject::defeatCache()
 {
     throw Error("contra-query defeatCache: not supported on virtual values");
 }
 
-std::optional<FunctionInfo> ContraObject::getFunctionInfo()
+std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
 {
     // TODO: could issue a contra-query for function info
     return std::nullopt;
 }
 
-PosIdx ContraObject::getPos()
+PosIdx AmbientObject::getPos()
 {
     return noPos;
 }
 
-std::optional<std::vector<std::string>> ContraObject::getAttrPath()
+std::optional<std::vector<std::string>> AmbientObject::getAttrPath()
 {
     return std::nullopt;
 }

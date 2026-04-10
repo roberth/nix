@@ -73,7 +73,7 @@ ref<Object> Interpreter::apply(ref<Object> fn, ref<Object> arg)
 {
     auto fnValue = fn->defeatCache();
 
-    // For virtual values (e.g. ContraObject), defeatCache throws.
+    // For virtual values (e.g. AmbientObject), defeatCache throws.
     // Create a thunk via ExprFromObject instead.
     RootValue argValue;
     try {

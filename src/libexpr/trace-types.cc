@@ -57,17 +57,17 @@ void from_json(const nlohmann::json & j, GetEnvResponse & r)
 }
 
 // ---------------------------------------------------------------------------
-// Contra-query serialization
+// Ambient interaction serialization
 // ---------------------------------------------------------------------------
 
-void to_json(nlohmann::json & j, const ContraQueryRequest & r)
+void to_json(nlohmann::json & j, const AmbientRequest & r)
 {
     nlohmann::json queryJson;
     std::visit([&](const auto & q) { queryJson = nlohmann::json{{"tag", q.tag}, {"payload", q}}; }, r.query);
     j = nlohmann::json{{"query", queryJson}};
 }
 
-void from_json(const nlohmann::json & j, ContraQueryRequest & r)
+void from_json(const nlohmann::json & j, AmbientRequest & r)
 {
     auto & q = j.at("query");
     auto tag = q.at("tag").get<std::string_view>();
@@ -98,14 +98,14 @@ void from_json(const nlohmann::json & j, ContraQueryRequest & r)
     throw nlohmann::json::parse_error::create(302, 0, "unknown contra-query tag: " + std::string(tag), &j);
 }
 
-void to_json(nlohmann::json & j, const ContraQueryResponse & r)
+void to_json(nlohmann::json & j, const AmbientResponse & r)
 {
     nlohmann::json resultJson;
     std::visit([&](const auto & res) { resultJson = res; }, r.result);
     j = nlohmann::json{{"result", resultJson}};
 }
 
-void from_json(const nlohmann::json & j, ContraQueryResponse & r)
+void from_json(const nlohmann::json & j, AmbientResponse & r)
 {
     // The result type is determined by context (the query determines
     // which result type to expect). For generic deserialization we
@@ -477,12 +477,12 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
             from_json(j["response"], resp);
             return Response<GetEnvRequest>{req, resp};
         }
-        if (type == ContraQueryRequest::tag) {
-            ContraQueryRequest req;
+        if (type == AmbientRequest::tag) {
+            AmbientRequest req;
             from_json(j["request"], req);
-            ContraQueryResponse resp;
+            AmbientResponse resp;
             from_json(j["response"], resp);
-            return Response<ContraQueryRequest>{req, resp};
+            return Response<AmbientRequest>{req, resp};
         }
         return std::nullopt;
     }

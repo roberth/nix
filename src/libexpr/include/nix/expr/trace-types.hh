@@ -509,31 +509,30 @@ using ResultVariant = std::variant<
     ResultFunctionInfo>;
 
 // ---------------------------------------------------------------------------
-// Contra-query: query on a virtual value provided by the outer evaluator
+// Ambient interaction: query on a value from the ambient (outer) evaluator
 // ---------------------------------------------------------------------------
 
 /**
- * A contra-query embeds an existing Query/Result pair, issued by the inner
- * evaluator to inspect a virtual value from the outer evaluator. Uses the
- * typed QueryVariant/ResultVariant so the trie can hash and look up the
- * structured data.
+ * An ambient query embeds an existing Query/Result pair, issued by the
+ * local evaluator to interact with a value from the ambient evaluator.
+ * Uses the typed QueryVariant/ResultVariant so the trie can hash and
+ * look up the structured data.
  */
-struct ContraQueryRequest
+struct AmbientRequest
 {
-    static constexpr std::string_view tag = "contraQuery";
+    static constexpr std::string_view tag = "ambientQuery";
     QueryVariant query;
 };
 
-struct ContraQueryResponse
+struct AmbientResponse
 {
     ResultVariant result;
 };
 
-DECLARE_TRACE_PAIR(ContraQueryRequest, ContraQueryResponse)
+DECLARE_TRACE_PAIR(AmbientRequest, AmbientResponse)
 
-// Update EnvRequests to include ContraQueryRequest
 template<template<typename> class F>
-using AllEnvRequests = ApplyWrapper<F, FileReadRequest, GetEnvRequest, ContraQueryRequest>;
+using AllEnvRequests = ApplyWrapper<F, FileReadRequest, GetEnvRequest, AmbientRequest>;
 
 namespace detail {
 

@@ -1,13 +1,13 @@
 #include <gtest/gtest.h>
 
-#include "nix/expr/contra-object.hh"
+#include "nix/expr/ambient-object.hh"
 
 namespace nix {
 
 /**
  * Mock resolver: maps queries to predetermined results.
  */
-static ContraQueryFn mockResolver(std::map<std::string, trace::ResultVariant> responses)
+static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> responses)
 {
     return [responses = std::move(responses)](const trace::QueryVariant & q) -> trace::ResultVariant {
         // Extract the 'from' or id from the query
@@ -26,37 +26,37 @@ static ContraQueryFn mockResolver(std::map<std::string, trace::ResultVariant> re
     };
 }
 
-TEST(ContraObjectTest, GetType)
+TEST(AmbientObjectTest, GetType)
 {
-    auto obj = std::make_shared<ContraObject>(
+    auto obj = std::make_shared<AmbientObject>(
         "0", mockResolver({{"getType:0", trace::ResultType{"int"}}}));
     EXPECT_EQ(obj->getType(), nInt);
 }
 
-TEST(ContraObjectTest, GetInt)
+TEST(AmbientObjectTest, GetInt)
 {
-    auto obj = std::make_shared<ContraObject>(
+    auto obj = std::make_shared<AmbientObject>(
         "0", mockResolver({{"getInt:0", trace::ResultInt{42}}}));
     EXPECT_EQ(obj->getInt().value, 42);
 }
 
-TEST(ContraObjectTest, GetString)
+TEST(AmbientObjectTest, GetString)
 {
-    auto obj = std::make_shared<ContraObject>(
+    auto obj = std::make_shared<AmbientObject>(
         "0", mockResolver({{"getString:0", trace::ResultString{"hello"}}}));
     EXPECT_EQ(obj->getStringIgnoreContext(), "hello");
 }
 
-TEST(ContraObjectTest, GetBool)
+TEST(AmbientObjectTest, GetBool)
 {
-    auto obj = std::make_shared<ContraObject>(
+    auto obj = std::make_shared<AmbientObject>(
         "0", mockResolver({{"getBool:0", trace::ResultBool{true}}}));
     EXPECT_TRUE(obj->getBool());
 }
 
-TEST(ContraObjectTest, GetAttrReturnsChild)
+TEST(AmbientObjectTest, GetAttrReturnsChild)
 {
-    auto obj = std::make_shared<ContraObject>(
+    auto obj = std::make_shared<AmbientObject>(
         "0",
         mockResolver({
             {"getAttr:0", trace::ResultMaybeType{std::optional<std::string>{"int"}}},
@@ -67,16 +67,16 @@ TEST(ContraObjectTest, GetAttrReturnsChild)
     EXPECT_EQ(child->getInt().value, 99);
 }
 
-TEST(ContraObjectTest, GetAttrMissing)
+TEST(AmbientObjectTest, GetAttrMissing)
 {
-    auto obj = std::make_shared<ContraObject>(
+    auto obj = std::make_shared<AmbientObject>(
         "0", mockResolver({{"getAttr:0", trace::ResultMaybeType{std::nullopt}}}));
     EXPECT_EQ(obj->maybeGetAttr("missing"), nullptr);
 }
 
-TEST(ContraObjectTest, GetListElem)
+TEST(AmbientObjectTest, GetListElem)
 {
-    auto obj = std::make_shared<ContraObject>(
+    auto obj = std::make_shared<AmbientObject>(
         "0",
         mockResolver({
             {"getListElem:0", trace::ResultType{"string"}},
@@ -87,9 +87,9 @@ TEST(ContraObjectTest, GetListElem)
     EXPECT_EQ(child->getStringIgnoreContext(), "world");
 }
 
-TEST(ContraObjectTest, GetAttrNames)
+TEST(AmbientObjectTest, GetAttrNames)
 {
-    auto obj = std::make_shared<ContraObject>(
+    auto obj = std::make_shared<AmbientObject>(
         "0", mockResolver({{"getAttrNames:0", trace::ResultListOfStrings{{"a", "b", "c"}}}}));
     auto names = obj->getAttrNames();
     EXPECT_EQ(names.size(), 3u);
