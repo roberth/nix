@@ -282,15 +282,12 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
                                 return innerEnv.ambientQuery(
                                     q, [&resolver](const trace::QueryVariant & q2) { return resolver->query(q2); });
                             };
-                            AmbientRegisterLocalFn registerLocal = [resolver](std::shared_ptr<Object> obj) {
-                                // Deduplicate: same Object pointer → same local id.
-                                // Essential for fixed-point combinators.
-                                for (auto & [id, existing] : resolver->localObjects)
-                                    if (existing == obj)
-                                        return id;
-                                auto localId = "L" + std::to_string(resolver->nextLocalId++);
-                                resolver->localObjects[localId] = std::move(obj);
-                                return localId;
+                            AmbientRegisterLocalFn registerLocal = [resolver](std::shared_ptr<Object> obj, const std::string & id) {
+                                // Deduplicate by id. If already registered, skip.
+                                if (resolver->localObjects.count(id))
+                                    return id;
+                                resolver->localObjects[id] = std::move(obj);
+                                return id;
                             };
                             auto contraArg = make_ref<AmbientObject>("0", std::move(queryFn), std::move(registerLocal));
 

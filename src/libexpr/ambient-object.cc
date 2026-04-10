@@ -173,13 +173,16 @@ std::shared_ptr<Object> AmbientObject::queryApply(const std::string & argId, std
     if (!registerLocal)
         throw Error("ambient apply: no registerLocal callback");
 
-    auto localId = registerLocal(std::move(argObj));
-    auto result = queryFn(trace::QueryApply{id, localId});
+    // Use the caller's argId directly. Only register if not already
+    // present — essential for self-referential values where the same
+    // Value is passed in recursive calls.
+    registerLocal(std::move(argObj), argId);
+    auto result = queryFn(trace::QueryApply{id, argId});
     auto * r = std::get_if<trace::ResultType>(&result);
     if (!r)
         throw Error("ambient apply: unexpected result type");
 
-    auto resultId = id + ".apply(" + localId + ")";
+    auto resultId = id + ".apply(" + argId + ")";
     return std::make_shared<AmbientObject>(resultId, queryFn, registerLocal);
 }
 
