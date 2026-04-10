@@ -69,6 +69,26 @@ echo '{ val = 1; }' > "$TEST_ROOT/cached.nix"
 # Second evaluation (same file) should succeed (cache hit)
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/cached.nix; }).val') == 1 ]]
 
+# --- Replay completeness: _NIX_DISALLOW_PARSE proves no re-evaluation ---
+# With CLI-level tracing (--option tracing-eval-cache true), the outer
+# evaluator replays the entire expression from the trie. If parsing is
+# disallowed and the result is still correct, replay is working without
+# falling back to re-evaluation.
+
+clearCache
+
+cat > "$TEST_ROOT/replay-complete.nix" <<EOF
+derivation { name = "replay-test"; system = builtins.currentSystem; builder = "/bin/sh"; args = [ "-c" "echo ok > \$out" ]; }
+EOF
+
+# Record with CLI-level tracing
+nix build --option tracing-eval-cache true --impure --dry-run --expr 'builtins.cache { import = '"$TEST_ROOT"'/replay-complete.nix; }'
+
+# Replay with parsing disallowed — proves result comes entirely from cache.
+# Uses nix build --dry-run which navigates via the Object interface,
+# unlike nix eval which calls defeatCache and bypasses replay.
+_NIX_DISALLOW_PARSE=1 nix build --option tracing-eval-cache true --impure --dry-run --expr 'builtins.cache { import = '"$TEST_ROOT"'/replay-complete.nix; }'
+
 # --- Cache invalidation ---
 
 # Modify the file
