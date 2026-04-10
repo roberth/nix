@@ -120,6 +120,12 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
        invalidation. */
     auto toInnerPath = [&](const SourcePath & p) { return RootedPath{innerState->rootFSRoot, p.path}; };
 
+    // Create a shared resolver for ambient interactions BEFORE evaluation.
+    // All <cached-fn> PrimOps from this builtins.cache call share it.
+    // Set on the interpreter so Interpreter::apply can propagate it.
+    auto resolver = makeAmbientResolver(&state, replayEval.get_ptr());
+    interpreter->ambientResolver = resolver;
+
     // Evaluate in the replay evaluator (tries cache first, falls back to recording)
     auto displayName = importPath ? importPath->path.abs() : *expr;
     tracingCacheLog("builtins.cache: evaluating %s", displayName);
@@ -133,7 +139,7 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     // Evaluate eagerly — primops must not return thunks (forceValue
     // doesn't recurse into thunks-inside-thunks). Child attrset/list
     // elements are still lazy (ExprFromObject creates child thunks).
-    ExprFromObject(result.get_ptr(), replayEval.get_ptr()).eval(state, state.baseEnv, v);
+    ExprFromObject(result.get_ptr(), replayEval.get_ptr(), resolver).eval(state, state.baseEnv, v);
 }
 
 static RegisterPrimOp primop_cache({
