@@ -85,9 +85,12 @@ EOF
 nix build --option tracing-eval-cache true --impure --dry-run --expr 'builtins.cache { import = '"$TEST_ROOT"'/replay-complete.nix; }'
 
 # Replay with parsing disallowed — proves result comes entirely from cache.
-# Uses nix build --dry-run which navigates via the Object interface,
-# unlike nix eval which calls defeatCache and bypasses replay.
 _NIX_DISALLOW_PARSE=1 nix build --option tracing-eval-cache true --impure --dry-run --expr 'builtins.cache { import = '"$TEST_ROOT"'/replay-complete.nix; }'
+
+# nix eval with CLI-level tracing: also replays without parsing
+echo '{ val = 42; }' > "$TEST_ROOT/replay-eval.nix"
+nix eval --option tracing-eval-cache true --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/replay-eval.nix; }).val'
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --option tracing-eval-cache true --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/replay-eval.nix; }).val') == 42 ]]
 
 # --- Cache invalidation ---
 
