@@ -61,6 +61,7 @@ struct QueryNode
     QueryHash queryHash;
     std::optional<NodeHash> afterHash;
     std::optional<NodeHash> structuralParent;
+    bool isEnvironment = false;
 };
 
 /**
@@ -82,6 +83,7 @@ struct ResultNode
     NodeHash nodeHash;
     NodeHash afterHash;
     std::string payload; // Serialized result
+    std::optional<NodeHash> queryNodeHash; // Which Query this Result answers
 };
 
 /**
@@ -158,7 +160,8 @@ public:
         const std::optional<NodeHash> & afterHash,
         const QueryHash & queryHash,
         const std::string & payload,
-        const std::optional<NodeHash> & structuralParent = std::nullopt);
+        const std::optional<NodeHash> & structuralParent = std::nullopt,
+        bool isEnvironment = false);
 
     /**
      * Insert a response node into the trie.
@@ -179,7 +182,10 @@ public:
      * @param payload Serialized result payload
      * @return The nodeHash of the inserted/existing result node
      */
-    NodeHash insertResult(const NodeHash & afterHash, const std::string & payload);
+    NodeHash insertResult(
+        const NodeHash & afterHash,
+        const std::string & payload,
+        const std::optional<NodeHash> & queryNodeHash = std::nullopt);
 
     // -------------------------------------------------------------------------
     // Query operations

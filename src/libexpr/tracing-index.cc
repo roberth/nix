@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS Queries (
     nodeHash BLOB PRIMARY KEY,
     queryHash BLOB NOT NULL,
     afterHash BLOB,
-    structuralParent BLOB
+    structuralParent BLOB,
+    isEnvironment INTEGER NOT NULL DEFAULT 0
 );
 
 -- Query payloads (cold storage for inspection)
@@ -40,7 +41,8 @@ CREATE TABLE IF NOT EXISTS Responses (
 CREATE TABLE IF NOT EXISTS Results (
     nodeHash BLOB PRIMARY KEY,
     afterHash BLOB NOT NULL,
-    payload BLOB NOT NULL
+    payload BLOB NOT NULL,
+    queryNodeHash BLOB
 );
 
 -- Shortcut index: queryHash → nodeHash for fast lookup
@@ -120,8 +122,8 @@ TracingIndex::TracingIndex(const std::filesystem::path & dbPath)
     // Prepare insert statements
     state->insertQuery.create(
         state->db,
-        "INSERT OR IGNORE INTO Queries(nodeHash, queryHash, afterHash, structuralParent) "
-        "VALUES (?, ?, ?, ?)");
+        "INSERT OR IGNORE INTO Queries(nodeHash, queryHash, afterHash, structuralParent, isEnvironment) "
+        "VALUES (?, ?, ?, ?, ?)");
 
     state->insertQueryPayload.create(
         state->db, "INSERT OR IGNORE INTO QueryPayloads(queryHash, payload) VALUES (?, ?)");
@@ -132,24 +134,24 @@ TracingIndex::TracingIndex(const std::filesystem::path & dbPath)
         "VALUES (?, ?, ?, ?)");
 
     state->insertResult.create(
-        state->db, "INSERT OR IGNORE INTO Results(nodeHash, afterHash, payload) VALUES (?, ?, ?)");
+        state->db, "INSERT OR IGNORE INTO Results(nodeHash, afterHash, payload, queryNodeHash) VALUES (?, ?, ?, ?)");
 
     state->insertShortcut.create(state->db, "INSERT OR IGNORE INTO Shortcuts(queryHash, nodeHash) VALUES (?, ?)");
 
     // Prepare get statements (0..1)
     state->getQuery.create(
-        state->db, "SELECT nodeHash, queryHash, afterHash, structuralParent FROM Queries WHERE nodeHash = ?");
+        state->db, "SELECT nodeHash, queryHash, afterHash, structuralParent, isEnvironment FROM Queries WHERE nodeHash = ?");
 
     state->getResponse.create(
         state->db, "SELECT nodeHash, afterHash, request, response FROM Responses WHERE nodeHash = ?");
 
-    state->getResult.create(state->db, "SELECT nodeHash, afterHash, payload FROM Results WHERE nodeHash = ?");
+    state->getResult.create(state->db, "SELECT nodeHash, afterHash, payload, queryNodeHash FROM Results WHERE nodeHash = ?");
 
     state->getQueryPayload.create(state->db, "SELECT payload FROM QueryPayloads WHERE queryHash = ?");
 
     // Prepare single-row child lookups
     state->getChildResult.create(
-        state->db, "SELECT nodeHash, afterHash, payload FROM Results WHERE afterHash = ? LIMIT 1");
+        state->db, "SELECT nodeHash, afterHash, payload, queryNodeHash FROM Results WHERE afterHash = ? LIMIT 1");
     state->getChildRequests.create(
         state->db, "SELECT DISTINCT request FROM Responses WHERE afterHash = ?");
 
@@ -158,16 +160,16 @@ TracingIndex::TracingIndex(const std::filesystem::path & dbPath)
         state->db, "SELECT nodeHash, createdAt FROM Shortcuts WHERE queryHash = ? ORDER BY createdAt DESC");
 
     state->selectChildQueries.create(
-        state->db, "SELECT nodeHash, queryHash, afterHash, structuralParent FROM Queries WHERE afterHash = ?");
+        state->db, "SELECT nodeHash, queryHash, afterHash, structuralParent, isEnvironment FROM Queries WHERE afterHash = ?");
 
     state->selectChildResponses.create(
         state->db, "SELECT nodeHash, afterHash, request, response FROM Responses WHERE afterHash = ?");
 
-    state->selectChildResults.create(state->db, "SELECT nodeHash, afterHash, payload FROM Results WHERE afterHash = ?");
+    state->selectChildResults.create(state->db, "SELECT nodeHash, afterHash, payload, queryNodeHash FROM Results WHERE afterHash = ?");
 
     state->selectStructuralChildren.create(
         state->db,
-        "SELECT nodeHash, queryHash, afterHash, structuralParent FROM Queries "
+        "SELECT nodeHash, queryHash, afterHash, structuralParent, isEnvironment FROM Queries "
         "WHERE structuralParent = ? AND queryHash = ?");
 }
 
@@ -230,7 +232,8 @@ NodeHash TracingIndex::insertQuery(
     const std::optional<NodeHash> & afterHash,
     const QueryHash & queryHash,
     const std::string & payload,
-    const std::optional<NodeHash> & structuralParent)
+    const std::optional<NodeHash> & structuralParent,
+    bool isEnvironment)
 {
     auto nodeHash = computeQueryNodeHash(afterHash, queryHash);
 
@@ -248,6 +251,7 @@ NodeHash TracingIndex::insertQuery(
         use(hashToBlob(*structuralParent));
     else
         use.bind(); // NULL
+    use(static_cast<int64_t>(isEnvironment ? 1 : 0));
     use.exec();
 
     // Insert payload (cold storage)
@@ -270,12 +274,20 @@ TracingIndex::insertResponse(const NodeHash & afterHash, const std::string & req
     return nodeHash;
 }
 
-NodeHash TracingIndex::insertResult(const NodeHash & afterHash, const std::string & payload)
+NodeHash TracingIndex::insertResult(
+    const NodeHash & afterHash, const std::string & payload, const std::optional<NodeHash> & queryNodeHash)
 {
     auto nodeHash = computeResultNodeHash(afterHash, payload);
 
     auto state(_state->lock());
-    state->insertResult.use()(hashToBlob(nodeHash))(hashToBlob(afterHash))(payload).exec();
+    auto use = state->insertResult.use();
+    use(hashToBlob(nodeHash));
+    use(hashToBlob(afterHash));
+    use(payload);
+    if (queryNodeHash)
+        use(hashToBlob(*queryNodeHash));
+    else
+        use.bind(); // NULL
 
     return nodeHash;
 }
@@ -315,6 +327,7 @@ std::optional<QueryNode> TracingIndex::getQuery(const NodeHash & nodeHash)
         .queryHash = blobToHash(query.getStr(1)),
         .afterHash = query.isNull(2) ? std::nullopt : std::optional{blobToHash(query.getStr(2))},
         .structuralParent = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
+        .isEnvironment = query.getInt(4) != 0,
     };
 }
 
@@ -346,6 +359,7 @@ std::optional<ResultNode> TracingIndex::getResult(const NodeHash & nodeHash)
         .nodeHash = blobToHash(query.getStr(0)),
         .afterHash = blobToHash(query.getStr(1)),
         .payload = query.getStr(2),
+        .queryNodeHash = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
     };
 }
 
@@ -435,6 +449,7 @@ std::optional<ResultNode> TracingIndex::getChildResult(const NodeHash & afterHas
         .nodeHash = blobToHash(query.getStr(0)),
         .afterHash = blobToHash(query.getStr(1)),
         .payload = query.getStr(2),
+        .queryNodeHash = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
     };
 }
 
