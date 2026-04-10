@@ -28,20 +28,32 @@ struct FileHashCache::State
 FileHashCache::FileHashCache(std::filesystem::path dbPath)
     : _state(std::make_unique<Sync<State>>())
 {
-    if (dbPath.empty()) {
-        auto cacheDir = std::filesystem::path(getCacheDir());
-        createDirs(cacheDir);
-        dbPath = cacheDir / "file-hash-cache.sqlite";
+    try {
+        if (dbPath.empty()) {
+            auto cacheDir = std::filesystem::path(getCacheDir());
+            createDirs(cacheDir);
+            dbPath = cacheDir / "file-hash-cache.sqlite";
+        }
+
+        auto state(_state->lock());
+        state->db = SQLite(dbPath, {.mode = SQLiteOpenMode::Normal, .useWAL = true});
+        state->db.isCache();
+        state->db.exec(schema);
+
+        state->queryHash.create(state->db, "select mtime, hash from FileHashes where path = ?");
+        state->insertHash.create(state->db, "insert or replace into FileHashes(path, mtime, hash) values (?, ?, ?)");
+        state->deleteHash.create(state->db, "delete from FileHashes where path = ?");
+    } catch (...) {
+        // Fall back to in-memory database if the on-disk cache can't be opened
+        // (e.g. read-only filesystem, sandboxed builds).
+        auto state(_state->lock());
+        state->db = SQLite(":memory:", {.mode = SQLiteOpenMode::Normal});
+        state->db.exec(schema);
+
+        state->queryHash.create(state->db, "select mtime, hash from FileHashes where path = ?");
+        state->insertHash.create(state->db, "insert or replace into FileHashes(path, mtime, hash) values (?, ?, ?)");
+        state->deleteHash.create(state->db, "delete from FileHashes where path = ?");
     }
-
-    auto state(_state->lock());
-    state->db = SQLite(dbPath, {.mode = SQLiteOpenMode::Normal, .useWAL = true});
-    state->db.isCache();
-    state->db.exec(schema);
-
-    state->queryHash.create(state->db, "select mtime, hash from FileHashes where path = ?");
-    state->insertHash.create(state->db, "insert or replace into FileHashes(path, mtime, hash) values (?, ?, ?)");
-    state->deleteHash.create(state->db, "delete from FileHashes where path = ?");
 }
 
 FileHashCache::~FileHashCache() = default;
