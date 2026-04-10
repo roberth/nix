@@ -95,14 +95,16 @@ struct AmbientResolver
                         outerState->mkThunk_(*argThunk, argExpr);
                     }
 
-                    // Create a lazy application — don't call the function yet.
-                    // The result may be self-referential (e.g. fixed-point combinator).
+                    // Call the function eagerly. The argument stays lazy (bridged
+                    // via AmbientObject/ExprFromObject thunk) so the fixed-point's
+                    // self-reference uses the same outer Value pointer, enabling
+                    // the Nix evaluator's cycle detection.
                     auto * resultVal = outerState->allocValue();
-                    resultVal->mkApp(*fnVal, argThunk);
+                    outerState->callFunction(**fnVal, *argThunk, *resultVal, noPos);
                     auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
                     auto resultId = query.fn + ".apply(" + query.arg + ")";
                     objects[resultId] = resultObj;
-                    return trace::ResultType{objectTypeToString(resultObj->getTypeLazy())};
+                    return trace::ResultType{objectTypeToString(resultObj->getType())};
                 } else if constexpr (!requires { query.from; }) {
                     throw Error("ambient query: query type has no 'from' field");
                 } else {
@@ -114,7 +116,28 @@ struct AmbientResolver
                         auto child = obj->maybeGetAttr(query.name);
                         if (!child)
                             return trace::ResultMaybeType{std::nullopt};
-                        auto childId = query.from + "." + query.name;
+                        // Detect self-references by comparing underlying Value
+                        // pointers. Without this, self.buildPackages = self
+                        // creates infinite ExprFromObject expansions.
+                        std::string childId = query.from + "." + query.name;
+                        try {
+                            auto childVal = child->defeatCache();
+                            auto findByValue = [&](auto & map) {
+                                for (auto & [id, existing] : map) {
+                                    try {
+                                        auto existingVal = existing->defeatCache();
+                                        if (*childVal == *existingVal) {
+                                            childId = id;
+                                            child = existing;
+                                            return true;
+                                        }
+                                    } catch (...) {}
+                                }
+                                return false;
+                            };
+                            if (!findByValue(objects))
+                                findByValue(localObjects);
+                        } catch (...) {}
                         objects[childId] = child;
                         return trace::ResultMaybeType{
                             std::optional<std::string>{objectTypeToString(child->getType())}};
