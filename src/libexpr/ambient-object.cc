@@ -83,10 +83,8 @@ SourcePath AmbientObject::getPath()
     auto result = queryFn(trace::QueryGetPath{id});
     auto * r = std::get_if<trace::ResultPath>(&result);
     if (!r)
-        throw Error("contra-query getPath: unexpected result type");
-    // AmbientObject can't reconstruct a full SourcePath from just a
-    // string path — this would need the accessor. For now, throw.
-    throw Error("contra-query getPath: not yet supported");
+        throw Error("ambient getPath: unexpected result type");
+    return SourcePath(getFSSourceAccessor(), CanonPath(r->path));
 }
 
 bool AmbientObject::getBool(std::string_view)

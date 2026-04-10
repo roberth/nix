@@ -191,6 +191,10 @@ expectStderr 1 nix eval --impure --expr '((builtins.cache { import = '"$TEST_ROO
 echo '{ f, x }: f x' > "$TEST_ROOT/call-fn.nix"
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 10; }') == 11 ]]
 
+# Path values forwarded through the cache boundary
+echo '{ p }: p' > "$TEST_ROOT/path-fn.nix"
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/path-fn.nix; }) { p = '"$TEST_ROOT"'; }') == /*/builtins-cache ]]
+
 # Curried ambient function with self-referential attrset (callPackageWith pattern)
 cat > "$TEST_ROOT/callpkg-fn.nix" << 'NIX'
 { callPackageWith }:
