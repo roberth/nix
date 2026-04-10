@@ -253,11 +253,21 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
                             }
                             std::shared_ptr<Object> outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
                             auto rootId = res->registerOuter(outerArgObj);
-                            AmbientQueryFn queryFn = [res](int objectId, const trace::QueryVariant & q) {
-                                return res->query(objectId, q);
+                            auto & innerEnv = *innerEval->getEvalState().environment;
+                            AmbientQueryFn queryFn = [res, &innerEnv](int objectId, const trace::QueryVariant & q) {
+                                auto qr = res->query(objectId, q);
+                                // Record the ambient interaction in the inner trace
+                                innerEnv.ambientQuery(q, [&](const trace::QueryVariant &) { return qr.result; });
+                                return qr;
                             };
-                            AmbientApplyFn applyFn = [res](int fnId, std::shared_ptr<Object> argObj) {
-                                return res->apply(fnId, std::move(argObj));
+                            AmbientApplyFn applyFn = [res, &innerEnv](int fnId, std::shared_ptr<Object> argObj) {
+                                auto resultId = res->apply(fnId, std::move(argObj));
+                                // Record the apply as an ambient interaction
+                                trace::QueryApply applyQuery{std::to_string(fnId), std::to_string(resultId)};
+                                innerEnv.ambientQuery(applyQuery, [&](const trace::QueryVariant &) -> trace::ResultVariant {
+                                    return trace::ResultType{"apply"};
+                                });
+                                return resultId;
                             };
                             auto contraArg = make_ref<AmbientObject>(rootId, std::move(queryFn), std::move(applyFn));
 

@@ -61,11 +61,19 @@ class TracingWriter
     std::optional<NodeHash> afterHash;
 
 public:
+    uint64_t nextVirtualRoot = 0;
+
     TracingWriter(TraceSink & sink, TracingIndex * index = nullptr)
         : sink(sink)
         , index(index)
     {
     }
+
+    /**
+     * Allocate a virtual root id. Shared between TracingEvaluator and
+     * TracingReplayEvaluator for deterministic assignment.
+     */
+    uint64_t allocVirtualRoot() { return nextVirtualRoot++; }
 
     /**
      * Log a root query (evalFile, evalExpr, apply).

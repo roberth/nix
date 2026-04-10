@@ -223,9 +223,9 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     // These are values created by the Nix evaluator directly (e.g. `{}`
     // literals) that never passed through the Evaluator interface.
     if (!fnId)
-        fnId = "virtual:" + std::to_string(writer.getSink().allocValue());
+        fnId = "virtual:" + std::to_string(writer.allocVirtualRoot());
     if (!argId)
-        argId = "virtual:" + std::to_string(writer.getSink().allocValue());
+        argId = "virtual:" + std::to_string(writer.allocVirtualRoot());
 
     tracingCacheLog("tracing: apply");
     auto [v, qh] = writer.logRootQuery(trace::QueryApply{*fnId, *argId});

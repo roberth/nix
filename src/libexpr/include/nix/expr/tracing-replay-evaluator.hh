@@ -26,6 +26,7 @@ class TracingReplayEvaluator : public Evaluator
 {
     ref<Evaluator> inner;
     TracingIndex & tracingIndex;
+    TracingWriter & writer; // shared with TracingEvaluator for virtual root counter
 
     /**
      * Environment for validating cached responses during replay.
@@ -65,7 +66,8 @@ public:
     TracingReplayEvaluator(
         ref<Evaluator> inner,
         TracingIndex & tracingIndex,
-        Environment & validationEnv);
+        Environment & validationEnv,
+        TracingWriter & writer);
 
     /**
      * Validate a vector of (query, result) pairs against current environment.

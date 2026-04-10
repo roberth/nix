@@ -191,7 +191,7 @@ ref<EvalState> EvalCommand::getEvalState()
             // is shared with TracingEnvironment for coherent temporal ordering.
             ref<Evaluator> eval = make_ref<Interpreter>(ref<EvalState>(evalState));
             eval = make_ref<TracingEvaluator>(*tracingWriter, eval);
-            eval = make_ref<TracingReplayEvaluator>(eval, *tracingIndex, *sysEnv);
+            eval = make_ref<TracingReplayEvaluator>(eval, *tracingIndex, *sysEnv, *tracingWriter);
             evalState->evaluatorCompat = eval.get_ptr();
             evalState->rootTracingIndex = tracingIndex.get();
             evaluatorCompat = eval;

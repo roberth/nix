@@ -94,7 +94,7 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     // On miss, TracingEvaluator records into the trie via TracingWriter.
     ref<Evaluator> recordingEval = make_ref<TracingEvaluator>(*writer, interpreter);
     ref<Evaluator> replayEval =
-        make_ref<TracingReplayEvaluator>(recordingEval, *index, *state.environment);
+        make_ref<TracingReplayEvaluator>(recordingEval, *index, *state.environment, *writer);
 
     // Store per-call state on the outer EvalState so it outlives Object references.
     // TracingObjects and TracingReplayObjects hold raw references to these.

@@ -14,9 +14,11 @@ namespace nix {
 TracingReplayEvaluator::TracingReplayEvaluator(
     ref<Evaluator> inner,
     TracingIndex & tracingIndex,
-    Environment & validationEnv)
+    Environment & validationEnv,
+    TracingWriter & writer)
     : inner(inner)
     , tracingIndex(tracingIndex)
+    , writer(writer)
     , validationEnv(validationEnv)
 {
 }
@@ -308,14 +310,23 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto fnId = getId(*fn);
     auto argId = getId(*arg);
 
-    if (fnId && argId) {
-        if (auto result = lookup(trace::QueryApply{*fnId, *argId})) {
-            tracingCacheLog("replay hit: apply");
-            return make_ref<TracingReplayObject>(
-                *this, result->second, [this, fn, arg]() { return inner->apply(fn, arg); });
-        }
-        tracingCacheLog("replay miss: apply");
+    // Allocate virtual root ids from the shared counter.
+    // The tracing evaluator uses the same counter, so on a miss
+    // when it records, it sees the counter already advanced past
+    // these ids and allocates new ones for ITS virtual roots.
+    // On a hit, the counter has advanced and the tracing evaluator
+    // is never called.
+    if (!fnId)
+        fnId = "virtual:" + std::to_string(writer.allocVirtualRoot());
+    if (!argId)
+        argId = "virtual:" + std::to_string(writer.allocVirtualRoot());
+
+    if (auto result = lookup(trace::QueryApply{*fnId, *argId})) {
+        tracingCacheLog("replay hit: apply");
+        return make_ref<TracingReplayObject>(
+            *this, result->second, [this, fn, arg]() { return inner->apply(fn, arg); });
     }
+    tracingCacheLog("replay miss: apply");
 
     return inner->apply(fn, arg);
 }
