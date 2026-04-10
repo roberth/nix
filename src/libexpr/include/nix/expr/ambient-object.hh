@@ -25,9 +25,10 @@ using AmbientQueryFn = std::function<trace::ResultVariant(const trace::QueryVari
 
 /**
  * Callback to register a local Object for use in ambient apply queries.
- * Returns the assigned local id.
+ * If id is provided, uses it (deduplicating); otherwise assigns a new one.
+ * Returns the local id.
  */
-using AmbientRegisterLocalFn = std::function<std::string(std::shared_ptr<Object>)>;
+using AmbientRegisterLocalFn = std::function<std::string(std::shared_ptr<Object>, const std::string & id)>;
 
 /**
  * Object implementation backed by contra-queries to the outer evaluator.

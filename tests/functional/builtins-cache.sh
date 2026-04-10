@@ -212,6 +212,21 @@ NIX
   in (builtins.cache { import = '"$TEST_ROOT"'/callpkg-fn.nix; }) { inherit callPackageWith; }
 ') == '"hi"' ]]
 
+# Self-referential args with ambient callback (overrideAttrs pattern):
+# the same Value passed to the callback multiple times must reuse the
+# same bridged thunk, otherwise cycle detection fails.
+cat > "$TEST_ROOT/selfref-fn.nix" << 'NIX'
+{ applyOverlay }:
+let
+  base = { name = "test"; version = "1.0"; };
+  args = applyOverlay base (args // { extra = true; });
+in args
+NIX
+[[ $(nix eval --impure --expr '
+  let applyOverlay = base: final: base // { hasVersion = final ? version; };
+  in ((builtins.cache { import = '"$TEST_ROOT"'/selfref-fn.nix; }) { inherit applyOverlay; }).hasVersion
+') == true ]]
+
 # functionArgs across the cache boundary
 cat > "$TEST_ROOT/fargs-fn.nix" << 'NIX'
 { f }:
