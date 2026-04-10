@@ -67,12 +67,12 @@ TEST(TraceTypes, GetEnvResponseEmpty)
 // Ambient interaction round-trips
 // ---------------------------------------------------------------------------
 
-TEST(TraceTypes, AmbientRequestRoundTrip)
+TEST(TraceTypes, AmbientOutgoingRequestRoundTrip)
 {
-    AmbientRequest req{QueryGetAttr{"x", "0"}};
+    AmbientOutgoingRequest req{QueryGetAttr{"x", "0"}};
     json j;
     to_json(j, req);
-    AmbientRequest req2{QueryGetAttr{}};
+    AmbientOutgoingRequest req2{QueryGetAttr{}};
     from_json(j, req2);
     auto * q = std::get_if<QueryGetAttr>(&req2.query);
     ASSERT_NE(q, nullptr);
@@ -80,29 +80,29 @@ TEST(TraceTypes, AmbientRequestRoundTrip)
     EXPECT_EQ(q->from, "0");
 }
 
-TEST(TraceTypes, AmbientResponseRoundTrip)
+TEST(TraceTypes, AmbientOutgoingResponseRoundTrip)
 {
-    AmbientResponse resp{ResultString{"hello"}};
+    AmbientOutgoingResponse resp{ResultString{"hello"}};
     json j;
     to_json(j, resp);
-    AmbientResponse resp2{ResultString{}};
+    AmbientOutgoingResponse resp2{ResultString{}};
     from_json(j, resp2);
     auto * r = std::get_if<ResultString>(&resp2.result);
     ASSERT_NE(r, nullptr);
     EXPECT_EQ(r->value, "hello");
 }
 
-TEST(TraceTypes, AmbientResponseWrapperRoundTrip)
+TEST(TraceTypes, AmbientOutgoingResponseWrapperRoundTrip)
 {
-    Response<AmbientRequest> traced{
+    Response<AmbientOutgoingRequest> traced{
         .request = {QueryGetAttr{"x", "0"}},
         .response = {ResultMaybeType{std::optional<std::string>{"nInt"}}},
     };
     json j;
     to_json(j, traced);
-    EXPECT_EQ(j["type"], "ambientQuery");
+    EXPECT_EQ(j["type"], "ambientOutgoing");
 
-    Response<AmbientRequest> traced2;
+    Response<AmbientOutgoingRequest> traced2;
     from_json(j, traced2);
     auto * q = std::get_if<QueryGetAttr>(&traced2.request.query);
     ASSERT_NE(q, nullptr);
@@ -111,7 +111,7 @@ TEST(TraceTypes, AmbientResponseWrapperRoundTrip)
 
 TEST(TraceTypes, AmbientQueryParseTraceEntry)
 {
-    Response<AmbientRequest> original{
+    Response<AmbientOutgoingRequest> original{
         .request = {QueryGetString{"42"}},
         .response = {ResultString{"hello"}},
     };
@@ -120,7 +120,7 @@ TEST(TraceTypes, AmbientQueryParseTraceEntry)
 
     auto parsed = parseTraceEntry(j);
     ASSERT_TRUE(parsed.has_value());
-    auto * resp = std::get_if<Response<AmbientRequest>>(&*parsed);
+    auto * resp = std::get_if<Response<AmbientOutgoingRequest>>(&*parsed);
     ASSERT_NE(resp, nullptr);
     auto * q = std::get_if<QueryGetString>(&resp->request.query);
     ASSERT_NE(q, nullptr);
