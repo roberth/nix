@@ -60,14 +60,16 @@ void from_json(const nlohmann::json & j, GetEnvResponse & r)
 // Ambient interaction serialization
 // ---------------------------------------------------------------------------
 
-void to_json(nlohmann::json & j, const AmbientRequest & r)
+// Shared helpers: both outgoing and incoming wrap QueryVariant/ResultVariant.
+
+static void queryVariantToJson(nlohmann::json & j, const QueryVariant & query)
 {
     nlohmann::json queryJson;
-    std::visit([&](const auto & q) { queryJson = nlohmann::json{{"tag", q.tag}, {"payload", q}}; }, r.query);
+    std::visit([&](const auto & q) { queryJson = nlohmann::json{{"tag", q.tag}, {"payload", q}}; }, query);
     j = nlohmann::json{{"query", queryJson}};
 }
 
-void from_json(const nlohmann::json & j, AmbientRequest & r)
+static void queryVariantFromJson(const nlohmann::json & j, QueryVariant & query)
 {
     auto & q = j.at("query");
     auto tag = q.at("tag").get<std::string_view>();
@@ -77,7 +79,7 @@ void from_json(const nlohmann::json & j, AmbientRequest & r)
         if (tag == T::tag) {
             T val;
             from_json(payload, val);
-            r.query = val;
+            query = val;
             return true;
         }
         return false;
@@ -95,29 +97,25 @@ void from_json(const nlohmann::json & j, AmbientRequest & r)
         || tryParse.template operator()<QueryApply>())
         return;
 
-    throw nlohmann::json::parse_error::create(302, 0, "unknown contra-query tag: " + std::string(tag), &j);
+    throw nlohmann::json::parse_error::create(302, 0, "unknown ambient query tag: " + std::string(tag), &j);
 }
 
-void to_json(nlohmann::json & j, const AmbientResponse & r)
+static void resultVariantToJson(nlohmann::json & j, const ResultVariant & result)
 {
     nlohmann::json resultJson;
-    std::visit([&](const auto & res) { resultJson = res; }, r.result);
+    std::visit([&](const auto & res) { resultJson = res; }, result);
     j = nlohmann::json{{"result", resultJson}};
 }
 
-void from_json(const nlohmann::json & j, AmbientResponse & r)
+static void resultVariantFromJson(const nlohmann::json & j, ResultVariant & result)
 {
-    // The result type is determined by context (the query determines
-    // which result type to expect). For generic deserialization we
-    // store the raw JSON — the caller can parse the specific type.
-    // For now, try common result types.
     auto & res = j.at("result");
 
     auto tryParse = [&]<typename T>(T *) -> bool {
         try {
             T val;
             from_json(res, val);
-            r.result = val;
+            result = val;
             return true;
         } catch (...) {
             return false;
@@ -144,8 +142,18 @@ void from_json(const nlohmann::json & j, AmbientResponse & r)
         return;
     if (tryParse((ResultListSize *) nullptr))
         return;
-    throw nlohmann::json::parse_error::create(302, 0, "could not parse contra-query result", &j);
+    throw nlohmann::json::parse_error::create(302, 0, "could not parse ambient result", &j);
 }
+
+void to_json(nlohmann::json & j, const AmbientOutgoingRequest & r) { queryVariantToJson(j, r.query); }
+void from_json(const nlohmann::json & j, AmbientOutgoingRequest & r) { queryVariantFromJson(j, r.query); }
+void to_json(nlohmann::json & j, const AmbientOutgoingResponse & r) { resultVariantToJson(j, r.result); }
+void from_json(const nlohmann::json & j, AmbientOutgoingResponse & r) { resultVariantFromJson(j, r.result); }
+
+void to_json(nlohmann::json & j, const AmbientIncomingRequest & r) { queryVariantToJson(j, r.query); }
+void from_json(const nlohmann::json & j, AmbientIncomingRequest & r) { queryVariantFromJson(j, r.query); }
+void to_json(nlohmann::json & j, const AmbientIncomingResponse & r) { resultVariantToJson(j, r.result); }
+void from_json(const nlohmann::json & j, AmbientIncomingResponse & r) { resultVariantFromJson(j, r.result); }
 
 // ---------------------------------------------------------------------------
 // Result payload serialization
@@ -477,12 +485,19 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
             from_json(j["response"], resp);
             return Response<GetEnvRequest>{req, resp};
         }
-        if (type == AmbientRequest::tag) {
-            AmbientRequest req;
+        if (type == AmbientOutgoingRequest::tag) {
+            AmbientOutgoingRequest req;
             from_json(j["request"], req);
-            AmbientResponse resp;
+            AmbientOutgoingResponse resp;
             from_json(j["response"], resp);
-            return Response<AmbientRequest>{req, resp};
+            return Response<AmbientOutgoingRequest>{req, resp};
+        }
+        if (type == AmbientIncomingRequest::tag) {
+            AmbientIncomingRequest req;
+            from_json(j["request"], req);
+            AmbientIncomingResponse resp;
+            from_json(j["response"], resp);
+            return Response<AmbientIncomingRequest>{req, resp};
         }
         return std::nullopt;
     }

@@ -509,30 +509,50 @@ using ResultVariant = std::variant<
     ResultFunctionInfo>;
 
 // ---------------------------------------------------------------------------
-// Ambient interaction: query on a value from the ambient (outer) evaluator
+// Ambient interaction trace types
+//
+// These embed interaction tracing events into the Environment trace.
+// Outgoing: local evaluator queries the ambient (outer) evaluator.
+// Incoming: ambient evaluator accesses local values during a callback.
 // ---------------------------------------------------------------------------
 
 /**
- * An ambient query embeds an existing Query/Result pair, issued by the
- * local evaluator to interact with a value from the ambient evaluator.
- * Uses the typed QueryVariant/ResultVariant so the trie can hash and
- * look up the structured data.
+ * Outgoing ambient query: local→external.
+ * Data queries (getType, getAttr, ...) and external calls (apply).
  */
-struct AmbientRequest
+struct AmbientOutgoingRequest
 {
-    static constexpr std::string_view tag = "ambientQuery";
+    static constexpr std::string_view tag = "ambientOutgoing";
     QueryVariant query;
 };
 
-struct AmbientResponse
+struct AmbientOutgoingResponse
 {
     ResultVariant result;
 };
 
-DECLARE_TRACE_PAIR(AmbientRequest, AmbientResponse)
+DECLARE_TRACE_PAIR(AmbientOutgoingRequest, AmbientOutgoingResponse)
+
+/**
+ * Incoming ambient query: external→local.
+ * The ambient evaluator accessing local values during a callback.
+ */
+struct AmbientIncomingRequest
+{
+    static constexpr std::string_view tag = "ambientIncoming";
+    QueryVariant query;
+};
+
+struct AmbientIncomingResponse
+{
+    ResultVariant result;
+};
+
+DECLARE_TRACE_PAIR(AmbientIncomingRequest, AmbientIncomingResponse)
 
 template<template<typename> class F>
-using AllEnvRequests = ApplyWrapper<F, FileReadRequest, GetEnvRequest, AmbientRequest>;
+using AllEnvRequests =
+    ApplyWrapper<F, FileReadRequest, GetEnvRequest, AmbientOutgoingRequest, AmbientIncomingRequest>;
 
 namespace detail {
 
