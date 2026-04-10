@@ -53,9 +53,21 @@ struct ExprFromObject : ExprProxy
      */
     std::shared_ptr<Evaluator> innerEvaluator;
 
-    explicit ExprFromObject(std::shared_ptr<Object> obj, std::shared_ptr<Evaluator> innerEvaluator = nullptr)
+    /**
+     * Optional shared resolver for ambient interactions.
+     * When set, the PrimOp created for functions uses this resolver
+     * instead of creating a fresh one. Shared across all function
+     * calls for a single builtins.cache invocation.
+     */
+    std::shared_ptr<struct AmbientResolver> ambientResolver;
+
+    explicit ExprFromObject(
+        std::shared_ptr<Object> obj,
+        std::shared_ptr<Evaluator> innerEvaluator = nullptr,
+        std::shared_ptr<AmbientResolver> ambientResolver = nullptr)
         : obj(std::move(obj))
         , innerEvaluator(std::move(innerEvaluator))
+        , ambientResolver(std::move(ambientResolver))
     {
     }
 
@@ -70,16 +82,27 @@ struct ExprFromObjectAttr : ExprProxy
     std::shared_ptr<Object> parentObj;
     std::string name;
     std::shared_ptr<Evaluator> innerEvaluator;
+    std::shared_ptr<struct AmbientResolver> ambientResolver;
 
     ExprFromObjectAttr(
-        std::shared_ptr<Object> parentObj, std::string name, std::shared_ptr<Evaluator> innerEvaluator)
+        std::shared_ptr<Object> parentObj, std::string name,
+        std::shared_ptr<Evaluator> innerEvaluator,
+        std::shared_ptr<AmbientResolver> ambientResolver = nullptr)
         : parentObj(std::move(parentObj))
         , name(std::move(name))
         , innerEvaluator(std::move(innerEvaluator))
+        , ambientResolver(std::move(ambientResolver))
     {
     }
 
     void eval(EvalState & state, Env & env, Value & v) override;
 };
+
+/**
+ * Create a shared AmbientResolver for use with ExprFromObject.
+ * The resolver is shared across all function calls within a single
+ * builtins.cache invocation.
+ */
+std::shared_ptr<AmbientResolver> makeAmbientResolver(EvalState * outerState, std::shared_ptr<Evaluator> innerEvaluator);
 
 } // namespace nix

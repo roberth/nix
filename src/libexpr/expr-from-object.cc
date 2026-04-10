@@ -31,7 +31,7 @@ static std::string objectTypeToString(ObjectType type)
  * Resolves contra-queries by dispatching to the appropriate Object method,
  * registering child Objects under structurally derived ids.
  */
-struct AmbientResolver
+struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
 {
     std::map<int, std::shared_ptr<Object>> outerValues; // outer values (from ambient evaluator)
     std::map<int, std::shared_ptr<Object>> localValues; // inner values (passed to callbacks)
@@ -135,7 +135,7 @@ struct AmbientResolver
         auto & argThunk = bridgedLocals[argId];
         if (!argThunk) {
             argThunk = outerState->allocValue();
-            auto * argExpr = new ExprFromObject(argObj, innerEvaluator);
+            auto * argExpr = new ExprFromObject(argObj, innerEvaluator, shared_from_this());
             outerState->mkThunk_(*argThunk, argExpr);
         }
 
@@ -158,7 +158,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
         auto attrs = state.buildBindings(names.size());
         for (const auto & name : names) {
             auto * thunk = state.allocValue();
-            auto * expr = new ExprFromObjectAttr(obj, name, innerEvaluator);
+            auto * expr = new ExprFromObjectAttr(obj, name, innerEvaluator, ambientResolver);
             state.mkThunk_(*thunk, expr);
             attrs.insert(state.symbols.create(name), thunk);
         }
@@ -171,7 +171,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
         auto builder = state.buildList(size);
         for (size_t i = 0; i < size; i++) {
             auto childObj = obj->getListElem(i);
-            auto childExpr = new ExprFromObject(std::move(childObj), innerEvaluator);
+            auto childExpr = new ExprFromObject(std::move(childObj), innerEvaluator, ambientResolver);
             builder.elems[i] = childExpr->maybeThunk(state, env);
         }
         v.mkList(builder);
@@ -225,7 +225,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
                     .args = {"args"},
                     .arity = 1,
                     .impl =
-                        [objPtr, innerEval](EvalState & state, const PosIdx pos, Value ** args, Value & v) {
+                        [objPtr, innerEval, resolver = this->ambientResolver](EvalState & state, const PosIdx pos, Value ** args, Value & v) {
                             if (!innerEval) {
                                 // No inner evaluator — this is an ambient function.
                                 // Issue an ambient QueryApply through the AmbientObject's queryFn.
@@ -240,27 +240,24 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
                                 // Issue the apply through the ambient query mechanism
                                 auto result = ambient->queryApply(std::move(argObj));
 
-                                // Bridge result back
-                                ExprFromObject(result).eval(state, state.baseEnv, v);
+                                // Bridge result back, propagating the resolver
+                                ExprFromObject(result, nullptr, resolver).eval(state, state.baseEnv, v);
                                 return;
                             }
 
-                            // Wrap the outer argument as an AmbientObject.
-                            // Route queries through the inner Environment so
-                            // the TracingEnvironment records them in the trie.
+                            // Use the shared resolver from the builtins.cache call.
                             // Do NOT force args[0] — it may be self-referential.
+                            auto & res = resolver;
+                            if (!res) {
+                                state.error<TypeError>("cached function call: no ambient resolver").atPos(pos).debugThrow();
+                            }
                             std::shared_ptr<Object> outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
-                            auto resolver = std::make_shared<AmbientResolver>();
-                            auto rootId = resolver->registerOuter(outerArgObj);
-                            resolver->outerState = &state;
-                            resolver->innerEvaluator = innerEval;
-                            auto & innerEnv = *innerEval->getEvalState().environment;
-                            AmbientQueryFn queryFn = [resolver, &innerEnv](int objectId, const trace::QueryVariant & q) {
-                                // TODO: route through innerEnv.ambientQuery for recording
-                                return resolver->query(objectId, q);
+                            auto rootId = res->registerOuter(outerArgObj);
+                            AmbientQueryFn queryFn = [res](int objectId, const trace::QueryVariant & q) {
+                                return res->query(objectId, q);
                             };
-                            AmbientApplyFn applyFn = [resolver](int fnId, std::shared_ptr<Object> argObj) {
-                                return resolver->apply(fnId, std::move(argObj));
+                            AmbientApplyFn applyFn = [res](int fnId, std::shared_ptr<Object> argObj) {
+                                return res->apply(fnId, std::move(argObj));
                             };
                             auto contraArg = make_ref<AmbientObject>(rootId, std::move(queryFn), std::move(applyFn));
 
@@ -268,7 +265,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
                             auto result = innerEval->apply(ref<Object>(objPtr), contraArg);
 
                             // Bridge result back to outer evaluator
-                            ExprFromObject(result.get_ptr(), innerEval).eval(state, state.baseEnv, v);
+                            ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
                         },
                     .getFunctionInfo = [objPtr]() -> std::optional<FunctionInfo> { return objPtr->getFunctionInfo(); },
                 };
@@ -289,7 +286,15 @@ void ExprFromObjectAttr::eval(EvalState & state, Env & env, Value & v)
     auto childObj = parentObj->maybeGetAttr(name);
     if (!childObj)
         state.error<TypeError>("ExprFromObjectAttr: attribute '%s' missing", name).debugThrow();
-    ExprFromObject(std::move(childObj), innerEvaluator).eval(state, env, v);
+    ExprFromObject(std::move(childObj), innerEvaluator, ambientResolver).eval(state, env, v);
+}
+
+std::shared_ptr<AmbientResolver> makeAmbientResolver(EvalState * outerState, std::shared_ptr<Evaluator> innerEvaluator)
+{
+    auto resolver = std::make_shared<AmbientResolver>();
+    resolver->outerState = outerState;
+    resolver->innerEvaluator = std::move(innerEvaluator);
+    return resolver;
 }
 
 } // namespace nix

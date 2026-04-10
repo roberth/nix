@@ -17,6 +17,9 @@ class Interpreter : public Evaluator
     ref<EvalState> evalState;
 
 public:
+    /// Shared resolver for ambient interactions (set by builtins.cache).
+    std::shared_ptr<struct AmbientResolver> ambientResolver;
+
     explicit Interpreter(ref<EvalState> evalState);
 
     bool isReadOnly() const override;

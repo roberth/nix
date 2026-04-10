@@ -80,7 +80,7 @@ ref<Object> Interpreter::apply(ref<Object> fn, ref<Object> arg)
         argValue = arg->defeatCache();
     } catch (Error &) {
         auto * thunk = evalState->allocValue();
-        auto * expr = new ExprFromObject(arg.get_ptr());
+        auto * expr = new ExprFromObject(arg.get_ptr(), nullptr, ambientResolver);
         evalState->mkThunk_(*thunk, expr);
         argValue = allocRootValue(thunk);
     }
