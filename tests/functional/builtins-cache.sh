@@ -187,10 +187,47 @@ expectStderr 1 nix eval --impure --expr '((builtins.cache { import = '"$TEST_ROO
 # When the cached function receives an argument containing a function
 # (e.g. an overlay), calling that function is a covariant callback —
 # the inner evaluator calls back into the outer evaluator.
-# TODO: requires interaction tracing (Step 3e/3f) to implement.
 
-# echo '{ f, x }: f x' > "$TEST_ROOT/call-fn.nix"
-# [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 10; }') == 11 ]]
+echo '{ f, x }: f x' > "$TEST_ROOT/call-fn.nix"
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 10; }') == 11 ]]
+
+# functionArgs across the cache boundary
+cat > "$TEST_ROOT/fargs-fn.nix" << 'NIX'
+{ f }:
+let innerFn = { p, q ? 0 }: p + q;
+in {
+  # inner's functionArgs on outer lambda
+  innerSeesOuter = builtins.functionArgs f;
+  # forward outer lambda back through inner
+  outerFwd = f;
+  # forward inner lambda out through inner
+  innerFwd = innerFn;
+}
+NIX
+
+# inner's builtins.functionArgs on a lambda that's in outer
+[[ $(nix eval --impure --expr 'let r = (builtins.cache { import = '"$TEST_ROOT"'/fargs-fn.nix; }) { f = { a, b ? 1 }: a + b; }; in r.innerSeesOuter') == '{ a = false; b = true; }' ]]
+
+# outer's builtins.functionArgs on a lambda that's in inner
+[[ $(nix eval --impure --expr 'let r = (builtins.cache { import = '"$TEST_ROOT"'/fargs-fn.nix; }) { f = { a, b ? 1 }: a + b; }; in builtins.functionArgs r.innerFwd') == '{ p = false; q = true; }' ]]
+
+# TODO: outer's builtins.functionArgs on a lambda forwarded through inner returns {}
+# because the function is a <cached-fn> PrimOp. builtins.functionArgs doesn't
+# consult PrimOp::getFunctionInfo.
+# [[ $(nix eval --impure --expr 'let r = (builtins.cache { import = '"$TEST_ROOT"'/fargs-fn.nix; }) { f = { a, b ? 1 }: a + b; }; in builtins.functionArgs r.outerFwd') == '{ a = false; b = true; }' ]]
+
+# TODO: inner's builtins.functionArgs on a lambda forwarded through outer — same issue
+# [[ $(nix eval --impure --expr '
+#   let inner = builtins.cache { import = '"$TEST_ROOT"'/fargs-inner.nix; };
+#       pkg = inner {};
+#   in (builtins.cache { expr = "{ g }: builtins.functionArgs g"; baseDir = '"$TEST_ROOT"'; }) { g = pkg.g; }
+# ') == '{ m = false; n = true; }' ]]
+
+# Fixed-point combinator with callback: overlay accesses the self-reference.
+# The local argument must be a virtual value (not eagerly forced) to avoid
+# infinite recursion through the fixed-point.
+echo '{ overlay }: let fix = f: let x = f x; in x; in fix (self: { a = 1; } // overlay self)' > "$TEST_ROOT/fix-fn.nix"
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/fix-fn.nix; }) { overlay = self: { b = self.a + 1; }; }') == '{ a = 1; b = 2; }' ]]
 
 # --- Nested builtins.cache with function calls ---
 

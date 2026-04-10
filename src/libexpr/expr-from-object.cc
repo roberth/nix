@@ -34,6 +34,10 @@ static std::string objectTypeToString(ObjectType type)
 struct AmbientResolver
 {
     std::map<std::string, std::shared_ptr<Object>> objects;
+    std::map<std::string, std::shared_ptr<Object>> localObjects; // inner values passed to callbacks
+    std::map<std::string, Value *> bridgedLocals; // local id → outer Value (cached for reuse)
+    EvalState * outerState = nullptr; // for bridging local values to outer heap
+    uint64_t nextLocalId = 0;
 
     explicit AmbientResolver(std::string rootId, std::shared_ptr<Object> rootObj)
     {
@@ -43,9 +47,12 @@ struct AmbientResolver
     std::shared_ptr<Object> resolve(const std::string & id)
     {
         auto it = objects.find(id);
-        if (it == objects.end())
-            throw Error("contra-query: unknown virtual value id '%s'", id);
-        return it->second;
+        if (it != objects.end())
+            return it->second;
+        auto lit = localObjects.find(id);
+        if (lit != localObjects.end())
+            return lit->second;
+        throw Error("ambient query: unknown value id '%s'", id);
     }
 
     trace::ResultVariant query(const trace::QueryVariant & q)
@@ -53,8 +60,51 @@ struct AmbientResolver
         return std::visit(
             [&](const auto & query) -> trace::ResultVariant {
                 using Q = std::decay_t<decltype(query)>;
-                if constexpr (!requires { query.from; }) {
-                    throw Error("contra-query: query type has no 'from' field");
+                if constexpr (std::is_same_v<Q, trace::QueryApply>) {
+                    // Covariant callback: call ambient function with local value.
+                    if (!outerState)
+                        throw Error("ambient apply requires outerState");
+                    auto fnObj = resolve(query.fn);
+                    auto argIt = localObjects.find(query.arg);
+                    if (argIt == localObjects.end())
+                        throw Error("ambient apply: unknown local value '%s'", query.arg);
+
+                    // Bridge local arg as an AmbientObject backed by the resolver.
+                    // Attribute accesses route back through the resolver to the
+                    // inner Object, avoiding eager forcing of self-referential values.
+                    // Reuse bridged values for fixed-point cycle detection.
+                    auto fnVal = fnObj->defeatCache();
+                    auto & argThunk = bridgedLocals[query.arg];
+                    if (!argThunk) {
+                        // Create an AmbientObject for the local value that routes
+                        // queries back through the resolver.
+                        AmbientRegisterLocalFn regLocal = [this](std::shared_ptr<Object> obj) {
+                            for (auto & [id, existing] : localObjects)
+                                if (existing == obj)
+                                    return id;
+                            auto lid = "L" + std::to_string(nextLocalId++);
+                            localObjects[lid] = std::move(obj);
+                            return lid;
+                        };
+                        auto localAmbient = std::make_shared<AmbientObject>(
+                            query.arg,
+                            [this](const trace::QueryVariant & q) { return this->query(q); },
+                            std::move(regLocal));
+                        argThunk = outerState->allocValue();
+                        auto * argExpr = new ExprFromObject(localAmbient);
+                        outerState->mkThunk_(*argThunk, argExpr);
+                    }
+
+                    // Create a lazy application — don't call the function yet.
+                    // The result may be self-referential (e.g. fixed-point combinator).
+                    auto * resultVal = outerState->allocValue();
+                    resultVal->mkApp(*fnVal, argThunk);
+                    auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
+                    auto resultId = query.fn + ".apply(" + query.arg + ")";
+                    objects[resultId] = resultObj;
+                    return trace::ResultType{objectTypeToString(resultObj->getTypeLazy())};
+                } else if constexpr (!requires { query.from; }) {
+                    throw Error("ambient query: query type has no 'from' field");
                 } else {
                     auto obj = resolve(query.from);
 
@@ -93,8 +143,13 @@ struct AmbientResolver
                         return trace::ResultType{objectTypeToString(child->getType())};
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetPath>) {
                         return trace::ResultPath{obj->getPath().path.abs()};
+                    } else if constexpr (std::is_same_v<Q, trace::QueryGetFunctionInfo>) {
+                        auto info = obj->getFunctionInfo();
+                        if (!info)
+                            return trace::ResultFunctionInfo{false, {}, false};
+                        return trace::ResultFunctionInfo{true, info->formals, info->ellipsis};
                     } else {
-                        throw Error("unsupported contra-query type");
+                        throw Error("unsupported ambient query type");
                     }
                 }
             },
@@ -181,25 +236,48 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
                     .impl =
                         [objPtr, innerEval](EvalState & state, const PosIdx pos, Value ** args, Value & v) {
                             if (!innerEval) {
-                                state
-                                    .error<TypeError>(
-                                        "cached function calls require an inner evaluator (builtins.cache)")
-                                    .atPos(pos)
-                                    .debugThrow();
+                                // No inner evaluator — this is an ambient function.
+                                // Issue an ambient QueryApply through the AmbientObject's queryFn.
+                                auto * ambient = dynamic_cast<AmbientObject *>(&*objPtr);
+                                if (!ambient)
+                                    state.error<TypeError>("cached function call without inner evaluator or ambient object").atPos(pos).debugThrow();
+
+                                // Register the outer argument as a local value.
+                                // Do NOT force it — it may be self-referential.
+                                auto argObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
+                                auto argId = "local:" + std::to_string(reinterpret_cast<uintptr_t>(args[0]));
+
+                                // Issue the apply through the ambient query mechanism
+                                auto result = ambient->queryApply(argId, argObj);
+
+                                // Bridge result back
+                                ExprFromObject(result).eval(state, state.baseEnv, v);
+                                return;
                             }
 
                             // Wrap the outer argument as an AmbientObject.
                             // Route queries through the inner Environment so
                             // the TracingEnvironment records them in the trie.
                             state.forceValue(*args[0], pos);
-                            auto outerArgObj = state.toObjectCompat(*args[0]);
-                            auto resolver = std::make_shared<AmbientResolver>("0", outerArgObj.get_ptr());
+                            std::shared_ptr<Object> outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
+                            auto resolver = std::make_shared<AmbientResolver>("0", outerArgObj);
+                            resolver->outerState = &state;
                             auto & innerEnv = *innerEval->getEvalState().environment;
                             AmbientQueryFn queryFn = [resolver, &innerEnv](const trace::QueryVariant & q) {
                                 return innerEnv.ambientQuery(
-                                    q, [&](const trace::QueryVariant & q2) { return resolver->query(q2); });
+                                    q, [&resolver](const trace::QueryVariant & q2) { return resolver->query(q2); });
                             };
-                            auto contraArg = make_ref<AmbientObject>("0", std::move(queryFn));
+                            AmbientRegisterLocalFn registerLocal = [resolver](std::shared_ptr<Object> obj) {
+                                // Deduplicate: same Object pointer → same local id.
+                                // Essential for fixed-point combinators.
+                                for (auto & [id, existing] : resolver->localObjects)
+                                    if (existing == obj)
+                                        return id;
+                                auto localId = "L" + std::to_string(resolver->nextLocalId++);
+                                resolver->localObjects[localId] = std::move(obj);
+                                return localId;
+                            };
+                            auto contraArg = make_ref<AmbientObject>("0", std::move(queryFn), std::move(registerLocal));
 
                             // Apply the cached function to the contra argument
                             auto result = innerEval->apply(ref<Object>(objPtr), contraArg);

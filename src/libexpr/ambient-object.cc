@@ -26,9 +26,10 @@ static ObjectType stringToObjectType(const std::string & type)
     throw Error("unknown object type: %s", type);
 }
 
-AmbientObject::AmbientObject(std::string id, AmbientQueryFn queryFn)
+AmbientObject::AmbientObject(std::string id, AmbientQueryFn queryFn, AmbientRegisterLocalFn registerLocal)
     : id(std::move(id))
     , queryFn(std::move(queryFn))
+    , registerLocal(std::move(registerLocal))
 {
 }
 
@@ -39,7 +40,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
     if (!r || !r->type)
         return nullptr;
     // Child is structurally identified: parent id + attr name
-    return std::make_shared<AmbientObject>(id + "." + name, queryFn);
+    return std::make_shared<AmbientObject>(id + "." + name, queryFn, registerLocal);
 }
 
 std::vector<std::string> AmbientObject::getAttrNames()
@@ -128,7 +129,7 @@ std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
 {
     auto result = queryFn(trace::QueryGetListElem{id, index});
     // Child is structurally identified: parent id + index
-    return std::make_shared<AmbientObject>(id + "[" + std::to_string(index) + "]", queryFn);
+    return std::make_shared<AmbientObject>(id + "[" + std::to_string(index) + "]", queryFn, registerLocal);
 }
 
 ObjectType AmbientObject::getTypeLazy()
@@ -152,8 +153,11 @@ RootValue AmbientObject::defeatCache()
 
 std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
 {
-    // TODO: could issue a contra-query for function info
-    return std::nullopt;
+    auto result = queryFn(trace::QueryGetFunctionInfo{id});
+    auto * r = std::get_if<trace::ResultFunctionInfo>(&result);
+    if (!r || !r->hasInfo)
+        return std::nullopt;
+    return FunctionInfo{.formals = r->formals, .ellipsis = r->ellipsis};
 }
 
 PosIdx AmbientObject::getPos()
@@ -164,6 +168,21 @@ PosIdx AmbientObject::getPos()
 std::optional<std::vector<std::string>> AmbientObject::getAttrPath()
 {
     return std::nullopt;
+}
+
+std::shared_ptr<Object> AmbientObject::queryApply(const std::string & argId, std::shared_ptr<Object> argObj)
+{
+    if (!registerLocal)
+        throw Error("ambient apply: no registerLocal callback");
+
+    auto localId = registerLocal(std::move(argObj));
+    auto result = queryFn(trace::QueryApply{id, localId});
+    auto * r = std::get_if<trace::ResultType>(&result);
+    if (!r)
+        throw Error("ambient apply: unexpected result type");
+
+    auto resultId = id + ".apply(" + localId + ")";
+    return std::make_shared<AmbientObject>(resultId, queryFn, registerLocal);
 }
 
 } // namespace nix
