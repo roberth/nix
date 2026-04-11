@@ -51,6 +51,29 @@ class TracingReplayEvaluator : public Evaluator
     std::optional<NodeHash> temporalCursor;
 
     /**
+     * Ambient replay state for validating ambient interaction events.
+     * Maps recorded ambient ids (the "from" field in query payloads)
+     * to current Objects. Populated during apply() before lookup(),
+     * extended as child-producing queries are validated.
+     */
+    struct AmbientReplayState
+    {
+        std::map<std::string, std::shared_ptr<Object>> idToObject;
+        /// Root Objects without trie identity, assigned lazily to the
+        /// first unseen "from" id during the walk.
+        std::vector<std::shared_ptr<Object>> unresolvedRoots;
+        int nextChildId = 0;
+    };
+    std::optional<AmbientReplayState> ambientState;
+
+    /**
+     * Dispatch an ambient query against the current Objects.
+     * Returns serialized CBOR result, or nullopt if the query can't
+     * be dispatched (unknown id, unsupported query type).
+     */
+    std::optional<std::string> dispatchAmbientQuery(const nlohmann::json & reqJson);
+
+    /**
      * Try to find a cached result using the tracing index.
      * Returns nullopt on miss, or (resultPayload, triePosition) on hit.
      */

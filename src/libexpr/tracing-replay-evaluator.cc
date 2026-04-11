@@ -109,11 +109,120 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
             auto currentVal = validationEnv.getEnv(name);
             nlohmann::json respJson = trace::GetEnvResponse{currentVal};
             return jsonToCborString(respJson);
+        } else if (reqJson.contains("query") && ambientState) {
+            return dispatchAmbientQuery(reqJson);
         }
     } catch (const std::exception & e) {
         tracingCacheLog("replay: failed to get current response: %s", e.what());
     }
     return std::nullopt;
+}
+
+static std::string objectTypeToString(ObjectType type)
+{
+    switch (type) {
+    case nAttrs: return "set";
+    case nList: return "list";
+    case nString: return "string";
+    case nPath: return "path";
+    case nInt: return "int";
+    case nFloat: return "float";
+    case nBool: return "bool";
+    case nNull: return "null";
+    case nFunction: return "lambda";
+    case nThunk: return "thunk";
+    case nExternal: return "external";
+    case nFailed: return "failed";
+    }
+    return "unknown";
+}
+
+std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nlohmann::json & reqJson)
+{
+    auto tag = reqJson["query"].get<std::string>();
+    auto & params = reqJson["params"];
+
+    // Extract target Object from the id mapping
+    std::string fromId;
+    if (params.contains("from"))
+        fromId = params["from"].get<std::string>();
+    else if (tag == "apply")
+        return std::nullopt; // Apply replay not yet implemented
+    else
+        return std::nullopt;
+
+    auto it = ambientState->idToObject.find(fromId);
+    if (it == ambientState->idToObject.end()) {
+        // Lazy seeding: assign the next unresolved root Object
+        if (ambientState->unresolvedRoots.empty()) {
+            tracingCacheLog("replay: unknown ambient id %s, no unresolved roots", fromId);
+            return std::nullopt;
+        }
+        auto root = ambientState->unresolvedRoots.front();
+        ambientState->unresolvedRoots.erase(ambientState->unresolvedRoots.begin());
+        ambientState->idToObject[fromId] = root;
+        // Set nextChildId past this root's id so children don't collide
+        try {
+            auto idNum = std::stoi(fromId);
+            if (idNum >= ambientState->nextChildId)
+                ambientState->nextChildId = idNum + 1;
+        } catch (...) {}
+        it = ambientState->idToObject.find(fromId);
+    }
+
+    auto & obj = it->second;
+    nlohmann::json resultJson;
+
+    if (tag == "getType") {
+        resultJson = trace::ResultType{objectTypeToString(obj->getType())};
+    } else if (tag == "getAttr") {
+        auto name = params["name"].get<std::string>();
+        auto child = obj->maybeGetAttr(name);
+        if (!child) {
+            resultJson = trace::ResultMaybeType{std::nullopt};
+        } else {
+            auto childId = std::to_string(ambientState->nextChildId++);
+            ambientState->idToObject[childId] = child;
+            resultJson = trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}};
+        }
+    } else if (tag == "getString") {
+        resultJson = trace::ResultString{obj->getStringIgnoreContext()};
+    } else if (tag == "getStringWithContext") {
+        auto [str, ctx] = obj->getStringWithContext();
+        std::vector<std::string> ctxStrings;
+        for (auto & c : ctx)
+            ctxStrings.push_back(c.to_string());
+        resultJson = trace::ResultStringWithContext{str, std::move(ctxStrings)};
+    } else if (tag == "getAttrNames") {
+        resultJson = trace::ResultListOfStrings{obj->getAttrNames()};
+    } else if (tag == "getBool") {
+        resultJson = trace::ResultBool{obj->getBool()};
+    } else if (tag == "getInt") {
+        resultJson = trace::ResultInt{obj->getInt().value};
+    } else if (tag == "getFloat") {
+        resultJson = trace::ResultFloat{obj->getFloat()};
+    } else if (tag == "getListSize") {
+        resultJson = trace::ResultListSize{obj->getListSize()};
+    } else if (tag == "getListElem") {
+        auto index = params["index"].get<size_t>();
+        auto child = obj->getListElem(index);
+        auto childId = std::to_string(ambientState->nextChildId++);
+        ambientState->idToObject[childId] = child;
+        resultJson = trace::ResultType{objectTypeToString(child->getType())};
+    } else if (tag == "getPath") {
+        resultJson = trace::ResultPath{obj->getPath().path.abs()};
+    } else if (tag == "getFunctionInfo") {
+        auto info = obj->getFunctionInfo();
+        if (!info)
+            resultJson = trace::ResultFunctionInfo{false, {}, false};
+        else
+            resultJson = trace::ResultFunctionInfo{true, info->formals, info->ellipsis};
+    } else {
+        tracingCacheLog("replay: unsupported ambient query tag: %s", tag);
+        return std::nullopt;
+    }
+
+    return jsonToCborString(resultJson);
 }
 
 bool TracingReplayEvaluator::validateDeps(const std::vector<std::pair<QueryNode, ResultNode>> & deps)
@@ -326,7 +435,24 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     if (!argId)
         argId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(arg).value());
 
-    if (auto result = lookup(trace::QueryApply{*fnId, *argId})) {
+    // Set up ambient replay state for validating ambient interactions.
+    // Objects without trie identity (virtual roots) are registered as
+    // unresolved roots — lazily mapped to recorded ambient ids during
+    // the walk.
+    AmbientReplayState state;
+    if (!getId(*arg))
+        state.unresolvedRoots.push_back(arg.get_ptr());
+    if (!getId(*fn))
+        state.unresolvedRoots.push_back(fn.get_ptr());
+    ambientState = std::move(state);
+
+    auto result = lookup(trace::QueryApply{*fnId, *argId});
+    // Don't clear ambientState — child queries on the result
+    // TracingReplayObject may encounter ambient events that need
+    // the same id→Object mapping. The state persists until the
+    // next apply() call sets up a new one.
+
+    if (result) {
         tracingCacheLog("replay hit: apply");
         return make_ref<TracingReplayObject>(
             *this, result->second, [this, fn, arg]() { return inner->apply(fn, arg); });
