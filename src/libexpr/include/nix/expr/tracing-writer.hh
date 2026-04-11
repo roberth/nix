@@ -6,10 +6,15 @@
 
 #include "nix/expr/trace-sink.hh"
 #include "nix/expr/tracing-index.hh"
+#include "nix/util/ref.hh"
 
+#include <map>
 #include <optional>
+#include <vector>
 
 namespace nix {
+
+class Object;
 
 /**
  * Serialize a JSON value to CBOR as a std::string (for trie storage).
@@ -60,6 +65,8 @@ class TracingWriter
     TracingIndex * index; // nullptr if trie recording disabled
     std::optional<NodeHash> afterHash;
     uint64_t nextVirtualRoot = 0;
+    std::map<Object *, VirtualRootId> virtualRootRegistry;
+    std::vector<ref<Object>> virtualRootObjects; // extends Object lifetime
 
 public:
     TracingWriter(TraceSink & sink, TracingIndex * index = nullptr)
@@ -69,9 +76,21 @@ public:
     }
 
     /**
-     * Allocate a virtual root id.
+     * Get or allocate a virtual root id for an Object.
+     *
+     * Returns the same id for the same Object across calls,
+     * eliminating id drift between replay and recording evaluators.
      */
-    VirtualRootId allocVirtualRoot() { return VirtualRootId(nextVirtualRoot++); }
+    VirtualRootId getOrAllocVirtualRoot(ref<Object> obj)
+    {
+        auto it = virtualRootRegistry.find(&*obj);
+        if (it != virtualRootRegistry.end())
+            return it->second;
+        auto id = VirtualRootId(nextVirtualRoot++);
+        virtualRootRegistry[&*obj] = id;
+        virtualRootObjects.push_back(obj);
+        return id;
+    }
 
     /**
      * Log a root query (evalFile, evalExpr, apply).

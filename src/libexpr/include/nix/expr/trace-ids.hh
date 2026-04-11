@@ -21,8 +21,9 @@ namespace nix {
 template<typename Tag, typename T>
 struct StrongId
 {
-    T raw;
+    T raw{};
 
+    StrongId() = default;
     explicit StrongId(T v) : raw(v) {}
 
     T value() const { return raw; }

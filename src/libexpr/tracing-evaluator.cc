@@ -219,13 +219,13 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto fnId = getId(*fn);
     auto argId = getId(*arg);
 
-    // Assign virtual root identities to objects without trie identity.
-    // These are values created by the Nix evaluator directly (e.g. `{}`
+    // Get or allocate virtual root identities for objects without trie
+    // identity — values created by the Nix evaluator directly (e.g. `{}`
     // literals) that never passed through the Evaluator interface.
     if (!fnId)
-        fnId = "virtual:" + std::to_string(writer.allocVirtualRoot().value());
+        fnId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(fn).value());
     if (!argId)
-        argId = "virtual:" + std::to_string(writer.allocVirtualRoot().value());
+        argId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(arg).value());
 
     tracingCacheLog("tracing: apply");
     auto [v, qh] = writer.logRootQuery(trace::QueryApply{*fnId, *argId});
