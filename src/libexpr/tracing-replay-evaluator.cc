@@ -319,9 +319,9 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     // ensures that on a miss, when the recording evaluator sees the
     // same Object, it gets the same id — no counter drift.
     if (!fnId)
-        fnId = "virtual:" + std::to_string(writer.allocVirtualRoot().value());
+        fnId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(fn).value());
     if (!argId)
-        argId = "virtual:" + std::to_string(writer.allocVirtualRoot().value());
+        argId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(arg).value());
 
     if (auto result = lookup(trace::QueryApply{*fnId, *argId})) {
         tracingCacheLog("replay hit: apply");
