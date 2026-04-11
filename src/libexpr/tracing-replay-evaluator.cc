@@ -317,9 +317,9 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     // On a hit, the counter has advanced and the tracing evaluator
     // is never called.
     if (!fnId)
-        fnId = "virtual:" + std::to_string(writer.allocVirtualRoot());
+        fnId = "virtual:" + std::to_string(writer.allocVirtualRoot().value());
     if (!argId)
-        argId = "virtual:" + std::to_string(writer.allocVirtualRoot());
+        argId = "virtual:" + std::to_string(writer.allocVirtualRoot().value());
 
     if (auto result = lookup(trace::QueryApply{*fnId, *argId})) {
         tracingCacheLog("replay hit: apply");

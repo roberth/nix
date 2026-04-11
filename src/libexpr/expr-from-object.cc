@@ -33,28 +33,28 @@ static std::string objectTypeToString(ObjectType type)
  */
 struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
 {
-    std::map<int, std::shared_ptr<Object>> outerValues; // outer values (from ambient evaluator)
-    std::map<int, std::shared_ptr<Object>> localValues; // inner values (passed to callbacks)
-    std::map<int, Value *> bridgedLocals;               // local id → outer Value (cached for reuse)
+    std::map<AmbientId, std::shared_ptr<Object>> outerValues; // outer values (from ambient evaluator)
+    std::map<AmbientId, std::shared_ptr<Object>> localValues; // inner values (passed to callbacks)
+    std::map<AmbientId, Value *> bridgedLocals;               // local id → outer Value (cached for reuse)
     EvalState * outerState = nullptr;
     std::shared_ptr<Evaluator> innerEvaluator;
     int nextId = 0;
 
-    int registerOuter(std::shared_ptr<Object> obj)
+    AmbientId registerOuter(std::shared_ptr<Object> obj)
     {
-        auto id = nextId++;
+        auto id = AmbientId(nextId++);
         outerValues[id] = std::move(obj);
         return id;
     }
 
-    int registerLocal(std::shared_ptr<Object> obj)
+    AmbientId registerLocal(std::shared_ptr<Object> obj)
     {
-        auto id = nextId++;
+        auto id = AmbientId(nextId++);
         localValues[id] = std::move(obj);
         return id;
     }
 
-    std::shared_ptr<Object> resolve(int id)
+    std::shared_ptr<Object> resolve(AmbientId id)
     {
         auto it = outerValues.find(id);
         if (it != outerValues.end())
@@ -62,10 +62,10 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
         auto lit = localValues.find(id);
         if (lit != localValues.end())
             return lit->second;
-        throw Error("ambient query: unknown value id %d", id);
+        throw Error("ambient query: unknown value id %d", id.value());
     }
 
-    AmbientQueryResult query(int objectId, const trace::QueryVariant & q)
+    AmbientQueryResult query(AmbientId objectId, const trace::QueryVariant & q)
     {
         return std::visit(
             [&](const auto & query) -> AmbientQueryResult {
@@ -122,7 +122,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
             q);
     }
 
-    int apply(int fnId, std::shared_ptr<Object> argObj)
+    AmbientId apply(AmbientId fnId, std::shared_ptr<Object> argObj)
     {
         if (!outerState)
             throw Error("ambient apply requires outerState");
@@ -254,16 +254,16 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
                             std::shared_ptr<Object> outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
                             auto rootId = res->registerOuter(outerArgObj);
                             auto & innerEnv = *innerEval->getEvalState().environment;
-                            AmbientQueryFn queryFn = [res, &innerEnv](int objectId, const trace::QueryVariant & q) {
+                            AmbientQueryFn queryFn = [res, &innerEnv](AmbientId objectId, const trace::QueryVariant & q) {
                                 auto qr = res->query(objectId, q);
                                 // Record the ambient interaction in the inner trace
                                 innerEnv.ambientQuery(q, [&](const trace::QueryVariant &) { return qr.result; });
                                 return qr;
                             };
-                            AmbientApplyFn applyFn = [res, &innerEnv](int fnId, std::shared_ptr<Object> argObj) {
+                            AmbientApplyFn applyFn = [res, &innerEnv](AmbientId fnId, std::shared_ptr<Object> argObj) {
                                 auto resultId = res->apply(fnId, std::move(argObj));
                                 // Record the apply as an ambient interaction
-                                trace::QueryApply applyQuery{std::to_string(fnId), std::to_string(resultId)};
+                                trace::QueryApply applyQuery{std::to_string(fnId.value()), std::to_string(resultId.value())};
                                 innerEnv.ambientQuery(applyQuery, [&](const trace::QueryVariant &) -> trace::ResultVariant {
                                     return trace::ResultType{"apply"};
                                 });

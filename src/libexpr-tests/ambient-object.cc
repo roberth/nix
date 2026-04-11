@@ -10,10 +10,10 @@ namespace nix {
  */
 static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> responses)
 {
-    return [responses = std::move(responses)](int objectId, const trace::QueryVariant & q) -> AmbientQueryResult {
+    return [responses = std::move(responses)](AmbientId objectId, const trace::QueryVariant & q) -> AmbientQueryResult {
         std::string key = std::visit(
             [&](const auto & query) -> std::string {
-                return std::string(query.tag) + ":" + std::to_string(objectId);
+                return std::string(query.tag) + ":" + std::to_string(objectId.value());
             },
             q);
         auto it = responses.find(key);
@@ -21,15 +21,15 @@ static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> r
             throw Error("mock resolver: no response for %s", key);
 
         // For queries that produce children, return a child id
-        std::optional<int> childId;
+        std::optional<AmbientId> childId;
         if (std::holds_alternative<trace::ResultMaybeType>(it->second)) {
             auto & rmt = std::get<trace::ResultMaybeType>(it->second);
             if (rmt.type)
-                childId = objectId * 100 + 1;
+                childId = AmbientId(objectId.value() * 100 + 1);
         }
         if (std::holds_alternative<trace::ResultType>(it->second)) {
             // Could be a getListElem
-            childId = objectId * 100 + 1;
+            childId = AmbientId(objectId.value() * 100 + 1);
         }
         return {it->second, childId};
     };
@@ -38,35 +38,35 @@ static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> r
 TEST(AmbientObjectTest, GetType)
 {
     auto obj = std::make_shared<AmbientObject>(
-        0, mockResolver({{"getType:0", trace::ResultType{"int"}}}));
+        AmbientId(0), mockResolver({{"getType:0", trace::ResultType{"int"}}}));
     EXPECT_EQ(obj->getType(), nInt);
 }
 
 TEST(AmbientObjectTest, GetInt)
 {
     auto obj = std::make_shared<AmbientObject>(
-        0, mockResolver({{"getInt:0", trace::ResultInt{42}}}));
+        AmbientId(0), mockResolver({{"getInt:0", trace::ResultInt{42}}}));
     EXPECT_EQ(obj->getInt().value, 42);
 }
 
 TEST(AmbientObjectTest, GetString)
 {
     auto obj = std::make_shared<AmbientObject>(
-        0, mockResolver({{"getString:0", trace::ResultString{"hello"}}}));
+        AmbientId(0), mockResolver({{"getString:0", trace::ResultString{"hello"}}}));
     EXPECT_EQ(obj->getStringIgnoreContext(), "hello");
 }
 
 TEST(AmbientObjectTest, GetBool)
 {
     auto obj = std::make_shared<AmbientObject>(
-        0, mockResolver({{"getBool:0", trace::ResultBool{true}}}));
+        AmbientId(0), mockResolver({{"getBool:0", trace::ResultBool{true}}}));
     EXPECT_TRUE(obj->getBool());
 }
 
 TEST(AmbientObjectTest, GetAttrReturnsChild)
 {
     auto obj = std::make_shared<AmbientObject>(
-        0,
+        AmbientId(0),
         mockResolver({
             {"getAttr:0", trace::ResultMaybeType{std::optional<std::string>{"int"}}},
             {"getInt:1", trace::ResultInt{99}},
@@ -79,14 +79,14 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
 TEST(AmbientObjectTest, GetAttrMissing)
 {
     auto obj = std::make_shared<AmbientObject>(
-        0, mockResolver({{"getAttr:0", trace::ResultMaybeType{std::nullopt}}}));
+        AmbientId(0), mockResolver({{"getAttr:0", trace::ResultMaybeType{std::nullopt}}}));
     EXPECT_EQ(obj->maybeGetAttr("missing"), nullptr);
 }
 
 TEST(AmbientObjectTest, GetListElem)
 {
     auto obj = std::make_shared<AmbientObject>(
-        0,
+        AmbientId(0),
         mockResolver({
             {"getListElem:0", trace::ResultType{"string"}},
             {"getString:1", trace::ResultString{"world"}},
@@ -99,7 +99,7 @@ TEST(AmbientObjectTest, GetListElem)
 TEST(AmbientObjectTest, GetAttrNames)
 {
     auto obj = std::make_shared<AmbientObject>(
-        0, mockResolver({{"getAttrNames:0", trace::ResultListOfStrings{{"a", "b", "c"}}}}));
+        AmbientId(0), mockResolver({{"getAttrNames:0", trace::ResultListOfStrings{{"a", "b", "c"}}}}));
     auto names = obj->getAttrNames();
     EXPECT_EQ(names.size(), 3u);
     EXPECT_EQ(names[0], "a");

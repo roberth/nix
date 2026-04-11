@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 
 #include "nix/expr/trace-file.hh"
+#include "nix/expr/trace-ids.hh"
 #include "nix/expr/trace-types.hh"
 
 namespace nix {
@@ -41,7 +42,7 @@ TEST_F(TraceFileTest, WritesValidJsonArray)
     {
         TraceFile tf(tracePath);
         tf.logQuery(trace::QueryExpr{"1 + 1", "/"});
-        tf.logResult(uint64_t(0), trace::ResultType{"int"});
+        tf.logResult(ValueHandle(0), trace::ResultType{"int"});
     }
 
     auto j = readTraceFile();
@@ -70,8 +71,8 @@ TEST_F(TraceFileTest, AllocatesIncreasingHandles)
         TraceFile tf(tracePath);
         auto v1 = tf.logQuery(trace::QueryExpr{"1", "/"});
         auto v2 = tf.logQuery(trace::QueryImport{"/tmp/test.nix"});
-        EXPECT_EQ(v1, 0u);
-        EXPECT_EQ(v2, 1u);
+        EXPECT_EQ(v1, ValueHandle(0));
+        EXPECT_EQ(v2, ValueHandle(1));
     }
 }
 

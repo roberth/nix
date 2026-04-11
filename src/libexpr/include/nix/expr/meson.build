@@ -48,6 +48,7 @@ headers = [ config_pub_h ] + files(
   'static-string-data.hh',
   'symbol-table.hh',
   'trace-file.hh',
+  'trace-ids.hh',
   'trace-sink.hh',
   'trace-types.hh',
   'tracing-cache-log.hh',

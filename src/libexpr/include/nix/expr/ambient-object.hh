@@ -9,6 +9,7 @@
  */
 
 #include "nix/expr/evaluator.hh"
+#include "nix/expr/trace-ids.hh"
 #include "nix/expr/trace-types.hh"
 
 #include <functional>
@@ -24,21 +25,21 @@ namespace nix {
 struct AmbientQueryResult
 {
     trace::ResultVariant result;
-    std::optional<int> childId; // id of child Object in the resolver, if applicable
+    std::optional<AmbientId> childId; // id of child Object in the resolver, if applicable
 };
 
 /**
  * Callback type for issuing ambient queries.
  * Takes the caller's Object id and a query, returns the result.
  */
-using AmbientQueryFn = std::function<AmbientQueryResult(int objectId, const trace::QueryVariant &)>;
+using AmbientQueryFn = std::function<AmbientQueryResult(AmbientId objectId, const trace::QueryVariant &)>;
 
 /**
  * Callback type for ambient function application.
  * Takes the function's Object id and the argument Object, returns
  * the result Object id.
  */
-using AmbientApplyFn = std::function<int(int fnId, std::shared_ptr<Object> argObj)>;
+using AmbientApplyFn = std::function<AmbientId(AmbientId fnId, std::shared_ptr<Object> argObj)>;
 
 /**
  * Object implementation backed by ambient queries to the outer evaluator.
@@ -47,12 +48,12 @@ using AmbientApplyFn = std::function<int(int fnId, std::shared_ptr<Object> argOb
  */
 class AmbientObject : public Object
 {
-    int id;                   ///< Integer id in the resolver
+    AmbientId id;             ///< Integer id in the resolver
     AmbientQueryFn queryFn;   ///< Callback to issue ambient queries
     AmbientApplyFn applyFn;   ///< Callback for function application (may be null)
 
 public:
-    AmbientObject(int id, AmbientQueryFn queryFn, AmbientApplyFn applyFn = {});
+    AmbientObject(AmbientId id, AmbientQueryFn queryFn, AmbientApplyFn applyFn = {});
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
@@ -78,7 +79,7 @@ public:
      */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj);
 
-    int getId() const { return id; }
+    AmbientId getId() const { return id; }
 };
 
 } // namespace nix
