@@ -102,8 +102,11 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
                     continue;
 
                 auto currentResponse = evaluator.getCurrentResponse(*payloadOpt);
-                if (!currentResponse)
-                    continue;
+                if (!currentResponse) {
+                    // Unknown query type (e.g. ambient interaction) — can't
+                    // validate, so this path is not usable for replay.
+                    break;
+                }
 
                 auto childResult = tracingIndex.getChildResult(childQ.nodeHash);
                 if (childResult && childResult->payload == *currentResponse) {
@@ -235,8 +238,11 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
                     continue;
 
                 auto currentResponse = evaluator.getCurrentResponse(*payloadOpt);
-                if (!currentResponse)
-                    continue;
+                if (!currentResponse) {
+                    // Unknown query type (e.g. ambient interaction) — can't
+                    // validate, so this path is not usable for replay.
+                    break;
+                }
 
                 auto childResult = tracingIndex.getChildResult(childQ.nodeHash);
                 if (childResult && childResult->payload == *currentResponse) {

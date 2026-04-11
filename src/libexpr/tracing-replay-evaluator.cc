@@ -152,6 +152,11 @@ bool TracingReplayEvaluator::validateDeps(const std::vector<std::pair<QueryNode,
                     tracingCacheLog("replay invalidated: env %s changed", name);
                     return false;
                 }
+            } else {
+                // Unknown query type (e.g. ambient interaction) — can't
+                // re-execute to validate. Conservative: invalidate.
+                tracingCacheLog("replay invalidated: unvalidatable dependency");
+                return false;
             }
         } catch (const std::exception & e) {
             tracingCacheLog("replay: failed to parse dependency: %s", e.what());
@@ -202,8 +207,11 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
                     continue;
 
                 auto currentResponse = getCurrentResponse(*payloadOpt);
-                if (!currentResponse)
-                    continue;
+                if (!currentResponse) {
+                    // Unknown query type (e.g. ambient interaction) — can't
+                    // validate, so this path is not usable for replay.
+                    break;
+                }
 
                 // Check if there's a result matching the current response
                 auto childResult = tracingIndex.getChildResult(childQ.nodeHash);
@@ -310,16 +318,13 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto fnId = getId(*fn);
     auto argId = getId(*arg);
 
-    // Allocate virtual root ids from the shared counter.
-    // The tracing evaluator uses the same counter, so on a miss
-    // when it records, it sees the counter already advanced past
-    // these ids and allocates new ones for ITS virtual roots.
-    // On a hit, the counter has advanced and the tracing evaluator
-    // is never called.
+    // Get or allocate virtual root ids. The registry on TracingWriter
+    // ensures that on a miss, when the recording evaluator sees the
+    // same Object, it gets the same id — no counter drift.
     if (!fnId)
-        fnId = "virtual:" + std::to_string(writer.allocVirtualRoot().value());
+        fnId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(fn).value());
     if (!argId)
-        argId = "virtual:" + std::to_string(writer.allocVirtualRoot().value());
+        argId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(arg).value());
 
     if (auto result = lookup(trace::QueryApply{*fnId, *argId})) {
         tracingCacheLog("replay hit: apply");
