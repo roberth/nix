@@ -6,6 +6,7 @@
  * handle persistence.
  */
 
+#include "nix/expr/trace-ids.hh"
 #include "nix/expr/trace-types.hh"
 
 #include <nlohmann/json.hpp>
@@ -26,20 +27,20 @@ public:
     virtual void log(const nlohmann::json & entry) = 0;
 
     /** Allocate a new value handle for tracing. */
-    uint64_t allocValue()
+    ValueHandle allocValue()
     {
-        return nextValueNum++;
+        return ValueHandle(nextValueNum++);
     }
 
     /**
      * Log a query and return its value handle.
      */
     template<typename T>
-    uint64_t logQuery(const T & queryPayload)
+    ValueHandle logQuery(const T & queryPayload)
     {
         auto v = allocValue();
         nlohmann::json j;
-        trace::to_json(j, trace::Query<T>{queryPayload, v});
+        trace::to_json(j, trace::Query<T>{queryPayload, v.value()});
         log(j);
         return v;
     }
@@ -48,10 +49,10 @@ public:
      * Log a result for a value handle.
      */
     template<typename T>
-    void logResult(uint64_t v, const T & resultPayload)
+    void logResult(ValueHandle v, const T & resultPayload)
     {
         nlohmann::json j;
-        trace::to_json(j, trace::Result<T>{resultPayload, v});
+        trace::to_json(j, trace::Result<T>{resultPayload, v.value()});
         log(j);
     }
 

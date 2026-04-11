@@ -59,10 +59,9 @@ class TracingWriter
     TraceSink & sink;
     TracingIndex * index; // nullptr if trie recording disabled
     std::optional<NodeHash> afterHash;
-
-public:
     uint64_t nextVirtualRoot = 0;
 
+public:
     TracingWriter(TraceSink & sink, TracingIndex * index = nullptr)
         : sink(sink)
         , index(index)
@@ -70,20 +69,19 @@ public:
     }
 
     /**
-     * Allocate a virtual root id. Shared between TracingEvaluator and
-     * TracingReplayEvaluator for deterministic assignment.
+     * Allocate a virtual root id.
      */
-    uint64_t allocVirtualRoot()
+    VirtualRootId allocVirtualRoot()
     {
-        return nextVirtualRoot++;
+        return VirtualRootId(nextVirtualRoot++);
     }
 
     /**
      * Log a root query (evalFile, evalExpr, apply).
-     * Returns (valueNum, queryHash) so the caller can pass queryHash to logResult.
+     * Returns (valueHandle, queryHash) so the caller can pass queryHash to logResult.
      */
     template<typename Q>
-    std::pair<uint64_t, std::optional<QueryHash>> logRootQuery(const Q & query)
+    std::pair<ValueHandle, std::optional<QueryHash>> logRootQuery(const Q & query)
     {
         auto valueNum = sink.logQuery(query);
 
@@ -105,7 +103,8 @@ public:
      * Returns (valueNum, queryHash).
      */
     template<typename Q>
-    std::pair<uint64_t, std::optional<QueryHash>> logQuery(const Q & query, const std::optional<TriePosition> & parent)
+    std::pair<ValueHandle, std::optional<QueryHash>>
+    logQuery(const Q & query, const std::optional<TriePosition> & parent)
     {
         auto valueNum = sink.logQuery(query);
 
@@ -167,7 +166,7 @@ public:
      */
     template<typename R>
     std::optional<TriePosition>
-    logResult(uint64_t valueNum, const R & result, const std::optional<QueryHash> & queryHash)
+    logResult(ValueHandle valueNum, const R & result, const std::optional<QueryHash> & queryHash)
     {
         sink.logResult(valueNum, result);
 

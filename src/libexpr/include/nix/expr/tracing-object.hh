@@ -17,16 +17,16 @@ class TracingObject : public Object
 {
     ref<Object> inner;
     TracingWriter & writer;
-    uint64_t valueNum;
+    ValueHandle valueNum;
     std::optional<TriePosition> triePos;
 
-    TracingObject(ref<Object> inner, TracingWriter & writer, uint64_t valueNum, std::optional<TriePosition> triePos);
+    TracingObject(ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos);
 
 public:
     static ref<TracingObject> create(
         ref<Object> inner,
         TracingWriter & writer,
-        uint64_t valueNum,
+        ValueHandle valueNum,
         std::optional<TriePosition> triePos = std::nullopt);
 
     /** Get the query hash string for trie identity, if available. */
