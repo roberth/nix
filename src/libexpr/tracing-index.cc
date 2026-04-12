@@ -5,8 +5,12 @@
 #include "nix/util/logging.hh"
 #include "nix/util/serialise.hh"
 #include "nix/util/users.hh"
+#include "nix/util/util.hh"
 
 #include <nlohmann/json.hpp>
+#include <condition_variable>
+#include <thread>
+#include <variant>
 
 namespace nix {
 
@@ -59,15 +63,33 @@ CREATE INDEX IF NOT EXISTS ResultsAfter ON Results(afterHash);
 CREATE INDEX IF NOT EXISTS QueriesStructural ON Queries(structuralParent, queryHash);
 )sql";
 
+// ---- Write operations queued for background persistence ----
+
+struct WriteInsertQuery
+{
+    std::string nodeHash;
+    std::string queryHash;
+    std::optional<std::string> afterHash;
+    std::optional<std::string> structuralParent;
+    int depth;
+    std::string payload; // CBOR
+};
+
+struct WriteInsertResult
+{
+    std::string nodeHash;
+    std::string afterHash;
+    std::string payload; // CBOR
+    std::optional<std::string> queryNodeHash;
+};
+
+using WriteOp = std::variant<WriteInsertQuery, WriteInsertResult>;
+
+// ---- Reader state (main thread) ----
+
 struct TracingIndex::State
 {
     SQLite db;
-
-    // Insert statements
-    SQLiteStmt insertQuery;
-    SQLiteStmt insertQueryPayload;
-    SQLiteStmt insertResult;
-    SQLiteStmt insertShortcut;
 
     // Query statements (0..1)
     SQLiteStmt getQuery;
@@ -82,6 +104,117 @@ struct TracingIndex::State
     SQLiteStmt selectChildQueries;
     SQLiteStmt selectChildResults;
     SQLiteStmt selectStructuralChildren;
+};
+
+// ---- Background writer ----
+
+struct TracingIndex::WriteQueue
+{
+    Sync<std::vector<WriteOp>> pending;
+    std::condition_variable wakeup;
+    std::thread thread;
+    std::atomic<bool> done{false};
+
+    WriteQueue(const std::filesystem::path & dbPath)
+    {
+        thread = std::thread([this, dbPath] { run(dbPath); });
+    }
+
+    ~WriteQueue()
+    {
+        done = true;
+        wakeup.notify_one();
+        thread.join();
+    }
+
+    void enqueue(WriteOp op)
+    {
+        {
+            auto q = pending.lock();
+            q->push_back(std::move(op));
+        }
+        wakeup.notify_one();
+    }
+
+private:
+    void run(const std::filesystem::path & dbPath)
+    {
+        try {
+            SQLite db(dbPath, {.mode = SQLiteOpenMode::Normal, .useWAL = true});
+            db.isCache();
+
+            SQLiteStmt insertQuery, insertQueryPayload, insertResult, insertShortcut;
+            insertQuery.create(db,
+                "INSERT OR IGNORE INTO Queries(nodeHash, queryHash, afterHash, structuralParent, depth) "
+                "VALUES (?, ?, ?, ?, ?)");
+            insertQueryPayload.create(db,
+                "INSERT OR IGNORE INTO QueryPayloads(queryHash, payload) VALUES (?, ?)");
+            insertResult.create(db,
+                "INSERT OR IGNORE INTO Results(nodeHash, afterHash, payload, queryNodeHash) VALUES (?, ?, ?, ?)");
+            insertShortcut.create(db,
+                "INSERT OR IGNORE INTO Shortcuts(queryHash, nodeHash) VALUES (?, ?)");
+
+            while (true) {
+                std::vector<WriteOp> batch;
+                {
+                    auto q = pending.lock();
+                    while (q->empty() && !done.load())
+                        q.wait(wakeup);
+                    batch = std::move(*q);
+                    q->clear();
+                }
+
+                if (batch.empty() && done.load())
+                    break;
+
+                if (batch.empty())
+                    continue;
+
+                SQLiteTxn txn(db);
+                for (auto & op : batch) {
+                    std::visit(
+                        overloaded{
+                            [&](const WriteInsertQuery & w) {
+                                {
+                                    auto use = insertQuery.use();
+                                    use(w.nodeHash);
+                                    use(w.queryHash);
+                                    if (w.afterHash)
+                                        use(*w.afterHash);
+                                    else
+                                        use.bind();
+                                    if (w.structuralParent)
+                                        use(*w.structuralParent);
+                                    else
+                                        use.bind();
+                                    use(static_cast<int64_t>(w.depth));
+                                    use.exec();
+                                }
+                                insertQueryPayload.use()(w.queryHash)
+                                    (reinterpret_cast<const unsigned char *>(w.payload.data()), w.payload.size())
+                                    .exec();
+                                insertShortcut.use()(w.queryHash)(w.nodeHash).exec();
+                            },
+                            [&](const WriteInsertResult & w) {
+                                auto use = insertResult.use();
+                                use(w.nodeHash);
+                                use(w.afterHash);
+                                use(reinterpret_cast<const unsigned char *>(w.payload.data()), w.payload.size());
+                                if (w.queryNodeHash)
+                                    use(*w.queryNodeHash);
+                                else
+                                    use.bind();
+                                use.exec();
+                            },
+                        },
+                        op);
+                }
+                txn.commit();
+            }
+        } catch (std::exception & e) {
+            ignoreExceptionInDestructor();
+        }
+    }
 };
 
 static std::filesystem::path defaultDbPath()
@@ -109,21 +242,7 @@ TracingIndex::TracingIndex(const std::filesystem::path & dbPath)
     state->db.isCache();
     state->db.exec(schema);
 
-    // Prepare insert statements
-    state->insertQuery.create(
-        state->db,
-        "INSERT OR IGNORE INTO Queries(nodeHash, queryHash, afterHash, structuralParent, depth) "
-        "VALUES (?, ?, ?, ?, ?)");
-
-    state->insertQueryPayload.create(
-        state->db, "INSERT OR IGNORE INTO QueryPayloads(queryHash, payload) VALUES (?, ?)");
-
-    state->insertResult.create(
-        state->db, "INSERT OR IGNORE INTO Results(nodeHash, afterHash, payload, queryNodeHash) VALUES (?, ?, ?, ?)");
-
-    state->insertShortcut.create(state->db, "INSERT OR IGNORE INTO Shortcuts(queryHash, nodeHash) VALUES (?, ?)");
-
-    // Prepare get statements (0..1)
+    // Prepare read statements (0..1)
     state->getQuery.create(
         state->db, "SELECT nodeHash, queryHash, afterHash, structuralParent, depth FROM Queries WHERE nodeHash = ?");
 
@@ -149,9 +268,15 @@ TracingIndex::TracingIndex(const std::filesystem::path & dbPath)
         "SELECT nodeHash, queryHash, afterHash, structuralParent, depth FROM Queries "
         "WHERE structuralParent = ? AND queryHash = ?");
 
+    // Background writer opens its own connection
+    _writeQueue = std::make_unique<WriteQueue>(dbPath);
 }
 
-TracingIndex::~TracingIndex() = default;
+TracingIndex::~TracingIndex()
+{
+    // WriteQueue destructor joins the background thread
+    _writeQueue.reset();
+}
 
 // -----------------------------------------------------------------------------
 // Hash computation utilities
@@ -204,29 +329,14 @@ NodeHash TracingIndex::insertQuery(
 {
     auto nodeHash = computeQueryNodeHash(afterHash, queryHash);
 
-    auto state(_state->lock());
-
-    // Insert query node
-    auto use = state->insertQuery.use();
-    use(hashToBlob(nodeHash));
-    use(hashToBlob(queryHash));
-    if (afterHash)
-        use(hashToBlob(*afterHash));
-    else
-        use.bind(); // NULL
-    if (structuralParent)
-        use(hashToBlob(*structuralParent));
-    else
-        use.bind(); // NULL
-    use(static_cast<int64_t>(depth));
-    use.exec();
-
-    // Insert payload (cold storage) — bind as blob, CBOR may contain null bytes
-    state->insertQueryPayload.use()(hashToBlob(queryHash))
-        (reinterpret_cast<const unsigned char *>(payload.data()), payload.size()).exec();
-
-    // Insert shortcut for fast lookup
-    state->insertShortcut.use()(hashToBlob(queryHash))(hashToBlob(nodeHash)).exec();
+    _writeQueue->enqueue(WriteInsertQuery{
+        .nodeHash = hashToBlob(nodeHash),
+        .queryHash = hashToBlob(queryHash),
+        .afterHash = afterHash ? std::optional{hashToBlob(*afterHash)} : std::nullopt,
+        .structuralParent = structuralParent ? std::optional{hashToBlob(*structuralParent)} : std::nullopt,
+        .depth = depth,
+        .payload = payload,
+    });
 
     return nodeHash;
 }
@@ -236,16 +346,12 @@ NodeHash TracingIndex::insertResult(
 {
     auto nodeHash = computeResultNodeHash(afterHash, payload);
 
-    auto state(_state->lock());
-    auto use = state->insertResult.use();
-    use(hashToBlob(nodeHash));
-    use(hashToBlob(afterHash));
-    use(reinterpret_cast<const unsigned char *>(payload.data()), payload.size());
-    if (queryNodeHash)
-        use(hashToBlob(*queryNodeHash));
-    else
-        use.bind(); // NULL
-    use.exec();
+    _writeQueue->enqueue(WriteInsertResult{
+        .nodeHash = hashToBlob(nodeHash),
+        .afterHash = hashToBlob(afterHash),
+        .payload = payload,
+        .queryNodeHash = queryNodeHash ? std::optional{hashToBlob(*queryNodeHash)} : std::nullopt,
+    });
 
     return nodeHash;
 }
