@@ -276,6 +276,33 @@ echo '{ }: { g = { m, n ? 5 }: m + n; }' > "$TEST_ROOT/fargs-inner.nix"
 echo '{ overlay }: let fix = f: let x = f x; in x; in fix (self: { a = 1; } // overlay self)' > "$TEST_ROOT/fix-fn.nix"
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/fix-fn.nix; }) { overlay = self: { b = self.a + 1; }; }') == '{ a = 1; b = 2; }' ]]
 
+# --- Ambient replay: multiple attributes with nested traversal ---
+# Tests that the ambient id mapping handles multiple child Objects
+# and child-of-child queries, and that invalidation of a nested
+# value produces correct results (not stale cached values).
+# No clearCache — prior trie entries from other tests must not interfere.
+
+cat > "$TEST_ROOT/multi-attr.nix" << 'NIX'
+{ args }:
+let
+  # Access b.value before a — non-obvious order
+  bVal = args.b.value;
+  aVal = args.a;
+in aVal + bVal
+NIX
+
+# First call: 10 + 20 = 30
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/multi-attr.nix; }) { args = { a = 10; b = { value = 20; }; }; }') == 30 ]]
+
+# Second call with same args: should replay from cache
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/multi-attr.nix; }) { args = { a = 10; b = { value = 20; }; }; }') == 30 ]]
+
+# Third call: change nested value — must NOT serve stale 30
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/multi-attr.nix; }) { args = { a = 10; b = { value = 99; }; }; }') == 109 ]]
+
+# Fourth call: change top-level value
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/multi-attr.nix; }) { args = { a = 1; b = { value = 99; }; }; }') == 100 ]]
+
 # --- Nested builtins.cache with function calls ---
 
 clearCache
