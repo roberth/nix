@@ -99,6 +99,18 @@ struct InstallableValue : Installable
     virtual std::pair<Value *, PosIdx> toValue(EvalState & state) = 0;
 
     /**
+     * Like toValue, but returns a lazy thunk that preserves caching.
+     * The returned Value is an ExprFromObject thunk — forcing it
+     * evaluates through the Object interface (cache-aware) rather
+     * than defeating the cache.
+     *
+     * Use this for commands that don't need to inspect the Value
+     * structure directly (e.g. nix eval, nix build). Use toValue()
+     * for commands that need the real Value (e.g. nix edit).
+     */
+    virtual std::pair<Value *, PosIdx> toValueCached(EvalState & state);
+
+    /**
      * @deprecated Use Evaluator and Object instead.
      * Get a cursor to each value this Installable could refer to.
      * However if none exists, throw exception instead of returning

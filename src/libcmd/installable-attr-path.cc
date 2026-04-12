@@ -1,5 +1,6 @@
 #include "nix/store/globals.hh"
 #include "nix/cmd/installable-attr-path.hh"
+#include "nix/expr/expr-from-object.hh"
 #include "nix/store/outputs-spec.hh"
 #include "nix/util/util.hh"
 #include "nix/cmd/command.hh"
@@ -58,6 +59,25 @@ std::pair<Value *, PosIdx> InstallableAttrPath::toValue(EvalState & state)
     auto v = obj->defeatCache();
     state.forceValue(**v, noPos);
     return {*v, obj->getPos()};
+}
+
+std::pair<Value *, PosIdx> InstallableAttrPath::toValueCached(EvalState & state)
+{
+    auto autoArgs = cmd.getAutoArgs(state);
+    std::map<std::string, ref<Object>> autoArgsObj;
+    for (auto & arg : *autoArgs)
+        autoArgsObj.emplace(std::string(state.symbols[arg.name]), state.toObjectCompat(*arg.value));
+
+    auto attrPathTokens = tokenizeString<std::vector<std::string>>(attrPath, ".");
+    auto obj =
+        *expr::helpers::findAlongAttrPathWithAutoCall(*evaluator, rootObject, attrPath, attrPathTokens, autoArgsObj);
+
+    // Bridge via ExprFromObject — creates a lazy thunk that evaluates
+    // through the Object interface, preserving cache replay.
+    auto * v = state.allocValue();
+    auto * expr = new ExprFromObject(obj, evaluator.get_ptr(), nullptr);
+    state.mkThunk_(*v, expr);
+    return {v, obj->getPos()};
 }
 
 DerivedPathsWithInfo InstallableAttrPath::toDerivedPaths()

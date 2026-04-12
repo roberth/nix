@@ -7,6 +7,12 @@
 
 namespace nix {
 
+std::pair<Value *, PosIdx> InstallableValue::toValueCached(EvalState & state)
+{
+    // Default: fall back to toValue (defeats cache)
+    return toValue(state);
+}
+
 std::vector<ref<eval_cache::AttrCursor>> InstallableValue::getCursors(EvalState & state)
 {
     auto evalCache =
