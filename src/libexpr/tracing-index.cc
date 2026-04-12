@@ -621,8 +621,15 @@ std::optional<ResultNode> TracingIndex::findResult(
 
         for (const auto & child : queries) {
             if (child.depth == 0) {
-                // Depth=0 queries are from other evaluations sharing
-                // this temporal position. Skip them.
+                // Depth=0 child: nested user query from this or another
+                // evaluation. Try following — backtrack if dead end.
+                tracingCacheLog("findResult[%d]   depth=0 query %s", walkDepth, hashPrefix(child.nodeHash));
+                walkDepth++;
+                if (auto found = walk(child.nodeHash)) {
+                    walkDepth--;
+                    return found;
+                }
+                walkDepth--;
                 continue;
             }
 

@@ -55,6 +55,7 @@ struct CmdEvalCacheInspect : Command
     {
         TracingIndex index;
         auto nodeHash = Hash::parseAny(nodeHashHex, HashAlgorithm::SHA256);
+        std::cerr << "Parsed hash: " << nodeHash.to_string(HashFormat::Base16, false) << " (" << nodeHash.hashSize << " bytes)\n";
 
         if (auto q = index.getQuery(nodeHash)) {
             std::cout << "Type: Query\n";
