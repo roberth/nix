@@ -542,6 +542,86 @@ TracingIndex::selectStructuralChildren(const NodeHash & structuralParent, const 
     return result;
 }
 
+std::optional<ResultNode> TracingIndex::findResult(
+    const NodeHash & queryNodeHash,
+    std::function<bool(const std::string & queryPayload, const std::string & resultPayload)> validator)
+{
+    auto state(_state->lock());
+
+    // Lambdas that query under the held lock
+    auto childResult = [&](const NodeHash & after) -> std::optional<ResultNode> {
+        auto q = state->getChildResult.use();
+        bindBlob(q, hashToBlob(after));
+        if (!q.next())
+            return std::nullopt;
+        return ResultNode{
+            .nodeHash = readHash(q, 0),
+            .afterHash = readHash(q, 1),
+            .payload = q.getBlob(2),
+            .queryNodeHash = readHashOpt(q, 3),
+        };
+    };
+
+    auto childQueries = [&](const NodeHash & after) -> std::vector<QueryNode> {
+        std::vector<QueryNode> result;
+        auto q = state->selectChildQueries.use();
+        bindBlob(q, hashToBlob(after));
+        while (q.next()) {
+            result.push_back(QueryNode{
+                .nodeHash = readHash(q, 0),
+                .queryHash = readHash(q, 1),
+                .afterHash = readHashOpt(q, 2),
+                .structuralParent = readHashOpt(q, 3),
+                .depth = static_cast<int>(q.getInt(4)),
+            });
+        }
+        return result;
+    };
+
+    auto queryPayload = [&](const QueryHash & qh) -> std::optional<std::string> {
+        auto q = state->getQueryPayload.use();
+        bindBlob(q, hashToBlob(qh));
+        if (!q.next())
+            return std::nullopt;
+        return q.getBlob(0);
+    };
+
+    // Walk forward from the query node
+    NodeHash current = queryNodeHash;
+
+    while (true) {
+        if (auto result = childResult(current))
+            return result;
+
+        auto children = childQueries(current);
+        bool advanced = false;
+        for (const auto & child : children) {
+            if (child.depth == 0) {
+                // Nested user query — advance through it
+                current = child.nodeHash;
+                advanced = true;
+                break;
+            }
+
+            auto payload = queryPayload(child.queryHash);
+            if (!payload)
+                continue;
+
+            auto result = childResult(child.nodeHash);
+            if (!result)
+                continue;
+
+            if (validator(*payload, result->payload)) {
+                current = result->nodeHash;
+                advanced = true;
+                break;
+            }
+        }
+        if (!advanced)
+            return std::nullopt;
+    }
+}
+
 std::vector<std::pair<QueryNode, ResultNode>> TracingIndex::selectDependencies(const NodeHash & queryNodeHash)
 {
     std::vector<std::pair<QueryNode, ResultNode>> result;

@@ -290,58 +290,13 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
             continue;
 
         // Walk forward: Query → (depth>0 Query/Result)* → Result(depth=0)
-        // At each step, validate depth>0 queries by computing the current
-        // response and comparing with the recorded result.
-        std::optional<ResultNode> resultNode;
-        NodeHash current = shortcut.nodeHash;
-        bool validPath = true;
+        auto resultNode = tracingIndex.findResult(shortcut.nodeHash,
+            [&](const std::string & queryPayload, const std::string & resultPayload) {
+                auto currentResponse = getCurrentResponse(queryPayload);
+                return currentResponse && resultPayload == *currentResponse;
+            });
 
-        while (true) {
-            // Check for a depth=0 result (the final answer)
-            if (auto result = tracingIndex.getChildResult(current)) {
-                resultNode = result;
-                break;
-            }
-
-            // Look for child queries in the temporal chain
-            auto childQueries = tracingIndex.selectChildQueries(current);
-            bool foundValid = false;
-            for (const auto & childQ : childQueries) {
-                if (childQ.depth == 0) {
-                    // Depth=0: a nested user query interleaved in the
-                    // temporal chain. Advance into it.
-                    current = childQ.nodeHash;
-                    foundValid = true;
-                    break;
-                }
-
-                auto payloadOpt = tracingIndex.getQueryPayload(childQ.queryHash);
-                if (!payloadOpt)
-                    continue;
-
-                auto currentResponse = getCurrentResponse(*payloadOpt);
-                if (!currentResponse) {
-                    // Unknown query type (e.g. ambient interaction) — can't
-                    // validate, so this path is not usable for replay.
-                    break;
-                }
-
-                // Check if there's a result matching the current response
-                auto childResult = tracingIndex.getChildResult(childQ.nodeHash);
-                if (childResult && childResult->payload == *currentResponse) {
-                    markValidated(childResult->nodeHash);
-                    current = childResult->nodeHash;
-                    foundValid = true;
-                    break;
-                }
-            }
-            if (!foundValid) {
-                validPath = false;
-                break;
-            }
-        }
-
-        if (!resultNode || !validPath)
+        if (!resultNode)
             continue;
 
         validatedNodes.insert(resultNode->nodeHash);

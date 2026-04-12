@@ -81,55 +81,16 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
     auto & tracingIndex = evaluator.getTracingIndex();
     auto queryHash = TracingIndex::computeQueryHash(query);
 
-    // Walk forward from a query node through depth>0 Query/Result pairs
-    // to the final depth=0 Result node.
     auto findResult = [&](const QueryNode & child) -> std::optional<ResultNode> {
-        NodeHash current = child.nodeHash;
-
-        while (true) {
-            if (auto result = tracingIndex.getChildResult(current))
-                return result;
-
-            // Look for child queries in the temporal chain
-            auto childQueries = tracingIndex.selectChildQueries(current);
-            bool foundValid = false;
-            for (const auto & childQ : childQueries) {
-                if (childQ.depth == 0) {
-                    // Depth=0: a nested user query interleaved in the
-                    // temporal chain. Advance into it — the outer result
-                    // is reachable through its subtree.
-                    current = childQ.nodeHash;
-                    foundValid = true;
-                    break;
-                }
-
-                auto payloadOpt = tracingIndex.getQueryPayload(childQ.queryHash);
-                if (!payloadOpt)
-                    continue;
-
-                auto currentResponse = evaluator.getCurrentResponse(*payloadOpt);
-                if (!currentResponse) {
-                    // Unknown query type (e.g. ambient interaction) — can't
-                    // validate, so this path is not usable for replay.
-                    break;
-                }
-
-                auto childResult = tracingIndex.getChildResult(childQ.nodeHash);
-                if (childResult && childResult->payload == *currentResponse) {
-                    evaluator.markValidated(childResult->nodeHash);
-                    current = childResult->nodeHash;
-                    foundValid = true;
-                    break;
-                }
-            }
-            if (!foundValid) {
-                tracingCacheLog("replay: response validation failed for %s", Q::tag);
-                return std::nullopt;
-            }
-        }
-
-        tracingCacheLog("replay: no result found for %s", Q::tag);
-        return std::nullopt;
+        return tracingIndex.findResult(child.nodeHash,
+            [&](const std::string & queryPayload, const std::string & resultPayload) {
+                auto currentResponse = evaluator.getCurrentResponse(queryPayload);
+                if (!currentResponse)
+                    return false;
+                if (resultPayload != *currentResponse)
+                    return false;
+                return true;
+            });
     };
 
     auto parseResult = [&](const ResultNode & resultNode) -> std::optional<R> {
@@ -227,45 +188,15 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
     auto queryHash = TracingIndex::computeQueryHash(query);
 
     auto findResult = [&](const QueryNode & child) -> std::optional<ResultNode> {
-        NodeHash current = child.nodeHash;
-
-        while (true) {
-            if (auto result = tracingIndex.getChildResult(current))
-                return result;
-
-            auto childQueries = tracingIndex.selectChildQueries(current);
-            bool foundValid = false;
-            for (const auto & childQ : childQueries) {
-                if (childQ.depth == 0)
-                    continue;
-
-                auto payloadOpt = tracingIndex.getQueryPayload(childQ.queryHash);
-                if (!payloadOpt)
-                    continue;
-
-                auto currentResponse = evaluator.getCurrentResponse(*payloadOpt);
-                if (!currentResponse) {
-                    // Unknown query type (e.g. ambient interaction) — can't
-                    // validate, so this path is not usable for replay.
-                    break;
-                }
-
-                auto childResult = tracingIndex.getChildResult(childQ.nodeHash);
-                if (childResult && childResult->payload == *currentResponse) {
-                    evaluator.markValidated(childResult->nodeHash);
-                    current = childResult->nodeHash;
-                    foundValid = true;
-                    break;
-                }
-            }
-            if (!foundValid) {
-                tracingCacheLog("replay: response validation failed for %s", Q::tag);
-                return std::nullopt;
-            }
-        }
-
-        tracingCacheLog("replay: no result found for %s", Q::tag);
-        return std::nullopt;
+        return tracingIndex.findResult(child.nodeHash,
+            [&](const std::string & queryPayload, const std::string & resultPayload) {
+                auto currentResponse = evaluator.getCurrentResponse(queryPayload);
+                if (!currentResponse)
+                    return false;
+                if (resultPayload != *currentResponse)
+                    return false;
+                return true;
+            });
     };
 
     auto parseResultWithPos = [&](const ResultNode & resultNode) -> std::optional<std::pair<R, TriePosition>> {
