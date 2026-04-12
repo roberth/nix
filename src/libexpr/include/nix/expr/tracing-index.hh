@@ -245,6 +245,10 @@ public:
 private:
     struct State;
     std::unique_ptr<Sync<State>> _state;
+
+    /** Write queue + background writer thread. */
+    struct WriteQueue;
+    std::unique_ptr<WriteQueue> _writeQueue;
 };
 
 // -------------------------------------------------------------------------
