@@ -346,7 +346,9 @@ ref<Object> TracingReplayEvaluator::evalFile(const SourcePath & path, const std:
 {
     if (auto result = lookup(trace::QueryImport{displayPath})) {
         tracingCacheLog("replay hit: evalFile %s", displayPath);
-        writer.syncAfterHash(result->second.resultNodeHash);
+        // Don't sync writer afterHash — let re-recordings after a
+        // miss start from a fresh position, keeping their temporal
+        // chains separate from previous recordings.
         return make_ref<TracingReplayObject>(
             *this, result->second, [this, path, displayPath]() { return inner->evalFile(path, displayPath); });
     }
@@ -359,7 +361,9 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Sou
 {
     if (auto result = lookup(trace::QueryExpr{expr, basePath.path.abs()})) {
         tracingCacheLog("replay hit: evalExpr");
-        writer.syncAfterHash(result->second.resultNodeHash);
+        // Don't sync writer afterHash — let re-recordings after a
+        // miss start from a fresh position, keeping their temporal
+        // chains separate from previous recordings.
         return make_ref<TracingReplayObject>(
             *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); });
     }
@@ -424,7 +428,9 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     if (result) {
         tracingCacheLog("replay hit: apply");
-        writer.syncAfterHash(result->second.resultNodeHash);
+        // Don't sync writer afterHash — let re-recordings after a
+        // miss start from a fresh position, keeping their temporal
+        // chains separate from previous recordings.
         return make_ref<TracingReplayObject>(
             *this, result->second, [this, fn, arg]() { return inner->apply(fn, arg); });
     }
