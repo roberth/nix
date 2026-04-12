@@ -590,14 +590,18 @@ std::optional<ResultNode> TracingIndex::findResult(
     NodeHash current = queryNodeHash;
 
     while (true) {
-        if (auto result = childResult(current))
-            return result;
+        // Check for a depth=0 Result (the final answer).
+        if (auto result = childResult(current)) {
+            if (!result->queryNodeHash)
+                return result;
+            // Depth>0 result — fall through to child queries
+        }
 
         auto children = childQueries(current);
         bool advanced = false;
         for (const auto & child : children) {
             if (child.depth == 0) {
-                // Nested user query — advance through it
+                // Nested user query — try advancing through it
                 current = child.nodeHash;
                 advanced = true;
                 break;
