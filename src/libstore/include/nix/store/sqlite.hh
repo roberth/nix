@@ -140,6 +140,7 @@ struct SQLiteStmt
         bool next();
 
         std::string getStr(int col);
+        std::string getBlob(int col);
         int64_t getInt(int col);
         bool isNull(int col);
     };
