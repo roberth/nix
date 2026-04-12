@@ -109,6 +109,14 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
         }
     };
 
+    // Helper: on successful lookup, commit pending validated nodes
+    auto onHit = [&](const ResultNode & resultNode, const char * strategy) -> void {
+        commitValidated();
+        evaluator.markValidated(resultNode.nodeHash);
+        evaluator.setTemporalCursor(resultNode.nodeHash);
+        tracingCacheLog("replay hit (%s): %s", strategy, Q::tag);
+    };
+
     std::set<NodeHash> triedNodes;
 
     // Strategy 1: Trie following — direct lookup from the evaluator's temporal cursor
@@ -120,11 +128,7 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
             if (evaluator.validateToValidatedNode(child->nodeHash)) {
                 if (auto resultNode = findResult(*child)) {
                     if (auto result = parseResult(*resultNode)) {
-                        commitValidated();
-                        commitValidated();
-                evaluator.markValidated(resultNode->nodeHash);
-                        evaluator.setTemporalCursor(resultNode->nodeHash);
-                        tracingCacheLog("replay hit (trie): %s", Q::tag);
+                        onHit(*resultNode, "trie");
                         return result;
                     }
                 }
@@ -146,10 +150,7 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
 
         if (auto resultNode = findResult(child)) {
             if (auto result = parseResult(*resultNode)) {
-                commitValidated();
-                evaluator.markValidated(resultNode->nodeHash);
-                evaluator.setTemporalCursor(resultNode->nodeHash);
-                tracingCacheLog("replay hit (structural): %s", Q::tag);
+                onHit(*resultNode, "structural");
                 return result;
             }
         }
@@ -173,10 +174,7 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
 
         if (auto resultNode = findResult(*queryNode)) {
             if (auto result = parseResult(*resultNode)) {
-                commitValidated();
-                evaluator.markValidated(resultNode->nodeHash);
-                evaluator.setTemporalCursor(resultNode->nodeHash);
-                tracingCacheLog("replay hit (shortcut): %s", Q::tag);
+                onHit(*resultNode, "shortcut");
                 return result;
             }
         }
@@ -230,9 +228,16 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
         }
     };
 
+    auto onHit = [&](const ResultNode & resultNode, const char * strategy) -> void {
+        commitValidated();
+        evaluator.markValidated(resultNode.nodeHash);
+        evaluator.setTemporalCursor(resultNode.nodeHash);
+        tracingCacheLog("replay hit (%s): %s", strategy, Q::tag);
+    };
+
     std::set<NodeHash> triedNodes;
 
-    // Strategy 1: Trie following — direct lookup from the evaluator's temporal cursor
+    // Strategy 1: Trie following
     if (auto cursor = evaluator.getTemporalCursor()) {
         auto nodeHash = TracingIndex::computeQueryNodeHash(*cursor, queryHash);
         if (auto child = tracingIndex.getQuery(nodeHash)) {
@@ -241,11 +246,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
             if (evaluator.validateToValidatedNode(child->nodeHash)) {
                 if (auto resultNode = findResult(*child)) {
                     if (auto result = parseResultWithPos(*resultNode)) {
-                        commitValidated();
-                        commitValidated();
-                evaluator.markValidated(resultNode->nodeHash);
-                        evaluator.setTemporalCursor(resultNode->nodeHash);
-                        tracingCacheLog("replay hit (trie): %s", Q::tag);
+                        onHit(*resultNode, "trie");
                         return result;
                     }
                 }
@@ -253,7 +254,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
         }
     }
 
-    // Strategy 2: Structural lookup — structural children
+    // Strategy 2: Structural lookup
     auto structuralChildren = tracingIndex.selectStructuralChildren(triePos.resultNodeHash, queryHash);
     for (const auto & child : structuralChildren) {
         if (triedNodes.count(child.nodeHash))
@@ -267,16 +268,13 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 
         if (auto resultNode = findResult(child)) {
             if (auto result = parseResultWithPos(*resultNode)) {
-                commitValidated();
-                evaluator.markValidated(resultNode->nodeHash);
-                evaluator.setTemporalCursor(resultNode->nodeHash);
-                tracingCacheLog("replay hit (structural): %s", Q::tag);
+                onHit(*resultNode, "structural");
                 return result;
             }
         }
     }
 
-    // Strategy 3: Shortcut lookup — global table
+    // Strategy 3: Shortcut lookup
     auto shortcuts = tracingIndex.selectShortcuts(queryHash);
     for (const auto & shortcut : shortcuts) {
         if (triedNodes.count(shortcut.nodeHash))
@@ -294,10 +292,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 
         if (auto resultNode = findResult(*queryNode)) {
             if (auto result = parseResultWithPos(*resultNode)) {
-                commitValidated();
-                evaluator.markValidated(resultNode->nodeHash);
-                evaluator.setTemporalCursor(resultNode->nodeHash);
-                tracingCacheLog("replay hit (shortcut): %s", Q::tag);
+                onHit(*resultNode, "shortcut");
                 return result;
             }
         }
