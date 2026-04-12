@@ -205,6 +205,17 @@ public:
     }
 
     /**
+     * Advance the temporal cursor to a replayed position.
+     * Called when the replay evaluator hits — ensures that
+     * subsequent misses (which fall through to recording) start
+     * from the correct temporal position in the trie.
+     */
+    void syncAfterHash(const NodeHash & nodeHash)
+    {
+        afterHash = nodeHash;
+    }
+
+    /**
      * Check if trie recording is enabled.
      */
     bool hasIndex() const
