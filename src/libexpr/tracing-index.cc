@@ -1,4 +1,6 @@
 #include "nix/expr/tracing-index.hh"
+#include "nix/expr/tracing-cache-log.hh"
+#include "nix/expr/tracing-writer.hh"
 #include "nix/store/sqlite.hh"
 #include "nix/util/file-system.hh"
 #include "nix/util/hash.hh"
@@ -336,12 +338,17 @@ NodeHash TracingIndex::computeQueryNodeHash(const std::optional<NodeHash> & afte
     return sink.finish().hash;
 }
 
-NodeHash TracingIndex::computeResultNodeHash(const NodeHash & afterHash, const std::string & payload)
+NodeHash TracingIndex::computeResultNodeHash(
+    const NodeHash & afterHash, const std::string & payload, const std::optional<NodeHash> & queryNodeHash)
 {
     HashSink sink(HashAlgorithm::SHA256);
     auto astr = afterHash.to_string(HashFormat::Base16, false);
     sink << astr;
     sink << payload;
+    if (queryNodeHash) {
+        auto qstr = queryNodeHash->to_string(HashFormat::Base16, false);
+        sink << qstr;
+    }
     return sink.finish().hash;
 }
 
@@ -373,7 +380,7 @@ NodeHash TracingIndex::insertQuery(
 NodeHash TracingIndex::insertResult(
     const NodeHash & afterHash, const std::string & payload, const std::optional<NodeHash> & queryNodeHash)
 {
-    auto nodeHash = computeResultNodeHash(afterHash, payload);
+    auto nodeHash = computeResultNodeHash(afterHash, payload, queryNodeHash);
 
     _writeQueue->enqueue(WriteInsertResult{
         .nodeHash = hashToBlob(nodeHash),
@@ -588,42 +595,75 @@ std::optional<ResultNode> TracingIndex::findResult(
         return q.getBlob(0);
     };
 
-    // Recursive walk with backtracking. At each position:
-    // - Check for the target Result (queryNodeHash matches)
-    // - Try advancing through each non-target Result
-    // - Try advancing through depth=0 children (nested queries)
-    // - Validate depth>0 children (env events) and try each
+    auto hashPrefix = [](const NodeHash & h) { return h.to_string(HashFormat::Base16, false).substr(0, 12); };
+
+    // Recursive walk with backtracking.
+    int walkDepth = 0;
     std::function<std::optional<ResultNode>(const NodeHash &)> walk;
     walk = [&](const NodeHash & current) -> std::optional<ResultNode> {
         auto results = childResults(current);
-        for (const auto & r : results) {
-            if (r.queryNodeHash && *r.queryNodeHash == queryNodeHash)
-                return r;  // Target Result found
-        }
-        // Try advancing through non-target Results
-        for (const auto & r : results) {
-            if (auto found = walk(r.nodeHash))
-                return found;
-        }
+        auto queries = childQueries(current);
 
-        for (const auto & child : childQueries(current)) {
+        tracingCacheLog("findResult[%d] at %s: %zu results, %zu queries (target=%s)",
+            walkDepth, hashPrefix(current),
+            results.size(), queries.size(), hashPrefix(queryNodeHash));
+
+        for (const auto & r : results) {
+            bool isTarget = r.queryNodeHash && *r.queryNodeHash == queryNodeHash;
+            tracingCacheLog("findResult[%d]   result %s qnHash=%s %s",
+                walkDepth, hashPrefix(r.nodeHash),
+                r.queryNodeHash ? hashPrefix(*r.queryNodeHash) : "NULL",
+                isTarget ? "TARGET" : "non-target");
+            if (isTarget)
+                return r;
+        }
+        // Non-target Results belong to other queries' chains — skip.
+
+        for (const auto & child : queries) {
             if (child.depth == 0) {
-                if (auto found = walk(child.nodeHash))
-                    return found;
+                // Depth=0 queries are from other evaluations sharing
+                // this temporal position. Skip them.
                 continue;
             }
 
             auto payload = queryPayload(child.queryHash);
-            if (!payload)
+            if (!payload) {
+                tracingCacheLog("findResult[%d]   depth=%d query %s: no payload", walkDepth, child.depth, hashPrefix(child.nodeHash));
                 continue;
+            }
 
-            for (const auto & eventResult : childResults(child.nodeHash)) {
-                if (validator(*payload, eventResult.nodeHash, eventResult.payload)) {
-                    if (auto found = walk(eventResult.nodeHash))
+            auto evResults = childResults(child.nodeHash);
+            tracingCacheLog("findResult[%d]   depth=%d query %s: %zu event results",
+                walkDepth, child.depth, hashPrefix(child.nodeHash), evResults.size());
+
+            for (const auto & eventResult : evResults) {
+                bool valid = validator(*payload, eventResult.nodeHash, eventResult.payload);
+                if (!valid) {
+                    try {
+                        auto qj = cborStringToJson(*payload);
+                        auto rj = cborStringToJson(eventResult.payload);
+                        tracingCacheLog("findResult[%d]     event result %s: INVALID query=%s recorded=%s",
+                            walkDepth, hashPrefix(eventResult.nodeHash),
+                            qj.dump().substr(0, 120), rj.dump().substr(0, 80));
+                    } catch (...) {
+                        tracingCacheLog("findResult[%d]     event result %s: INVALID (dump failed)",
+                            walkDepth, hashPrefix(eventResult.nodeHash));
+                    }
+                } else {
+                    tracingCacheLog("findResult[%d]     event result %s: VALID",
+                        walkDepth, hashPrefix(eventResult.nodeHash));
+                }
+                if (valid) {
+                    walkDepth++;
+                    if (auto found = walk(eventResult.nodeHash)) {
+                        walkDepth--;
                         return found;
+                    }
+                    walkDepth--;
                 }
             }
         }
+        tracingCacheLog("findResult[%d] backtrack from %s", walkDepth, hashPrefix(current));
         return std::nullopt;
     };
 

@@ -119,9 +119,12 @@ public:
 
     /**
      * Compute a node hash for a result node.
-     * nodeHash = hash(afterHash, payload)
+     * nodeHash = hash(afterHash, payload, queryNodeHash)
      */
-    static NodeHash computeResultNodeHash(const NodeHash & afterHash, const std::string & payload);
+    static NodeHash computeResultNodeHash(
+        const NodeHash & afterHash,
+        const std::string & payload,
+        const std::optional<NodeHash> & queryNodeHash = std::nullopt);
 
     // -------------------------------------------------------------------------
     // Recording operations (insert into trie)
