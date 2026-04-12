@@ -3380,8 +3380,9 @@ Expr * EvalState::parse(
     if (getEnv("_NIX_DISALLOW_PARSE").has_value()) {
         // Allow nix-internal files and string expressions (--expr);
         // block parsing of user files which should come from cache.
-        bool allowed = std::holds_alternative<SourcePath>(origin)
-            && std::get<SourcePath>(origin).to_string().starts_with("«nix-internal»");
+        bool allowed = std::holds_alternative<Pos::String>(origin)
+            || (std::holds_alternative<SourcePath>(origin)
+                && std::get<SourcePath>(origin).to_string().starts_with("«nix-internal»"));
         if (!allowed) {
             auto originStr = std::visit(
                 overloaded{

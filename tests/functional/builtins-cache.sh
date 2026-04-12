@@ -66,8 +66,8 @@ echo '{ val = 1; }' > "$TEST_ROOT/cached.nix"
 # Trie index should exist
 [[ -f "$cacheDir/index.sqlite" ]]
 
-# Second evaluation (same file) should succeed (cache hit)
-[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/cached.nix; }).val') == 1 ]]
+# Second evaluation: must replay (parsing disallowed)
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/cached.nix; }).val') == 1 ]]
 
 # --- Replay completeness: _NIX_DISALLOW_PARSE proves no re-evaluation ---
 # With CLI-level tracing (--option tracing-eval-cache true), the outer
@@ -145,8 +145,8 @@ echo '100' > "$TEST_ROOT/addend.nix"
 # First call: 1 + 100 = 101
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/fn-dep.nix; }) { x = 1; }') == 101 ]]
 
-# Second call with same args: should produce same result (cache hit)
-[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/fn-dep.nix; }) { x = 1; }') == 101 ]]
+# Second call with same args: must replay (parsing disallowed)
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/fn-dep.nix; }) { x = 1; }') == 101 ]]
 
 # Change the transitive dependency
 sleep 1
@@ -291,16 +291,19 @@ let
 in aVal + bVal
 NIX
 
-# First call: 10 + 20 = 30
+# First call: 10 + 20 = 30 (records)
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/multi-attr.nix; }) { args = { a = 10; b = { value = 20; }; }; }') == 30 ]]
 
-# Second call with same args: should replay from cache
-[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/multi-attr.nix; }) { args = { a = 10; b = { value = 20; }; }; }') == 30 ]]
+# Second call with same args: must replay (parsing disallowed)
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/multi-attr.nix; }) { args = { a = 10; b = { value = 20; }; }; }') == 30 ]]
 
 # Third call: change nested value — must NOT serve stale 30
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/multi-attr.nix; }) { args = { a = 10; b = { value = 99; }; }; }') == 109 ]]
 
-# Fourth call: change top-level value
+# Fourth call with same changed args: must replay
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/multi-attr.nix; }) { args = { a = 10; b = { value = 99; }; }; }') == 109 ]]
+
+# Fifth call: change top-level value
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/multi-attr.nix; }) { args = { a = 1; b = { value = 99; }; }; }') == 100 ]]
 
 # --- Nested builtins.cache with function calls ---
