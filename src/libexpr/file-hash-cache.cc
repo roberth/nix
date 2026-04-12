@@ -43,9 +43,10 @@ FileHashCache::FileHashCache(std::filesystem::path dbPath)
         state->queryHash.create(state->db, "select mtime, hash from FileHashes where path = ?");
         state->insertHash.create(state->db, "insert or replace into FileHashes(path, mtime, hash) values (?, ?, ?)");
         state->deleteHash.create(state->db, "delete from FileHashes where path = ?");
-    } catch (...) {
+    } catch (std::exception & e) {
         // Fall back to in-memory database if the on-disk cache can't be opened
         // (e.g. read-only filesystem, sandboxed builds).
+        debug("file hash cache: falling back to in-memory database: %s", e.what());
         auto state(_state->lock());
         state->db = SQLite(":memory:", {.mode = SQLiteOpenMode::Normal});
         state->db.exec(schema);

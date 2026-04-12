@@ -106,6 +106,39 @@ struct TracingIndex::State
     SQLiteStmt selectStructuralChildren;
 };
 
+// ---- Hash ↔ blob helpers ----
+
+static std::string hashToBlob(const Hash & h)
+{
+    return std::string(reinterpret_cast<const char *>(h.hash), h.hashSize);
+}
+
+static Hash blobToHash(const std::string & blob)
+{
+    Hash h(HashAlgorithm::SHA256);
+    if (blob.size() != h.hashSize)
+        throw Error("invalid hash blob size %d (expected %d)", blob.size(), h.hashSize);
+    std::memcpy(h.hash, blob.data(), h.hashSize);
+    return h;
+}
+
+static SQLiteStmt::Use & bindBlob(SQLiteStmt::Use & use, const std::string & blob)
+{
+    return use(reinterpret_cast<const unsigned char *>(blob.data()), blob.size());
+}
+
+static Hash readHash(SQLiteStmt::Use & query, int col)
+{
+    return blobToHash(query.getBlob(col));
+}
+
+static std::optional<Hash> readHashOpt(SQLiteStmt::Use & query, int col)
+{
+    if (query.isNull(col))
+        return std::nullopt;
+    return blobToHash(query.getBlob(col));
+}
+
 // ---- Background writer ----
 
 struct TracingIndex::WriteQueue
@@ -177,31 +210,39 @@ private:
                             [&](const WriteInsertQuery & w) {
                                 {
                                     auto use = insertQuery.use();
-                                    use(w.nodeHash);
-                                    use(w.queryHash);
+                                    bindBlob(use, w.nodeHash);
+                                    bindBlob(use, w.queryHash);
                                     if (w.afterHash)
-                                        use(*w.afterHash);
+                                        bindBlob(use, *w.afterHash);
                                     else
                                         use.bind();
                                     if (w.structuralParent)
-                                        use(*w.structuralParent);
+                                        bindBlob(use, *w.structuralParent);
                                     else
                                         use.bind();
                                     use(static_cast<int64_t>(w.depth));
                                     use.exec();
                                 }
-                                insertQueryPayload.use()(w.queryHash)
-                                    (reinterpret_cast<const unsigned char *>(w.payload.data()), w.payload.size())
-                                    .exec();
-                                insertShortcut.use()(w.queryHash)(w.nodeHash).exec();
+                                {
+                                    auto use = insertQueryPayload.use();
+                                    bindBlob(use, w.queryHash);
+                                    use(reinterpret_cast<const unsigned char *>(w.payload.data()), w.payload.size());
+                                    use.exec();
+                                }
+                                {
+                                    auto use = insertShortcut.use();
+                                    bindBlob(use, w.queryHash);
+                                    bindBlob(use, w.nodeHash);
+                                    use.exec();
+                                }
                             },
                             [&](const WriteInsertResult & w) {
                                 auto use = insertResult.use();
-                                use(w.nodeHash);
-                                use(w.afterHash);
+                                bindBlob(use, w.nodeHash);
+                                bindBlob(use, w.afterHash);
                                 use(reinterpret_cast<const unsigned char *>(w.payload.data()), w.payload.size());
                                 if (w.queryNodeHash)
-                                    use(*w.queryNodeHash);
+                                    bindBlob(use, *w.queryNodeHash);
                                 else
                                     use.bind();
                                 use.exec();
@@ -278,19 +319,7 @@ TracingIndex::~TracingIndex()
     _writeQueue.reset();
 }
 
-// -----------------------------------------------------------------------------
-// Hash computation utilities
-// -----------------------------------------------------------------------------
-
-static std::string hashToBlob(const Hash & h)
-{
-    return h.to_string(HashFormat::Base16, false);
-}
-
-static Hash blobToHash(const std::string & blob)
-{
-    return Hash::parseAny(blob, HashAlgorithm::SHA256);
-}
+// (hash utilities moved above WriteQueue)
 
 NodeHash TracingIndex::computeQueryNodeHash(const std::optional<NodeHash> & afterHash, const QueryHash & queryHash)
 {
@@ -365,12 +394,13 @@ std::vector<ShortcutEntry> TracingIndex::selectShortcuts(const QueryHash & query
     std::vector<ShortcutEntry> result;
 
     auto state(_state->lock());
-    auto query = state->selectShortcuts.use()(hashToBlob(queryHash));
+    auto query = state->selectShortcuts.use();
+    bindBlob(query, hashToBlob(queryHash));
 
     while (query.next()) {
         result.push_back(
             ShortcutEntry{
-                .nodeHash = blobToHash(query.getStr(0)),
+                .nodeHash = readHash(query, 0),
                 .createdAt = query.getInt(1),
             });
     }
@@ -381,16 +411,17 @@ std::vector<ShortcutEntry> TracingIndex::selectShortcuts(const QueryHash & query
 std::optional<QueryNode> TracingIndex::getQuery(const NodeHash & nodeHash)
 {
     auto state(_state->lock());
-    auto query = state->getQuery.use()(hashToBlob(nodeHash));
+    auto query = state->getQuery.use();
+    bindBlob(query, hashToBlob(nodeHash));
 
     if (!query.next())
         return std::nullopt;
 
     return QueryNode{
-        .nodeHash = blobToHash(query.getStr(0)),
-        .queryHash = blobToHash(query.getStr(1)),
-        .afterHash = query.isNull(2) ? std::nullopt : std::optional{blobToHash(query.getStr(2))},
-        .structuralParent = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
+        .nodeHash = readHash(query, 0),
+        .queryHash = readHash(query, 1),
+        .afterHash = readHashOpt(query, 2),
+        .structuralParent = readHashOpt(query, 3),
         .depth = static_cast<int>(query.getInt(4)),
     };
 }
@@ -398,23 +429,25 @@ std::optional<QueryNode> TracingIndex::getQuery(const NodeHash & nodeHash)
 std::optional<ResultNode> TracingIndex::getResult(const NodeHash & nodeHash)
 {
     auto state(_state->lock());
-    auto query = state->getResult.use()(hashToBlob(nodeHash));
+    auto query = state->getResult.use();
+    bindBlob(query, hashToBlob(nodeHash));
 
     if (!query.next())
         return std::nullopt;
 
     return ResultNode{
-        .nodeHash = blobToHash(query.getStr(0)),
-        .afterHash = blobToHash(query.getStr(1)),
+        .nodeHash = readHash(query, 0),
+        .afterHash = readHash(query, 1),
         .payload = query.getBlob(2),
-        .queryNodeHash = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
+        .queryNodeHash = readHashOpt(query, 3),
     };
 }
 
 std::optional<std::string> TracingIndex::getQueryPayload(const QueryHash & queryHash)
 {
     auto state(_state->lock());
-    auto query = state->getQueryPayload.use()(hashToBlob(queryHash));
+    auto query = state->getQueryPayload.use();
+    bindBlob(query, hashToBlob(queryHash));
 
     if (!query.next())
         return std::nullopt;
@@ -431,15 +464,16 @@ std::vector<QueryNode> TracingIndex::selectChildQueries(const NodeHash & resultN
     std::vector<QueryNode> result;
 
     auto state(_state->lock());
-    auto query = state->selectChildQueries.use()(hashToBlob(resultNodeHash));
+    auto query = state->selectChildQueries.use();
+    bindBlob(query, hashToBlob(resultNodeHash));
 
     while (query.next()) {
         result.push_back(
             QueryNode{
-                .nodeHash = blobToHash(query.getStr(0)),
-                .queryHash = blobToHash(query.getStr(1)),
-                .afterHash = query.isNull(2) ? std::nullopt : std::optional{blobToHash(query.getStr(2))},
-                .structuralParent = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
+                .nodeHash = readHash(query, 0),
+                .queryHash = readHash(query, 1),
+                .afterHash = readHashOpt(query, 2),
+                .structuralParent = readHashOpt(query, 3),
                 .depth = static_cast<int>(query.getInt(4)),
             });
     }
@@ -452,13 +486,14 @@ std::vector<ResultNode> TracingIndex::selectChildResults(const NodeHash & afterH
     std::vector<ResultNode> result;
 
     auto state(_state->lock());
-    auto query = state->selectChildResults.use()(hashToBlob(afterHash));
+    auto query = state->selectChildResults.use();
+    bindBlob(query, hashToBlob(afterHash));
 
     while (query.next()) {
         result.push_back(
             ResultNode{
-                .nodeHash = blobToHash(query.getStr(0)),
-                .afterHash = blobToHash(query.getStr(1)),
+                .nodeHash = readHash(query, 0),
+                .afterHash = readHash(query, 1),
                 .payload = query.getBlob(2),
             });
     }
@@ -469,16 +504,17 @@ std::vector<ResultNode> TracingIndex::selectChildResults(const NodeHash & afterH
 std::optional<ResultNode> TracingIndex::getChildResult(const NodeHash & afterHash)
 {
     auto state(_state->lock());
-    auto query = state->getChildResult.use()(hashToBlob(afterHash));
+    auto query = state->getChildResult.use();
+    bindBlob(query, hashToBlob(afterHash));
 
     if (!query.next())
         return std::nullopt;
 
     return ResultNode{
-        .nodeHash = blobToHash(query.getStr(0)),
-        .afterHash = blobToHash(query.getStr(1)),
+        .nodeHash = readHash(query, 0),
+        .afterHash = readHash(query, 1),
         .payload = query.getBlob(2),
-        .queryNodeHash = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
+        .queryNodeHash = readHashOpt(query, 3),
     };
 }
 
@@ -488,15 +524,17 @@ TracingIndex::selectStructuralChildren(const NodeHash & structuralParent, const 
     std::vector<QueryNode> result;
 
     auto state(_state->lock());
-    auto query = state->selectStructuralChildren.use()(hashToBlob(structuralParent))(hashToBlob(queryHash));
+    auto query = state->selectStructuralChildren.use();
+    bindBlob(query, hashToBlob(structuralParent));
+    bindBlob(query, hashToBlob(queryHash));
 
     while (query.next()) {
         result.push_back(
             QueryNode{
-                .nodeHash = blobToHash(query.getStr(0)),
-                .queryHash = blobToHash(query.getStr(1)),
-                .afterHash = query.isNull(2) ? std::nullopt : std::optional{blobToHash(query.getStr(2))},
-                .structuralParent = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
+                .nodeHash = readHash(query, 0),
+                .queryHash = readHash(query, 1),
+                .afterHash = readHashOpt(query, 2),
+                .structuralParent = readHashOpt(query, 3),
                 .depth = static_cast<int>(query.getInt(4)),
             });
     }
