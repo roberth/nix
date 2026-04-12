@@ -246,13 +246,14 @@ public:
      * Walk forward from a query node through depth>0 events to find
      * the depth=0 Result. Holds the lock for the entire walk.
      *
-     * @param validator Called for each depth>0 event with (queryPayload, resultPayload).
+     * @param validator Called for each depth>0 event with
+     *        (queryPayload, resultNodeHash, resultPayload).
      *        Returns true if the event validates against current state.
      * @return The final Result node, or nullopt if validation fails.
      */
     std::optional<ResultNode> findResult(
         const NodeHash & queryNodeHash,
-        std::function<bool(const std::string & queryPayload, const std::string & resultPayload)> validator);
+        std::function<bool(const std::string & queryPayload, const NodeHash & resultNodeHash, const std::string & resultPayload)> validator);
 
 private:
     struct State;

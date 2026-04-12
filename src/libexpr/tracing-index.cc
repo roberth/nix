@@ -544,7 +544,7 @@ TracingIndex::selectStructuralChildren(const NodeHash & structuralParent, const 
 
 std::optional<ResultNode> TracingIndex::findResult(
     const NodeHash & queryNodeHash,
-    std::function<bool(const std::string & queryPayload, const std::string & resultPayload)> validator)
+    std::function<bool(const std::string & queryPayload, const NodeHash & resultNodeHash, const std::string & resultPayload)> validator)
 {
     auto state(_state->lock());
 
@@ -611,7 +611,7 @@ std::optional<ResultNode> TracingIndex::findResult(
             if (!result)
                 continue;
 
-            if (validator(*payload, result->payload)) {
+            if (validator(*payload, result->nodeHash, result->payload)) {
                 current = result->nodeHash;
                 advanced = true;
                 break;

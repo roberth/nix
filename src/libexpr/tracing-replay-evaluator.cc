@@ -291,9 +291,12 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
 
         // Walk forward: Query → (depth>0 Query/Result)* → Result(depth=0)
         auto resultNode = tracingIndex.findResult(shortcut.nodeHash,
-            [&](const std::string & queryPayload, const std::string & resultPayload) {
+            [&](const std::string & queryPayload, const NodeHash & resultNodeHash, const std::string & resultPayload) {
                 auto currentResponse = getCurrentResponse(queryPayload);
-                return currentResponse && resultPayload == *currentResponse;
+                if (!currentResponse || resultPayload != *currentResponse)
+                    return false;
+                markValidated(resultNodeHash);
+                return true;
             });
 
         if (!resultNode)

@@ -83,12 +83,11 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
 
     auto findResult = [&](const QueryNode & child) -> std::optional<ResultNode> {
         return tracingIndex.findResult(child.nodeHash,
-            [&](const std::string & queryPayload, const std::string & resultPayload) {
+            [&](const std::string & queryPayload, const NodeHash & resultNodeHash, const std::string & resultPayload) {
                 auto currentResponse = evaluator.getCurrentResponse(queryPayload);
-                if (!currentResponse)
+                if (!currentResponse || resultPayload != *currentResponse)
                     return false;
-                if (resultPayload != *currentResponse)
-                    return false;
+                evaluator.markValidated(resultNodeHash);
                 return true;
             });
     };
@@ -189,12 +188,11 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 
     auto findResult = [&](const QueryNode & child) -> std::optional<ResultNode> {
         return tracingIndex.findResult(child.nodeHash,
-            [&](const std::string & queryPayload, const std::string & resultPayload) {
+            [&](const std::string & queryPayload, const NodeHash & resultNodeHash, const std::string & resultPayload) {
                 auto currentResponse = evaluator.getCurrentResponse(queryPayload);
-                if (!currentResponse)
+                if (!currentResponse || resultPayload != *currentResponse)
                     return false;
-                if (resultPayload != *currentResponse)
-                    return false;
+                evaluator.markValidated(resultNodeHash);
                 return true;
             });
     };
