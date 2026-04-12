@@ -10,6 +10,10 @@ clearCache() {
     rm -rf "$cacheDir"
 }
 
+# Start with a clean trie — no entries from previous test runs.
+# No further clearCache calls: tests must handle accumulated entries.
+clearCache
+
 # --- Basic functionality ---
 
 # Scalar import
@@ -57,8 +61,6 @@ expectStderr 1 nix eval --impure --expr 'builtins.cache { import = '"$TEST_ROOT"
 
 # --- Caching behavior ---
 
-clearCache
-
 # First evaluation records into trie
 echo '{ val = 1; }' > "$TEST_ROOT/cached.nix"
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/cached.nix; }).val') == 1 ]]
@@ -75,7 +77,6 @@ echo '{ val = 1; }' > "$TEST_ROOT/cached.nix"
 # disallowed and the result is still correct, replay is working without
 # falling back to re-evaluation.
 
-clearCache
 
 cat > "$TEST_ROOT/replay-complete.nix" <<EOF
 derivation { name = "replay-test"; system = builtins.currentSystem; builder = "/bin/sh"; args = [ "-c" "echo ok > \$out" ]; }
@@ -100,7 +101,6 @@ echo '{ val = 999; }' > "$TEST_ROOT/cached.nix"
 
 # --- Transitive dependency invalidation ---
 
-clearCache
 
 echo '{ dep = import ./dep.nix; }' > "$TEST_ROOT/parent.nix"
 echo '100' > "$TEST_ROOT/dep.nix"
@@ -135,8 +135,6 @@ echo 'x: x + 1' > "$TEST_ROOT/simple-fn.nix"
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/simple-fn.nix; }) 5') == 6 ]]
 
 # --- Function call: cache invalidation ---
-
-clearCache
 
 # Function that reads a transitive dependency
 echo '{ x }: x + import ./addend.nix' > "$TEST_ROOT/fn-dep.nix"
@@ -306,9 +304,9 @@ NIX
 # Fifth call: change top-level value
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/multi-attr.nix; }) { args = { a = 1; b = { value = 99; }; }; }') == 100 ]]
 
+
 # --- Nested builtins.cache with function calls ---
 
-clearCache
 
 # inner.nix: a cached module that exports a function
 echo '{ f = x: x * 10; base = 1; }' > "$TEST_ROOT/inner-mod.nix"
@@ -378,7 +376,6 @@ echo '{ f = x: x * 10; base = 0; }' > "$TEST_ROOT/inner-mod.nix"
 # If validation reads bypass the outer Environment, a subsequent
 # change to inner files won't invalidate the outer.
 
-clearCache
 
 echo "tracing-eval-cache = true" >> "$NIX_CONF_DIR/nix.conf"
 
@@ -407,7 +404,6 @@ echo '14' > "$TEST_ROOT/rv-leaf.nix"
 # builtins.cache must flow through the outer environment's accessor
 # chain so the outer trace records them as dependencies.
 
-clearCache
 
 latestSymlink="$TEST_HOME/.cache/nix/eval-tracing-v0/latest.json"
 
@@ -446,7 +442,6 @@ grep -q '"absPath".*inner-traced\.nix' "$newOuterTrace"
 # must include leaf.nix as a dependency so that changes to the leaf
 # invalidate the outer cached result.
 
-clearCache
 
 echo 'builtins.cache { import = '"$TEST_ROOT"'/leaf.nix; }' > "$TEST_ROOT/middle.nix"
 echo '13' > "$TEST_ROOT/leaf.nix"
@@ -484,7 +479,6 @@ grep -q '"absPath".*leaf\.nix' "$nestedOuterTrace"
 # trie cache, bypassing the outer tracing environment. The outer
 # recording never sees leaf.nix, so step 3 serves the stale value.
 
-clearCache
 
 echo '{ val = import ./itn-leaf.nix; }' > "$TEST_ROOT/itn-inner.nix"
 echo '13' > "$TEST_ROOT/itn-leaf.nix"
