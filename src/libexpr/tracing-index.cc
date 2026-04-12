@@ -549,17 +549,19 @@ std::optional<ResultNode> TracingIndex::findResult(
     auto state(_state->lock());
 
     // Lambdas that query under the held lock
-    auto childResult = [&](const NodeHash & after) -> std::optional<ResultNode> {
-        auto q = state->getChildResult.use();
+    auto childResults = [&](const NodeHash & after) -> std::vector<ResultNode> {
+        std::vector<ResultNode> results;
+        auto q = state->selectChildResults.use();
         bindBlob(q, hashToBlob(after));
-        if (!q.next())
-            return std::nullopt;
-        return ResultNode{
-            .nodeHash = readHash(q, 0),
-            .afterHash = readHash(q, 1),
-            .payload = q.getBlob(2),
-            .queryNodeHash = readHashOpt(q, 3),
-        };
+        while (q.next()) {
+            results.push_back(ResultNode{
+                .nodeHash = readHash(q, 0),
+                .afterHash = readHash(q, 1),
+                .payload = q.getBlob(2),
+                .queryNodeHash = readHashOpt(q, 3),
+            });
+        }
+        return results;
     };
 
     auto childQueries = [&](const NodeHash & after) -> std::vector<QueryNode> {
@@ -586,44 +588,39 @@ std::optional<ResultNode> TracingIndex::findResult(
         return q.getBlob(0);
     };
 
-    // Walk forward from the query node
-    NodeHash current = queryNodeHash;
-
-    while (true) {
-        // Check for a depth=0 Result (the final answer).
-        if (auto result = childResult(current)) {
-            if (!result->queryNodeHash)
-                return result;
-            // Depth>0 result — fall through to child queries
+    // Recursive walk with backtracking across possible worlds.
+    std::function<std::optional<ResultNode>(const NodeHash &)> walk;
+    walk = [&](const NodeHash & current) -> std::optional<ResultNode> {
+        // Check for depth=0 Results (queryNodeHash is NULL).
+        for (const auto & r : childResults(current)) {
+            if (!r.queryNodeHash)
+                return r;
         }
 
-        auto children = childQueries(current);
-        bool advanced = false;
-        for (const auto & child : children) {
+        for (const auto & child : childQueries(current)) {
             if (child.depth == 0) {
-                // Nested user query — try advancing through it
-                current = child.nodeHash;
-                advanced = true;
-                break;
+                // Nested user query — try advancing through its subtree.
+                if (auto result = walk(child.nodeHash))
+                    return result;
+                continue;
             }
 
+            // Depth>0 environment event — validate and try each result.
             auto payload = queryPayload(child.queryHash);
             if (!payload)
                 continue;
 
-            auto result = childResult(child.nodeHash);
-            if (!result)
-                continue;
-
-            if (validator(*payload, result->nodeHash, result->payload)) {
-                current = result->nodeHash;
-                advanced = true;
-                break;
+            for (const auto & eventResult : childResults(child.nodeHash)) {
+                if (validator(*payload, eventResult.nodeHash, eventResult.payload)) {
+                    if (auto result = walk(eventResult.nodeHash))
+                        return result;
+                }
             }
         }
-        if (!advanced)
-            return std::nullopt;
-    }
+        return std::nullopt;
+    };
+
+    return walk(queryNodeHash);
 }
 
 std::vector<std::pair<QueryNode, ResultNode>> TracingIndex::selectDependencies(const NodeHash & queryNodeHash)
