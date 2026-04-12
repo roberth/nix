@@ -4563,8 +4563,9 @@ Expr * EvalState::parse(
            lazy-paths: origin holds RootedPath (not SourcePath) for
            file-backed parses; project to a SourcePath string for the
            internal-file check and the error message. */
-        bool allowed = std::holds_alternative<RootedPath>(origin)
-                       && std::get<RootedPath>(origin).sourcePath().to_string().starts_with("«nix-internal»");
+        bool allowed = std::holds_alternative<Pos::String>(origin)
+                       || (std::holds_alternative<RootedPath>(origin)
+                           && std::get<RootedPath>(origin).sourcePath().to_string().starts_with("«nix-internal»"));
         if (!allowed) {
             auto originStr = std::visit(
                 overloaded{
