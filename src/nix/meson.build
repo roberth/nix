@@ -77,6 +77,8 @@ nix_sources = [ config_priv_h ] + files(
   'edit.cc',
   'env.cc',
   'eval.cc',
+  'eval-cache.cc',
+  'eval-cache-inspect.cc',
   'flake-prefetch-inputs.cc',
   'flake.cc',
   'formatter.cc',
