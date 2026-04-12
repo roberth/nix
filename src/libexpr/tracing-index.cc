@@ -221,8 +221,9 @@ NodeHash TracingIndex::insertQuery(
     use(static_cast<int64_t>(depth));
     use.exec();
 
-    // Insert payload (cold storage)
-    state->insertQueryPayload.use()(hashToBlob(queryHash))(payload).exec();
+    // Insert payload (cold storage) — bind as blob, CBOR may contain null bytes
+    state->insertQueryPayload.use()(hashToBlob(queryHash))
+        (reinterpret_cast<const unsigned char *>(payload.data()), payload.size()).exec();
 
     // Insert shortcut for fast lookup
     state->insertShortcut.use()(hashToBlob(queryHash))(hashToBlob(nodeHash)).exec();
@@ -239,7 +240,7 @@ NodeHash TracingIndex::insertResult(
     auto use = state->insertResult.use();
     use(hashToBlob(nodeHash));
     use(hashToBlob(afterHash));
-    use(payload);
+    use(reinterpret_cast<const unsigned char *>(payload.data()), payload.size());
     if (queryNodeHash)
         use(hashToBlob(*queryNodeHash));
     else
@@ -299,7 +300,7 @@ std::optional<ResultNode> TracingIndex::getResult(const NodeHash & nodeHash)
     return ResultNode{
         .nodeHash = blobToHash(query.getStr(0)),
         .afterHash = blobToHash(query.getStr(1)),
-        .payload = query.getStr(2),
+        .payload = query.getBlob(2),
         .queryNodeHash = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
     };
 }
@@ -312,7 +313,7 @@ std::optional<std::string> TracingIndex::getQueryPayload(const QueryHash & query
     if (!query.next())
         return std::nullopt;
 
-    return query.getStr(0);
+    return query.getBlob(0);
 }
 
 // -----------------------------------------------------------------------------
@@ -352,7 +353,7 @@ std::vector<ResultNode> TracingIndex::selectChildResults(const NodeHash & afterH
             ResultNode{
                 .nodeHash = blobToHash(query.getStr(0)),
                 .afterHash = blobToHash(query.getStr(1)),
-                .payload = query.getStr(2),
+                .payload = query.getBlob(2),
             });
     }
 
@@ -370,7 +371,7 @@ std::optional<ResultNode> TracingIndex::getChildResult(const NodeHash & afterHas
     return ResultNode{
         .nodeHash = blobToHash(query.getStr(0)),
         .afterHash = blobToHash(query.getStr(1)),
-        .payload = query.getStr(2),
+        .payload = query.getBlob(2),
         .queryNodeHash = query.isNull(3) ? std::nullopt : std::optional{blobToHash(query.getStr(3))},
     };
 }
