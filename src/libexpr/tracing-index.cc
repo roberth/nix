@@ -591,9 +591,12 @@ std::optional<ResultNode> TracingIndex::findResult(
     // Recursive walk with backtracking across possible worlds.
     std::function<std::optional<ResultNode>(const NodeHash &)> walk;
     walk = [&](const NodeHash & current) -> std::optional<ResultNode> {
-        // Check for depth=0 Results (queryNodeHash is NULL).
+        // Check for Results that belong to the target query.
+        // Results with queryNodeHash matching the starting query are
+        // the target. Results with other queryNodeHash values belong
+        // to nested queries or env events — skip them.
         for (const auto & r : childResults(current)) {
-            if (!r.queryNodeHash)
+            if (r.queryNodeHash && *r.queryNodeHash == queryNodeHash)
                 return r;
         }
 

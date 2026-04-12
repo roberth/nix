@@ -93,23 +93,32 @@ public:
     }
 
     /**
+     * Opaque handle linking a query to its result in the trie.
+     */
+    struct QueryHandle
+    {
+        std::optional<QueryHash> queryHash;
+        std::optional<NodeHash> queryNodeHash;
+    };
+
+    /**
      * Log a root query (evalFile, evalExpr, apply).
-     * Returns (valueHandle, queryHash) so the caller can pass queryHash to logResult.
+     * Returns (valueHandle, queryHandle) so the caller can pass queryHandle to logResult.
      */
     template<typename Q>
-    std::pair<ValueHandle, std::optional<QueryHash>> logRootQuery(const Q & query)
+    std::pair<ValueHandle, QueryHandle> logRootQuery(const Q & query)
     {
         auto valueNum = sink.logQuery(query);
 
         if (!index)
-            return {valueNum, std::nullopt};
+            return {valueNum, {}};
 
         auto queryHash = TracingIndex::computeQueryHash(query);
         nlohmann::json j = query;
         auto queryNodeHash = index->insertQuery(afterHash, queryHash, jsonToCborString(j));
         afterHash = queryNodeHash;
 
-        return {valueNum, queryHash};
+        return {valueNum, {queryHash, queryNodeHash}};
     }
 
     /**
@@ -119,13 +128,13 @@ public:
      * Returns (valueNum, queryHash).
      */
     template<typename Q>
-    std::pair<ValueHandle, std::optional<QueryHash>>
+    std::pair<ValueHandle, QueryHandle>
     logQuery(const Q & query, const std::optional<TriePosition> & parent)
     {
         auto valueNum = sink.logQuery(query);
 
         if (!index)
-            return {valueNum, std::nullopt};
+            return {valueNum, {}};
 
         auto queryHash = TracingIndex::computeQueryHash(query);
         nlohmann::json j = query;
@@ -133,7 +142,7 @@ public:
         auto queryNodeHash = index->insertQuery(afterHash, queryHash, jsonToCborString(j), structuralParent);
         afterHash = queryNodeHash;
 
-        return {valueNum, queryHash};
+        return {valueNum, {queryHash, queryNodeHash}};
     }
 
     /**
@@ -179,20 +188,20 @@ public:
      * @param queryHash The queryHash from logRootQuery or logQuery.
      */
     template<typename R>
-    std::optional<TriePosition> logResult(ValueHandle valueNum, const R & result, const std::optional<QueryHash> & queryHash)
+    std::optional<TriePosition> logResult(ValueHandle valueNum, const R & result, const QueryHandle & qh)
     {
         sink.logResult(valueNum, result);
 
-        if (!index || !afterHash || !queryHash)
+        if (!index || !afterHash || !qh.queryHash)
             return std::nullopt;
 
         nlohmann::json j = result;
-        auto resultNodeHash = index->insertResult(*afterHash, jsonToCborString(j));
+        auto resultNodeHash = index->insertResult(*afterHash, jsonToCborString(j), qh.queryNodeHash);
         afterHash = resultNodeHash;
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,
-            .queryHashStr = queryHash->to_string(HashFormat::Base16, false),
+            .queryHashStr = qh.queryHash->to_string(HashFormat::Base16, false),
         };
     }
 
