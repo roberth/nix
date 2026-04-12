@@ -242,6 +242,18 @@ public:
     std::vector<std::pair<QueryNode, ResultNode>> selectDependenciesUntilValidated(
         const NodeHash & queryNodeHash, const std::set<NodeHash> & validatedNodes, bool & reachedValidated);
 
+    /**
+     * Walk forward from a query node through depth>0 events to find
+     * the depth=0 Result. Holds the lock for the entire walk.
+     *
+     * @param validator Called for each depth>0 event with (queryPayload, resultPayload).
+     *        Returns true if the event validates against current state.
+     * @return The final Result node, or nullopt if validation fails.
+     */
+    std::optional<ResultNode> findResult(
+        const NodeHash & queryNodeHash,
+        std::function<bool(const std::string & queryPayload, const std::string & resultPayload)> validator);
+
 private:
     struct State;
     std::unique_ptr<Sync<State>> _state;
