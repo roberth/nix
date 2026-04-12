@@ -153,20 +153,21 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
 
     auto it = ambientState->idToObject.find(fromId);
     if (it == ambientState->idToObject.end()) {
-        // Lazy seeding: assign the next unresolved root Object
-        if (ambientState->unresolvedRoots.empty()) {
-            tracingCacheLog("replay: unknown ambient id %s, no unresolved roots", fromId);
+        // Lazy unification: map the unknown id to the next available Object.
+        // First try pending children (from previous getAttr/getListElem),
+        // then unresolved roots (the apply operands).
+        std::shared_ptr<Object> obj;
+        if (!ambientState->pendingChildren.empty()) {
+            obj = ambientState->pendingChildren.front();
+            ambientState->pendingChildren.erase(ambientState->pendingChildren.begin());
+        } else if (!ambientState->unresolvedRoots.empty()) {
+            obj = ambientState->unresolvedRoots.front();
+            ambientState->unresolvedRoots.erase(ambientState->unresolvedRoots.begin());
+        } else {
+            tracingCacheLog("replay: unknown ambient id %s, no pending objects", fromId);
             return std::nullopt;
         }
-        auto root = ambientState->unresolvedRoots.front();
-        ambientState->unresolvedRoots.erase(ambientState->unresolvedRoots.begin());
-        ambientState->idToObject[fromId] = root;
-        // Set nextChildId past this root's id so children don't collide
-        try {
-            auto idNum = std::stoi(fromId);
-            if (idNum >= ambientState->nextChildId)
-                ambientState->nextChildId = idNum + 1;
-        } catch (...) {}
+        ambientState->idToObject[fromId] = obj;
         it = ambientState->idToObject.find(fromId);
     }
 
@@ -181,8 +182,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
         if (!child) {
             resultJson = trace::ResultMaybeType{std::nullopt};
         } else {
-            auto childId = std::to_string(ambientState->nextChildId++);
-            ambientState->idToObject[childId] = child;
+            ambientState->pendingChildren.push_back(child);
             resultJson = trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}};
         }
     } else if (tag == "getString") {
@@ -206,8 +206,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
     } else if (tag == "getListElem") {
         auto index = params["index"].get<size_t>();
         auto child = obj->getListElem(index);
-        auto childId = std::to_string(ambientState->nextChildId++);
-        ambientState->idToObject[childId] = child;
+        ambientState->pendingChildren.push_back(child);
         resultJson = trace::ResultType{objectTypeToString(child->getType())};
     } else if (tag == "getPath") {
         resultJson = trace::ResultPath{obj->getPath().path.abs()};
@@ -304,12 +303,17 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
                 break;
             }
 
-            // Look for depth>0 child queries (environment events)
+            // Look for child queries in the temporal chain
             auto childQueries = tracingIndex.selectChildQueries(current);
             bool foundValid = false;
             for (const auto & childQ : childQueries) {
-                if (childQ.depth == 0)
-                    continue;
+                if (childQ.depth == 0) {
+                    // Depth=0: a nested user query interleaved in the
+                    // temporal chain. Advance into it.
+                    current = childQ.nodeHash;
+                    foundValid = true;
+                    break;
+                }
 
                 auto payloadOpt = tracingIndex.getQueryPayload(childQ.queryHash);
                 if (!payloadOpt)

@@ -62,7 +62,9 @@ class TracingReplayEvaluator : public Evaluator
         /// Root Objects without trie identity, assigned lazily to the
         /// first unseen "from" id during the walk.
         std::vector<std::shared_ptr<Object>> unresolvedRoots;
-        int nextChildId = 0;
+        /// Child Objects from queries that produce children (getAttr,
+        /// getListElem), awaiting assignment to the next unseen id.
+        std::vector<std::shared_ptr<Object>> pendingChildren;
     };
     std::optional<AmbientReplayState> ambientState;
 
