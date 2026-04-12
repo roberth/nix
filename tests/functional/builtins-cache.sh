@@ -498,3 +498,8 @@ echo '(builtins.cache { import = '"$TEST_ROOT"'/itn-inner.nix; })' > "$TEST_ROOT
 sleep 1
 echo '14' > "$TEST_ROOT/itn-leaf.nix"
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/itn-outer.nix; }).val') == 14 ]]
+
+# Clean up: remove tracing-eval-cache setting from nix.conf so it
+# doesn't affect subsequent test runs. Match exactly to avoid
+# removing the experimental-features line.
+sed -i '/^tracing-eval-cache = true$/d' "$NIX_CONF_DIR/nix.conf"
