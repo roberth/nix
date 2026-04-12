@@ -290,18 +290,24 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
             continue;
 
         // Walk forward: Query → (depth>0 Query/Result)* → Result(depth=0)
+        std::vector<NodeHash> pendingValidated;
         auto resultNode = tracingIndex.findResult(shortcut.nodeHash,
             [&](const std::string & queryPayload, const NodeHash & resultNodeHash, const std::string & resultPayload) {
                 auto currentResponse = getCurrentResponse(queryPayload);
                 if (!currentResponse || resultPayload != *currentResponse)
                     return false;
-                markValidated(resultNodeHash);
+                pendingValidated.push_back(resultNodeHash);
                 return true;
             });
 
-        if (!resultNode)
+        if (!resultNode) {
+            pendingValidated.clear();
             continue;
+        }
 
+        // Commit validated nodes only on success
+        for (const auto & h : pendingValidated)
+            markValidated(h);
         validatedNodes.insert(resultNode->nodeHash);
         temporalCursor = resultNode->nodeHash;
         tracingCacheLog("replay hit: %s", Q::tag);
