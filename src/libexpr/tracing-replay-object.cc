@@ -81,16 +81,23 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
     auto & tracingIndex = evaluator.getTracingIndex();
     auto queryHash = TracingIndex::computeQueryHash(query);
 
+    std::vector<NodeHash> pendingValidated;
     auto findResult = [&](const QueryNode & child) -> std::optional<ResultNode> {
+        pendingValidated.clear();
         return tracingIndex.findResult(
             child.nodeHash,
             [&](const std::string & queryPayload, const NodeHash & resultNodeHash, const std::string & resultPayload) {
                 auto currentResponse = evaluator.getCurrentResponse(queryPayload);
                 if (!currentResponse || resultPayload != *currentResponse)
                     return false;
-                evaluator.markValidated(resultNodeHash);
+                pendingValidated.push_back(resultNodeHash);
                 return true;
             });
+    };
+    auto commitValidated = [&]() {
+        for (const auto & h : pendingValidated)
+            evaluator.markValidated(h);
+        pendingValidated.clear();
     };
 
     auto parseResult = [&](const ResultNode & resultNode) -> std::optional<R> {
@@ -114,6 +121,8 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
             if (evaluator.validateToValidatedNode(child->nodeHash)) {
                 if (auto resultNode = findResult(*child)) {
                     if (auto result = parseResult(*resultNode)) {
+                        commitValidated();
+                        commitValidated();
                         evaluator.markValidated(resultNode->nodeHash);
                         evaluator.setTemporalCursor(resultNode->nodeHash);
                         tracingCacheLog("replay hit (trie): %s", Q::tag);
@@ -138,6 +147,7 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
 
         if (auto resultNode = findResult(child)) {
             if (auto result = parseResult(*resultNode)) {
+                commitValidated();
                 evaluator.markValidated(resultNode->nodeHash);
                 evaluator.setTemporalCursor(resultNode->nodeHash);
                 tracingCacheLog("replay hit (structural): %s", Q::tag);
@@ -164,6 +174,7 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
 
         if (auto resultNode = findResult(*queryNode)) {
             if (auto result = parseResult(*resultNode)) {
+                commitValidated();
                 evaluator.markValidated(resultNode->nodeHash);
                 evaluator.setTemporalCursor(resultNode->nodeHash);
                 tracingCacheLog("replay hit (shortcut): %s", Q::tag);
@@ -187,16 +198,23 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
     auto & tracingIndex = evaluator.getTracingIndex();
     auto queryHash = TracingIndex::computeQueryHash(query);
 
+    std::vector<NodeHash> pendingValidated;
     auto findResult = [&](const QueryNode & child) -> std::optional<ResultNode> {
+        pendingValidated.clear();
         return tracingIndex.findResult(
             child.nodeHash,
             [&](const std::string & queryPayload, const NodeHash & resultNodeHash, const std::string & resultPayload) {
                 auto currentResponse = evaluator.getCurrentResponse(queryPayload);
                 if (!currentResponse || resultPayload != *currentResponse)
                     return false;
-                evaluator.markValidated(resultNodeHash);
+                pendingValidated.push_back(resultNodeHash);
                 return true;
             });
+    };
+    auto commitValidated = [&]() {
+        for (const auto & h : pendingValidated)
+            evaluator.markValidated(h);
+        pendingValidated.clear();
     };
 
     auto parseResultWithPos = [&](const ResultNode & resultNode) -> std::optional<std::pair<R, TriePosition>> {
@@ -225,6 +243,8 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
             if (evaluator.validateToValidatedNode(child->nodeHash)) {
                 if (auto resultNode = findResult(*child)) {
                     if (auto result = parseResultWithPos(*resultNode)) {
+                        commitValidated();
+                        commitValidated();
                         evaluator.markValidated(resultNode->nodeHash);
                         evaluator.setTemporalCursor(resultNode->nodeHash);
                         tracingCacheLog("replay hit (trie): %s", Q::tag);
@@ -249,6 +269,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 
         if (auto resultNode = findResult(child)) {
             if (auto result = parseResultWithPos(*resultNode)) {
+                commitValidated();
                 evaluator.markValidated(resultNode->nodeHash);
                 evaluator.setTemporalCursor(resultNode->nodeHash);
                 tracingCacheLog("replay hit (structural): %s", Q::tag);
@@ -275,6 +296,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 
         if (auto resultNode = findResult(*queryNode)) {
             if (auto result = parseResultWithPos(*resultNode)) {
+                commitValidated();
                 evaluator.markValidated(resultNode->nodeHash);
                 evaluator.setTemporalCursor(resultNode->nodeHash);
                 tracingCacheLog("replay hit (shortcut): %s", Q::tag);
