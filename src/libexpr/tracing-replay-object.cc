@@ -81,6 +81,12 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
     auto & tracingIndex = evaluator.getTracingIndex();
     auto queryHash = TracingIndex::computeQueryHash(query);
 
+    // Reset temporal cursor to this object's position. The cursor is
+    // shared across all objects on this evaluator, so a prior lookup on
+    // a different object may have moved it. Our children chain from
+    // our own resultNodeHash, not wherever the cursor drifted.
+    evaluator.setTemporalCursor(triePos.resultNodeHash);
+
     std::vector<NodeHash> pendingValidated;
     auto findResult = [&](const QueryNode & child) -> std::optional<ResultNode> {
         pendingValidated.clear();
@@ -194,6 +200,9 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 {
     auto & tracingIndex = evaluator.getTracingIndex();
     auto queryHash = TracingIndex::computeQueryHash(query);
+
+    // Reset temporal cursor to this object's position (see lookupResult).
+    evaluator.setTemporalCursor(triePos.resultNodeHash);
 
     std::vector<NodeHash> pendingValidated;
     auto findResult = [&](const QueryNode & child) -> std::optional<ResultNode> {
