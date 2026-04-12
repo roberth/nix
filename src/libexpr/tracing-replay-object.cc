@@ -90,12 +90,18 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
             if (auto result = tracingIndex.getChildResult(current))
                 return result;
 
-            // Look for depth>0 child queries (environment events)
+            // Look for child queries in the temporal chain
             auto childQueries = tracingIndex.selectChildQueries(current);
             bool foundValid = false;
             for (const auto & childQ : childQueries) {
-                if (childQ.depth == 0)
-                    continue;
+                if (childQ.depth == 0) {
+                    // Depth=0: a nested user query interleaved in the
+                    // temporal chain. Advance into it — the outer result
+                    // is reachable through its subtree.
+                    current = childQ.nodeHash;
+                    foundValid = true;
+                    break;
+                }
 
                 auto payloadOpt = tracingIndex.getQueryPayload(childQ.queryHash);
                 if (!payloadOpt)
