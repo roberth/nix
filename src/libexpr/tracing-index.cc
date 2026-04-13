@@ -595,72 +595,52 @@ std::optional<ResultNode> TracingIndex::findResult(
         return q.getBlob(0);
     };
 
-    auto hashPrefix = [](const NodeHash & h) { return h.to_string(HashFormat::Base16, false).substr(0, 12); };
+    // Recursive walk with backtracking across possible worlds.
+    // At each node, tries: target Result, then non-target Results,
+    // then d=0 children, then d>0 events with validation.
+    std::function<std::optional<ResultNode>(const NodeHash &, int)> walk;
+    walk = [&](const NodeHash & current, int depth) -> std::optional<ResultNode> {
+        if (depth > 200) return std::nullopt;
 
-    // Iterative walk following the temporal chain.
-    // - Target Results (queryNodeHash matches): return
-    // - Non-target Results: advance through (part of the chain)
-    // - Depth=0 child queries: advance into (transparent in chain)
-    // - Depth>0 child queries: validate, advance through Result
-    NodeHash current = queryNodeHash;
-    int step = 0;
-
-    while (step < 1000) {
         auto results = childResults(current);
-        auto queries = childQueries(current);
 
-        tracingCacheLog("findResult[%d] at %s: %zu results, %zu queries",
-            step, hashPrefix(current), results.size(), queries.size());
-
-        // Check Results
+        // Check for target Result
         for (const auto & r : results) {
-            bool isTarget = r.queryNodeHash && *r.queryNodeHash == queryNodeHash;
-            if (isTarget) {
-                tracingCacheLog("findResult[%d]   TARGET %s", step, hashPrefix(r.nodeHash));
+            if (r.queryNodeHash && *r.queryNodeHash == queryNodeHash)
                 return r;
-            }
-        }
-        // Advance through non-target Results
-        if (!results.empty()) {
-            current = results.front().nodeHash;
-            step++;
-            continue;
         }
 
-        // Follow child queries
-        bool advanced = false;
+        // Try advancing through each non-target Result
+        for (const auto & r : results) {
+            if (auto found = walk(r.nodeHash, depth + 1))
+                return found;
+        }
+
+        // Try child queries
+        auto queries = childQueries(current);
         for (const auto & child : queries) {
             if (child.depth == 0) {
-                // Transparent in chain — advance into
-                current = child.nodeHash;
-                advanced = true;
-                break;
+                // Transparent in temporal chain — try following
+                if (auto found = walk(child.nodeHash, depth + 1))
+                    return found;
+                continue;
             }
 
-            // Depth>0: validate
+            // Depth>0: validate and try each event Result
             auto payload = queryPayload(child.queryHash);
-            if (!payload)
-                continue;
+            if (!payload) continue;
 
-            auto evResults = childResults(child.nodeHash);
-            for (const auto & eventResult : evResults) {
+            for (const auto & eventResult : childResults(child.nodeHash)) {
                 if (validator(*payload, eventResult.nodeHash, eventResult.payload)) {
-                    tracingCacheLog("findResult[%d]   d>0 VALID %s", step, hashPrefix(eventResult.nodeHash));
-                    current = eventResult.nodeHash;
-                    advanced = true;
-                    break;
+                    if (auto found = walk(eventResult.nodeHash, depth + 1))
+                        return found;
                 }
             }
-            if (advanced)
-                break;
         }
-        if (!advanced) {
-            tracingCacheLog("findResult[%d]   dead end at %s", step, hashPrefix(current));
-            return std::nullopt;
-        }
-        step++;
-    }
-    return std::nullopt;
+        return std::nullopt;
+    };
+
+    return walk(queryNodeHash, 0);
 }
 
 std::vector<std::pair<QueryNode, ResultNode>> TracingIndex::selectDependencies(const NodeHash & queryNodeHash)
