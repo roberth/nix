@@ -595,25 +595,26 @@ std::optional<ResultNode> TracingIndex::findResult(
         return q.getBlob(0);
     };
 
-    // Iterative walk following the temporal chain.
-    // The chain from a Query to its Result contains only d>0 events
-    // (file reads, env vars, ambient queries). D=0 children at any
-    // position are from OTHER queries sharing this node — skip them.
-    // Non-target Results are from other queries — skip them too.
-    NodeHash current = queryNodeHash;
+    // Recursive walk with backtracking on d>0 event Results.
+    // The chain from a Query to its Result contains only d>0 events.
+    // D=0 children and non-target Results are from other queries
+    // sharing this node — skip them. When multiple d>0 event Results
+    // exist (from different recordings), try each with backtracking.
+    std::function<std::optional<ResultNode>(const NodeHash &, int)> walk;
+    walk = [&](const NodeHash & current, int depth) -> std::optional<ResultNode> {
+        if (depth > 100000)
+            return std::nullopt;
 
-    for (int step = 0; step < 100000; step++) {
         // Check for target Result
         for (const auto & r : childResults(current)) {
             if (r.queryNodeHash && *r.queryNodeHash == queryNodeHash)
                 return r;
         }
 
-        // Follow d>0 child queries (validate each)
-        bool advanced = false;
+        // Try d>0 child queries with backtracking
         for (const auto & child : childQueries(current)) {
             if (child.depth == 0)
-                continue; // Other queries — not part of our chain
+                continue;
 
             auto payload = queryPayload(child.queryHash);
             if (!payload)
@@ -621,18 +622,15 @@ std::optional<ResultNode> TracingIndex::findResult(
 
             for (const auto & eventResult : childResults(child.nodeHash)) {
                 if (validator(*payload, eventResult.nodeHash, eventResult.payload)) {
-                    current = eventResult.nodeHash;
-                    advanced = true;
-                    break;
+                    if (auto found = walk(eventResult.nodeHash, depth + 1))
+                        return found;
                 }
             }
-            if (advanced)
-                break;
         }
-        if (!advanced)
-            return std::nullopt;
-    }
-    return std::nullopt;
+        return std::nullopt;
+    };
+
+    return walk(queryNodeHash, 0);
 }
 
 std::vector<std::pair<QueryNode, ResultNode>> TracingIndex::selectDependencies(const NodeHash & queryNodeHash)
