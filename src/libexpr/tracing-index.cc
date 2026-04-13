@@ -595,52 +595,44 @@ std::optional<ResultNode> TracingIndex::findResult(
         return q.getBlob(0);
     };
 
-    // Recursive walk with backtracking across possible worlds.
-    // At each node, tries: target Result, then non-target Results,
-    // then d=0 children, then d>0 events with validation.
-    std::function<std::optional<ResultNode>(const NodeHash &, int)> walk;
-    walk = [&](const NodeHash & current, int depth) -> std::optional<ResultNode> {
-        if (depth > 200) return std::nullopt;
+    // Iterative walk following the temporal chain.
+    // The chain from a Query to its Result contains only d>0 events
+    // (file reads, env vars, ambient queries). D=0 children at any
+    // position are from OTHER queries sharing this node — skip them.
+    // Non-target Results are from other queries — skip them too.
+    NodeHash current = queryNodeHash;
 
-        auto results = childResults(current);
-
+    for (int step = 0; step < 100000; step++) {
         // Check for target Result
-        for (const auto & r : results) {
+        for (const auto & r : childResults(current)) {
             if (r.queryNodeHash && *r.queryNodeHash == queryNodeHash)
                 return r;
         }
 
-        // Try advancing through each non-target Result
-        for (const auto & r : results) {
-            if (auto found = walk(r.nodeHash, depth + 1))
-                return found;
-        }
+        // Follow d>0 child queries (validate each)
+        bool advanced = false;
+        for (const auto & child : childQueries(current)) {
+            if (child.depth == 0)
+                continue; // Other queries — not part of our chain
 
-        // Try child queries
-        auto queries = childQueries(current);
-        for (const auto & child : queries) {
-            if (child.depth == 0) {
-                // Transparent in temporal chain — try following
-                if (auto found = walk(child.nodeHash, depth + 1))
-                    return found;
-                continue;
-            }
-
-            // Depth>0: validate and try each event Result
             auto payload = queryPayload(child.queryHash);
-            if (!payload) continue;
+            if (!payload)
+                continue;
 
             for (const auto & eventResult : childResults(child.nodeHash)) {
                 if (validator(*payload, eventResult.nodeHash, eventResult.payload)) {
-                    if (auto found = walk(eventResult.nodeHash, depth + 1))
-                        return found;
+                    current = eventResult.nodeHash;
+                    advanced = true;
+                    break;
                 }
             }
+            if (advanced)
+                break;
         }
-        return std::nullopt;
-    };
-
-    return walk(queryNodeHash, 0);
+        if (!advanced)
+            return std::nullopt;
+    }
+    return std::nullopt;
 }
 
 std::vector<std::pair<QueryNode, ResultNode>> TracingIndex::selectDependencies(const NodeHash & queryNodeHash)

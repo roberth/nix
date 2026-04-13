@@ -230,12 +230,9 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     tracingCacheLog("tracing: apply");
     auto [v, qh] = writer.logRootQuery(trace::QueryApply{*fnId, *argId});
     auto result = inner->apply(fn, arg);
-    // Force the result type. getTypeLazy() returns nThunk for lazy
-    // applications, which produces a useless {"type":"thunk"} Result
-    // with no d>0 events. getType() forces evaluation, producing the
-    // actual type and recording all d>0 events in the temporal chain.
-    auto type = result->getType();
-    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
+    // Don't record type — apply creates a virtual value (thunk).
+    // The actual type is discovered by the caller via getType queries.
+    auto triePos = writer.logResult(v, trace::ResultType{"apply"}, qh);
     return TracingObject::create(result, writer, v, triePos);
 }
 
