@@ -280,10 +280,16 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
 {
     auto queryHash = TracingIndex::computeQueryHash(query);
     auto shortcuts = tracingIndex.selectShortcuts(queryHash);
+    tracingCacheLog("lookup %s: %zu shortcuts for queryHash=%s",
+        Q::tag, shortcuts.size(),
+        queryHash.to_string(HashFormat::Base16, false).substr(0, 16));
 
     for (const auto & shortcut : shortcuts) {
-        if (!validateDependencies(shortcut.nodeHash))
+        if (!validateDependencies(shortcut.nodeHash)) {
+            tracingCacheLog("lookup %s: shortcut %s deps invalid",
+                Q::tag, shortcut.nodeHash.to_string(HashFormat::Base16, false).substr(0, 16));
             continue;
+        }
 
         auto queryNode = tracingIndex.getQuery(shortcut.nodeHash);
         if (!queryNode)
