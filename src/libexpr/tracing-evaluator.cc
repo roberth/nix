@@ -227,7 +227,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     if (!argId)
         argId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(arg).value());
 
-    tracingCacheLog("tracing: apply");
+    tracingCacheLog("tracing: apply fnId=%s argId=%s", fnId ? *fnId : "none", argId ? *argId : "none");
     auto [v, qh] = writer.logRootQuery(trace::QueryApply{*fnId, *argId});
     auto result = inner->apply(fn, arg);
     // Don't record type — apply creates a virtual value (thunk).

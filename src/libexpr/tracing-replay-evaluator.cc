@@ -426,6 +426,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         state.unresolvedRoots.push_back(fn.get_ptr());
     ambientState = std::move(state);
 
+    tracingCacheLog("replay: apply fnId=%s argId=%s", *fnId, *argId);
     auto result = lookup(trace::QueryApply{*fnId, *argId});
     // Don't clear ambientState — child queries on the result
     // TracingReplayObject may encounter ambient events that need
