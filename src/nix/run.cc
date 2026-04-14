@@ -10,6 +10,7 @@
 #include "nix/util/finally.hh"
 #include "nix/util/source-accessor.hh"
 #include "nix/expr/eval.hh"
+#include "nix/expr/tracing-index.hh"
 #include "nix/util/util.hh"
 #include "nix/store/globals.hh"
 
@@ -63,6 +64,11 @@ void execProgramInStore(
     }
 
     restoreProcessContext();
+
+    // Flush tracing index writes before exec replaces the process.
+    // atexit handlers don't run on exec, and GC-allocated EvalState
+    // destructors may not have run either.
+    TracingIndex::flushAllWriteQueues();
 
     /* If this is a diverted store (i.e. its "logical" location
        (typically /nix/store) differs from its "physical" location

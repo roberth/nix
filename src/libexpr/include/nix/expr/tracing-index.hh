@@ -96,6 +96,12 @@ public:
 
     ~TracingIndex();
 
+    /**
+     * Flush all active WriteQueues process-wide. Call before exec()
+     * or other operations that bypass normal C++ destruction.
+     */
+    static void flushAllWriteQueues();
+
     TracingIndex(const TracingIndex &) = delete;
     TracingIndex & operator=(const TracingIndex &) = delete;
 

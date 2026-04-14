@@ -369,6 +369,11 @@ TracingIndex::~TracingIndex()
     _writeQueue.reset();
 }
 
+void TracingIndex::flushAllWriteQueues()
+{
+    WriteQueue::flushAll();
+}
+
 // (hash utilities moved above WriteQueue)
 
 NodeHash TracingIndex::computeQueryNodeHash(const std::optional<NodeHash> & afterHash, const QueryHash & queryHash)
