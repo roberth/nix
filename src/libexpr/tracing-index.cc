@@ -2,6 +2,7 @@
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/store/sqlite.hh"
+#include <sqlite3.h>
 #include "nix/util/file-system.hh"
 #include "nix/util/hash.hh"
 #include "nix/util/logging.hh"
@@ -401,6 +402,8 @@ std::vector<ShortcutEntry> TracingIndex::selectShortcuts(const QueryHash & query
     std::vector<ShortcutEntry> result;
 
     auto state(_state->lock());
+    // Ensure we see data committed by the background writer thread
+    state->db.exec("PRAGMA wal_checkpoint(PASSIVE)");
     auto query = state->selectShortcuts.use();
     bindBlob(query, hashToBlob(queryHash));
 
