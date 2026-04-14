@@ -12,6 +12,8 @@
 
 #include <nlohmann/json.hpp>
 #include <condition_variable>
+#include <mutex>
+#include <set>
 #include <thread>
 #include <variant>
 
@@ -160,16 +162,45 @@ struct TracingIndex::WriteQueue
     std::thread thread;
     std::atomic<bool> done{false};
 
+    /**
+     * Global registry of active WriteQueues. Ensures all background writer
+     * threads are joined and data is flushed before process exit, even when
+     * the owning TracingIndex is GC-allocated and its destructor may not run.
+     */
+    static Sync<std::set<WriteQueue *>> & registry()
+    {
+        static Sync<std::set<WriteQueue *>> instance;
+        return instance;
+    }
+
+    static void flushAll()
+    {
+        auto queues = registry().lock();
+        for (auto * q : *queues)
+            q->shutdown();
+        queues->clear();
+    }
+
     WriteQueue(const std::filesystem::path & dbPath)
     {
+        static std::once_flag atexitRegistered;
+        std::call_once(atexitRegistered, [] { std::atexit(flushAll); });
         thread = std::thread([this, dbPath] { run(dbPath); });
+        registry().lock()->insert(this);
     }
 
     ~WriteQueue()
     {
-        done = true;
-        wakeup.notify_one();
-        thread.join();
+        shutdown();
+        registry().lock()->erase(this);
+    }
+
+    void shutdown()
+    {
+        if (!done.exchange(true)) {
+            wakeup.notify_one();
+            thread.join();
+        }
     }
 
     void enqueue(WriteOp op)
@@ -263,6 +294,13 @@ private:
                         op);
                 }
                 txn.commit();
+
+                // Checkpoint WAL into the main DB so other processes
+                // (and the in-process reader connection) see committed
+                // data immediately. EvalState is GC-allocated so its
+                // destructor may never run — we can't defer this to
+                // shutdown.
+                db.exec("PRAGMA wal_checkpoint(PASSIVE)");
             }
         } catch (std::exception & e) {
             ignoreExceptionInDestructor();
