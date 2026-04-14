@@ -499,6 +499,101 @@ sleep 1
 echo '14' > "$TEST_ROOT/itn-leaf.nix"
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/itn-outer.nix; }).val') == 14 ]]
 
+# --- Ambient unification: shared virtual value across attributes ---
+# The cached function accesses the SAME ambient field in two separate
+# lazy result attributes. Each attribute's getInt triggers its own
+# ambient event section. The second section's backward validation
+# encounters the first section's ambient events. The FIFO unification
+# in dispatchAmbientQuery must map ids correctly: child Objects from
+# getAttr must be consumed by the immediately-following id reference,
+# not by an unrelated id from a different section.
+
+cat > "$TEST_ROOT/shared-val.nix" << 'NIX'
+{ args }:
+{ a = args.x; b = args.x + 1; }
+NIX
+
+# Record: a=10, b=11
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/shared-val.nix; }) { args = { x = 10; }; }') == '{ a = 10; b = 11; }' ]]
+
+# Replay: same args, must replay both attributes from cache
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/shared-val.nix; }) { args = { x = 10; }; }') == '{ a = 10; b = 11; }' ]]
+
+# Change x: both must update — tests that the second section's
+# backward walk correctly detects the change in a prior section
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/shared-val.nix; }) { args = { x = 99; }; }') == '{ a = 99; b = 100; }' ]]
+
+# Replay changed
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/shared-val.nix; }) { args = { x = 99; }; }') == '{ a = 99; b = 100; }' ]]
+
+# --- Ambient unification: independent fields, deep nesting ---
+# Two attributes access DIFFERENT deeply-nested fields. Each path
+# produces a chain of child ids (getAttr → child → getAttr → child → getInt).
+# If the FIFO unification misorders these children, the wrong leaf
+# value would be read: a would get b's value or vice versa.
+
+cat > "$TEST_ROOT/deep-indep.nix" << 'NIX'
+{ args }:
+{ a = args.x.val; b = args.y.val; }
+NIX
+
+# Record: a=1, b=2
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/deep-indep.nix; }) { args = { x = { val = 1; }; y = { val = 2; }; }; }') == '{ a = 1; b = 2; }' ]]
+
+# Replay
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/deep-indep.nix; }) { args = { x = { val = 1; }; y = { val = 2; }; }; }') == '{ a = 1; b = 2; }' ]]
+
+# Change only y.val — a must stay 1, b must become 99.
+# If the unification swapped x.val and y.val children, a=99 b=1.
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/deep-indep.nix; }) { args = { x = { val = 1; }; y = { val = 99; }; }; }') == '{ a = 1; b = 99; }' ]]
+
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/deep-indep.nix; }) { args = { x = { val = 1; }; y = { val = 99; }; }; }') == '{ a = 1; b = 99; }' ]]
+
+# Change only x.val — a must become 77, b stays 99
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/deep-indep.nix; }) { args = { x = { val = 77; }; y = { val = 99; }; }; }') == '{ a = 77; b = 99; }' ]]
+
+# --- Ambient unification: interleaved deep access ---
+# The function accesses fields from BOTH branches of the argument
+# in an interleaved pattern: x first, then y, then back to x.
+# The recording creates ambient ids in this interleaved order.
+# Replay must map ids to Objects in the same order.
+
+cat > "$TEST_ROOT/interleaved.nix" << 'NIX'
+{ args }:
+let
+  xType = builtins.typeOf args.x;
+  yType = builtins.typeOf args.y;
+  xVal = args.x;
+  yVal = args.y;
+in xVal + yVal
+NIX
+
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/interleaved.nix; }) { args = { x = 10; y = 20; }; }') == 30 ]]
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/interleaved.nix; }) { args = { x = 10; y = 20; }; }') == 30 ]]
+
+# Change y — if x and y children were swapped by unification, result
+# would be 10+10=20 or 99+99=198 instead of correct 10+99=109
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/interleaved.nix; }) { args = { x = 10; y = 99; }; }') == 109 ]]
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/interleaved.nix; }) { args = { x = 10; y = 99; }; }') == 109 ]]
+
+# --- Ambient unification: list elements ---
+# Access list elements from a virtual value. getListElem also
+# pushes to pendingChildren, same as getAttr. Tests that the FIFO
+# order is maintained for list element children.
+
+cat > "$TEST_ROOT/list-access.nix" << 'NIX'
+{ args }:
+let xs = args.items;
+in builtins.elemAt xs 0 + builtins.elemAt xs 1 * 10
+NIX
+
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/list-access.nix; }) { args = { items = [ 3 7 ]; }; }') == 73 ]]
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/list-access.nix; }) { args = { items = [ 3 7 ]; }; }') == 73 ]]
+
+# Swap elements — if unification mapped indices wrong, result stays 73
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/list-access.nix; }) { args = { items = [ 7 3 ]; }; }') == 37 ]]
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/list-access.nix; }) { args = { items = [ 7 3 ]; }; }') == 37 ]]
+
 # Clean up: remove tracing-eval-cache setting from nix.conf so it
 # doesn't affect subsequent test runs. Match exactly to avoid
 # removing the experimental-features line.
