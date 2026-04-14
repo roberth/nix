@@ -21,6 +21,7 @@
 #include "nix/store/path-with-outputs.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-inline.hh"
+#include "nix/expr/tracing-index.hh"
 #include "nix/expr/get-drvs.hh"
 #include "nix/cmd/common-eval-args.hh"
 #include "nix/expr/attr-path.hh"
@@ -676,6 +677,8 @@ static void main_nix_build(int argc, char ** argv)
         auto argPtrs = stringsToCharPtrs(args);
 
         restoreProcessContext();
+
+        TracingIndex::flushAllWriteQueues();
 
         logger->stop();
 
