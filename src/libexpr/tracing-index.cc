@@ -94,6 +94,18 @@ struct TracingIndex::State
 {
     SQLite db;
 
+    /**
+     * Ensure reader sees data committed by the background writer.
+     * WAL mode doesn't automatically make writer-committed data
+     * visible to a reader on a different connection in the same
+     * process. A passive checkpoint transfers WAL data to the
+     * main DB file without blocking.
+     */
+    void checkpoint()
+    {
+        db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+    }
+
     // Query statements (0..1)
     SQLiteStmt getQuery;
     SQLiteStmt getResult;
@@ -405,8 +417,7 @@ std::vector<ShortcutEntry> TracingIndex::selectShortcuts(const QueryHash & query
     std::vector<ShortcutEntry> result;
 
     auto state(_state->lock());
-    // Ensure we see data committed by the background writer thread
-    state->db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+    state->checkpoint();
     auto query = state->selectShortcuts.use();
     bindBlob(query, hashToBlob(queryHash));
 
@@ -424,6 +435,7 @@ std::vector<ShortcutEntry> TracingIndex::selectShortcuts(const QueryHash & query
 std::optional<QueryNode> TracingIndex::getQuery(const NodeHash & nodeHash)
 {
     auto state(_state->lock());
+    state->checkpoint();
     auto query = state->getQuery.use();
     bindBlob(query, hashToBlob(nodeHash));
 
@@ -442,6 +454,7 @@ std::optional<QueryNode> TracingIndex::getQuery(const NodeHash & nodeHash)
 std::optional<ResultNode> TracingIndex::getResult(const NodeHash & nodeHash)
 {
     auto state(_state->lock());
+    state->checkpoint();
     auto query = state->getResult.use();
     bindBlob(query, hashToBlob(nodeHash));
 
@@ -459,6 +472,7 @@ std::optional<ResultNode> TracingIndex::getResult(const NodeHash & nodeHash)
 std::optional<std::string> TracingIndex::getQueryPayload(const QueryHash & queryHash)
 {
     auto state(_state->lock());
+    state->checkpoint();
     auto query = state->getQueryPayload.use();
     bindBlob(query, hashToBlob(queryHash));
 
@@ -477,6 +491,7 @@ std::vector<QueryNode> TracingIndex::selectChildQueries(const NodeHash & resultN
     std::vector<QueryNode> result;
 
     auto state(_state->lock());
+    state->checkpoint();
     auto query = state->selectChildQueries.use();
     bindBlob(query, hashToBlob(resultNodeHash));
 
@@ -499,6 +514,7 @@ std::vector<ResultNode> TracingIndex::selectChildResults(const NodeHash & afterH
     std::vector<ResultNode> result;
 
     auto state(_state->lock());
+    state->checkpoint();
     auto query = state->selectChildResults.use();
     bindBlob(query, hashToBlob(afterHash));
 
@@ -517,6 +533,7 @@ std::vector<ResultNode> TracingIndex::selectChildResults(const NodeHash & afterH
 std::optional<ResultNode> TracingIndex::getChildResult(const NodeHash & afterHash)
 {
     auto state(_state->lock());
+    state->checkpoint();
     auto query = state->getChildResult.use();
     bindBlob(query, hashToBlob(afterHash));
 
@@ -537,6 +554,7 @@ TracingIndex::selectStructuralChildren(const NodeHash & structuralParent, const 
     std::vector<QueryNode> result;
 
     auto state(_state->lock());
+    state->checkpoint();
     auto query = state->selectStructuralChildren.use();
     bindBlob(query, hashToBlob(structuralParent));
     bindBlob(query, hashToBlob(queryHash));
@@ -562,6 +580,7 @@ std::optional<ResultNode> TracingIndex::findResult(
         validator)
 {
     auto state(_state->lock());
+    state->checkpoint();
 
     // Lambdas that query under the held lock
     auto childResults = [&](const NodeHash & after) -> std::vector<ResultNode> {
