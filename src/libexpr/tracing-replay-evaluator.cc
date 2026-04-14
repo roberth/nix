@@ -230,46 +230,22 @@ bool TracingReplayEvaluator::validateDeps(const std::vector<std::pair<QueryNode,
         if (validatedNodes.count(rNode.nodeHash))
             continue;
 
-        try {
-            // Get the query payload (request) to know what to re-execute
-            auto payloadOpt = tracingIndex.getQueryPayload(qNode.queryHash);
-            if (!payloadOpt) {
-                tracingCacheLog("replay: missing query payload for dependency");
-                return false;
-            }
-            auto reqJson = cborStringToJson(*payloadOpt);
-
-            // The result payload is the recorded response — compare as raw bytes
-            if (reqJson.contains("absPath")) {
-                std::string path = reqJson["absPath"];
-                auto currentHash = validationEnv.getFileHash(path);
-
-                nlohmann::json currentRespJson = trace::FileReadResponse{currentHash};
-                auto currentCbor = jsonToCborString(currentRespJson);
-                if (rNode.payload != currentCbor) {
-                    tracingCacheLog("replay invalidated: file %s changed", path);
-                    return false;
-                }
-            } else if (reqJson.contains("name")) {
-                std::string name = reqJson["name"];
-                auto currentVal = validationEnv.getEnv(name);
-
-                nlohmann::json currentRespJson = trace::GetEnvResponse{currentVal};
-                auto currentCbor = jsonToCborString(currentRespJson);
-                if (rNode.payload != currentCbor) {
-                    tracingCacheLog("replay invalidated: env %s changed", name);
-                    return false;
-                }
-            } else {
-                // Unknown query type (e.g. ambient interaction) — can't
-                // re-execute to validate. Conservative: invalidate.
-                tracingCacheLog("replay invalidated: unvalidatable dependency");
-                return false;
-            }
-        } catch (const std::exception & e) {
-            tracingCacheLog("replay: failed to parse dependency: %s", e.what());
+        auto payloadOpt = tracingIndex.getQueryPayload(qNode.queryHash);
+        if (!payloadOpt) {
+            tracingCacheLog("replay: missing query payload for dependency");
             return false;
         }
+
+        auto currentResponse = getCurrentResponse(*payloadOpt);
+        if (!currentResponse) {
+            tracingCacheLog("replay invalidated: could not compute current response");
+            return false;
+        }
+        if (rNode.payload != *currentResponse) {
+            tracingCacheLog("replay invalidated: dependency response changed");
+            return false;
+        }
+
         validatedNodes.insert(rNode.nodeHash);
     }
     return true;
