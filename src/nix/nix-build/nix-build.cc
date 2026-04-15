@@ -147,6 +147,7 @@ static void main_nix_build(int argc, char ** argv)
 
     std::string envCommand; // interactive shell
     Strings envExclude;
+    std::optional<std::string> shell;
 
     auto myName = isNixShell ? "nix-shell" : "nix-build";
 
@@ -306,6 +307,9 @@ static void main_nix_build(int argc, char ** argv)
                         joined.view());
             }
         }
+
+        else if (isNixShell && *arg == "--shell")
+            shell = getArg(*arg, arg, end);
 
         else if (*arg == "--keep")
             keepVars.insert(getArg(*arg, arg, end));
@@ -521,10 +525,11 @@ static void main_nix_build(int argc, char ** argv)
         std::vector<DerivedPath> pathsToBuild;
         RealisedPath::Set pathsToCopy;
 
-        /* Figure out what bash shell to use. If $NIX_BUILD_SHELL
-           is not set, then build bashInteractive from
-           <nixpkgs>. */
-        auto shell = getEnv("NIX_BUILD_SHELL");
+        /* Figure out what bash shell to use. --shell flag takes
+           precedence, then $NIX_BUILD_SHELL, then bashInteractive
+           from <nixpkgs>. */
+        if (!shell)
+            shell = getEnv("NIX_BUILD_SHELL");
         std::optional<StorePath> shellDrv;
 
         if (!shell) {
