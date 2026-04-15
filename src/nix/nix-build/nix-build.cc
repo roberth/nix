@@ -21,7 +21,16 @@
 #include "nix/store/path-with-outputs.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-inline.hh"
+#include "nix/expr/expr-from-object.hh"
+#include "nix/expr/interpreter.hh"
+#include "nix/expr/trace-file.hh"
+#include "nix/expr/trace-sink.hh"
+#include "nix/expr/environment/system.hh"
+#include "nix/expr/tracing-environment.hh"
+#include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-index.hh"
+#include "nix/expr/tracing-replay-evaluator.hh"
+#include "nix/expr/tracing-writer.hh"
 #include "nix/expr/get-drvs.hh"
 #include "nix/cmd/common-eval-args.hh"
 #include "nix/expr/attr-path.hh"
@@ -322,7 +331,34 @@ static void main_nix_build(int argc, char ** argv)
     auto store = openStore();
     auto evalStore = myArgs.evalStoreUrl ? openStore(StoreReference{*myArgs.evalStoreUrl}) : store;
 
-    auto state = std::make_shared<EvalState>(myArgs.lookupPath, evalStore, fetchSettings, evalSettings, store);
+    // Tracing eval cache infrastructure (kept alive for the duration of evaluation).
+    std::unique_ptr<TracingDatabase> tracingDb;
+    std::unique_ptr<TraceFile> traceFile;
+    std::unique_ptr<TracingIndex> tracingIndex;
+    std::unique_ptr<TracingWriter> tracingWriter;
+    std::shared_ptr<Evaluator> evaluator;
+
+    std::shared_ptr<EvalState> state;
+    if (evalSettings.useTracingEvalCache) {
+        tracingDb = std::make_unique<TracingDatabase>();
+        auto tracePath = tracingDb->newTraceFile();
+        traceFile =
+            std::make_unique<TraceFile>(tracePath, [&, tracePath]() { tracingDb->updateLatestSymlink(tracePath); });
+        tracingIndex = std::make_unique<TracingIndex>();
+        tracingWriter = std::make_unique<TracingWriter>(*traceFile, tracingIndex.get());
+        auto sysEnv = make_ref<SystemEnvironment>(evalSettings, evalStore, store);
+        auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *tracingWriter);
+        state = std::make_shared<EvalState>(myArgs.lookupPath, fetchSettings, evalSettings, tracingEnv, sysEnv);
+
+        ref<Evaluator> eval = make_ref<Interpreter>(ref<EvalState>(state));
+        eval = make_ref<TracingEvaluator>(*tracingWriter, eval);
+        eval = make_ref<TracingReplayEvaluator>(eval, *tracingIndex, *sysEnv, *tracingWriter);
+        state->evaluatorCompat = eval.get_ptr();
+        state->rootTracingIndex = tracingIndex.get();
+        evaluator = eval.get_ptr();
+    } else {
+        state = std::make_shared<EvalState>(myArgs.lookupPath, evalStore, fetchSettings, evalSettings, store);
+    }
     state->repair = myArgs.repair;
     if (myArgs.repair)
         buildMode = bmRepair;
@@ -374,19 +410,33 @@ static void main_nix_build(int argc, char ** argv)
     PackageInfos drvs;
 
     /* Parse the expressions. */
-    std::vector<Expr *> exprs;
+    struct EvalFile
+    {
+        RootedPath path;
+    };
+
+    struct EvalExprStr
+    {
+        std::string expr;
+        RootedPath basePath;
+    };
+
+    using ExprSource = std::variant<Expr *, EvalFile, EvalExprStr>;
+    std::vector<ExprSource> exprSources;
 
     if (readStdin)
-        exprs = {state->parseStdin()};
+        exprSources.emplace_back(state->parseStdin());
     else
         for (auto i : remainingArgs) {
             auto shebangBaseDir = absPath(script.parent_path());
             if (fromArgs) {
-                exprs.push_back(state->parseExprFromString(
-                    std::move(i),
-                    (inShebang && compatibilitySettings.nixShellShebangArgumentsRelativeToScript)
-                        ? lookupFileArg(*state, shebangBaseDir.string())
-                        : state->rootedPath(".")));
+                auto basePath = (inShebang && compatibilitySettings.nixShellShebangArgumentsRelativeToScript)
+                                    ? lookupFileArg(*state, shebangBaseDir.string())
+                                    : state->rootedPath(".");
+                if (evaluator)
+                    exprSources.emplace_back(EvalExprStr{std::move(i), basePath});
+                else
+                    exprSources.emplace_back(state->parseExprFromString(std::move(i), basePath));
             } else {
                 auto absolute = i;
                 try {
@@ -407,7 +457,10 @@ static void main_nix_build(int argc, char ** argv)
                     auto resolvedSp = isNixShell ? resolveShellExprPath(sp) : resolveExprPath(sp);
                     RootedPath resolved{looked.root, resolvedSp.path};
 
-                    exprs.push_back(state->parseExprFromFile(resolved));
+                    if (evaluator)
+                        exprSources.emplace_back(EvalFile{resolved});
+                    else
+                        exprSources.emplace_back(state->parseExprFromFile(resolved));
                 }
             }
         }
@@ -416,9 +469,21 @@ static void main_nix_build(int argc, char ** argv)
     if (attrPaths.empty())
         attrPaths = {""};
 
-    for (auto e : exprs) {
+    for (auto & src : exprSources) {
         Value vRoot;
-        state->eval(e, vRoot);
+        std::visit(
+            overloaded{
+                [&](Expr * e) { state->eval(e, vRoot); },
+                [&](const EvalFile & f) {
+                    auto obj = evaluator->evalFile(f.path, f.path.path.abs());
+                    ExprFromObject(obj.get_ptr(), evaluator).eval(*state, state->baseEnv, vRoot);
+                },
+                [&](const EvalExprStr & e) {
+                    auto obj = evaluator->evalExpr(e.expr, e.basePath);
+                    ExprFromObject(obj.get_ptr(), evaluator).eval(*state, state->baseEnv, vRoot);
+                },
+            },
+            src);
 
         auto takesNixShellAttr = [&](const Value & v) {
             if (!isNixShell) {
