@@ -495,11 +495,20 @@ static void main_nix_build(int argc, char ** argv)
             }
             bool add = false;
             if (v.type() == nFunction) {
-                if (auto formals = v.lambda().fun->getFormals()) {
-                    for (auto & i : formals->formals) {
-                        if (state->symbols[i.name] == "inNixShell") {
-                            add = true;
-                            break;
+                if (v.isLambda()) {
+                    if (auto formals = v.lambda().fun->getFormals()) {
+                        for (auto & i : formals->formals) {
+                            if (state->symbols[i.name] == "inNixShell") {
+                                add = true;
+                                break;
+                            }
+                        }
+                    }
+                } else if (v.isPrimOp()) {
+                    // PrimOps from ExprFromObject may have getFunctionInfo
+                    if (auto info = v.primOp()->getFunctionInfo) {
+                        if (auto fi = info()) {
+                            add = fi->formals.count("inNixShell") > 0;
                         }
                     }
                 }
