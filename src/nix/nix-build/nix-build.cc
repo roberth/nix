@@ -341,6 +341,7 @@ static void main_nix_build(int argc, char ** argv)
     std::unique_ptr<TracingIndex> tracingIndex;
     std::unique_ptr<TracingWriter> tracingWriter;
     std::shared_ptr<Evaluator> evaluator;
+    std::shared_ptr<AmbientResolver> resolver;
 
     std::shared_ptr<EvalState> state;
     if (evalSettings.useTracingEvalCache) {
@@ -354,12 +355,14 @@ static void main_nix_build(int argc, char ** argv)
         auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *tracingWriter);
         state = std::make_shared<EvalState>(myArgs.lookupPath, fetchSettings, evalSettings, tracingEnv, sysEnv);
 
-        ref<Evaluator> eval = make_ref<Interpreter>(ref<EvalState>(state));
-        eval = make_ref<TracingEvaluator>(*tracingWriter, eval);
+        auto interpreter = make_ref<Interpreter>(ref<EvalState>(state));
+        ref<Evaluator> eval = make_ref<TracingEvaluator>(*tracingWriter, interpreter);
         eval = make_ref<TracingReplayEvaluator>(eval, *tracingIndex, *sysEnv, *tracingWriter);
         state->evaluatorCompat = eval.get_ptr();
         state->rootTracingIndex = tracingIndex.get();
         evaluator = eval.get_ptr();
+        resolver = makeAmbientResolver(state.get(), evaluator);
+        interpreter->ambientResolver = resolver;
     } else {
         state = std::make_shared<EvalState>(myArgs.lookupPath, evalStore, fetchSettings, evalSettings, store);
     }
@@ -480,11 +483,11 @@ static void main_nix_build(int argc, char ** argv)
                 [&](Expr * e) { state->eval(e, vRoot); },
                 [&](const EvalFile & f) {
                     auto obj = evaluator->evalFile(f.path, f.path.path.abs());
-                    ExprFromObject(obj.get_ptr(), evaluator).eval(*state, state->baseEnv, vRoot);
+                    ExprFromObject(obj.get_ptr(), evaluator, resolver).eval(*state, state->baseEnv, vRoot);
                 },
                 [&](const EvalExprStr & e) {
                     auto obj = evaluator->evalExpr(e.expr, e.basePath);
-                    ExprFromObject(obj.get_ptr(), evaluator).eval(*state, state->baseEnv, vRoot);
+                    ExprFromObject(obj.get_ptr(), evaluator, resolver).eval(*state, state->baseEnv, vRoot);
                 },
             },
             src);
