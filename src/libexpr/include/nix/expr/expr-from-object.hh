@@ -39,26 +39,22 @@ struct ExprFromObject : ExprProxy
     std::shared_ptr<Object> obj;
 
     /**
-     * Controls where function calls are routed.
+     * Inner evaluator for function call routing.
      *
-     * When set: the Object is a function defined inside the cache
-     * boundary. Calling it routes through this evaluator via apply().
-     * ambientResolver MUST also be set to bridge arguments.
+     * When set, the Object is a function defined inside the cache
+     * boundary. eval() creates a `<cached-fn>` PrimOp that routes
+     * calls through this evaluator. ambientResolver MUST also be set.
      *
-     * When null: either the Object isn't a function, or it's an
-     * ambient function (AmbientObject) that dispatches via queryApply
-     * without needing an inner evaluator.
+     * When null, functions are either absent or ambient (from the
+     * outer evaluator). Ambient functions get an `<ambient-fn>`
+     * PrimOp that dispatches via AmbientObject::queryApply().
      */
     std::shared_ptr<Evaluator> innerEvaluator;
 
     /**
      * Bidirectional bridge between outer EvalState and inner evaluator.
      * Propagated to child ExprFromObjects so nested function results
-     * can also dispatch calls.
-     *
-     * Set whenever function calls are possible — both for inner
-     * functions (with innerEvaluator) and ambient function results
-     * (without innerEvaluator, but children may need it).
+     * can dispatch calls regardless of which PrimOp variant created them.
      *
      * Created via makeAmbientResolver(outerState, innerEvaluator).
      */

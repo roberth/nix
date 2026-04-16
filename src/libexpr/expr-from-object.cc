@@ -176,6 +176,78 @@ void ExprProxy::bindVars(EvalState & es, const std::shared_ptr<const StaticEnv> 
     // No variables to bind - we pull from external sources, not the environment
 }
 
+/**
+ * Create a PrimOp for a function defined inside the cache boundary.
+ * Calls route through the inner evaluator, with the ambient resolver
+ * bridging arguments between outer and inner.
+ */
+static PrimOp * makeCachedFnPrimOp(
+    std::shared_ptr<Object> fnObj, std::shared_ptr<Evaluator> innerEval, std::shared_ptr<AmbientResolver> resolver)
+{
+    return new
+#if NIX_USE_BOEHMGC
+        (GC)
+#endif
+            PrimOp{
+                .name = "<cached-fn>",
+                .args = {"args"},
+                .arity = 1,
+                .impl =
+                    [fnObj, innerEval, resolver](EvalState & state, const PosIdx pos, Value ** args, Value & v) {
+                        // Do NOT force args[0] — it may be self-referential.
+                        auto outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
+                        auto rootId = resolver->registerOuter(outerArgObj);
+                        auto & innerEnv = *innerEval->getEvalState().environment;
+                        AmbientQueryFn queryFn = [resolver,
+                                                  &innerEnv](AmbientId objectId, const trace::QueryVariant & q) {
+                            auto qr = resolver->query(objectId, q);
+                            innerEnv.ambientQuery(q, [&](const trace::QueryVariant &) { return qr.result; });
+                            return qr;
+                        };
+                        AmbientApplyFn applyFn = [resolver, &innerEnv](AmbientId fnId, std::shared_ptr<Object> argObj) {
+                            auto resultId = resolver->apply(fnId, std::move(argObj));
+                            trace::QueryApply applyQuery{
+                                std::to_string(fnId.value()), std::to_string(resultId.value())};
+                            innerEnv.ambientQuery(applyQuery, [&](const trace::QueryVariant &) -> trace::ResultVariant {
+                                return trace::ResultType{"apply"};
+                            });
+                            return resultId;
+                        };
+                        auto contraArg = make_ref<AmbientObject>(rootId, std::move(queryFn), std::move(applyFn));
+                        auto result = innerEval->apply(ref<Object>(fnObj), contraArg);
+                        ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
+                    },
+                .getFunctionInfo = [fnObj]() -> std::optional<FunctionInfo> { return fnObj->getFunctionInfo(); },
+            };
+}
+
+/**
+ * Create a PrimOp for an ambient function (from the outer evaluator).
+ * Calls dispatch through AmbientObject::queryApply without an inner evaluator.
+ */
+static PrimOp * makeAmbientFnPrimOp(std::shared_ptr<Object> fnObj, std::shared_ptr<AmbientResolver> resolver)
+{
+    return new
+#if NIX_USE_BOEHMGC
+        (GC)
+#endif
+            PrimOp{
+                .name = "<ambient-fn>",
+                .args = {"args"},
+                .arity = 1,
+                .impl =
+                    [fnObj, resolver](EvalState & state, const PosIdx pos, Value ** args, Value & v) {
+                        auto * ambient = dynamic_cast<AmbientObject *>(&*fnObj);
+                        if (!ambient)
+                            state.error<TypeError>("expected an ambient function object").atPos(pos).debugThrow();
+                        auto argObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
+                        auto result = ambient->queryApply(std::move(argObj));
+                        ExprFromObject(result, nullptr, resolver).eval(state, state.baseEnv, v);
+                    },
+                .getFunctionInfo = [fnObj]() -> std::optional<FunctionInfo> { return fnObj->getFunctionInfo(); },
+            };
+}
+
 void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
 {
     auto type = obj->getType();
@@ -242,79 +314,13 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
     }
 
     case nFunction: {
-        auto objPtr = obj;
-        auto innerEval = innerEvaluator;
-        auto * primOp = new
-#if NIX_USE_BOEHMGC
-            (GC)
-#endif
-                PrimOp{
-                    .name = "<cached-fn>",
-                    .args = {"args"},
-                    .arity = 1,
-                    .impl =
-                        [objPtr, innerEval, resolver = this->ambientResolver](
-                            EvalState & state, const PosIdx pos, Value ** args, Value & v) {
-                            if (!innerEval) {
-                                // No inner evaluator — this is an ambient function.
-                                // Issue an ambient QueryApply through the AmbientObject's queryFn.
-                                auto * ambient = dynamic_cast<AmbientObject *>(&*objPtr);
-                                if (!ambient)
-                                    state
-                                        .error<TypeError>(
-                                            "cached function call without inner evaluator or ambient object")
-                                        .atPos(pos)
-                                        .debugThrow();
-
-                                // Register the outer argument as a local value.
-                                // Do NOT force it — it may be self-referential.
-                                auto argObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
-
-                                // Issue the apply through the ambient query mechanism
-                                auto result = ambient->queryApply(std::move(argObj));
-
-                                // Bridge result back, propagating the resolver
-                                ExprFromObject(result, nullptr, resolver).eval(state, state.baseEnv, v);
-                                return;
-                            }
-
-                            // Route through the inner evaluator. The resolver
-                            // bridges arguments between outer and inner — it must
-                            // be set whenever innerEvaluator is set.
-                            auto & res = resolver;
-                            assert(res && "ExprFromObject: innerEvaluator set without ambientResolver");
-                            std::shared_ptr<Object> outerArgObj =
-                                std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
-                            auto rootId = res->registerOuter(outerArgObj);
-                            auto & innerEnv = *innerEval->getEvalState().environment;
-                            AmbientQueryFn queryFn = [res,
-                                                      &innerEnv](AmbientId objectId, const trace::QueryVariant & q) {
-                                auto qr = res->query(objectId, q);
-                                // Record the ambient interaction in the inner trace
-                                innerEnv.ambientQuery(q, [&](const trace::QueryVariant &) { return qr.result; });
-                                return qr;
-                            };
-                            AmbientApplyFn applyFn = [res, &innerEnv](AmbientId fnId, std::shared_ptr<Object> argObj) {
-                                auto resultId = res->apply(fnId, std::move(argObj));
-                                // Record the apply as an ambient interaction
-                                trace::QueryApply applyQuery{
-                                    std::to_string(fnId.value()), std::to_string(resultId.value())};
-                                innerEnv.ambientQuery(
-                                    applyQuery, [&](const trace::QueryVariant &) -> trace::ResultVariant {
-                                        return trace::ResultType{"apply"};
-                                    });
-                                return resultId;
-                            };
-                            auto contraArg = make_ref<AmbientObject>(rootId, std::move(queryFn), std::move(applyFn));
-
-                            // Apply the cached function to the contra argument
-                            auto result = innerEval->apply(ref<Object>(objPtr), contraArg);
-
-                            // Bridge result back to outer evaluator
-                            ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
-                        },
-                    .getFunctionInfo = [objPtr]() -> std::optional<FunctionInfo> { return objPtr->getFunctionInfo(); },
-                };
+        PrimOp * primOp;
+        if (innerEvaluator) {
+            assert(ambientResolver && "inner evaluator requires ambient resolver");
+            primOp = makeCachedFnPrimOp(obj, innerEvaluator, ambientResolver);
+        } else {
+            primOp = makeAmbientFnPrimOp(obj, ambientResolver);
+        }
         v.mkPrimOp(primOp);
         break;
     }
