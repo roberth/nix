@@ -278,14 +278,11 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
                                 return;
                             }
 
-                            // Use the shared resolver from the builtins.cache call.
-                            // Do NOT force args[0] — it may be self-referential.
+                            // Route through the inner evaluator. The resolver
+                            // bridges arguments between outer and inner — it must
+                            // be set whenever innerEvaluator is set.
                             auto & res = resolver;
-                            if (!res) {
-                                state.error<TypeError>("cached function call: no ambient resolver")
-                                    .atPos(pos)
-                                    .debugThrow();
-                            }
+                            assert(res && "ExprFromObject: innerEvaluator set without ambientResolver");
                             std::shared_ptr<Object> outerArgObj =
                                 std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
                             auto rootId = res->registerOuter(outerArgObj);
