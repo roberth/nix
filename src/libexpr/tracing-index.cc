@@ -172,8 +172,14 @@ struct TracingIndex::WriteQueue
      */
     static Sync<std::set<WriteQueue *>> & registry()
     {
-        static Sync<std::set<WriteQueue *>> instance;
-        return instance;
+        // Intentionally leaked: the registry must outlive every other static
+        // and every atexit handler, including flushAll (registered below).
+        // A function-local `static Sync<...> instance;` would have its
+        // destructor registered alongside atexit handlers and could run
+        // before flushAll, leaving flushAll to iterate a destroyed std::set
+        // and crash in std::_Rb_tree_increment.
+        static auto * instance = new Sync<std::set<WriteQueue *>>;
+        return *instance;
     }
 
     static void flushAll()
@@ -186,14 +192,6 @@ struct TracingIndex::WriteQueue
 
     WriteQueue(const std::filesystem::path & dbPath)
     {
-        // Touch the registry *before* registering the atexit handler so the
-        // registry's static `instance` outlives flushAll. Static destructors
-        // and atexit handlers run together in LIFO order, so whichever side
-        // constructs second runs first. If atexit is registered first and the
-        // registry is constructed second, the registry is destroyed *before*
-        // flushAll runs and flushAll iterates a destroyed std::set, crashing
-        // in std::_Rb_tree_increment.
-        registry();
         static std::once_flag atexitRegistered;
         std::call_once(atexitRegistered, [] { std::atexit(flushAll); });
         thread = std::thread([this, dbPath] { run(dbPath); });
