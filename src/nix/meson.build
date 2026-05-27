@@ -129,10 +129,7 @@ nix_sources = [ config_priv_h ] + files(
 )
 
 if host_machine.system() != 'windows'
-  nix_sources += files(
-    'unix/daemon.cc',
-    'unix/store-roots-daemon.cc',
-  )
+  nix_sources += files('unix/daemon.cc', 'unix/store-roots-daemon.cc')
 endif
 
 nix_sources += [
@@ -148,30 +145,15 @@ nix_sources += [
 # The rest of the subdirectories aren't separate components,
 # just source files in another directory, so we process them here.
 
-build_remote_sources = files(
-  'build-remote/build-remote.cc',
-)
-nix_build_sources = files(
-  'nix-build/nix-build.cc',
-)
-nix_channel_sources = files(
-  'nix-channel/nix-channel.cc',
-)
+build_remote_sources = files('build-remote/build-remote.cc')
+nix_build_sources = files('nix-build/nix-build.cc')
+nix_channel_sources = files('nix-channel/nix-channel.cc')
 unpack_channel_gen = gen_header.process('nix-channel/unpack-channel.nix')
-nix_collect_garbage_sources = files(
-  'nix-collect-garbage/nix-collect-garbage.cc',
-)
-nix_copy_closure_sources = files(
-  'nix-copy-closure/nix-copy-closure.cc',
-)
+nix_collect_garbage_sources = files('nix-collect-garbage/nix-collect-garbage.cc')
+nix_copy_closure_sources = files('nix-copy-closure/nix-copy-closure.cc')
 nix_env_buildenv_gen = gen_header.process('nix-env/buildenv.nix')
-nix_env_sources = files(
-  'nix-env/nix-env.cc',
-  'nix-env/user-env.cc',
-)
-nix_instantiate_sources = files(
-  'nix-instantiate/nix-instantiate.cc',
-)
+nix_env_sources = files('nix-env/nix-env.cc', 'nix-env/user-env.cc')
+nix_instantiate_sources = files('nix-instantiate/nix-instantiate.cc')
 nix_store_sources = files(
   'nix-store/dotgraph.cc',
   'nix-store/graphml.cc',
@@ -192,10 +174,7 @@ sources = [
 ]
 
 if host_machine.system() != 'windows'
-  sources += [
-    build_remote_sources,
-    nix_channel_sources,
-  ]
+  sources += [ build_remote_sources, nix_channel_sources ]
 endif
 
 include_dirs = [ include_directories('.') ]
