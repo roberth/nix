@@ -103,4 +103,32 @@ TEST_F(FileHashCacheTest, DetectsMtimeChange)
     EXPECT_NE(hash1, hash2);
 }
 
+TEST_F(FileHashCacheTest, ConstructorPerformsNoIO)
+{
+    // SystemEnvironment constructs a FileHashCache for every EvalState,
+    // even when no caller will ever query it. Nix is sometimes invoked
+    // with HOME set to a directory that must not be auto-created (e.g.
+    // /homeless-shelter inside builds without sandboxing, or /fake-home
+    // in lang.sh purity tests). Materialising the cache dir there breaks
+    // downstream purity checks.
+    //
+    // Verify that the default-path constructor (the same path taken by
+    // SystemEnvironment) performs no filesystem I/O: the cache dir must
+    // not exist after construction, even though `HOME` points at a
+    // non-existent location.
+    auto fakeHome = tempDir / "non-existent-home";
+    setenv("HOME", fakeHome.string().c_str(), 1);
+    // Make sure XDG fallback doesn't shadow HOME.
+    unsetenv("XDG_CACHE_HOME");
+    unsetenv("NIX_CACHE_HOME");
+
+    {
+        FileHashCache cache;
+        EXPECT_FALSE(std::filesystem::exists(fakeHome))
+            << "FileHashCache constructor must not create HOME ('" << fakeHome.string() << "')";
+    }
+    // Sanity: still doesn't exist after destruction either.
+    EXPECT_FALSE(std::filesystem::exists(fakeHome));
+}
+
 } // namespace nix
