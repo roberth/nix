@@ -2,8 +2,10 @@
 
 source common.sh
 
-# Enable tracing in nix.conf
-echo "tracing-eval-cache = true" >> "$NIX_CONF_DIR/nix.conf"
+# Enable tracing in nix.conf. Use $test_nix_conf rather than
+# $NIX_CONF_DIR/nix.conf so the test also works inside NixOS VM tests,
+# where NIX_CONF_DIR is unset (the system nix daemon owns its own conf).
+echo "tracing-eval-cache = true" >> "$test_nix_conf"
 
 # getCacheDir() returns $HOME/.cache/nix; TracingDatabase appends eval-tracing-v0/traces
 tracesDir="$TEST_HOME/.cache/nix/eval-tracing-v0/traces"

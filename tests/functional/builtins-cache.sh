@@ -377,7 +377,7 @@ echo '{ f = x: x * 10; base = 0; }' > "$TEST_ROOT/inner-mod.nix"
 # change to inner files won't invalidate the outer.
 
 
-echo "tracing-eval-cache = true" >> "$NIX_CONF_DIR/nix.conf"
+echo "tracing-eval-cache = true" >> "$test_nix_conf"
 
 echo '{ val = import ./rv-leaf.nix; }' > "$TEST_ROOT/rv-inner.nix"
 echo '13' > "$TEST_ROOT/rv-leaf.nix"
@@ -408,7 +408,7 @@ echo '14' > "$TEST_ROOT/rv-leaf.nix"
 latestSymlink="$TEST_HOME/.cache/nix/eval-tracing-v0/latest.json"
 
 # Enable outer tracing
-echo "tracing-eval-cache = true" >> "$NIX_CONF_DIR/nix.conf"
+echo "tracing-eval-cache = true" >> "$test_nix_conf"
 
 echo '{ inner = 13; }' > "$TEST_ROOT/inner-traced.nix"
 
@@ -597,4 +597,4 @@ NIX
 # Clean up: remove tracing-eval-cache setting from nix.conf so it
 # doesn't affect subsequent test runs. Match exactly to avoid
 # removing the experimental-features line.
-sed -i '/^tracing-eval-cache = true$/d' "$NIX_CONF_DIR/nix.conf"
+sed -i '/^tracing-eval-cache = true$/d' "$test_nix_conf"
