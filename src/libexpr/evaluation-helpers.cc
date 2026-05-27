@@ -139,6 +139,44 @@ StringSet getDerivationOutputs(Object & obj)
     return outputsToInstall;
 }
 
+StringSet getAllDerivationOutputs(Object & obj)
+{
+    // outputSpecified takes precedence (matches PackageInfo::queryOutputs).
+    if (auto aOutputSpecified = obj.maybeGetAttr("outputSpecified")) {
+        if (aOutputSpecified->getBool("while checking outputSpecified")) {
+            if (auto aOutputName = obj.maybeGetAttr("outputName")) {
+                if (aOutputName->getType() == nString) {
+                    return {aOutputName->getStringIgnoreContext()};
+                }
+            }
+        }
+    }
+
+    // Start from every declared output. (queryOutputs(false, true) behaviour.)
+    StringSet declared;
+    if (auto outputsAttr = obj.maybeGetAttr("outputs")) {
+        for (auto & s : outputsAttr->getListOfStringsNoCtx())
+            declared.insert(s);
+    }
+    if (declared.empty())
+        declared.insert("out");
+
+    // Filter by meta.outputsToInstall when present. Drop stale entries
+    // silently rather than throwing.
+    if (auto aMeta = obj.maybeGetAttr("meta")) {
+        if (auto aOutputsToInstall = aMeta->maybeGetAttr("outputsToInstall")) {
+            StringSet filtered;
+            for (auto & s : aOutputsToInstall->getListOfStringsNoCtx())
+                if (declared.contains(s))
+                    filtered.insert(s);
+            if (!filtered.empty())
+                return filtered;
+        }
+    }
+
+    return declared;
+}
+
 OrSuggestions<std::shared_ptr<Object>> findAlongAttrPath(Object & obj, const std::vector<std::string> & attrPath)
 {
     std::shared_ptr<Object> current = obj.shared_from_this();

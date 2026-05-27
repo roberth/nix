@@ -295,6 +295,56 @@ TEST_F(EvaluatorHelpersTest, getDerivationOutputs_OutputSpecifiedFalseUsesMeta)
     EXPECT_TRUE(outputs.count("out"));
 }
 
+TEST_F(EvaluatorHelpersTest, getAllDerivationOutputs_MultiOutputDefaultsToAll)
+{
+    auto expr = state.parseExprFromString(
+        R"(
+        derivation {
+            name = "test";
+            system = "x86_64-linux";
+            builder = "/bin/sh";
+            outputs = [ "out" "bin" "dev" ];
+        }
+    )",
+        state.rootedPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    // Without meta.outputsToInstall, returns every declared output —
+    // the nix-env / `nix build -f` convention.
+    auto outputs = getAllDerivationOutputs(*obj);
+
+    EXPECT_EQ(outputs.size(), 3);
+    EXPECT_TRUE(outputs.count("out"));
+    EXPECT_TRUE(outputs.count("bin"));
+    EXPECT_TRUE(outputs.count("dev"));
+}
+
+TEST_F(EvaluatorHelpersTest, getAllDerivationOutputs_MetaFiltersToValidOutputs)
+{
+    auto expr = state.parseExprFromString(
+        R"(
+        (derivation {
+            name = "test";
+            system = "x86_64-linux";
+            builder = "/bin/sh";
+            outputs = [ "out" "bin" "dev" ];
+        }) // { meta = { outputsToInstall = [ "bin" "stale" ]; }; }
+    )",
+        state.rootedPath("."));
+    auto v = state.allocValue();
+    state.eval(expr, *v);
+    auto obj = state.toObjectCompat(*v);
+
+    // meta.outputsToInstall narrows the set; stale entries are silently
+    // dropped (PackageInfo::queryOutputs would throw).
+    auto outputs = getAllDerivationOutputs(*obj);
+
+    EXPECT_EQ(outputs.size(), 1);
+    EXPECT_TRUE(outputs.count("bin"));
+}
+
 // Tests for findAlongAttrPath helper
 TEST_F(EvaluatorHelpersTest, findAlongAttrPath_EmptyPath)
 {

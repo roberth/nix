@@ -99,19 +99,10 @@ DerivedPathsWithInfo InstallableAttrPath::toDerivedPaths()
         auto outputs = std::visit(
             overloaded{
                 [&](const ExtendedOutputsSpec::Default &) -> OutputsSpec {
-                    auto outputsToInstall = expr::helpers::getDerivationOutputs(*obj);
-                    // getDerivationOutputs defaults to {"out"} when
-                    // outputsToInstall metadata is absent. Verify "out"
-                    // exists; if not, use the actual outputs.
-                    if (outputsToInstall == StringSet{"out"}) {
-                        if (auto outputsAttr = obj->maybeGetAttr("outputs")) {
-                            auto outputNames = outputsAttr->getListOfStringsNoCtx();
-                            bool hasOut = std::find(outputNames.begin(), outputNames.end(), "out") != outputNames.end();
-                            if (!hasOut)
-                                return OutputsSpec::Names{StringSet(outputNames.begin(), outputNames.end())};
-                        }
-                    }
-                    return OutputsSpec::Names{std::move(outputsToInstall)};
+                    // nix-env-style default: every declared output, filtered
+                    // by meta.outputsToInstall. Differs from flake's {"out"}
+                    // convention.
+                    return OutputsSpec::Names{expr::helpers::getAllDerivationOutputs(*obj)};
                 },
                 [&](const ExtendedOutputsSpec::Explicit & e) -> OutputsSpec { return e; },
             },

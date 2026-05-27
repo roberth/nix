@@ -78,6 +78,21 @@ StorePath forceDerivation(Evaluator & evaluator, Object & obj, Store & store);
 StringSet getDerivationOutputs(Object & obj);
 
 /**
+ * Get the outputs of a derivation, defaulting to *all* declared outputs.
+ *
+ * Mirrors `PackageInfo::queryOutputs(false, true)`: if `outputSpecified` is
+ * set, return just that; otherwise start from every declared output and
+ * intersect with `meta.outputsToInstall` when present. Stale
+ * `outputsToInstall` entries that don't match any declared output are
+ * silently dropped (`queryOutputs` would throw).
+ *
+ * Used by `nix-env`-style attr-path installables where the convention is
+ * "all outputs"; differs from `getDerivationOutputs`, which defaults to
+ * `{"out"}` for the flake convention.
+ */
+StringSet getAllDerivationOutputs(Object & obj);
+
+/**
  * Navigate an attribute path through nested attrsets.
  *
  * Does not auto-call functors or functions.
