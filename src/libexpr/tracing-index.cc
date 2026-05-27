@@ -186,6 +186,14 @@ struct TracingIndex::WriteQueue
 
     WriteQueue(const std::filesystem::path & dbPath)
     {
+        // Touch the registry *before* registering the atexit handler so the
+        // registry's static `instance` outlives flushAll. Static destructors
+        // and atexit handlers run together in LIFO order, so whichever side
+        // constructs second runs first. If atexit is registered first and the
+        // registry is constructed second, the registry is destroyed *before*
+        // flushAll runs and flushAll iterates a destroyed std::set, crashing
+        // in std::_Rb_tree_increment.
+        registry();
         static std::once_flag atexitRegistered;
         std::call_once(atexitRegistered, [] { std::atexit(flushAll); });
         thread = std::thread([this, dbPath] { run(dbPath); });
