@@ -359,7 +359,12 @@ rec {
           (
             set -x
             time nix-env --store dummy:// -f ${nixpkgs-regression} -qaP --drv-path | sort | grep -v nixos-install-tools > packages
-            [[ $(sha1sum < packages | cut -c1-40) = e01b031fc9785a572a38be6bc473957e3b6faad7 ]]
+            # Hash updated for 770cdc73d (feat(get-drvs): remove pointer-identity
+            # deduplication from getDerivations). The change makes the CLI more
+            # predictable and removes a caching obstacle; downstream
+            # toDerivedPaths() still deduplicates by drvPath. Aliases that share a
+            # derivation now each appear in the listing.
+            [[ $(sha1sum < packages | cut -c1-40) = 5f12b5228fc7cdb6729ff5521908bb9e770216c7 ]]
           )
           mkdir $out
         '';
