@@ -377,6 +377,9 @@ echo '{ f = x: x * 10; base = 0; }' > "$TEST_ROOT/inner-mod.nix"
 # change to inner files won't invalidate the outer.
 
 
+# Use $test_nix_conf (not $NIX_CONF_DIR/nix.conf) so the test also works
+# inside NixOS VM tests, where NIX_CONF_DIR is unset and alice reads her
+# own config via NIX_USER_CONF_FILES (wired up by common/init.sh).
 echo "tracing-eval-cache = true" >> "$test_nix_conf"
 
 echo '{ val = import ./rv-leaf.nix; }' > "$TEST_ROOT/rv-inner.nix"
