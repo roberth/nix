@@ -138,8 +138,5 @@ if get_option('benchmarks')
     cpp_pch : do_pch ? [ 'pch/precompiled-headers.hh' ] : [],
   )
 
-  benchmark(
-    'nix-expr-benchmarks',
-    benchmark_exe,
-  )
+  benchmark('nix-expr-benchmarks', benchmark_exe)
 endif
