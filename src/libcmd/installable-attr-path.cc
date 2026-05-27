@@ -13,12 +13,6 @@
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/evaluation-helpers.hh"
 #include "nix/expr/environment/system.hh"
-#include "nix/util/url.hh"
-#include "nix/fetchers/registry.hh"
-#include "nix/store/build-result.hh"
-
-#include <regex>
-#include <queue>
 
 #include <nlohmann/json.hpp>
 

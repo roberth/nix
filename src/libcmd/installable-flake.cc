@@ -8,19 +8,10 @@
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-error.hh"
 #include "nix/expr/evaluation-helpers.hh"
-#include "nix/expr/get-drvs.hh"
-#include "nix/store/store-api.hh"
-#include "nix/main/shared.hh"
 #include "nix/flake/flake.hh"
 #include "nix/expr/eval-cache.hh"
 #include "nix/expr/coarse-eval-cache.hh"
 #include "nix/expr/interpreter.hh"
-#include "nix/util/url.hh"
-#include "nix/fetchers/registry.hh"
-#include "nix/store/build-result.hh"
-
-#include <regex>
-#include <queue>
 
 #include <nlohmann/json.hpp>
 
