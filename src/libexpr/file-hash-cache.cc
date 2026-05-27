@@ -19,6 +19,8 @@ create table if not exists FileHashes (
 
 struct FileHashCache::State
 {
+    bool opened = false;
+    std::filesystem::path dbPath;
     SQLite db;
     SQLiteStmt queryHash;
     SQLiteStmt insertHash;
@@ -28,6 +30,24 @@ struct FileHashCache::State
 FileHashCache::FileHashCache(std::filesystem::path dbPath)
     : _state(std::make_unique<Sync<State>>())
 {
+    // Defer SQLite open and cache-dir creation until first use. Construction is
+    // unconditional (SystemEnvironment owns one), but only the tracing replay
+    // path actually calls getHash/lookup. Eagerly creating ~/.cache/nix here
+    // would materialise phantom HOME dirs like /homeless-shelter or /fake-home
+    // when Nix is invoked with such HOME values (test isolation, build purity).
+    auto state(_state->lock());
+    state->dbPath = std::move(dbPath);
+}
+
+FileHashCache::~FileHashCache() = default;
+
+void FileHashCache::ensureOpen(FileHashCache::State & state)
+{
+    if (state.opened)
+        return;
+    state.opened = true;
+
+    auto dbPath = state.dbPath;
     try {
         if (dbPath.empty()) {
             auto cacheDir = std::filesystem::path(getCacheDir());
@@ -35,29 +55,21 @@ FileHashCache::FileHashCache(std::filesystem::path dbPath)
             dbPath = cacheDir / "file-hash-cache.sqlite";
         }
 
-        auto state(_state->lock());
-        state->db = SQLite(dbPath, {.mode = SQLiteOpenMode::Normal, .useWAL = true});
-        state->db.isCache();
-        state->db.exec(schema);
-
-        state->queryHash.create(state->db, "select mtime, hash from FileHashes where path = ?");
-        state->insertHash.create(state->db, "insert or replace into FileHashes(path, mtime, hash) values (?, ?, ?)");
-        state->deleteHash.create(state->db, "delete from FileHashes where path = ?");
+        state.db = SQLite(dbPath, {.mode = SQLiteOpenMode::Normal, .useWAL = true});
+        state.db.isCache();
+        state.db.exec(schema);
     } catch (std::exception & e) {
         // Fall back to in-memory database if the on-disk cache can't be opened
         // (e.g. read-only filesystem, sandboxed builds).
         debug("file hash cache: falling back to in-memory database: %s", e.what());
-        auto state(_state->lock());
-        state->db = SQLite(":memory:", {.mode = SQLiteOpenMode::Normal});
-        state->db.exec(schema);
-
-        state->queryHash.create(state->db, "select mtime, hash from FileHashes where path = ?");
-        state->insertHash.create(state->db, "insert or replace into FileHashes(path, mtime, hash) values (?, ?, ?)");
-        state->deleteHash.create(state->db, "delete from FileHashes where path = ?");
+        state.db = SQLite(":memory:", {.mode = SQLiteOpenMode::Normal});
+        state.db.exec(schema);
     }
-}
 
-FileHashCache::~FileHashCache() = default;
+    state.queryHash.create(state.db, "select mtime, hash from FileHashes where path = ?");
+    state.insertHash.create(state.db, "insert or replace into FileHashes(path, mtime, hash) values (?, ?, ?)");
+    state.deleteHash.create(state.db, "delete from FileHashes where path = ?");
+}
 
 static std::optional<time_t> getMtime(const std::filesystem::path & path)
 {
@@ -74,6 +86,7 @@ std::optional<Hash> FileHashCache::lookup(const std::filesystem::path & path)
         return std::nullopt;
 
     auto state(_state->lock());
+    ensureOpen(*state);
     auto query = state->queryHash.use()(path.string());
     if (!query.next())
         return std::nullopt;
@@ -103,6 +116,7 @@ Hash FileHashCache::getHash(const std::filesystem::path & path)
         throw Error("cannot stat file '%s'", path.string());
 
     auto state(_state->lock());
+    ensureOpen(*state);
     state->insertHash.use()(path.string())(static_cast<int64_t>(*mtime))(hash.to_string(HashFormat::SRI, true)).exec();
 
     return hash;
@@ -111,6 +125,7 @@ Hash FileHashCache::getHash(const std::filesystem::path & path)
 void FileHashCache::invalidate(const std::filesystem::path & path)
 {
     auto state(_state->lock());
+    ensureOpen(*state);
     state->deleteHash.use()(path.string()).exec();
 }
 

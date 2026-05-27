@@ -49,6 +49,16 @@ public:
 private:
     struct State;
     std::unique_ptr<Sync<State>> _state;
+
+    /**
+     * Open the SQLite database on first use, deferring any I/O until the
+     * cache is actually queried. The constructor must not eagerly create
+     * the cache dir, since SystemEnvironment instantiates this for every
+     * EvalState and Nix is sometimes invoked with HOME pointing at a
+     * directory that must not be auto-created (e.g. /homeless-shelter).
+     * Falls back to an in-memory DB on failure.
+     */
+    static void ensureOpen(State & state);
 };
 
 } // namespace nix
