@@ -29,9 +29,7 @@ subdir('nix-meson-build-support/subprojects')
 subdir('nix-meson-build-support/big-objs')
 
 # Check for each of these functions, and create a define like `#define HAVE_SYSCONF 1`.
-check_funcs = [
-  'sysconf',
-]
+check_funcs = [ 'sysconf' ]
 foreach funcspec : check_funcs
   define_name = 'HAVE_' + funcspec.underscorify().to_upper()
   define_value = cxx.has_function(funcspec).to_int()
@@ -40,10 +38,7 @@ endforeach
 
 boost = dependency(
   'boost',
-  modules : [
-    'container',
-    'context',
-  ],
+  modules : [ 'container', 'context' ],
   include_type : 'system',
 )
 # boost is a public dependency, but not a pkg-config dependency unfortunately, so we
@@ -64,10 +59,7 @@ bdw_gc_required = get_option('gc').disable_if(
 bdw_gc = dependency('bdw-gc', required : bdw_gc_required)
 if bdw_gc.found()
   deps_public += bdw_gc
-  foreach funcspec : [
-    'pthread_attr_get_np',
-    'pthread_getattr_np',
-  ]
+  foreach funcspec : [ 'pthread_attr_get_np', 'pthread_getattr_np' ]
     define_name = 'HAVE_' + funcspec.underscorify().to_upper()
     define_value = cxx.has_function(funcspec).to_int()
     configdata_priv.set(define_name, define_value)
@@ -107,18 +99,8 @@ subdir('nix-meson-build-support/common')
 
 parser_tab = custom_target(
   input : 'parser.y',
-  output : [
-    'parser-tab.cc',
-    'parser-tab.hh',
-  ],
-  command : [
-    'bison',
-    '-v',
-    '-o',
-    '@OUTPUT0@',
-    '@INPUT@',
-    '-d',
-  ],
+  output : [ 'parser-tab.cc', 'parser-tab.hh' ],
+  command : [ 'bison', '-v', '-o', '@OUTPUT0@', '@INPUT@', '-d' ],
   # NOTE(Qyriad): Meson doesn't support installing only part of a custom target, so we add
   # an install script below which removes parser-tab.cc.
   install : true,
@@ -126,14 +108,8 @@ parser_tab = custom_target(
 )
 
 lexer_tab = custom_target(
-  input : [
-    'lexer.l',
-    parser_tab,
-  ],
-  output : [
-    'lexer-tab.cc',
-    'lexer-tab.hh',
-  ],
+  input : [ 'lexer.l', parser_tab ],
+  output : [ 'lexer-tab.cc', 'lexer-tab.hh' ],
   command : [
     'flex',
     '-Cf', # Use full scanner tables
@@ -150,10 +126,7 @@ lexer_tab = custom_target(
 subdir('nix-meson-build-support/generate-header')
 
 generated_headers = []
-foreach header : [
-  'imported-drv-to-derivation.nix',
-  'fetchurl.nix',
-]
+foreach header : [ 'imported-drv-to-derivation.nix', 'fetchurl.nix' ]
   generated_headers += gen_header.process(header)
 endforeach
 
@@ -223,10 +196,7 @@ if not get_option('debug')
   if cxx.get_id() == 'clang'
     # The default as of LLVM 21 is 225:
     # llc --help-hidden | grep inline-threshold
-    parser_library_cpp_args += [
-      '-mllvm',
-      '-inline-threshold=5000',
-    ]
+    parser_library_cpp_args += [ '-mllvm', '-inline-threshold=5000' ]
   elif cxx.get_id() == 'gcc'
     parser_library_cpp_args += [
       '--param=max-inline-insns-single=1000',
