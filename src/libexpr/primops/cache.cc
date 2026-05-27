@@ -89,8 +89,11 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     // dependencies — required for correctness when the outer evaluator
     // is itself cached.
     auto tracingEnv = make_ref<TracingEnvironment>(state.environment, *writer);
-    auto innerState =
-        make_ref<EvalState>(LookupPath{}, state.fetchSettings, state.settings, tracingEnv, state.systemEnvironment);
+    // Share the outer EvalState's symbol table so symbols interned during
+    // inner evaluation (parse, AttrPath::parse, etc.) compare equal to the
+    // outer state's symbols.
+    auto innerState = make_ref<EvalState>(
+        LookupPath{}, state.fetchSettings, state.settings, tracingEnv, state.systemEnvironment, state.getSymbolTable());
 
     auto interpreter = make_ref<Interpreter>(innerState);
 

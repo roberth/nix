@@ -175,6 +175,35 @@ TEST_F(EvalStateTest, getBuiltin_fail)
     ASSERT_THROW(state.getBuiltin("nonexistent"), EvalError);
 }
 
+TEST_F(EvalStateTest, sharedSymbolTable_internsAcrossStates)
+{
+    // Inner EvalState that shares the outer state's symbol table — the
+    // configuration `builtins.cache` uses for its nested evaluator.
+    auto inner = make_ref<EvalState>(
+        LookupPath{},
+        state.fetchSettings,
+        state.settings,
+        state.environment,
+        state.systemEnvironment,
+        state.getSymbolTable());
+
+    auto outerSym = state.symbols.create("shared-attr-name");
+    auto innerSym = inner->symbols.create("shared-attr-name");
+
+    EXPECT_EQ(outerSym, innerSym);
+    EXPECT_EQ(&state.symbols, &inner->symbols);
+}
+
+TEST_F(EvalStateTest, defaultSymbolTable_isIndependent)
+{
+    // Default-constructed EvalState gets its own SymbolTable. `Symbol` is
+    // a small integer index into the table — two independent tables can
+    // coincidentally produce the same index for the same insertion
+    // sequence, so identity of the *table* is the load-bearing invariant.
+    auto independent = make_ref<EvalState>(LookupPath{}, store, state.fetchSettings, state.settings);
+    EXPECT_NE(&state.symbols, &independent->symbols);
+}
+
 class PureEvalTest : public LibExprTest
 {
 public:

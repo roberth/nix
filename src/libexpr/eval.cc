@@ -272,10 +272,12 @@ EvalState::EvalState(
     const fetchers::Settings & fetchSettings,
     const EvalSettings & settings,
     ref<Environment> environment,
-    ref<SystemEnvironment> systemEnvironment)
-    : fetchSettings{fetchSettings}
+    ref<SystemEnvironment> systemEnvironment,
+    ref<SymbolTable> symbolTable)
+    : symbolTablePtr(symbolTable)
+    , fetchSettings{fetchSettings}
     , settings{settings}
-    , symbols(StaticEvalSymbols::staticSymbolTable())
+    , symbols(*symbolTablePtr)
     , repair(NoRepair)
     , environment(environment)
     , systemEnvironment(systemEnvironment)

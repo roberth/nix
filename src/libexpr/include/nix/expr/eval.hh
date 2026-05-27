@@ -376,13 +376,19 @@ private:
 
 class EvalState : public std::enable_shared_from_this<EvalState>
 {
+private:
+    // Declared before `symbols` so the reference initialiser sees a live
+    // SymbolTable. Shared with inner evaluators (`builtins.cache`) so the
+    // same string yields the same `Symbol` across nested states.
+    const ref<SymbolTable> symbolTablePtr;
+
 public:
     static constexpr StaticEvalSymbols s = StaticEvalSymbols::create();
 
     const fetchers::Settings & fetchSettings;
     const EvalSettings & settings;
 
-    SymbolTable symbols;
+    SymbolTable & symbols;
     PosTable positions;
 
     EvalMemory mem;
@@ -787,9 +793,20 @@ public:
         const fetchers::Settings & fetchSettings,
         const EvalSettings & settings,
         ref<Environment> environment,
-        ref<SystemEnvironment> systemEnvironment);
+        ref<SystemEnvironment> systemEnvironment,
+        ref<SymbolTable> symbolTable = make_ref<SymbolTable>(StaticEvalSymbols::staticSymbolTable()));
 
     ~EvalState();
+
+    /**
+     * The underlying SymbolTable as a shareable ref. Hand this to nested
+     * EvalState instances (e.g. the one `builtins.cache` creates) so they
+     * intern symbols into the same table.
+     */
+    ref<SymbolTable> getSymbolTable() const
+    {
+        return symbolTablePtr;
+    }
 
     /**
      * A wrapper around EvalMemory::allocValue() to avoid code churn when it
