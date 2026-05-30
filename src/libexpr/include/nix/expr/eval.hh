@@ -587,6 +587,14 @@ public:
     StorePath mountInput(fetchers::Input & input, const fetchers::Input & originalInput, ref<SourceAccessor> accessor);
 
     /**
+     * Compute narHash for an input (so the lockfile sees it as
+     * locked) and surface it on `input.attrs`, without mounting on
+     * `storeFS` or allowlisting a storePath. Use this from flake
+     * loading where path values stay accessor-rooted.
+     */
+    void lockInput(fetchers::Input & input, const fetchers::Input & originalInput, ref<SourceAccessor> accessor);
+
+    /**
      * Parse a Nix expression from the specified file.
      */
     Expr * parseExprFromFile(const SourcePath & path);
