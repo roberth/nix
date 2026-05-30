@@ -38,6 +38,7 @@ suites += {
     'trace-ifd.sh',
     'get-flake.sh',
     'type-error-fallback.sh',
+    'lazy-paths-submodule.sh',
   ],
   'workdir' : meson.current_source_dir(),
 }
