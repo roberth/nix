@@ -2143,6 +2143,7 @@ void ExprConcatStrings::eval(EvalState & state, Env & env, Value & v)
 
     bool first = !forceString;
     ValueType firstType = nString;
+    std::shared_ptr<SourceAccessor> firstPathAccessor;
 
     // List of returned strings. References to these Values must NOT be persisted.
     SmallTemporaryValueVector<conservativeStackReservation> values(es.size());
@@ -2158,6 +2159,13 @@ void ExprConcatStrings::eval(EvalState & state, Env & env, Value & v)
            and none of the strings are allowed to have contexts. */
         if (first) {
             firstType = vTmp.type();
+            /* Capture the first path's accessor so the concatenated
+               result stays rooted on it. Re-rooting on `rootFS` (the
+               historical default) erases custom accessors like fetched
+               trees, which the rest of the path then can't be read
+               through. */
+            if (firstType == nPath)
+                firstPathAccessor = vTmp.path().accessor;
         }
 
         if (firstType == nInt) {
@@ -2220,7 +2228,7 @@ void ExprConcatStrings::eval(EvalState & state, Env & env, Value & v)
         for (const auto & part : strings) {
             resultStr += *part;
         }
-        v.mkPath(state.rootPath(CanonPath(resultStr)), state.mem);
+        v.mkPath(SourcePath{ref(firstPathAccessor), CanonPath(resultStr)}, state.mem);
     } else {
         auto & resultStr = StringData::alloc(state.mem, sSize);
         auto * tmp = resultStr.data();
