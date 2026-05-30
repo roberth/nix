@@ -1,5 +1,6 @@
 #include <atomic>
 #include "nix/util/source-accessor.hh"
+#include "nix/util/resolve-symlinks.hh"
 
 namespace nix {
 
@@ -106,41 +107,7 @@ std::string SourceAccessor::showPath(const CanonPath & path)
 
 CanonPath SourceAccessor::resolveSymlinks(const CanonPath & path, SymlinkResolution mode)
 {
-    auto res = CanonPath::root;
-
-    int linksAllowed = 1024;
-
-    std::list<std::string> todo;
-    for (auto & c : path)
-        todo.push_back(std::string(c));
-
-    while (!todo.empty()) {
-        auto c = *todo.begin();
-        todo.pop_front();
-        if (c == "" || c == ".")
-            ;
-        else if (c == "..") {
-            if (!res.isRoot())
-                res.pop();
-        } else {
-            res.push(c);
-            if (mode == SymlinkResolution::Full || !todo.empty()) {
-                if (auto st = maybeLstat(res); st && st->type == SourceAccessor::tSymlink) {
-                    if (!linksAllowed--)
-                        throw Error("infinite symlink recursion in path '%s'", showPath(path));
-                    auto target = readLink(res);
-                    if (std::filesystem::path(target).is_absolute()) {
-                        res = CanonPath::root;
-                    } else {
-                        res.pop();
-                    }
-                    todo.splice(todo.begin(), tokenizeString<std::list<std::string>>(target, "/"));
-                }
-            }
-        }
-    }
-
-    return res;
+    return nix::resolveSymlinks(*this, path, mode);
 }
 
 } // namespace nix

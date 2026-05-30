@@ -76,6 +76,7 @@ headers = [ config_pub_h ] + files(
   'ref.hh',
   'regex-combinators.hh',
   'repair-flag.hh',
+  'resolve-symlinks.hh',
   'serialise.hh',
   'signals.hh',
   'signature/local-keys.hh',
