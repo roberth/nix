@@ -42,6 +42,60 @@ TEST(CanonPath, basic)
     }
 }
 
+/* Pin the raw-string constructors' lexical `..` handling. The
+   constructors pop one component per `..` and silently drop `..`s at
+   root. This is *not* filesystem-walked semantics: when an input
+   traverses a symlink under some accessor, the constructor's answer
+   differs from what the walker (see `resolveSymlinks`) would produce
+   for the same input against that accessor. These tests pin the
+   lexical behaviour so regressions in either direction are caught:
+
+   * a stricter constructor (throwing or preserving `..`) shows up
+     here as a failed expectation;
+   * a less strict constructor (e.g. consulting an accessor) shows up
+     as the same expectation no longer holding for the same input.
+
+   The inputs are character-literal strings, which deterministically
+   bind to `CanonPath(const char *)` rather than the `string_view`
+   overload (array-to-pointer decay outranks the user-defined
+   conversion). Both ctors delegate to the same `absPathPure` /
+   `canonPathInner` machinery, so the assertions equally pin the
+   `string_view` and `(string_view, root)` siblings — see their
+   `\see` cross-references. The doc-comment on
+   `CanonPath(std::string_view)` warns about the semantic gap; this
+   is the regression guard backing that doc. */
+TEST(CanonPath, lexicalDotDotHandling)
+{
+    /* Simple pop. */
+    EXPECT_EQ(CanonPath("/a/../b").abs(), "/b");
+
+    /* Chain of pops. */
+    EXPECT_EQ(CanonPath("/a/b/c/../../d").abs(), "/a/d");
+
+    /* `..` at root vanishes silently — no exception, just a no-op. */
+    EXPECT_EQ(CanonPath("/../foo").abs(), "/foo");
+
+    /* Overshoot: the second `..` would escape, gets silently dropped
+       (not stacked, not errored). */
+    EXPECT_EQ(CanonPath("/a/../../foo").abs(), "/foo");
+
+    /* `..` consuming the only component leaves root. */
+    EXPECT_EQ(CanonPath("/a/..").abs(), "/");
+
+    /* Relative input gets a leading `/` prepended before
+       canonicalisation, so the same lexical rules apply. */
+    EXPECT_EQ(CanonPath("foo/..").abs(), "/");
+    EXPECT_EQ(CanonPath("../foo").abs(), "/foo");
+
+    /* `.` components are stripped (companion behaviour to `..`
+       popping). Pinned here so any future change that lets `.`
+       components survive into the assembled path is forced to revisit
+       this test alongside the `..`-handling ones. */
+    EXPECT_EQ(CanonPath("/a/./b").abs(), "/a/b");
+    EXPECT_EQ(CanonPath("/./a").abs(), "/a");
+    EXPECT_EQ(CanonPath("/.").abs(), "/");
+}
+
 TEST(CanonPath, nullBytes)
 {
     std::string s = "/hello/world";
