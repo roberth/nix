@@ -1,4 +1,5 @@
 #include "nix/store/store-api.hh"
+#include "nix/store/content-address.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/source-root.hh"
 #include "nix/util/mounted-source-accessor.hh"
@@ -113,28 +114,49 @@ void EvalState::lockInput(fetchers::Input & input, const fetchers::Input & origi
 StorePath
 EvalState::mountInput(fetchers::Input & input, const fetchers::Input & originalInput, ref<SourceAccessor> accessor)
 {
-    /* To mount the input, dryRun is sufficient. We still compute the narHash (to check for mismatches) and the store
-       path to figure out where to mount it. TODO: This could be relaxed in the future by making outPath and narHash
-       lazier. Good code that doesn't do `toString ./.` or otherwise inspects the outPath string and only uses it for
-       doing relative imports does not even require computing the store path. That is a big invasive change though and
-       would require having a special "LazyStorePathString" thunk. narHash also doesn't need to be computed eagerly in
-       case it's not actually specified (like during local development with a dirty tree) - in that case narHash could
-       also become a lazy app/thunk that shares the state with the storePath delayed computation. */
-    auto [storePath, narHash] = fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, input.getName());
+    /* Two cases:
+       - `originalInput` carries a narHash (the user asserted one in
+         `builtins.fetchGit { narHash = ...; }` etc.). Hash the tree
+         to verify the assertion, so a wrong one is caught loudly at
+         eval time — *before* anything depending on the storePath can
+         be memoised. The hashing is via `fetchToStore2(DryRun)`,
+         which only actually walks the accessor on the first
+         retrieval of a given fingerprint (typically a git rev);
+         subsequent calls hit the `sourcePathToHash` cache
+         (sqlite-backed, persists across sessions) and return
+         without reading any blobs.
+       - Otherwise, trust the narHash already on `input` (typically
+         from a flake.lock entry surfaced through the fetcher). Derive
+         the storePath via the fixed-output formula — no walk. The
+         actual walk-and-copy happens later in `ensureLazyPathCopied`
+         if eval ends with this storePath in the string context. */
+    auto storePath = [&]() -> StorePath {
+        if (originalInput.getNarHash()) {
+            auto [sp, narHash] = fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, input.getName());
+            if (narHash != *originalInput.getNarHash())
+                throw Error(
+                    (unsigned int) 102,
+                    "NAR hash mismatch in input '%s', expected '%s' but got '%s'",
+                    originalInput.to_string(),
+                    narHash.to_string(HashFormat::SRI, true),
+                    originalInput.getNarHash()->to_string(HashFormat::SRI, true));
+            input.attrs.insert_or_assign("narHash", narHash.to_string(HashFormat::SRI, true));
+            return sp;
+        }
+        auto narHash = input.getNarHash();
+        assert(narHash);
+        return store->makeFixedOutputPathFromCA(
+            input.getName(),
+            ContentAddressWithReferences::fromParts(ContentAddressMethod::Raw::NixArchive, *narHash, {}));
+    }();
 
     allowPath(storePath); // FIXME: should just whitelist the entire virtual store
-
     storeFS->mount(CanonPath(store->printStorePath(storePath)), [acc = accessor]() { return acc; });
 
-    input.attrs.insert_or_assign("narHash", narHash.to_string(HashFormat::SRI, true));
-
-    if (originalInput.getNarHash() && narHash != *originalInput.getNarHash())
-        throw Error(
-            (unsigned int) 102,
-            "NAR hash mismatch in input '%s', expected '%s' but got '%s'",
-            originalInput.to_string(),
-            narHash.to_string(HashFormat::SRI, true),
-            originalInput.getNarHash()->to_string(HashFormat::SRI, true));
+    /* Pre-populate the SourcePath→StorePath cache so coerceToString of
+       a path-typed `input.outPath` (at the accessor's root) returns
+       this storePath without walking the tree. */
+    srcToStore->try_emplace(SourcePath{accessor, CanonPath::root}, storePath);
 
     return storePath;
 }
