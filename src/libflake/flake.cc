@@ -251,11 +251,13 @@ static Flake readFlake(
 
     // NOTE evalFile forces vInfo to be an attrset because mustBeTrivial is true.
     Value vInfo;
-    /* `rootDir` is either the fetcher's tree-rooted SourcePath
-       (first readFlake call, accessor=fetched tree → Copyable) or
-       a rootFS-rooted SourcePath at the flake's storepath
-       (second call, after `mountInput` — the accessor is rootFS,
-       the path is `/nix/store/X-source/...`, so kind=System). */
+    /* All `readFlake` callers in this branch admit Copyable
+       accessors — the lazy-paths reshape in `feat(libflake):
+       consume lazy fetchTreeFinal results in call-flake.nix`
+       removed the previous "second call after `mountInput`" path
+       that routed through rootFS. The runtime check below stays
+       as a defensive no-op against a future caller breaking
+       the invariant (would surface as System routing). */
     auto root =
         &*flakePath.accessor == &*state.rootFS ? state.rootFSRoot : state.getOrCreateFetcherRoot(flakePath.accessor);
     auto flakeRooted = RootedPath{root, flakePath.path};
@@ -400,14 +402,19 @@ static Flake getFlake(
         lockedRef = FlakeRef(std::move(cachedInput2.lockedInput), newLockedRef.subdir);
     }
 
-    auto storePath = state.mountInput(lockedRef.input, originalRef.input, cachedInput.accessor());
-    auto rootDir = state.storePath(storePath);
-    // Re-parse flake.nix from the store.
+    // Lazy paths: don't mount. flake.path is rooted at the fetcher's
+    // accessor; readFlake reads flake.nix straight through that
+    // accessor without copying the tree to the store. User code that
+    // forces stringification (e.g. `"${self.outPath}"`) materializes
+    // the storePath on demand via copyPathToStore. lockInput still
+    // surfaces narHash so the lockfile sees this input as locked.
+    state.lockInput(lockedRef.input, originalRef.input, cachedInput.accessor());
+    SourcePath rootDir{cachedInput.accessor(), CanonPath::root};
     flake = readFlake(state, originalRef, resolvedRef, lockedRef, rootDir, lockRootAttrPath);
     flake.nodeLocation = NodeLocation{
         .tree =
             fetchers::MountableTree{
-                .storePath = storePath,
+                .storePath = std::nullopt,
                 .accessor = cachedInput.accessor,
             },
         .subdir = lockedRef.subdir,
@@ -602,9 +609,36 @@ LockedFlake lockFlake(
 
                     auto resolveRelativePath = [&]() -> std::optional<SourcePath> {
                         if (auto relativePath = input.ref->input.isRelative()) {
-                            return SourcePath{
-                                overriddenSourcePath.accessor,
-                                CanonPath(relativePath->string(), overriddenSourcePath.path.parent().value())};
+                            /* Part 3: route the relative-input join
+                               through the kind-aware `resolveSymlinks`
+                               wrapper, then catch the generic
+                               `AccessorBoundaryEscape` and rewrap with a
+                               flake-input-specific diagnostic.
+
+                               The parent flake's accessor is by
+                               construction a fetched-tree view
+                               (Copyable). Wrap it ad-hoc so the wrapper
+                               applies `StrictAccessorBoundary`. The
+                               check fires on both the literal `..`
+                               escape (`path:../foo` against a flake at
+                               tree root) and the symlink-target escape
+                               (where an ancestor's symlink target pops
+                               past root). */
+                            auto relStr = relativePath->string();
+                            auto parent = overriddenSourcePath.path.parent();
+                            assert(parent);
+                            auto joined = parent->abs() + "/" + relStr;
+                            SourceRoot adhoc{overriddenSourcePath.accessor, SourceRootKind::Copyable};
+                            try {
+                                auto resolved =
+                                    nix::resolveSymlinks(adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
+                                return SourcePath{overriddenSourcePath.accessor, resolved};
+                            } catch (AccessorBoundaryEscape &) {
+                                throw Error(
+                                    "relative flake input path '%s' escapes the source tree at %s",
+                                    relStr,
+                                    overriddenSourcePath.accessor->showPath(CanonPath::root));
+                            }
                         } else
                             return std::nullopt;
                     };
@@ -802,14 +836,16 @@ LockedFlake lockFlake(
 
                                     auto lockedRef = FlakeRef(std::move(cachedInput.lockedInput), input.ref->subdir);
 
-                                    auto storePath =
-                                        state.mountInput(lockedRef.input, input.ref->input, cachedInput.accessor());
+                                    // See the matching comment in getFlake: no
+                                    // mount, the storePath is left nullopt and
+                                    // the accessor thunk carries through.
+                                    state.lockInput(lockedRef.input, input.ref->input, cachedInput.accessor());
 
                                     return {
                                         NodeLocation{
                                             .tree =
                                                 fetchers::MountableTree{
-                                                    .storePath = storePath,
+                                                    .storePath = std::nullopt,
                                                     .accessor = cachedInput.accessor,
                                                 },
                                             .subdir = lockedRef.subdir,
@@ -1025,10 +1061,27 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
         auto & vSourceInfo = override.alloc(state.symbols.create("sourceInfo"));
 
         auto lockedNode = node.dynamic_pointer_cast<const LockedNode>();
+
         const auto & lockedRef = lockedNode ? lockedNode->lockedRef : lockedFlake.flake.lockedRef;
 
+        /* `lazy` follows whether we know the storePath: nodePaths
+           entries from getFlake/computeLocks went through lockInput
+           (no mountInput, no storePath; the accessor is the fetcher's
+           and rooted at the tree), so emit renders `outPath` as a
+           path Value. Entries from `lockFlake(SourcePath)` come with
+           a known storePath and an accessor rooted at rootFS — those
+           must render eagerly because the accessor isn't scoped to
+           the tree. */
+        bool lazy = !info.tree.storePath.has_value();
         emitTreeAttrs(
-            state, noPos, info.tree, lockedRef.input, vSourceInfo, false, !lockedNode && lockedFlake.flake.forceDirty);
+            state,
+            noPos,
+            info.tree,
+            lockedRef.input,
+            vSourceInfo,
+            /*emptyRevFallback=*/false,
+            /*forceDirty=*/!lockedNode && lockedFlake.flake.forceDirty,
+            lazy);
 
         auto key = keyMap.find(node);
         assert(key != keyMap.end());
