@@ -321,6 +321,7 @@ EvalState::EvalState(
     , debugRepl(nullptr)
     , debugStop(false)
     , trylevel(0)
+    , treeNarHashes(make_ref<decltype(treeNarHashes)::element_type>())
     , importResolutionCache(make_ref<decltype(importResolutionCache)::element_type>())
     , fileEvalCache(make_ref<decltype(fileEvalCache)::element_type>())
     , positionToDocComment(make_ref<decltype(positionToDocComment)::element_type>())
@@ -2733,6 +2734,15 @@ BackedStringView EvalState::coerceToString(
         .debugThrow();
 }
 
+/* The store path a NAR hash names, given the caller's choice of name.
+   `fetchToStore2` derives it the same way, so a recorded hash lets us
+   answer without repeating its walk. */
+static StorePath storePathFromNarHash(Store & store, std::string_view name, const Hash & narHash)
+{
+    return store.makeFixedOutputPathFromCA(
+        name, ContentAddressWithReferences::fromParts(ContentAddressMethod::Raw::NixArchive, narHash, {}));
+}
+
 StorePath EvalState::copyPathToStore(NixStringContext & context, const RootedPath & path)
 {
     auto sp = path.sourcePath();
@@ -2749,16 +2759,24 @@ StorePath EvalState::copyPathToStore(NixStringContext & context, const RootedPat
             "cannot copy a path on an internal accessor to the store at '%1%'", sp.accessor->showPath(sp.path))
             .debugThrow();
 
-    auto dstPath = fetchToStore(
-        fetchSettings,
-        *store,
-        sp.resolveSymlinks(SymlinkResolution::Ancestors),
-        settings.isReadOnly() ? FetchMode::DryRun : FetchMode::Copy,
-        sp.baseName(),
-        ContentAddressMethod::Raw::NixArchive,
-        nullptr,
-        repair);
-    allowPath(dstPath);
+    auto cachedNarHash = getConcurrent(*treeNarHashes, sp);
+
+    /* The name is ours, not the recording caller's: taking theirs would make
+       the result depend on who walked first. */
+    auto dstPath = cachedNarHash ? storePathFromNarHash(*store, sp.baseName(), *cachedNarHash) : [&]() {
+        auto dstPath = fetchToStore(
+            fetchSettings,
+            *store,
+            sp.resolveSymlinks(SymlinkResolution::Ancestors),
+            settings.isReadOnly() ? FetchMode::DryRun : FetchMode::Copy,
+            sp.baseName(),
+            ContentAddressMethod::Raw::NixArchive,
+            nullptr,
+            repair);
+        allowPath(dstPath);
+        printMsg(lvlChatty, "copied source '%1%' -> '%2%'", sp, store->printStorePath(dstPath));
+        return dstPath;
+    }();
 
     context.insert(NixStringContextElem::Opaque{.path = dstPath});
     return dstPath;
