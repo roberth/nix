@@ -346,13 +346,18 @@ static void fetchTree(
         state.inputCache->getAccessor(state.fetchSettings, *state.store, input, fetchers::UseRegistries::No);
 
     if (lazy) {
-        /* Skip mountInput entirely. emit renders `outPath` as a
-           path-typed Value rooted on the fetcher's accessor; reads
-           through it go through the accessor directly without
-           forcing a NAR copy. String coercion still resolves to a
-           store-path string (via `copyPathToStore`) when the user
-           asks for one. The accessor stays alive through eval via
-           `state.inputCache`. */
+        /* When the input is already locked, mount the predicted
+           storePath via the narHash. This lets `${input.outPath}` (and
+           similar string coercions at the accessor's root) render the
+           storePath without walking, while the actual copy is deferred
+           to `ensureLazyPathCopied`. When the input is unlocked, we
+           skip even this step: there's no narHash to predict from, and
+           we don't want to walk eagerly just to compute one. emit
+           still renders `outPath` as a path-typed Value rooted on the
+           fetcher's accessor (lazy=true); reads through it go through
+           the accessor directly without forcing a NAR copy. */
+        if (cachedInput.lockedInput.getNarHash())
+            state.mountInput(cachedInput.lockedInput, input, cachedInput.accessor());
         emitTreeAttrs(
             state,
             fetchers::MountableTree{.storePath = std::nullopt, .accessor = cachedInput.accessor},
@@ -364,6 +369,11 @@ static void fetchTree(
         return;
     }
 
+    /* Eager mode: emitTreeAttrs needs the storePath up front, so
+       ensure the input is locked (walks once to record narHash if it
+       wasn't already), then mount via the narHash-driven shortcut. */
+    if (!cachedInput.lockedInput.getNarHash())
+        state.lockInput(cachedInput.lockedInput, input, cachedInput.accessor());
     auto storePath = state.mountInput(cachedInput.lockedInput, input, cachedInput.accessor());
 
     emitTreeAttrs(

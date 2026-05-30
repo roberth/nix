@@ -636,7 +636,25 @@ public:
     void checkURI(const std::string & uri);
 
     /**
-     * Mount an input on the Nix store.
+     * Mount an already-locked input (one whose `narHash` is known) on
+     * the Nix store. Derives the storePath from the narHash via the
+     * fixed-output formula, sets up the `storeFS` mount + allowlist,
+     * and pre-populates `srcToStore` so subsequent string coercion of
+     * a path-typed value at the accessor's root returns the storePath
+     * without walking. The walk+copy is deferred to
+     * `ensureLazyPathCopied`.
+     *
+     * If `originalInput` itself asserts a `narHash` (e.g. from a
+     * `builtins.fetchGit { narHash = ...; }` literal), the assertion
+     * is verified against `fetchToStore2(DryRun)`. The hash is
+     * computed by walking the accessor only on the *first* retrieval
+     * of a given fingerprint (typically a git rev); subsequent calls
+     * hit the `sourcePathToHash` cache and return without reading any
+     * blobs. This keeps the eval-time safety of upstream's sync
+     * verification without paying for it on every evaluation.
+     *
+     * Callers must ensure the input has a narHash; for unlocked
+     * inputs, call `lockInput` first.
      */
     StorePath mountInput(fetchers::Input & input, const fetchers::Input & originalInput, ref<SourceAccessor> accessor);
 
