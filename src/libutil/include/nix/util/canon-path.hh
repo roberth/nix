@@ -54,9 +54,32 @@ public:
     /**
      * Construct a canon path from a non-canonical path. Any '.', '..'
      * or empty components are removed.
+     *
+     * The `..` removal is lexical: each `..` pops the most recent
+     * component of the assembled result, with no inspection of what
+     * the previous component refers to. Whether a component is a
+     * symlink is a property of how the path is later resolved against
+     * an accessor, not a property of the input string — so when the
+     * resulting path is walked through an accessor that maps a prior
+     * component to a symlink, lexical popping produces a *different*
+     * path than walking the input through that accessor. In walked
+     * semantics `..` follows the symlink first and lands at the parent
+     * of its target, not at the parent of the symlink's name. For
+     * example, if `/a` resolves to a symlink to `/x/y`, then
+     * `CanonPath("/a/../b")` yields `/b`, while walking `/a/../b`
+     * through the accessor reaches `/x/b`.
+     *
+     * Use this constructor only when the resulting path is known not
+     * to traverse a symlink under the accessor it will be resolved
+     * against (e.g. the path was assembled component by component, or
+     * already came from a prior resolution). For raw paths that may
+     * traverse symlinks, use `SourceAccessor::resolveSymlinks` (or
+     * `nix::resolveSymlinks`), which walks the input through the
+     * accessor.
      */
     CanonPath(std::string_view raw);
 
+    /// \see CanonPath(std::string_view) — same lexical-`..` warning applies.
     explicit CanonPath(const char * raw);
 
     struct unchecked_t
@@ -84,6 +107,8 @@ public:
      * If `raw` starts with a slash, return
      * `CanonPath(raw)`. Otherwise return a `CanonPath` representing
      * `root + "/" + raw`.
+     *
+     * \see CanonPath(std::string_view) — same lexical-`..` warning applies.
      */
     CanonPath(std::string_view raw, const CanonPath & root);
 
