@@ -6,6 +6,7 @@
 
 #include "nix/flake/flake-primops.hh"
 #include "nix/expr/eval.hh"
+#include "nix/expr/source-root.hh"
 #include "nix/flake/flake.hh"
 #include "nix/flake/flakeref.hh"
 #include "nix/flake/settings.hh"
@@ -40,26 +41,11 @@ PrimOp getFlake(const Settings & settings)
             .allowUnlocked = !state.settings.pureEval,
         };
 
-        if (args[0]->type() == nPath) {
-            auto path = state.realisePath(pos, *args[0]);
-            /* `realisePath` returned a SourcePath living inside
-               `/nix/store/<obj>/<sub>` — recover the components for
-               `NodePathInfo` directly. */
-            auto [storePath, subPath] = state.store->toStorePath(path.path.abs());
-            auto location = nix::flake::NodeLocation{
-                .tree =
-                    nix::fetchers::MountableTree{
-                        .storePath = storePath,
-                        .accessor = [acc = path.accessor]() { return acc; },
-                    },
-                .subdir = std::string{CanonPath(subPath).rel()},
-            };
-            callFlake(state, lockFlake(settings, state, path, std::move(location), lockFlags), v);
-        } else {
-            std::string flakeRefS(
-                state.forceStringNoCtx(*args[0], pos, "while evaluating the argument passed to builtins.getFlake"));
-
-            auto flakeRef = nix::parseFlakeRef(state.fetchSettings, flakeRefS, {}, true);
+        /* Lock + evaluate via a FlakeRef. Used by the string form and
+           by the System branch of the path-value form (the latter
+           builds the FlakeRef from attrs directly, no string round-
+           trip). The pure-eval lock check applies uniformly here. */
+        auto lockByFlakeRef = [&](nix::FlakeRef flakeRef, const std::string & flakeRefS) {
             if (state.settings.pureEval && !flakeRef.input.isLocked(state.fetchSettings))
                 throw Error(
                     "cannot call 'getFlake' on unlocked flake reference '%s', at %s (use --impure to override)",
@@ -74,17 +60,29 @@ PrimOp getFlake(const Settings & settings)
                 flakeRef.input.getType() == "path" && sourcePath && state.store->isInStore(sourcePath->string())) {
                 auto [storePath, subPath] = state.store->toStorePath(sourcePath->string());
                 if (auto mount = state.storeFS->getMount(CanonPath(state.store->printStorePath(storePath)))) {
-                    auto path = state.storePath(storePath) / CanonPath(subPath);
+                    /* `mount` was registered by a fetcher (the only
+                       site that mounts an individual storePath — the
+                       constructor only mounts `/` and `/nix/store`),
+                       so it is Copyable by construction. Use it
+                       directly instead of constructing a rootFS-based
+                       SourcePath, so the resulting NodeLocation
+                       carries a Copyable accessor like every other
+                       NodeLocation in the post-lazy-paths regime. */
+                    auto mountRef = ref(mount);
+                    /* mountInput is the only mounter into storeFS
+                       (other than the constructor's root and
+                       /nix/store), so any per-storepath mount is
+                       by construction Copyable -- no runtime check
+                       needed; the wrap below admits it as such. */
                     auto subdir = CanonPath(subPath);
-                    if (!flakeRef.subdir.empty()) {
-                        path = path / flakeRef.subdir;
+                    if (!flakeRef.subdir.empty())
                         subdir = CanonPath(flakeRef.subdir, subdir);
-                    }
+                    auto path = SourcePath{mountRef, subdir};
                     auto location = nix::flake::NodeLocation{
                         .tree =
                             nix::fetchers::MountableTree{
                                 .storePath = storePath,
-                                .accessor = [acc = path.accessor]() { return acc; },
+                                .accessor = [acc = mountRef]() { return acc; },
                             },
                         .subdir = std::string{subdir.rel()},
                     };
@@ -93,6 +91,83 @@ PrimOp getFlake(const Settings & settings)
             }
 
             callFlake(state, lockFlake(settings, state, flakeRef, lockFlags), v);
+        };
+
+        if (args[0]->type() == nPath) {
+            auto rp = args[0]->rootedPath();
+            auto path = state.realisePath(pos, *args[0]);
+            /* Dispatch by the path Value's SourceRoot kind:
+
+               - `Copyable` accessors *are* fetched-tree views: the
+                 source flake's input cache already holds the external
+                 narHash that pins them. Use them directly via the
+                 SourcePath form of `lockFlake`; no re-fetch, no copy.
+
+               - `System` accessors point into the real filesystem.
+                 Reachable for path values rooted on rootFS — e.g.
+                 `--impure --expr 'builtins.getFlake /nix/store/X'`
+                 with a literal absolute path. Build a `path:` Input
+                 from attrs — no string round-trip — attaching the
+                 store's externally-recorded narHash when the path
+                 is in-store. lockByFlakeRef's in-store shortcut
+                 then picks up any already-mounted storeFS entry
+                 (the Copyable mount above).
+
+               - `Internal` accessors hold nix-internal helpers and
+                 aren't user-facing tree surfaces. Reject
+                 defensively. */
+            switch (rp.root->kind) {
+            case SourceRootKind::Copyable: {
+                auto location = nix::flake::NodeLocation{
+                    .tree =
+                        nix::fetchers::MountableTree{
+                            .storePath = std::nullopt,
+                            .accessor = [acc = path.accessor]() { return acc; },
+                        },
+                    .subdir = std::string{path.path.rel()},
+                };
+                callFlake(state, lockFlake(settings, state, path, std::move(location), lockFlags), v);
+                break;
+            }
+            case SourceRootKind::System: {
+                auto absStr = path.path.abs();
+                fetchers::Attrs attrs;
+                attrs.insert_or_assign("type", std::string("path"));
+                std::string subdir;
+                if (state.store->isInStore(absStr)) {
+                    auto [storePath, subPath] = state.store->toStorePath(absStr);
+                    attrs.insert_or_assign("path", state.store->printStorePath(storePath));
+                    /* Externally-recorded narHash from the store, not
+                       computed from current eval. Makes the synthesised
+                       FlakeRef satisfy `isLocked()` in pure-eval, and
+                       lets the `path:` fetcher's in-store shortcut
+                       reuse the storepath verbatim. */
+                    attrs.insert_or_assign(
+                        "narHash", state.store->queryPathInfo(storePath)->narHash.to_string(HashFormat::SRI, true));
+                    subdir = std::string{CanonPath(subPath).rel()};
+                } else {
+                    /* No external narHash to attach. `isLocked()` will
+                       return false; pure-eval rejects via the check in
+                       `lockByFlakeRef`. Impure mode proceeds and copies
+                       through the fetcher. */
+                    attrs.insert_or_assign("path", std::string{absStr});
+                }
+                FlakeRef flakeRef{fetchers::Input::fromAttrs(state.fetchSettings, std::move(attrs)), std::move(subdir)};
+                lockByFlakeRef(flakeRef, flakeRef.to_string());
+                break;
+            }
+            case SourceRootKind::Internal:
+                state
+                    .error<EvalError>(
+                        "cannot call 'builtins.getFlake' on an internal path value at '%s'",
+                        path.accessor->showPath(path.path))
+                    .atPos(pos)
+                    .debugThrow();
+            }
+        } else {
+            std::string flakeRefS(
+                state.forceStringNoCtx(*args[0], pos, "while evaluating the argument passed to builtins.getFlake"));
+            lockByFlakeRef(nix::parseFlakeRef(state.fetchSettings, flakeRefS, {}, true), flakeRefS);
         }
     };
 

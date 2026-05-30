@@ -44,27 +44,67 @@ let
 
       parentNode = allNodes.${getInputByPath lockFile.root node.parent};
 
-      sourceInfo =
+      # Raw fetcher result. `lazy = true` keeps `outPath` as a path
+      # value so `import (flakePath + "/flake.nix")` walks the
+      # accessor without forcing a store copy. Relative inputs
+      # inherit their parent's fetchResult since they share its tree.
+      fetchResult =
         if hasOverride then
           overrides.${key}.sourceInfo
         else if isRelative then
-          parentNode.sourceInfo
+          parentNode.fetchResult
         else
           # FIXME: remove obsolete node.info.
           # Note: lock file entries are always final.
-          fetchTreeFinal (node.info or { } // removeAttrs node.locked [ "dir" ]);
+          fetchTreeFinal (node.info or { } // removeAttrs node.locked [ "dir" ] // { lazy = true; });
 
       subdir = overrides.${key}.dir or node.locked.dir or "";
 
+      # Internal path value used to `import` the flake.nix without a
+      # store copy when the fetchResult is path-typed.
+      #
+      # The relative branch needs the same `+ subdir` tail as the
+      # absolute branch: a relative input with `?dir=` (e.g.
+      # `path:./sub?dir=inner`) lives at `parent + "/sub/inner"`,
+      # not `parent + "/sub"`. Without the tail, `import (flakePath
+      # + "/flake.nix")` would try to load the wrong flake.nix.
+      flakePath =
+        if !hasOverride && isRelative then
+          parentNode.flakePath
+          + (if node.locked.path == "" then "" else "/" + node.locked.path)
+          + (if subdir == "" then "" else "/" + subdir)
+        else
+          fetchResult.outPath + (if subdir == "" then "" else "/" + subdir);
+
+      flake = import (flakePath + "/flake.nix");
+
+      # User-facing string outPath: built by string concatenation so
+      # the subdir appends to the root storePath. Coercing
+      # `flakePath` directly would copy the subdir as a leaf-named
+      # store object.
+      #
+      # Why this stays a string and not a path value (i.e. why
+      # there's no `inputs.self.lazyPath` here): a flake.outPath
+      # has to identify *both* the flake's source tree and its
+      # subdir-relative position within that tree. A store path
+      # naturally does (one store object = root, subdir is a
+      # subpath inside it). A path value `flakePath + "/relative"`
+      # only identifies a copy of the subpath, dropping the root
+      # and parents — so it can't serve as the flake's outPath
+      # without losing the ability to e.g. import sibling files.
+      # Making `self` lazy in that sense needs new flake machinery
+      # that's out of scope here.
       outPath =
         if !hasOverride && isRelative then
           parentNode.outPath
           + (if node.locked.path == "" then "" else "/" + node.locked.path)
           + (if subdir == "" then "" else "/" + subdir)
         else
-          sourceInfo.outPath + (if subdir == "" then "" else "/" + subdir);
+          "${fetchResult.outPath}" + (if subdir == "" then "" else "/" + subdir);
 
-      flake = import (outPath + "/flake.nix");
+      sourceInfo = fetchResult // {
+        outPath = "${fetchResult.outPath}";
+      };
 
       inputs = mapAttrs (inputName: inputSpec: allNodes.${resolveInput inputSpec}.result) (
         node.inputs or { }
@@ -97,9 +137,17 @@ let
           assert builtins.isFunction flake.outputs;
           result
         else
-          sourceInfo // { inherit sourceInfo outPath; };
+          sourceInfo
+          // {
+            inherit sourceInfo outPath;
+          };
 
-      inherit outPath sourceInfo;
+      inherit
+        outPath
+        flakePath
+        fetchResult
+        sourceInfo
+        ;
     }
   ) lockFile.nodes;
 
