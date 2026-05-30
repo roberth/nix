@@ -74,6 +74,7 @@ sources = files(
   'position.cc',
   'processes.cc',
   'ref.cc',
+  'resolve-symlinks.cc',
   'serialise.cc',
   'sort.cc',
   'source-accessor.cc',
