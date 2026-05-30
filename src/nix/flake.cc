@@ -216,10 +216,11 @@ struct CmdFlakeMetadata : FlakeCommand, MixJSON
         auto lockedFlake = lockFlake();
         auto & flake = lockedFlake.flake;
 
-        /* Flakes do not get copied to the store, but are instead mounted at
-           their expected store paths in storeFS. Querying metadata does not
-           force copying to the store, as one would expect. */
-        auto storePath = store->toStorePath(flake.path.path.abs()).first;
+        /* flake.path is accessor-rooted under lazy paths, so it is not a
+           store path. Derive the expected storePath from the locked input's
+           narHash (set by lockInput during getFlake) — metadata never needs
+           to materialize the tree, just to name where it would live. */
+        auto storePath = flake.lockedRef.input.computeStorePath(*store);
 
         if (json) {
             nlohmann::json j;

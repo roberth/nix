@@ -130,16 +130,15 @@ nix build -o "$TEST_ROOT/result" --expr "(builtins.getFlake \"$flake1Dir\").pack
 # 'getFlake' on a locked flakeref should succeed even in pure mode.
 nix build -o "$TEST_ROOT/result" --expr "(builtins.getFlake \"git+file://$flake1Dir?rev=$hash2\").packages.$system.default"
 
-# Regression test for dirOf on the root of the flake.
-[[ $(nix eval --json flake1#parent) = \""$NIX_STORE_DIR"\" ]]
-
-# Regression test for baseNameOf on the root of the flake.
+# Under lazy paths the flake's `./.` is an accessor-rooted path value.
+# `dirOf ./.` preserves the path Value at the accessor root, which
+# JSON-renders as "/". The remaining two checks pass `./.` through
+# `baseNameOf` and string coercion respectively; both go through
+# archetype-routed `coerceToString` (Copyable case), which materialises
+# the storePath and yields a `<hash>-source` segment.
+[[ $(nix eval --json flake1#parent) = '"/"' ]]
 [[ $(nix eval --raw flake1#baseName) =~ ^[a-z0-9]+-source$ ]]
-
-# Test that the root of a tree returns a path named /nix/store/<hash1>-<hash2>-source.
-# This behavior is *not* desired, but has existed for a while.
-# Issue #10627 what to do about it.
-[[ $(nix eval --raw flake1#root) =~ ^.*/[a-z0-9]+-[a-z0-9]+-source$ ]]
+[[ $(nix eval --raw flake1#root) =~ ^.*/[a-z0-9]+-source$ ]]
 
 # Building a flake with an unlocked dependency should fail in pure mode.
 (! nix build -o "$TEST_ROOT/result" flake2#bar --no-registries)
