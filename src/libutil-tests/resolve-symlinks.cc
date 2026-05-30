@@ -307,4 +307,306 @@ TEST_F(ResolveSymlinksTest, OverloadsAgreeOnCanonicalInput)
     EXPECT_EQ(fromString.abs(), "/a/b/c");
 }
 
+/* ------------------------------------------------------------------
+ * Callbacks
+ *
+ * The string_view overload accepts a `Callbacks` template parameter
+ * whose hooks are called at semantically interesting transitions.
+ * Tests below use `RecordingCallbacks` (accumulate events into a
+ * vector) and `ThrowingCallbacks` (throw on the Nth event).
+ * ------------------------------------------------------------------ */
+
+struct RecordedEvent
+{
+    enum Kind {
+        Parent,
+        AbsoluteSymlink,
+    };
+
+    Kind kind;
+    /* For Parent: path before pop. For AbsoluteSymlink: link site. */
+    CanonPath path;
+    /* For AbsoluteSymlink only. Empty for Parent. */
+    std::string target;
+
+    friend std::ostream & operator<<(std::ostream & os, const RecordedEvent & e)
+    {
+        os << (e.kind == Parent ? "Parent(" : "AbsoluteSymlink(") << e.path.abs();
+        if (e.kind == AbsoluteSymlink)
+            os << ", " << e.target;
+        return os << ")";
+    }
+};
+
+struct RecordingCallbacks : NoOpResolveSymlinksCallbacks
+{
+    std::vector<RecordedEvent> & events;
+
+    explicit RecordingCallbacks(std::vector<RecordedEvent> & e)
+        : events(e)
+    {
+    }
+
+    void onParent(const CanonPath & current) const
+    {
+        events.push_back({RecordedEvent::Parent, current, {}});
+    }
+
+    void onAbsoluteSymlink(const CanonPath & link, std::string_view target) const
+    {
+        events.push_back({RecordedEvent::AbsoluteSymlink, link, std::string{target}});
+    }
+};
+
+class ResolveSymlinksCallbacksTest : public ResolveSymlinksTest
+{
+protected:
+    std::vector<RecordedEvent> events;
+    RecordingCallbacks recording{events};
+
+    CanonPath resolveRecording(std::string_view rawPath, SymlinkResolution mode = SymlinkResolution::Full)
+    {
+        return nix::resolveSymlinks(*accessor, rawPath, mode, recording);
+    }
+};
+
+/* A plain path with no symlinks and no `..` fires no events. */
+TEST_F(ResolveSymlinksCallbacksTest, NoEventsOnPlainPath)
+{
+    accessor->addFile(CanonPath("/a/b/c"), "x");
+
+    EXPECT_EQ(resolveRecording("/a/b/c").abs(), "/a/b/c");
+    EXPECT_TRUE(events.empty());
+}
+
+/* `.` and empty components are skipped silently — no `onParent` or
+   `onAbsoluteSymlink` events for them. */
+TEST_F(ResolveSymlinksCallbacksTest, NoEventsForDotOrEmpty)
+{
+    accessor->addFile(CanonPath("/a/b"), "x");
+
+    EXPECT_EQ(resolveRecording("/a/./b").abs(), "/a/b");
+    EXPECT_EQ(resolveRecording("/a//b").abs(), "/a/b");
+    EXPECT_TRUE(events.empty());
+}
+
+/* A single `..` in the input fires exactly one Parent event with
+   `current` set to the path before the pop. */
+TEST_F(ResolveSymlinksCallbacksTest, ParentEventFiresOnDotDotInInput)
+{
+    accessor->addFile(CanonPath("/a/file"), "x");
+    sink.createDirectory(CanonPath("/a/b"));
+
+    EXPECT_EQ(resolveRecording("/a/b/..").abs(), "/a");
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_EQ(events[0].kind, RecordedEvent::Parent);
+    EXPECT_EQ(events[0].path.abs(), "/a/b");
+}
+
+/* A `..` whose pop would escape past root fires the event with
+   `current = /`. The resolver still clamps silently (the callback
+   doesn't change behaviour unless it throws). */
+TEST_F(ResolveSymlinksCallbacksTest, ParentEventFiresAtRootBeforeClamp)
+{
+    accessor->addFile(CanonPath("/foo"), "x");
+
+    EXPECT_EQ(resolveRecording("/../foo").abs(), "/foo");
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_EQ(events[0].kind, RecordedEvent::Parent);
+    EXPECT_EQ(events[0].path.abs(), "/");
+}
+
+/* Each `..` fires its own event, with `current` set to the path
+   before its pop. */
+TEST_F(ResolveSymlinksCallbacksTest, ParentEventsFirePerDotDot)
+{
+    accessor->addFile(CanonPath("/foo"), "x");
+    sink.createDirectory(CanonPath("/a/b/c"));
+
+    EXPECT_EQ(resolveRecording("/a/b/c/../../foo").abs(), "/a/foo");
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0].kind, RecordedEvent::Parent);
+    EXPECT_EQ(events[0].path.abs(), "/a/b/c");
+    EXPECT_EQ(events[1].kind, RecordedEvent::Parent);
+    EXPECT_EQ(events[1].path.abs(), "/a/b");
+}
+
+/* A `..` that arrives via a symlink target's splice also fires the
+   event. With `/link -> ".."`, walking `/link` pops to root, splices
+   `[".."]`, processes `..` against root → event with `current = /`. */
+TEST_F(ResolveSymlinksCallbacksTest, ParentEventFiresOnDotDotFromSymlinkTarget)
+{
+    sink.createSymlink(CanonPath("/link"), "..");
+
+    EXPECT_EQ(resolveRecording("/link").abs(), "/");
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_EQ(events[0].kind, RecordedEvent::Parent);
+    EXPECT_EQ(events[0].path.abs(), "/");
+}
+
+/* Following an absolute-target symlink fires AbsoluteSymlink with
+   `link` = symlink site and `target` = target string. */
+TEST_F(ResolveSymlinksCallbacksTest, AbsoluteSymlinkEventFiresBeforeRebase)
+{
+    accessor->addFile(CanonPath("/x/y"), "y");
+    sink.createSymlink(CanonPath("/link"), "/x/y");
+
+    EXPECT_EQ(resolveRecording("/link").abs(), "/x/y");
+    ASSERT_EQ(events.size(), 1u);
+    EXPECT_EQ(events[0].kind, RecordedEvent::AbsoluteSymlink);
+    EXPECT_EQ(events[0].path.abs(), "/link");
+    EXPECT_EQ(events[0].target, "/x/y");
+}
+
+/* A relative-target symlink does *not* fire AbsoluteSymlink (it uses
+   the pop+splice path, not the reset-to-root path). Use a target with
+   no `..`s, so we can assert the events vector is genuinely empty —
+   any `..` in a relative target would still legitimately fire Parent. */
+TEST_F(ResolveSymlinksCallbacksTest, RelativeSymlinkDoesNotFireAbsoluteEvent)
+{
+    accessor->addFile(CanonPath("/x"), "y");
+    sink.createSymlink(CanonPath("/link"), "x");
+
+    EXPECT_EQ(resolveRecording("/link").abs(), "/x");
+    EXPECT_TRUE(events.empty());
+}
+
+/* Events fire in walk order: parent before each `..`, absolute-symlink
+   before its rebase. A mixed input produces them interleaved. */
+TEST_F(ResolveSymlinksCallbacksTest, EventOrderMatchesWalk)
+{
+    /* `/a -> /x` (absolute). Walking `/a/../y`:
+         push a → res=/a; symlink → event(AbsoluteSymlink, /a, /x),
+                       res=/, splice [x]; todo=[x, .., y].
+         push x → res=/x.
+         process .. → event(Parent, /x), pop to /.
+         push y → res=/y.
+       Expected: AbsoluteSymlink, Parent. */
+    sink.createSymlink(CanonPath("/a"), "/x");
+
+    EXPECT_EQ(resolveRecording("/a/../y").abs(), "/y");
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0].kind, RecordedEvent::AbsoluteSymlink);
+    EXPECT_EQ(events[0].path.abs(), "/a");
+    EXPECT_EQ(events[0].target, "/x");
+    EXPECT_EQ(events[1].kind, RecordedEvent::Parent);
+    EXPECT_EQ(events[1].path.abs(), "/x");
+}
+
+/* A callback may throw to refuse — the exception propagates out of
+   `resolveSymlinks` unchanged. */
+struct ThrowingOnParent : NoOpResolveSymlinksCallbacks
+{
+    struct Refused : std::runtime_error
+    {
+        Refused()
+            : std::runtime_error("refused parent traversal")
+        {
+        }
+    };
+
+    void onParent(const CanonPath &) const
+    {
+        throw Refused{};
+    }
+};
+
+TEST_F(ResolveSymlinksTest, ThrowFromOnParentPropagates)
+{
+    accessor->addFile(CanonPath("/foo"), "x");
+    sink.createDirectory(CanonPath("/a/b"));
+
+    EXPECT_THROW(
+        nix::resolveSymlinks(*accessor, std::string_view{"/a/b/../foo"}, SymlinkResolution::Full, ThrowingOnParent{}),
+        ThrowingOnParent::Refused);
+}
+
+struct ThrowingOnAbsoluteSymlink : NoOpResolveSymlinksCallbacks
+{
+    struct Refused : std::runtime_error
+    {
+        Refused()
+            : std::runtime_error("refused absolute-symlink follow")
+        {
+        }
+    };
+
+    void onAbsoluteSymlink(const CanonPath &, std::string_view) const
+    {
+        throw Refused{};
+    }
+};
+
+TEST_F(ResolveSymlinksTest, ThrowFromOnAbsoluteSymlinkPropagates)
+{
+    accessor->addFile(CanonPath("/x"), "y");
+    sink.createSymlink(CanonPath("/link"), "/x");
+
+    EXPECT_THROW(
+        nix::resolveSymlinks(
+            *accessor, std::string_view{"/link"}, SymlinkResolution::Full, ThrowingOnAbsoluteSymlink{}),
+        ThrowingOnAbsoluteSymlink::Refused);
+}
+
+/* Throwing from a hook halts the walk: subsequent events do not fire.
+   Set up two `..`s, throw on the second; verify only the first was
+   recorded. */
+struct ThrowOnNthParent : NoOpResolveSymlinksCallbacks
+{
+    struct Refused : std::runtime_error
+    {
+        Refused()
+            : std::runtime_error("refused on Nth")
+        {
+        }
+    };
+
+    std::vector<RecordedEvent> & events;
+    mutable size_t count = 0;
+    size_t throwOn;
+
+    ThrowOnNthParent(std::vector<RecordedEvent> & e, size_t n)
+        : events(e)
+        , throwOn(n)
+    {
+    }
+
+    void onParent(const CanonPath & current) const
+    {
+        events.push_back({RecordedEvent::Parent, current, {}});
+        if (++count == throwOn)
+            throw Refused{};
+    }
+};
+
+TEST_F(ResolveSymlinksTest, ThrowFromHookHaltsWalk)
+{
+    accessor->addFile(CanonPath("/foo"), "x");
+    sink.createDirectory(CanonPath("/a/b/c"));
+    /* Place an absolute-target symlink at `/a/link` so that if the
+       walk continued past the throw, an `onAbsoluteSymlink` event
+       would fire. We can then assert that no AbsoluteSymlink event
+       was recorded, which actually distinguishes halt-on-throw from
+       just-completed. */
+    sink.createSymlink(CanonPath("/a/link"), "/foo");
+
+    std::vector<RecordedEvent> events;
+    ThrowOnNthParent throwOnSecond{events, 2};
+
+    EXPECT_THROW(
+        nix::resolveSymlinks(*accessor, std::string_view{"/a/b/c/../../link"}, SymlinkResolution::Full, throwOnSecond),
+        ThrowOnNthParent::Refused);
+
+    /* Two Parent events recorded; the AbsoluteSymlink that would
+       have fired on `/a/link` doesn't appear because the walk
+       halted at the throw. */
+    ASSERT_EQ(events.size(), 2u);
+    EXPECT_EQ(events[0].kind, RecordedEvent::Parent);
+    EXPECT_EQ(events[0].path.abs(), "/a/b/c");
+    EXPECT_EQ(events[1].kind, RecordedEvent::Parent);
+    EXPECT_EQ(events[1].path.abs(), "/a/b");
+    for (const auto & e : events)
+        EXPECT_NE(e.kind, RecordedEvent::AbsoluteSymlink);
+}
+
 } // namespace nix
