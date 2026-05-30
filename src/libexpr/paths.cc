@@ -60,6 +60,24 @@ void EvalState::ensureLazyPathsCopied(const NixStringContext & context)
             ensureLazyPathCopied(o->path);
 }
 
+void EvalState::lockInput(fetchers::Input & input, const fetchers::Input & originalInput, ref<SourceAccessor> accessor)
+{
+    /* Walk the tree once to compute the lockfile-grade narHash; surface it on
+       input.attrs so callers treat the input as locked. No mount, no
+       allowlist: with lazy paths, downstream code keeps SourcePath values
+       rooted at the fetcher's accessor and reads through it directly, so
+       there is nothing for storeFS to expose. */
+    auto [_, narHash] = fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, input.getName());
+    input.attrs.insert_or_assign("narHash", narHash.to_string(HashFormat::SRI, true));
+    if (originalInput.getNarHash() && narHash != *originalInput.getNarHash())
+        throw Error(
+            (unsigned int) 102,
+            "NAR hash mismatch in input '%s', expected '%s' but got '%s'",
+            originalInput.to_string(),
+            narHash.to_string(HashFormat::SRI, true),
+            originalInput.getNarHash()->to_string(HashFormat::SRI, true));
+}
+
 StorePath
 EvalState::mountInput(fetchers::Input & input, const fetchers::Input & originalInput, ref<SourceAccessor> accessor)
 {
