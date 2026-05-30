@@ -105,6 +105,11 @@ std::string SourceAccessor::showPath(const CanonPath & path)
     return displayPrefix + path.abs() + displaySuffix;
 }
 
+std::string SourceAccessor::showPath(std::string_view rawPath)
+{
+    return displayPrefix + std::string(rawPath) + displaySuffix;
+}
+
 CanonPath SourceAccessor::resolveSymlinks(const CanonPath & path, SymlinkResolution mode)
 {
     return nix::resolveSymlinks(*this, path, mode);

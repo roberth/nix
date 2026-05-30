@@ -191,8 +191,20 @@ public:
     virtual std::string showPath(const CanonPath & path);
 
     /**
-     * Resolve any symlinks in `path` according to the given
-     * resolution mode.
+     * Display-format a raw path string. Used for error messages on
+     * raw input that has not gone through `CanonPath` and so must
+     * preserve `..` (and the like) in its rendered form. The default
+     * just sandwiches the input between the display prefix/suffix;
+     * derived accessors may override.
+     */
+    virtual std::string showPath(std::string_view rawPath);
+
+    /**
+     * Resolve any symlinks in `path` against this accessor.
+     *
+     * For raw-string input where `..` components must be applied with
+     * symlink-aware semantics, include `resolve-symlinks.hh` and call
+     * the free function `nix::resolveSymlinks(*this, rawPath, mode)`.
      *
      * @param mode might only be a temporary solution for this.
      * See the discussion in https://github.com/NixOS/nix/pull/9985.
