@@ -29,6 +29,7 @@ suites += {
     'non-flake-inputs.sh',
     'relative-paths.sh',
     'relative-paths-lockfile.sh',
+    'relative-subflake-sourceinfo.sh',
     'symlink-paths.sh',
     'debugger.sh',
     'source-paths.sh',

@@ -77,3 +77,18 @@ parentOut=$(nix eval --raw "$flake1Dir/subflake#parentOutPath1")
 # stops recognising the in-store result of these copies.
 [[ $(nix eval --impure --raw "$flake1Dir/subflake#parentViaInterpolation") = "$parentOut" ]]
 [[ $(nix eval --impure --raw "$flake1Dir/subflake#parentViaBuiltinsPath") = "$parentOut" ]]
+
+# Literal-path-value \`getFlake\`: shell-expanded as a Nix path-syntax
+# expression, this evaluates to a path-value rooted on rootFS (the
+# parser's accessor for absolute literals). rootFS is admitted once
+# under the System-kinded \`rootFSRoot\` (EvalState ctor), so the
+# SourceRoot kind dispatch in \`prim_getFlake\` lands in the System
+# arm. That arm builds a \`path:\` Input from attrs and attaches the
+# store's narHash for in-store paths, making the resulting FlakeRef
+# locked (\`isLocked()\` true → pure-eval lock check passes);
+# downstream the \`path:\` fetcher's source-shortcut reuses the
+# storepath verbatim. Catches: System arm not firing (different arm
+# → different outPath or error), and missing narHash attachment
+# (unlocked FlakeRef → pure-eval rejection fails the assertion
+# loudly).
+[[ $(nix eval --raw --expr "(builtins.getFlake $parentOut).outPath") = "$parentOut" ]]
