@@ -239,4 +239,72 @@ TEST_F(ResolveSymlinksTest, BrokenSymlinkResolvesToTargetPath)
     EXPECT_EQ(resolve(CanonPath("/broken"), SymlinkResolution::Full).abs(), "/no/such/place");
 }
 
+/* A trailing slash on input is absorbed by `tokenizeString` (which
+   collapses runs of separators), so no empty component reaches the
+   walker — the end-to-end result matches the un-slashed form via the
+   tokeniser, not via any walker-level empty-skip. */
+TEST_F(ResolveSymlinksTest, TrailingSlashIgnored)
+{
+    accessor->addFile(CanonPath("/foo"), "x");
+
+    EXPECT_EQ(nix::resolveSymlinks(*accessor, std::string_view{"/foo/"}).abs(), "/foo");
+    /* CanonPath strips the trailing slash itself, so this is redundant
+       at the CanonPath level — but the test pins that both paths
+       agree on the same input shape. */
+    EXPECT_EQ(nix::resolveSymlinks(*accessor, CanonPath("/foo/")).abs(), "/foo");
+}
+
+/* Boundary inputs: empty string, single slash, just `.`. Each should
+   resolve to root without throwing. */
+TEST_F(ResolveSymlinksTest, EmptyAndRootLikeInputs)
+{
+    EXPECT_EQ(nix::resolveSymlinks(*accessor, std::string_view{""}).abs(), "/");
+    EXPECT_EQ(nix::resolveSymlinks(*accessor, std::string_view{"/"}).abs(), "/");
+    EXPECT_EQ(nix::resolveSymlinks(*accessor, std::string_view{"."}).abs(), "/");
+    EXPECT_EQ(nix::resolveSymlinks(*accessor, std::string_view{"/."}).abs(), "/");
+}
+
+/* The raison d'être of the `std::string_view` overload: it preserves
+   `..` components so the walker can apply symlink-aware semantics,
+   producing a different (and correct) answer than the `CanonPath`
+   overload when a component along the way is a symlink.
+
+   Setup: `/a` is an absolute symlink to `/x/y`, and there's a regular
+   file at `/x/file`. The POSIX walk of `/a/../file` follows `/a` to
+   `/x/y`, takes `..` from there to `/x`, then `file` → `/x/file`.
+
+   The `std::string_view` overload tokenises raw, sees the `..` after
+   the symlink follow, and produces `/x/file`. The `CanonPath`
+   overload pre-strips `/a/..` lexically inside the constructor, so
+   the walker never sees the symlink and the result is `/file` — a
+   path that doesn't exist as anything in this accessor. */
+TEST_F(ResolveSymlinksTest, RawStringPreservesDotDotForSymlinkAwareSemantics)
+{
+    accessor->addFile(CanonPath("/x/file"), "y");
+    sink.createSymlink(CanonPath("/a"), "/x/y");
+
+    auto walked = nix::resolveSymlinks(*accessor, std::string_view{"/a/../file"}, SymlinkResolution::Full);
+    EXPECT_EQ(walked.abs(), "/x/file");
+
+    /* Pin the lexical-clamp behaviour of the `CanonPath` overload on
+       the same input so a future change that fixes either side
+       surfaces here. */
+    auto lexical = nix::resolveSymlinks(*accessor, CanonPath("/a/../file"), SymlinkResolution::Full);
+    EXPECT_EQ(lexical.abs(), "/file");
+
+    EXPECT_NE(walked.abs(), lexical.abs());
+}
+
+/* Sanity: on input that's already canonical (no `..`, no `.`, no
+   empty components), the two overloads must agree. */
+TEST_F(ResolveSymlinksTest, OverloadsAgreeOnCanonicalInput)
+{
+    accessor->addFile(CanonPath("/a/b/c"), "x");
+
+    auto fromString = nix::resolveSymlinks(*accessor, std::string_view{"/a/b/c"});
+    auto fromCanon = nix::resolveSymlinks(*accessor, CanonPath("/a/b/c"));
+    EXPECT_EQ(fromString.abs(), fromCanon.abs());
+    EXPECT_EQ(fromString.abs(), "/a/b/c");
+}
+
 } // namespace nix
