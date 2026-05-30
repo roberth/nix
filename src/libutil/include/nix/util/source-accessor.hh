@@ -203,8 +203,10 @@ public:
      * Resolve any symlinks in `path` against this accessor.
      *
      * For raw-string input where `..` components must be applied with
-     * symlink-aware semantics, include `resolve-symlinks.hh` and call
-     * the free function `nix::resolveSymlinks(*this, rawPath, mode)`.
+     * symlink-aware semantics, or to observe or refuse transitions
+     * during the walk via callbacks (e.g. an `..`-escape policy),
+     * include `resolve-symlinks.hh` and call the free function
+     * `nix::resolveSymlinks(*this, rawPath, mode, …)`.
      *
      * @param mode might only be a temporary solution for this.
      * See the discussion in https://github.com/NixOS/nix/pull/9985.
