@@ -303,6 +303,143 @@ TEST(BufferedSourceReadLine, BufferExhaustedThenEof)
     EXPECT_EQ(source.readLine(/*eofOk=*/true), "");
 }
 
+#ifdef __linux__
+TEST(ReadFile, ToleratesNominalSizeZeroFromProc)
+{
+    // /proc files like /proc/version report size 0 from fstat, yet hold real
+    // content. readFile must drain to EOF without trusting getFileSize.
+    int fd = open("/proc/version", O_RDONLY);
+    ASSERT_NE(fd, -1);
+    auto got = readFile(fd);
+    EXPECT_FALSE(got.empty());
+    EXPECT_NE(got.find("Linux"), std::string::npos);
+    close(fd);
+}
+#endif
+
+#ifndef _WIN32
+TEST(ReadFile, ReadsFullContentsOfRegularFile)
+{
+    // Build the file via a pipe so we don't depend on the filesystem; use
+    // a memfd-equivalent so getFileSize returns the actual byte count.
+    char tmpl[] = "/tmp/nix-readfile-XXXXXX";
+    int fd = mkstemp(tmpl);
+    ASSERT_NE(fd, -1);
+    unlink(tmpl);
+
+    std::string payload(8192, 'x');
+    for (size_t i = 0; i < payload.size(); ++i)
+        payload[i] = static_cast<char>((i * 7 + 3) & 0xff);
+    ASSERT_EQ(::write(fd, payload.data(), payload.size()), (ssize_t) payload.size());
+    ASSERT_EQ(lseek(fd, 0, SEEK_SET), 0);
+
+    auto got = readFile(fd);
+    EXPECT_EQ(got, payload);
+    close(fd);
+}
+#endif
+
+#ifndef _WIN32
+TEST(DrainFD, NonBlockingStopsAtEAGAIN)
+{
+    // With block=false, drainFD must set O_NONBLOCK, return the bytes
+    // currently available, then restore the original flags.
+    Pipe pipe;
+    pipe.create(); // default: blocking
+
+    writeFull(pipe.writeSide.get(), "ready", /*allowInterrupts=*/false);
+    // Leave the write side OPEN: blocking-mode drainFD would deadlock
+    // here, so passing the test proves block=false took effect.
+
+    auto got = drainFD(pipe.readSide.get(), {.block = false});
+    EXPECT_EQ(got, "ready");
+
+    // Original flags must be restored: a subsequent blocking read still
+    // works synchronously when more data arrives.
+    writeFull(pipe.writeSide.get(), "more", /*allowInterrupts=*/false);
+    pipe.writeSide.close();
+    auto got2 = drainFD(pipe.readSide.get());
+    EXPECT_EQ(got2, "more");
+
+    // Sanity-check by inspecting the flags directly: O_NONBLOCK must be
+    // cleared after both drainFD calls return.
+    int flags = fcntl(pipe.readSide.get(), F_GETFL);
+    ASSERT_NE(flags, -1);
+    EXPECT_EQ(flags & O_NONBLOCK, 0);
+}
+
+TEST(DrainFD, NonBlockingRestoresOriginalFlags)
+{
+    // Set a custom flag (O_APPEND on the read side of a pipe is benign but
+    // visible via F_GETFL) and verify drainFD's Finally restores it.
+    Pipe pipe;
+    pipe.create();
+
+    int initial = fcntl(pipe.readSide.get(), F_GETFL);
+    ASSERT_NE(initial, -1);
+    ASSERT_NE(fcntl(pipe.readSide.get(), F_SETFL, initial | O_APPEND), -1);
+    int after = fcntl(pipe.readSide.get(), F_GETFL);
+    ASSERT_EQ(after & O_APPEND, O_APPEND);
+
+    writeFull(pipe.writeSide.get(), "x", /*allowInterrupts=*/false);
+    auto got = drainFD(pipe.readSide.get(), {.block = false});
+    EXPECT_EQ(got, "x");
+
+    // O_APPEND must still be set after drainFD returns (Finally restored
+    // the saved flags including O_APPEND, not just zeroed them).
+    int restored = fcntl(pipe.readSide.get(), F_GETFL);
+    ASSERT_NE(restored, -1);
+    EXPECT_EQ(restored & O_APPEND, O_APPEND);
+    EXPECT_EQ(restored & O_NONBLOCK, 0);
+
+    pipe.writeSide.close();
+}
+
+TEST(DrainFD, BlockingReadsUntilEOF)
+{
+    Pipe pipe;
+    pipe.create();
+
+    writeFull(pipe.writeSide.get(), "hello", /*allowInterrupts=*/false);
+    pipe.writeSide.close();
+
+    auto got = drainFD(pipe.readSide.get());
+    EXPECT_EQ(got, "hello");
+}
+
+TEST(DrainFD, ExpectedSizeReadsExactly)
+{
+    Pipe pipe;
+    pipe.create();
+
+    writeFull(pipe.writeSide.get(), "0123456789", /*allowInterrupts=*/false);
+    // Don't close the write side: with .expected=true and a matching size,
+    // drainFD must return as soon as it has read the requested bytes.
+
+    auto got = drainFD(pipe.readSide.get(), {.size = 5, .expected = true});
+    EXPECT_EQ(got, "01234");
+
+    // The pipe is still open with five bytes remaining; a follow-up drain
+    // should pick them up.
+    pipe.writeSide.close();
+    auto got2 = drainFD(pipe.readSide.get());
+    EXPECT_EQ(got2, "56789");
+}
+
+TEST(DrainFD, ExpectedSizeThrowsOnEarlyEOF)
+{
+    Pipe pipe;
+    pipe.create();
+
+    writeFull(pipe.writeSide.get(), "abc", /*allowInterrupts=*/false);
+    pipe.writeSide.close();
+
+    EXPECT_THROW(
+        drainFD(pipe.readSide.get(), {.size = 10, .expected = true}),
+        EndOfFile);
+}
+#endif
+
 TEST(WriteLine, AppendsNewlineAndWrites)
 {
     Pipe pipe;
