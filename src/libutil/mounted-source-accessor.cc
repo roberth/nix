@@ -1,10 +1,29 @@
 #include "nix/util/mounted-source-accessor.hh"
 
+#include <atomic>
+#include <memory>
+#include <mutex>
+
 #include <boost/unordered/concurrent_flat_map.hpp>
 
 namespace nix {
 
 namespace {
+
+/* Unfortunate that we reimplement memo() logic, but fun<> can not
+   give us bool fired, needed for invalidateCache. */
+struct MountEntry
+{
+    fun<ref<SourceAccessor>()> thunk;
+    std::once_flag flag;
+    std::atomic<bool> fired{false};
+    std::optional<ref<SourceAccessor>> cached;
+
+    explicit MountEntry(fun<ref<SourceAccessor>()> thunk)
+        : thunk(std::move(thunk))
+    {
+    }
+};
 
 struct MountedSourceAccessorImpl : MountedSourceAccessor
 {
@@ -12,17 +31,17 @@ private:
     void anchor() override {};
 
 public:
-    boost::concurrent_flat_map<CanonPath, ref<SourceAccessor>> mounts;
+    boost::concurrent_flat_map<CanonPath, std::shared_ptr<MountEntry>> mounts;
 
-    MountedSourceAccessorImpl(std::map<CanonPath, ref<SourceAccessor>> _mounts)
+    MountedSourceAccessorImpl(std::map<CanonPath, fun<ref<SourceAccessor>()>> _mounts)
     {
         displayPrefix.clear();
 
         // Currently we require a root filesystem. This could be relaxed.
         assert(_mounts.contains(CanonPath::root));
 
-        for (auto & [path, accessor] : _mounts)
-            mount(path, accessor);
+        for (auto & [path, thunk] : _mounts)
+            mount(path, std::move(thunk));
 
         // FIXME: return dummy parent directories automatically?
     }
@@ -81,7 +100,14 @@ public:
 
     void invalidateCache() override
     {
-        mounts.visit_all([](auto & kv) { kv.second->invalidateCache(); });
+        /* Only invalidate mounts that have actually been materialised.
+           Un-fired thunks have nothing to invalidate; firing them just
+           to invalidate would defeat the laziness. */
+        mounts.visit_all([](auto & kv) {
+            auto & entry = *kv.second;
+            if (entry.fired.load(std::memory_order_acquire))
+                (*entry.cached)->invalidateCache();
+        });
     }
 
     std::optional<std::filesystem::path> getPhysicalPath(const CanonPath & path) override
@@ -90,17 +116,25 @@ public:
         return accessor->getPhysicalPath(subpath);
     }
 
-    void mount(CanonPath mountPoint, ref<SourceAccessor> accessor) override
+    void mount(CanonPath mountPoint, fun<ref<SourceAccessor>()> accessor) override
     {
-        mounts.emplace(std::move(mountPoint), std::move(accessor));
+        mounts.emplace(std::move(mountPoint), std::make_shared<MountEntry>(std::move(accessor)));
     }
 
     std::shared_ptr<SourceAccessor> getMount(CanonPath mountPoint) override
     {
-        if (auto res = getConcurrent(mounts, mountPoint))
-            return *res;
-        else
+        auto entry_opt = getConcurrent(mounts, mountPoint);
+        if (!entry_opt)
             return nullptr;
+        auto entry = *entry_opt;
+        std::call_once(entry->flag, [&]() {
+            entry->cached.emplace(entry->thunk());
+            /* `release` pairs with the `acquire` in invalidateCache;
+               other threads that observe `fired == true` will also see
+               the write to `cached`. */
+            entry->fired.store(true, std::memory_order_release);
+        });
+        return entry->cached->get_ptr();
     }
 
     std::pair<CanonPath, std::optional<std::string>> getFingerprint(const CanonPath & path) override
@@ -116,7 +150,7 @@ public:
 
 MountedSourceAccessor::~MountedSourceAccessor() {}
 
-ref<MountedSourceAccessor> makeMountedSourceAccessor(std::map<CanonPath, ref<SourceAccessor>> mounts)
+ref<MountedSourceAccessor> makeMountedSourceAccessor(std::map<CanonPath, fun<ref<SourceAccessor>()>> mounts)
 {
     return make_ref<MountedSourceAccessorImpl>(std::move(mounts));
 }

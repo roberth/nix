@@ -970,7 +970,7 @@ struct GitInputScheme : InputScheme
            input accessor consisting of the accessor for the top-level
            repo and the accessors for the submodules. */
         if (getSubmodulesAttr(input)) {
-            std::map<CanonPath, nix::ref<SourceAccessor>> mounts;
+            std::map<CanonPath, nix::fun<nix::ref<SourceAccessor>()>> mounts;
 
             for (auto & [submodule, submoduleRev] : repo->getSubmodules(rev, exportIgnore)) {
                 auto resolved = repo->resolveSubmoduleUrl(submodule.url);
@@ -1002,11 +1002,11 @@ struct GitInputScheme : InputScheme
                 auto submoduleInput = fetchers::Input::fromAttrs(std::move(attrs));
                 auto [submoduleAccessor, submoduleInput2] = submoduleInput.getAccessor(settings, store);
                 submoduleAccessor->setPathDisplay("«" + submoduleInput.to_string() + "»");
-                mounts.insert_or_assign(submodule.path, submoduleAccessor);
+                mounts.insert_or_assign(submodule.path, [acc = submoduleAccessor]() { return acc; });
             }
 
             if (!mounts.empty()) {
-                mounts.insert_or_assign(CanonPath::root, accessor);
+                mounts.insert_or_assign(CanonPath::root, [acc = accessor]() { return acc; });
                 accessor = makeMountedSourceAccessor(std::move(mounts));
             }
         }
@@ -1038,11 +1038,11 @@ struct GitInputScheme : InputScheme
            where getAccessorFromCommit() would produce one (submodules
            disabled, or a gitlink without a .gitmodules entry). */
         if (!repoInfo.workdirInfo.submodules.empty()) {
-            std::map<CanonPath, nix::ref<SourceAccessor>> mounts;
+            std::map<CanonPath, nix::fun<nix::ref<SourceAccessor>()>> mounts;
 
             for (auto & submodule : repoInfo.workdirInfo.submodules) {
                 if (!getSubmodulesAttr(input) || submodule.url.empty()) {
-                    mounts.insert_or_assign(submodule.path, makeEmptySourceAccessor());
+                    mounts.insert_or_assign(submodule.path, []() { return makeEmptySourceAccessor(); });
                     continue;
                 }
 
@@ -1064,10 +1064,10 @@ struct GitInputScheme : InputScheme
                 if (!submoduleInput2.getRev())
                     repoInfo.workdirInfo.isDirty = true;
 
-                mounts.insert_or_assign(submodule.path, submoduleAccessor);
+                mounts.insert_or_assign(submodule.path, [acc = submoduleAccessor]() { return acc; });
             }
 
-            mounts.insert_or_assign(CanonPath::root, accessor);
+            mounts.insert_or_assign(CanonPath::root, [acc = accessor]() { return acc; });
             accessor = makeMountedSourceAccessor(std::move(mounts));
         }
 
