@@ -18,6 +18,8 @@ void RestrictedPathError::anchor() {}
 
 void SymlinkNotAllowed::anchor() {}
 
+void AccessorBoundaryEscape::anchor() {}
+
 static std::atomic<size_t> nextNumber{0};
 
 bool SourceAccessor::Stat::isNotNARSerialisable()
