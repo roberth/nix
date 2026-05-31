@@ -329,7 +329,7 @@ static void fetchTree(
     auto cachedInput =
         state.inputCache->getAccessor(state.fetchSettings, *state.store, input, fetchers::UseRegistries::No);
 
-    auto storePath = state.mountInput(cachedInput.lockedInput, input, cachedInput.accessor);
+    auto storePath = state.mountInput(cachedInput.lockedInput, input, cachedInput.accessor());
 
     emitTreeAttrs(state, callSite.pos, storePath, cachedInput.lockedInput, v, params.emptyRevFallback, false);
 }
@@ -588,7 +588,7 @@ fetch(EvalState & state, Value * const * args, Value & v, const std::string & wh
         auto input = fetchers::Input::fromAttrs(std::move(attrs));
         auto cachedInput =
             state.inputCache->getAccessor(state.fetchSettings, *state.store, input, fetchers::UseRegistries::No);
-        auto storePath = state.mountInput(cachedInput.lockedInput, input, cachedInput.accessor);
+        auto storePath = state.mountInput(cachedInput.lockedInput, input, cachedInput.accessor());
         state.mkStorePathString(storePath, v);
     } else {
         auto storePath = fetchers::downloadFile(*state.store, state.fetchSettings, *url, name).storePath;
