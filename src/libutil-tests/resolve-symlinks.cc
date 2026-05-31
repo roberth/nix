@@ -609,4 +609,79 @@ TEST_F(ResolveSymlinksTest, ThrowFromHookHaltsWalk)
         EXPECT_NE(e.kind, RecordedEvent::AbsoluteSymlink);
 }
 
+/* ------------------------------------------------------------------
+ * StrictAccessorBoundary
+ *
+ * The strict-escape callback. Throws Error when a `..` would pop past
+ * the accessor's root, regardless of whether the `..` came from the
+ * input or from a spliced symlink target. Otherwise transparent — non-
+ * escaping inputs resolve the same as the no-callback path.
+ * ------------------------------------------------------------------ */
+
+class StrictAccessorBoundaryTest : public ResolveSymlinksTest
+{
+protected:
+    CanonPath resolveStrict(std::string_view rawPath, SymlinkResolution mode = SymlinkResolution::Full)
+    {
+        return nix::resolveSymlinks(*accessor, rawPath, mode, StrictAccessorBoundary{*accessor});
+    }
+};
+
+/* Non-escaping input resolves the same as without the boundary —
+   `..` that stays inside the tree pops normally and doesn't throw. */
+TEST_F(StrictAccessorBoundaryTest, NonEscapingResolvesUnchanged)
+{
+    accessor->addFile(CanonPath("/a/b"), "x");
+
+    EXPECT_EQ(resolveStrict("/a/b").abs(), "/a/b");
+    EXPECT_EQ(resolveStrict("/a/../a/b").abs(), "/a/b");
+}
+
+/* `..`-at-root in the input throws AccessorBoundaryEscape (the
+   dedicated subclass) rather than silently clamping. */
+TEST_F(StrictAccessorBoundaryTest, ParentPastRootFromInputThrows)
+{
+    accessor->addFile(CanonPath("/foo"), "x");
+
+    EXPECT_THROW(resolveStrict("/../foo"), AccessorBoundaryEscape);
+}
+
+/* `..` in a relative symlink target that would escape past root
+   throws — the policy fires for `..`s introduced via splice, not
+   only those literally in the input. */
+TEST_F(StrictAccessorBoundaryTest, ParentPastRootFromSymlinkTargetThrows)
+{
+    accessor->addFile(CanonPath("/foo"), "x");
+    sink.createSymlink(CanonPath("/link"), "../foo");
+
+    EXPECT_THROW(resolveStrict("/link"), AccessorBoundaryEscape);
+}
+
+/* Absolute symlink target rebases to accessor root — not an escape,
+   no throw. */
+TEST_F(StrictAccessorBoundaryTest, AbsoluteSymlinkRebaseDoesNotThrow)
+{
+    accessor->addFile(CanonPath("/x"), "y");
+    sink.createSymlink(CanonPath("/link"), "/x");
+
+    EXPECT_NO_THROW(resolveStrict("/link"));
+    EXPECT_EQ(resolveStrict("/link").abs(), "/x");
+}
+
+/* The error message names the source tree at the moment of the would-be
+   escape. Compare against the same HintFmt the policy throws — the
+   reader of this test sees the exact format string and arguments. */
+TEST_F(StrictAccessorBoundaryTest, ErrorMessageNamesPathAtEscape)
+{
+    accessor->addFile(CanonPath("/foo"), "x");
+    accessor->setPathDisplay("«fixture»");
+
+    try {
+        resolveStrict("/../foo");
+        FAIL() << "expected throw";
+    } catch (const AccessorBoundaryEscape & e) {
+        EXPECT_EQ(e.info().msg.str(), HintFmt("'..' would escape the source tree at %s", "«fixture»/").str());
+    }
+}
+
 } // namespace nix
