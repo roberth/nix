@@ -60,6 +60,47 @@ struct NoOpResolveSymlinksCallbacks
 };
 
 /**
+ * Thrown by `StrictAccessorBoundary` when a `..` would pop past the
+ * accessor's root. A dedicated subclass (rather than plain `Error`)
+ * so callers can catch just *this* failure mode and add their own
+ * context — for example the language-level eval layer catches it and
+ * rethrows as `EvalError` with position attribution, without
+ * accidentally swallowing unrelated `Error`s from elsewhere in the
+ * resolveSymlinks call.
+ */
+MakeError(AccessorBoundaryEscape, Error);
+
+/**
+ * Reject any `..` component that would pop past the accessor's root.
+ *
+ * Useful for callers that want a structural escape check rather than
+ * the silent clamp inherited from `resolveSymlinks`'s legacy `..`-at-
+ * root branch (or, upstream, from `CanonPath`'s constructor). An
+ * attempt to escape — whether the `..` came from the input itself or
+ * from a spliced symlink target — raises an `AccessorBoundaryEscape`
+ * naming the path at the moment of the would-be escape.
+ *
+ * The constructor takes the accessor by reference for the diagnostic
+ * (`accessor.showPath(at)`); the caller is responsible for keeping
+ * the accessor alive for the duration of the resolution.
+ */
+struct StrictAccessorBoundary : NoOpResolveSymlinksCallbacks
+{
+    SourceAccessor & accessor;
+
+    explicit StrictAccessorBoundary(SourceAccessor & accessor)
+        : accessor(accessor)
+    {
+    }
+
+    void onParent(const CanonPath & at) const
+    {
+        if (at.isRoot())
+            throw AccessorBoundaryEscape("'..' would escape the source tree at %s", accessor.showPath(at));
+    }
+};
+
+/**
  * Resolve any symlinks in `rawPath` against `accessor` according to
  * the given resolution mode, optionally calling back into a callbacks
  * object at semantically interesting transitions.
