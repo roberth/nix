@@ -946,20 +946,39 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
 
         auto lockedNode = node.dynamic_pointer_cast<const LockedNode>();
 
-        auto [storePath, subdir] = state.store->toStorePath(sourcePath.path.abs());
+        const auto & lockedRef = lockedNode ? lockedNode->lockedRef : lockedFlake.flake.lockedRef;
+
+        /* For inputs with a narHash, derive the storePath via
+           content addressing and take `dir` from `lockedRef.subdir`.
+
+           Inputs without a narHash (relative-path inputs sharing
+           the parent's store object, indirect refs whose lockedRef
+           isn't fully resolved here, dirty worktrees under
+           forceDirty) can't use `computeStorePath` — it would throw
+           — and can't use `lockedRef.subdir` either: a parsed
+           `path:./sub` FlakeRef has `subdir==""` even though the
+           input lives in a real subdir of the parent. Their
+           SourcePath in nodePaths is the rendered
+           `/nix/store/<obj>/<sub>` form the parent was mounted at;
+           split it for both pieces. */
+        StorePath storePath = StorePath::dummy;
+        std::string dir;
+        if (lockedRef.input.getNarHash().has_value()) {
+            storePath = lockedRef.input.computeStorePath(*state.store);
+            dir = lockedRef.subdir;
+        } else {
+            auto [sp, sd] = state.store->toStorePath(sourcePath.path.abs());
+            storePath = sp;
+            dir = CanonPath(sd).rel();
+        }
 
         emitTreeAttrs(
-            state,
-            storePath,
-            lockedNode ? lockedNode->lockedRef.input : lockedFlake.flake.lockedRef.input,
-            vSourceInfo,
-            false,
-            !lockedNode && lockedFlake.flake.forceDirty);
+            state, storePath, lockedRef.input, vSourceInfo, false, !lockedNode && lockedFlake.flake.forceDirty);
 
         auto key = keyMap.find(node);
         assert(key != keyMap.end());
 
-        override.alloc(state.symbols.create("dir")).mkString(CanonPath(subdir).rel(), state.mem);
+        override.alloc(state.symbols.create("dir")).mkString(dir, state.mem);
 
         overrides.alloc(state.symbols.create(key->second)).mkAttrs(override);
     }
