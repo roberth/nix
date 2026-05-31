@@ -244,7 +244,7 @@ EvalState::EvalState(
     , symbols(StaticEvalSymbols::staticSymbolTable())
     , repair(NoRepair)
     , storeFS(makeMountedSourceAccessor({
-          {CanonPath::root, makeEmptySourceAccessor()},
+          {CanonPath::root, [acc = makeEmptySourceAccessor()]() { return acc; }},
           /* In the pure eval case, we can simply require
              valid paths. However, in the *impure* eval
              case this gets in the way of the union
@@ -263,7 +263,7 @@ EvalState::EvalState(
              exception, and make union source accessor
              catch it, so we don't need to do this hack.
            */
-          {CanonPath(store->storeDir), store->getFSAccessor(settings.pureEval)},
+          {CanonPath(store->storeDir), [acc = store->getFSAccessor(settings.pureEval)]() { return acc; }},
       }))
     , rootFS([&] {
         /* In pure eval mode, we provide a filesystem that only
