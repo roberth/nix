@@ -92,7 +92,7 @@ EvalState::mountInput(fetchers::Input & input, const fetchers::Input & originalI
 
     allowPath(storePath); // FIXME: should just whitelist the entire virtual store
 
-    storeFS->mount(CanonPath(store->printStorePath(storePath)), accessor);
+    storeFS->mount(CanonPath(store->printStorePath(storePath)), [acc = accessor]() { return acc; });
 
     input.attrs.insert_or_assign("narHash", narHash.to_string(HashFormat::SRI, true));
 

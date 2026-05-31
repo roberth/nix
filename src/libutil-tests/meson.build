@@ -83,6 +83,7 @@ sources = files(
   'memo.cc',
   'memory-source-accessor.cc',
   'monitorfdhup.cc',
+  'mounted-source-accessor.cc',
   'nar-listing.cc',
   'nix_api_util.cc',
   'nix_api_util_internal.cc',
