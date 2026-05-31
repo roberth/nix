@@ -14,7 +14,13 @@ InputCache::CachedResult InputCache::getAccessor(
     if (!fetched) {
         if (originalInput.isDirect()) {
             auto [accessor, lockedInput] = originalInput.getAccessor(settings, store);
-            fetched.emplace(CachedInput{.lockedInput = lockedInput, .accessor = accessor});
+            /* The fetcher already materialised the accessor (it had to,
+               in order to derive the locked input). We wrap it in a
+               trivial identity thunk so consumers that *don't* need to
+               read from it can still pass the slot through APIs that
+               want a thunk (e.g. `MountedSourceAccessor::mount`)
+               without forcing a re-fetch. */
+            fetched.emplace(CachedInput{.lockedInput = lockedInput, .accessor = [acc = accessor]() { return acc; }});
         } else {
             if (useRegistries != UseRegistries::No) {
                 auto [res, extraAttrs] = lookupInRegistries(settings, store, originalInput, useRegistries);
@@ -23,7 +29,10 @@ InputCache::CachedResult InputCache::getAccessor(
                 if (!fetched) {
                     auto [accessor, lockedInput] = resolvedInput.getAccessor(settings, store);
                     fetched.emplace(
-                        CachedInput{.lockedInput = lockedInput, .accessor = accessor, .extraAttrs = extraAttrs});
+                        CachedInput{
+                            .lockedInput = lockedInput,
+                            .accessor = [acc = accessor]() { return acc; },
+                            .extraAttrs = extraAttrs});
                 }
                 upsert(resolvedInput, *fetched);
             } else {
@@ -35,7 +44,7 @@ InputCache::CachedResult InputCache::getAccessor(
         upsert(originalInput, *fetched);
     }
 
-    debug("got tree '%s' from '%s'", fetched->accessor, fetched->lockedInput.to_string());
+    debug("got tree from '%s'", fetched->lockedInput.to_string());
 
     return {fetched->accessor, resolvedInput, fetched->lockedInput, fetched->extraAttrs};
 }
