@@ -53,6 +53,7 @@ sources = files(
   'eval.cc',
   'json.cc',
   'lazy-fetcher-attr.cc',
+  'lock-input.cc',
   'main.cc',
   'nix_api_expr.cc',
   'nix_api_external.cc',
