@@ -44,6 +44,7 @@ sources = files(
   'git-lfs-fetch.cc',
   'git-utils.cc',
   'git.cc',
+  'input-cache.cc',
   'input.cc',
   'nix_api_fetchers.cc',
   'public-key.cc',
