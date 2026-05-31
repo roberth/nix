@@ -376,7 +376,7 @@ static Flake getFlake(
     auto lockedRef = FlakeRef(std::move(cachedInput.lockedInput), subdir);
 
     // Parse/eval flake.nix to get at the input.self attributes.
-    auto flake = readFlake(state, originalRef, resolvedRef, lockedRef, {cachedInput.accessor}, lockRootAttrPath);
+    auto flake = readFlake(state, originalRef, resolvedRef, lockedRef, {cachedInput.accessor()}, lockRootAttrPath);
 
     // Re-fetch the tree if necessary.
     auto newLockedRef = applySelfAttrs(lockedRef, flake);
@@ -391,7 +391,7 @@ static Flake getFlake(
         lockedRef = FlakeRef(std::move(cachedInput2.lockedInput), newLockedRef.subdir);
     }
 
-    auto rootDir = state.storePath(state.mountInput(lockedRef.input, originalRef.input, cachedInput.accessor));
+    auto rootDir = state.storePath(state.mountInput(lockedRef.input, originalRef.input, cachedInput.accessor()));
     // Re-parse flake.nix from the store.
     return readFlake(state, originalRef, resolvedRef, lockedRef, rootDir, lockRootAttrPath);
 }
@@ -749,8 +749,8 @@ LockedFlake lockFlake(
                                     auto lockedRef = FlakeRef(std::move(cachedInput.lockedInput), input.ref->subdir);
 
                                     return {
-                                        state.storePath(
-                                            state.mountInput(lockedRef.input, input.ref->input, cachedInput.accessor)),
+                                        state.storePath(state.mountInput(
+                                            lockedRef.input, input.ref->input, cachedInput.accessor())),
                                         lockedRef};
                                 }
                             }();

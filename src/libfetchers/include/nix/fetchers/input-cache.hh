@@ -1,6 +1,7 @@
 #pragma once
 
 #include "nix/fetchers/fetchers.hh"
+#include "nix/util/fun.hh"
 
 namespace nix::fetchers {
 
@@ -9,9 +10,18 @@ struct Settings;
 
 struct InputCache
 {
+    /**
+     * `accessor` is a thunk so consumers that only need the locked
+     * input or extra attrs (e.g. lockfile rendering, sourceInfo
+     * metadata) don't pay for the fetcher's accessor materialisation.
+     * Fire the thunk (`accessor()`) when actually reading through
+     * the source. Passing the thunk directly to APIs that accept a
+     * `fun<ref<SourceAccessor>()>` (e.g. `MountedSourceAccessor::mount`)
+     * keeps the deferral end-to-end.
+     */
     struct CachedResult
     {
-        ref<SourceAccessor> accessor;
+        fun<ref<SourceAccessor>()> accessor;
         Input resolvedInput;
         Input lockedInput;
         Attrs extraAttrs;
@@ -23,7 +33,7 @@ struct InputCache
     struct CachedInput
     {
         Input lockedInput;
-        ref<SourceAccessor> accessor;
+        fun<ref<SourceAccessor>()> accessor;
         Attrs extraAttrs;
     };
 
