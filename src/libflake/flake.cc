@@ -603,16 +603,22 @@ LockedFlake lockFlake(
                             auto flake = readFlake(state, ref, ref, ref, *resolvedPath, inputAttrPath);
                             /* Relative inputs share their parent's
                                store object; carry parent's storePath
-                               and accessor through. The subdir within
-                               parent's storePath is what splitting
-                               the resolved flake.nix's directory at
-                               the store-path boundary recovers. */
+                               and accessor through. Compose the in-
+                               storePath subdir by resolving the
+                               relative target (which may include
+                               `..`) against the parent's subdir,
+                               then applying this input's own parsed
+                               subdir. `CanonPath(raw, base)` handles
+                               `..` traversal lexically; `/` does
+                               not. */
                             auto & parentInfo = nodePaths.at(node);
-                            auto [_, in_parent_subpath] = state.store->toStorePath(flake.path.parent().path.abs());
+                            auto relativeTarget = input.ref->input.isRelative().value().string();
+                            auto subdir = CanonPath(relativeTarget, CanonPath(parentInfo.subdir));
+                            subdir = CanonPath(ref.subdir, subdir);
                             flake.nodeLocation = NodeLocation{
                                 .storePath = parentInfo.storePath,
                                 .accessor = parentInfo.accessor,
-                                .subdir = std::string{CanonPath(in_parent_subpath).rel()},
+                                .subdir = std::string{subdir.rel()},
                             };
                             return flake;
                         } else {
@@ -763,16 +769,21 @@ LockedFlake lockFlake(
                                 if (auto resolvedPath = resolveRelativePath()) {
                                     /* Same shape as getInputFlake's
                                        relative branch: share parent's
-                                       storePath + accessor; the in-
-                                       parent subdir comes from
-                                       splitting the resolved path. */
+                                       storePath + accessor; resolve
+                                       the relative target against
+                                       parent's subdir, then apply
+                                       this input's parsed subdir.
+                                       `CanonPath(raw, base)` handles
+                                       `..` traversal. */
                                     auto & parentInfo = nodePaths.at(node);
-                                    auto [_, in_parent_subpath] = state.store->toStorePath(resolvedPath->path.abs());
+                                    auto relativeTarget = input.ref->input.isRelative().value().string();
+                                    auto subdir = CanonPath(relativeTarget, CanonPath(parentInfo.subdir));
+                                    subdir = CanonPath(input.ref->subdir, subdir);
                                     return {
                                         NodeLocation{
                                             .storePath = parentInfo.storePath,
                                             .accessor = parentInfo.accessor,
-                                            .subdir = std::string{CanonPath(in_parent_subpath).rel()},
+                                            .subdir = std::string{subdir.rel()},
                                         },
                                         *input.ref};
                                 } else {
