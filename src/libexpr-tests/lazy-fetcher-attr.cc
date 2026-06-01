@@ -4,7 +4,9 @@
 #include "nix/expr/tests/libexpr.hh"
 #include "nix/fetchers/attrs.hh"
 #include "nix/fetchers/fetchers.hh"
+#include "nix/fetchers/mountable-tree.hh"
 #include "nix/store/path.hh"
+#include "nix/util/memory-source-accessor.hh"
 
 namespace nix {
 
@@ -15,6 +17,18 @@ protected:
     {
         return StorePath{"g1w7hy3qg1w7hy3qg1w7hy3qg1w7hy3q-test"};
     }
+
+    /* A MountableTree backed by the dummy storePath and an empty
+       accessor thunk. emit's eager rendering only uses storePath, so
+       these tests don't fire the accessor — making this the right
+       shape for tests that don't care about lazy reads. */
+    fetchers::MountableTree dummyTree()
+    {
+        return fetchers::MountableTree{
+            .storePath = dummyPath(),
+            .accessor = [acc = make_ref<MemorySourceAccessor>().cast<SourceAccessor>()]() { return acc; },
+        };
+    }
 };
 
 TEST_F(LazyFetcherAttrTest, nonLazyAttrProducesImmediateValue)
@@ -24,7 +38,7 @@ TEST_F(LazyFetcherAttrTest, nonLazyAttrProducesImmediateValue)
     input.attrs.insert_or_assign("revCount", uint64_t(5));
 
     Value v;
-    emitTreeAttrs(state, dummyPath(), input, v, false, false);
+    emitTreeAttrs(state, dummyTree(), input, v, false, false);
     state.forceValue(v, noPos);
 
     auto * rcAttr = v.attrs()->get(state.symbols.create("revCount"));
@@ -48,7 +62,7 @@ TEST_F(LazyFetcherAttrTest, lazyAttrProducesThunk)
                 }})));
 
     Value v;
-    emitTreeAttrs(state, dummyPath(), input, v, false, false);
+    emitTreeAttrs(state, dummyTree(), input, v, false, false);
     state.forceValue(v, noPos);
 
     auto * rcAttr = v.attrs()->get(state.symbols.create("revCount"));
@@ -79,7 +93,7 @@ TEST_F(LazyFetcherAttrTest, lazyFunctionOnlyCalledOnAccess)
                 }})));
 
     Value v;
-    emitTreeAttrs(state, dummyPath(), input, v, false, false);
+    emitTreeAttrs(state, dummyTree(), input, v, false, false);
     state.forceValue(v, noPos);
 
     // Access lastModified, so should not trigger lazy revCount

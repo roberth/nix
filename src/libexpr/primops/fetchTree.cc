@@ -118,7 +118,7 @@ static void emitLazyAttrThunk(EvalState & state, const fetchers::LazyAttr & lazy
 
 void emitTreeAttrs(
     EvalState & state,
-    const StorePath & storePath,
+    const fetchers::MountableTree & tree,
     const fetchers::Input & input,
     Value & v,
     bool emptyRevFallback,
@@ -126,7 +126,7 @@ void emitTreeAttrs(
 {
     auto attrs = state.buildBindings(100);
 
-    state.mkStorePathString(storePath, attrs.alloc(state.s.outPath));
+    state.mkStorePathString(tree.storePath, attrs.alloc(state.s.outPath));
 
     // FIXME: support arbitrary input attributes.
 
@@ -323,7 +323,13 @@ static void fetchTree(
 
     auto storePath = state.mountInput(cachedInput.lockedInput, input, cachedInput.accessor());
 
-    emitTreeAttrs(state, storePath, cachedInput.lockedInput, v, params.emptyRevFallback, false);
+    emitTreeAttrs(
+        state,
+        fetchers::MountableTree{.storePath = storePath, .accessor = cachedInput.accessor},
+        cachedInput.lockedInput,
+        v,
+        params.emptyRevFallback,
+        false);
 }
 
 static void prim_fetchTree(EvalState & state, const PosIdx pos, Value ** args, Value & v)

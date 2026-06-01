@@ -1008,12 +1008,7 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
         const auto & lockedRef = lockedNode ? lockedNode->lockedRef : lockedFlake.flake.lockedRef;
 
         emitTreeAttrs(
-            state,
-            info.tree.storePath,
-            lockedRef.input,
-            vSourceInfo,
-            false,
-            !lockedNode && lockedFlake.flake.forceDirty);
+            state, info.tree, lockedRef.input, vSourceInfo, false, !lockedNode && lockedFlake.flake.forceDirty);
 
         auto key = keyMap.find(node);
         assert(key != keyMap.end());
