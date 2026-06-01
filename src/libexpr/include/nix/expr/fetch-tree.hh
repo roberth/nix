@@ -6,12 +6,9 @@
 namespace nix {
 
 /**
- * Convert a libfetchers `Input` to libexpr `Value`.
- *
- * The `MountableTree` carries the predicted storePath used for the
- * eager `outPath` string render, plus a lazy accessor thunk that's
- * available for the future path-typed outPath shape (`fetchTree
- * { lazy = true; }`).
+ * Convert a libfetchers `Input` to libexpr `Value` with an eager
+ * (store-path-string) `outPath`. The `MountableTree` carries the
+ * predicted storePath for the render.
  *
  * @param `callPos` optional position of the `fetchTree` / `fetchGit` / ... call
  *   that produces this attrset, added to every attribute of the returned
@@ -21,6 +18,21 @@ void emitTreeAttrs(
     EvalState & state,
     PosIdx callPos,
     const fetchers::MountableTree & tree,
+    const fetchers::Input & input,
+    Value & v,
+    bool emptyRevFallback = false,
+    bool forceDirty = false);
+
+/**
+ * Like the `MountableTree` overload, but `outPath` is a path-typed
+ * Value rooted on the supplied `SourcePath`. Used by `fetchTree
+ * { lazy = true; }` so reads through `outPath` go through the
+ * fetcher's accessor without forcing a store copy.
+ */
+void emitTreeAttrs(
+    EvalState & state,
+    PosIdx callPos,
+    const SourcePath & sourcePath,
     const fetchers::Input & input,
     Value & v,
     bool emptyRevFallback = false,
