@@ -7,6 +7,7 @@
 #include "nix/fetchers/mountable-tree.hh"
 #include "nix/store/path.hh"
 #include "nix/util/memory-source-accessor.hh"
+#include "nix/util/source-path.hh"
 
 namespace nix {
 
@@ -109,6 +110,38 @@ TEST_F(LazyFetcherAttrTest, lazyFunctionOnlyCalledOnAccess)
     state.forceValue(*rcAttr->value, noPos);
     EXPECT_EQ(rcAttr->value->integer().value, 99);
     EXPECT_EQ(calls, 1);
+}
+
+/* The SourcePath overload emits `outPath` as a path-typed Value
+   rooted on the supplied SourcePath, with metadata identical to the
+   MountableTree overload (both go through the shared
+   `addFetchTreeMetadataAttrs` helper). */
+TEST_F(LazyFetcherAttrTest, sourcePathOverloadProducesPathTypedOutPath)
+{
+    auto accessor = make_ref<MemorySourceAccessor>();
+    accessor->addFile(CanonPath("/file"), "content");
+
+    fetchers::Input input;
+    input.attrs.insert_or_assign("type", std::string("git"));
+    input.attrs.insert_or_assign("revCount", uint64_t(7));
+
+    Value v;
+    emitTreeAttrs(state, SourcePath{accessor, CanonPath::root}, input, v, false, false);
+    state.forceValue(v, noPos);
+
+    /* outPath is a path-typed Value rooted at the accessor's root. */
+    auto * outPath = v.attrs()->get(state.s.outPath);
+    ASSERT_NE(outPath, nullptr);
+    state.forceValue(*outPath->value, noPos);
+    EXPECT_EQ(outPath->value->type(), nPath);
+    EXPECT_EQ(&*outPath->value->path().accessor, &*accessor);
+    EXPECT_EQ(outPath->value->path().path.abs(), "/");
+
+    /* Metadata layer agrees with the MountableTree overload. */
+    auto * rcAttr = v.attrs()->get(state.symbols.create("revCount"));
+    ASSERT_NE(rcAttr, nullptr);
+    state.forceValue(*rcAttr->value, noPos);
+    EXPECT_EQ(rcAttr->value->integer().value, 7);
 }
 
 } // namespace nix
