@@ -2,10 +2,12 @@
 
 #include "nix/expr/fetch-tree.hh"
 #include "nix/expr/tests/libexpr.hh"
+#include "nix/expr/value/context.hh"
 #include "nix/fetchers/attrs.hh"
 #include "nix/fetchers/fetchers.hh"
 #include "nix/fetchers/mountable-tree.hh"
 #include "nix/store/path.hh"
+#include "nix/store/store-api.hh"
 #include "nix/util/memory-source-accessor.hh"
 #include "nix/util/source-path.hh"
 
@@ -151,6 +153,52 @@ TEST_F(LazyFetcherAttrTest, lazyEmitProducesPathTypedOutPath)
     ASSERT_NE(rcAttr, nullptr);
     state.forceValue(*rcAttr->value, noPos);
     EXPECT_EQ(rcAttr->value->integer().value, 7);
+}
+
+/* When `lazy = false`, emit renders `outPath` as the storePath's printed
+   string *and* registers the storePath in the string context. The context
+   is the load-bearing piece — downstream derivations that interpolate
+   `${input.outPath}` rely on it to see the input as a build-time
+   dependency. The previous `emitTreeAttrs(StorePath, …)` overload had a
+   dedicated test for this; v5 reaches the same code path via
+   `MountableTree{ storePath = …, … }` + `lazy = false`. Pin it here. */
+TEST_F(LazyFetcherAttrTest, eagerEmitProducesStorePathStringWithContext)
+{
+    fetchers::Input input;
+    input.attrs.insert_or_assign("type", std::string("git"));
+    auto sp = dummyPath();
+
+    Value v;
+    emitTreeAttrs(
+        state,
+        fetchers::MountableTree{
+            .storePath = sp,
+            .accessor = [acc = make_ref<MemorySourceAccessor>().cast<SourceAccessor>()]() { return acc; },
+        },
+        input,
+        v,
+        /*emptyRevFallback=*/false,
+        /*forceDirty=*/false,
+        /*lazy=*/false);
+    state.forceValue(v, noPos);
+
+    auto * outPath = v.attrs()->get(state.s.outPath);
+    ASSERT_NE(outPath, nullptr);
+
+    /* outPath is a string carrying the printed storePath. */
+    NixStringContext context;
+    auto s = state.forceString(*outPath->value, context, noPos, "outPath");
+    EXPECT_EQ(s, store->printStorePath(sp));
+
+    /* And the context contains an Opaque element naming that storePath
+       — silent loss of this is a derivation-graph correctness bug. */
+    bool foundStorePath = false;
+    for (auto & c : context) {
+        if (auto * o = std::get_if<NixStringContextElem::Opaque>(&c.raw))
+            if (o->path == sp)
+                foundStorePath = true;
+    }
+    EXPECT_TRUE(foundStorePath);
 }
 
 } // namespace nix
