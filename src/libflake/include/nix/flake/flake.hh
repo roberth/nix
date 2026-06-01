@@ -1,13 +1,12 @@
 #pragma once
 ///@file
 
-#include "nix/util/fun.hh"
+#include "nix/fetchers/mountable-tree.hh"
 #include "nix/util/types.hh"
 #include "nix/flake/flakeref.hh"
 #include "nix/flake/lockfile.hh"
 #include "nix/expr/value.hh"
 #include "nix/expr/eval-cache.hh"
-#include "nix/store/path.hh"
 
 namespace nix {
 
@@ -16,30 +15,15 @@ class EvalState;
 namespace flake {
 
 /**
- * A source tree's identity (its predicted storePath) paired with a
- * thunk for reading through its accessor. The mount on `storeFS`
- * fires lazily — when a reader actually touches the accessor — so
- * holding a `MountableTree` doesn't commit to any materialisation
- * having happened. Same instance can be shared across multiple
- * `NodeLocation`s when several nodes (e.g. relative-path inputs)
- * live inside the same store object.
- */
-struct MountableTree
-{
-    StorePath storePath;
-    fun<ref<SourceAccessor>()> accessor;
-};
-
-/**
  * Where one lockfile node lives: a reference to the tree it lives
- * in, plus the in-tree subdir to its `flake.nix`. For non-relative
- * inputs the `tree` is unique to this node; for relative-path
- * inputs the `tree` is the parent's, and the `subdir` records the
- * in-parent subpath.
+ * in (a `fetchers::MountableTree`), plus the in-tree subdir to its
+ * `flake.nix`. For non-relative inputs the `tree` is unique to this
+ * node; for relative-path inputs the `tree` is the parent's, and
+ * the `subdir` records the in-parent subpath.
  */
 struct NodeLocation
 {
-    MountableTree tree;
+    fetchers::MountableTree tree;
     std::string subdir;
 };
 
