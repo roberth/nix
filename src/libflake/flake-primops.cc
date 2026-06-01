@@ -48,7 +48,7 @@ PrimOp getFlake(const Settings & settings)
             auto [storePath, subPath] = state.store->toStorePath(path.path.abs());
             auto location = nix::flake::NodeLocation{
                 .tree =
-                    nix::flake::MountableTree{
+                    nix::fetchers::MountableTree{
                         .storePath = storePath,
                         .accessor = [acc = path.accessor]() { return acc; },
                     },
@@ -82,7 +82,7 @@ PrimOp getFlake(const Settings & settings)
                     }
                     auto location = nix::flake::NodeLocation{
                         .tree =
-                            nix::flake::MountableTree{
+                            nix::fetchers::MountableTree{
                                 .storePath = storePath,
                                 .accessor = [acc = path.accessor]() { return acc; },
                             },
