@@ -81,6 +81,7 @@ suites = [
       'fetchurl.sh',
       'fetchPath.sh',
       'fetchTree-file.sh',
+      'fetchTreeLazy.sh',
       'simple.sh',
       'referrers.sh',
       'optimise-store.sh',

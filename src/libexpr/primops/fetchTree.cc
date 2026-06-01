@@ -116,18 +116,13 @@ static void emitLazyAttrThunk(EvalState & state, const fetchers::LazyAttr & lazy
     dest.mkApp(vPrimOp, vExt);
 }
 
-void emitTreeAttrs(
-    EvalState & state,
-    const fetchers::MountableTree & tree,
-    const fetchers::Input & input,
-    Value & v,
-    bool emptyRevFallback,
-    bool forceDirty)
+/* Populate the metadata attrs (everything except `outPath`) for one
+   fetch-tree attrset. Both `emitTreeAttrs` overloads call this with
+   a builder that has had `outPath` set in whichever shape the
+   overload renders; the metadata layer is the same regardless. */
+static void addFetchTreeMetadataAttrs(
+    EvalState & state, const fetchers::Input & input, BindingsBuilder & attrs, bool emptyRevFallback, bool forceDirty)
 {
-    auto attrs = state.buildBindings(100);
-
-    state.mkStorePathString(tree.storePath, attrs.alloc(state.s.outPath));
-
     // FIXME: support arbitrary input attributes.
 
     if (auto narHash = input.getNarHash())
@@ -166,7 +161,33 @@ void emitTreeAttrs(
         attrs.alloc("lastModifiedDate")
             .mkString(fmt("%s", std::put_time(std::gmtime(&*lastModified), "%Y%m%d%H%M%S")), state.mem);
     }
+}
 
+void emitTreeAttrs(
+    EvalState & state,
+    const fetchers::MountableTree & tree,
+    const fetchers::Input & input,
+    Value & v,
+    bool emptyRevFallback,
+    bool forceDirty)
+{
+    auto attrs = state.buildBindings(100);
+    state.mkStorePathString(tree.storePath, attrs.alloc(state.s.outPath));
+    addFetchTreeMetadataAttrs(state, input, attrs, emptyRevFallback, forceDirty);
+    v.mkAttrs(attrs);
+}
+
+void emitTreeAttrs(
+    EvalState & state,
+    const SourcePath & sourcePath,
+    const fetchers::Input & input,
+    Value & v,
+    bool emptyRevFallback,
+    bool forceDirty)
+{
+    auto attrs = state.buildBindings(100);
+    attrs.alloc(state.s.outPath).mkPath(sourcePath, state.mem);
+    addFetchTreeMetadataAttrs(state, input, attrs, emptyRevFallback, forceDirty);
     v.mkAttrs(attrs);
 }
 
@@ -184,6 +205,7 @@ static void fetchTree(
     fetchers::Input input{};
     NixStringContext context;
     std::optional<std::string> type;
+    bool lazy = false;
     auto fetcher = params.isFetchGit ? "fetchGit" : "fetchTree";
     if (params.isFetchGit)
         type = "git";
@@ -208,6 +230,17 @@ static void fetchTree(
         for (auto & attr : *args[0]->attrs()) {
             if (attr.name == state.s.type)
                 continue;
+            if (state.symbols[attr.name] == "lazy") {
+                state.forceValue(*attr.value, attr.pos);
+                if (attr.value->type() != nBool)
+                    state
+                        .error<TypeError>(
+                            "argument 'lazy' to '%s' is %s while a Boolean is expected", fetcher, showType(*attr.value))
+                        .atPos(pos)
+                        .debugThrow();
+                lazy = attr.value->boolean();
+                continue;
+            }
             state.forceValue(*attr.value, attr.pos);
             if (attr.value->type() == nPath || attr.value->type() == nString) {
                 auto s = state.coerceToString(attr.pos, *attr.value, context, "", false, false).toOwned();
@@ -320,6 +353,24 @@ static void fetchTree(
 
     auto cachedInput =
         state.inputCache->getAccessor(state.fetchSettings, *state.store, input, fetchers::UseRegistries::No);
+
+    if (lazy) {
+        /* Skip mountInput entirely. `outPath` is emitted as a
+           path-typed Value rooted on the fetcher's accessor; reads
+           through it go through the accessor directly without
+           forcing a NAR copy. String coercion still resolves to a
+           store-path string (via `copyPathToStore`) when the user
+           asks for one. The accessor stays alive through eval via
+           `state.inputCache`. */
+        emitTreeAttrs(
+            state,
+            SourcePath{cachedInput.accessor(), CanonPath::root},
+            cachedInput.lockedInput,
+            v,
+            params.emptyRevFallback,
+            false);
+        return;
+    }
 
     auto storePath = state.mountInput(cachedInput.lockedInput, input, cachedInput.accessor());
 
