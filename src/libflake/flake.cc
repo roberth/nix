@@ -397,7 +397,7 @@ static Flake getFlake(
     flake = readFlake(state, originalRef, resolvedRef, lockedRef, rootDir, lockRootAttrPath);
     flake.nodeLocation = NodeLocation{
         .tree =
-            MountableTree{
+            fetchers::MountableTree{
                 .storePath = storePath,
                 .accessor = cachedInput.accessor,
             },
@@ -799,7 +799,7 @@ LockedFlake lockFlake(
                                     return {
                                         NodeLocation{
                                             .tree =
-                                                MountableTree{
+                                                fetchers::MountableTree{
                                                     .storePath = storePath,
                                                     .accessor = cachedInput.accessor,
                                                 },

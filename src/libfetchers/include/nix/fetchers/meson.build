@@ -11,6 +11,7 @@ headers = files(
   'git-utils.hh',
   'input-cache.hh',
   'merkle-tar-adapter.hh',
+  'mountable-tree.hh',
   'registry.hh',
   'tarball.hh',
 )
