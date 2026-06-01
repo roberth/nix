@@ -104,6 +104,7 @@ suites = [
       'fetchMercurial.sh',
       'fetchPath.sh',
       'fetchTree-file.sh',
+      'fetchTreeLazy.sh',
       'fetchurl.sh',
       'filter-source.sh',
       'fixed-slow-vs-bad.sh',
