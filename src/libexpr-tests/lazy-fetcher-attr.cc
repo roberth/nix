@@ -112,11 +112,10 @@ TEST_F(LazyFetcherAttrTest, lazyFunctionOnlyCalledOnAccess)
     EXPECT_EQ(calls, 1);
 }
 
-/* The SourcePath overload emits `outPath` as a path-typed Value
-   rooted on the supplied SourcePath, with metadata identical to the
-   MountableTree overload (both go through the shared
-   `addFetchTreeMetadataAttrs` helper). */
-TEST_F(LazyFetcherAttrTest, sourcePathOverloadProducesPathTypedOutPath)
+/* When `lazy = true`, emit renders `outPath` as a path-typed Value
+   rooted on the accessor — with metadata identical to the eager
+   rendering. */
+TEST_F(LazyFetcherAttrTest, lazyEmitProducesPathTypedOutPath)
 {
     auto accessor = make_ref<MemorySourceAccessor>();
     accessor->addFile(CanonPath("/file"), "content");
@@ -126,7 +125,17 @@ TEST_F(LazyFetcherAttrTest, sourcePathOverloadProducesPathTypedOutPath)
     input.attrs.insert_or_assign("revCount", uint64_t(7));
 
     Value v;
-    emitTreeAttrs(state, SourcePath{accessor, CanonPath::root}, input, v, false, false);
+    emitTreeAttrs(
+        state,
+        fetchers::MountableTree{
+            .storePath = std::nullopt,
+            .accessor = [acc = accessor.cast<SourceAccessor>()]() { return acc; },
+        },
+        input,
+        v,
+        /*emptyRevFallback=*/false,
+        /*forceDirty=*/false,
+        /*lazy=*/true);
     state.forceValue(v, noPos);
 
     /* outPath is a path-typed Value rooted at the accessor's root. */
@@ -137,7 +146,7 @@ TEST_F(LazyFetcherAttrTest, sourcePathOverloadProducesPathTypedOutPath)
     EXPECT_EQ(&*outPath->value->path().accessor, &*accessor);
     EXPECT_EQ(outPath->value->path().path.abs(), "/");
 
-    /* Metadata layer agrees with the MountableTree overload. */
+    /* Metadata layer agrees with the eager shape. */
     auto * rcAttr = v.attrs()->get(state.symbols.create("revCount"));
     ASSERT_NE(rcAttr, nullptr);
     state.forceValue(*rcAttr->value, noPos);

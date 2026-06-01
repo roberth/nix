@@ -169,24 +169,14 @@ void emitTreeAttrs(
     const fetchers::Input & input,
     Value & v,
     bool emptyRevFallback,
-    bool forceDirty)
+    bool forceDirty,
+    bool lazy)
 {
     auto attrs = state.buildBindings(100);
-    state.mkStorePathString(tree.storePath, attrs.alloc(state.s.outPath));
-    addFetchTreeMetadataAttrs(state, input, attrs, emptyRevFallback, forceDirty);
-    v.mkAttrs(attrs);
-}
-
-void emitTreeAttrs(
-    EvalState & state,
-    const SourcePath & sourcePath,
-    const fetchers::Input & input,
-    Value & v,
-    bool emptyRevFallback,
-    bool forceDirty)
-{
-    auto attrs = state.buildBindings(100);
-    attrs.alloc(state.s.outPath).mkPath(sourcePath, state.mem);
+    if (lazy)
+        attrs.alloc(state.s.outPath).mkPath(SourcePath{tree.accessor(), CanonPath::root}, state.mem);
+    else
+        state.mkStorePathString(tree.storePath.value(), attrs.alloc(state.s.outPath));
     addFetchTreeMetadataAttrs(state, input, attrs, emptyRevFallback, forceDirty);
     v.mkAttrs(attrs);
 }
@@ -355,7 +345,7 @@ static void fetchTree(
         state.inputCache->getAccessor(state.fetchSettings, *state.store, input, fetchers::UseRegistries::No);
 
     if (lazy) {
-        /* Skip mountInput entirely. `outPath` is emitted as a
+        /* Skip mountInput entirely. emit renders `outPath` as a
            path-typed Value rooted on the fetcher's accessor; reads
            through it go through the accessor directly without
            forcing a NAR copy. String coercion still resolves to a
@@ -364,11 +354,12 @@ static void fetchTree(
            `state.inputCache`. */
         emitTreeAttrs(
             state,
-            SourcePath{cachedInput.accessor(), CanonPath::root},
+            fetchers::MountableTree{.storePath = std::nullopt, .accessor = cachedInput.accessor},
             cachedInput.lockedInput,
             v,
             params.emptyRevFallback,
-            false);
+            /*forceDirty=*/false,
+            /*lazy=*/true);
         return;
     }
 
