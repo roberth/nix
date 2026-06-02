@@ -396,8 +396,11 @@ static Flake getFlake(
     // Re-parse flake.nix from the store.
     flake = readFlake(state, originalRef, resolvedRef, lockedRef, rootDir, lockRootAttrPath);
     flake.nodeLocation = NodeLocation{
-        .storePath = storePath,
-        .accessor = cachedInput.accessor,
+        .tree =
+            MountableTree{
+                .storePath = storePath,
+                .accessor = cachedInput.accessor,
+            },
         .subdir = lockedRef.subdir,
     };
     return flake;
@@ -612,13 +615,12 @@ LockedFlake lockFlake(
                                subdir. `CanonPath(raw, base)` handles
                                `..` traversal lexically; `/` does
                                not. */
-                            auto & parentInfo = nodePaths.at(node);
+                            auto & parentLoc = nodePaths.at(node);
                             auto relativeTarget = input.ref->input.isRelative().value().string();
-                            auto subdir = CanonPath(relativeTarget, CanonPath(parentInfo.subdir));
+                            auto subdir = CanonPath(relativeTarget, CanonPath(parentLoc.subdir));
                             subdir = CanonPath(ref.subdir, subdir);
                             flake.nodeLocation = NodeLocation{
-                                .storePath = parentInfo.storePath,
-                                .accessor = parentInfo.accessor,
+                                .tree = parentLoc.tree,
                                 .subdir = std::string{subdir.rel()},
                             };
                             return flake;
@@ -765,25 +767,23 @@ LockedFlake lockFlake(
                         }
 
                         else {
-                            auto [info, lockedRef] = [&]() -> std::tuple<NodeLocation, FlakeRef> {
+                            auto [loc, lockedRef] = [&]() -> std::tuple<NodeLocation, FlakeRef> {
                                 // Handle non-flake 'path:./...' inputs.
                                 if (auto resolvedPath = resolveRelativePath()) {
                                     /* Same shape as getInputFlake's
                                        relative branch: share parent's
-                                       storePath + accessor; resolve
-                                       the relative target against
-                                       parent's subdir, then apply
-                                       this input's parsed subdir.
-                                       `CanonPath(raw, base)` handles
-                                       `..` traversal. */
-                                    auto & parentInfo = nodePaths.at(node);
+                                       tree; resolve the relative
+                                       target against parent's subdir,
+                                       then apply this input's parsed
+                                       subdir. `CanonPath(raw, base)`
+                                       handles `..` traversal. */
+                                    auto & parentLoc = nodePaths.at(node);
                                     auto relativeTarget = input.ref->input.isRelative().value().string();
-                                    auto subdir = CanonPath(relativeTarget, CanonPath(parentInfo.subdir));
+                                    auto subdir = CanonPath(relativeTarget, CanonPath(parentLoc.subdir));
                                     subdir = CanonPath(input.ref->subdir, subdir);
                                     return {
                                         NodeLocation{
-                                            .storePath = parentInfo.storePath,
-                                            .accessor = parentInfo.accessor,
+                                            .tree = parentLoc.tree,
                                             .subdir = std::string{subdir.rel()},
                                         },
                                         *input.ref};
@@ -798,8 +798,11 @@ LockedFlake lockFlake(
 
                                     return {
                                         NodeLocation{
-                                            .storePath = storePath,
-                                            .accessor = cachedInput.accessor,
+                                            .tree =
+                                                MountableTree{
+                                                    .storePath = storePath,
+                                                    .accessor = cachedInput.accessor,
+                                                },
                                             .subdir = lockedRef.subdir,
                                         },
                                         lockedRef};
@@ -808,7 +811,7 @@ LockedFlake lockFlake(
 
                             auto childNode = make_ref<LockedNode>(lockedRef, ref, false, overriddenParentPath);
 
-                            nodePaths.emplace(childNode, info);
+                            nodePaths.emplace(childNode, loc);
 
                             node->inputs.insert_or_assign(id, childNode);
                         }
@@ -954,26 +957,17 @@ lockFlake(const Settings & settings, EvalState & state, const FlakeRef & topRef,
     return lockFlake(settings, state, topRef, lockFlags, getFlake(state, topRef, useRegistriesTop, {}));
 }
 
-LockedFlake
-lockFlake(const Settings & settings, EvalState & state, const SourcePath & flakeDir, const LockFlags & lockFlags)
+LockedFlake lockFlake(
+    const Settings & settings,
+    EvalState & state,
+    const SourcePath & flakeDir,
+    NodeLocation location,
+    const LockFlags & lockFlags)
 {
     /* We need a fake flakeref to put in the `Flake` struct, but it's not used for anything. */
     auto fakeRef = parseFlakeRef("flake:get-flake");
     auto flake = readFlake(state, fakeRef, fakeRef, fakeRef, flakeDir, {});
-
-    /* No mountInput went through here — callers pass a `flakeDir`
-       they constructed themselves (e.g. `builtins.getFlake` on a
-       `self.sourceInfo.outPath`-shaped path, which lives inside
-       `/nix/store/<obj>/<...>`). Derive the storePath by splitting
-       at the store-path boundary; wrap `flakeDir.accessor` as an
-       identity thunk since the accessor is already materialised. */
-    auto [storePath, subPath] = state.store->toStorePath(flakeDir.path.abs());
-    flake.nodeLocation = NodeLocation{
-        .storePath = storePath,
-        .accessor = [acc = flakeDir.accessor]() { return acc; },
-        .subdir = std::string{CanonPath(subPath).rel()},
-    };
-
+    flake.nodeLocation = std::move(location);
     return lockFlake(settings, state, fakeRef, lockFlags, std::move(flake));
 }
 
@@ -1018,7 +1012,7 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
         emitTreeAttrs(
             state,
             noPos,
-            info.storePath,
+            info.tree.storePath,
             lockedRef.input,
             vSourceInfo,
             false,
