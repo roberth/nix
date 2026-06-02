@@ -16,25 +16,30 @@ class EvalState;
 namespace flake {
 
 /**
- * Materialisation info for one node's source tree. Captures the
- * three pieces of data the lockfile machinery needs about *where*
- * each input lives:
- *
- * - `storePath`: the store object the source tree was mounted at.
- * - `accessor`: thunk producing the underlying SourceAccessor for
- *   that storePath; fired lazily by readers that need to walk the
- *   tree (e.g. `import (input.outPath + "/file")`).
- * - `subdir`: the in-storePath subpath where this node's flake.nix
- *   lives (empty for inputs that *are* the storePath's root). For
- *   relative-path inputs that share their parent's store object,
- *   this includes the parent-subdir prefix so the override `dir`
- *   attribute is unambiguous against `storePath` regardless of how
- *   the SourcePath was constructed.
+ * A source tree's identity (its predicted storePath) paired with a
+ * thunk for reading through its accessor. The mount on `storeFS`
+ * fires lazily — when a reader actually touches the accessor — so
+ * holding a `MountableTree` doesn't commit to any materialisation
+ * having happened. Same instance can be shared across multiple
+ * `NodeLocation`s when several nodes (e.g. relative-path inputs)
+ * live inside the same store object.
  */
-struct NodeLocation
+struct MountableTree
 {
     StorePath storePath;
     fun<ref<SourceAccessor>()> accessor;
+};
+
+/**
+ * Where one lockfile node lives: a reference to the tree it lives
+ * in, plus the in-tree subdir to its `flake.nix`. For non-relative
+ * inputs the `tree` is unique to this node; for relative-path
+ * inputs the `tree` is the parent's, and the `subdir` records the
+ * in-parent subpath.
+ */
+struct NodeLocation
+{
+    MountableTree tree;
     std::string subdir;
 };
 
@@ -114,12 +119,12 @@ struct Flake
     SourcePath path;
 
     /**
-     * Materialisation info for the flake's source tree. Set by
-     * `getFlake` (after mounting via the input cache) and by the
-     * relative-input branch of `lockFlake`'s `getInputFlake` (which
-     * shares its parent's tree). Carries through to `nodePaths` so
-     * `callFlake`'s sourceInfo rendering can use it directly without
-     * re-deriving anything.
+     * Where this flake lives in the store. Set by `getFlake` (after
+     * the input cache hands us a tree + the mount is registered)
+     * and by the relative-input branch of `lockFlake`'s
+     * `getInputFlake` (which inherits its parent's tree). Carries
+     * through to `nodePaths` so `callFlake`'s sourceInfo rendering
+     * can use it directly without re-deriving anything.
      */
     std::optional<NodeLocation> nodeLocation;
 
@@ -164,10 +169,10 @@ struct LockedFlake
     LockFile lockFile;
 
     /**
-     * Source tree materialisation info for nodes that have been
-     * fetched in `lockFlake()`; in particular, the root node and the
-     * overridden inputs. `callFlake` reads from this when rendering
-     * each input's `sourceInfo` and `dir` override slots.
+     * Where each lockfile node lives. `callFlake` reads from this
+     * when rendering per-input `sourceInfo` and `dir` override
+     * slots; non-evaluator consumers (e.g. `nix flake archive`) can
+     * walk it to access input trees through the lazy accessor.
      */
     std::map<ref<Node>, NodeLocation> nodePaths;
 
@@ -257,17 +262,22 @@ struct LockFlags
 LockedFlake
 lockFlake(const Settings & settings, EvalState & state, const FlakeRef & flakeRef, const LockFlags & lockFlags);
 
-/*
- * @pre `flakeDir.path` must parse as a store-rendered path
- * (`/nix/store/<hash>-<name>[/<subpath>]`). The implementation derives
- * the flake's `nodeLocation` by splitting at the store-path boundary;
- * a `flakeDir` that doesn't parse this way raises a generic
- * `BadStorePath`. Callers in practice satisfy this — `getFlake` on
- * `self.sourceInfo.outPath`-shaped paths, etc. — but the precondition
- * is real.
+/**
+ * Lock a flake whose source tree was materialised by the caller
+ * (e.g. `builtins.getFlake (./some/store/path)`). The caller passes
+ * both the SourcePath used to evaluate `flake.nix` and the
+ * location that will populate the root node's `nodePaths` entry —
+ * the two are derived from the same caller-side data, and forcing
+ * the caller to pass both avoids re-splitting the SourcePath at the
+ * store-path boundary inside `lockFlake`.
  */
-LockedFlake
-lockFlake(const Settings & settings, EvalState & state, const SourcePath & flakeDir, const LockFlags & lockFlags);
+
+LockedFlake lockFlake(
+    const Settings & settings,
+    EvalState & state,
+    const SourcePath & flakeDir,
+    NodeLocation location,
+    const LockFlags & lockFlags);
 
 void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & v);
 

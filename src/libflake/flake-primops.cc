@@ -42,7 +42,19 @@ PrimOp getFlake(const Settings & settings)
 
         if (args[0]->type() == nPath) {
             auto path = state.realisePath(pos, *args[0]);
-            callFlake(state, lockFlake(settings, state, path, lockFlags), v);
+            /* `realisePath` returned a SourcePath living inside
+               `/nix/store/<obj>/<sub>` — recover the components for
+               `NodePathInfo` directly. */
+            auto [storePath, subPath] = state.store->toStorePath(path.path.abs());
+            auto location = nix::flake::NodeLocation{
+                .tree =
+                    nix::flake::MountableTree{
+                        .storePath = storePath,
+                        .accessor = [acc = path.accessor]() { return acc; },
+                    },
+                .subdir = std::string{CanonPath(subPath).rel()},
+            };
+            callFlake(state, lockFlake(settings, state, path, std::move(location), lockFlags), v);
         } else {
             std::string flakeRefS(
                 state.forceStringNoCtx(*args[0], pos, "while evaluating the argument passed to builtins.getFlake"));
@@ -63,9 +75,20 @@ PrimOp getFlake(const Settings & settings)
                 auto [storePath, subPath] = state.store->toStorePath(sourcePath->string());
                 if (auto mount = state.storeFS->getMount(CanonPath(state.store->printStorePath(storePath)))) {
                     auto path = state.storePath(storePath) / CanonPath(subPath);
-                    if (!flakeRef.subdir.empty())
+                    auto subdir = CanonPath(subPath);
+                    if (!flakeRef.subdir.empty()) {
                         path = path / flakeRef.subdir;
-                    return callFlake(state, lockFlake(settings, state, path, lockFlags), v);
+                        subdir = CanonPath(flakeRef.subdir, subdir);
+                    }
+                    auto location = nix::flake::NodeLocation{
+                        .tree =
+                            nix::flake::MountableTree{
+                                .storePath = storePath,
+                                .accessor = [acc = path.accessor]() { return acc; },
+                            },
+                        .subdir = std::string{subdir.rel()},
+                    };
+                    return callFlake(state, lockFlake(settings, state, path, std::move(location), lockFlags), v);
                 }
             }
 
