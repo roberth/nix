@@ -132,12 +132,16 @@ nix build -o "$TEST_ROOT/result" --expr "(builtins.getFlake \"git+file://$flake1
 
 # Under lazy paths the flake's `./.` is an accessor-rooted path value.
 # `dirOf ./.` preserves the path Value at the accessor root, which
-# JSON-renders as "/". The remaining two checks pass `./.` through
-# `baseNameOf` and string coercion respectively; both go through
-# archetype-routed `coerceToString` (Copyable case), which materialises
-# the storePath and yields a `<hash>-source` segment.
+# JSON-renders as "/". `baseNameOf ./.` reads the canon path's
+# trailing segment directly through the `prim_baseNameOf` nPath
+# specialisation -- the accessor root has no basename, so the
+# result is `""` (vs the pre-specialisation `<hash>-source` shape,
+# which required walking the accessor to materialise a storePath
+# rendering). The third check passes `./.` through string coercion,
+# which still routes through `coerceToString`'s Copyable branch and
+# yields the `<hash>-source` segment.
 [[ $(nix eval --json flake1#parent) = '"/"' ]]
-[[ $(nix eval --raw flake1#baseName) =~ ^[a-z0-9]+-source$ ]]
+[[ $(nix eval --raw flake1#baseName) = "" ]]
 [[ $(nix eval --raw flake1#root) =~ ^.*/[a-z0-9]+-source$ ]]
 
 # Building a flake with an unlocked dependency should fail in pure mode.

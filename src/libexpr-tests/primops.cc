@@ -4,6 +4,7 @@
 #include "nix/expr/eval-settings.hh"
 #include "nix/expr/source-root.hh"
 #include "nix/util/memory-source-accessor.hh"
+#include "nix/util/tests/counting-source-accessor.hh"
 
 #include "nix/expr/tests/libexpr.hh"
 
@@ -159,6 +160,81 @@ TEST_F(PrimOpTest, baseNameOf)
 {
     auto v = eval("builtins.baseNameOf /some/path");
     ASSERT_THAT(v, IsStringEq("path"));
+}
+
+namespace {
+
+/* Parse a file from an in-memory accessor admitted as Copyable.
+   Centralises the SourceRoot wrap so the per-test fixture stays
+   focused on the contract under test. */
+template<typename Accessor>
+nix::Expr * parseFromCopyableAccessor(EvalState & state, Accessor accessor, CanonPath path)
+{
+    auto root = make_ref<SourceRoot>(accessor.template cast<SourceAccessor>(), SourceRootKind::Copyable);
+    return state.parseExprFromFile(RootedPath{root, std::move(path)});
+}
+
+} // namespace
+
+/* `prim_baseNameOf` on an `nPath` reads the trailing segment of
+   the SourcePath's `CanonPath` directly, without routing through
+   `coerceToString`'s Copyable branch (which walks the accessor
+   root to render `<storePath>/<subpath>`). These tests pin both
+   sides of that contract: the result string is the right
+   basename, *and* the accessor was not walked.
+
+   Walk-count assertions use `CountingSourceAccessor`'s
+   `readFileCount`: NAR-serialisation reads every file exactly
+   once per walk, so a single file fixture means `readFileCount`
+   is 0 iff no walk happened. The basename-result assertions
+   pin: for any subpath the basename matches what the walking
+   form returned (basename of `<storePath>/<subpath>` equals
+   basename of `<subpath>`); for the accessor root the canon
+   path has no basename and the result is `""`, vs the
+   walking form's `<hash>-source`. */
+TEST_F(PrimOpTest, baseNameOfCopyableSubpath)
+{
+    auto inner = make_ref<MemorySourceAccessor>();
+    inner->addFile(CanonPath("/some/dir/file.nix"), "builtins.baseNameOf ./file.nix");
+    auto accessor = make_ref<CountingSourceAccessor>(inner);
+    auto * expr = parseFromCopyableAccessor(state, accessor, CanonPath("/some/dir/file.nix"));
+    Value v;
+    state.eval(expr, v);
+    state.forceValue(v, noPos);
+    ASSERT_THAT(v, IsStringEq("file.nix"));
+    EXPECT_EQ(accessor->readFileCount.load(), 1u) << "only the file being evaluated should be read";
+}
+
+TEST_F(PrimOpTest, baseNameOfCopyableNestedSubpath)
+{
+    auto inner = make_ref<MemorySourceAccessor>();
+    inner->addFile(CanonPath("/a/b/file.nix"), "builtins.baseNameOf ./.");
+    auto accessor = make_ref<CountingSourceAccessor>(inner);
+    auto * expr = parseFromCopyableAccessor(state, accessor, CanonPath("/a/b/file.nix"));
+    Value v;
+    state.eval(expr, v);
+    state.forceValue(v, noPos);
+    /* `./.` from `/a/b/file.nix` resolves to `/a/b`, a non-root
+       canon path — its basename is the segment `b`. */
+    ASSERT_THAT(v, IsStringEq("b"));
+    EXPECT_EQ(accessor->readFileCount.load(), 1u) << "only the file being evaluated should be read";
+}
+
+TEST_F(PrimOpTest, baseNameOfCopyableRoot)
+{
+    auto inner = make_ref<MemorySourceAccessor>();
+    inner->addFile(CanonPath("/file.nix"), "builtins.baseNameOf ./.");
+    auto accessor = make_ref<CountingSourceAccessor>(inner);
+    auto * expr = parseFromCopyableAccessor(state, accessor, CanonPath("/file.nix"));
+    Value v;
+    state.eval(expr, v);
+    state.forceValue(v, noPos);
+    /* `./.` from `/file.nix` resolves to the accessor root
+       (`CanonPath::root`); the root has no basename. The pre-
+       specialisation form walked here to render `<storePath>/`
+       and returned `<hash>-source`; the new contract is `""`. */
+    ASSERT_THAT(v, IsStringEq(""));
+    EXPECT_EQ(accessor->readFileCount.load(), 1u) << "only the file being evaluated should be read";
 }
 
 TEST_F(PrimOpTest, dirOf)
