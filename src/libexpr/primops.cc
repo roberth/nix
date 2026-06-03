@@ -2068,6 +2068,36 @@ static std::string_view legacyBaseNameOf(std::string_view path)
    following the last slash. */
 static void prim_baseNameOf(EvalState & state, const PosIdx pos, Value ** args, Value & v)
 {
+    state.forceValue(*args[0], pos);
+
+    /* For a path value, read the basename straight out of the
+       `CanonPath` -- `CanonPath::baseName()` already returns the
+       trailing path segment as a `string_view` (and `nullopt` for
+       the root). This mirrors what `prim_dirOf` already does for
+       the complementary structural case (`./foo -> ./.`), and
+       skips routing path values through `coerceToString`'s
+       Copyable branch, which renders `<storePath>/<subpath>` by
+       walking the whole accessor root.
+
+       The user-visible difference vs the pre-specialisation form
+       is narrow: for any path whose canon path has a basename
+       (`./foo`, `./bar/baz`, ...), this returns the same string
+       the walking form returned, because the basename is
+       determined by the trailing path segment, not by what prefix
+       the storePath renders to. The only divergence is
+       `baseNameOf ./.` on a Copyable accessor: today it walks to
+       render `<storePath>/` and returns `<hash>-source`; here it
+       returns `""` (the canon path's root has no basename). The
+       `<hash>-source` shape was an artefact of v7's
+       `coerceToString` Copyable branch rather than a stable
+       contract; callers that depended on it should pass an
+       explicit name (via the surrounding derivation's `name`
+       attr, etc.). */
+    if (args[0]->type() == nPath) {
+        v.mkString(args[0]->path().path.baseName().value_or(""), state.mem);
+        return;
+    }
+
     NixStringContext context;
     v.mkString(
         legacyBaseNameOf(*state.coerceToString(
