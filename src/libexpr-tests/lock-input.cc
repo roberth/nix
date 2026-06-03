@@ -1,5 +1,8 @@
+#include <filesystem>
+
 #include <gtest/gtest.h>
 
+#include "nix/expr/source-root.hh"
 #include "nix/expr/tests/libexpr.hh"
 #include "nix/fetchers/fetchers.hh"
 #include "nix/util/memory-source-accessor.hh"
@@ -15,6 +18,13 @@ protected:
     void SetUp() override
     {
         accessor->addFile(CanonPath("/file"), "content");
+        /* `copyPathToStore` goes through `fetchToStore2`, which opens
+           a sqlite cache under `$XDG_CACHE_HOME` (or `$HOME/.cache`).
+           The nix sandbox's `HOME=/homeless-shelter` is unwritable, so
+           point the cache somewhere writable. */
+        auto dir = std::filesystem::temp_directory_path() / "nix-test-cache";
+        std::filesystem::create_directories(dir);
+        ::setenv("XDG_CACHE_HOME", dir.c_str(), 1);
     }
 
     /* Construct an Input that lockInput's `fetchToStore2 + name` lookups
@@ -96,6 +106,33 @@ TEST_F(LockInputTest, NarHashLazyAttrMemoises)
     input.getNarHash();
     input.getNarHash();
     EXPECT_EQ(counted->readFileCount.load(), 1u) << "subsequent forces are memoised";
+}
+
+/* lockInput's narHash LazyAttr shares walks with `copyPathToStore`:
+   once a Copy has populated `srcToStore` with the same SourcePath, the
+   LazyAttr's compute consults that cache and returns the recorded hash
+   instead of re-walking. Matters most for non-fingerprinted accessors
+   where the sqlite `sourcePathToHash` cache can't bridge the two
+   callsites on its own. */
+TEST_F(LockInputTest, NarHashReusesSrcToStore)
+{
+    auto base = make_ref<MemorySourceAccessor>();
+    base->addFile(CanonPath("/file"), "content");
+    auto counted = make_ref<CountingSourceAccessor>(base);
+    auto input = makeInput();
+
+    state.lockInput(input, input, counted);
+
+    NixStringContext ctx;
+    /* `copyPathToStore` rejects Internal-rooted paths; wrap the
+       in-memory accessor as Copyable -- mirrors how fetcher results
+       are admitted at the libexpr/libfetchers boundary. */
+    auto root = make_ref<SourceRoot>(counted.cast<SourceAccessor>(), SourceRootKind::Copyable);
+    state.copyPathToStore(ctx, RootedPath{root, CanonPath::root});
+    EXPECT_EQ(counted->readFileCount.load(), 1u) << "the Copy walks once";
+
+    input.getNarHash();
+    EXPECT_EQ(counted->readFileCount.load(), 1u) << "lockInput's LazyAttr reuses the hash recorded by Copy";
 }
 
 /* Idempotency: a second lockInput call on an already-locked input
