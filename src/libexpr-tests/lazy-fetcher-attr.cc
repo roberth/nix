@@ -114,6 +114,41 @@ TEST_F(LazyFetcherAttrTest, lazyFunctionOnlyCalledOnAccess)
     EXPECT_EQ(calls, 1);
 }
 
+/* narHash mirrors revCount's lazy-attr emit: when the input carries a
+   LazyAttr on `narHash`, emit produces a Nix-side thunk rather than
+   forcing the libfetchers LazyAttr eagerly. lockInput installs exactly
+   such a LazyAttr; without this path emit would walk the tree at
+   emitTreeAttrs time, undoing the lazy-paths deferral. */
+TEST_F(LazyFetcherAttrTest, narHashLazyAttrProducesThunk)
+{
+    int calls = 0;
+    auto sriHash = std::string("sha256-a4Xg9Q+RWpHBFQJYw8BN3aaXIlFcqaPSuv9QcjbUutw=");
+    fetchers::Input input;
+    input.attrs.insert_or_assign("type", std::string("git"));
+    input.attrs.insert_or_assign(
+        "narHash",
+        fetchers::LazyAttr(
+            make_ref<fetchers::LazyAttrComputation>(
+                fetchers::LazyAttrComputation{.compute = [&calls, sriHash]() -> fetchers::ResolvedAttr {
+                    calls++;
+                    return sriHash;
+                }})));
+
+    Value v;
+    emitTreeAttrs(state, dummyTree(), input, v, false, false);
+    state.forceValue(v, noPos);
+
+    auto * nhAttr = v.attrs()->get(state.symbols.create("narHash"));
+    ASSERT_NE(nhAttr, nullptr);
+
+    EXPECT_EQ(calls, 0) << "emit must not force the narHash LazyAttr";
+
+    state.forceValue(*nhAttr->value, noPos);
+    EXPECT_EQ(calls, 1);
+    NixStringContext ctx;
+    EXPECT_EQ(state.forceString(*nhAttr->value, ctx, noPos, "narHash"), sriHash);
+}
+
 /* When `lazy = true`, emit renders `outPath` as a path-typed Value
    rooted on the accessor — with metadata identical to the eager
    rendering. */
