@@ -131,7 +131,14 @@ static void addFetchTreeMetadataAttrs(
 {
     // FIXME: support arbitrary input attributes.
 
-    if (auto narHash = input.getNarHash())
+    /* Mirror revCount's lazy-attr path: if narHash is a LazyAttr (the
+       shape lockInput installs), thunk it on the Nix side instead of
+       forcing here. Eager forcing here would walk the tree at emit
+       time and undo the lazy-paths deferral for inputs that route
+       only through fetchTree's attrset. */
+    if (auto narHashLazy = maybeGetLazyAttr(input.attrs, "narHash"))
+        emitLazyAttrThunk(state, *narHashLazy, attrs.alloc("narHash", callPos));
+    else if (auto narHash = input.getNarHash())
         attrs.alloc("narHash", callPos).mkString(narHash->to_string(HashFormat::SRI, true), state.mem);
 
     if (input.getType() == "git")
