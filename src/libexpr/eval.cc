@@ -2690,8 +2690,11 @@ StorePath EvalState::copyPathToStore(NixStringContext & context, const RootedPat
 
     auto dstPathCached = getConcurrent(*srcToStore, sp);
 
-    auto dstPath = dstPathCached ? *dstPathCached : [&]() {
-        auto dstPath = fetchToStore(
+    auto dstPath = dstPathCached ? dstPathCached->first : [&]() {
+        /* Use fetchToStore2 (not fetchToStore) so the same walk hands
+           back the NAR hash too — recording it in `srcToStore` lets a
+           later `lockInput` narHash force skip the re-walk. */
+        auto [dstPath, narHash] = fetchToStore2(
             fetchSettings,
             *store,
             sp.resolveSymlinks(SymlinkResolution::Ancestors),
@@ -2701,7 +2704,7 @@ StorePath EvalState::copyPathToStore(NixStringContext & context, const RootedPat
             nullptr,
             repair);
         allowPath(dstPath);
-        srcToStore->try_emplace(sp, dstPath);
+        srcToStore->try_emplace(sp, std::make_pair(dstPath, narHash));
         printMsg(lvlChatty, "copied source '%1%' -> '%2%'", sp, store->printStorePath(dstPath));
         return dstPath;
     }();

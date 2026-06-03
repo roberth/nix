@@ -125,7 +125,17 @@ void EvalState::lockInput(fetchers::Input & input, const fetchers::Input & origi
     auto lazyHash = make_ref<fetchers::LazyAttrComputation>(fetchers::LazyAttrComputation{
         .compute = memo<fetchers::ResolvedAttr>(
             [this, accessor, inputName, originalNarHash, originalInput]() -> fetchers::ResolvedAttr {
-                auto [_, narHash] = fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, inputName);
+                /* Reuse the hash from a prior walk on this SourcePath
+                   (mountInput or copyPathToStore both populate
+                   `srcToStore` with `(StorePath, Hash)`). For
+                   non-fingerprinted accessors this is the only way the
+                   two callsites can share a walk — `fetchToStore2`'s
+                   sqlite cache needs a fingerprint to bridge them. */
+                Hash narHash = [&] {
+                    if (auto hit = getConcurrent(*srcToStore, SourcePath{accessor, CanonPath::root}))
+                        return hit->second;
+                    return fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, inputName).second;
+                }();
                 if (originalNarHash && narHash != *originalNarHash)
                     throw Error(
                         (unsigned int) 102,
@@ -157,7 +167,7 @@ EvalState::mountInput(fetchers::Input & input, const fetchers::Input & originalI
          the storePath via the fixed-output formula — no walk. The
          actual walk-and-copy happens later in `ensureLazyPathCopied`
          if eval ends with this storePath in the string context. */
-    auto storePath = [&]() -> StorePath {
+    auto [storePath, narHash] = [&]() -> std::pair<StorePath, Hash> {
         if (originalInput.getNarHash()) {
             auto [sp, narHash] = fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, input.getName());
             if (narHash != *originalInput.getNarHash())
@@ -168,22 +178,25 @@ EvalState::mountInput(fetchers::Input & input, const fetchers::Input & originalI
                     narHash.to_string(HashFormat::SRI, true),
                     originalInput.getNarHash()->to_string(HashFormat::SRI, true));
             input.attrs.insert_or_assign("narHash", narHash.to_string(HashFormat::SRI, true));
-            return sp;
+            return {sp, narHash};
         }
         auto narHash = input.getNarHash();
         assert(narHash);
-        return store->makeFixedOutputPathFromCA(
-            input.getName(),
-            ContentAddressWithReferences::fromParts(ContentAddressMethod::Raw::NixArchive, *narHash, {}));
+        return {
+            store->makeFixedOutputPathFromCA(
+                input.getName(),
+                ContentAddressWithReferences::fromParts(ContentAddressMethod::Raw::NixArchive, *narHash, {})),
+            *narHash};
     }();
 
     allowPath(storePath); // FIXME: should just whitelist the entire virtual store
     storeFS->mount(CanonPath(store->printStorePath(storePath)), [acc = accessor]() { return acc; });
 
-    /* Pre-populate the SourcePath→StorePath cache so coerceToString of
-       a path-typed `input.outPath` (at the accessor's root) returns
-       this storePath without walking the tree. */
-    srcToStore->try_emplace(SourcePath{accessor, CanonPath::root}, storePath);
+    /* Pre-populate the SourcePath→(StorePath, Hash) cache so coerceToString
+       of a path-typed `input.outPath` (at the accessor's root) returns
+       this storePath without walking the tree, and `lockInput`'s narHash
+       LazyAttr (if not yet forced) can reuse the hash from the same walk. */
+    srcToStore->try_emplace(SourcePath{accessor, CanonPath::root}, std::make_pair(storePath, narHash));
 
     return storePath;
 }

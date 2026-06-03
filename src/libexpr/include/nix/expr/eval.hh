@@ -489,9 +489,13 @@ public:
 
 private:
 
-    /* Cache for calls to addToStore(); maps source paths to the store
-       paths. */
-    const ref<boost::concurrent_flat_map<SourcePath, StorePath>> srcToStore;
+    /* Cache for calls to addToStore(): maps source paths to the store
+       paths and the NAR hash from the same walk. Carrying both lets
+       `lockInput`'s narHash LazyAttr reuse what a previous
+       `copyPathToStore` already computed (and vice versa, mediated by
+       fetchToStore2's own cache when the accessor provides a
+       fingerprint). */
+    const ref<boost::concurrent_flat_map<SourcePath, std::pair<StorePath, Hash>>> srcToStore;
 
     /**
      * A cache that maps paths to "resolved" paths for importing Nix
