@@ -49,8 +49,11 @@ TEST_F(LockInputTest, RecordsNarHashOnInputAttrs)
 /* lockInput throws when originalInput asserts a narHash that disagrees
    with the walked tree's narHash. Pins the exit-102 mismatch contract
    carried over from mountInput; flake input updates rely on it firing
-   before a stale narHash is committed. We assert both the exit status
-   (102 — flake refresh keys off it) and the message shape so a
+   before a stale narHash is committed. Detection is deferred: lockInput
+   installs a LazyAttr whose force does the walk-and-compare. Any
+   consumer (lockfile write, computeStorePath, attrsToJSON, getNarHash)
+   forces the value and surfaces the throw. We assert both the exit
+   status (102 — flake refresh keys off it) and the message shape so a
    refactor that fell back to a generic `Error(status=1, "...")` here
    would surface immediately. */
 TEST_F(LockInputTest, ThrowsOnNarHashAssertionMismatch)
@@ -61,9 +64,11 @@ TEST_F(LockInputTest, ThrowsOnNarHashAssertionMismatch)
     /* A plausible-shaped but definitely-wrong SHA-256. */
     asserted.attrs.insert_or_assign("narHash", std::string("sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="));
 
+    state.lockInput(input, asserted, accessor);
+
     try {
-        state.lockInput(input, asserted, accessor);
-        FAIL() << "expected lockInput to throw";
+        (void) input.getNarHash();
+        FAIL() << "expected getNarHash to throw on the deferred mismatch";
     } catch (const Error & e) {
         EXPECT_EQ(e.info().status, 102u);
         EXPECT_NE(e.what(), nullptr);

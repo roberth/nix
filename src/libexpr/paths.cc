@@ -3,6 +3,7 @@
 #include "nix/expr/eval.hh"
 #include "nix/expr/source-root.hh"
 #include "nix/util/mounted-source-accessor.hh"
+#include "nix/fetchers/attrs.hh"
 #include "nix/fetchers/fetch-to-store.hh"
 
 #include <boost/unordered/concurrent_flat_map.hpp>
@@ -95,20 +96,36 @@ void EvalState::ensureLazyPathsCopied(const NixStringContext & context)
 
 void EvalState::lockInput(fetchers::Input & input, const fetchers::Input & originalInput, ref<SourceAccessor> accessor)
 {
-    /* Walk the tree once to compute the lockfile-grade narHash; surface it on
-       input.attrs so callers treat the input as locked. No mount, no
-       allowlist: with lazy paths, downstream code keeps SourcePath values
-       rooted at the fetcher's accessor and reads through it directly, so
-       there is nothing for storeFS to expose. */
-    auto [_, narHash] = fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, input.getName());
-    input.attrs.insert_or_assign("narHash", narHash.to_string(HashFormat::SRI, true));
-    if (originalInput.getNarHash() && narHash != *originalInput.getNarHash())
-        throw Error(
-            (unsigned int) 102,
-            "NAR hash mismatch in input '%s', expected '%s' but got '%s'",
-            originalInput.to_string(),
-            narHash.to_string(HashFormat::SRI, true),
-            originalInput.getNarHash()->to_string(HashFormat::SRI, true));
+    /* Defer the narHash computation: install a `LazyAttr` that walks the
+       tree only when something actually forces the value (lockfile write,
+       `computeStorePath`, user-supplied-narHash verification, ...). No
+       mount, no allowlist: with lazy paths, downstream code keeps
+       SourcePath values rooted at the fetcher's accessor and reads
+       through it directly, so there is nothing for storeFS to expose. */
+    /* Snapshot `inputName` out of `input` rather than capturing the
+       Input — `LazyAttr` is `ref<LazyAttrComputation>` (shared_ptr-
+       wrapped), so the underlying object is shared across copies; what
+       multiplies is the number of independent `forceAttr` call sites,
+       each of which re-runs `compute` (neither `forceAttr` nor — yet
+       — `LazyAttrComputation` itself memoises). `originalInput` is
+       safe to copy: in production it's a pre-lock value (FlakeRef-
+       derived, strings only). Its `to_string()` is reserved for the
+       mismatch branch. */
+    auto inputName = input.getName();
+    auto originalNarHash = originalInput.getNarHash();
+    auto lazyHash = make_ref<fetchers::LazyAttrComputation>(fetchers::LazyAttrComputation{
+        .compute = [this, accessor, inputName, originalNarHash, originalInput]() -> fetchers::ResolvedAttr {
+            auto [_, narHash] = fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, inputName);
+            if (originalNarHash && narHash != *originalNarHash)
+                throw Error(
+                    (unsigned int) 102,
+                    "NAR hash mismatch in input '%s', expected '%s' but got '%s'",
+                    originalInput.to_string(),
+                    narHash.to_string(HashFormat::SRI, true),
+                    originalNarHash->to_string(HashFormat::SRI, true));
+            return narHash.to_string(HashFormat::SRI, true);
+        }});
+    input.attrs.insert_or_assign("narHash", fetchers::Attr{lazyHash});
 }
 
 StorePath
