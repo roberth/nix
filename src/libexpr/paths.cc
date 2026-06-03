@@ -125,7 +125,16 @@ void EvalState::lockInput(fetchers::Input & input, const fetchers::Input & origi
     auto lazyHash = make_ref<fetchers::LazyAttrComputation>(fetchers::LazyAttrComputation{
         .compute = memo<fetchers::ResolvedAttr>(
             [this, accessor, inputName, originalNarHash, originalInput]() -> fetchers::ResolvedAttr {
-                auto [_, narHash] = fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, inputName);
+                /* Reuse the hash from a prior walk on this SourcePath
+                   (`mountInput` and `copyPathToStore` both record one).
+                   For non-fingerprinted accessors this is the only way
+                   the two callsites can share a walk — `fetchToStore2`'s
+                   sqlite cache needs a fingerprint to bridge them. */
+                Hash narHash = [&] {
+                    if (auto hit = getConcurrent(*treeNarHashes, SourcePath{accessor, CanonPath::root}))
+                        return *hit;
+                    return fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, inputName).second;
+                }();
                 if (originalNarHash && narHash != *originalNarHash)
                     throw Error(
                         (unsigned int) 102,

@@ -2764,7 +2764,10 @@ StorePath EvalState::copyPathToStore(NixStringContext & context, const RootedPat
     /* The name is ours, not the recording caller's: taking theirs would make
        the result depend on who walked first. */
     auto dstPath = cachedNarHash ? storePathFromNarHash(*store, sp.baseName(), *cachedNarHash) : [&]() {
-        auto dstPath = fetchToStore(
+        /* Use fetchToStore2 (not fetchToStore) so the same walk hands
+           back the NAR hash too — recording it lets a later `lockInput`
+           narHash force skip the re-walk. */
+        auto [dstPath, narHash] = fetchToStore2(
             fetchSettings,
             *store,
             sp.resolveSymlinks(SymlinkResolution::Ancestors),
@@ -2774,6 +2777,7 @@ StorePath EvalState::copyPathToStore(NixStringContext & context, const RootedPat
             nullptr,
             repair);
         allowPath(dstPath);
+        treeNarHashes->try_emplace(sp, narHash);
         printMsg(lvlChatty, "copied source '%1%' -> '%2%'", sp, store->printStorePath(dstPath));
         return dstPath;
     }();
