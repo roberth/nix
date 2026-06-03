@@ -2,6 +2,7 @@
 #include "nix/store/content-address.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/source-root.hh"
+#include "nix/util/memo.hh"
 #include "nix/util/mounted-source-accessor.hh"
 #include "nix/fetchers/attrs.hh"
 #include "nix/fetchers/fetch-to-store.hh"
@@ -113,18 +114,27 @@ void EvalState::lockInput(fetchers::Input & input, const fetchers::Input & origi
        mismatch branch. */
     auto inputName = input.getName();
     auto originalNarHash = originalInput.getNarHash();
+    /* Wrap in `memo<>` so the walk fires at most once even when the
+       attr is forced repeatedly (lockfile write + computeStorePath +
+       JSON serialization, ...). Crucial for non-fingerprinted
+       accessors (dirty trees, in-memory): without memoisation, every
+       force re-walks because the `sourcePathToHash` cache in
+       `fetchToStore2` only kicks in on a fingerprint. On a mismatch
+       throw, `call_once` keeps the flag unset so subsequent forces
+       still surface the error. */
     auto lazyHash = make_ref<fetchers::LazyAttrComputation>(fetchers::LazyAttrComputation{
-        .compute = [this, accessor, inputName, originalNarHash, originalInput]() -> fetchers::ResolvedAttr {
-            auto [_, narHash] = fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, inputName);
-            if (originalNarHash && narHash != *originalNarHash)
-                throw Error(
-                    (unsigned int) 102,
-                    "NAR hash mismatch in input '%s', expected '%s' but got '%s'",
-                    originalInput.to_string(),
-                    narHash.to_string(HashFormat::SRI, true),
-                    originalNarHash->to_string(HashFormat::SRI, true));
-            return narHash.to_string(HashFormat::SRI, true);
-        }});
+        .compute = memo<fetchers::ResolvedAttr>(
+            [this, accessor, inputName, originalNarHash, originalInput]() -> fetchers::ResolvedAttr {
+                auto [_, narHash] = fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, inputName);
+                if (originalNarHash && narHash != *originalNarHash)
+                    throw Error(
+                        (unsigned int) 102,
+                        "NAR hash mismatch in input '%s', expected '%s' but got '%s'",
+                        originalInput.to_string(),
+                        narHash.to_string(HashFormat::SRI, true),
+                        originalNarHash->to_string(HashFormat::SRI, true));
+                return narHash.to_string(HashFormat::SRI, true);
+            })});
     input.attrs.insert_or_assign("narHash", fetchers::Attr{lazyHash});
 }
 
