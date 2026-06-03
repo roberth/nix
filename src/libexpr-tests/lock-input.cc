@@ -3,6 +3,7 @@
 #include "nix/expr/tests/libexpr.hh"
 #include "nix/fetchers/fetchers.hh"
 #include "nix/util/memory-source-accessor.hh"
+#include "nix/util/tests/counting-source-accessor.hh"
 
 namespace nix {
 
@@ -75,6 +76,26 @@ TEST_F(LockInputTest, ThrowsOnNarHashAssertionMismatch)
         EXPECT_NE(std::string{e.what()}.find("NAR hash mismatch in input"), std::string::npos)
             << "actual message: " << e.what();
     }
+}
+
+/* lockInput's narHash LazyAttr memoises: forcing the attribute multiple
+   times walks the tree at most once. Matters for non-fingerprinted
+   accessors (dirty trees, in-memory), where `fetchToStore2`'s
+   sourcePathToHash cache never kicks in — without memoisation each
+   force re-walks. With fingerprinted accessors the sqlite cache
+   already shares; this test pins the parity. */
+TEST_F(LockInputTest, NarHashLazyAttrMemoises)
+{
+    auto counted = make_ref<CountingSourceAccessor>(accessor);
+    auto input = makeInput();
+
+    state.lockInput(input, input, counted);
+    EXPECT_EQ(counted->readFileCount.load(), 0u) << "lockInput must not walk";
+    input.getNarHash();
+    EXPECT_EQ(counted->readFileCount.load(), 1u) << "first force walks the one-file tree";
+    input.getNarHash();
+    input.getNarHash();
+    EXPECT_EQ(counted->readFileCount.load(), 1u) << "subsequent forces are memoised";
 }
 
 /* Idempotency: a second lockInput call on an already-locked input
