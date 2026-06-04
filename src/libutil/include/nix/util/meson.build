@@ -35,6 +35,7 @@ headers = [ config_pub_h ] + files(
   'current-process.hh',
   'deleter.hh',
   'demangle.hh',
+  'diagnose.hh',
   'english.hh',
   'environment-variables.hh',
   'error.hh',

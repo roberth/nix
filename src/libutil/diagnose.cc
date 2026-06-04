@@ -1,4 +1,4 @@
-#include "nix/expr/diagnose.hh"
+#include "nix/util/diagnose.hh"
 #include "nix/util/configuration.hh"
 #include "nix/util/config-impl.hh"
 #include "nix/util/abstract-setting-to-json.hh"
