@@ -38,6 +38,7 @@ suites += {
     'get-flake.sh',
     'type-error-fallback.sh',
     'lazy-paths-submodule.sh',
+    'lint-fetch-whole-source-to-store.sh',
   ],
   'workdir' : meson.current_source_dir(),
 }
