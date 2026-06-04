@@ -1117,6 +1117,13 @@ Flake::~Flake() {}
 
 ref<eval_cache::EvalCache> openEvalCache(EvalState & state, ref<const LockedFlake> lockedFlake)
 {
+    if (state.settings.useEvalCache && state.settings.pureEval
+        && state.fetchSettings.lintFetchWholeSourceToStore != Diagnose::Ignore)
+        throw UsageError(
+            "`lint-fetch-whole-source-to-store` needs `--no-eval-cache` (or `eval-cache = false`): "
+            "the eval cache reads the whole flake source to form its key, and warm hits skip "
+            "evaluation entirely.");
+
     auto fingerprint = state.settings.useEvalCache && state.settings.pureEval
                            ? lockedFlake->getFingerprint(*state.store, state.fetchSettings)
                            : std::nullopt;
