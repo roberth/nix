@@ -87,6 +87,7 @@ headers = [ config_pub_h ] + files(
   'sort.hh',
   'source-accessor.hh',
   'source-path.hh',
+  'source-root.hh',
   'split.hh',
   'std-hash.hh',
   'strings-inline.hh',
