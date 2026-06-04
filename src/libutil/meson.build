@@ -177,6 +177,7 @@ sources = [ config_priv_h ] + files(
   'config-global.cc',
   'configuration.cc',
   'current-process.cc',
+  'diagnose.cc',
   'english.cc',
   'environment-variables.cc',
   'error.cc',
