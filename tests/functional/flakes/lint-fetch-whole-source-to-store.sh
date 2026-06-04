@@ -18,16 +18,20 @@ EOF
 git -C "$repo" add flake.nix
 git -C "$repo" -c user.email=t@t -c user.name=t commit -q -m init
 
-# Cold call: the cache is empty. The lint surfaces the callsite.
+# Combining the eval cache (on by default for `nix eval` on a flake)
+# with a non-`ignore` value of the lint is refused: the eval cache
+# would silently bypass evaluation on a warm run, defeating the lint's
+# purpose. The error tells the user to use `--no-eval-cache`.
 expectStderr 1 nix --lint-fetch-whole-source-to-store fatal eval "$repo#x" \
+    | grepQuiet 'no-eval-cache'
+
+# Cold call with the eval cache off: the lint surfaces the callsite.
+expectStderr 1 nix --no-eval-cache --lint-fetch-whole-source-to-store fatal eval "$repo#x" \
     | grepQuiet 'reading the entire contents of fetched source.*into the store.*lint-fetch-whole-source-to-store'
 
-# Warm call: the same fetch would now hit the sourcePathToHash cache. The
-# lint must still fire — the developer wants to find the offending
+# Warm call: the sourcePathToHash sqlite cache is now populated, but
+# the lint must still fire — the developer wants to find the offending
 # callsite irrespective of whether a cache happens to short-circuit it.
-# (Use --no-eval-cache so the result-level eval cache doesn't bypass
-# evaluation entirely; the eval-cache+lint interaction is a separate
-# concern.)
 expectStderr 1 nix --no-eval-cache --lint-fetch-whole-source-to-store fatal eval "$repo#x" \
     | grepQuiet 'reading the entire contents of fetched source.*into the store.*lint-fetch-whole-source-to-store'
 
