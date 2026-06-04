@@ -2,9 +2,11 @@
 #include "nix/store/content-address.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/source-root.hh"
+#include "nix/util/diagnose.hh"
 #include "nix/util/memo.hh"
 #include "nix/util/mounted-source-accessor.hh"
 #include "nix/fetchers/attrs.hh"
+#include "nix/fetchers/fetch-settings.hh"
 #include "nix/fetchers/fetch-to-store.hh"
 
 #include <boost/unordered/concurrent_flat_map.hpp>
@@ -134,6 +136,13 @@ void EvalState::lockInput(fetchers::Input & input, const fetchers::Input & origi
                 Hash narHash = [&] {
                     if (auto hit = getConcurrent(*srcToStore, SourcePath{accessor, CanonPath::root}))
                         return hit->second;
+                    /* Lockable inputs are by-construction fetched
+                       trees (Copyable). Fire the lint before any
+                       walk so callers wired to crash on this setting
+                       can catch the offending site. */
+                    diagnose(fetchSettings.lintFetchWholeSourceToStore, [&](bool fatal) -> std::optional<Error> {
+                        return Error("computing narHash for fetched input '%s' walks the source tree", inputName);
+                    });
                     return fetchToStore2(fetchSettings, *store, accessor, FetchMode::DryRun, inputName).second;
                 }();
                 if (originalNarHash && narHash != *originalNarHash)

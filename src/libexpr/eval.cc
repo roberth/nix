@@ -1,5 +1,7 @@
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-error.hh"
+#include "nix/util/diagnose.hh"
+#include "nix/fetchers/fetch-settings.hh"
 #include "nix/expr/source-root.hh"
 #include "nix/expr/eval-settings.hh"
 #include "nix/expr/primops.hh"
@@ -2687,6 +2689,31 @@ StorePath EvalState::copyPathToStore(NixStringContext & context, const RootedPat
         error<EvalError>(
             "cannot copy a path on an internal accessor to the store at '%1%'", sp.accessor->showPath(sp.path))
             .debugThrow();
+
+    /* The lint fires on the *request* to copy a fetched source to
+       store. Placing it before the cache lookup means a warm
+       `srcToStore` cache doesn't silently hide the offending
+       callsite. Two narrow predicates gate it:
+
+       - Only Copyable-kinded paths are in scope: System paths
+         represent filesystem locations the user explicitly
+         requested, not fetched sources.
+
+       - Only requests at the accessor root (`sp.path.isRoot()`)
+         are flagged, matching the lint's name and its warning
+         text. Per-file copies via `"${./script.sh}"`-style
+         interpolation reach this code path with a non-root
+         `sp.path`; they materialise just that one file (not the
+         "entire contents" of the source), and they're intrinsic
+         to the lazy-paths regime — flagging them would generate
+         hundreds of warnings per `nix eval .#pkg.drvPath` (each
+         derivation referencing each shell hook) and drown the
+         actual whole-tree offenders that the lint is supposed to
+         surface. */
+    if (path.root->kind == SourceRootKind::Copyable && sp.path.isRoot())
+        diagnose(fetchSettings.lintFetchWholeSourceToStore, [&](bool fatal) -> std::optional<Error> {
+            return Error("reading the entire contents of fetched source '%s' into the store", sp);
+        });
 
     auto dstPathCached = getConcurrent(*srcToStore, sp);
 

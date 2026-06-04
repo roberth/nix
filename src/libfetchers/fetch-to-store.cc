@@ -1,6 +1,7 @@
 #include "nix/fetchers/fetch-to-store.hh"
 #include "nix/fetchers/fetchers.hh"
 #include "nix/fetchers/fetch-settings.hh"
+#include "nix/util/diagnose.hh"
 #include "nix/util/environment-variables.hh"
 
 namespace nix {
@@ -36,6 +37,12 @@ std::pair<StorePath, Hash> fetchToStore2(
     PathFilter * filter,
     RepairFlag repair)
 {
+    /* The lint that fires on a Copyable source lives in
+       `EvalState::copyPathToStore` and `EvalState::lockInput`
+       (libexpr), where the path's `SourceRoot` kind is in scope.
+       libfetchers can't see `SourceRootKind` values (it's a
+       libexpr concept). */
+
     std::optional<fetchers::Cache::Key> cacheKey;
 
     auto [subpath, fingerprint] = filter ? std::pair<CanonPath, std::optional<std::string>>{path.path, std::nullopt}

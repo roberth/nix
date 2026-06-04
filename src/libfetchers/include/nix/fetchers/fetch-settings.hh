@@ -3,6 +3,7 @@
 
 #include "nix/util/types.hh"
 #include "nix/util/configuration.hh"
+#include "nix/util/diagnose.hh"
 #include "nix/util/ref.hh"
 #include "nix/util/sync.hh"
 
@@ -147,6 +148,30 @@ struct Settings : public Config
           Files fetched via `NIX_PATH`, `fetchGit`, `fetchMercurial`,
           `fetchTarball`, and `fetchurl` respect this TTL.
         )"};
+
+    Setting<Diagnose> lintFetchWholeSourceToStore{
+        this,
+        Diagnose::Ignore,
+        "lint-fetch-whole-source-to-store",
+        R"(
+          Controls handling of evaluation paths that read the whole
+          contents of a fetched source (such as a flake input) into
+          the store, either by copying the tree or by computing its
+          NAR hash.
+
+          - `ignore`: Allow without warning (default)
+          - `warn`: Emit a warning at the offending callsite
+          - `fatal`: Abort evaluation at the offending callsite
+
+          Under lazy paths, a fetched source's metadata, sub-paths,
+          and individual files are reachable without reading the whole
+          tree. Setting this to `warn` or `fatal` is useful for
+          surfacing eager fallbacks during development — anything that
+          ends up walking an entire fetched source either has a lazy
+          alternative that should be used, or is a user-visible
+          coercion (e.g. `toString` on the source's `outPath`).
+        )",
+    };
 
     ref<Cache> getCache() const;
 

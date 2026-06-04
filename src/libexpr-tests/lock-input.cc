@@ -5,6 +5,7 @@
 #include "nix/expr/source-root.hh"
 #include "nix/expr/tests/libexpr.hh"
 #include "nix/fetchers/fetchers.hh"
+#include "nix/util/diagnose.hh"
 #include "nix/util/memory-source-accessor.hh"
 #include "nix/util/tests/counting-source-accessor.hh"
 
@@ -133,6 +134,25 @@ TEST_F(LockInputTest, NarHashReusesSrcToStore)
 
     input.getNarHash();
     EXPECT_EQ(counted->readFileCount.load(), 1u) << "lockInput's LazyAttr reuses the hash recorded by Copy";
+}
+
+/* `lint-fetch-whole-source-to-store = fatal` aborts the walk of a
+   Copyable accessor before `fetchToStore2` reads any contents.
+   This is the developer-facing knob that catches code paths which
+   should be staying lazy under flake evaluation but instead end up
+   asking for the whole source tree in store form. */
+TEST_F(LockInputTest, LintFetchWholeSourceToStoreThrowsBeforeReading)
+{
+    auto base = make_ref<MemorySourceAccessor>();
+    base->addFile(CanonPath("/file"), "content");
+    auto counted = make_ref<CountingSourceAccessor>(base);
+    auto input = makeInput();
+
+    fetchSettings.lintFetchWholeSourceToStore = Diagnose::Fatal;
+
+    state.lockInput(input, input, counted);
+    EXPECT_THROW(input.getNarHash(), Error);
+    EXPECT_EQ(counted->readFileCount.load(), 0u) << "the lint must fire before any contents are read";
 }
 
 /* Idempotency: a second lockInput call on an already-locked input
