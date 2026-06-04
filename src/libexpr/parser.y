@@ -30,7 +30,7 @@
 #include "nix/expr/nixexpr.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-settings.hh"
-#include "nix/expr/diagnose.hh"
+#include "nix/util/diagnose.hh"
 #include "nix/expr/parser-state.hh"
 
 #define YY_DECL                                    \

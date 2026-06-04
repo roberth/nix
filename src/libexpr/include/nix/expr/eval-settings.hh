@@ -1,7 +1,7 @@
 #pragma once
 ///@file
 
-#include "nix/expr/diagnose.hh"
+#include "nix/util/diagnose.hh"
 #include "nix/expr/eval-profiler-settings.hh"
 #include "nix/util/configuration.hh"
 #include "nix/util/source-path.hh"
