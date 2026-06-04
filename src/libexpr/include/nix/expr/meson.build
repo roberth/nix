@@ -11,7 +11,6 @@ headers = [ config_pub_h ] + files(
   'attr-path.hh',
   'attr-set.hh',
   'counter.hh',
-  'diagnose.hh',
   'eval-cache.hh',
   'eval-error.hh',
   'eval-gc.hh',
