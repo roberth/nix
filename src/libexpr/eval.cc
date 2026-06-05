@@ -978,6 +978,18 @@ void EvalState::mkPos(Value & v, PosIdx p)
 {
     auto origin = positions.originOf(p);
     if (auto path = std::get_if<RootedPath>(&origin)) {
+        /* Positions whose origin lives on an Internal-kinded
+           SourceRoot — corepkgs files, derivation-internal helpers,
+           similar internals — have no user-visible source location.
+           Surface them as `null`, matching the shape unsafeGetAttrPos
+           already uses for genuinely missing positions, rather than
+           an attrset whose `.file` would resolve to nix-internal
+           accessor coordinates (`<nix>foo.nix`,
+           `«nix-internal»derivation-internal.nix`, ...). */
+        if (path->root->kind == SourceRootKind::Internal) {
+            v.mkNull();
+            return;
+        }
         auto attrs = buildBindings(3);
         attrs.alloc(s.file).mkString(path->path.abs(), mem);
         makePositionThunks(*this, p, attrs.alloc(s.line), attrs.alloc(s.column));

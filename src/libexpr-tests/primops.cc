@@ -187,29 +187,23 @@ TEST_F(PrimOpTest, getAttrNotFound)
     ASSERT_THROW(eval("builtins.getAttr \"y\" { }"), TypeError);
 }
 
-TEST_F(PrimOpTest, unsafeGetAttrPos)
+/* Regression guard for the *new* behaviour: positions whose
+   SourceRoot is Internal-kinded surface as `null` through
+   `unsafeGetAttrPos`, rather than leaking corepkgs / internal-FS
+   coordinates into user-visible attrsets. */
+TEST_F(PrimOpTest, unsafeGetAttrPosReturnsNullForInternalRootedPositions)
 {
     state.corepkgsFS->addFile(CanonPath("foo.nix"), "\n\r\n\r{ y = \"x\"; }");
 
     auto expr = "builtins.unsafeGetAttrPos \"y\" (import <nix/foo.nix>)";
     auto v = eval(expr);
-    ASSERT_THAT(v, IsAttrsOfSize(3));
-
-    auto file = v.attrs()->get(createSymbol("file"));
-    ASSERT_NE(file, nullptr);
-    ASSERT_THAT(*file->value, IsString());
-    auto s = baseNameOf(file->value->string_view());
-    ASSERT_EQ(s, "foo.nix");
-
-    auto line = v.attrs()->get(createSymbol("line"));
-    ASSERT_NE(line, nullptr);
-    state.forceValue(*line->value, noPos);
-    ASSERT_THAT(*line->value, IsIntEq(4));
-
-    auto column = v.attrs()->get(createSymbol("column"));
-    ASSERT_NE(column, nullptr);
-    state.forceValue(*column->value, noPos);
-    ASSERT_THAT(*column->value, IsIntEq(3));
+    /* The position's origin is on corepkgsFS — an Internal-kinded
+       SourceRoot — so `mkPos` returns `null` rather than the
+       `{file, line, column}` attrset. Matches the behaviour for
+       `derivation` outputs whose positions live on `internalFS`:
+       `builtins.unsafeGetAttrPos "outPath" (derivation {...})` is
+       also `null`. */
+    EXPECT_EQ(v.type(), nNull);
 }
 
 TEST_F(PrimOpTest, hasAttr)
