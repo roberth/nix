@@ -24,6 +24,7 @@
 #include "nix/flake/flake.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-cache.hh"
+#include "nix/expr/source-root.hh"
 #include "nix/expr/eval-settings.hh"
 #include "nix/flake/lockfile.hh"
 #include "nix/expr/eval-inline.hh"
@@ -250,7 +251,15 @@ static Flake readFlake(
 
     // NOTE evalFile forces vInfo to be an attrset because mustBeTrivial is true.
     Value vInfo;
-    state.evalFile(flakePath, vInfo, true);
+    /* `rootDir` is either the fetcher's tree-rooted SourcePath
+       (first readFlake call, accessor=fetched tree → Copyable) or
+       a rootFS-rooted SourcePath at the flake's storepath
+       (second call, after `mountInput` — the accessor is rootFS,
+       the path is `/nix/store/X-source/...`, so kind=System). */
+    auto root =
+        &*flakePath.accessor == &*state.rootFS ? state.rootFSRoot : state.getOrCreateFetcherRoot(flakePath.accessor);
+    auto flakeRooted = RootedPath{root, flakePath.path};
+    state.evalFile(flakeRooted, vInfo, true);
 
     Flake flake{
         .originalRef = originalRef,
@@ -982,10 +991,19 @@ static ref<SourceAccessor> makeInternalFS()
 }
 
 static auto internalFS = makeInternalFS();
+/* The flake-internal accessor is admitted as Internal — its files
+   (currently `call-flake.nix`) implement the call-flake machinery
+   and aren't meant to surface as user-visible path values. Named
+   distinctly from `EvalState::internalFSRoot` (which wraps the
+   *evaluator*-internal MemorySourceAccessor for
+   `derivation-internal.nix` and `imported-drv-to-derivation.nix`)
+   because the two accessors live at different scopes (process-
+   static vs per-EvalState) and host different files. */
+static auto callFlakeInternalRoot = make_ref<SourceRoot>(internalFS, SourceRootKind::Internal);
 
 static Value * requireInternalFile(EvalState & state, CanonPath path)
 {
-    SourcePath p{internalFS, path};
+    RootedPath p{callFlakeInternalRoot, path};
     auto v = state.allocValue();
     state.evalFile(p, *v); // has caching
     return v;

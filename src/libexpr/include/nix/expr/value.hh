@@ -16,6 +16,7 @@
 #include "nix/expr/eval-gc.hh"
 #include "nix/expr/value/context.hh"
 #include "nix/util/source-path.hh"
+#include "nix/util/source-root.hh"
 #include "nix/expr/print-options.hh"
 #include "nix/util/checked-arithmetic.hh"
 
@@ -390,7 +391,26 @@ struct ValueBase
 
     struct Path
     {
-        SourceAccessor * accessor;
+        /**
+         * Non-owning. Lifetime is held by one of:
+         *
+         * - `EvalState::rootFSRoot` / `corepkgsRoot` /
+         *   `internalFSRoot` (pinned for the eval's lifetime as
+         *   `ref<>` members).
+         * - `EvalState::fetcherRoots` (Copyable admissions for
+         *   fetcher accessors; pinned for the eval's lifetime
+         *   as map values).
+         * - A file-static `ref<SourceRoot>` for accessors that
+         *   live across `EvalState`s (currently
+         *   `flake.cc`'s call-flake.nix root; process-static).
+         *
+         * The pointer aliases one of those owners — same pattern
+         * as the pre-SourceRoot `SourceAccessor *` field. Callers
+         * that need to retain a root past the Value's lifetime
+         * must extend via `pathRoot()->shared_from_this()` (see
+         * `ExprConcatStrings::eval` capturing `firstPathRoot`).
+         */
+        SourceRoot * root;
         const StringData * path;
     };
 
@@ -906,7 +926,7 @@ protected:
     void getStorage(Path & path) const noexcept
     {
         Payload payload = loadPayload();
-        path.accessor = untagPointer<decltype(path.accessor)>(payload[0]);
+        path.root = untagPointer<decltype(path.root)>(payload[0]);
         path.path = std::bit_cast<const StringData *>(payload[1]);
     }
 
@@ -963,7 +983,7 @@ protected:
 
     void setStorage(Path path) noexcept
     {
-        setUntaggablePayload<pdPath>(path.accessor, path.path);
+        setUntaggablePayload<pdPath>(path.root, path.path);
     }
 
     void setStorage(Failed * failed) noexcept
@@ -1332,11 +1352,11 @@ public:
 
     void mkStringMove(const StringData & s, const NixStringContext & context, EvalMemory & mem);
 
-    void mkPath(const SourcePath & path, EvalMemory & mem);
+    void mkPath(const RootedPath & path, EvalMemory & mem);
 
-    inline void mkPath(SourceAccessor * accessor, const StringData & path) noexcept
+    inline void mkPath(SourceRoot * root, const StringData & path) noexcept
     {
-        setStorage(Path{.accessor = accessor, .path = &path});
+        setStorage(Path{.root = root, .path = &path});
     }
 
     inline void mkNull() noexcept
@@ -1439,8 +1459,13 @@ public:
 
     SourcePath path() const
     {
-        return SourcePath(
-            ref(pathAccessor()->shared_from_this()), CanonPath(CanonPath::unchecked_t(), std::string(pathStrView())));
+        return SourcePath(pathRoot()->accessor, CanonPath(CanonPath::unchecked_t(), std::string(pathStrView())));
+    }
+
+    RootedPath rootedPath() const
+    {
+        return RootedPath(
+            ref(pathRoot()->shared_from_this()), CanonPath(CanonPath::unchecked_t(), std::string(pathStrView())));
     }
 
     const StringData & string_data() const noexcept
@@ -1523,9 +1548,9 @@ public:
         return getStorage<Path>().path->view();
     }
 
-    SourceAccessor * pathAccessor() const noexcept
+    SourceRoot * pathRoot() const noexcept
     {
-        return getStorage<Path>().accessor;
+        return getStorage<Path>().root;
     }
 
     Failed & failed() const noexcept

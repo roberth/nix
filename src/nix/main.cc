@@ -258,7 +258,7 @@ static void showHelp(std::vector<std::string> subcommand, NixArgs & toplevel)
     state.eval(
         state.parseExprFromString(
 #include "generate-manpage.nix.gen.hh"
-            , state.rootPath(CanonPath::root)),
+            , state.rootedPath(CanonPath::root)),
         *vGenerateManpage);
 
     state.corepkgsFS->addFile(

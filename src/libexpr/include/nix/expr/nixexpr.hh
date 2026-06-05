@@ -209,13 +209,13 @@ struct ExprString : Expr
 
 struct ExprPath : Expr
 {
-    ref<SourceAccessor> accessor;
+    ref<SourceRoot> root;
     Value v;
 
-    ExprPath(std::pmr::polymorphic_allocator<char> & alloc, ref<SourceAccessor> accessor, std::string_view sv)
-        : accessor(accessor)
+    ExprPath(std::pmr::polymorphic_allocator<char> & alloc, ref<SourceRoot> root, std::string_view sv)
+        : root(root)
     {
-        v.mkPath(&*accessor, StringData::make(*alloc.resource(), sv));
+        v.mkPath(&*root, StringData::make(*alloc.resource(), sv));
     }
 
     Value * maybeThunk(EvalState & state, Env & env) override;

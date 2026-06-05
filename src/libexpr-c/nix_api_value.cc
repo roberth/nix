@@ -532,7 +532,7 @@ nix_err nix_init_path_string(nix_c_context * context, EvalState * s, nix_value *
         context->last_err_code = NIX_OK;
     try {
         auto & v = check_value_out(value);
-        v.mkPath(s->state.rootPath(nix::CanonPath(str)), s->state.mem);
+        v.mkPath(s->state.rootedPath(nix::CanonPath(str)), s->state.mem);
     }
     NIXC_CATCH_ERRS
 }

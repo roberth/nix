@@ -1,4 +1,5 @@
 #include "nix/util/source-path.hh"
+#include "nix/util/source-root.hh"
 
 namespace nix {
 
@@ -82,6 +83,12 @@ std::strong_ordering SourcePath::operator<=>(const SourcePath & x) const noexcep
 std::ostream & operator<<(std::ostream & str, const SourcePath & path)
 {
     str << path.to_string();
+    return str;
+}
+
+std::ostream & operator<<(std::ostream & str, const RootedPath & path)
+{
+    str << path.sourcePath();
     return str;
 }
 
