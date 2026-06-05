@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include "nix/expr/eval.hh"
+#include "nix/expr/source-root.hh"
 #include "nix/expr/tests/libexpr.hh"
 #include "nix/expr/tests/gc.hh"
 #include "nix/util/memory-source-accessor.hh"
@@ -231,7 +232,9 @@ TEST_F(LibExprTest, gcThreadPropagatesException)
 TEST_F(LibExprTest, resetFileCacheReleasesValues)
 {
     auto accessor = make_ref<MemorySourceAccessor>();
-    auto file = accessor->addFile(CanonPath("/test.nix"), "{ a = 1; }");
+    accessor->addFile(CanonPath("/test.nix"), "{ a = 1; }");
+    auto root = make_ref<SourceRoot>(accessor.cast<SourceAccessor>(), SourceRootKind::System);
+    auto file = RootedPath{root, CanonPath("/test.nix")};
 
     auto weak = static_cast<void **>(GC_MALLOC_ATOMIC(sizeof(void *)));
     ASSERT_NE(nullptr, weak);

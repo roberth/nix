@@ -196,8 +196,13 @@ static int main_nix_instantiate(int argc, char ** argv)
             files.push_back("./default.nix");
 
         for (auto & i : files) {
-            Expr * e = fromArgs ? state->parseExprFromString(i, state->rootPath("."))
-                                : state->parseExprFromFile(resolveExprPath(lookupFileArg(*state, i)));
+            Expr * e;
+            if (fromArgs)
+                e = state->parseExprFromString(i, state->rootedPath("."));
+            else {
+                auto looked = lookupFileArg(*state, i);
+                e = state->parseExprFromFile(RootedPath{looked.root, resolveExprPath(looked.sourcePath()).path});
+            }
             processExpr(
                 *state, attrPaths, parseOnly, strict, autoArgs, evalOnly, outputKind, xmlOutputSourceLocation, e);
         }

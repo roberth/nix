@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "nix/expr/eval.hh"
+#include "nix/expr/source-root.hh"
 #include "nix/expr/tests/libexpr.hh"
 #include "nix/util/memory-source-accessor.hh"
 #include "nix/util/source-path.hh"
@@ -15,9 +16,12 @@ TEST_F(ExprConcatStringsTest, preservesFirstPathAccessorOnConcat)
     auto accessor = make_ref<MemorySourceAccessor>();
 
     Value vPath;
-    vPath.mkPath(SourcePath{accessor, CanonPath("/dir")}, state.mem);
+    /* Test fixture: pretend the in-memory accessor was admitted as
+       System (matching the rootFS pathway today's concat preserves). */
+    auto testRoot = make_ref<SourceRoot>(accessor.cast<SourceAccessor>(), SourceRootKind::System);
+    vPath.mkPath(RootedPath{testRoot, CanonPath("/dir")}, state.mem);
 
-    auto * lambda = state.parseExprFromString("p: p + \"/sub\"", state.rootPath(CanonPath::root));
+    auto * lambda = state.parseExprFromString("p: p + \"/sub\"", state.rootedPath(CanonPath::root));
     Value vLambda;
     state.eval(lambda, vLambda);
 
@@ -32,7 +36,7 @@ TEST_F(ExprConcatStringsTest, preservesFirstPathAccessorOnConcat)
 
 TEST_F(ExprConcatStringsTest, rootFSPathLiteralStillConcatsOnRootFS)
 {
-    auto * expr = state.parseExprFromString("/some/absolute + \"/leaf\"", state.rootPath(CanonPath::root));
+    auto * expr = state.parseExprFromString("/some/absolute + \"/leaf\"", state.rootedPath(CanonPath::root));
     Value v;
     state.eval(expr, v);
     state.forceValue(v, noPos);
@@ -51,9 +55,10 @@ TEST_F(ExprConcatStringsTest, preservesFirstPathAccessorThroughMultiStringConcat
     auto accessor = make_ref<MemorySourceAccessor>();
 
     Value vPath;
-    vPath.mkPath(SourcePath{accessor, CanonPath("/dir")}, state.mem);
+    auto testRoot = make_ref<SourceRoot>(accessor.cast<SourceAccessor>(), SourceRootKind::System);
+    vPath.mkPath(RootedPath{testRoot, CanonPath("/dir")}, state.mem);
 
-    auto * lambda = state.parseExprFromString("p: p + \"/a\" + \"/b\"", state.rootPath(CanonPath::root));
+    auto * lambda = state.parseExprFromString("p: p + \"/a\" + \"/b\"", state.rootedPath(CanonPath::root));
     Value vLambda;
     state.eval(lambda, vLambda);
 

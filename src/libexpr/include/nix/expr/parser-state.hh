@@ -157,9 +157,9 @@ struct ParserState
     SymbolTable & symbols;
     PosTable & positions;
     Expr * result;
-    SourcePath basePath;
+    RootedPath basePath;
     PosTable::Origin origin;
-    const ref<SourceAccessor> rootFS;
+    const ref<SourceRoot> rootFS;
     static constexpr Expr::AstSymbols s = StaticEvalSymbols::create().exprSymbols;
     const EvalSettings & settings;
 
