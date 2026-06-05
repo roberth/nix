@@ -2576,7 +2576,7 @@ BackedStringView EvalState::coerceToString(
             // slash, as in /foo/${x}.
             return v.pathStrView();
         } else if (copyToStore) {
-            return store->printStorePath(copyPathToStore(context, v.path()));
+            return store->printStorePath(copyPathToStore(context, v.rootedPath()));
         } else {
             return std::string{v.path().path.abs()};
         }
@@ -2664,17 +2664,28 @@ BackedStringView EvalState::coerceToString(
         .debugThrow();
 }
 
-StorePath EvalState::copyPathToStore(NixStringContext & context, const SourcePath & path)
+StorePath EvalState::copyPathToStore(NixStringContext & context, const RootedPath & path)
 {
-    if (nix::isDerivation(path.path.abs()))
+    auto sp = path.sourcePath();
+    if (nix::isDerivation(sp.path.abs()))
         error<EvalError>("file names are not allowed to end in '%1%'", drvExtension).debugThrow();
+
+    /* Internal-kinded SourceRoots can't be copied to the store. Catch
+       the attempt here so string interpolation (`"${...}"`) on an
+       internal path errors with the same shape `mkPos` uses for the
+       null case. Without this check, `${corepkgsPath}` would silently
+       produce a store path of nix-internal helpers. */
+    if (path.root->kind == SourceRootKind::Internal)
+        error<EvalError>(
+            "cannot copy a path on an internal accessor to the store at '%1%'", sp.accessor->showPath(sp.path))
+            .debugThrow();
 
     auto dstPath = fetchToStore(
         fetchSettings,
         *store,
-        path.resolveSymlinks(SymlinkResolution::Ancestors),
+        sp.resolveSymlinks(SymlinkResolution::Ancestors),
         settings.isReadOnly() ? FetchMode::DryRun : FetchMode::Copy,
-        path.baseName(),
+        sp.baseName(),
         ContentAddressMethod::Raw::NixArchive,
         nullptr,
         repair);
