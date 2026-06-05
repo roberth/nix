@@ -206,6 +206,17 @@ TEST_F(PrimOpTest, unsafeGetAttrPosReturnsNullForInternalRootedPositions)
     EXPECT_EQ(v.type(), nNull);
 }
 
+/* `copyPathToStore` (the engine behind `"${...}"` interpolation on a
+   path Value) refuses Internal-kinded paths up front. Without this
+   check, `"${<nix/foo.nix>}"` would silently produce a store path
+   of nix-internal corepkgs helpers, a contract leak from the
+   evaluator's internals to user code. */
+TEST_F(PrimOpTest, copyPathToStoreRejectsInternal)
+{
+    state.corepkgsFS->addFile(CanonPath("foo.nix"), "{ y = \"x\"; }");
+    ASSERT_THROW(eval("\"${<nix/foo.nix>}\""), EvalError);
+}
+
 TEST_F(PrimOpTest, hasAttr)
 {
     auto v = eval("builtins.hasAttr \"x\" { x = 1; }");
