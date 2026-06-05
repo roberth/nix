@@ -10,6 +10,7 @@
 #include <variant>
 
 #include "nix/util/source-path.hh"
+#include "nix/util/source-root.hh"
 
 namespace nix {
 
@@ -51,7 +52,7 @@ struct Pos
         }
     };
 
-    typedef std::variant<std::monostate, Stdin, String, SourcePath> Origin;
+    typedef std::variant<std::monostate, Stdin, String, RootedPath> Origin;
 
     Origin origin = std::monostate();
 
