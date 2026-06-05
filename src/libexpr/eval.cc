@@ -2575,9 +2575,42 @@ BackedStringView EvalState::coerceToString(
             return v.pathStrView();
         } else if (copyToStore) {
             return store->printStorePath(copyPathToStore(context, v.rootedPath()));
-        } else {
-            return std::string{v.path().path.abs()};
         }
+        /* `toString` (no copy-to-store) on a path Value: dispatch on
+           the SourceRoot's kind set at admission. */
+        auto rp = v.rootedPath();
+        switch (rp.root->kind) {
+        case SourceRootKind::Internal:
+            error<EvalError>(
+                "cannot coerce a path on an internal accessor to a string at '%1%'",
+                rp.root->accessor->showPath(rp.path))
+                .withTrace(pos, errorCtx)
+                .debugThrow();
+        case SourceRootKind::System:
+            return std::string{rp.path.abs()};
+        case SourceRootKind::Copyable: {
+            /* Fetched-tree path: materialise the tree's root (a
+               storepath) and append the subpath. The string form
+               matches `"${...}"` interpolation, but the *context*
+               must stay empty — `toString p` has always been
+               contextless on path Values, and NixOS modules rely on
+               it. Materialise into a throwaway context; the
+               `treeNarHashes` cache short-circuits subsequent calls.
+               Also register the original accessor on `storeFS` for
+               the resulting storepath, so downstream consumers that
+               read through `storePathAccessor` find the lazy
+               accessor — same shape `mountInput` sets up. Without
+               this, code that takes the storepath string from
+               `toString` and tries to read it back fails the
+               lookup. */
+            NixStringContext discardContext;
+            auto storePath = copyPathToStore(discardContext, RootedPath{rp.root, CanonPath::root});
+            auto spStr = store->printStorePath(storePath);
+            storeFS->mount(CanonPath(spStr), [accessor = rp.root->accessor]() { return accessor; });
+            return spStr + rp.path.absOrEmpty();
+        }
+        }
+        unreachable();
     }
 
     if (v.type() == nAttrs) {
