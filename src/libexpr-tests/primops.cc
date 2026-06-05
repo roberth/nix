@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include "nix/expr/eval-settings.hh"
+#include "nix/expr/source-root.hh"
 #include "nix/util/memory-source-accessor.hh"
 
 #include "nix/expr/tests/libexpr.hh"
@@ -215,6 +216,47 @@ TEST_F(PrimOpTest, copyPathToStoreRejectsInternal)
 {
     state.corepkgsFS->addFile(CanonPath("foo.nix"), "{ y = \"x\"; }");
     ASSERT_THROW(eval("\"${<nix/foo.nix>}\""), EvalError);
+}
+
+/* `toString` (no copy-to-store) on a path Value dispatches on the
+   SourceRoot kind. System gives the raw abs path (historical
+   behaviour). Copyable materialises the tree's root to a store path
+   and appends the subpath. Internal errors. */
+TEST_F(PrimOpTest, toStringSystem)
+{
+    Value vPath;
+    auto acc = make_ref<MemorySourceAccessor>();
+    auto root = make_ref<SourceRoot>(acc.cast<SourceAccessor>(), SourceRootKind::System);
+    vPath.mkPath(RootedPath{root, CanonPath("/some/file.nix")}, state.mem);
+
+    auto * lambda = state.parseExprFromString("p: toString p", state.rootedPath(CanonPath::root));
+    Value vLambda;
+    state.eval(lambda, vLambda);
+    Value vResult;
+    state.callFunction(vLambda, vPath, vResult, noPos);
+    state.forceValue(vResult, noPos);
+
+    ASSERT_EQ(vResult.type(), nString);
+    EXPECT_EQ(std::string(vResult.string_view()), "/some/file.nix");
+}
+
+TEST_F(PrimOpTest, toStringInternalErrors)
+{
+    Value vPath;
+    auto acc = make_ref<MemorySourceAccessor>();
+    auto root = make_ref<SourceRoot>(acc.cast<SourceAccessor>(), SourceRootKind::Internal);
+    vPath.mkPath(RootedPath{root, CanonPath("/some/file.nix")}, state.mem);
+
+    auto * lambda = state.parseExprFromString("p: toString p", state.rootedPath(CanonPath::root));
+    Value vLambda;
+    state.eval(lambda, vLambda);
+    Value vResult;
+    ASSERT_THROW(
+        {
+            state.callFunction(vLambda, vPath, vResult, noPos);
+            state.forceValue(vResult, noPos);
+        },
+        EvalError);
 }
 
 TEST_F(PrimOpTest, hasAttr)
