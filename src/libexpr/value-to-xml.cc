@@ -26,7 +26,7 @@ static void printValueAsXML(
 
 static void posToXML(EvalState & state, XMLAttrs & xmlAttrs, const Pos & pos)
 {
-    if (auto path = std::get_if<SourcePath>(&pos.origin))
+    if (auto path = std::get_if<RootedPath>(&pos.origin))
         xmlAttrs["path"] = path->path.abs();
     xmlAttrs["line"] = fmt("%1%", pos.line);
     xmlAttrs["column"] = fmt("%1%", pos.column);

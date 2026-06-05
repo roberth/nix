@@ -92,4 +92,23 @@ std::ostream & operator<<(std::ostream & str, const RootedPath & path)
     return str;
 }
 
+bool RootedPath::operator==(const RootedPath & x) const noexcept
+{
+    return path == x.path && root->kind == x.root->kind && *root->accessor == *x.root->accessor;
+}
+
+std::strong_ordering RootedPath::operator<=>(const RootedPath & x) const noexcept
+{
+    /* Lex compare on (path, kind, accessor) — chosen so that
+       displays sort intuitively (paths first), with kind and
+       accessor identity as tiebreakers. Pointer identity of the
+       SourceRoot is irrelevant: two roots wrapping the same
+       (accessor, kind) compare equal. */
+    if (auto cmp = path <=> x.path; cmp != 0)
+        return cmp;
+    if (auto cmp = root->kind <=> x.root->kind; cmp != 0)
+        return cmp;
+    return *root->accessor <=> *x.root->accessor;
+}
+
 } // namespace nix
