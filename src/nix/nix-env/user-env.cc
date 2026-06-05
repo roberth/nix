@@ -23,7 +23,8 @@ PackageInfos queryInstalled(EvalState & state, const std::filesystem::path & use
     auto manifestFile = userEnv / "manifest.nix";
     if (pathExists(manifestFile)) {
         Value v;
-        state.evalFile(state.rootPath(CanonPath(manifestFile.string())).resolveSymlinks(), v);
+        state.evalFile(
+            RootedPath{state.rootFSRoot, state.rootPath(CanonPath(manifestFile.string())).resolveSymlinks().path}, v);
         const Bindings & bindings = Bindings::emptyBindings;
         getDerivations(state, v, "", bindings, elems, false);
     }
@@ -127,7 +128,7 @@ bool createUserEnv(
     state.eval(
         state.parseExprFromString(
 #include "buildenv.nix.gen.hh"
-            , state.rootPath(CanonPath::root)),
+            , state.rootedPath(CanonPath::root)),
         envBuilder);
 
     /* Construct a Nix expression that calls the user environment

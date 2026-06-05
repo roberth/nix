@@ -385,7 +385,7 @@ static void main_nix_build(int argc, char ** argv)
                     std::move(i),
                     (inShebang && compatibilitySettings.nixShellShebangArgumentsRelativeToScript)
                         ? lookupFileArg(*state, shebangBaseDir.string())
-                        : state->rootPath(".")));
+                        : state->rootedPath(".")));
             } else {
                 auto absolute = i;
                 try {
@@ -401,10 +401,12 @@ static void main_nix_build(int argc, char ** argv)
                     std::filesystem::path iPath{i};
                     auto baseDir = inShebang && !packages ? absPath(iPath, &shebangBaseDir) : iPath;
 
-                    auto sourcePath = lookupFileArg(*state, baseDir.string());
-                    auto resolvedPath = isNixShell ? resolveShellExprPath(sourcePath) : resolveExprPath(sourcePath);
+                    auto looked = lookupFileArg(*state, baseDir.string());
+                    auto sp = looked.sourcePath();
+                    auto resolvedSp = isNixShell ? resolveShellExprPath(sp) : resolveExprPath(sp);
+                    RootedPath resolved{looked.root, resolvedSp.path};
 
-                    exprs.push_back(state->parseExprFromFile(resolvedPath));
+                    exprs.push_back(state->parseExprFromFile(resolved));
                 }
             }
         }
@@ -473,7 +475,7 @@ static void main_nix_build(int argc, char ** argv)
         if (!shell) {
 
             try {
-                auto expr = state->parseExprFromString("(import <nixpkgs> {}).bashInteractive", state->rootPath("."));
+                auto expr = state->parseExprFromString("(import <nixpkgs> {}).bashInteractive", state->rootedPath("."));
 
                 Value v;
                 state->eval(expr, v);

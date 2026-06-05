@@ -3,6 +3,7 @@
 
 #include "nix/util/args.hh"
 #include "nix/util/canon-path.hh"
+#include "nix/util/source-root.hh"
 #include "nix/main/common-args.hh"
 #include "nix/expr/search-path.hh"
 #include "nix/expr/eval-settings.hh"
@@ -85,6 +86,6 @@ private:
 /**
  * @param baseDir Optional [base directory](https://nix.dev/manual/nix/development/glossary#gloss-base-directory)
  */
-SourcePath lookupFileArg(EvalState & state, std::string_view s, const std::filesystem::path * baseDir = nullptr);
+RootedPath lookupFileArg(EvalState & state, std::string_view s, const std::filesystem::path * baseDir = nullptr);
 
 } // namespace nix

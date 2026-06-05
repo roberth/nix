@@ -45,7 +45,7 @@ protected:
     Value eval(std::string input, bool forceValue = true)
     {
         Value v;
-        Expr * e = state.parseExprFromString(input, state.rootPath(CanonPath::root));
+        Expr * e = state.parseExprFromString(input, state.rootedPath(CanonPath::root));
         assert(e);
         state.eval(e, v);
         if (forceValue)
@@ -55,7 +55,7 @@ protected:
 
     Value * maybeThunk(std::string input, bool forceValue = true)
     {
-        Expr * e = state.parseExprFromString(input, state.rootPath(CanonPath::root));
+        Expr * e = state.parseExprFromString(input, state.rootedPath(CanonPath::root));
         assert(e);
         return e->maybeThunk(state, state.baseEnv);
     }

@@ -259,7 +259,7 @@ static void showHelp(std::vector<std::string> subcommand, NixArgs & toplevel)
             {
 #embed "doc/manual/generate-manpage.nix"
             },
-            state.rootPath(CanonPath::root)),
+            state.rootedPath(CanonPath::root)),
         *vGenerateManpage);
 
     state.corepkgsFS->addFile(

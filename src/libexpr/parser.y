@@ -68,13 +68,13 @@ Expr * parseExprFromBuf(
     char * text,
     size_t length,
     Pos::Origin origin,
-    const SourcePath & basePath,
+    const RootedPath & basePath,
     Exprs & exprs,
     SymbolTable & symbols,
     const EvalSettings & settings,
     PosTable & positions,
     DocCommentMap & docComments,
-    const ref<SourceAccessor> rootFS);
+    const ref<SourceRoot> rootFS);
 
 /**
  * Puts the lexer in REPL bindings mode before the first token. This causes
@@ -90,13 +90,13 @@ ExprAttrs * parseReplBindingsFromBuf(
     char * text,
     size_t length,
     Pos::Origin origin,
-    const SourcePath & basePath,
+    const RootedPath & basePath,
     Exprs & exprs,
     SymbolTable & symbols,
     const EvalSettings & settings,
     PosTable & positions,
     DocCommentMap & docComments,
-    const ref<SourceAccessor> rootFS);
+    const ref<SourceRoot> rootFS);
 
 }
 
@@ -430,7 +430,7 @@ path_start
         /* add back in the trailing '/' to the first segment */
         if (literal.size() > 1 && literal.back() == '/')
           path += '/';
-        $$ = state->exprs.add<ExprPath>(state->exprs.alloc, state->rootFS, path);
+        $$ = state->exprs.add<ExprPath>(state->exprs.alloc, ref<SourceRoot>(state->rootFS), path);
     } else {
         /* check for short path literals */
         diagnose(state->settings.lintShortPathLiterals, [&](bool) -> std::optional<ParseError> {
@@ -446,7 +446,7 @@ path_start
         /* add back in the trailing '/' to the first segment */
         if (literal.size() > 1 && literal.back() == '/')
           path += '/';
-        $$ = state->exprs.add<ExprPath>(state->exprs.alloc, state->basePath.accessor, path);
+        $$ = state->exprs.add<ExprPath>(state->exprs.alloc, state->basePath.root, path);
     }
   }
   | HPATH {
@@ -464,7 +464,7 @@ path_start
         });
     });
     auto path(getHome().string() + std::string($1.p + 1, $1.l - 1));
-    $$ = state->exprs.add<ExprPath>(state->exprs.alloc, state->rootFS, path);
+    $$ = state->exprs.add<ExprPath>(state->exprs.alloc, ref<SourceRoot>(state->rootFS), path);
   }
   ;
 
@@ -598,13 +598,13 @@ Expr * parseExprFromBuf(
     char * text,
     size_t length,
     Pos::Origin origin,
-    const SourcePath & basePath,
+    const RootedPath & basePath,
     Exprs & exprs,
     SymbolTable & symbols,
     const EvalSettings & settings,
     PosTable & positions,
     DocCommentMap & docComments,
-    const ref<SourceAccessor> rootFS)
+    const ref<SourceRoot> rootFS)
 {
     yyscan_t scanner;
     LexerState lexerState {
@@ -637,13 +637,13 @@ ExprAttrs * parseReplBindingsFromBuf(
     char * text,
     size_t length,
     Pos::Origin origin,
-    const SourcePath & basePath,
+    const RootedPath & basePath,
     Exprs & exprs,
     SymbolTable & symbols,
     const EvalSettings & settings,
     PosTable & positions,
     DocCommentMap & docComments,
-    const ref<SourceAccessor> rootFS)
+    const ref<SourceRoot> rootFS)
 {
     yyscan_t scanner;
     LexerState lexerState {

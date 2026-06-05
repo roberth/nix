@@ -39,7 +39,7 @@ static void BM_EvalDynamicAttrs(benchmark::State & state)
 
         auto stPtr = std::make_shared<EvalState>(LookupPath{}, store, fetchSettings, evalSettings, nullptr);
         auto & st = *stPtr;
-        Expr * expr = st.parseExprFromString(exprStr, st.rootPath(CanonPath::root));
+        Expr * expr = st.parseExprFromString(exprStr, st.rootedPath(CanonPath::root));
 
         Value v;
 

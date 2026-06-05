@@ -183,7 +183,8 @@ void emitTreeAttrs(
 {
     auto attrs = state.buildBindings(100);
     if (lazy)
-        attrs.alloc(state.s.outPath, callPos).mkPath(SourcePath{tree.accessor(), CanonPath::root}, state.mem);
+        attrs.alloc(state.s.outPath, callPos)
+            .mkPath(RootedPath{state.getOrCreateFetcherRoot(tree.accessor()), CanonPath::root}, state.mem);
     else
         state.mkStorePathString(tree.storePath.value(), attrs.alloc(state.s.outPath, callPos));
     addFetchTreeMetadataAttrs(state, callPos, input, attrs, emptyRevFallback, forceDirty);

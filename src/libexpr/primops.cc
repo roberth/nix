@@ -226,7 +226,7 @@ static void mkOutputString(
  * @param storePath The path to the `.drv` to import.
  * @param v Return value
  */
-void derivationToValue(EvalState & state, const SourcePath & path, const StorePath & storePath, Value & v)
+void derivationToValue(EvalState & state, const RootedPath & path, const StorePath & storePath, Value & v)
 {
     auto path2 = path.path.abs();
     Derivation drv = state.store->readDerivation(storePath);
@@ -251,7 +251,9 @@ void derivationToValue(EvalState & state, const SourcePath & path, const StorePa
     w->mkAttrs(attrs);
 
     auto vImportedDrvToDerivation = state.allocValue();
-    state.evalFile(state.importedDrvToDerivation, *vImportedDrvToDerivation); // has caching
+    state.evalFile(
+        RootedPath{state.internalFSRoot, state.importedDrvToDerivation.path},
+        *vImportedDrvToDerivation); // has caching
 
     v.mkApp(vImportedDrvToDerivation, w);
     state.forceAttrs(v, noPos, "while calling imported-drv-to-derivation.nix");
@@ -266,7 +268,7 @@ void derivationToValue(EvalState & state, const SourcePath & path, const StorePa
  * @param vScope The base scope to use for the import.
  * @param v Return value
  */
-static void scopedImport(EvalState & state, SourcePath & path, Value * vScope, Value & v)
+static void scopedImport(EvalState & state, RootedPath & path, Value * vScope, Value & v)
 {
     state.forceAttrs(*vScope, noPos, "while evaluating the first argument passed to builtins.scopedImport");
 
@@ -284,8 +286,9 @@ static void scopedImport(EvalState & state, SourcePath & path, Value * vScope, V
     // No need to call staticEnv.sort(), because
     // args[0]->attrs is already sorted.
 
-    printTalkative("evaluating file '%1%'", path);
-    Expr * e = state.parseExprFromFile(resolveExprPath(path), staticEnv);
+    auto sp = path.sourcePath();
+    printTalkative("evaluating file '%1%'", sp);
+    Expr * e = state.parseExprFromFile(RootedPath{path.root, resolveExprPath(sp).path}, staticEnv);
 
     e->eval(state, *env, v);
 }
@@ -294,8 +297,16 @@ static void scopedImport(EvalState & state, SourcePath & path, Value * vScope, V
    argument. */
 static void import(EvalState & state, Value & vPath, Value * vScope, Value & v)
 {
-    auto path = state.realisePath(noPos, vPath, std::nullopt);
-    auto path2 = path.path.abs();
+    /* `realisePath` forces `vPath` and rewrites the canon path
+       only when context carries lazy-mounted store rewrites; the
+       accessor identity is preserved, so re-rooting on `vPath`'s
+       `SourceRoot` (for path Values) or `rootFSRoot` (for string
+       arguments, which `coerceToPath` resolves under rootFS) is
+       sound. */
+    auto realisedSp = state.realisePath(noPos, vPath, std::nullopt);
+    auto path2 = realisedSp.path.abs();
+    auto path = vPath.type() == nPath ? RootedPath{vPath.rootedPath().root, realisedSp.path}
+                                      : RootedPath{state.rootFSRoot, realisedSp.path};
 
     // FIXME
     auto isValidDerivationInStore = [&]() -> std::optional<StorePath> {
@@ -517,7 +528,7 @@ void prim_exec(EvalState & state, CallSite callSite, Value * const * args, Value
     auto output = runProgram(program, true, toOsStrings(std::move(commandArgs)));
     Expr * parsed;
     try {
-        parsed = state.parseExprFromString(std::move(output), state.rootPath(CanonPath::root));
+        parsed = state.parseExprFromString(std::move(output), state.rootedPath(CanonPath::root));
     } catch (Error & e) {
         e.addTrace(nullptr, "while parsing the output from '%1%'", program);
         throw;
@@ -2151,8 +2162,8 @@ static void prim_dirOf(EvalState & state, CallSite callSite, Value * const * arg
 {
     state.forceValue(*args[0], noPos);
     if (args[0]->type() == nPath) {
-        auto path = args[0]->path();
-        v.mkPath(path.path.isRoot() ? path : path.parent(), state.mem);
+        auto rp = args[0]->rootedPath();
+        v.mkPath(rp.path.isRoot() ? rp : rp.parent(), state.mem);
     } else {
         NixStringContext context;
         auto path = state.coerceToString(
@@ -2487,6 +2498,10 @@ static RegisterPrimOp primop_readFileType({
 static void prim_readDir(EvalState & state, CallSite callSite, Value * const * args, Value & v)
 {
     auto path = state.realisePath(noPos, *args[0]);
+    /* Per-entry mkPath needs to inherit the input's `SourceRoot`:
+       path values keep their own root; string arguments resolve
+       through rootFS, so wrap as `rootFSRoot` (System). */
+    auto root = args[0]->type() == nPath ? args[0]->rootedPath().root : state.rootFSRoot;
 
     // Retrieve directory entries for all nodes in a directory.
     // This is similar to `getFileType` but is optimized to reduce system calls
@@ -2507,7 +2522,7 @@ static void prim_readDir(EvalState & state, CallSite callSite, Value * const * a
             // detailed node info quickly in this case we produce a thunk to
             // query the file type lazily.
             auto epath = state.allocValue();
-            epath->mkPath(path / name, state.mem);
+            epath->mkPath(RootedPath{root, path.path / name}, state.mem);
             if (!readFileType)
                 readFileType = &state.getBuiltin("readFileType");
             attr.mkApp(readFileType, epath);
@@ -5625,7 +5640,7 @@ void EvalState::createBaseEnv(const EvalSettings & evalSettings)
 
     /* Note: we have to initialize the 'derivation' constant *after*
        building baseEnv/staticBaseEnv because it uses 'builtins'. */
-    evalFile(derivationInternal, *vDerivation);
+    evalFile(RootedPath{internalFSRoot, derivationInternal.path}, *vDerivation);
 }
 
 } // namespace nix
