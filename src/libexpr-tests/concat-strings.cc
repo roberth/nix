@@ -71,4 +71,54 @@ TEST_F(ExprConcatStringsTest, preservesFirstPathAccessorThroughMultiStringConcat
     EXPECT_EQ(vResult.path().path.abs(), "/dir/a/b");
 }
 
+/* `fetchTreeResult + "/sub"` (Copyable first, string second) stays
+   valid. The first operand sets the result's root; no walk is
+   needed because the second operand is a string. The result is a
+   Copyable-rooted path at the joined subpath -- read via the
+   accessor without materialising the whole tree. */
+TEST_F(ExprConcatStringsTest, copyableFirstWithStringSecondIsAllowed)
+{
+    Value vPath;
+    auto acc = make_ref<MemorySourceAccessor>();
+    auto root = make_ref<SourceRoot>(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
+    vPath.mkPath(RootedPath{root, CanonPath("/dir")}, state.mem);
+
+    auto * lambda = state.parseExprFromString("p: p + \"/sub\"", state.rootedPath(CanonPath::root));
+    Value vLambda;
+    state.eval(lambda, vLambda);
+
+    Value vResult;
+    state.callFunction(vLambda, vPath, vResult, noPos);
+    state.forceValue(vResult, noPos);
+
+    ASSERT_EQ(vResult.type(), nPath);
+    EXPECT_EQ(&*vResult.path().accessor, &*acc);
+    EXPECT_EQ(vResult.path().path.abs(), "/dir/sub");
+}
+
+/* `./foo + fetchTreeResult` — the second operand is Copyable. Same
+   rejection: the Copyable operand would be stringified via the
+   walking arm, and the result spliced as a storepath substring
+   into the system-rooted prefix. The grandfathered System+System
+   form (`/var/lib + /var/log`) is unchanged. */
+TEST_F(ExprConcatStringsTest, rejectsCopyableAsSecondPath)
+{
+    Value vCopyable;
+    auto acc = make_ref<MemorySourceAccessor>();
+    auto root = make_ref<SourceRoot>(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
+    vCopyable.mkPath(RootedPath{root, CanonPath("/x")}, state.mem);
+
+    auto * lambda = state.parseExprFromString("p: /tmp + p", state.rootedPath(CanonPath::root));
+    Value vLambda;
+    state.eval(lambda, vLambda);
+
+    Value vResult;
+    ASSERT_THROW(
+        {
+            state.callFunction(vLambda, vCopyable, vResult, noPos);
+            state.forceValue(vResult, noPos);
+        },
+        EvalError);
+}
+
 } // namespace nix
