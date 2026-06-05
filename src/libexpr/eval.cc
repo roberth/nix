@@ -2542,9 +2542,30 @@ BackedStringView EvalState::coerceToString(
             return v.pathStrView();
         } else if (copyToStore) {
             return store->printStorePath(copyPathToStore(context, v.rootedPath()));
-        } else {
-            return std::string{v.path().path.abs()};
         }
+        /* `toString` (no copy-to-store) on a path Value: dispatch on
+           the SourceRoot's kind set at admission. */
+        auto rp = v.rootedPath();
+        switch (rp.root->kind) {
+        case SourceRootKind::Internal:
+            error<EvalError>(
+                "cannot coerce a path on an internal accessor to a string at '%1%'",
+                rp.root->accessor->showPath(rp.path))
+                .withTrace(pos, errorCtx)
+                .debugThrow();
+        case SourceRootKind::System:
+            return std::string{rp.path.abs()};
+        case SourceRootKind::Copyable: {
+            /* Fetched-tree path: materialise the tree's root (a
+               storepath) and append the subpath. Matches what
+               `"${...}"` interpolation produces, so `toString p ==
+               "${p}"` for fetched-tree paths. The `srcToStore`
+               cache short-circuits subsequent calls. */
+            auto storePath = copyPathToStore(context, RootedPath{rp.root, CanonPath::root});
+            return store->printStorePath(storePath) + rp.path.absOrEmpty();
+        }
+        }
+        unreachable();
     }
 
     if (v.type() == nAttrs) {
