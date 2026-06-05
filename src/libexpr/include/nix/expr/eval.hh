@@ -911,7 +911,7 @@ public:
         bool copyToStore = true,
         bool canonicalizePath = true);
 
-    StorePath copyPathToStore(NixStringContext & context, const SourcePath & path);
+    StorePath copyPathToStore(NixStringContext & context, const RootedPath & path);
 
     /**
      * Path coercion.
