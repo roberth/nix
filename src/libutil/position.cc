@@ -44,9 +44,9 @@ std::optional<std::string> Pos::getSource() const
                 // Get rid of the null terminators added by the parser.
                 return std::string(s.source->c_str());
             },
-            [](const SourcePath & path) -> std::optional<std::string> {
+            [](const RootedPath & path) -> std::optional<std::string> {
                 try {
-                    return path.readFile();
+                    return path.sourcePath().readFile();
                 } catch (...) { // FIXME: make readFile() not throw?
                     return std::nullopt;
                 }
@@ -56,8 +56,8 @@ std::optional<std::string> Pos::getSource() const
 
 std::optional<SourcePath> Pos::getSourcePath() const
 {
-    if (auto * path = std::get_if<SourcePath>(&origin))
-        return *path;
+    if (auto * path = std::get_if<RootedPath>(&origin))
+        return path->sourcePath();
     return std::nullopt;
 }
 
@@ -69,7 +69,7 @@ void Pos::print(std::ostream & out, bool showOrigin) const
                 [&](const std::monostate &) { out << "«none»"; },
                 [&](const Pos::Stdin &) { out << "«stdin»"; },
                 [&](const Pos::String & s) { out << "«string»"; },
-                [&](const SourcePath & path) { out << path; }},
+                [&](const RootedPath & path) { out << path.sourcePath(); }},
             origin);
         out << ":";
     }

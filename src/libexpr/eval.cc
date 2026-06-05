@@ -995,7 +995,7 @@ void EvalState::mkThunk_(Value & v, Expr * expr)
 void EvalState::mkPos(Value & v, PosIdx p)
 {
     auto origin = positions.originOf(p);
-    if (auto path = std::get_if<SourcePath>(&origin)) {
+    if (auto path = std::get_if<RootedPath>(&origin)) {
         auto attrs = buildBindings(3);
         attrs.alloc(s.file).mkString(path->path.abs(), mem);
         makePositionThunks(*this, p, attrs.alloc(s.line), attrs.alloc(s.column));
@@ -1528,8 +1528,8 @@ void ExprSelect::eval(EvalState & state, Env & env, Value & v)
         // Traces are printed in reverse, so we add context before the main item.
         if (attrPos) {
             auto attrPosR = state.positions[attrPos];
-            auto origin = std::get_if<SourcePath>(&attrPosR.origin);
-            if (!(origin && *origin == state.derivationInternal)) {
+            auto origin = std::get_if<RootedPath>(&attrPosR.origin);
+            if (!(origin && origin->sourcePath() == state.derivationInternal)) {
                 auto successPath =
                     showAttrSelectionPath(state, env, std::span<const AttrName>(attrPathStart, unresolvedOrEnd));
                 state.addErrorTrace(e, attrPos, "from the definition of '%1%'", successPath);
@@ -3194,8 +3194,8 @@ void EvalState::printStatistics()
                 else
                     obj["name"] = nullptr;
                 if (auto pos = positions[fun->pos]) {
-                    if (auto path = std::get_if<SourcePath>(&pos.origin))
-                        obj["file"] = path->to_string();
+                    if (auto path = std::get_if<RootedPath>(&pos.origin))
+                        obj["file"] = path->sourcePath().to_string();
                     obj["line"] = pos.line;
                     obj["column"] = pos.column;
                 }
@@ -3209,8 +3209,8 @@ void EvalState::printStatistics()
             attrSelects->cvisit_all([&](auto & i) {
                 json obj = json::object();
                 if (auto pos = positions[i.first]) {
-                    if (auto path = std::get_if<SourcePath>(&pos.origin))
-                        obj["file"] = path->to_string();
+                    if (auto path = std::get_if<RootedPath>(&pos.origin))
+                        obj["file"] = path->sourcePath().to_string();
                     obj["line"] = pos.line;
                     obj["column"] = pos.column;
                 }
@@ -3266,7 +3266,7 @@ Expr * EvalState::parseExprFromFile(const RootedPath & path, const std::shared_p
     auto buffer = path.sourcePath().resolveSymlinks().readFile();
     // readFile hopefully have left some extra space for terminators
     buffer.append("\0\0", 2);
-    return parse(buffer.data(), buffer.size(), Pos::Origin(path.sourcePath()), path.parent(), staticEnv);
+    return parse(buffer.data(), buffer.size(), Pos::Origin(path), path.parent(), staticEnv);
 }
 
 Expr * EvalState::parseExprFromString(
@@ -3461,11 +3461,11 @@ Expr * EvalState::parse(
 
     result->bindVars(*this, staticEnv);
 
-    if (auto sourcePath = std::get_if<SourcePath>(&origin))
+    if (auto rooted = std::get_if<RootedPath>(&origin))
         /* A single file might appear multiple times in PosTable if it's
            parsed by scopedImport. If we are the first then emplace into the map, otherwise
            copy our positions into the existing map. */
-        positionToDocComment->emplace_or_visit(*sourcePath, tmpDocComments, [&tmpDocComments](auto & kv) {
+        positionToDocComment->emplace_or_visit(rooted->sourcePath(), tmpDocComments, [&tmpDocComments](auto & kv) {
             kv.second->insert(tmpDocComments->begin(), tmpDocComments->end());
         });
 
@@ -3487,11 +3487,11 @@ ExprAttrs * EvalState::parseReplBindings(
 
     bindings->bindVars(*this, staticEnv);
 
-    if (auto sourcePath = std::get_if<SourcePath>(&origin))
+    if (auto rooted = std::get_if<RootedPath>(&origin))
         /* A single file might appear multiple times in PosTable if it's
            parsed by scopedImport. If we are the first then emplace into the map, otherwise
            copy our positions into the existing map. */
-        positionToDocComment->emplace_or_visit(*sourcePath, tmpDocComments, [&tmpDocComments](auto & kv) {
+        positionToDocComment->emplace_or_visit(rooted->sourcePath(), tmpDocComments, [&tmpDocComments](auto & kv) {
             kv.second->insert(tmpDocComments->begin(), tmpDocComments->end());
         });
 
