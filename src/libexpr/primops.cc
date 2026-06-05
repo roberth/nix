@@ -3,6 +3,7 @@
 #include "nix/expr/eval-inline.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-settings.hh"
+#include "nix/expr/source-root.hh"
 #include "nix/expr/gc-small-vector.hh"
 #include "nix/expr/json-to-value.hh"
 #include "nix/expr/static-string-data.hh"
@@ -3218,6 +3219,15 @@ static RegisterPrimOp primop_unsafeGetAttrPos(
 // but each type of thunk has an associated runtime cost in the current evaluator.
 // as with black holes this cost is too high to justify another thunk type to check
 // for in the very hot path that is forceValue.
+//
+// `__curPos.file` follows the same shape: a thunk wrapping `fileOfPos`.
+// Lazy resolution lets the rendered path follow the SourceRoot kind --
+// for a Copyable accessor the file string materialises as
+// `<storePath>/<subpath>` (matching `toString` of a `mkPath` value), and
+// for System accessors it stays the raw absolute canon path. The thunk
+// pays a single `mkApp`-style allocation per position; the actual store
+// path lookup is memoised through `srcToStore`, so positions sharing an
+// accessor share the work.
 static struct LazyPosAccessors
 {
     PrimOp primop_lineOfPos{.arity = 1, .impl = [](EvalState & state, PosIdx pos, Value ** args, Value & v) {
@@ -3226,27 +3236,64 @@ static struct LazyPosAccessors
     PrimOp primop_columnOfPos{.arity = 1, .impl = [](EvalState & state, PosIdx pos, Value ** args, Value & v) {
                                   v.mkInt(state.positions[PosIdx(args[0]->integer().value)].column);
                               }};
+    PrimOp primop_fileOfPos{.arity = 1, .impl = [](EvalState & state, PosIdx pos, Value ** args, Value & v) {
+                                auto origin = state.positions.originOf(PosIdx(args[0]->integer().value));
+                                auto * path = std::get_if<RootedPath>(&origin);
+                                /* `mkPos` only routes through `fileOfPos`
+                                   for `RootedPath` origins, so this should
+                                   always hold; treating it defensively
+                                   keeps a stray call from segfaulting. */
+                                assert(path);
+                                /* Internal positions never reach the
+                                   thunk -- `mkPos` short-circuits them to
+                                   `null` before allocating the attrset --
+                                   but render `null` here for defence so a
+                                   stray force matches `mkPos`'s shape. */
+                                if (path->root->kind == SourceRootKind::Internal) {
+                                    v.mkNull();
+                                    return;
+                                }
+                                /* For System / Copyable, resolve via
+                                   `coerceToString` with `copyToStore=false`:
+                                   System returns the raw abs path; Copyable
+                                   materialises the root and appends the
+                                   subpath, matching `"${...}"` interpolation. */
+                                Value vPath;
+                                vPath.mkPath(*path, state.mem);
+                                NixStringContext ctx;
+                                auto str = state.coerceToString(
+                                    pos,
+                                    vPath,
+                                    ctx,
+                                    "while resolving the source file of a position",
+                                    /* coerceMore */ false,
+                                    /* copyToStore */ false,
+                                    /* canonicalizePath */ true);
+                                v.mkString(*str, ctx, state.mem);
+                            }};
 
-    Value lineOfPos, columnOfPos;
+    Value lineOfPos, columnOfPos, fileOfPos;
 
     LazyPosAccessors()
     {
         lineOfPos.mkPrimOp(&primop_lineOfPos);
         columnOfPos.mkPrimOp(&primop_columnOfPos);
+        fileOfPos.mkPrimOp(&primop_fileOfPos);
     }
 
-    void operator()(EvalState & state, const PosIdx pos, Value & line, Value & column)
+    void operator()(EvalState & state, const PosIdx pos, Value & file, Value & line, Value & column)
     {
         Value * posV = state.allocValue();
         posV->mkInt(pos.id);
+        file.mkApp(&fileOfPos, posV);
         line.mkApp(&lineOfPos, posV);
         column.mkApp(&columnOfPos, posV);
     }
 } makeLazyPosAccessors;
 
-void makePositionThunks(EvalState & state, const PosIdx pos, Value & line, Value & column)
+void makePositionThunks(EvalState & state, const PosIdx pos, Value & file, Value & line, Value & column)
 {
-    makeLazyPosAccessors(state, pos, line, column);
+    makeLazyPosAccessors(state, pos, file, line, column);
 }
 
 /* Dynamic version of the `?' operator. */

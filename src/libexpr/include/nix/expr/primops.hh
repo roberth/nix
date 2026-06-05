@@ -36,6 +36,6 @@ void prim_importNative(EvalState & state, const PosIdx pos, Value ** args, Value
  */
 void prim_exec(EvalState & state, const PosIdx pos, Value ** args, Value & v);
 
-void makePositionThunks(EvalState & state, const PosIdx pos, Value & line, Value & column);
+void makePositionThunks(EvalState & state, const PosIdx pos, Value & file, Value & line, Value & column);
 
 } // namespace nix

@@ -991,8 +991,16 @@ void EvalState::mkPos(Value & v, PosIdx p)
             return;
         }
         auto attrs = buildBindings(3);
-        attrs.alloc(s.file).mkString(path->path.abs(), mem);
-        makePositionThunks(*this, p, attrs.alloc(s.line), attrs.alloc(s.column));
+        /* `.file` is a thunk over `fileOfPos` (see `LazyPosAccessors`).
+           System accessors render to the raw absolute canon path;
+           Copyable accessors render to `<storePath>/<subpath>` via
+           `coerceToString`, so the file string is reachable via the
+           store (`nix edit`, `meta.position`, ...) instead of being
+           accessor-internal nonsense like `/inner.nix` from a fetched
+           tree. The thunk shape lets the kind-driven rendering stay
+           lazy: positions are emitted in every eval but only a small
+           fraction ever has `.file` forced. */
+        makePositionThunks(*this, p, attrs.alloc(s.file), attrs.alloc(s.line), attrs.alloc(s.column));
         v.mkAttrs(attrs);
     } else
         v.mkNull();
