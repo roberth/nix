@@ -883,7 +883,7 @@ void NixRepl::addVarToScope(const Symbol name, Value & v)
 Expr * NixRepl::parseString(std::string s)
 {
     try {
-        return state->parseExprFromString(std::move(s), state->rootPath("."), staticEnv);
+        return state->parseExprFromString(std::move(s), state->rootedPath("."), staticEnv);
     } catch (ParseError & e) {
         if (isIncompleteInput(e))
             throw IncompleteReplExpr(e.msg());
@@ -893,7 +893,7 @@ Expr * NixRepl::parseString(std::string s)
 
 ExprAttrs * NixRepl::parseReplBindings(std::string s)
 {
-    auto basePath = state->rootPath(".");
+    auto basePath = state->rootedPath(".");
 
     // Try parsing as bindings
     try {

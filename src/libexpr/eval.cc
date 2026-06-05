@@ -1,5 +1,6 @@
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-error.hh"
+#include "nix/expr/source-root.hh"
 #include "nix/expr/eval-settings.hh"
 #include "nix/expr/primops.hh"
 #include "nix/expr/print-options.hh"
@@ -293,6 +294,9 @@ EvalState::EvalState(
     }())
     , corepkgsFS(make_ref<MemorySourceAccessor>())
     , internalFS(make_ref<MemorySourceAccessor>())
+    , rootFSRoot(make_ref<SourceRoot>(rootFS, SourceRootKind::System))
+    , corepkgsRoot(make_ref<SourceRoot>(corepkgsFS.cast<SourceAccessor>(), SourceRootKind::Internal))
+    , internalFSRoot(make_ref<SourceRoot>(internalFS.cast<SourceAccessor>(), SourceRootKind::Internal))
     , derivationInternal{internalFS->addFile(
           CanonPath("derivation-internal.nix"),
 #include "primops/derivation.nix.gen.hh"
@@ -313,6 +317,7 @@ EvalState::EvalState(
     , positionToDocComment(make_ref<decltype(positionToDocComment)::element_type>())
     , lookupPathResolved(make_ref<decltype(lookupPathResolved)::element_type>())
     , regexCache(makeRegexCache())
+    , fetcherRoots(make_ref<decltype(fetcherRoots)::element_type>())
 #if NIX_USE_BOEHMGC
     , baseEnvP(std::allocate_shared<Env *>(traceable_allocator<Env *>(), &mem.allocEnv(BASE_ENV_SIZE)))
     , baseEnv(**baseEnvP)
@@ -907,9 +912,9 @@ void Value::mkStringMove(const StringData & s, const NixStringContext & context,
     mkStringNoCopy(s, Value::StringWithContext::Context::fromBuilder(context, mem));
 }
 
-void Value::mkPath(const SourcePath & path, EvalMemory & mem)
+void Value::mkPath(const RootedPath & path, EvalMemory & mem)
 {
-    mkPath(&*path.accessor, StringData::make(mem, path.path.abs()));
+    mkPath(&*path.root, StringData::make(mem, path.path.abs()));
 }
 
 [[gnu::always_inline]] inline Value * EvalState::lookupVar(Env * env, const ExprVar & var, bool noEval)
@@ -1102,10 +1107,10 @@ namespace {
 struct ExprParseFile : Expr, gc
 {
     // FIXME: make this a reference (see below).
-    SourcePath path;
+    RootedPath path;
     bool mustBeTrivial;
 
-    ExprParseFile(SourcePath & path, bool mustBeTrivial)
+    ExprParseFile(RootedPath & path, bool mustBeTrivial)
         : path(path)
         , mustBeTrivial(mustBeTrivial)
     {
@@ -1113,7 +1118,8 @@ struct ExprParseFile : Expr, gc
 
     void eval(EvalState & state, Env & env, Value & v) override
     {
-        printTalkative("evaluating file '%s'", path);
+        auto sp = path.sourcePath();
+        printTalkative("evaluating file '%s'", sp);
 
         auto e = state.parseExprFromFile(path);
 
@@ -1121,17 +1127,17 @@ struct ExprParseFile : Expr, gc
             auto dts =
                 state.debugRepl
                     ? makeDebugTraceStacker(
-                          state, *e, state.baseEnv, e->getPos(), "while evaluating the file '%s':", path.to_string())
+                          state, *e, state.baseEnv, e->getPos(), "while evaluating the file '%s':", sp.to_string())
                     : nullptr;
 
             // Enforce that 'flake.nix' is a direct attrset, not a
             // computation.
             if (mustBeTrivial && !(dynamic_cast<ExprAttrs *>(e)))
-                state.error<EvalError>("file '%s' must be an attribute set", path).debugThrow();
+                state.error<EvalError>("file '%s' must be an attribute set", sp).debugThrow();
 
             state.eval(e, v);
         } catch (Error & e) {
-            state.addErrorTrace(e, "while evaluating the file '%s':", path.to_string());
+            state.addErrorTrace(e, "while evaluating the file '%s':", sp.to_string());
             throw;
         }
     }
@@ -1139,30 +1145,36 @@ struct ExprParseFile : Expr, gc
 
 } // namespace
 
-void EvalState::evalFile(const SourcePath & path, Value & v, bool mustBeTrivial)
+void EvalState::evalFile(const RootedPath & path, Value & v, bool mustBeTrivial)
 {
-    auto resolvedPath = getConcurrent(*importResolutionCache, path);
+    auto sp = path.sourcePath();
+    auto resolvedSp = getConcurrent(*importResolutionCache, sp);
 
-    if (!resolvedPath) {
-        resolvedPath = resolveExprPath(path);
-        importResolutionCache->emplace(path, *resolvedPath);
+    if (!resolvedSp) {
+        resolvedSp = resolveExprPath(sp);
+        importResolutionCache->emplace(sp, *resolvedSp);
     }
 
-    if (auto v2 = getConcurrent(*fileEvalCache, *resolvedPath)) {
+    if (auto v2 = getConcurrent(*fileEvalCache, *resolvedSp)) {
         forceValue(**v2, noPos);
         v = **v2;
         return;
     }
+
+    /* The resolved SourcePath inherits the input's SourceRoot — the
+       resolution (e.g. `./foo` → `./foo/default.nix`) stays within
+       the same admission. */
+    RootedPath resolvedPath{path.root, resolvedSp->path};
 
     Value * vExpr;
     // FIXME: put ExprParseFile on the stack instead of the heap once
     // https://github.com/NixOS/nix/pull/13930 is merged. That will ensure
     // the post-condition that `expr` is unreachable after
     // `forceValue()` returns.
-    auto expr = new ExprParseFile{*resolvedPath, mustBeTrivial};
+    auto expr = new ExprParseFile{resolvedPath, mustBeTrivial};
 
     fileEvalCache->try_emplace_and_cvisit(
-        *resolvedPath,
+        *resolvedSp,
         nullptr,
         [&](auto & i) {
             vExpr = allocValue();
@@ -2103,7 +2115,7 @@ void ExprConcatStrings::eval(EvalState & state, Env & env, Value & v)
 
     bool first = !forceString;
     ValueType firstType = nString;
-    std::shared_ptr<SourceAccessor> firstPathAccessor;
+    std::shared_ptr<SourceRoot> firstPathRoot;
 
     // List of returned strings. References to these Values must NOT be persisted.
     SmallTemporaryValueVector<conservativeStackReservation> values(es.size());
@@ -2125,7 +2137,7 @@ void ExprConcatStrings::eval(EvalState & state, Env & env, Value & v)
                trees, which the rest of the path then can't be read
                through. */
             if (firstType == nPath)
-                firstPathAccessor = vTmp.path().accessor;
+                firstPathRoot = vTmp.pathRoot()->shared_from_this();
         }
 
         if (firstType == nInt) {
@@ -2188,7 +2200,7 @@ void ExprConcatStrings::eval(EvalState & state, Env & env, Value & v)
         for (const auto & part : strings) {
             resultStr += *part;
         }
-        v.mkPath(SourcePath{ref(firstPathAccessor), CanonPath(resultStr)}, state.mem);
+        v.mkPath(RootedPath{ref(firstPathRoot), CanonPath(resultStr)}, state.mem);
     } else {
         auto & resultStr = StringData::alloc(state.mem, sSize);
         auto * tmp = resultStr.data();
@@ -2785,7 +2797,7 @@ void EvalState::assertEqValues(Value & v1, Value & v2, const PosIdx pos, std::st
         return;
 
     case nPath:
-        if (v1.pathAccessor() != v2.pathAccessor()) {
+        if (&*v1.pathRoot()->accessor != &*v2.pathRoot()->accessor) {
             error<AssertionError>(
                 "path '%s' is not equal to path '%s' because their accessors are different",
                 ValuePrinter(*this, v1, errorPrintOptions),
@@ -2968,7 +2980,7 @@ bool EvalState::eqValues(Value & v1, Value & v2, const PosIdx pos, std::string_v
     case nPath:
         return
             // FIXME: compare accessors by their fingerprint.
-            v1.pathAccessor() == v2.pathAccessor() && v1.pathStrView() == v2.pathStrView();
+            &*v1.pathRoot()->accessor == &*v2.pathRoot()->accessor && v1.pathStrView() == v2.pathStrView();
 
     case nNull:
         return true;
@@ -3210,21 +3222,21 @@ SourcePath resolveExprPath(SourcePath path, bool addDefaultNix)
     return path;
 }
 
-Expr * EvalState::parseExprFromFile(const SourcePath & path)
+Expr * EvalState::parseExprFromFile(const RootedPath & path)
 {
     return parseExprFromFile(path, staticBaseEnv);
 }
 
-Expr * EvalState::parseExprFromFile(const SourcePath & path, const std::shared_ptr<StaticEnv> & staticEnv)
+Expr * EvalState::parseExprFromFile(const RootedPath & path, const std::shared_ptr<StaticEnv> & staticEnv)
 {
-    auto buffer = path.resolveSymlinks().readFile();
+    auto buffer = path.sourcePath().resolveSymlinks().readFile();
     // readFile hopefully have left some extra space for terminators
     buffer.append("\0\0", 2);
-    return parse(buffer.data(), buffer.size(), Pos::Origin(path), path.parent(), staticEnv);
+    return parse(buffer.data(), buffer.size(), Pos::Origin(path.sourcePath()), path.parent(), staticEnv);
 }
 
 Expr * EvalState::parseExprFromString(
-    std::string s_, const SourcePath & basePath, const std::shared_ptr<StaticEnv> & staticEnv)
+    std::string s_, const RootedPath & basePath, const std::shared_ptr<StaticEnv> & staticEnv)
 {
     // NOTE this method (and parseStdin) must take care to *fully copy* their input
     // into their respective Pos::Origin until the parser stops overwriting its input
@@ -3234,19 +3246,19 @@ Expr * EvalState::parseExprFromString(
     return parse(s_.data(), s_.size(), Pos::String{.source = s}, basePath, staticEnv);
 }
 
-Expr * EvalState::parseExprFromString(std::string s, const SourcePath & basePath)
+Expr * EvalState::parseExprFromString(std::string s, const RootedPath & basePath)
 {
     return parseExprFromString(std::move(s), basePath, staticBaseEnv);
 }
 
 ExprAttrs *
-EvalState::parseReplBindings(std::string s_, const SourcePath & basePath, const std::shared_ptr<StaticEnv> & staticEnv)
+EvalState::parseReplBindings(std::string s_, const RootedPath & basePath, const std::shared_ptr<StaticEnv> & staticEnv)
 {
     return parseReplBindings(s_, s_, basePath, staticEnv);
 }
 
 ExprAttrs * EvalState::parseReplBindings(
-    std::string s_, std::string errorSource, const SourcePath & basePath, const std::shared_ptr<StaticEnv> & staticEnv)
+    std::string s_, std::string errorSource, const RootedPath & basePath, const std::shared_ptr<StaticEnv> & staticEnv)
 {
     auto s = make_ref<std::string>(std::move(errorSource));
     // flex requires two NUL terminators for yy_scan_buffer
@@ -3264,16 +3276,27 @@ Expr * EvalState::parseStdin()
     // drainFD should have left some extra space for terminators
     buffer.append("\0\0", 2);
     auto s = make_ref<std::string>(buffer);
-    return parse(buffer.data(), buffer.size(), Pos::Stdin{.source = s}, rootPath("."), staticBaseEnv);
+    return parse(buffer.data(), buffer.size(), Pos::Stdin{.source = s}, rootedPath("."), staticBaseEnv);
 }
 
-SourcePath EvalState::findFile(const std::string_view path)
+RootedPath EvalState::findFile(const std::string_view path)
 {
     return findFile(lookupPath, path);
 }
 
-SourcePath EvalState::findFile(const LookupPath & lookupPath, const std::string_view path, const PosIdx pos)
+RootedPath EvalState::findFile(const LookupPath & lookupPath, const std::string_view path, const PosIdx pos)
 {
+    /* Wrap a lookup-path-resolved SourcePath as a RootedPath under
+       the appropriate kind. LookupPath entries resolve under
+       rootFS (System); the corepkgs hardcoded fallback uses the
+       Internal-kinded corepkgsRoot so its positions and string
+       coercions surface as nix-internal rather than user-visible. */
+    auto wrap = [&](SourcePath sp) -> RootedPath {
+        if (&*sp.accessor == &*corepkgsFS.cast<SourceAccessor>())
+            return {corepkgsRoot, sp.path};
+        return {rootFSRoot, sp.path};
+    };
+
     for (auto & i : lookupPath.elements) {
         auto suffixOpt = i.prefix.suffixIfPotentialMatch(path);
 
@@ -3289,7 +3312,7 @@ SourcePath EvalState::findFile(const LookupPath & lookupPath, const std::string_
         auto suffixPath = CanonPath(suffix);
         if (auto cachedRes = getConcurrent(*rOpt->resolvedPaths, suffixPath)) {
             if (*cachedRes)
-                return **cachedRes;
+                return wrap(**cachedRes);
             else
                 // Cached negative lookup.
                 continue;
@@ -3298,7 +3321,7 @@ SourcePath EvalState::findFile(const LookupPath & lookupPath, const std::string_
         auto res = (r.path / suffixPath).resolveSymlinks();
         if (res.pathExists()) {
             r.resolvedPaths->emplace(suffixPath, res);
-            return res;
+            return wrap(res);
         }
 
         // Backward compatibility hack: throw an exception if access
@@ -3311,7 +3334,7 @@ SourcePath EvalState::findFile(const LookupPath & lookupPath, const std::string_
     }
 
     if (hasPrefix(path, "nix/"))
-        return {corepkgsFS, CanonPath(path.substr(3))};
+        return {corepkgsRoot, CanonPath(path.substr(3))};
 
     error<ThrownError>(
         settings.pureEval ? "cannot look up '<%s>' in pure evaluation mode (use '--impure' to override)"
@@ -3394,13 +3417,13 @@ Expr * EvalState::parse(
     char * text,
     size_t length,
     Pos::Origin origin,
-    const SourcePath & basePath,
+    const RootedPath & basePath,
     const std::shared_ptr<StaticEnv> & staticEnv)
 {
     auto tmpDocComments = make_ref<DocCommentMap>();
 
     auto result = parseExprFromBuf(
-        text, length, origin, basePath, mem.exprs, symbols, settings, positions, *tmpDocComments, rootFS);
+        text, length, origin, basePath, mem.exprs, symbols, settings, positions, *tmpDocComments, rootFSRoot);
 
     result->bindVars(*this, staticEnv);
 
@@ -3419,13 +3442,13 @@ ExprAttrs * EvalState::parseReplBindings(
     char * text,
     size_t length,
     Pos::Origin origin,
-    const SourcePath & basePath,
+    const RootedPath & basePath,
     const std::shared_ptr<StaticEnv> & staticEnv)
 {
     auto tmpDocComments = make_ref<DocCommentMap>();
 
     auto bindings = parseReplBindingsFromBuf(
-        text, length, origin, basePath, mem.exprs, symbols, settings, positions, *tmpDocComments, rootFS);
+        text, length, origin, basePath, mem.exprs, symbols, settings, positions, *tmpDocComments, rootFSRoot);
     assert(bindings);
 
     bindings->bindVars(*this, staticEnv);

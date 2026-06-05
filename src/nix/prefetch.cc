@@ -37,7 +37,7 @@ std::string resolveMirrorUrl(EvalState & state, const std::string & url)
     // FIXME: use nixpkgs flake
     state.eval(
         state.parseExprFromString(
-            "import <nixpkgs/pkgs/build-support/fetchurl/mirrors.nix>", state.rootPath(CanonPath::root)),
+            "import <nixpkgs/pkgs/build-support/fetchurl/mirrors.nix>", state.rootedPath(CanonPath::root)),
         vMirrors);
     state.forceAttrs(vMirrors, noPos, "while evaluating the set of all mirrors");
 
@@ -216,7 +216,8 @@ static int main_nix_prefetch_url(int argc, char ** argv)
             url = args[0];
         } else {
             Value vRoot;
-            state->evalFile(resolveExprPath(lookupFileArg(*state, args.empty() ? "." : args[0])), vRoot);
+            auto looked = lookupFileArg(*state, args.empty() ? "." : args[0]);
+            state->evalFile(RootedPath{looked.root, resolveExprPath(looked.sourcePath()).path}, vRoot);
             Value & v(*findAlongAttrPath(*state, attrPath, autoArgs, vRoot).first);
             state->forceAttrs(v, noPos, "while evaluating the source attribute to prefetch");
 

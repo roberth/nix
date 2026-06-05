@@ -1,7 +1,10 @@
 #include "nix/store/store-api.hh"
 #include "nix/expr/eval.hh"
+#include "nix/expr/source-root.hh"
 #include "nix/util/mounted-source-accessor.hh"
 #include "nix/fetchers/fetch-to-store.hh"
+
+#include <boost/unordered/concurrent_flat_map.hpp>
 
 namespace nix {
 
@@ -17,9 +20,38 @@ SourcePath EvalState::rootPath(std::string_view path)
     return {rootFS, CanonPath(absPath(path).string())};
 }
 
+RootedPath EvalState::rootedPath(CanonPath path)
+{
+    return {rootFSRoot, std::move(path)};
+}
+
+RootedPath EvalState::rootedPath(std::string_view path)
+{
+    return {rootFSRoot, CanonPath(absPath(path).string())};
+}
+
 SourcePath EvalState::storePath(const StorePath & path)
 {
     return {rootFS, CanonPath{store->printStorePath(path)}};
+}
+
+ref<SourceRoot> EvalState::getOrCreateFetcherRoot(ref<SourceAccessor> accessor)
+{
+    SourceAccessor * key = &*accessor;
+    /* Hot path: read-only lookup. Each fetcher accessor is admitted
+       once and re-emitted on every `fetchTree` materialisation, so
+       cache hits dominate. */
+    std::optional<ref<SourceRoot>> hit;
+    fetcherRoots->cvisit(key, [&](const auto & kv) { hit = kv.second; });
+    if (hit)
+        return *hit;
+    /* Miss: allocate, insert. Race-tolerant — each accessor maps to a
+       single Copyable-kinded SourceRoot, so concurrent inserts produce
+       structurally identical entries; the loser's allocation is
+       dropped via the visitor. */
+    ref<SourceRoot> result = make_ref<SourceRoot>(accessor, SourceRootKind::Copyable);
+    fetcherRoots->emplace_or_visit(key, result, [&](const auto & kv) { result = kv.second; });
+    return result;
 }
 
 void EvalState::ensureLazyPathCopied(const StorePath & path)

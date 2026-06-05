@@ -266,7 +266,9 @@ void SourceExprCommand::completeInstallable(AddCompletions & completions, std::s
 
             evalSettings.pureEval = false;
             auto state = getEvalState();
-            auto e = state->parseExprFromFile(resolveExprPath(lookupFileArg(*state, file->string())));
+            auto lookedUp = lookupFileArg(*state, file->string());
+            auto resolved = RootedPath{lookedUp.root, resolveExprPath(lookedUp.sourcePath()).path};
+            auto e = state->parseExprFromFile(resolved);
 
             Value root;
             state->eval(e, root);
@@ -469,7 +471,7 @@ Installables SourceExprCommand::parseInstallables(ref<Store> store, std::vector<
             state->evalFile(lookupFileArg(*state, file->string(), &dir), *vFile);
         } else {
             auto dir = absPath(getCommandBaseDir());
-            auto e = state->parseExprFromString(*expr, state->rootPath(dir.string()));
+            auto e = state->parseExprFromString(*expr, state->rootedPath(dir.string()));
             state->eval(e, *vFile);
         }
 

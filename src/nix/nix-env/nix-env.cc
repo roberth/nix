@@ -73,7 +73,7 @@ typedef enum { srcNixExprDrvs, srcNixExprs, srcStorePaths, srcProfile, srcAttrPa
 struct InstallSourceInfo
 {
     InstallSourceType type;
-    std::shared_ptr<SourcePath> nixExprPath; /* for srcNixExprDrvs, srcNixExprs */
+    std::shared_ptr<RootedPath> nixExprPath; /* for srcNixExprDrvs, srcNixExprs */
     std::filesystem::path profile;           /* for srcProfile */
     std::string systemFilter;                /* for srcNixExprDrvs */
     Bindings * autoArgs;
@@ -122,10 +122,11 @@ static bool isNixExpr(const SourcePath & path, struct SourceAccessor::Stat & st)
 
 static constexpr size_t maxAttrs = 1024;
 
-static void getAllExprs(EvalState & state, const SourcePath & path, StringSet & seen, BindingsBuilder & attrs)
+static void getAllExprs(EvalState & state, const RootedPath & path, StringSet & seen, BindingsBuilder & attrs)
 {
+    auto sp = path.sourcePath();
     StringSet namesSorted;
-    for (auto & [name, _] : path.resolveSymlinks().readDirectory())
+    for (auto & [name, _] : sp.resolveSymlinks().readDirectory())
         namesSorted.insert(name);
 
     for (auto & i : namesSorted) {
@@ -135,16 +136,17 @@ static void getAllExprs(EvalState & state, const SourcePath & path, StringSet & 
         if (i == "manifest.nix")
             continue;
 
-        auto path2 = (path / i).resolveSymlinks();
+        auto sp2 = (sp / i).resolveSymlinks();
+        RootedPath path2{path.root, sp2.path};
 
         SourceAccessor::Stat st;
         try {
-            st = path2.lstat();
+            st = sp2.lstat();
         } catch (Error &) {
             continue; // ignore dangling symlinks in ~/.nix-defexpr
         }
 
-        if (isNixExpr(path2, st) && (st.type != SourceAccessor::tRegular || hasSuffix(path2.baseName(), ".nix"))) {
+        if (isNixExpr(sp2, st) && (st.type != SourceAccessor::tRegular || hasSuffix(sp2.baseName(), ".nix"))) {
             /* Strip off the `.nix' filename suffix (if applicable),
                otherwise the attribute cannot be selected with the
                `-A' option.  Useful if you want to stick a Nix
@@ -154,14 +156,14 @@ static void getAllExprs(EvalState & state, const SourcePath & path, StringSet & 
                 attrName = std::string(attrName, 0, attrName.size() - 4);
             if (!seen.insert(attrName).second) {
                 std::string suggestionMessage = "";
-                if (path2.path.abs().find("channels") != std::string::npos
+                if (sp2.path.abs().find("channels") != std::string::npos
                     && path.path.abs().find("channels") != std::string::npos)
                     suggestionMessage =
                         fmt("\nsuggestion: remove '%s' from either the root channels or the user channels", attrName);
                 printError(
                     "warning: name collision in input Nix expressions, skipping '%1%'"
                     "%2%",
-                    path2,
+                    sp2,
                     suggestionMessage);
                 continue;
             }
@@ -169,7 +171,7 @@ static void getAllExprs(EvalState & state, const SourcePath & path, StringSet & 
             auto vArg = state.allocValue();
             vArg->mkPath(path2, state.mem);
             if (seen.size() == maxAttrs)
-                throw Error("too many Nix expressions in directory '%1%'", path);
+                throw Error("too many Nix expressions in directory '%1%'", sp);
             attrs.alloc(attrName).mkApp(&state.getBuiltin("import"), vArg);
         } else if (st.type == SourceAccessor::tDirectory)
             /* `path2' is a directory (with no default.nix in it);
@@ -178,11 +180,12 @@ static void getAllExprs(EvalState & state, const SourcePath & path, StringSet & 
     }
 }
 
-static void loadSourceExpr(EvalState & state, const SourcePath & path, Value & v)
+static void loadSourceExpr(EvalState & state, const RootedPath & path, Value & v)
 {
-    auto st = path.resolveSymlinks().lstat();
+    auto sp = path.sourcePath();
+    auto st = sp.resolveSymlinks().lstat();
 
-    if (isNixExpr(path, st))
+    if (isNixExpr(sp, st))
         state.evalFile(path, v);
 
     /* The path is a directory.  Put the Nix expressions in the
@@ -200,12 +203,12 @@ static void loadSourceExpr(EvalState & state, const SourcePath & path, Value & v
     }
 
     else
-        throw Error("path '%s' is not a directory or a Nix expression", path);
+        throw Error("path '%s' is not a directory or a Nix expression", sp);
 }
 
 static void loadDerivations(
     EvalState & state,
-    const SourcePath & nixExprPath,
+    const RootedPath & nixExprPath,
     std::string systemFilter,
     Bindings & autoArgs,
     const std::string & pathPrefix,
@@ -432,7 +435,7 @@ static void queryInstSources(
         loadSourceExpr(state, *instSource.nixExprPath, vArg);
 
         for (auto & i : args) {
-            Expr * eFun = state.parseExprFromString(i, state.rootPath("."));
+            Expr * eFun = state.parseExprFromString(i, state.rootedPath("."));
             Value vFun, vTmp;
             state.eval(eFun, vFun);
             vTmp.mkApp(&vFun, &vArg);
@@ -1514,9 +1517,9 @@ static int main_nix_env(int argc, char ** argv)
             std::shared_ptr<EvalState>(new EvalState(myArgs.lookupPath, store, fetchSettings, evalSettings));
         globals.state->repair = myArgs.repair;
 
-        globals.instSource.nixExprPath = std::make_shared<SourcePath>(
+        globals.instSource.nixExprPath = std::make_shared<RootedPath>(
             file != "" ? lookupFileArg(*globals.state, file)
-                       : globals.state->rootPath(CanonPath(nixExprPath.string())));
+                       : globals.state->rootedPath(CanonPath(nixExprPath.string())));
 
         globals.instSource.autoArgs = myArgs.getAutoArgs(*globals.state);
 

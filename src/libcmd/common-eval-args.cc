@@ -163,8 +163,8 @@ Bindings * MixEvalArgs::getAutoArgs(EvalState & state)
                         state.parseExprFromString(
                             arg.expr,
                             compatibilitySettings.nixShellShebangArgumentsRelativeToScript
-                                ? state.rootPath(absPath(getCommandBaseDir()).string())
-                                : state.rootPath(".")));
+                                ? state.rootedPath(absPath(getCommandBaseDir()).string())
+                                : state.rootedPath(".")));
                 },
                 [&](const AutoArgString & arg) { v->mkString(arg.s, state.mem); },
                 [&](const AutoArgFile & arg) { v->mkString(readFile(arg.path.string()), state.mem); },
@@ -175,12 +175,17 @@ Bindings * MixEvalArgs::getAutoArgs(EvalState & state)
     return res.finish();
 }
 
-SourcePath lookupFileArg(EvalState & state, std::string_view s, const std::filesystem::path * baseDir)
+RootedPath lookupFileArg(EvalState & state, std::string_view s, const std::filesystem::path * baseDir)
 {
+    /* All branches admit through `rootFS` (CLI-supplied paths resolve
+       to filesystem locations, including the storepath fallbacks
+       that route through rootFS→storeFS). System is the correct
+       admission kind. */
+    auto wrap = [&](SourcePath sp) -> RootedPath { return {state.rootFSRoot, sp.path}; };
     if (EvalSettings::isPseudoUrl(s)) {
         auto accessor = fetchers::downloadTarball(*state.store, state.fetchSettings, EvalSettings::resolvePseudoUrl(s));
         auto storePath = fetchToStore(state.fetchSettings, *state.store, SourcePath(accessor), FetchMode::Copy);
-        return state.storePath(storePath);
+        return wrap(state.storePath(storePath));
     }
 
     else if (hasPrefix(s, "flake:")) {
@@ -191,7 +196,7 @@ SourcePath lookupFileArg(EvalState & state, std::string_view s, const std::files
         auto storePath = nix::fetchToStore(
             state.fetchSettings, *state.store, SourcePath(accessor), FetchMode::Copy, lockedRef.input.getName());
         state.allowPath(storePath);
-        return state.storePath(storePath);
+        return wrap(state.storePath(storePath));
     }
 
     else if (s.size() > 2 && s.at(0) == '<' && s.at(s.size() - 1) == '>') {
@@ -201,7 +206,7 @@ SourcePath lookupFileArg(EvalState & state, std::string_view s, const std::files
     }
 
     else
-        return state.rootPath(absPath(std::filesystem::path{s}, baseDir).string());
+        return wrap(state.rootPath(absPath(std::filesystem::path{s}, baseDir).string()));
 }
 
 } // namespace nix

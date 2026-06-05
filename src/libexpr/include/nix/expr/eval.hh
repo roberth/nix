@@ -395,6 +395,36 @@ public:
      */
     const ref<MemorySourceAccessor> internalFS;
 
+    /**
+     * The SourceRoot wrapping `rootFS` under which every rootFS-rooted
+     * path Value is admitted (System-kinded). Owned here so the same
+     * shared `ref<SourceRoot>` flows into every admission seam (the
+     * parser, `findFile`, `rootPath`-derived call sites).
+     */
+    const ref<SourceRoot> rootFSRoot;
+
+    /**
+     * SourceRoot for `corepkgsFS` (Internal-kinded). Used to admit
+     * Nix-internal helper files into the parser without surfacing
+     * them as user-visible path Values.
+     */
+    const ref<SourceRoot> corepkgsRoot;
+
+    /**
+     * SourceRoot for `internalFS` (Internal-kinded).
+     */
+    const ref<SourceRoot> internalFSRoot;
+
+    /**
+     * Memoise the `SourceRoot` wrapping a fetcher's `SourceAccessor`
+     * under Copyable kind. Pinned for `EvalState`'s lifetime so a
+     * raw `SourceRoot *` stored on a path Value stays live. Keyed
+     * by accessor identity (`SourceAccessor *`) — the same fetcher
+     * accessor is always exposed under the same Copyable kind, so
+     * one entry per accessor suffices.
+     */
+    ref<SourceRoot> getOrCreateFetcherRoot(ref<SourceAccessor> accessor);
+
     const SourcePath derivationInternal;
     const SourcePath importedDrvToDerivation;
 
@@ -504,6 +534,21 @@ private:
      */
     const ref<RegexCache> regexCache;
 
+    /**
+     * Backing map for `getOrCreateFetcherRoot`. Pinned for the
+     * eval's lifetime.
+     *
+     * The map keys on a raw `SourceAccessor *`, but the value is
+     * `ref<SourceRoot>` and `SourceRoot` itself holds a
+     * `ref<SourceAccessor>`. So the value owns the accessor that
+     * its own key points at: as long as the entry is in the map,
+     * the key is dereferenceable. No eviction is ever performed,
+     * and `Value::path()` documents how callers extend root
+     * lifetimes when needed, so the raw-pointer key is sound by
+     * construction.
+     */
+    const ref<boost::concurrent_flat_map<SourceAccessor *, ref<SourceRoot>>> fetcherRoots;
+
 public:
 
     /**
@@ -545,6 +590,15 @@ public:
      * Variant which accepts relative paths too.
      */
     SourcePath rootPath(std::string_view path);
+
+    /**
+     * Like `rootPath`, but admitted under the System-kinded
+     * `rootFSRoot`. Use this at sites that produce path Values or
+     * `RootedPath` arguments to the parser; the kind reflects that
+     * the path is meant to be interpreted as a filesystem path.
+     */
+    RootedPath rootedPath(CanonPath path);
+    RootedPath rootedPath(std::string_view path);
 
     /**
      * Return a `SourcePath` that refers to `path` in the store.
@@ -595,28 +649,33 @@ public:
     void lockInput(fetchers::Input & input, const fetchers::Input & originalInput, ref<SourceAccessor> accessor);
 
     /**
-     * Parse a Nix expression from the specified file.
+     * Parse a Nix expression from the specified file. The
+     * `RootedPath`'s `SourceRoot` carries the language-level kind
+     * under which the file is admitted (System for filesystem
+     * loads, Copyable for fetched-tree loads, Internal for
+     * nix-internal helpers).
      */
-    Expr * parseExprFromFile(const SourcePath & path);
-    Expr * parseExprFromFile(const SourcePath & path, const std::shared_ptr<StaticEnv> & staticEnv);
+    Expr * parseExprFromFile(const RootedPath & path);
+    Expr * parseExprFromFile(const RootedPath & path, const std::shared_ptr<StaticEnv> & staticEnv);
 
     /**
-     * Parse a Nix expression from the specified string.
+     * Parse a Nix expression from the specified string. `basePath`
+     * names the file's surrounding directory under its `SourceRoot`.
      */
     Expr *
-    parseExprFromString(std::string s, const SourcePath & basePath, const std::shared_ptr<StaticEnv> & staticEnv);
-    Expr * parseExprFromString(std::string s, const SourcePath & basePath);
+    parseExprFromString(std::string s, const RootedPath & basePath, const std::shared_ptr<StaticEnv> & staticEnv);
+    Expr * parseExprFromString(std::string s, const RootedPath & basePath);
 
     /**
      * Parse REPL bindings from the specified string.
      * Returns ExprAttrs with bindings to add to scope.
      */
     ExprAttrs *
-    parseReplBindings(std::string s, const SourcePath & basePath, const std::shared_ptr<StaticEnv> & staticEnv);
+    parseReplBindings(std::string s, const RootedPath & basePath, const std::shared_ptr<StaticEnv> & staticEnv);
     ExprAttrs * parseReplBindings(
         std::string s,
         std::string errorSource,
-        const SourcePath & basePath,
+        const RootedPath & basePath,
         const std::shared_ptr<StaticEnv> & staticEnv);
 
     Expr * parseStdin();
@@ -626,15 +685,15 @@ public:
      * form. Optionally enforce that the top-level expression is
      * trivial (i.e. doesn't require arbitrary computation).
      */
-    void evalFile(const SourcePath & path, Value & v, bool mustBeTrivial = false);
+    void evalFile(const RootedPath & path, Value & v, bool mustBeTrivial = false);
 
     void resetFileCache();
 
     /**
      * Look up a file in the search path.
      */
-    SourcePath findFile(const std::string_view path);
-    SourcePath findFile(const LookupPath & lookupPath, const std::string_view path, const PosIdx pos = noPos);
+    RootedPath findFile(const std::string_view path);
+    RootedPath findFile(const LookupPath & lookupPath, const std::string_view path, const PosIdx pos = noPos);
 
     /**
      * Try to resolve a search path value (not the optional key part).
@@ -921,14 +980,14 @@ private:
         char * text,
         size_t length,
         Pos::Origin origin,
-        const SourcePath & basePath,
+        const RootedPath & basePath,
         const std::shared_ptr<StaticEnv> & staticEnv);
 
     ExprAttrs * parseReplBindings(
         char * text,
         size_t length,
         Pos::Origin origin,
-        const SourcePath & basePath,
+        const RootedPath & basePath,
         const std::shared_ptr<StaticEnv> & staticEnv);
 
     /**
