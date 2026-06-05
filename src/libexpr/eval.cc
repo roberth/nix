@@ -2160,6 +2160,34 @@ void ExprConcatStrings::eval(EvalState & state, Env & env, Value & v)
                 firstPathRoot = vTmp.pathRoot()->shared_from_this();
         }
 
+        /* Reject a non-first path operand whose SourceRoot is
+           Copyable. `./foo + fetchTreeResult` would stringify the
+           fetched-tree operand through `coerceToString`'s Copyable
+           arm, walking the entire tree to splice a storepath
+           substring into the joined path -- the resulting subpath
+           isn't a meaningful address.
+
+           The first operand being Copyable is fine: it just sets
+           the result's root, no walk involved (`fetchTreeResult +
+           "/sub"` stays valid because the second operand is a
+           string, not a Copyable path that needs walking).
+
+           The grandfathered System+System form
+           (`/var/lib + /var/log == /var/lib/var/log`) is
+           preserved. Internal-rooted operands fall through to
+           `coerceToString`'s Internal-reject (C6), with the same
+           error shape. */
+        if (!first && firstType == nPath && vTmp.type() == nPath && vTmp.pathRoot()->kind == SourceRootKind::Copyable) {
+            state
+                .error<EvalError>(
+                    "concatenating a fetched-tree path onto a path is not supported -- "
+                    "use string interpolation (\"${a}/${b}\") if you need to join paths "
+                    "involving fetched trees")
+                .atPos(i_pos)
+                .withFrame(env, *this)
+                .debugThrow();
+        }
+
         if (firstType == nInt) {
             if (vTmp.type() == nInt) {
                 auto newN = n + vTmp.integer();
