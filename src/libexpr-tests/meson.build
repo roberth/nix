@@ -48,6 +48,7 @@ subdir('nix-meson-build-support/common')
 
 sources = files(
   'concat-strings.cc',
+  'cur-pos-file.cc',
   'derived-path.cc',
   'error_traces.cc',
   'eval.cc',
