@@ -491,8 +491,8 @@ ProcessLineResult NixRepl::processLine(std::string line)
                 return {path, 0};
             } else if (v.isLambda()) {
                 auto pos = state->positions[v.lambda().fun->pos];
-                if (auto path = std::get_if<SourcePath>(&pos.origin))
-                    return {*path, pos.line};
+                if (auto path = std::get_if<RootedPath>(&pos.origin))
+                    return {path->sourcePath(), pos.line};
                 else
                     throw Error("'%s' cannot be shown in an editor", pos);
             } else {

@@ -123,7 +123,15 @@ struct RootedPath
         return sourcePath().getPhysicalPath();
     }
 
-    bool operator==(const RootedPath & x) const noexcept = default;
+    bool operator==(const RootedPath & x) const noexcept;
+    /**
+     * Lex compare on (path, kind, accessor.number). Ordering is
+     * deterministic within a process; cross-process ordering is not
+     * — `SourceAccessor::number` is assigned in allocation order per
+     * process, so a given accessor's number isn't reproducible
+     * across runs.
+     */
+    std::strong_ordering operator<=>(const RootedPath & x) const noexcept;
 };
 
 std::ostream & operator<<(std::ostream & str, const RootedPath & path);
