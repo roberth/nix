@@ -82,6 +82,7 @@ suites = [
       'fetchPath.sh',
       'fetchTree-file.sh',
       'fetchTreeLazy.sh',
+      'kind-aware-import-escape.sh',
       'simple.sh',
       'referrers.sh',
       'optimise-store.sh',

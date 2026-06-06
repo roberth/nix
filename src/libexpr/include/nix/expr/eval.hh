@@ -1284,6 +1284,21 @@ std::string showType(const Value & v);
 SourcePath resolveExprPath(SourcePath path, bool addDefaultNix = true);
 
 /**
+ * Kind-aware variant of `resolveExprPath`: the ancestor symlink
+ * walk routes through the kind-aware `resolveSymlinks` wrapper
+ * (see `<nix/expr/source-root.hh>`). For Copyable accessors a
+ * symlink whose target escapes the accessor root raises
+ * `AccessorBoundaryEscape`; System keeps the historical lenient
+ * walk; Internal-rooted paths bypass the wrapper (the wrapper
+ * refuses Internal by design) and fall back to the bare resolver.
+ *
+ * Prefer this overload at sites that have a `RootedPath` in hand —
+ * the import / scopedImport choke point in particular, where it
+ * actually catches escapes that the bare overload silently clamps.
+ */
+SourcePath resolveExprPath(const RootedPath & path, bool addDefaultNix = true);
+
+/**
  * Whether a URI is allowed, assuming restrictEval is enabled
  */
 bool isAllowedURI(std::string_view uri, const Strings & allowedPaths);
