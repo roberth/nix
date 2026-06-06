@@ -71,6 +71,42 @@ TEST_F(SourceRootResolveSymlinksTest, SystemSilentlyClampsInputEscape)
     EXPECT_EQ(resolved.abs(), "/sibling/leaf");
 }
 
+/* Copyable: absolute-target symlink rejected. Distinct from
+   `..` escape: the symlink doesn't try to pop past root, but its
+   `/sibling` target would shift meaning between accessor-view
+   (= `<root>/sibling`) and post-materialisation (= real
+   `/sibling` on the host filesystem). Refusing at admission
+   keeps Copyable trees position-independent. */
+TEST_F(SourceRootResolveSymlinksTest, CopyableRejectsAbsoluteSymlink)
+{
+    auto a = make_ref<MemorySourceAccessor>();
+    a->addFile(CanonPath("/sibling/leaf"), "y");
+    {
+        MemorySink sink{*a};
+        sink.createSymlink(CanonPath("/abs-link"), "/sibling");
+    }
+    auto root = make_ref<SourceRoot>(a.cast<SourceAccessor>(), SourceRootKind::Copyable);
+    EXPECT_THROW(
+        nix::resolveSymlinks(*root, std::string_view{"/abs-link/leaf"}, SymlinkResolution::Full),
+        AccessorBoundaryEscape);
+}
+
+/* System: absolute-target symlink follows lenient (the rebased
+   semantics match the libutil resolver's default). Pins the
+   asymmetry with Copyable. */
+TEST_F(SourceRootResolveSymlinksTest, SystemFollowsAbsoluteSymlink)
+{
+    auto a = make_ref<MemorySourceAccessor>();
+    a->addFile(CanonPath("/sibling/leaf"), "y");
+    {
+        MemorySink sink{*a};
+        sink.createSymlink(CanonPath("/abs-link"), "/sibling");
+    }
+    auto root = make_ref<SourceRoot>(a.cast<SourceAccessor>(), SourceRootKind::System);
+    auto resolved = nix::resolveSymlinks(*root, std::string_view{"/abs-link/leaf"}, SymlinkResolution::Full);
+    EXPECT_EQ(resolved.abs(), "/sibling/leaf");
+}
+
 /* System: symlink-target escape silently follows. Asymmetric with
    the Copyable case above; both pinned so a future change has to
    update both tests. */

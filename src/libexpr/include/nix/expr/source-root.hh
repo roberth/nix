@@ -53,14 +53,52 @@ enum class SourceRootKind : std::uint8_t {
 };
 
 /**
+ * Boundary policy for `Copyable` accessors. Adds absolute-symlink
+ * rejection on top of `StrictAccessorBoundary`'s `..` rejection.
+ *
+ * Why absolute symlinks are rejected for Copyable but not for the
+ * libutil-level `StrictAccessorBoundary`: a Copyable tree is meant
+ * to be position-independent — it materialises into a storepath
+ * at some point, and `/` shifts meaning at that boundary. Pre-
+ * materialisation, a symlink whose target is `/sibling` resolves
+ * to `<accessor-root>/sibling`. Post-materialisation, the same
+ * symlink file in the store points at the *real* `/sibling` (the
+ * system root). Two different files would be read at the same
+ * symlink depending on whether the tree has been materialised
+ * yet. Refusing absolute symlinks at admission keeps Copyable
+ * trees actually relocatable.
+ *
+ * `StrictAccessorBoundary` itself stays absolute-symlink-tolerant
+ * because its other callers (flake-input layer in main, etc.)
+ * don't have the materialisation-relocation concern Copyable does.
+ */
+struct StrictCopyableBoundary : StrictAccessorBoundary
+{
+    using StrictAccessorBoundary::StrictAccessorBoundary;
+
+    void onAbsoluteSymlink(const CanonPath & link, std::string_view target) const
+    {
+        throw AccessorBoundaryEscape(
+            "absolute symlink '%s' (target '%s') in the source tree at %s is not allowed; "
+            "Copyable trees must be position-independent so that materialising them to the "
+            "store does not change which file a symlink resolves to",
+            accessor.showPath(link),
+            std::string(target),
+            accessor.showPath(CanonPath::root));
+    }
+};
+
+/**
  * Kind-aware `resolveSymlinks`: walks `path` through `root.accessor`
  * and applies a boundary policy chosen by `root.kind`.
  *
- * - `Copyable`: `StrictAccessorBoundary`. A fetched tree is a
+ * - `Copyable`: `StrictCopyableBoundary`. A fetched tree is a
  *   contained unit; an `..`-past-root has no meaningful target
  *   inside the tree, and the silent lexical clamp inherited from
  *   `CanonPath`'s raw-string constructor would name something
- *   wrong. Throws `AccessorBoundaryEscape` on escape.
+ *   wrong. Absolute symlinks are also rejected — see
+ *   `StrictCopyableBoundary`. Throws `AccessorBoundaryEscape` on
+ *   either case.
  * - `System`: bare lenient walker, no boundary check. rootFS *is*
  *   the real filesystem, and the historical lexical-`..` clamp at
  *   accessor root has the meaning the user expects. Preserves the
@@ -95,7 +133,7 @@ resolveSymlinks(const SourceRoot & root, std::string_view path, SymlinkResolutio
     case SourceRootKind::System:
         return nix::resolveSymlinks(*root.accessor, path, mode);
     case SourceRootKind::Copyable:
-        return nix::resolveSymlinks(*root.accessor, path, mode, StrictAccessorBoundary{*root.accessor});
+        return nix::resolveSymlinks(*root.accessor, path, mode, StrictCopyableBoundary{*root.accessor});
     case SourceRootKind::Internal:
         /* No `throw std::logic_error` here, even though "loud
            programmer error" is the intent: a `std::` exception is
