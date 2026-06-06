@@ -246,7 +246,33 @@ static Flake readFlake(
     const SourcePath & rootDir,
     const InputAttrPath & lockRootAttrPath)
 {
-    auto flakeDir = rootDir / CanonPath(resolvedRef.subdir);
+    /* Part 3: route the flake's `?dir=` subdir composition through
+       the kind-aware `resolveSymlinks` wrapper. The bare
+       `CanonPath(raw)` silently clamps `..`-past-root, so
+       `getFlake "path:/nix/store/X-source?dir=../etc"` would
+       quietly resolve `subdir` to `/etc` inside the storepath.
+       The wrapper raises `AccessorBoundaryEscape`; catch and
+       rewrap with the flake-input-specific diagnostic.
+
+       Compose against `rootDir.path`, not bare accessor root: for
+       relative-input flakes, `rootDir` already names the input's
+       in-tree path (e.g. `/sub`), and `?dir=` is resolved against
+       that. Walking from accessor root would land on `/inner`
+       instead of `/sub/inner` and read the wrong flake.nix. */
+    SourcePath flakeDir = rootDir;
+    if (!resolvedRef.subdir.empty()) {
+        auto joined = rootDir.path.abs() + "/" + resolvedRef.subdir;
+        SourceRoot adhoc{rootDir.accessor, SourceRootKind::Copyable};
+        try {
+            auto resolved = nix::resolveSymlinks(adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
+            flakeDir = SourcePath{rootDir.accessor, resolved};
+        } catch (AccessorBoundaryEscape &) {
+            throw Error(
+                "flake input subdir '%s' escapes the source tree at %s",
+                resolvedRef.subdir,
+                rootDir.accessor->showPath(CanonPath::root));
+        }
+    }
     auto flakePath = flakeDir / "flake.nix";
 
     // NOTE evalFile forces vInfo to be an attrset because mustBeTrivial is true.
