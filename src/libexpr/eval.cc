@@ -2842,6 +2842,61 @@ SourcePath EvalState::coerceToPath(const PosIdx pos, Value & v, NixStringContext
     return rootPath(CanonPath(path));
 }
 
+RootedPath
+EvalState::coerceToRootedPath(const PosIdx pos, Value & v, NixStringContext & context, std::string_view errorCtx)
+{
+    try {
+        forceValue(v, pos);
+    } catch (Error & e) {
+        e.addTrace(positions[pos], errorCtx);
+        throw;
+    }
+
+    /* nPath: the kind is sitting right on the Value. Return it
+       verbatim. No IO, no walk. */
+    if (v.type() == nPath)
+        return v.rootedPath();
+
+    if (v.type() == nAttrs) {
+        /* `__toString` takes precedence over `outPath` (per the
+           language manual's string-interpolation rules). Call it
+           and recurse on the result; the recursion preserves the
+           inner kind if `__toString` returns an nPath, and falls
+           through to the string arm if it returns the documented
+           string. */
+        if (auto i = v.attrs()->get(s.toString)) {
+            Value v1;
+            callFunction(*i->value, v, v1, pos);
+            return coerceToRootedPath(pos, v1, context, errorCtx);
+        }
+        /* `outPath`: peel inductively when it's path- or
+           attrset-shaped. The documented contract is "outPath must
+           be a string"; under lazy paths the runtime actually
+           carries an nPath here (`fetchTree { lazy = true; }`),
+           and the inner path's `SourceRoot` is the kind we want
+           the caller to see. When `outPath` *is* a string (the
+           contract case, the eager-fetchTree case, derivations'
+           predicted-store-path strings) we fall through to the
+           string arm below, which admits under `rootFSRoot`
+           (System). */
+        if (auto i = v.attrs()->get(s.outPath)) {
+            forceValue(*i->value, pos);
+            if (i->value->type() == nPath || i->value->type() == nAttrs)
+                return coerceToRootedPath(pos, *i->value, context, errorCtx);
+        }
+    }
+
+    /* Fallback: route through `coerceToString` (no copy-to-store)
+       and admit the resulting string under `rootFSRoot` (System).
+       Any string-shaped path the language can produce here
+       identifies a filesystem location, so System is the correct
+       admission kind. */
+    auto path = coerceToString(pos, v, context, errorCtx, false, false, true).toOwned();
+    if (path == "" || path[0] != '/')
+        error<EvalError>("string '%1%' doesn't represent an absolute path", path).withTrace(pos, errorCtx).debugThrow();
+    return rootedPath(CanonPath(path));
+}
+
 StorePath
 EvalState::coerceToStorePath(const PosIdx pos, Value & v, NixStringContext & context, std::string_view errorCtx)
 {

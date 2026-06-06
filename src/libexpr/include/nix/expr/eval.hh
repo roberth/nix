@@ -895,6 +895,31 @@ public:
     SourcePath coerceToPath(const PosIdx pos, Value & v, NixStringContext & context, std::string_view errorCtx);
 
     /**
+     * Like `coerceToPath`, but returns a `RootedPath` so the caller
+     * can see the language-level `SourceRootKind` the path lives
+     * under. The kind is found inductively by peeling the input:
+     *
+     * - `nPath`: kind is the path Value's own `SourceRoot`.
+     * - `nAttrs` with `__toString`: call it, recurse on the result.
+     * - `nAttrs` with `outPath`: if `outPath` is itself path- or
+     *   attrset-shaped, recurse on it (this is the lazy-paths
+     *   regime where `fetchTree { lazy = true; }.outPath` is an
+     *   nPath); if it's a string, fall through to the string arm.
+     * - Any string-shaped value (including `outPath` strings, the
+     *   documented contract): the string identifies a filesystem
+     *   location, so the result is admitted under `rootFSRoot`
+     *   (System).
+     *
+     * Use this at sites that route on the path's `SourceRootKind`
+     * (e.g. `realisePath`'s kind-aware symlink resolver). For sites
+     * that only want a bare `SourcePath`, `coerceToPath` is fine —
+     * it stays on its historical route through `coerceToString` for
+     * the non-bare-path cases (notably `builtins.storePath` relies
+     * on the Copyable-walk-to-storepath-string rewrap).
+     */
+    RootedPath coerceToRootedPath(const PosIdx pos, Value & v, NixStringContext & context, std::string_view errorCtx);
+
+    /**
      * Like coerceToPath, but the result must be a store path.
      */
     StorePath coerceToStorePath(const PosIdx pos, Value & v, NixStringContext & context, std::string_view errorCtx);
