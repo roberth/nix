@@ -59,3 +59,12 @@ let
   t = builtins.fetchTree { type = \"path\"; path = $root/tree; lazy = true; };
 in builtins.readFile (t.outPath + \"/good.txt\")
 ") = "content" ]]
+
+# `"${path}"` interpolation through the same escape: goes through
+# `copyPathToStore`'s ancestor walk, whose kind-aware wrapper
+# rejects via the same mechanism.
+expectStderr 1 nix --extra-experimental-features "$xpFlags" eval --impure --raw --expr "
+let
+  t = builtins.fetchTree { type = \"path\"; path = $root/tree; lazy = true; };
+in \"\${t.outPath + \"/escape-link/file.txt\"}\"
+" | grepQuiet "escape the source tree"
