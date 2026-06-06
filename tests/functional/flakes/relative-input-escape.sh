@@ -82,6 +82,57 @@ rm -f "$root/flake.lock"
 expect 1 nix flake lock "$root" 2>&1 \
     | grep "relative flake input path '../../escapedoy' escapes the source tree at"
 
+# ----- relative-input-via-escaping-symlink -----------------------------
+
+# `inputs.X.url = "path:./sub/symlink-escape"` exercises the
+# symlink-target case at the relative-input layer. Note:
+# `resolveRelativePath` walks with `SymlinkResolution::Ancestors`,
+# which does *not* resolve the trailing component — so the
+# escape isn't detected at lock time by Part 3A. Instead, the
+# resolved SourcePath flows through `readFlake → evalFile →
+# resolveExprPath` (Part 2B), which uses `Full` mode and follows
+# the symlink. The wrapper's `StrictCopyableBoundary` then
+# catches the escape with the bare libutil message.
+#
+# This is the "two layers compose" property from Part 2/3:
+# Part 3A catches escapes whose `..` is in the input path's
+# *ancestor* chain (so the Ancestors-mode walk hits them);
+# Part 2 catches escapes via symlinks at the input's trailing
+# position (Full-mode walk at the actual read site).
+ln -s ../../escape "$root/sub/symlink-escape"
+cat > "$root/flake.nix" <<EOF
+{
+    description = "root with relative input via escaping symlink";
+    inputs = {
+        viaLink.url = "path:./sub/symlink-escape";
+    };
+    outputs = { viaLink, ... }: { tag = viaLink.tag; };
+}
+EOF
+git -C "$root" add flake.nix sub/symlink-escape
+rm -f "$root/flake.lock"
+expect 1 nix flake lock "$root" 2>&1 \
+    | grep "'\.\.' would escape the source tree at"
+
+# Absolute-symlink variant: `abs-link -> /sibling`. Same
+# layering — caught at the read site (Part 2B) with the
+# StrictCopyableBoundary's `Copyable trees must be position-
+# independent` message.
+ln -s /sibling "$root/abs-link"
+cat > "$root/flake.nix" <<EOF
+{
+    description = "root with relative input via absolute symlink";
+    inputs = {
+        viaAbs.url = "path:./abs-link";
+    };
+    outputs = { viaAbs, ... }: { tag = viaAbs.tag; };
+}
+EOF
+git -C "$root" add flake.nix abs-link
+rm -f "$root/flake.lock"
+expect 1 nix flake lock "$root" 2>&1 \
+    | grep "absolute symlink '.*' .* is not allowed; Copyable trees must be position-independent"
+
 # ----- relative-input-with-escaping-?dir= ------------------------------
 
 # `inputs.X.url = "path:./sub?dir=../../escapedoy"` exercises the
