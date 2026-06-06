@@ -2294,6 +2294,76 @@ void ExprConcatStrings::eval(EvalState & state, Env & env, Value & v)
         for (const auto & part : strings) {
             resultStr += *part;
         }
+
+        /* Part 1 of the three-part escape handling: lexical check
+           for Copyable-rooted path concatenation. `CanonPath(raw)`
+           silently clamps `..`-past-root. For Copyable accessors
+           (fetched trees), the clamped result lands at a path
+           *inside* the tree that the user almost certainly didn't
+           mean. Walk the components lexically and reject if depth
+           would go negative.
+
+           No I/O — no symlink resolution, no accessor reads. The
+           check is pure-language, matching the operator's
+           character (the reviewer's objection to cff28d23f was
+           the I/O at concat time, not the principle of catching
+           escapes).
+
+           System keeps historical silent-clamp; the long-standing
+           `./foo + "../bar"` idiom depends on it. Internal can't
+           reach here (path concat preserves the first arg's root;
+           Internal-rooted paths aren't admitted as user-visible
+           starting points in practice).
+
+           Symlink-target escapes (where the joined string has no
+           literal `..` but a symlink in the path traverses one)
+           are NOT caught here — those need the read-time
+           kind-aware resolver in Part 2 (which fires when the
+           resulting path is actually read). The two layers
+           compose: Part 1 catches obvious lexical escapes early
+           and cheaply; Part 2 catches symlink-spliced escapes at
+           the read site. */
+        if (firstPathRoot->kind == SourceRootKind::Copyable) {
+            /* Reuse libutil's `tokenizeString`: it collapses runs of
+               separators and skips empty components naturally, so the
+               loop here only handles `.` / `..` semantics. Container
+               choice (`std::vector<std::string>`) differs from
+               `resolveSymlinks`'s `std::list<std::string>` because
+               this loop walks the components forward and never
+               splices — vector is the right shape; list buys
+               splice support we don't need. The hand-rolled walker
+               the previous shape used was a parallel implementation
+               of equivalent component splitting; the simpler shape
+               here keeps the lexical check honest about that. The
+               trade-off vs. the hand-rolled walker is one
+               `std::string` allocation per component plus a vector
+               per call — fine for Copyable path-concat, which is
+               not a hot path (concats per eval are dwarfed by other
+               allocations in `ExprConcatStrings`). A
+               `tokenizeString<std::vector<std::string_view>>` extern
+               instantiation could lift the per-component allocation
+               if needed in the future. */
+            int depth = 0;
+            for (const auto & component : tokenizeString<std::vector<std::string>>(resultStr, "/")) {
+                if (component == ".")
+                    continue;
+                if (component == "..") {
+                    if (depth == 0) {
+                        state
+                            .error<EvalError>(
+                                "concatenated path '%s' would escape the source tree at %s",
+                                resultStr,
+                                firstPathRoot->accessor->showPath(CanonPath::root))
+                            .atPos(pos)
+                            .withFrame(env, *this)
+                            .debugThrow();
+                    }
+                    depth--;
+                } else
+                    depth++;
+            }
+        }
+
         v.mkPath(RootedPath{ref(firstPathRoot), CanonPath(resultStr)}, state.mem);
     } else {
         auto & resultStr = StringData::alloc(state.mem, sSize);
