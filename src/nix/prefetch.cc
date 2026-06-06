@@ -217,7 +217,7 @@ static int main_nix_prefetch_url(int argc, char ** argv)
         } else {
             Value vRoot;
             auto looked = lookupFileArg(*state, args.empty() ? "." : args[0]);
-            state->evalFile(RootedPath{looked.root, resolveExprPath(looked.sourcePath()).path}, vRoot);
+            state->evalFile(RootedPath{looked.root, resolveExprPath(looked).path}, vRoot);
             Value & v(*findAlongAttrPath(*state, attrPath, autoArgs, vRoot).first);
             state->forceAttrs(v, noPos, "while evaluating the source attribute to prefetch");
 

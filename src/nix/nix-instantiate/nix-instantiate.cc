@@ -201,7 +201,7 @@ static int main_nix_instantiate(int argc, char ** argv)
                 e = state->parseExprFromString(i, state->rootedPath("."));
             else {
                 auto looked = lookupFileArg(*state, i);
-                e = state->parseExprFromFile(RootedPath{looked.root, resolveExprPath(looked.sourcePath()).path});
+                e = state->parseExprFromFile(RootedPath{looked.root, resolveExprPath(looked).path});
             }
             processExpr(
                 *state, attrPaths, parseOnly, strict, autoArgs, evalOnly, outputKind, xmlOutputSourceLocation, e);

@@ -126,6 +126,7 @@ suites = [
       'impure-env.sh',
       'impure-eval.sh',
       'json.sh',
+      'kind-aware-import-escape.sh',
       'lang-gc.sh',
       'lang.sh',
       'legacy-ssh-store.sh',

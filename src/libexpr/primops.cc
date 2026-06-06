@@ -289,7 +289,9 @@ static void scopedImport(EvalState & state, RootedPath & path, Value * vScope, V
 
     auto sp = path.sourcePath();
     printTalkative("evaluating file '%1%'", sp);
-    Expr * e = state.parseExprFromFile(RootedPath{path.root, resolveExprPath(sp).path}, staticEnv);
+    /* Kind-aware overload — catches Copyable escapes during the
+       ancestor walk. */
+    Expr * e = state.parseExprFromFile(RootedPath{path.root, resolveExprPath(path).path}, staticEnv);
 
     e->eval(state, *env, v);
 }
