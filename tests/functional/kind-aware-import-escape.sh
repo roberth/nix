@@ -111,3 +111,37 @@ let
   t = builtins.fetchTree { type = \"path\"; path = $root/tree; lazy = true; };
 in \"\${t.outPath + \"/abs-link/file.txt\"}\"
 " | grepQuiet "$absSymlinkPattern"
+
+# ----- string-boundary loses the Copyable kind -------------------------
+
+# Due-diligence pin: once the user interpolates a Copyable path to
+# a string, the Copyable kind is lost — the resulting string is
+# just a path string, and reading it back goes through rootFS
+# (System kind) where `..` clamps lexically per the historical
+# behaviour. The escape check does *not* fire across the string
+# boundary.
+#
+# This is the intended design: Copyable is a property of the
+# path *value*, not of the string content. A user who explicitly
+# converts to string is opting out of the policy. The test
+# affirms that the failure mode here is the historical
+# "lexically clamped to /nix/store/X, doesn't exist" shape, not
+# the wrapper's escape diagnostic.
+stringBypassErr="$TEST_ROOT/string-bypass.err"
+expectStderr 1 nix --extra-experimental-features "$xpFlags" eval --impure --raw --expr "
+let
+  t = builtins.fetchTree { type = \"path\"; path = $root/tree; lazy = true; };
+  # Interpolate to string, then build a new path via string
+  # concat. \`/nix/store/<hash>-source/../escape-target\` clamps
+  # lexically to \`/nix/store/escape-target\` — bypasses the
+  # wrapper entirely.
+  escaped = \"\${t.outPath}/../escape-target.txt\";
+in builtins.readFile escaped
+" | tee "$stringBypassErr" | grepQuiet "is too short to be a valid store path"
+# Assert the *absence* of the escape pattern — if a future change
+# extended the wrapper to fire across the string boundary, this
+# would catch it.
+if grep -q "$dotdotEscapePattern\|$absSymlinkPattern" "$stringBypassErr"; then
+    echo "expected string-boundary path not to trigger escape check; got escape diagnostic" >&2
+    exit 1
+fi
