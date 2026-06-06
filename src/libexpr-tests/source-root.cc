@@ -1,0 +1,122 @@
+#include <gtest/gtest.h>
+
+#include "nix/expr/source-root.hh"
+#include "nix/expr/tests/libexpr.hh"
+#include "nix/util/memory-source-accessor.hh"
+#include "nix/util/source-accessor.hh"
+
+namespace nix {
+
+class SourceRootResolveSymlinksTest : public LibExprTest
+{
+protected:
+    /* Fixture: a tiny in-memory accessor with one file at the root,
+       one in a subdir, and topology useful for distinguishing
+       walked / rejected / silently-clamped outcomes. */
+    ref<MemorySourceAccessor> makeFixture()
+    {
+        auto a = make_ref<MemorySourceAccessor>();
+        a->addFile(CanonPath("/sub/file"), "x");
+        a->addFile(CanonPath("/sibling/leaf"), "y");
+        return a;
+    }
+};
+
+/* Copyable: input-side `..` past root rejected. The wrapper's
+   dispatch to `StrictAccessorBoundary` is the whole point. */
+TEST_F(SourceRootResolveSymlinksTest, CopyableRejectsInputEscape)
+{
+    auto root = make_ref<SourceRoot>(makeFixture().cast<SourceAccessor>(), SourceRootKind::Copyable);
+    EXPECT_THROW(
+        nix::resolveSymlinks(*root, std::string_view{"/../../escape"}, SymlinkResolution::Ancestors),
+        AccessorBoundaryEscape);
+}
+
+/* Copyable: `..` that stays within the tree is fine. Distinguishes
+   "any `..` rejected" from "only escape rejected". */
+TEST_F(SourceRootResolveSymlinksTest, CopyableAllowsInTreeParent)
+{
+    auto root = make_ref<SourceRoot>(makeFixture().cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto resolved = nix::resolveSymlinks(*root, std::string_view{"/sub/../sibling/leaf"}, SymlinkResolution::Ancestors);
+    EXPECT_EQ(resolved.abs(), "/sibling/leaf");
+}
+
+/* Copyable: symlink-target escape. The input path itself has no
+   `..`, but resolution follows an in-tree symlink whose target
+   pops past root. The walker splices the target's components and
+   re-fires `onParent`, catching the escape that wasn't visible in
+   the input string. */
+TEST_F(SourceRootResolveSymlinksTest, CopyableRejectsSymlinkTargetEscape)
+{
+    auto a = make_ref<MemorySourceAccessor>();
+    a->addFile(CanonPath("/sub/file"), "x");
+    {
+        MemorySink sink{*a};
+        /* `/sub/escape` resolves to `../../target` — pops past root. */
+        sink.createSymlink(CanonPath("/sub/escape"), "../../target");
+    }
+    auto root = make_ref<SourceRoot>(a.cast<SourceAccessor>(), SourceRootKind::Copyable);
+    EXPECT_THROW(
+        nix::resolveSymlinks(*root, std::string_view{"/sub/escape"}, SymlinkResolution::Full), AccessorBoundaryEscape);
+}
+
+/* System: input-side `..` past root silently clamps per
+   `CanonPath`'s historical behaviour. Pins the lenient arm and
+   acts as a regression guard against a future "make System strict
+   too" change. */
+TEST_F(SourceRootResolveSymlinksTest, SystemSilentlyClampsInputEscape)
+{
+    auto root = make_ref<SourceRoot>(makeFixture().cast<SourceAccessor>(), SourceRootKind::System);
+    auto resolved = nix::resolveSymlinks(*root, std::string_view{"/../sibling/leaf"}, SymlinkResolution::Ancestors);
+    EXPECT_EQ(resolved.abs(), "/sibling/leaf");
+}
+
+/* System: symlink-target escape silently follows. Asymmetric with
+   the Copyable case above; both pinned so a future change has to
+   update both tests. */
+TEST_F(SourceRootResolveSymlinksTest, SystemFollowsSymlinkTargetEscapeSilently)
+{
+    auto a = make_ref<MemorySourceAccessor>();
+    a->addFile(CanonPath("/sub/anchor"), "x"); /* anchor so /sub exists as a directory */
+    {
+        MemorySink sink{*a};
+        sink.createSymlink(CanonPath("/sub/escape"), "../../target");
+    }
+    auto root = make_ref<SourceRoot>(a.cast<SourceAccessor>(), SourceRootKind::System);
+    auto resolved = nix::resolveSymlinks(*root, std::string_view{"/sub/escape"}, SymlinkResolution::Full);
+    EXPECT_EQ(resolved.abs(), "/target");
+}
+
+/* Internal: the wrapper has no decided policy and the arm
+   terminates the process via `unreachable()` rather than throwing.
+   Callers that legitimately read Internal-rooted paths (e.g.
+   `parseExprFromFile` loading corepkgs) bypass the wrapper. Use a
+   death test: `unreachable()` calls `panic()` which terminates via
+   `std::terminate()`, so EXPECT_THROW can't catch it. The regex
+   matches the prefix `panic()` writes via the `Unexpected
+   condition` formatter — pinning that the right abort path fires
+   (vs. some unrelated terminate). */
+TEST_F(SourceRootResolveSymlinksTest, InternalTerminatesProcess)
+{
+    auto root = make_ref<SourceRoot>(makeFixture().cast<SourceAccessor>(), SourceRootKind::Internal);
+    EXPECT_DEATH(nix::resolveSymlinks(*root, std::string_view{"/anything"}), "Unexpected condition");
+}
+
+/* The `CanonPath` overload delegates to the `string_view` form. */
+TEST_F(SourceRootResolveSymlinksTest, CanonPathOverloadDelegates)
+{
+    auto root = make_ref<SourceRoot>(makeFixture().cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto resolved = nix::resolveSymlinks(*root, CanonPath("/sub/file"), SymlinkResolution::Ancestors);
+    EXPECT_EQ(resolved.abs(), "/sub/file");
+}
+
+/* The `RootedPath` overload delegates to the SourceRoot form. */
+TEST_F(SourceRootResolveSymlinksTest, RootedPathOverloadDelegates)
+{
+    auto root = make_ref<SourceRoot>(makeFixture().cast<SourceAccessor>(), SourceRootKind::Copyable);
+    RootedPath rp{root, CanonPath("/sub/file")};
+    auto resolved = nix::resolveSymlinks(rp, SymlinkResolution::Ancestors);
+    EXPECT_EQ(resolved.abs(), "/sub/file");
+}
+
+} // namespace nix
