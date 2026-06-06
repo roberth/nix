@@ -75,8 +75,28 @@ PrimOp getFlake(const Settings & settings)
                        by construction Copyable -- no runtime check
                        needed; the wrap below admits it as such. */
                     auto subdir = CanonPath(subPath);
-                    if (!flakeRef.subdir.empty())
-                        subdir = CanonPath(flakeRef.subdir, subdir);
+                    if (!flakeRef.subdir.empty()) {
+                        /* Part 3: route `?dir=` composition through
+                           the kind-aware wrapper. Same shape as the
+                           companion fix in `readFlake` — a user-
+                           supplied `?dir=../escape` must be rejected,
+                           not silently clamped to the storepath root.
+                           The mount is Copyable by construction
+                           (mountInput is the only mounter into
+                           storeFS), so the wrapper applies
+                           StrictAccessorBoundary. */
+                        auto joined = subdir.abs() + "/" + flakeRef.subdir;
+                        SourceRoot adhoc{mountRef, SourceRootKind::Copyable};
+                        try {
+                            subdir =
+                                nix::resolveSymlinks(adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
+                        } catch (AccessorBoundaryEscape &) {
+                            throw Error(
+                                "flake input subdir '%s' escapes the source tree at %s",
+                                flakeRef.subdir,
+                                mountRef->showPath(CanonPath::root));
+                        }
+                    }
                     auto path = SourcePath{mountRef, subdir};
                     auto location = nix::flake::NodeLocation{
                         .tree =

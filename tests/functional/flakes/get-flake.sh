@@ -41,12 +41,28 @@ cat > "$flake1Dir/subflake/flake.nix" <<EOF
       # non-obvious reason (the explicit-copy idiom itself still works).
       parentViaInterpolation = (builtins.getFlake (builtins.unsafeDiscardStringContext "\${./..}")).outPath;
       parentViaBuiltinsPath = (builtins.getFlake (builtins.unsafeDiscardStringContext (builtins.path { path = ./..; name = "source"; }))).outPath;
+      # Escape via flakeref \`dir\` attr on a path: ref. Two variants —
+      # without a pre-existing storeFS mount (hits the FlakeRef-keyed
+      # lockFlake → readFlake path) and with one (forces a fetchTree
+      # first so the in-store shortcut in lockByFlakeRef fires
+      # instead). Both must be rejected by Part 3's kind-aware
+      # wrapper + flake-input-specific rewrap.
+      escapingDirAttr = (builtins.getFlake (builtins.flakeRefToString {
+        type = "path"; path = self.sourceInfo.outPath; narHash = self.narHash; dir = "../oops";
+      })).outPath;
+      escapingDirAttrViaShortcut =
+        let
+          mountForced = builtins.fetchTree { type = "path"; path = self.sourceInfo.outPath; narHash = self.narHash; };
+          bad = builtins.getFlake (builtins.flakeRefToString {
+            type = "path"; path = self.sourceInfo.outPath; narHash = self.narHash; dir = "../oops";
+          });
+        in builtins.seq mountForced.outPath bad.outPath;
     in {
       x = parentFlake.number;
       y = parentFlake2.number;
       parentOutPath1 = parentFlake.outPath;
       parentOutPath2 = parentFlake2.outPath;
-      inherit subflakeViaStorePath parentViaInterpolation parentViaBuiltinsPath;
+      inherit subflakeViaStorePath parentViaInterpolation parentViaBuiltinsPath escapingDirAttr escapingDirAttrViaShortcut;
     };
 }
 EOF
@@ -92,3 +108,17 @@ parentOut=$(nix eval --raw "$flake1Dir/subflake#parentOutPath1")
 # (unlocked FlakeRef → pure-eval rejection fails the assertion
 # loudly).
 [[ $(nix eval --raw --expr "(builtins.getFlake $parentOut).outPath") = "$parentOut" ]]
+
+# A flakeref \`dir\` attr that resolves past the storepath root (relative
+# to whatever in-tree subPath the URL points at) should be rejected,
+# not silently clamped. Two paths through `prim_getFlake` exercise the
+# same surface:
+#
+# - escapingDirAttr: no pre-existing storeFS mount → FlakeRef-keyed
+#   `lockByFlakeRef` → `readFlake` (Part 3B).
+# - escapingDirAttrViaShortcut: forces a fetchTree first so the
+#   in-store shortcut in lockByFlakeRef fires (Part 3C).
+expect 1 nix eval --raw "$flake1Dir/subflake#escapingDirAttr" 2>&1 \
+    | grep "flake input subdir '\.\./oops' escapes"
+expect 1 nix eval --raw "$flake1Dir/subflake#escapingDirAttrViaShortcut" 2>&1 \
+    | grep "flake input subdir '\.\./oops' escapes"
