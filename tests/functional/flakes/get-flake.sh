@@ -57,16 +57,54 @@ cat > "$flake1Dir/subflake/flake.nix" <<EOF
             type = "path"; path = self.sourceInfo.outPath; narHash = self.narHash; dir = "../oops";
           });
         in builtins.seq mountForced.outPath bad.outPath;
+      # Symlink-escape variants: \`?dir=escape-link\` walks through
+      # the in-tree \`escape-link\` symlink (target \`../somewhere\`
+      # outside the accessor). The wrapper's StrictCopyableBoundary
+      # rejects when the spliced target pops past root. Two
+      # variants for the same two code paths.
+      symlinkEscapeDirAttr = (builtins.getFlake (builtins.flakeRefToString {
+        type = "path"; path = self.sourceInfo.outPath; narHash = self.narHash; dir = "escape-link";
+      })).outPath;
+      symlinkEscapeDirAttrViaShortcut =
+        let
+          mountForced = builtins.fetchTree { type = "path"; path = self.sourceInfo.outPath; narHash = self.narHash; };
+          bad = builtins.getFlake (builtins.flakeRefToString {
+            type = "path"; path = self.sourceInfo.outPath; narHash = self.narHash; dir = "escape-link";
+          });
+        in builtins.seq mountForced.outPath bad.outPath;
+      # Absolute-symlink variants: \`?dir=abs-link\` walks through
+      # \`abs-link -> /sibling\`. Copyable trees must be
+      # position-independent (\`/\` shifts meaning post-
+      # materialisation), so the wrapper's StrictCopyableBoundary
+      # rejects absolute symlinks too.
+      absSymlinkDirAttr = (builtins.getFlake (builtins.flakeRefToString {
+        type = "path"; path = self.sourceInfo.outPath; narHash = self.narHash; dir = "abs-link";
+      })).outPath;
+      absSymlinkDirAttrViaShortcut =
+        let
+          mountForced = builtins.fetchTree { type = "path"; path = self.sourceInfo.outPath; narHash = self.narHash; };
+          bad = builtins.getFlake (builtins.flakeRefToString {
+            type = "path"; path = self.sourceInfo.outPath; narHash = self.narHash; dir = "abs-link";
+          });
+        in builtins.seq mountForced.outPath bad.outPath;
     in {
       x = parentFlake.number;
       y = parentFlake2.number;
       parentOutPath1 = parentFlake.outPath;
       parentOutPath2 = parentFlake2.outPath;
-      inherit subflakeViaStorePath parentViaInterpolation parentViaBuiltinsPath escapingDirAttr escapingDirAttrViaShortcut;
+      inherit subflakeViaStorePath parentViaInterpolation parentViaBuiltinsPath escapingDirAttr escapingDirAttrViaShortcut
+        symlinkEscapeDirAttr symlinkEscapeDirAttrViaShortcut
+        absSymlinkDirAttr absSymlinkDirAttrViaShortcut;
     };
 }
 EOF
-git -C "$flake1Dir" add subflake/flake.nix
+# In-tree symlinks for the symlink-escape and absolute-symlink
+# variants. Added in the parent flake (\`\$flake1Dir\`) so a
+# \`?dir=escape-link\` lookup against \`self.sourceInfo.outPath\`
+# (which is the parent's storepath) walks through them.
+ln -s ../somewhere "$flake1Dir/escape-link"
+ln -s /sibling "$flake1Dir/abs-link"
+git -C "$flake1Dir" add subflake/flake.nix escape-link abs-link
 
 [[ $(nix eval "$flake1Dir/subflake#x") = 123 ]]
 
@@ -118,7 +156,23 @@ parentOut=$(nix eval --raw "$flake1Dir/subflake#parentOutPath1")
 #   `lockByFlakeRef` → `readFlake` (Part 3B).
 # - escapingDirAttrViaShortcut: forces a fetchTree first so the
 #   in-store shortcut in lockByFlakeRef fires (Part 3C).
+# Tightened to the full Part 3B/3C diagnostic wording so a
+# regression that drops the input-name from the error surfaces.
 expect 1 nix eval --raw "$flake1Dir/subflake#escapingDirAttr" 2>&1 \
-    | grep "flake input subdir '\.\./oops' escapes"
+    | grep "flake input subdir '\.\./oops' escapes the source tree at"
 expect 1 nix eval --raw "$flake1Dir/subflake#escapingDirAttrViaShortcut" 2>&1 \
-    | grep "flake input subdir '\.\./oops' escapes"
+    | grep "flake input subdir '\.\./oops' escapes the source tree at"
+
+# Symlink-target escape via `?dir=escape-link`. Walks through
+# the in-tree symlink whose target escapes the storepath.
+expect 1 nix eval --raw "$flake1Dir/subflake#symlinkEscapeDirAttr" 2>&1 \
+    | grep "'\.\.' would escape the source tree at"
+expect 1 nix eval --raw "$flake1Dir/subflake#symlinkEscapeDirAttrViaShortcut" 2>&1 \
+    | grep "'\.\.' would escape the source tree at"
+
+# Absolute-symlink rejection via `?dir=abs-link`. The
+# StrictCopyableBoundary policy rejects.
+expect 1 nix eval --raw "$flake1Dir/subflake#absSymlinkDirAttr" 2>&1 \
+    | grep "absolute symlink '.*' .* is not allowed; Copyable trees must be position-independent"
+expect 1 nix eval --raw "$flake1Dir/subflake#absSymlinkDirAttrViaShortcut" 2>&1 \
+    | grep "absolute symlink '.*' .* is not allowed; Copyable trees must be position-independent"

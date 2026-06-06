@@ -157,4 +157,8 @@ jq '.nodes.sub.locked.path = "../escapedoy"' "$root/flake.lock" \
     > "$root/flake.lock.tmp"
 mv "$root/flake.lock.tmp" "$root/flake.lock"
 
-expect 1 nix eval --raw "$root#tag" 2>&1 | grep -i "escape\|outside"
+# Tightened: pin Part 1's specific wording so a regression in
+# the path-concat error message doesn't silently weaken this
+# defence-in-depth assertion.
+expect 1 nix eval --raw "$root#tag" 2>&1 \
+    | grep "concatenated path '.*' would escape the source tree at"
