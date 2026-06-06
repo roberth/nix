@@ -1173,7 +1173,10 @@ void EvalState::evalFile(const RootedPath & path, Value & v, bool mustBeTrivial)
     auto resolvedSp = getConcurrent(*importResolutionCache, sp);
 
     if (!resolvedSp) {
-        resolvedSp = resolveExprPath(sp);
+        /* Kind-aware overload: a Copyable accessor whose ancestor
+           chain traverses a symlink whose target escapes the
+           accessor root raises `AccessorBoundaryEscape`. */
+        resolvedSp = resolveExprPath(path);
         importResolutionCache->emplace(sp, *resolvedSp);
     }
 
@@ -3328,6 +3331,44 @@ SourcePath resolveExprPath(SourcePath path, bool addDefaultNix)
     /* If `path' refers to a directory, append `/default.nix'. */
     if (addDefaultNix && path.resolveSymlinks().lstat().type == SourceAccessor::tDirectory)
         return path / "default.nix";
+
+    return path;
+}
+
+SourcePath resolveExprPath(const RootedPath & rooted, bool addDefaultNix)
+{
+    /* Internal-kinded paths (corepkgs, derivation-internal, ...) are
+       trusted internal helpers; the kind-aware wrapper refuses to
+       run on them by design. Fall back to the bare lenient
+       resolver. */
+    if (rooted.root->kind == SourceRootKind::Internal)
+        return resolveExprPath(rooted.sourcePath(), addDefaultNix);
+
+    /* For Copyable / System, replace the bare `resolveSymlinks` at
+       each ancestor-walk step with the kind-aware wrapper. Copyable
+       gets `StrictAccessorBoundary` — a path whose ancestor chain
+       traverses a symlink whose target escapes the accessor root
+       (e.g. `/link -> ../../foo`) raises `AccessorBoundaryEscape`
+       rather than silently following the spliced target out of the
+       tree. System keeps the historical lenient walker. */
+    auto path = rooted.sourcePath();
+    unsigned int followCount = 0, maxFollow = 1024;
+
+    while (!path.path.isRoot()) {
+        if (++followCount >= maxFollow)
+            throw Error("too many symbolic links encountered while traversing the path '%s'", path);
+        auto parentResolved = nix::resolveSymlinks(*rooted.root, path.path.parent().value());
+        auto p = SourcePath{path.accessor, parentResolved} / path.baseName();
+        if (p.lstat().type != SourceAccessor::tSymlink)
+            break;
+        path = {path.accessor, CanonPath(p.readLink(), path.path.parent().value_or(CanonPath::root))};
+    }
+
+    if (addDefaultNix) {
+        auto resolved = nix::resolveSymlinks(*rooted.root, path.path);
+        if (SourcePath{path.accessor, resolved}.lstat().type == SourceAccessor::tDirectory)
+            return path / "default.nix";
+    }
 
     return path;
 }

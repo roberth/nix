@@ -267,7 +267,7 @@ void SourceExprCommand::completeInstallable(AddCompletions & completions, std::s
             evalSettings.pureEval = false;
             auto state = getEvalState();
             auto lookedUp = lookupFileArg(*state, file->string());
-            auto resolved = RootedPath{lookedUp.root, resolveExprPath(lookedUp.sourcePath()).path};
+            auto resolved = RootedPath{lookedUp.root, resolveExprPath(lookedUp).path};
             auto e = state->parseExprFromFile(resolved);
 
             Value root;
