@@ -2283,15 +2283,28 @@ void ExprConcatStrings::eval(EvalState & state, Env & env, Value & v)
            and cheaply; Part 2 catches symlink-spliced escapes at
            the read site. */
         if (firstPathRoot->kind == SourceRootKind::Copyable) {
+            /* Reuse libutil's `tokenizeString`: it collapses runs of
+               separators and skips empty components naturally, so the
+               loop here only handles `.` / `..` semantics. Container
+               choice (`std::vector<std::string>`) differs from
+               `resolveSymlinks`'s `std::list<std::string>` because
+               this loop walks the components forward and never
+               splices — vector is the right shape; list buys
+               splice support we don't need. The hand-rolled walker
+               the previous shape used was a parallel implementation
+               of equivalent component splitting; the simpler shape
+               here keeps the lexical check honest about that. The
+               trade-off vs. the hand-rolled walker is one
+               `std::string` allocation per component plus a vector
+               per call — fine for Copyable path-concat, which is
+               not a hot path (concats per eval are dwarfed by other
+               allocations in `ExprConcatStrings`). A
+               `tokenizeString<std::vector<std::string_view>>` extern
+               instantiation could lift the per-component allocation
+               if needed in the future. */
             int depth = 0;
-            std::string_view rest{resultStr};
-            while (!rest.empty()) {
-                while (!rest.empty() && rest.front() == '/')
-                    rest.remove_prefix(1);
-                auto sep = rest.find('/');
-                auto component = sep == std::string_view::npos ? rest : rest.substr(0, sep);
-                rest = sep == std::string_view::npos ? std::string_view{} : rest.substr(sep);
-                if (component.empty() || component == ".")
+            for (const auto & component : tokenizeString<std::vector<std::string>>(resultStr, "/")) {
+                if (component == ".")
                     continue;
                 if (component == "..") {
                     if (depth == 0) {
