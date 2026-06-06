@@ -82,6 +82,37 @@ rm -f "$root/flake.lock"
 expect 1 nix flake lock "$root" 2>&1 \
     | grep "relative flake input path '../../escapedoy' escapes the source tree at"
 
+# ----- relative-input-with-escaping-?dir= ------------------------------
+
+# `inputs.X.url = "path:./sub?dir=../../escapedoy"` exercises the
+# `?dir=` escape on a relative input. `resolveRelativePath` itself
+# succeeds (the relative path `./sub` is in-tree); the subdir
+# composition `resolvedPath + "/" + ref.subdir` is what walks past
+# the accessor root. For a flake input that goes through
+# `readFlake`, Part 3B catches it first (readFlake composes the
+# ?dir= subdir against rootDir.path with the wrapper). The Part
+# 3A.2 site is a backstop for the lockFlake-internal subdir
+# composition that doesn't go through readFlake.
+cat > "$root/sub/flake.nix" <<EOF
+{
+    description = "subflake (target — not the actual loaded flake)";
+    outputs = { ... }: { tag = "loaded-sub"; };
+}
+EOF
+cat > "$root/flake.nix" <<EOF
+{
+    description = "root with relative input + escaping ?dir=";
+    inputs = {
+        sub.url = "path:./sub?dir=../../escapedoy";
+    };
+    outputs = { sub, ... }: { tag = sub.tag; };
+}
+EOF
+git -C "$root" add flake.nix sub/flake.nix
+rm -f "$root/flake.lock"
+expect 1 nix flake lock "$root" 2>&1 \
+    | grep "flake input subdir '../../escapedoy' escapes the source tree"
+
 # ----- hand-edited-lockfile defence-in-depth ---------------------------
 
 # Bypass `resolveRelativePath` entirely: lock against a benign input,
@@ -102,7 +133,16 @@ cat > "$root/sub/flake.nix" <<EOF
     outputs = { ... }: { tag = "benign"; };
 }
 EOF
-git -C "$root" add sub/flake.nix
+cat > "$root/flake.nix" <<EOF
+{
+    description = "root";
+    inputs = {
+        sub.url = "path:./sub";
+    };
+    outputs = { sub, ... }: { tag = sub.tag; };
+}
+EOF
+git -C "$root" add flake.nix sub/flake.nix
 rm -f "$root/flake.lock"
 nix flake lock "$root"
 [[ $(nix eval --raw "$root#tag") = "benign" ]]
