@@ -178,7 +178,29 @@ SourcePath EvalState::realisePath(
                 ensureLazyPathsCopied(context);
             path = {path.accessor, CanonPath(rewriteStrings(path.path.abs(), rewrites))};
         }
-        return resolveSymlinks ? path.resolveSymlinks(*resolveSymlinks) : path;
+        if (!resolveSymlinks)
+            return path;
+        /* Kind-aware symlink resolution: Copyable accessors get
+           `StrictAccessorBoundary`; System keeps the historical
+           lenient walker; Internal bypasses the wrapper (the
+           wrapper refuses Internal by design). The kind comes from
+           the original path Value (`v.pathRoot()`) when `v` is
+           nPath, else `rootFSRoot` (string-coerced paths always
+           route through rootFS).
+
+           Known limitation: `v` of `nAttrs` with `__toString`
+           returning an nPath loses the inner path's kind here —
+           coerceToPath has recursed into the inner Value and
+           returned its SourcePath, but the kind selection below
+           reads v.type() of the outer attrset (= nAttrs → System
+           fallback). Threading the kind back out of coerceToPath
+           would need an API change; the loss is graceful (System
+           is lenient, never rejects). */
+        if (v.type() == nPath && v.pathRoot()->kind == SourceRootKind::Internal)
+            return path.resolveSymlinks(*resolveSymlinks);
+        ref<SourceRoot> root = (v.type() == nPath) ? ref(v.pathRoot()->shared_from_this()) : rootFSRoot;
+        auto resolved = nix::resolveSymlinks(*root, path.path, *resolveSymlinks);
+        return SourcePath{path.accessor, resolved};
     } catch (Error & e) {
         e.addTrace(positions[pos], "while realising the context of path '%s'", path);
         throw;

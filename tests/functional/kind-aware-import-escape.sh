@@ -43,3 +43,19 @@ let
   t = builtins.fetchTree { type = \"path\"; path = $root/tree; lazy = true; };
 in toString (import (t.outPath + \"/good.nix\")).a
 ") = 1 ]]
+
+# `builtins.readFile` through the same escape: goes through
+# `realisePath`, whose kind-aware wrapper rejects the same way.
+echo "content" > "$root/tree/good.txt"
+expectStderr 1 nix --extra-experimental-features "$xpFlags" eval --impure --raw --expr "
+let
+  t = builtins.fetchTree { type = \"path\"; path = $root/tree; lazy = true; };
+in builtins.readFile (t.outPath + \"/escape-link/file.txt\")
+" | grepQuiet "escape the source tree"
+
+# Sanity: readFile of a non-escaping path works.
+[[ $(nix --extra-experimental-features "$xpFlags" eval --impure --raw --expr "
+let
+  t = builtins.fetchTree { type = \"path\"; path = $root/tree; lazy = true; };
+in builtins.readFile (t.outPath + \"/good.txt\")
+") = "content" ]]
