@@ -30,6 +30,7 @@ suites += {
     'relative-paths.sh',
     'relative-paths-lockfile.sh',
     'relative-subflake-sourceinfo.sh',
+    'relative-input-escape.sh',
     'symlink-paths.sh',
     'debugger.sh',
     'source-paths.sh',
