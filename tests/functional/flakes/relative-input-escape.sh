@@ -81,3 +81,40 @@ git -C "$root" add sub/flake.nix
 rm -f "$root/flake.lock"
 expect 1 nix flake lock "$root" 2>&1 \
     | grep "relative flake input path '../../escapedoy' escapes the source tree at"
+
+# ----- hand-edited-lockfile defence-in-depth ---------------------------
+
+# Bypass `resolveRelativePath` entirely: lock against a benign input,
+# then hand-edit `flake.lock` to point its `locked.path` at
+# `../escapedoy`. At eval time, `call-flake.nix` builds
+# `flakePath = parentNode.flakePath + "/" + node.locked.path` (path-
+# concat). Part 1's lexical strict-`..` check on Copyable-rooted
+# concat fires: the joined string `/(parent)/../escapedoy`'s `..`
+# would pop past the accessor root, so concat raises EvalError.
+#
+# This is the defence-in-depth layer the call-flake.nix path relies
+# on. Without it, hand-edited (or corrupted) lockfiles could
+# silently clamp the escape and eval would happily import the
+# wrong tree.
+cat > "$root/sub/flake.nix" <<EOF
+{
+    description = "subflake (benign for the initial lock)";
+    outputs = { ... }: { tag = "benign"; };
+}
+EOF
+git -C "$root" add sub/flake.nix
+rm -f "$root/flake.lock"
+nix flake lock "$root"
+[[ $(nix eval --raw "$root#tag") = "benign" ]]
+
+# Tamper with the lockfile: rewrite the `sub` node's locked.path
+# from `sub` to `../escapedoy`. The lockfile-loading path in
+# `call-flake.nix` trusts the locked attrs verbatim, so this
+# reaches the path-concat site without going through
+# `resolveRelativePath`'s lock-time check again. Part 1's lexical
+# check at the concat site is what catches the escape.
+jq '.nodes.sub.locked.path = "../escapedoy"' "$root/flake.lock" \
+    > "$root/flake.lock.tmp"
+mv "$root/flake.lock.tmp" "$root/flake.lock"
+
+expect 1 nix eval --raw "$root#tag" 2>&1 | grep -i "escape\|outside"
