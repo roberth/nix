@@ -20,6 +20,8 @@
 #include "nix/fetchers/fetchers.hh"
 #include "nix/util/error.hh"
 #include "nix/util/experimental-features.hh"
+
+#include "copyable-boundary-walk.hh"
 #include "nix/util/mounted-source-accessor.hh"
 #include "nix/util/pos-idx.hh"
 #include "nix/util/pos-table.hh"
@@ -85,17 +87,13 @@ PrimOp getFlake(const Settings & settings)
                            (mountInput is the only mounter into
                            storeFS), so the wrapper applies
                            StrictAccessorBoundary. */
-                        auto joined = subdir.abs() + "/" + flakeRef.subdir;
-                        auto adhoc = SourceRoot::make(mountRef, SourceRootKind::Copyable);
-                        try {
-                            subdir =
-                                nix::resolveSymlinks(*adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
-                        } catch (AccessorBoundaryEscape &) {
-                            throw Error(
-                                "flake input subdir '%s' escapes the source tree at %s",
-                                flakeRef.subdir,
-                                mountRef->showPath(CanonPath::root));
-                        }
+                        subdir = nix::flake::joinAndCheckCopyable(
+                            mountRef, subdir, flakeRef.subdir, SymlinkResolution::Ancestors, [&]() {
+                                return Error(
+                                    "flake input subdir '%s' escapes the source tree at %s",
+                                    flakeRef.subdir,
+                                    mountRef->showPath(CanonPath::root));
+                            });
                     }
                     auto path = SourcePath{mountRef, subdir};
                     auto location = nix::flake::NodeLocation{
