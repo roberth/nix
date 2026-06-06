@@ -128,7 +128,7 @@ TEST_F(LockInputTest, NarHashReusesSrcToStore)
     /* `copyPathToStore` rejects Internal-rooted paths; wrap the
        in-memory accessor as Copyable -- mirrors how fetcher results
        are admitted at the libexpr/libfetchers boundary. */
-    auto root = make_ref<SourceRoot>(counted.cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto root = SourceRoot::make(counted.cast<SourceAccessor>(), SourceRootKind::Copyable);
     state.copyPathToStore(ctx, RootedPath{root, CanonPath::root});
     EXPECT_EQ(counted->readFileCount.load(), 1u) << "the Copy walks once";
 

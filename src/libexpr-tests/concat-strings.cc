@@ -18,7 +18,7 @@ TEST_F(ExprConcatStringsTest, preservesFirstPathAccessorOnConcat)
     Value vPath;
     /* Test fixture: pretend the in-memory accessor was admitted as
        System (matching the rootFS pathway today's concat preserves). */
-    auto testRoot = make_ref<SourceRoot>(accessor.cast<SourceAccessor>(), SourceRootKind::System);
+    auto testRoot = SourceRoot::make(accessor.cast<SourceAccessor>(), SourceRootKind::System);
     vPath.mkPath(RootedPath{testRoot, CanonPath("/dir")}, state.mem);
 
     auto * lambda = state.parseExprFromString("p: p + \"/sub\"", state.rootedPath(CanonPath::root));
@@ -55,7 +55,7 @@ TEST_F(ExprConcatStringsTest, preservesFirstPathAccessorThroughMultiStringConcat
     auto accessor = make_ref<MemorySourceAccessor>();
 
     Value vPath;
-    auto testRoot = make_ref<SourceRoot>(accessor.cast<SourceAccessor>(), SourceRootKind::System);
+    auto testRoot = SourceRoot::make(accessor.cast<SourceAccessor>(), SourceRootKind::System);
     vPath.mkPath(RootedPath{testRoot, CanonPath("/dir")}, state.mem);
 
     auto * lambda = state.parseExprFromString("p: p + \"/a\" + \"/b\"", state.rootedPath(CanonPath::root));
@@ -80,7 +80,7 @@ TEST_F(ExprConcatStringsTest, copyableFirstWithStringSecondIsAllowed)
 {
     Value vPath;
     auto acc = make_ref<MemorySourceAccessor>();
-    auto root = make_ref<SourceRoot>(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto root = SourceRoot::make(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
     vPath.mkPath(RootedPath{root, CanonPath("/dir")}, state.mem);
 
     auto * lambda = state.parseExprFromString("p: p + \"/sub\"", state.rootedPath(CanonPath::root));
@@ -105,7 +105,7 @@ TEST_F(ExprConcatStringsTest, rejectsCopyableAsSecondPath)
 {
     Value vCopyable;
     auto acc = make_ref<MemorySourceAccessor>();
-    auto root = make_ref<SourceRoot>(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto root = SourceRoot::make(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
     vCopyable.mkPath(RootedPath{root, CanonPath("/x")}, state.mem);
 
     auto * lambda = state.parseExprFromString("p: /tmp + p", state.rootedPath(CanonPath::root));
@@ -129,7 +129,7 @@ TEST_F(ExprConcatStringsTest, copyableConcatRejectsLexicalEscape)
 {
     Value vPath;
     auto acc = make_ref<MemorySourceAccessor>();
-    auto root = make_ref<SourceRoot>(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto root = SourceRoot::make(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
     /* Path at the accessor root: any `..` in the suffix immediately
        escapes. */
     vPath.mkPath(RootedPath{root, CanonPath::root}, state.mem);
@@ -154,7 +154,7 @@ TEST_F(ExprConcatStringsTest, copyableConcatAllowsInTreeParent)
 {
     Value vPath;
     auto acc = make_ref<MemorySourceAccessor>();
-    auto root = make_ref<SourceRoot>(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto root = SourceRoot::make(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
     vPath.mkPath(RootedPath{root, CanonPath("/sub")}, state.mem);
 
     auto * lambda = state.parseExprFromString("p: p + \"/../sibling\"", state.rootedPath(CanonPath::root));
@@ -191,7 +191,7 @@ TEST_F(ExprConcatStringsTest, copyableConcatNoCheckForNonDotDotSuffix)
 {
     Value vPath;
     auto acc = make_ref<MemorySourceAccessor>();
-    auto root = make_ref<SourceRoot>(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto root = SourceRoot::make(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
     vPath.mkPath(RootedPath{root, CanonPath::root}, state.mem);
 
     auto * lambda = state.parseExprFromString("p: p + \"/some/regular/path\"", state.rootedPath(CanonPath::root));

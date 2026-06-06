@@ -26,7 +26,7 @@ protected:
    dispatch to `StrictAccessorBoundary` is the whole point. */
 TEST_F(SourceRootResolveSymlinksTest, CopyableRejectsInputEscape)
 {
-    auto root = make_ref<SourceRoot>(makeFixture().cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto root = SourceRoot::make(makeFixture().cast<SourceAccessor>(), SourceRootKind::Copyable);
     EXPECT_THROW(
         nix::resolveSymlinks(*root, std::string_view{"/../../escape"}, SymlinkResolution::Ancestors),
         AccessorBoundaryEscape);
@@ -36,7 +36,7 @@ TEST_F(SourceRootResolveSymlinksTest, CopyableRejectsInputEscape)
    "any `..` rejected" from "only escape rejected". */
 TEST_F(SourceRootResolveSymlinksTest, CopyableAllowsInTreeParent)
 {
-    auto root = make_ref<SourceRoot>(makeFixture().cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto root = SourceRoot::make(makeFixture().cast<SourceAccessor>(), SourceRootKind::Copyable);
     auto resolved = nix::resolveSymlinks(*root, std::string_view{"/sub/../sibling/leaf"}, SymlinkResolution::Ancestors);
     EXPECT_EQ(resolved.abs(), "/sibling/leaf");
 }
@@ -55,7 +55,7 @@ TEST_F(SourceRootResolveSymlinksTest, CopyableRejectsSymlinkTargetEscape)
         /* `/sub/escape` resolves to `../../target` — pops past root. */
         sink.createSymlink(CanonPath("/sub/escape"), "../../target");
     }
-    auto root = make_ref<SourceRoot>(a.cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto root = SourceRoot::make(a.cast<SourceAccessor>(), SourceRootKind::Copyable);
     EXPECT_THROW(
         nix::resolveSymlinks(*root, std::string_view{"/sub/escape"}, SymlinkResolution::Full), AccessorBoundaryEscape);
 }
@@ -66,7 +66,7 @@ TEST_F(SourceRootResolveSymlinksTest, CopyableRejectsSymlinkTargetEscape)
    too" change. */
 TEST_F(SourceRootResolveSymlinksTest, SystemSilentlyClampsInputEscape)
 {
-    auto root = make_ref<SourceRoot>(makeFixture().cast<SourceAccessor>(), SourceRootKind::System);
+    auto root = SourceRoot::make(makeFixture().cast<SourceAccessor>(), SourceRootKind::System);
     auto resolved = nix::resolveSymlinks(*root, std::string_view{"/../sibling/leaf"}, SymlinkResolution::Ancestors);
     EXPECT_EQ(resolved.abs(), "/sibling/leaf");
 }
@@ -85,7 +85,7 @@ TEST_F(SourceRootResolveSymlinksTest, CopyableRejectsAbsoluteSymlink)
         MemorySink sink{*a};
         sink.createSymlink(CanonPath("/abs-link"), "/sibling");
     }
-    auto root = make_ref<SourceRoot>(a.cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto root = SourceRoot::make(a.cast<SourceAccessor>(), SourceRootKind::Copyable);
     EXPECT_THROW(
         nix::resolveSymlinks(*root, std::string_view{"/abs-link/leaf"}, SymlinkResolution::Full),
         AccessorBoundaryEscape);
@@ -102,7 +102,7 @@ TEST_F(SourceRootResolveSymlinksTest, SystemFollowsAbsoluteSymlink)
         MemorySink sink{*a};
         sink.createSymlink(CanonPath("/abs-link"), "/sibling");
     }
-    auto root = make_ref<SourceRoot>(a.cast<SourceAccessor>(), SourceRootKind::System);
+    auto root = SourceRoot::make(a.cast<SourceAccessor>(), SourceRootKind::System);
     auto resolved = nix::resolveSymlinks(*root, std::string_view{"/abs-link/leaf"}, SymlinkResolution::Full);
     EXPECT_EQ(resolved.abs(), "/sibling/leaf");
 }
@@ -118,7 +118,7 @@ TEST_F(SourceRootResolveSymlinksTest, SystemFollowsSymlinkTargetEscapeSilently)
         MemorySink sink{*a};
         sink.createSymlink(CanonPath("/sub/escape"), "../../target");
     }
-    auto root = make_ref<SourceRoot>(a.cast<SourceAccessor>(), SourceRootKind::System);
+    auto root = SourceRoot::make(a.cast<SourceAccessor>(), SourceRootKind::System);
     auto resolved = nix::resolveSymlinks(*root, std::string_view{"/sub/escape"}, SymlinkResolution::Full);
     EXPECT_EQ(resolved.abs(), "/target");
 }
@@ -134,14 +134,14 @@ TEST_F(SourceRootResolveSymlinksTest, SystemFollowsSymlinkTargetEscapeSilently)
    (vs. some unrelated terminate). */
 TEST_F(SourceRootResolveSymlinksTest, InternalTerminatesProcess)
 {
-    auto root = make_ref<SourceRoot>(makeFixture().cast<SourceAccessor>(), SourceRootKind::Internal);
+    auto root = SourceRoot::make(makeFixture().cast<SourceAccessor>(), SourceRootKind::Internal);
     EXPECT_DEATH(nix::resolveSymlinks(*root, std::string_view{"/anything"}), "Unexpected condition");
 }
 
 /* The `CanonPath` overload delegates to the `string_view` form. */
 TEST_F(SourceRootResolveSymlinksTest, CanonPathOverloadDelegates)
 {
-    auto root = make_ref<SourceRoot>(makeFixture().cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto root = SourceRoot::make(makeFixture().cast<SourceAccessor>(), SourceRootKind::Copyable);
     auto resolved = nix::resolveSymlinks(*root, CanonPath("/sub/file"), SymlinkResolution::Ancestors);
     EXPECT_EQ(resolved.abs(), "/sub/file");
 }
@@ -149,10 +149,32 @@ TEST_F(SourceRootResolveSymlinksTest, CanonPathOverloadDelegates)
 /* The `RootedPath` overload delegates to the SourceRoot form. */
 TEST_F(SourceRootResolveSymlinksTest, RootedPathOverloadDelegates)
 {
-    auto root = make_ref<SourceRoot>(makeFixture().cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto root = SourceRoot::make(makeFixture().cast<SourceAccessor>(), SourceRootKind::Copyable);
     RootedPath rp{root, CanonPath("/sub/file")};
     auto resolved = nix::resolveSymlinks(rp, SymlinkResolution::Ancestors);
     EXPECT_EQ(resolved.abs(), "/sub/file");
+}
+
+/* `EvalState::getOrCreateRoot(acc, k)` keys on `(accessor, kind)`,
+   not on accessor alone: the same accessor admitted under different
+   kinds must produce two distinct `SourceRoot`s. Pins the central
+   invariant the (accessor, kind) keying provides — a regression to
+   accessor-only keying would silently return whichever kind the
+   first admission used. */
+TEST_F(SourceRootResolveSymlinksTest, GetOrCreateRootKeysOnAccessorAndKind)
+{
+    auto accessor = makeFixture().cast<SourceAccessor>();
+
+    auto copyable = state.getOrCreateRoot(accessor, SourceRootKind::Copyable);
+    auto system = state.getOrCreateRoot(accessor, SourceRootKind::System);
+
+    EXPECT_NE(&*copyable, &*system) << "different kinds must allocate distinct SourceRoots";
+    EXPECT_EQ(copyable->kind, SourceRootKind::Copyable);
+    EXPECT_EQ(system->kind, SourceRootKind::System);
+
+    /* And same-kind re-lookup returns the *same* SourceRoot. */
+    auto copyable2 = state.getOrCreateRoot(accessor, SourceRootKind::Copyable);
+    EXPECT_EQ(&*copyable, &*copyable2) << "same (accessor, kind) must memoise";
 }
 
 } // namespace nix

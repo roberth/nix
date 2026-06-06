@@ -262,9 +262,9 @@ static Flake readFlake(
     SourcePath flakeDir = rootDir;
     if (!resolvedRef.subdir.empty()) {
         auto joined = rootDir.path.abs() + "/" + resolvedRef.subdir;
-        SourceRoot adhoc{rootDir.accessor, SourceRootKind::Copyable};
+        auto adhoc = SourceRoot::make(rootDir.accessor, SourceRootKind::Copyable);
         try {
-            auto resolved = nix::resolveSymlinks(adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
+            auto resolved = nix::resolveSymlinks(*adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
             flakeDir = SourcePath{rootDir.accessor, resolved};
         } catch (AccessorBoundaryEscape &) {
             throw Error(
@@ -284,8 +284,9 @@ static Flake readFlake(
        that routed through rootFS. The runtime check below stays
        as a defensive no-op against a future caller breaking
        the invariant (would surface as System routing). */
-    auto root =
-        &*flakePath.accessor == &*state.rootFS ? state.rootFSRoot : state.getOrCreateFetcherRoot(flakePath.accessor);
+    auto root = &*flakePath.accessor == &*state.rootFS
+                    ? state.rootFSRoot
+                    : state.getOrCreateRoot(flakePath.accessor, SourceRootKind::Copyable);
     auto flakeRooted = RootedPath{root, flakePath.path};
     state.evalFile(flakeRooted, vInfo, true);
 
@@ -653,10 +654,10 @@ LockedFlake lockFlake(
                             auto parent = overriddenSourcePath.path.parent();
                             assert(parent);
                             auto joined = parent->abs() + "/" + relStr;
-                            SourceRoot adhoc{overriddenSourcePath.accessor, SourceRootKind::Copyable};
+                            auto adhoc = SourceRoot::make(overriddenSourcePath.accessor, SourceRootKind::Copyable);
                             try {
-                                auto resolved =
-                                    nix::resolveSymlinks(adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
+                                auto resolved = nix::resolveSymlinks(
+                                    *adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
                                 return SourcePath{overriddenSourcePath.accessor, resolved};
                             } catch (AccessorBoundaryEscape &) {
                                 throw Error(
@@ -686,10 +687,10 @@ LockedFlake lockFlake(
                                `readFlake` site. */
                             auto & parentLoc = nodePaths.at(node);
                             auto joined = resolvedPath->path.abs() + "/" + ref.subdir;
-                            SourceRoot adhoc{overriddenSourcePath.accessor, SourceRootKind::Copyable};
+                            auto adhoc = SourceRoot::make(overriddenSourcePath.accessor, SourceRootKind::Copyable);
                             try {
-                                auto fullSubdir =
-                                    nix::resolveSymlinks(adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
+                                auto fullSubdir = nix::resolveSymlinks(
+                                    *adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
                                 flake.nodeLocation = NodeLocation{
                                     .tree = parentLoc.tree,
                                     .subdir = std::string{fullSubdir.rel()},
@@ -858,10 +859,11 @@ LockedFlake lockFlake(
                                        diagnostic. */
                                     auto & parentLoc = nodePaths.at(node);
                                     auto joined = resolvedPath->path.abs() + "/" + input.ref->subdir;
-                                    SourceRoot adhoc{overriddenSourcePath.accessor, SourceRootKind::Copyable};
+                                    auto adhoc =
+                                        SourceRoot::make(overriddenSourcePath.accessor, SourceRootKind::Copyable);
                                     try {
                                         auto fullSubdir = nix::resolveSymlinks(
-                                            adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
+                                            *adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
                                         return {
                                             NodeLocation{
                                                 .tree = parentLoc.tree,
@@ -1080,7 +1082,7 @@ static auto internalFS = makeInternalFS();
    `derivation-internal.nix` and `imported-drv-to-derivation.nix`)
    because the two accessors live at different scopes (process-
    static vs per-EvalState) and host different files. */
-static auto callFlakeInternalRoot = make_ref<SourceRoot>(internalFS, SourceRootKind::Internal);
+static auto callFlakeInternalRoot = SourceRoot::make(internalFS, SourceRootKind::Internal);
 
 static Value * requireInternalFile(EvalState & state, CanonPath path)
 {

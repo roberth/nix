@@ -397,9 +397,11 @@ struct ValueBase
          * - `EvalState::rootFSRoot` / `corepkgsRoot` /
          *   `internalFSRoot` (pinned for the eval's lifetime as
          *   `ref<>` members).
-         * - `EvalState::fetcherRoots` (Copyable admissions for
-         *   fetcher accessors; pinned for the eval's lifetime
-         *   as map values).
+         * - `EvalState::rootCache` (admissions keyed on
+         *   (accessor, kind); pinned for the eval's lifetime as
+         *   map values; today only Copyable admissions land
+         *   here, but the key shape is honest about the data
+         *   model — see `getOrCreateRoot` for the rationale).
          * - A file-static `ref<SourceRoot>` for accessors that
          *   live across `EvalState`s (currently
          *   `flake.cc`'s call-flake.nix root; process-static).
