@@ -2721,13 +2721,23 @@ StorePath EvalState::copyPathToStore(NixStringContext & context, const RootedPat
     auto dstPathCached = getConcurrent(*srcToStore, sp);
 
     auto dstPath = dstPathCached ? dstPathCached->first : [&]() {
-        /* Use fetchToStore2 (not fetchToStore) so the same walk hands
-           back the NAR hash too — recording it in `srcToStore` lets a
-           later `lockInput` narHash force skip the re-walk. */
+        /* Kind-aware ancestor walk: Copyable gets
+           `StrictAccessorBoundary` — a path whose ancestor
+           symlinks escape the accessor root raises
+           `AccessorBoundaryEscape` rather than silently splicing
+           the spliced target into the copy. Internal is
+           unreachable here (rejected above). System falls back to
+           the lenient walker.
+
+           Use fetchToStore2 (not fetchToStore) so the same walk
+           hands back the NAR hash too — recording it in
+           `srcToStore` lets a later `lockInput` narHash force
+           skip the re-walk. */
+        CanonPath resolved = nix::resolveSymlinks(*path.root, path.path, SymlinkResolution::Ancestors);
         auto [dstPath, narHash] = fetchToStore2(
             fetchSettings,
             *store,
-            sp.resolveSymlinks(SymlinkResolution::Ancestors),
+            SourcePath{sp.accessor, resolved},
             settings.isReadOnly() ? FetchMode::DryRun : FetchMode::Copy,
             sp.baseName(),
             ContentAddressMethod::Raw::NixArchive,
