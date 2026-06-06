@@ -233,7 +233,7 @@ TEST_F(LibExprTest, resetFileCacheReleasesValues)
 {
     auto accessor = make_ref<MemorySourceAccessor>();
     accessor->addFile(CanonPath("/test.nix"), "{ a = 1; }");
-    auto root = make_ref<SourceRoot>(accessor.cast<SourceAccessor>(), SourceRootKind::System);
+    auto root = SourceRoot::make(accessor.cast<SourceAccessor>(), SourceRootKind::System);
     auto file = RootedPath{root, CanonPath("/test.nix")};
 
     auto weak = static_cast<void **>(GC_MALLOC_ATOMIC(sizeof(void *)));
