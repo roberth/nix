@@ -673,24 +673,33 @@ LockedFlake lockFlake(
                     auto getInputFlake = [&](const FlakeRef & ref, const fetchers::UseRegistries useRegistries) {
                         if (auto resolvedPath = resolveRelativePath()) {
                             auto flake = readFlake(state, ref, ref, ref, *resolvedPath, inputAttrPath);
-                            /* Relative inputs share their parent's
-                               store object; carry parent's storePath
-                               and accessor through. Compose the in-
-                               storePath subdir by resolving the
-                               relative target (which may include
-                               `..`) against the parent's subdir,
-                               then applying this input's own parsed
-                               subdir. `CanonPath(raw, base)` handles
-                               `..` traversal lexically; `/` does
-                               not. */
+                            /* Compose the in-tree subdir from the
+                               post-walk `resolvedPath` (already
+                               escape-checked by `resolveRelativePath`)
+                               plus this input's parsed `ref.subdir`,
+                               routed through the kind-aware wrapper —
+                               `path:./sub?dir=../escape` on a
+                               relative input would otherwise still
+                               escape via `CanonPath`'s silent clamp.
+                               Catch and rewrap with the flake-input-
+                               specific diagnostic, matching the
+                               `readFlake` site. */
                             auto & parentLoc = nodePaths.at(node);
-                            auto relativeTarget = input.ref->input.isRelative().value().string();
-                            auto subdir = CanonPath(relativeTarget, CanonPath(parentLoc.subdir));
-                            subdir = CanonPath(ref.subdir, subdir);
-                            flake.nodeLocation = NodeLocation{
-                                .tree = parentLoc.tree,
-                                .subdir = std::string{subdir.rel()},
-                            };
+                            auto joined = resolvedPath->path.abs() + "/" + ref.subdir;
+                            SourceRoot adhoc{overriddenSourcePath.accessor, SourceRootKind::Copyable};
+                            try {
+                                auto fullSubdir =
+                                    nix::resolveSymlinks(adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
+                                flake.nodeLocation = NodeLocation{
+                                    .tree = parentLoc.tree,
+                                    .subdir = std::string{fullSubdir.rel()},
+                                };
+                            } catch (AccessorBoundaryEscape &) {
+                                throw Error(
+                                    "flake input subdir '%s' escapes the source tree at %s",
+                                    ref.subdir,
+                                    overriddenSourcePath.accessor->showPath(CanonPath::root));
+                            }
                             return flake;
                         } else {
                             return getFlake(state, ref, useRegistries, inputAttrPath);
@@ -839,22 +848,32 @@ LockedFlake lockFlake(
                                 // Handle non-flake 'path:./...' inputs.
                                 if (auto resolvedPath = resolveRelativePath()) {
                                     /* Same shape as getInputFlake's
-                                       relative branch: share parent's
-                                       tree; resolve the relative
-                                       target against parent's subdir,
-                                       then apply this input's parsed
-                                       subdir. `CanonPath(raw, base)`
-                                       handles `..` traversal. */
+                                       relative branch above: walk
+                                       `input.ref->subdir` on top of
+                                       the already-escape-checked
+                                       `resolvedPath` via the kind-
+                                       aware wrapper, catch
+                                       AccessorBoundaryEscape, rewrap
+                                       with the flake-input-specific
+                                       diagnostic. */
                                     auto & parentLoc = nodePaths.at(node);
-                                    auto relativeTarget = input.ref->input.isRelative().value().string();
-                                    auto subdir = CanonPath(relativeTarget, CanonPath(parentLoc.subdir));
-                                    subdir = CanonPath(input.ref->subdir, subdir);
-                                    return {
-                                        NodeLocation{
-                                            .tree = parentLoc.tree,
-                                            .subdir = std::string{subdir.rel()},
-                                        },
-                                        *input.ref};
+                                    auto joined = resolvedPath->path.abs() + "/" + input.ref->subdir;
+                                    SourceRoot adhoc{overriddenSourcePath.accessor, SourceRootKind::Copyable};
+                                    try {
+                                        auto fullSubdir = nix::resolveSymlinks(
+                                            adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
+                                        return {
+                                            NodeLocation{
+                                                .tree = parentLoc.tree,
+                                                .subdir = std::string{fullSubdir.rel()},
+                                            },
+                                            *input.ref};
+                                    } catch (AccessorBoundaryEscape &) {
+                                        throw Error(
+                                            "flake input subdir '%s' escapes the source tree at %s",
+                                            input.ref->subdir,
+                                            overriddenSourcePath.accessor->showPath(CanonPath::root));
+                                    }
                                 } else {
                                     auto cachedInput = state.inputCache->getAccessor(
                                         state.fetchSettings, *state.store, input.ref->input, useRegistriesInputs);
