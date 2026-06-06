@@ -2912,6 +2912,49 @@ SourcePath EvalState::coerceToPath(const PosIdx pos, Value & v, NixStringContext
         });
 }
 
+RootedPath
+EvalState::coerceToRootedPath(const PosIdx pos, Value & v, NixStringContext & context, std::string_view errorCtx)
+{
+    try {
+        forceValue(v, pos);
+    } catch (Error & e) {
+        e.addTrace(positions[pos], errorCtx);
+        throw;
+    }
+
+    /* Fallback: route through `coerceToString` (no copy-to-store)
+       and admit the resulting string under `rootFSRoot` (System).
+       Any string-shaped path the language can produce here
+       identifies a filesystem location, so System is the correct
+       admission kind. */
+    auto fromString = [&](Value & v2) -> RootedPath {
+        auto path = coerceToString(pos, v2, context, errorCtx, false, false, true).toOwned();
+        if (path == "" || path[0] != '/')
+            error<EvalError>("string '%1%' doesn't represent an absolute path", path)
+                .withTrace(pos, errorCtx)
+                .debugThrow();
+        return rootedPath(CanonPath(path));
+    };
+
+    /* nPath: the kind is sitting right on the Value. Return it
+       verbatim. No IO, no walk. */
+    if (v.type() == nPath)
+        return v.rootedPath();
+
+    if (v.type() == nAttrs)
+        return peelToStringOutPath(
+            pos,
+            v,
+            /*checkToStringReturn=*/false, // Historical quirk
+            [&](Value * peeled, bool) -> RootedPath {
+                if (peeled->type() == nPath)
+                    return peeled->rootedPath();
+                return fromString(*peeled);
+            });
+
+    return fromString(v);
+}
+
 StorePath
 EvalState::coerceToStorePath(const PosIdx pos, Value & v, NixStringContext & context, std::string_view errorCtx)
 {
