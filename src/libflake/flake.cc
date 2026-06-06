@@ -608,9 +608,36 @@ LockedFlake lockFlake(
 
                     auto resolveRelativePath = [&]() -> std::optional<SourcePath> {
                         if (auto relativePath = input.ref->input.isRelative()) {
-                            return SourcePath{
-                                overriddenSourcePath.accessor,
-                                CanonPath(relativePath->string(), overriddenSourcePath.path.parent().value())};
+                            /* Part 3: route the relative-input join
+                               through the kind-aware `resolveSymlinks`
+                               wrapper, then catch the generic
+                               `AccessorBoundaryEscape` and rewrap with a
+                               flake-input-specific diagnostic.
+
+                               The parent flake's accessor is by
+                               construction a fetched-tree view
+                               (Copyable). Wrap it ad-hoc so the wrapper
+                               applies `StrictAccessorBoundary`. The
+                               check fires on both the literal `..`
+                               escape (`path:../foo` against a flake at
+                               tree root) and the symlink-target escape
+                               (where an ancestor's symlink target pops
+                               past root). */
+                            auto relStr = relativePath->string();
+                            auto parent = overriddenSourcePath.path.parent();
+                            assert(parent);
+                            auto joined = parent->abs() + "/" + relStr;
+                            SourceRoot adhoc{overriddenSourcePath.accessor, SourceRootKind::Copyable};
+                            try {
+                                auto resolved =
+                                    nix::resolveSymlinks(adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
+                                return SourcePath{overriddenSourcePath.accessor, resolved};
+                            } catch (AccessorBoundaryEscape &) {
+                                throw Error(
+                                    "relative flake input path '%s' escapes the source tree at %s",
+                                    relStr,
+                                    overriddenSourcePath.accessor->showPath(CanonPath::root));
+                            }
                         } else
                             return std::nullopt;
                     };

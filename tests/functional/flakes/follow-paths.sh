@@ -130,16 +130,15 @@ EOF
 
 git -C "$flakeFollowsA" add flake.nix
 
-# FIXME: relative-input escape detection is transiently absent in this
-# commit. The lazy fetchTree path no longer routes through the
-# eager-mount + AllowList / storepath-parsing chain that previously
-# surfaced `path:../X` as "is forbidden in pure evaluation mode" /
-# "too short to be a valid store path". Both assertions are restored
-# two commits later (`feat(libflake): reject relative path inputs
-# that escape the flake's source tree`) with the structural error
-# message from the new `StrictAccessorBoundary`-based check.
-#expect 1 nix flake lock "$flakeFollowsA" 2>&1 | grep '/flakeB.*is forbidden in pure evaluation mode'
-#expect 1 nix flake lock --impure "$flakeFollowsA" 2>&1 | grep "'flakeB' is too short to be a valid store path"
+# Flake inputs are stricter than ordinary Nix path values: a relative
+# `path:..` may not escape past the containing flake's source tree
+# (i.e. `sourceInfo.outPath`). `flakeFollowsA` is at the tree root,
+# so `../flakeB` pops past it and is rejected structurally —
+# regardless of pure / impure mode. Caught by the kind-aware
+# `resolveSymlinks` wrapper in `resolveRelativePath`, rewrapped
+# with the flake-input-specific diagnostic.
+expect 1 nix flake lock "$flakeFollowsA" 2>&1 | grep "relative flake input path '../flakeB' escapes the source tree at"
+expect 1 nix flake lock --impure "$flakeFollowsA" 2>&1 | grep "relative flake input path '../flakeB' escapes the source tree at"
 
 # Relative-input + ?dir= subdir: the ?dir attribute names a path under
 # the relative input's own subdir, not under the parent flake's
