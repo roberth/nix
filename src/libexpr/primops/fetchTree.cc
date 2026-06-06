@@ -4,6 +4,7 @@
 #include "nix/expr/eval-inline.hh"
 #include "nix/expr/eval-settings.hh"
 #include "nix/expr/fetch-tree.hh"
+#include "nix/expr/source-root.hh"
 #include "nix/store/store-api.hh"
 #include "nix/store/build.hh"
 #include "nix/fetchers/fetchers.hh"
@@ -191,7 +192,9 @@ void emitTreeAttrs(
     auto attrs = state.buildBindings(100);
     if (lazy)
         attrs.alloc(state.s.outPath, callPos)
-            .mkPath(RootedPath{state.getOrCreateFetcherRoot(tree.accessor()), CanonPath::root}, state.mem);
+            .mkPath(
+                RootedPath{state.getOrCreateRoot(tree.accessor(), SourceRootKind::Copyable), CanonPath::root},
+                state.mem);
     else
         state.mkStorePathString(tree.storePath.value(), attrs.alloc(state.s.outPath, callPos));
     addFetchTreeMetadataAttrs(state, callPos, input, attrs, emptyRevFallback, forceDirty);

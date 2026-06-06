@@ -52,19 +52,42 @@ struct SourceRoot : std::enable_shared_from_this<SourceRoot>
     SourceRoot() = delete;
 
     /**
-     * Construct only via `make_ref<SourceRoot>(accessor, kind)` (or
-     * `std::make_shared`-equivalent).
+     * The only way to construct a `SourceRoot`. Returns a
+     * `ref<SourceRoot>` (an owning shared pointer); the in-class
+     * constructor is private to force this path.
      *
-     * `enable_shared_from_this` requires the instance to already be
-     * owned by a `shared_ptr` before `shared_from_this()` is called;
-     * a stack-allocated or raw-`new`-allocated `SourceRoot` would
-     * throw `std::bad_weak_ptr` at any capture site (e.g.
-     * `Value::rootedPath()`, `ExprConcatStrings`'s
-     * `firstPathRoot`). All current admission seams use
-     * `make_ref<SourceRoot>`; new admission seams must do the
-     * same.
+     * Why this matters: `enable_shared_from_this` requires the
+     * instance to already be owned by a `shared_ptr` before any
+     * `shared_from_this()` call. A stack-allocated or
+     * raw-`new`-allocated `SourceRoot` would compile fine, then
+     * throw `std::bad_weak_ptr` from a remote call site
+     * (`Value::rootedPath()`, `ExprConcatStrings::eval`'s
+     * `firstPathRoot`) — a runtime footgun. Funnelling
+     * construction through `make` rules the failure mode out at
+     * compile time: every `SourceRoot` exists inside a
+     * `shared_ptr` from the moment it's born.
      */
-    SourceRoot(ref<SourceAccessor> accessor, SourceRootKind kind)
+    static ref<SourceRoot> make(ref<SourceAccessor> accessor, SourceRootKind kind)
+    {
+        return ref<SourceRoot>(std::make_shared<SourceRoot>(Private{}, std::move(accessor), kind));
+    }
+
+private:
+    /* Pass-key token: only `SourceRoot::make` can construct a
+       `Private{}`, so the constructor below is callable only from
+       inside `make` (or from
+       `std::make_shared<SourceRoot>(Private{}, ...)`, which
+       `make` invokes). */
+    struct Private
+    {
+        explicit Private() = default;
+    };
+
+public:
+    /* Public for `std::make_shared`'s sake (it needs an
+       accessible constructor on the type it allocates); the
+       `Private` token gates real callers. */
+    SourceRoot(Private, ref<SourceAccessor> accessor, SourceRootKind kind)
         : accessor(std::move(accessor))
         , kind(kind)
     {

@@ -40,22 +40,23 @@ SourcePath EvalState::storePath(const StorePath & path)
     return {rootFS, CanonPath{store->printStorePath(path)}};
 }
 
-ref<SourceRoot> EvalState::getOrCreateFetcherRoot(ref<SourceAccessor> accessor)
+ref<SourceRoot> EvalState::getOrCreateRoot(ref<SourceAccessor> accessor, SourceRootKind kind)
 {
-    SourceAccessor * key = &*accessor;
-    /* Hot path: read-only lookup. Each fetcher accessor is admitted
-       once and re-emitted on every `fetchTree` materialisation, so
-       cache hits dominate. */
+    auto key = std::pair{&*accessor, kind};
+    /* Hot path: read-only lookup. Each (accessor, kind) is admitted
+       once and re-emitted on every reuse (e.g. every `fetchTree`
+       materialisation reusing the same fetcher accessor under
+       Copyable), so cache hits dominate. */
     std::optional<ref<SourceRoot>> hit;
-    fetcherRoots->cvisit(key, [&](const auto & kv) { hit = kv.second; });
+    rootCache->cvisit(key, [&](const auto & kv) { hit = kv.second; });
     if (hit)
         return *hit;
-    /* Miss: allocate, insert. Race-tolerant — each accessor maps to a
-       single Copyable-kinded SourceRoot, so concurrent inserts produce
-       structurally identical entries; the loser's allocation is
-       dropped via the visitor. */
-    ref<SourceRoot> result = make_ref<SourceRoot>(accessor, SourceRootKind::Copyable);
-    fetcherRoots->emplace_or_visit(key, result, [&](const auto & kv) { result = kv.second; });
+    /* Miss: allocate, insert. Race-tolerant — each (accessor, kind)
+       maps to a single SourceRoot value, so concurrent inserts
+       produce structurally identical entries; the loser's allocation
+       is dropped via the visitor. */
+    ref<SourceRoot> result = SourceRoot::make(accessor, kind);
+    rootCache->emplace_or_visit(key, result, [&](const auto & kv) { result = kv.second; });
     return result;
 }
 

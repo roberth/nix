@@ -39,7 +39,7 @@ protected:
     {
         auto acc = make_ref<MemorySourceAccessor>();
         acc->addFile(CanonPath("/test.nix"), std::string(contents));
-        auto root = make_ref<SourceRoot>(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
+        auto root = SourceRoot::make(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
         auto * expr = state.parseExprFromFile(RootedPath{root, CanonPath("/test.nix")});
         Value v;
         state.eval(expr, v);
