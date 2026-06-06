@@ -164,47 +164,47 @@ StringMap EvalState::realiseContext(const NixStringContext & context, StorePathS
     return res;
 }
 
-SourcePath EvalState::realisePath(
+RootedPath EvalState::realiseRootedPath(
     const PosIdx pos, Value & v, std::optional<SymlinkResolution> resolveSymlinks, CopyLazyPaths copyLazyPaths)
 {
     NixStringContext context;
 
-    auto path = coerceToPath(noPos, v, context, "while realising the context of a path");
+    /* Kind-preserving coercion: an `{ outPath = <Copyable nPath>; }`
+       shape (the lazy-paths regime) is peeled to the inner Copyable
+       RootedPath, so the dispatch below picks the Copyable boundary
+       policy instead of the System fallback. */
+    auto rp = coerceToRootedPath(noPos, v, context, "while realising the context of a path");
 
     try {
+        auto path = rp.sourcePath();
         if (!context.empty() && path.accessor == rootFS) {
             auto rewrites = realiseContext(context);
             if (copyLazyPaths == CopyLazyPaths::Copy)
                 ensureLazyPathsCopied(context);
-            path = {path.accessor, CanonPath(rewriteStrings(path.path.abs(), rewrites))};
+            rp = RootedPath{rp.root, CanonPath(rewriteStrings(path.path.abs(), rewrites))};
         }
         if (!resolveSymlinks)
-            return path;
+            return rp;
         /* Kind-aware symlink resolution: Copyable accessors get
-           `StrictAccessorBoundary`; System keeps the historical
+           `StrictCopyableBoundary`; System keeps the historical
            lenient walker; Internal bypasses the wrapper (the
-           wrapper refuses Internal by design). The kind comes from
-           the original path Value (`v.pathRoot()`) when `v` is
-           nPath, else `rootFSRoot` (string-coerced paths always
-           route through rootFS).
-
-           Known limitation: `v` of `nAttrs` with `__toString`
-           returning an nPath loses the inner path's kind here —
-           coerceToPath has recursed into the inner Value and
-           returned its SourcePath, but the kind selection below
-           reads v.type() of the outer attrset (= nAttrs → System
-           fallback). Threading the kind back out of coerceToPath
-           would need an API change; the loss is graceful (System
-           is lenient, never rejects). */
-        if (v.type() == nPath && v.pathRoot()->kind == SourceRootKind::Internal)
-            return path.resolveSymlinks(*resolveSymlinks);
-        ref<SourceRoot> root = (v.type() == nPath) ? ref(v.pathRoot()->shared_from_this()) : rootFSRoot;
-        auto resolved = nix::resolveSymlinks(*root, path.path, *resolveSymlinks);
-        return SourcePath{path.accessor, resolved};
+           wrapper refuses Internal by design). */
+        if (rp.root->kind == SourceRootKind::Internal) {
+            auto resolved = rp.sourcePath().resolveSymlinks(*resolveSymlinks);
+            return RootedPath{rp.root, resolved.path};
+        }
+        auto resolved = nix::resolveSymlinks(*rp.root, rp.path, *resolveSymlinks);
+        return RootedPath{rp.root, resolved};
     } catch (Error & e) {
-        e.addTrace(positions[pos], "while realising the context of path '%s'", path);
+        e.addTrace(positions[pos], "while realising the context of path '%s'", rp.sourcePath());
         throw;
     }
+}
+
+SourcePath EvalState::realisePath(
+    const PosIdx pos, Value & v, std::optional<SymlinkResolution> resolveSymlinks, CopyLazyPaths copyLazyPaths)
+{
+    return realiseRootedPath(pos, v, resolveSymlinks, copyLazyPaths).sourcePath();
 }
 
 /**
@@ -319,16 +319,12 @@ static void scopedImport(EvalState & state, const PosIdx pos, RootedPath & path,
    argument. */
 static void import(EvalState & state, const PosIdx pos, Value & vPath, Value * vScope, Value & v)
 {
-    /* `realisePath` forces `vPath` and rewrites the canon path
-       only when context carries lazy-mounted store rewrites; the
-       accessor identity is preserved, so re-rooting on `vPath`'s
-       `SourceRoot` (for path Values) or `rootFSRoot` (for string
-       arguments, which `coerceToPath` resolves under rootFS) is
-       sound. */
-    auto realisedSp = state.realisePath(pos, vPath, std::nullopt);
-    auto path2 = realisedSp.path.abs();
-    auto path = vPath.type() == nPath ? RootedPath{vPath.rootedPath().root, realisedSp.path}
-                                      : RootedPath{state.rootFSRoot, realisedSp.path};
+    /* `realiseRootedPath` peels the input inductively so the
+       returned `RootedPath` carries the right kind for downstream
+       routing — Copyable for fetched-tree-rooted shapes (including
+       `{ outPath = <Copyable path>; }`), System for string args. */
+    auto path = state.realiseRootedPath(pos, vPath, std::nullopt);
+    auto path2 = path.path.abs();
 
     // FIXME
     auto isValidDerivationInStore = [&]() -> std::optional<StorePath> {
@@ -2490,11 +2486,14 @@ static RegisterPrimOp primop_readFileType({
 /* Read a directory (without . or ..) */
 static void prim_readDir(EvalState & state, const PosIdx pos, Value ** args, Value & v)
 {
-    auto path = state.realisePath(pos, *args[0]);
-    /* Per-entry mkPath needs to inherit the input's `SourceRoot`:
-       path values keep their own root; string arguments resolve
-       through rootFS, so wrap as `rootFSRoot` (System). */
-    auto root = args[0]->type() == nPath ? args[0]->rootedPath().root : state.rootFSRoot;
+    auto rp = state.realiseRootedPath(pos, *args[0]);
+    auto path = rp.sourcePath();
+    /* Per-entry mkPath inherits the resolved kind directly: the
+       inductive peel in `coerceToRootedPath` finds the right kind
+       even for `{ outPath = <Copyable path>; }`, so the per-entry
+       Values surface the underlying tree's accessor instead of
+       silently falling back to rootFS. */
+    auto root = rp.root;
 
     // Retrieve directory entries for all nodes in a directory.
     // This is similar to `getFileType` but is optimized to reduce system calls
