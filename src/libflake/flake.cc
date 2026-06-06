@@ -25,6 +25,8 @@
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-cache.hh"
 #include "nix/expr/source-root.hh"
+
+#include "copyable-boundary-walk.hh"
 #include "nix/expr/eval-settings.hh"
 #include "nix/flake/lockfile.hh"
 #include "nix/expr/eval-inline.hh"
@@ -261,17 +263,14 @@ static Flake readFlake(
        instead of `/sub/inner` and read the wrong flake.nix. */
     SourcePath flakeDir = rootDir;
     if (!resolvedRef.subdir.empty()) {
-        auto joined = rootDir.path.abs() + "/" + resolvedRef.subdir;
-        auto adhoc = SourceRoot::make(rootDir.accessor, SourceRootKind::Copyable);
-        try {
-            auto resolved = nix::resolveSymlinks(*adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
-            flakeDir = SourcePath{rootDir.accessor, resolved};
-        } catch (AccessorBoundaryEscape &) {
-            throw Error(
-                "flake input subdir '%s' escapes the source tree at %s",
-                resolvedRef.subdir,
-                rootDir.accessor->showPath(CanonPath::root));
-        }
+        auto resolved = joinAndCheckCopyable(
+            rootDir.accessor, rootDir.path, resolvedRef.subdir, SymlinkResolution::Ancestors, [&]() {
+                return Error(
+                    "flake input subdir '%s' escapes the source tree at %s",
+                    resolvedRef.subdir,
+                    rootDir.accessor->showPath(CanonPath::root));
+            });
+        flakeDir = SourcePath{rootDir.accessor, resolved};
     }
     auto flakePath = flakeDir / "flake.nix";
 
@@ -653,18 +652,14 @@ LockedFlake lockFlake(
                             auto relStr = relativePath->string();
                             auto parent = overriddenSourcePath.path.parent();
                             assert(parent);
-                            auto joined = parent->abs() + "/" + relStr;
-                            auto adhoc = SourceRoot::make(overriddenSourcePath.accessor, SourceRootKind::Copyable);
-                            try {
-                                auto resolved = nix::resolveSymlinks(
-                                    *adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
-                                return SourcePath{overriddenSourcePath.accessor, resolved};
-                            } catch (AccessorBoundaryEscape &) {
-                                throw Error(
-                                    "relative flake input path '%s' escapes the source tree at %s",
-                                    relStr,
-                                    overriddenSourcePath.accessor->showPath(CanonPath::root));
-                            }
+                            auto resolved = joinAndCheckCopyable(
+                                overriddenSourcePath.accessor, *parent, relStr, SymlinkResolution::Ancestors, [&]() {
+                                    return Error(
+                                        "relative flake input path '%s' escapes the source tree at %s",
+                                        relStr,
+                                        overriddenSourcePath.accessor->showPath(CanonPath::root));
+                                });
+                            return SourcePath{overriddenSourcePath.accessor, resolved};
                         } else
                             return std::nullopt;
                     };
@@ -686,21 +681,21 @@ LockedFlake lockFlake(
                                specific diagnostic, matching the
                                `readFlake` site. */
                             auto & parentLoc = nodePaths.at(node);
-                            auto joined = resolvedPath->path.abs() + "/" + ref.subdir;
-                            auto adhoc = SourceRoot::make(overriddenSourcePath.accessor, SourceRootKind::Copyable);
-                            try {
-                                auto fullSubdir = nix::resolveSymlinks(
-                                    *adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
-                                flake.nodeLocation = NodeLocation{
-                                    .tree = parentLoc.tree,
-                                    .subdir = std::string{fullSubdir.rel()},
-                                };
-                            } catch (AccessorBoundaryEscape &) {
-                                throw Error(
-                                    "flake input subdir '%s' escapes the source tree at %s",
-                                    ref.subdir,
-                                    overriddenSourcePath.accessor->showPath(CanonPath::root));
-                            }
+                            auto fullSubdir = joinAndCheckCopyable(
+                                overriddenSourcePath.accessor,
+                                resolvedPath->path,
+                                ref.subdir,
+                                SymlinkResolution::Ancestors,
+                                [&]() {
+                                    return Error(
+                                        "flake input subdir '%s' escapes the source tree at %s",
+                                        ref.subdir,
+                                        overriddenSourcePath.accessor->showPath(CanonPath::root));
+                                });
+                            flake.nodeLocation = NodeLocation{
+                                .tree = parentLoc.tree,
+                                .subdir = std::string{fullSubdir.rel()},
+                            };
                             return flake;
                         } else {
                             return getFlake(state, ref, useRegistries, inputAttrPath);
@@ -858,24 +853,23 @@ LockedFlake lockFlake(
                                        with the flake-input-specific
                                        diagnostic. */
                                     auto & parentLoc = nodePaths.at(node);
-                                    auto joined = resolvedPath->path.abs() + "/" + input.ref->subdir;
-                                    auto adhoc =
-                                        SourceRoot::make(overriddenSourcePath.accessor, SourceRootKind::Copyable);
-                                    try {
-                                        auto fullSubdir = nix::resolveSymlinks(
-                                            *adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
-                                        return {
-                                            NodeLocation{
-                                                .tree = parentLoc.tree,
-                                                .subdir = std::string{fullSubdir.rel()},
-                                            },
-                                            *input.ref};
-                                    } catch (AccessorBoundaryEscape &) {
-                                        throw Error(
-                                            "flake input subdir '%s' escapes the source tree at %s",
-                                            input.ref->subdir,
-                                            overriddenSourcePath.accessor->showPath(CanonPath::root));
-                                    }
+                                    auto fullSubdir = joinAndCheckCopyable(
+                                        overriddenSourcePath.accessor,
+                                        resolvedPath->path,
+                                        input.ref->subdir,
+                                        SymlinkResolution::Ancestors,
+                                        [&]() {
+                                            return Error(
+                                                "flake input subdir '%s' escapes the source tree at %s",
+                                                input.ref->subdir,
+                                                overriddenSourcePath.accessor->showPath(CanonPath::root));
+                                        });
+                                    return {
+                                        NodeLocation{
+                                            .tree = parentLoc.tree,
+                                            .subdir = std::string{fullSubdir.rel()},
+                                        },
+                                        *input.ref};
                                 } else {
                                     auto cachedInput = state.inputCache->getAccessor(
                                         state.fetchSettings, *state.store, input.ref->input, useRegistriesInputs);
