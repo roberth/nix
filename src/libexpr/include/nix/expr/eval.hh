@@ -570,6 +570,28 @@ private:
         const ref<boost::concurrent_flat_map<CanonPath, std::optional<SourcePath>>> resolvedPaths;
     };
 
+public:
+
+    enum class CopyLazyPaths : bool {
+        PreserveLazy = false,
+        Copy = true,
+    };
+
+    struct Doc
+    {
+        Pos pos;
+        std::optional<std::string> name;
+        size_t arity;
+        std::vector<std::string> args;
+        /**
+         * Unlike the other `doc` fields in this file, this one should never be
+         * `null`.
+         */
+        const char * doc;
+    };
+
+private:
+
     const ref<
         boost::
             concurrent_flat_map<std::string, std::shared_ptr<LookupPathResolvedState>, StringViewHash, std::equal_to<>>>
@@ -895,11 +917,6 @@ public:
     auto peelToStringOutPath(const PosIdx pos, Value & v, bool checkToStringReturn, Cb && cb)
         -> std::invoke_result_t<Cb, Value *, bool>;
 
-    enum class CopyLazyPaths : bool {
-        PreserveLazy = false,
-        Copy = true,
-    };
-
     /**
      * For efficiency reasons, some store paths (as seen by the evaluator) in
      * the storeFS at their content-addressed locations don't get copied to the
@@ -1083,19 +1100,6 @@ public:
      */
     Value & getBuiltins();
 
-    struct Doc
-    {
-        Pos pos;
-        std::optional<std::string> name;
-        size_t arity;
-        std::vector<std::string> args;
-        /**
-         * Unlike the other `doc` fields in this file, this one should never be
-         * `null`.
-         */
-        const char * doc;
-    };
-
     /**
      * Retrieve the documentation for a value. This will evaluate the value if
      * it is a thunk, and it will partially apply __functor if applicable.
@@ -1269,6 +1273,19 @@ public:
      * the storeFS), fetch the store path to the store.
      */
     SourcePath realisePath(
+        const PosIdx pos,
+        Value & v,
+        std::optional<SymlinkResolution> resolveSymlinks = SymlinkResolution::Full,
+        CopyLazyPaths copyLazyPaths = CopyLazyPaths::PreserveLazy);
+
+    /**
+     * Like `realisePath`, but returns a `RootedPath` so callers that
+     * route on `SourceRootKind` (e.g. `import`'s downstream
+     * `evalFile`, `readDir`'s per-entry mkPath) get the kind without
+     * re-peeling. The kind is inherited from `coerceToRootedPath` —
+     * the same inductive peel `realisePath` itself uses.
+     */
+    RootedPath realiseRootedPath(
         const PosIdx pos,
         Value & v,
         std::optional<SymlinkResolution> resolveSymlinks = SymlinkResolution::Full,
