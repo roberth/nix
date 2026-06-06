@@ -15,6 +15,7 @@
  * dispatch sites that consume them.
  */
 
+#include "nix/util/resolve-symlinks.hh"
 #include "nix/util/source-root.hh"
 
 namespace nix {
@@ -50,5 +51,74 @@ enum class SourceRootKind : std::uint8_t {
      */
     Copyable,
 };
+
+/**
+ * Kind-aware `resolveSymlinks`: walks `path` through `root.accessor`
+ * and applies a boundary policy chosen by `root.kind`.
+ *
+ * - `Copyable`: `StrictAccessorBoundary`. A fetched tree is a
+ *   contained unit; an `..`-past-root has no meaningful target
+ *   inside the tree, and the silent lexical clamp inherited from
+ *   `CanonPath`'s raw-string constructor would name something
+ *   wrong. Throws `AccessorBoundaryEscape` on escape.
+ * - `System`: bare lenient walker, no boundary check. rootFS *is*
+ *   the real filesystem, and the historical lexical-`..` clamp at
+ *   accessor root has the meaning the user expects. Preserves the
+ *   long-standing `./foo + "../bar"` idiom that depends on it.
+ * - `Internal`: not handled. Internal accessors hold trusted
+ *   nix-internal helpers (corepkgs, derivation-internal, ...);
+ *   user code shouldn't reach them via dispatch sites that have
+ *   already rejected. The few internal eval paths that *do* read
+ *   Internal-rooted files (e.g. corepkgs imports) bypass this
+ *   wrapper and call the bare resolver directly. If Internal
+ *   reaches here, `unreachable()` fires so the reach terminates
+ *   the process rather than silently picking a default — the
+ *   intent is that a `catch` block somewhere upstream cannot
+ *   swallow this design-gap signal.
+ *
+ * Default `mode` is `Full`, matching the bare `resolveSymlinks`
+ * default. Pick explicitly when the shape differs:
+ * - reading a file (`parseExprFromFile`, `readFile` primops): `Full`
+ *   — the trailing component may itself be a symlink.
+ * - resolving to a directory whose trailing component should stay
+ *   intact (flake-input subdir, `copyPathToStore`'s ancestor walk):
+ *   `Ancestors`.
+ *
+ * Callers that want a domain-specific diagnostic catch
+ * `AccessorBoundaryEscape` and rewrap (see e.g.
+ * `flake.cc::resolveRelativePath`).
+ */
+inline CanonPath
+resolveSymlinks(const SourceRoot & root, std::string_view path, SymlinkResolution mode = SymlinkResolution::Full)
+{
+    switch (root.kind) {
+    case SourceRootKind::System:
+        return nix::resolveSymlinks(*root.accessor, path, mode);
+    case SourceRootKind::Copyable:
+        return nix::resolveSymlinks(*root.accessor, path, mode, StrictAccessorBoundary{*root.accessor});
+    case SourceRootKind::Internal:
+        /* No `throw std::logic_error` here, even though "loud
+           programmer error" is the intent: a `std::` exception is
+           non-idiomatic in this codebase (which uses
+           `MakeError`/`Error`), and an `Error` subclass *could* be
+           swallowed by an upstream `catch (Error &)`. `unreachable()`
+           terminates outright — no catch can intercept it — which is
+           the loudest signal available. The design-gap message
+           lives in the doc comment above. */
+        unreachable();
+    }
+    unreachable();
+}
+
+inline CanonPath
+resolveSymlinks(const SourceRoot & root, const CanonPath & path, SymlinkResolution mode = SymlinkResolution::Full)
+{
+    return resolveSymlinks(root, std::string_view{path.abs()}, mode);
+}
+
+inline CanonPath resolveSymlinks(const RootedPath & rp, SymlinkResolution mode = SymlinkResolution::Full)
+{
+    return resolveSymlinks(*rp.root, rp.path, mode);
+}
 
 } // namespace nix
