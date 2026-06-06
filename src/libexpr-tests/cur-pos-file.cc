@@ -45,7 +45,7 @@ protected:
     {
         accessor->addFile(inner, std::string(contents));
 
-        auto root = make_ref<SourceRoot>(accessor.cast<SourceAccessor>(), kind);
+        auto root = SourceRoot::make(accessor.cast<SourceAccessor>(), kind);
         auto * expr = state.parseExprFromFile({root, inner});
         Value v;
         state.eval(expr, v);

@@ -45,8 +45,8 @@ constexpr auto k1 = static_cast<SourceRootKind>(1);
 TEST(RootedPathEqual, sameTripleEqual)
 {
     auto acc = mkAcc();
-    auto r1 = make_ref<SourceRoot>(acc, k0);
-    auto r2 = make_ref<SourceRoot>(acc, k0);
+    auto r1 = SourceRoot::make(acc, k0);
+    auto r2 = SourceRoot::make(acc, k0);
     /* Distinct SourceRoot instances; identical (accessor, kind). */
     EXPECT_NE(&*r1, &*r2);
     EXPECT_EQ(RootedPath{r1}, RootedPath{r2});
@@ -57,15 +57,15 @@ TEST(RootedPathEqual, differingPathUnequal)
     auto acc = mkAcc();
     acc->addFile(CanonPath("/x"), "");
     acc->addFile(CanonPath("/y"), "");
-    auto r = make_ref<SourceRoot>(acc, k0);
+    auto r = SourceRoot::make(acc, k0);
     EXPECT_NE(RootedPath(r, CanonPath("/x")), RootedPath(r, CanonPath("/y")));
 }
 
 TEST(RootedPathEqual, differingKindUnequal)
 {
     auto acc = mkAcc();
-    auto r0 = make_ref<SourceRoot>(acc, k0);
-    auto r1 = make_ref<SourceRoot>(acc, k1);
+    auto r0 = SourceRoot::make(acc, k0);
+    auto r1 = SourceRoot::make(acc, k1);
     EXPECT_NE(RootedPath{r0}, RootedPath{r1});
 }
 
@@ -73,8 +73,8 @@ TEST(RootedPathEqual, differingAccessorUnequal)
 {
     auto accA = mkAcc();
     auto accB = mkAcc();
-    auto rA = make_ref<SourceRoot>(accA, k0);
-    auto rB = make_ref<SourceRoot>(accB, k0);
+    auto rA = SourceRoot::make(accA, k0);
+    auto rB = SourceRoot::make(accB, k0);
     EXPECT_NE(RootedPath{rA}, RootedPath{rB});
 }
 
@@ -89,8 +89,8 @@ TEST(RootedPathOrder, pathDominatesKind)
     auto acc = mkAcc();
     acc->addFile(CanonPath("/a"), "");
     acc->addFile(CanonPath("/b"), "");
-    auto rLow = make_ref<SourceRoot>(acc, k0);
-    auto rHigh = make_ref<SourceRoot>(acc, k1);
+    auto rLow = SourceRoot::make(acc, k0);
+    auto rHigh = SourceRoot::make(acc, k1);
 
     /* /a with the higher kind vs /b with the lower kind — path wins. */
     EXPECT_LT(RootedPath(rHigh, CanonPath("/a")), RootedPath(rLow, CanonPath("/b")));
@@ -105,8 +105,8 @@ TEST(RootedPathOrder, kindDominatesAccessor)
     /* Distinct accessors; one is "lower" than the other by number.
        We don't care which; pick the explicit pairing so kind drives
        the order. */
-    auto rLowKind = make_ref<SourceRoot>(accB, k0);  /* "higher" accessor + lower kind */
-    auto rHighKind = make_ref<SourceRoot>(accA, k1); /* "lower" accessor + higher kind */
+    auto rLowKind = SourceRoot::make(accB, k0);  /* "higher" accessor + lower kind */
+    auto rHighKind = SourceRoot::make(accA, k1); /* "lower" accessor + higher kind */
 
     EXPECT_LT(RootedPath{rLowKind}, RootedPath{rHighKind});
 }
@@ -117,8 +117,8 @@ TEST(RootedPathOrder, accessorBreaksTies)
        tiebreaker. */
     auto accA = mkAcc();
     auto accB = mkAcc();
-    auto rA = make_ref<SourceRoot>(accA, k0);
-    auto rB = make_ref<SourceRoot>(accB, k0);
+    auto rA = SourceRoot::make(accA, k0);
+    auto rB = SourceRoot::make(accB, k0);
 
     auto expected = (accA->number < accB->number) ? std::strong_ordering::less : std::strong_ordering::greater;
     EXPECT_EQ((RootedPath{rA} <=> RootedPath{rB}), expected);
@@ -127,8 +127,8 @@ TEST(RootedPathOrder, accessorBreaksTies)
 TEST(RootedPathOrder, equalGivesEquivalent)
 {
     auto acc = mkAcc();
-    auto r1 = make_ref<SourceRoot>(acc, k0);
-    auto r2 = make_ref<SourceRoot>(acc, k0);
+    auto r1 = SourceRoot::make(acc, k0);
+    auto r2 = SourceRoot::make(acc, k0);
     EXPECT_EQ((RootedPath{r1} <=> RootedPath{r2}), std::strong_ordering::equal);
 }
 

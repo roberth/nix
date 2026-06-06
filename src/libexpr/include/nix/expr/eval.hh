@@ -416,14 +416,31 @@ public:
     const ref<SourceRoot> internalFSRoot;
 
     /**
-     * Memoise the `SourceRoot` wrapping a fetcher's `SourceAccessor`
-     * under Copyable kind. Pinned for `EvalState`'s lifetime so a
-     * raw `SourceRoot *` stored on a path Value stays live. Keyed
-     * by accessor identity (`SourceAccessor *`) — the same fetcher
-     * accessor is always exposed under the same Copyable kind, so
-     * one entry per accessor suffices.
+     * Memoise the `SourceRoot` wrapping `accessor` under `kind`.
+     * Pinned for `EvalState`'s lifetime so the raw `SourceRoot *`
+     * stored on path Values (`Value::pathRoot()`) stays live.
+     * The Value is GC-managed; the `SourceRoot` lives in a
+     * `shared_ptr` side allocation, with the raw pointer being
+     * the bridge — the cache is the external anchor that keeps
+     * that pointer dereferenceable. `Pos::Origin`'s `RootedPath`
+     * arm holds `ref<SourceRoot>` directly and self-anchors;
+     * it doesn't depend on the cache.
+     *
+     * Keyed on `(accessor, kind)`, not on accessor alone: the
+     * same accessor can be admitted multiple times under
+     * different kinds (e.g. a posix accessor exposed both as a
+     * System filesystem view and as a Copyable per-storepath view)
+     * — see `SourceRoot`'s docstring. Keying on accessor alone
+     * would let the first admission's kind silently win for every
+     * subsequent lookup, which makes the cache an unintended
+     * claim about the data model rather than a pure optimisation.
+     *
+     * Today all callers pass `Copyable` (fetcher accessors), but
+     * the (accessor, kind) shape keeps the door open for a
+     * future System or Internal caller without making the cache
+     * structurally wrong in the meantime.
      */
-    ref<SourceRoot> getOrCreateFetcherRoot(ref<SourceAccessor> accessor);
+    ref<SourceRoot> getOrCreateRoot(ref<SourceAccessor> accessor, SourceRootKind kind);
 
     const SourcePath derivationInternal;
     const SourcePath importedDrvToDerivation;
@@ -561,19 +578,22 @@ private:
     const ref<RegexCache> regexCache;
 
     /**
-     * Backing map for `getOrCreateFetcherRoot`. Pinned for the
-     * eval's lifetime.
+     * Backing map for `getOrCreateRoot`. Pinned for the eval's
+     * lifetime so the raw `SourceRoot *` stored on Values and
+     * `Pos::Origin`s never dangles. Keyed on `(accessor, kind)` —
+     * the same accessor admitted under different kinds is two
+     * separate `SourceRoot`s with disjoint cache entries.
      *
-     * The map keys on a raw `SourceAccessor *`, but the value is
-     * `ref<SourceRoot>` and `SourceRoot` itself holds a
-     * `ref<SourceAccessor>`. So the value owns the accessor that
-     * its own key points at: as long as the entry is in the map,
-     * the key is dereferenceable. No eviction is ever performed,
-     * and `Value::path()` documents how callers extend root
-     * lifetimes when needed, so the raw-pointer key is sound by
-     * construction.
+     * The map keys on a raw `SourceAccessor *` (paired with
+     * `SourceRootKind`), but the value is `ref<SourceRoot>` and
+     * `SourceRoot` itself holds a `ref<SourceAccessor>`. So the
+     * value owns the accessor that its own key points at: as long
+     * as the entry is in the map, the key is dereferenceable. No
+     * eviction is ever performed, and `Value::path()` documents
+     * how callers extend root lifetimes when needed, so the
+     * raw-pointer key is sound by construction.
      */
-    const ref<boost::concurrent_flat_map<SourceAccessor *, ref<SourceRoot>>> fetcherRoots;
+    const ref<boost::concurrent_flat_map<std::pair<SourceAccessor *, SourceRootKind>, ref<SourceRoot>>> rootCache;
 
 public:
 

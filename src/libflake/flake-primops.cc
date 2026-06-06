@@ -86,10 +86,10 @@ PrimOp getFlake(const Settings & settings)
                            storeFS), so the wrapper applies
                            StrictAccessorBoundary. */
                         auto joined = subdir.abs() + "/" + flakeRef.subdir;
-                        SourceRoot adhoc{mountRef, SourceRootKind::Copyable};
+                        auto adhoc = SourceRoot::make(mountRef, SourceRootKind::Copyable);
                         try {
                             subdir =
-                                nix::resolveSymlinks(adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
+                                nix::resolveSymlinks(*adhoc, std::string_view{joined}, SymlinkResolution::Ancestors);
                         } catch (AccessorBoundaryEscape &) {
                             throw Error(
                                 "flake input subdir '%s' escapes the source tree at %s",

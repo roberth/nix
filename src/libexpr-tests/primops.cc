@@ -170,7 +170,7 @@ namespace {
 template<typename Accessor>
 nix::Expr * parseFromCopyableAccessor(EvalState & state, Accessor accessor, CanonPath path)
 {
-    auto root = make_ref<SourceRoot>(accessor.template cast<SourceAccessor>(), SourceRootKind::Copyable);
+    auto root = SourceRoot::make(accessor.template cast<SourceAccessor>(), SourceRootKind::Copyable);
     return state.parseExprFromFile(RootedPath{root, std::move(path)});
 }
 
@@ -302,7 +302,7 @@ TEST_F(PrimOpTest, toStringSystem)
 {
     Value vPath;
     auto acc = make_ref<MemorySourceAccessor>();
-    auto root = make_ref<SourceRoot>(acc.cast<SourceAccessor>(), SourceRootKind::System);
+    auto root = SourceRoot::make(acc.cast<SourceAccessor>(), SourceRootKind::System);
     vPath.mkPath(RootedPath{root, CanonPath("/some/file.nix")}, state.mem);
 
     auto * lambda = state.parseExprFromString("p: toString p", state.rootedPath(CanonPath::root));
@@ -320,7 +320,7 @@ TEST_F(PrimOpTest, toStringInternalErrors)
 {
     Value vPath;
     auto acc = make_ref<MemorySourceAccessor>();
-    auto root = make_ref<SourceRoot>(acc.cast<SourceAccessor>(), SourceRootKind::Internal);
+    auto root = SourceRoot::make(acc.cast<SourceAccessor>(), SourceRootKind::Internal);
     vPath.mkPath(RootedPath{root, CanonPath("/some/file.nix")}, state.mem);
 
     auto * lambda = state.parseExprFromString("p: toString p", state.rootedPath(CanonPath::root));

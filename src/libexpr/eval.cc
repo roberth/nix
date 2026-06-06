@@ -296,9 +296,9 @@ EvalState::EvalState(
     }())
     , corepkgsFS(make_ref<MemorySourceAccessor>())
     , internalFS(make_ref<MemorySourceAccessor>())
-    , rootFSRoot(make_ref<SourceRoot>(rootFS, SourceRootKind::System))
-    , corepkgsRoot(make_ref<SourceRoot>(corepkgsFS.cast<SourceAccessor>(), SourceRootKind::Internal))
-    , internalFSRoot(make_ref<SourceRoot>(internalFS.cast<SourceAccessor>(), SourceRootKind::Internal))
+    , rootFSRoot(SourceRoot::make(rootFS, SourceRootKind::System))
+    , corepkgsRoot(SourceRoot::make(corepkgsFS.cast<SourceAccessor>(), SourceRootKind::Internal))
+    , internalFSRoot(SourceRoot::make(internalFS.cast<SourceAccessor>(), SourceRootKind::Internal))
     , derivationInternal{internalFS->addFile(
           CanonPath("derivation-internal.nix"),
 #include "primops/derivation.nix.gen.hh"
@@ -319,7 +319,7 @@ EvalState::EvalState(
     , positionToDocComment(make_ref<decltype(positionToDocComment)::element_type>())
     , lookupPathResolved(make_ref<decltype(lookupPathResolved)::element_type>())
     , regexCache(makeRegexCache())
-    , fetcherRoots(make_ref<decltype(fetcherRoots)::element_type>())
+    , rootCache(make_ref<decltype(rootCache)::element_type>())
 #if NIX_USE_BOEHMGC
     , baseEnvP(std::allocate_shared<Env *>(traceable_allocator<Env *>(), &mem.allocEnv(BASE_ENV_SIZE)))
     , baseEnv(**baseEnvP)
