@@ -206,4 +206,45 @@ TEST_F(ExprConcatStringsTest, copyableConcatNoCheckForNonDotDotSuffix)
     EXPECT_EQ(vResult.path().path.abs(), "/some/regular/path");
 }
 
+/* Part 1 separator-handling: the depth walk now uses
+   `tokenizeString`, which collapses runs of `/`. These edge-case
+   suffixes must walk the same way the prior hand-rolled walker
+   did — pinned so a future refactor of the tokeniser surfaces
+   here. */
+TEST_F(ExprConcatStringsTest, copyableConcatSeparatorEdgeCases)
+{
+    auto acc = make_ref<MemorySourceAccessor>();
+    auto root = SourceRoot::make(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
+
+    struct Case
+    {
+        std::string suffix;
+        std::string expected;
+    };
+
+    std::vector<Case> cases{
+        {"//foo", "/sub/foo"},         /* leading double-slash collapses */
+        {"/foo//bar", "/sub/foo/bar"}, /* internal double-slash collapses */
+        {"/foo/", "/sub/foo"},         /* trailing slash absorbed by tokeniser */
+        {"/./foo", "/sub/foo"},        /* leading `.` skipped */
+        {"/a/./b", "/sub/a/b"},        /* internal `.` skipped */
+    };
+
+    for (const auto & c : cases) {
+        Value vPath;
+        vPath.mkPath(RootedPath{root, CanonPath("/sub")}, state.mem);
+
+        auto * lambda = state.parseExprFromString("p: p + \"" + c.suffix + "\"", state.rootedPath(CanonPath::root));
+        Value vLambda;
+        state.eval(lambda, vLambda);
+
+        Value vResult;
+        state.callFunction(vLambda, vPath, vResult, noPos);
+        state.forceValue(vResult, noPos);
+
+        ASSERT_EQ(vResult.type(), nPath) << "suffix " << c.suffix;
+        EXPECT_EQ(vResult.path().path.abs(), c.expected) << "suffix " << c.suffix;
+    }
+}
+
 } // namespace nix
