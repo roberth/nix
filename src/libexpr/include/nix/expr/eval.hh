@@ -853,6 +853,18 @@ public:
      * string.  If `coerceMore` is set, also converts nulls, integers,
      * booleans and lists to a string.  If `copyToStore` is set,
      * referenced paths are copied to the Nix store as a side effect.
+     *
+     * `copyToStore=false` does *not* universally mean "no store
+     * write": for a path value whose `SourceRoot.kind` is
+     * `Copyable` (the typical `fetchTree` / flake-input case), the
+     * Copyable arm always materialises the accessor's root via
+     * `copyPathToStore` and appends the subpath as text — the
+     * rendered `<storePath>/<subpath>` string only names a
+     * reachable location once the root has been copied. This is
+     * the same walk that `lint-fetch-whole-source-to-store`
+     * surfaces. `System`-kinded paths render as the raw absolute
+     * canon path with no IO; `Internal`-kinded paths raise an
+     * `EvalError`.
      */
     BackedStringView coerceToString(
         const PosIdx pos,
@@ -870,7 +882,15 @@ public:
      *
      * Converts strings, paths and derivations to a
      * path.  The result is guaranteed to be a canonicalised, absolute
-     * path.  Nothing is copied to the store.
+     * path.
+     *
+     * A bare path value (`nPath`) is returned directly via `v.path()`
+     * with no store IO. Other shapes — strings, and attrsets coerced
+     * via their `outPath` / `__toString` member — route through
+     * `coerceToString` with `copyToStore=false`, which for an
+     * `outPath` that resolves to a `Copyable`-rooted path triggers
+     * the same accessor-root copy described on `coerceToString`. The
+     * "no store IO" intuition only holds for the bare-path case.
      */
     SourcePath coerceToPath(const PosIdx pos, Value & v, NixStringContext & context, std::string_view errorCtx);
 
