@@ -145,3 +145,62 @@ if grep -q "$dotdotEscapePattern\|$absSymlinkPattern" "$stringBypassErr"; then
     echo "expected string-boundary path not to trigger escape check; got escape diagnostic" >&2
     exit 1
 fi
+
+# ----- attrset-wrapped Copyable path -----------------------------------
+
+# `import` / `readFile` / `readDir` route on `SourceRootKind` to
+# pick the symlink-resolution policy. The kind comes from the
+# inductive peel in `coerceToRootedPath`, so wrapping a Copyable
+# path in `{ outPath = <path>; }` or `{ __toString = self: <path>; }`
+# preserves the kind through the peel — the wrapper still applies.
+#
+# Pre-migration the kind was picked from the *outer* Value's
+# `type()`, which for `nAttrs` fell back to `rootFSRoot` (System
+# lenient walker) and the escape silently followed. These cases
+# pin that the new shape catches the escape through the wrapper.
+
+# readFile { outPath = <escaping Copyable path>; }
+expectStderr 1 nix --extra-experimental-features "$xpFlags" eval --impure --raw --expr "
+let
+  t = builtins.fetchTree { type = \"path\"; path = $root/tree; lazy = true; };
+  w = { outPath = t.outPath + \"/escape-link/file.txt\"; };
+in builtins.readFile w
+" | grepQuiet "$dotdotEscapePattern"
+
+# readFile { __toString = self: <escaping Copyable path>; }
+expectStderr 1 nix --extra-experimental-features "$xpFlags" eval --impure --raw --expr "
+let
+  t = builtins.fetchTree { type = \"path\"; path = $root/tree; lazy = true; };
+  w = { __toString = self: t.outPath + \"/escape-link/file.txt\"; };
+in builtins.readFile w
+" | grepQuiet "$dotdotEscapePattern"
+
+# import { outPath = <escaping Copyable path>; }
+expectStderr 1 nix --extra-experimental-features "$xpFlags" eval --impure --raw --expr "
+let
+  t = builtins.fetchTree { type = \"path\"; path = $root/tree; lazy = true; };
+  w = { outPath = t.outPath + \"/escape-link/foo.nix\"; };
+in import w
+" | grepQuiet "$dotdotEscapePattern"
+
+# readDir of a Copyable tree through an attrset wrapper: succeeds
+# (no escape), but the per-entry path Values must carry the
+# Copyable accessor — so reading one back through the wrapper
+# applies the escape policy. Pin both the success of the listing
+# and that an escape via the per-entry path is still caught.
+[[ $(nix --extra-experimental-features "$xpFlags" eval --impure --raw --expr "
+let
+  t = builtins.fetchTree { type = \"path\"; path = $root/tree; lazy = true; };
+  w = { outPath = t.outPath; };
+  entries = builtins.readDir w;
+in toString (builtins.length (builtins.attrNames entries))
+") -gt 0 ]]
+
+# Sanity for the non-escape attrset case: a wrapped path to a
+# regular file reads back fine.
+[[ $(nix --extra-experimental-features "$xpFlags" eval --impure --raw --expr "
+let
+  t = builtins.fetchTree { type = \"path\"; path = $root/tree; lazy = true; };
+  w = { outPath = t.outPath + \"/good.txt\"; };
+in builtins.readFile w
+") = "content" ]]
