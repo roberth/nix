@@ -264,7 +264,11 @@ static Flake readFlake(
     SourcePath flakeDir = rootDir;
     if (!resolvedRef.subdir.empty()) {
         auto resolved = joinAndCheckCopyable(
-            rootDir.accessor, rootDir.path, resolvedRef.subdir, SymlinkResolution::Ancestors, [&]() {
+            state.getOrCreateRoot(rootDir.accessor, SourceRootKind::Copyable),
+            rootDir.path,
+            resolvedRef.subdir,
+            SymlinkResolution::Ancestors,
+            [&]() {
                 return Error(
                     "flake input subdir '%s' escapes the source tree at %s",
                     resolvedRef.subdir,
@@ -653,7 +657,11 @@ LockedFlake lockFlake(
                             auto parent = overriddenSourcePath.path.parent();
                             assert(parent);
                             auto resolved = joinAndCheckCopyable(
-                                overriddenSourcePath.accessor, *parent, relStr, SymlinkResolution::Ancestors, [&]() {
+                                state.getOrCreateRoot(overriddenSourcePath.accessor, SourceRootKind::Copyable),
+                                *parent,
+                                relStr,
+                                SymlinkResolution::Ancestors,
+                                [&]() {
                                     return Error(
                                         "relative flake input path '%s' escapes the source tree at %s",
                                         relStr,
@@ -682,7 +690,7 @@ LockedFlake lockFlake(
                                `readFlake` site. */
                             auto & parentLoc = nodePaths.at(node);
                             auto fullSubdir = joinAndCheckCopyable(
-                                overriddenSourcePath.accessor,
+                                state.getOrCreateRoot(overriddenSourcePath.accessor, SourceRootKind::Copyable),
                                 resolvedPath->path,
                                 ref.subdir,
                                 SymlinkResolution::Ancestors,
@@ -854,7 +862,7 @@ LockedFlake lockFlake(
                                        diagnostic. */
                                     auto & parentLoc = nodePaths.at(node);
                                     auto fullSubdir = joinAndCheckCopyable(
-                                        overriddenSourcePath.accessor,
+                                        state.getOrCreateRoot(overriddenSourcePath.accessor, SourceRootKind::Copyable),
                                         resolvedPath->path,
                                         input.ref->subdir,
                                         SymlinkResolution::Ancestors,
