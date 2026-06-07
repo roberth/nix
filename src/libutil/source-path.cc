@@ -86,6 +86,111 @@ std::ostream & operator<<(std::ostream & str, const SourcePath & path)
     return str;
 }
 
+namespace {
+
+/* Compare two NAR nodes at their roots, optionally recursing into
+   directory children. `lstat`s are passed in to avoid a double
+   stat — the caller has already inspected them to short-circuit on a
+   type mismatch. */
+bool nodesEqual(
+    const SourcePath & a,
+    const SourceAccessor::Stat & sa,
+    const SourcePath & b,
+    const SourceAccessor::Stat & sb,
+    bool recurse)
+{
+    /* The caller pre-checks types match; reasserting is cheap and
+       keeps this function self-contained for direct hint use. */
+    if (sa.type != sb.type)
+        return false;
+
+    switch (sa.type) {
+    case SourceAccessor::tRegular:
+        if (sa.isExecutable != sb.isExecutable)
+            return false;
+        return a.readFile() == b.readFile();
+    case SourceAccessor::tSymlink:
+        return a.readLink() == b.readLink();
+    case SourceAccessor::tDirectory: {
+        auto da = a.readDirectory();
+        auto db = b.readDirectory();
+        /* DirEntries is std::map<std::string, optional<Type>>; equal
+           via std::map's lex compare gives us same name-set and
+           same per-entry types in one shot. */
+        if (da != db)
+            return false;
+        if (!recurse)
+            return true;
+        for (const auto & [name, _] : da) {
+            auto ca = a / name;
+            auto cb = b / name;
+            auto sca = ca.lstat();
+            auto scb = cb.lstat();
+            if (sca.type != scb.type)
+                return false;
+            if (!nodesEqual(ca, sca, cb, scb, /*recurse=*/true))
+                return false;
+        }
+        return true;
+    }
+    case SourceAccessor::tChar:
+    case SourceAccessor::tBlock:
+    case SourceAccessor::tSocket:
+    case SourceAccessor::tFifo:
+    case SourceAccessor::tUnknown:
+        /* Not part of the NAR model. Conservatively unequal — even
+           if they were the same kind, NAR would refuse to serialise
+           them. */
+        return false;
+    }
+    unreachable();
+}
+
+} // namespace
+
+bool contentsEqual(const SourcePath & a, const SourcePath & b, std::optional<CanonPath> hint)
+{
+    /* Step 1: lstat both. Disagreement on existence or file type is
+       an instant "no" — including the (somewhat degenerate) case where
+       neither path exists, which we treat as unequal because callers
+       generally won't be asking "are these two non-paths the same?"
+       and false is the safer answer to misuse. */
+    auto sa = a.maybeLstat();
+    auto sb = b.maybeLstat();
+    if (!sa || !sb)
+        return false;
+    if (sa->type != sb->type)
+        return false;
+
+    /* Step 2: same accessor pointer + same path is the trivial yes. */
+    if (&*a.accessor == &*b.accessor && a.path == b.path)
+        return true;
+
+    /* Step 3: fingerprint shortcut. Both accessors must produce a
+       fingerprint at this path, and both the fingerprint string and
+       the relative path inside the fingerprinted root must match. */
+    auto [fpaPath, fpa] = a.accessor->getFingerprint(a.path);
+    auto [fpbPath, fpb] = b.accessor->getFingerprint(b.path);
+    if (fpa && fpb && *fpa == *fpb && fpaPath == fpbPath)
+        return true;
+
+    /* Step 4: optional hint discriminator. Cheap subpath check meant
+       to fail fast for definitely-unequal trees (think `flake.nix`
+       for two flake roots). Low-level: we lstat the hint directly,
+       no symlink resolution. */
+    if (hint) {
+        auto subA = a / *hint;
+        auto subB = b / *hint;
+        auto hsA = subA.maybeLstat();
+        auto hsB = subB.maybeLstat();
+        if (hsA && hsB && !nodesEqual(subA, *hsA, subB, *hsB, /*recurse=*/false))
+            return false;
+    }
+
+    /* Step 5: full recursive NAR-semantics comparison. */
+    return nodesEqual(a, *sa, b, *sb, /*recurse=*/true);
+}
+
 std::ostream & operator<<(std::ostream & str, const RootedPath & path)
 {
     str << path.sourcePath();
