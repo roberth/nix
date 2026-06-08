@@ -992,7 +992,7 @@ void EvalState::mkPos(Value & v, PosIdx p)
             v.mkNull();
             return;
         }
-        auto attrs = buildBindings(3);
+        auto attrs = buildBindings(4);
         /* `.file` is a thunk over `fileOfPos` (see `LazyPosAccessors`).
            System accessors render to the raw absolute canon path;
            Copyable accessors render to `<storePath>/<subpath>` via
@@ -1003,6 +1003,15 @@ void EvalState::mkPos(Value & v, PosIdx p)
            lazy: positions are emitted in every eval but only a small
            fraction ever has `.file` forced. */
         makePositionThunks(*this, p, attrs.alloc(s.file), attrs.alloc(s.line), attrs.alloc(s.column));
+        /* `.path` carries the same origin as a path Value — the
+           same shape `fetchTree`'s lazy `outPath` emits. Callers
+           that just want to compare or manipulate the path
+           (NixOS-style module discovery: `unsafeGetAttrPos`'s
+           result feeds into module identity) can stay on the
+           path side and skip the Copyable materialisation that
+           `.file` forces. `toString` on `.path` reproduces
+           `.file`'s string. */
+        attrs.alloc(s.path).mkPath(*path, mem);
         v.mkAttrs(attrs);
     } else
         v.mkNull();
