@@ -2672,7 +2672,15 @@ BackedStringView EvalState::coerceToString(
                `"${...}"` interpolation produces, so `toString p ==
                "${p}"` for fetched-tree paths. The `srcToStore`
                cache short-circuits subsequent calls. */
-            auto storePath = copyPathToStore(context, RootedPath{rp.root, CanonPath::root});
+            auto storePath = [&]() {
+                try {
+                    return copyPathToStore(context, RootedPath{rp.root, CanonPath::root});
+                } catch (Error & e) {
+                    e.addTrace(
+                        positions[pos], "while coercing path '%s' on a fetched source to a string", rp.path.abs());
+                    throw;
+                }
+            }();
             return store->printStorePath(storePath) + rp.path.absOrEmpty();
         }
         }

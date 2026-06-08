@@ -142,3 +142,12 @@ git -C "$repo" -c user.email=t@t -c user.name=t commit -q -m init
 # away from.
 expectStderr 1 nix --no-eval-cache --lint-fetch-whole-source-to-store fatal eval "$repo#bad" \
     | grepQuiet 'reading the entire contents of fetched source.*into the store.*lint-fetch-whole-source-to-store'
+
+# The diagnostic must also surface the originating subpath as a
+# trace ("while coercing path 'X' on a fetched source to a
+# string"), so a real fatal hit in nixpkgs narrows to the
+# offending file rather than just the accessor root. Pin the
+# trace text so a refactor that dropped the catch-and-addTrace
+# in coerceToString's Copyable arm would surface here.
+expectStderr 1 nix --no-eval-cache --lint-fetch-whole-source-to-store fatal eval "$repo#bad" \
+    | grepQuiet "while coercing path"
