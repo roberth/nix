@@ -2720,7 +2720,15 @@ BackedStringView EvalState::coerceToString(
                `toString` and tries to read it back fails the
                lookup. */
             NixStringContext discardContext;
-            auto storePath = copyPathToStore(discardContext, RootedPath{rp.root, CanonPath::root});
+            auto storePath = [&]() {
+                try {
+                    return copyPathToStore(discardContext, RootedPath{rp.root, CanonPath::root});
+                } catch (Error & e) {
+                    e.addTrace(
+                        positions[pos], "while coercing path '%s' on a fetched source to a string", rp.path.abs());
+                    throw;
+                }
+            }();
             auto spStr = store->printStorePath(storePath);
             storeFS->mount(CanonPath(spStr), [accessor = rp.root->accessor]() { return accessor; });
             return spStr + rp.path.absOrEmpty();
