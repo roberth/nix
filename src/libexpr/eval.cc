@@ -3396,13 +3396,21 @@ bool EvalState::toStringEqual(Value & v1, Value & v2, const PosIdx pos, std::str
        subpath have different toStrings (System gives the
        abspath, Copyable gives the store-path + subpath). The
        shortcut also covers Internal × Internal cheaply, which
-       otherwise would throw in the reduction. */
+       otherwise would throw in the reduction.
+
+       Uses `pathRoot()` + `pathStrView()` to stay allocation-
+       free: `rootedPath()` constructs a `RootedPath` with a
+       heap-allocated subpath string and an atomic refcount bump
+       on the SourceRoot — both per call. In tight comparison
+       loops (sort/uniq, dedup) this branch dominated the perf
+       profile as ~5% self-time in `Value::rootedPath()`. */
     if (v1.type() == nString && v2.type() == nString)
         return v1.string_view() == v2.string_view();
     if (v1.type() == nPath && v2.type() == nPath) {
-        auto rp1 = v1.rootedPath();
-        auto rp2 = v2.rootedPath();
-        if (rp1.root->kind == rp2.root->kind && &*rp1.root->accessor == &*rp2.root->accessor && rp1.path == rp2.path)
+        auto * r1 = v1.pathRoot();
+        auto * r2 = v2.pathRoot();
+        bool sameRoot = r1 == r2 || (r1->kind == r2->kind && &*r1->accessor == &*r2->accessor);
+        if (sameRoot && v1.pathStrView() == v2.pathStrView())
             return true;
     }
 
@@ -3412,25 +3420,27 @@ bool EvalState::toStringEqual(Value & v1, Value & v2, const PosIdx pos, std::str
        stays None (computing the storeHash is what we're
        avoiding); an Internal path throws.
 
-       The result owns its bytes (string, not string_view).
-       Returning a view into `rp.path.abs()` would dangle once
-       this lambda returns — `rp` is a local `RootedPath` and
-       `abs()` is a reference into its internal storage. */
+       Same allocation discipline as the cheap shortcut above:
+       use `pathRoot()` + `pathStrView()` for the common System
+       arm, and only build a `RootedPath` on the Internal error
+       path (which throws anyway, so the alloc cost is moot). */
     auto eagerOf = [&](Value & v) -> std::optional<std::string> {
         if (v.type() == nString)
             return std::string(v.string_view());
-        auto rp = v.rootedPath();
-        switch (rp.root->kind) {
+        auto * root = v.pathRoot();
+        switch (root->kind) {
         case SourceRootKind::System:
-            return rp.path.abs();
+            return std::string(v.pathStrView());
         case SourceRootKind::Copyable:
             return std::nullopt;
-        case SourceRootKind::Internal:
+        case SourceRootKind::Internal: {
+            auto rp = v.rootedPath();
             error<EvalError>(
                 "cannot compute toString-equivalence on an internal-accessor path at '%1%'",
                 rp.root->accessor->showPath(rp.path))
                 .withTrace(pos, errorCtx)
                 .debugThrow();
+        }
         }
         unreachable();
     };
@@ -3446,14 +3456,10 @@ bool EvalState::toStringEqual(Value & v1, Value & v2, const PosIdx pos, std::str
 
     /* One reduced, one lazy (the lazy side is necessarily a
        Copyable path). Defer to `pathToStringEqual`. */
-    if (e1) {
-        auto rp2 = v2.rootedPath();
-        return pathToStringEqual(v2.path(), rp2.root->kind, *e1);
-    }
-    if (e2) {
-        auto rp1 = v1.rootedPath();
-        return pathToStringEqual(v1.path(), rp1.root->kind, *e2);
-    }
+    if (e1)
+        return pathToStringEqual(v2.path(), v2.pathRoot()->kind, *e1);
+    if (e2)
+        return pathToStringEqual(v1.path(), v1.pathRoot()->kind, *e2);
 
     /* Both lazy: both Copyable paths. Subpaths must match (else
        their toStrings differ in the trailing component);
