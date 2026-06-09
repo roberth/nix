@@ -1576,6 +1576,14 @@ struct PathEquivalenceContext
         Internal, so the only well-defined relation is pointer
         identity). */
     size_t classOfAccessor(const SourceRoot & root);
+
+    /** Same lookup as above without requiring a `SourceRoot`
+        wrapper. Used by `compareForToStringEquivalence`'s step 3
+        bridge, where the accessor comes from
+        `storeFS->getMount` and wrapping it in a fresh
+        `SourceRoot` per comparison would be a per-call
+        allocation. */
+    size_t classOfAccessor(ref<SourceAccessor> accessor, SourceRootKind kind);
 };
 
 } // namespace nix
