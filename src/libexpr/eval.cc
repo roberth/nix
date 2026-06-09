@@ -3606,10 +3606,12 @@ std::strong_ordering EvalState::compareForToStringEquivalence(
            side as a proper source. The bare `InvalidPath` that
            surfaces when the store path is unreachable doesn't
            name the operation — wrap it so the user sees what
-           comparison was attempted. */
+           comparison was attempted. The accessor+kind overload
+           of `classOfAccessor` skips the SourceRoot::make
+           allocation that the SourceRoot& overload above would
+           pay per call. */
         try {
-            auto synthRoot = SourceRoot::make(storePathAccessor(storePath), SourceRootKind::Copyable);
-            return ctx->classOfAccessor(*synthRoot);
+            return ctx->classOfAccessor(storePathAccessor(storePath), SourceRootKind::Copyable);
         } catch (InvalidPath & e) {
             e.addTrace(
                 positions[pos],
@@ -3880,11 +3882,16 @@ std::strong_ordering EvalState::comparePathsForOrdering(
 
 size_t PathEquivalenceContext::classOfAccessor(const SourceRoot & root)
 {
-    auto * raw = &*root.accessor;
+    return classOfAccessor(root.accessor, root.kind);
+}
+
+size_t PathEquivalenceContext::classOfAccessor(ref<SourceAccessor> accessor, SourceRootKind kind)
+{
+    auto * raw = &*accessor;
     if (auto it = classOf.find(raw); it != classOf.end())
         return it->second;
 
-    switch (root.kind) {
+    switch (kind) {
     case SourceRootKind::System: {
         if (!systemClassId)
             systemClassId = nextClassId++;
@@ -3899,7 +3906,7 @@ size_t PathEquivalenceContext::classOfAccessor(const SourceRoot & root)
            pair-of-classes, then both accessors share the id and
            subsequent comparisons are O(1). */
         for (size_t i = 0; i < copyableReps.size(); ++i) {
-            if (contentsEqual(root.accessor, copyableReps[i])) {
+            if (contentsEqual(accessor, copyableReps[i])) {
                 auto repId = classOf.at(&*copyableReps[i]);
                 classOf[raw] = repId;
                 return repId;
@@ -3907,7 +3914,7 @@ size_t PathEquivalenceContext::classOfAccessor(const SourceRoot & root)
         }
         /* No match — new class. */
         auto id = nextClassId++;
-        copyableReps.push_back(root.accessor);
+        copyableReps.push_back(accessor);
         classOf[raw] = id;
         return id;
     }
