@@ -152,4 +152,43 @@ TEST_F(AccessorsEquivalentTest, equivalencePairIsNotCached)
     EXPECT_FALSE(state.accessorsKnownInequivalent->contains(canonKey));
 }
 
+/* --- srcToStore query-only probe ------------------------------ */
+
+TEST_F(AccessorsEquivalentTest, srcToStoreProbeDecidesWhenBothPreCached)
+{
+    /* When both accessors already have a `srcToStore` entry from
+       prior independent comparisons, the query-only probe decides
+       directly: equal cached storePath ⇒ true, differ ⇒ false (and
+       cached as inequivalent). Construct the scenario by comparing
+       each side against a different unrelated accessor first, so
+       both end up in `srcToStore` without ever being compared to
+       each other. */
+
+    /* Positive case: A and B share NAR, populated independently. */
+    auto accA = mkAcc({{"/f", "shared"}});
+    auto accB = mkAcc({{"/f", "shared"}});
+    auto accC = mkAcc({{"/f", "different-C"}});
+    auto accD = mkAcc({{"/f", "different-D"}});
+    EXPECT_FALSE(state.accessorsEquivalent(accA, accC)); // populates A, C
+    EXPECT_FALSE(state.accessorsEquivalent(accB, accD)); // populates B, D
+    EXPECT_TRUE(state.accessorsEquivalent(accA, accB));  // probe path: same storePath
+    auto * rawA = &*accA;
+    auto * rawB = &*accB;
+    auto canonAB = rawA < rawB ? std::make_pair(rawA, rawB) : std::make_pair(rawB, rawA);
+    EXPECT_FALSE(state.accessorsKnownInequivalent->contains(canonAB));
+
+    /* Negative case: E and F differ, populated independently. */
+    auto accE = mkAcc({{"/f", "unique-E"}});
+    auto accF = mkAcc({{"/f", "unique-F"}});
+    auto accG = mkAcc({{"/f", "filler-G"}});
+    auto accH = mkAcc({{"/f", "filler-H"}});
+    EXPECT_FALSE(state.accessorsEquivalent(accE, accG)); // populates E, G
+    EXPECT_FALSE(state.accessorsEquivalent(accF, accH)); // populates F, H
+    EXPECT_FALSE(state.accessorsEquivalent(accE, accF)); // probe path: different storePaths
+    auto * rawE = &*accE;
+    auto * rawF = &*accF;
+    auto canonEF = rawE < rawF ? std::make_pair(rawE, rawF) : std::make_pair(rawF, rawE);
+    EXPECT_TRUE(state.accessorsKnownInequivalent->contains(canonEF));
+}
+
 } // namespace nix

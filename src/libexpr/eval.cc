@@ -3366,8 +3366,30 @@ bool EvalState::accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b
     /* hint reserved for the inequality probes added in later commits. */
     (void) hint;
 
+    /* Query-only probe: if BOTH sides have already been walked, their
+       NAR hashes decide it outright, without paying any further probe
+       or walk. The cheap path of `copyPathToStore` would also hit this,
+       but checking it explicitly up front lets us short-circuit the
+       more expensive root/hint probes (added in upcoming commits) in
+       the both-walked case. Comparing hashes rather than store paths is
+       what we mean here — two identical trees are equivalent however
+       they are named. Either side unwalked → no info, fall through. */
+    auto narHashOf = [&](ref<SourceAccessor> acc) -> std::optional<Hash> {
+        return getConcurrent(*treeNarHashes, SourcePath{acc, CanonPath::root});
+    };
+    {
+        auto hashA = narHashOf(a);
+        auto hashB = narHashOf(b);
+        if (hashA && hashB) {
+            if (*hashA == *hashB)
+                return true;
+            accessorsKnownInequivalent->insert(cacheKey);
+            return false;
+        }
+    }
+
     /* The only step that may walk a tree. `copyPathToStore` reads the
-       cached entry from `treeNarHashes` when present; otherwise it walks
+       recorded hash from `treeNarHashes` when present; otherwise it walks
        the tree once, computes the storePath, and writes it back. So
        any Copyable accessor pays at most one walk across the whole
        evaluation, regardless of how many comparisons reference it. */
