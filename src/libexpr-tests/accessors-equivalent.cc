@@ -108,4 +108,48 @@ TEST_F(AccessorsEquivalentTest, differentAccessorsDifferentContentsAreInequivale
     EXPECT_FALSE(state.accessorsEquivalent(accA, accB));
 }
 
+/* --- Known-inequivalent cache --------------------------------- */
+
+TEST_F(AccessorsEquivalentTest, inequivalencePairIsCachedAfterDecision)
+{
+    /* A negative decision (storePath compare differs) records the
+       pair in the inequality cache so a subsequent comparison
+       returns false without redoing the storePath compute. */
+    auto accA = mkAcc({{"/f", "A"}});
+    auto accB = mkAcc({{"/f", "B"}});
+    auto * rawA = &*accA;
+    auto * rawB = &*accB;
+    auto canonKey = rawA < rawB ? std::make_pair(rawA, rawB) : std::make_pair(rawB, rawA);
+
+    EXPECT_FALSE(state.accessorsKnownInequivalent->contains(canonKey));
+    EXPECT_FALSE(state.accessorsEquivalent(accA, accB));
+    EXPECT_TRUE(state.accessorsKnownInequivalent->contains(canonKey));
+}
+
+TEST_F(AccessorsEquivalentTest, inequivalenceCacheIsSymmetric)
+{
+    /* The cache key is canonicalised low-then-high so a later call
+       with reversed arguments hits the same entry. */
+    auto accA = mkAcc({{"/f", "A"}});
+    auto accB = mkAcc({{"/f", "B"}});
+    EXPECT_FALSE(state.accessorsEquivalent(accA, accB));
+    EXPECT_FALSE(state.accessorsEquivalent(accB, accA));
+}
+
+TEST_F(AccessorsEquivalentTest, equivalencePairIsNotCached)
+{
+    /* Only negative results are cached; positive decisions don't
+       earn an entry. The cheap positive proofs (pointer, fingerprint)
+       are essentially free to re-check, and storePath compute caches
+       its own answer in `srcToStore`. */
+    auto accA = mkAcc({{"/f", "shared"}});
+    auto accB = mkAcc({{"/f", "shared"}});
+    auto * rawA = &*accA;
+    auto * rawB = &*accB;
+    auto canonKey = rawA < rawB ? std::make_pair(rawA, rawB) : std::make_pair(rawB, rawA);
+
+    EXPECT_TRUE(state.accessorsEquivalent(accA, accB));
+    EXPECT_FALSE(state.accessorsKnownInequivalent->contains(canonKey));
+}
+
 } // namespace nix
