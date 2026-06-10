@@ -781,10 +781,16 @@ struct CompareValues
             case nString:
                 return v1->string_view() < v2->string_view();
             case nPath:
-                // Note: we don't take the accessor into account
-                // since it's not obvious how to compare them in a
-                // reproducible way.
-                return v1->pathStrView() < v2->pathStrView();
+                /* `<` on paths is `toString a < toString b` —
+                   the language-level semantic. Delegated to
+                   `comparePathsForOrdering`, which tries cheap
+                   discriminations first (same-root subpath
+                   compare; cross-kind storeDir-prefix lex test)
+                   and only materialises via `coerceToString` as
+                   a last resort. For Copyable the fallback
+                   fires `lint-fetch-whole-source-to-store`,
+                   matching the existing behaviour. */
+                return state.comparePathsForOrdering(*v1, *v2, pos, errorCtx) == std::strong_ordering::less;
             case nList:
                 // Lexicographic comparison
                 for (size_t i = 0;; i++) {

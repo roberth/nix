@@ -3465,6 +3465,135 @@ bool EvalState::toStringEqual(Value & v1, Value & v2, const PosIdx pos, std::str
     return contentsEqual(p1.accessor, p2.accessor, p1.path);
 }
 
+namespace {
+
+/* Do the two roots produce the same toString *prefix*?
+   Cheap signals only — same SourceAccessor (by `number`) or
+   matching fingerprint at root. Internal is not handled
+   here; callers reject Internal upfront so this helper
+   assumes non-Internal operands. */
+bool rootsHaveSamePrefix(const SourceRoot & r1, const SourceRoot & r2)
+{
+    if (r1.kind != r2.kind)
+        return false;
+    if (*r1.accessor == *r2.accessor)
+        return true;
+    auto [p1, fp1] = r1.accessor->getFingerprint(CanonPath::root);
+    auto [p2, fp2] = r2.accessor->getFingerprint(CanonPath::root);
+    return fp1 && fp2 && *fp1 == *fp2 && p1 == p2;
+}
+
+/* Cross-kind System × Copyable cheap classification. The
+   Copyable family of toStrings is exactly the strings starting
+   with `storeDir + "/"`; we classify the System abspath
+   against that family.
+     - Less / Greater: System lex-outside the family. Definitive
+       order against any Copyable, no Copyable info needed.
+     - SamePrefix: System lies inside `storeDir + "/"`. Both
+       toStrings share `storeDir + "/"` as a prefix — same shape
+       as the "step 1 shared-prefix subpath compare", except
+       the Copyable's post-prefix bytes (storeHash+name+subpath)
+       require materialisation. Caller defers to the materialise
+       arm to fill those in. */
+enum class CrossKindCheap { Less, SamePrefix, Greater };
+
+CrossKindCheap classifySystemVsCopyable(std::string_view systemAbs, std::string_view storeDir)
+{
+    std::string prefix = std::string(storeDir);
+    prefix += '/';
+    if (systemAbs.starts_with(prefix))
+        return CrossKindCheap::SamePrefix;
+    return systemAbs.compare(prefix) < 0 ? CrossKindCheap::Less : CrossKindCheap::Greater;
+}
+
+std::strong_ordering cmpStrings(std::string_view a, std::string_view b)
+{
+    auto c = a.compare(b);
+    if (c < 0)
+        return std::strong_ordering::less;
+    if (c > 0)
+        return std::strong_ordering::greater;
+    return std::strong_ordering::equal;
+}
+
+} // namespace
+
+std::strong_ordering
+EvalState::comparePathsForOrdering(Value & v1, Value & v2, const PosIdx pos, std::string_view errorCtx)
+{
+    forceValue(v1, pos);
+    forceValue(v2, pos);
+
+    auto rp1 = v1.rootedPath();
+    auto rp2 = v2.rootedPath();
+
+    /* Reject Internal upfront. `toString` on an Internal path
+       is undefined, so `<` is too — and rejecting here lets the
+       rest of the function assume the cheap shortcuts can
+       speak for both operands without special-casing. Mirrors
+       `coerceToString`'s Internal arm. */
+    for (auto * rp : {&rp1, &rp2}) {
+        if (rp->root->kind == SourceRootKind::Internal)
+            error<EvalError>(
+                "cannot coerce a path on an internal accessor to a string at '%1%'",
+                rp->root->accessor->showPath(rp->path))
+                .withTrace(pos, errorCtx)
+                .debugThrow();
+    }
+
+    /* 1. Shared root prefix → subpath drives the lex order. Raw-
+       string compare (not CanonPath's separator-first `<=>`) to
+       match what the full toString comparison would yield.
+       Covers same-accessor and matching-fingerprint cases of
+       any non-Internal kind. */
+    if (rootsHaveSamePrefix(*rp1.root, *rp2.root))
+        return cmpStrings(rp1.path.abs(), rp2.path.abs());
+
+    /* 2. Cross-kind System × Copyable. Ternary classification:
+         - Less / Greater: System lex-outside the storeDir+/
+           range → decisive without touching Copyable.
+         - SamePrefix: System lies inside storeDir+/, so it
+           shares the storeDir+/ prefix with the Copyable side.
+           Same shape as step 1's shared-prefix subpath compare,
+           but the Copyable's post-prefix bytes need
+           materialisation; defers to step 3. */
+    if (rp1.root->kind == SourceRootKind::System && rp2.root->kind == SourceRootKind::Copyable) {
+        switch (classifySystemVsCopyable(rp1.path.abs(), store->storeDir)) {
+        case CrossKindCheap::Less:
+            return std::strong_ordering::less;
+        case CrossKindCheap::Greater:
+            return std::strong_ordering::greater;
+        case CrossKindCheap::SamePrefix:
+            break;
+        }
+    } else if (rp1.root->kind == SourceRootKind::Copyable && rp2.root->kind == SourceRootKind::System) {
+        switch (classifySystemVsCopyable(rp2.path.abs(), store->storeDir)) {
+        case CrossKindCheap::Less:
+            return std::strong_ordering::greater;
+        case CrossKindCheap::Greater:
+            return std::strong_ordering::less;
+        case CrossKindCheap::SamePrefix:
+            break;
+        }
+    }
+
+    /* 3. Materialise both sides and string-compare. Two reach
+       paths:
+         - Same-kind, different roots, no fingerprint match. The
+           two toStrings are independent strings.
+         - Cross-kind System × Copyable with SamePrefix from step 2.
+           Both toStrings share storeDir+/ as a prefix; the compare
+           here is step 1's subpath compare with the Copyable's
+           post-prefix bytes filled in by `coerceToString`.
+       Materialisation on Copyable fires `lint-fetch-whole-source-
+       to-store` — correct: `<` semantically *is* a `toString`
+       call. */
+    NixStringContext ctxL, ctxR;
+    auto sL = coerceToString(pos, v1, ctxL, errorCtx, /*coerceMore=*/false, /*copyToStore=*/false);
+    auto sR = coerceToString(pos, v2, ctxR, errorCtx, /*coerceMore=*/false, /*copyToStore=*/false);
+    return cmpStrings(*sL, *sR);
+}
+
 bool EvalState::fullGC()
 {
 #if NIX_USE_BOEHMGC
