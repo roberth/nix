@@ -3875,12 +3875,17 @@ bool EvalState::toStringEqual(Value & v1, Value & v2, const PosIdx pos, std::str
 
     /* Both lazy: both Copyable paths. Subpaths must match (else
        their toStrings differ in the trailing component);
-       contentsEqual decides whether the storeHashes do. */
+       `accessorsEquivalent` decides whether the storeHashes do,
+       routing through cheap probes first (pointer, fingerprint,
+       srcToStore lookup, root-name SHA256, hint SHA256 at the
+       shared subpath) before paying any walk. The shared subpath
+       is the natural hint: the caller is already comparing at
+       that point in both trees. */
     auto p1 = v1.path();
     auto p2 = v2.path();
     if (p1.path != p2.path)
         return false;
-    return contentsEqual(p1.accessor, p2.accessor, p1.path);
+    return accessorsEquivalent(p1.accessor, p2.accessor, p1.path);
 }
 
 namespace {
