@@ -916,6 +916,29 @@ public:
     StorePath copyPathToStore(NixStringContext & context, const RootedPath & path);
 
     /**
+     * Return an accessor whose root is the given store path.
+     *
+     * First consults `storeFS`'s mount table — used by lazy
+     * fetchTree and friends that register an accessor (with
+     * fingerprint) for the store path they expose. Falls back
+     * to the `Store`'s own per-store-path accessor
+     * (`Store::requireStoreObjectAccessor`), which works
+     * uniformly across local, relocated, and remote stores.
+     *
+     * If the fallback accessor lacks a fingerprint, it gets
+     * one: `printStorePath(sp)`. The store path string is a
+     * content-addressed identity that satisfies the fingerprint
+     * contract — equal store paths ⇔ equal NAR by construction.
+     * Without this, downstream `fetchToStore` sees an
+     * unfingerprinted source and trips
+     * `_NIX_TEST_BARF_ON_UNCACHEABLE`.
+     *
+     * Throws `InvalidPath` if the store path is unreachable via
+     * either route — the genuinely undecidable case.
+     */
+    ref<SourceAccessor> storePathAccessor(const StorePath & sp);
+
+    /**
      * Path coercion.
      *
      * Converts strings, paths and derivations to a
@@ -1098,8 +1121,22 @@ public:
     /**
      * Do a deep equality test between two values.  That is, list
      * elements and attributes are compared recursively.
+     *
+     * When `ctx` is supplied, cross-type `nPath × nString` (in
+     * either order) is taken as path↔string equivalent under the
+     * `toString` semantic rather than the language `==`'s strict
+     * "different type => false". Recursion into `nList`/`nAttrs`
+     * threads the same ctx through, so the relaxation reaches
+     * arbitrary nesting depth. Only `PathEquivalentDedup` ever
+     * passes one; user-visible `==` / `assert` / `builtins.sort`
+     * / plain `genericClosure` keep their strict typing.
      */
-    bool eqValues(Value & v1, Value & v2, const PosIdx pos, std::string_view errorCtx);
+    bool eqValues(
+        Value & v1,
+        Value & v2,
+        const PosIdx pos,
+        std::string_view errorCtx,
+        struct PathEquivalenceContext * ctx = nullptr);
 
     /**
      * Like `eqValues`, but throws an `AssertionError` if not equal.
@@ -1146,6 +1183,55 @@ public:
     bool pathToStringEqual(const SourcePath & p, SourceRootKind kind, std::string_view s);
 
     /**
+     * Total preorder on path-or-string Values whose equivalence
+     * classes match toString-equivalence. The between-class
+     * ordering itself is NOT toString lex — it's a cheap layered
+     * order chosen so the comparator never has to materialise:
+     *
+     *   1. Camp partition.
+     *      - Camp A: byte-for-byte canonical Copyable `toString`
+     *        shape, i.e. `storeDir + "/" + 32-nix32-hash +
+     *        "-source"` optionally followed by a canonical
+     *        subpath. Copyable nPath is always Camp A (its
+     *        would-be toString is canonical by construction).
+     *      - Camp B: everything else, including non-canonical
+     *        store-shape strings (trailing slash, `/.`, `/..`,
+     *        non-`source` name, short hash).
+     *      - Camp B < Camp A.
+     *   2. Subpath compare.
+     *      - Camp A: byte lex on the parsed subpath after
+     *        `-source`.
+     *      - Camp B: byte lex on the full bytes (System abspath /
+     *        string).
+     *   3. Source root equivalence class. Fires only when a
+     *      `ctx` is supplied and step 2 returned equal within
+     *      Camp A. Each side resolves to a class id via
+     *      `ctx->classOfAccessor` (Copyable nPath uses its
+     *      accessor directly; nString / System-in-store parse
+     *      the bytes to a `StorePath` and bridge through
+     *      `storeFS->getMount` to obtain an accessor). Same id
+     *      → Equivalent; different ids → ordered by id number
+     *      (arbitrary but stable within one ctx). Throws if a
+     *      bridged store path isn't mounted in `storeFS`.
+     *
+     * Throws on Internal-kinded paths and on types other than
+     * `nPath` / `nString`.
+     */
+    std::strong_ordering compareForToStringEquivalence(
+        Value & a, Value & b, PosIdx pos, std::string_view errorCtx, struct PathEquivalenceContext * ctx = nullptr);
+
+    /**
+     * Invoke `CompareValues`'s comparator. Returns true iff `v1 < v2`
+     * under the same semantics as `builtins.lessThan` (no ctx) or
+     * `PathEquivalentDedup`'s otherMap (ctx provided). Exposed for
+     * unit testing the comparator's strict-weak-order properties
+     * (transitivity, antisymmetry, irreflexivity); the comparator
+     * itself stays in `primops.cc`.
+     */
+    bool compareValues(
+        Value & v1, Value & v2, PosIdx pos, std::string_view errorCtx, PathEquivalenceContext * ctx = nullptr);
+
+    /**
      * Order two path Values under the language-level `<` semantic
      * (`toString a < toString b`), committing to a definitive
      * answer — no `Expensive` state. Cheap branches first;
@@ -1179,8 +1265,18 @@ public:
      * `toStringEqual` (which return `bool`); they share the
      * cheap-discrimination strategy but have a different result
      * space.
+     *
+     * When `ctx` is supplied (only `PathEquivalentDedup`'s
+     * comparator does so), same-classId is taken as a cheap
+     * equivalence witness — two Copyable accessors that
+     * classify into the same class return `equal` without
+     * materialising. Different classes get an arbitrary but
+     * stable order via the classId number, so the result remains
+     * a total preorder usable as a sorted-container key without
+     * firing the materialise-fallback (and the lint with it).
      */
-    std::strong_ordering comparePathsForOrdering(Value & v1, Value & v2, PosIdx pos, std::string_view errorCtx);
+    std::strong_ordering comparePathsForOrdering(
+        Value & v1, Value & v2, PosIdx pos, std::string_view errorCtx, struct PathEquivalenceContext * ctx = nullptr);
 
     bool isFunctor(const Value & fun) const;
 
@@ -1437,6 +1533,50 @@ SourcePath resolveExprPath(const RootedPath & path, bool addDefaultNix = true);
  * Whether a URI is allowed, assuming restrictEval is enabled
  */
 bool isAllowedURI(std::string_view uri, const Strings & allowedPaths);
+
+/**
+ * Per-invocation equivalence-class classifier for
+ * `builtins.genericClosure { pathEquivalent = true; … }`'s
+ * comparator. Same classId means "the two roots' toStrings
+ * would agree" — established cheaply via accessor identity or
+ * fingerprint match, or by a `contentsEqual` walk against an
+ * existing representative (paid at most once per accessor).
+ *
+ * The framework: a total preorder over `Value` whose
+ * equivalence classes are the dedup classes. Class IDs are the
+ * cheap witness for path equivalence; the ctx-aware comparator
+ * uses them to discriminate without materialising.
+ *
+ * Only `PathEquivalentDedup`'s comparator passes a ctx;
+ * user-visible Nix comparisons (`==`, `assert`, `builtins.sort`,
+ * plain `genericClosure`) keep their current strict typing.
+ */
+struct PathEquivalenceContext
+{
+    EvalState & state;
+
+    /** Cached equivalence-class id per accessor pointer. */
+    std::unordered_map<const SourceAccessor *, size_t> classOf;
+    /** Representative accessors per Copyable class, used for
+        the `contentsEqual` scan when classifying a new
+        accessor. */
+    std::vector<ref<SourceAccessor>> copyableReps;
+    /** All System accessors share one id (their toString does
+        not depend on the accessor — see `SourceRootKind::System`'s
+        singleton assumption). Assigned on first encounter. */
+    std::optional<size_t> systemClassId;
+    /** Monotonic id allocator. */
+    size_t nextClassId = 0;
+
+    /** Look up or assign the equivalence-class id for `root`.
+        Two roots share an id iff their toStrings would agree at
+        the root: System → singleton id, Copyable → NAR-equivalence
+        class via `contentsEqual` against existing reps, Internal
+        → identity-class per pointer (toString is undefined for
+        Internal, so the only well-defined relation is pointer
+        identity). */
+    size_t classOfAccessor(const SourceRoot & root);
+};
 
 } // namespace nix
 
