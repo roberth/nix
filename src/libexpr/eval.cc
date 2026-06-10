@@ -325,6 +325,7 @@ EvalState::EvalState(
     , treeNarHashes(make_ref<decltype(treeNarHashes)::element_type>())
     , accessorsKnownInequivalent(make_ref<decltype(accessorsKnownInequivalent)::element_type>())
     , accessorRootProbeCache(make_ref<decltype(accessorRootProbeCache)::element_type>())
+    , accessorHintProbeCache(make_ref<decltype(accessorHintProbeCache)::element_type>())
     , importResolutionCache(make_ref<decltype(importResolutionCache)::element_type>())
     , fileEvalCache(make_ref<decltype(fileEvalCache)::element_type>())
     , positionToDocComment(make_ref<decltype(positionToDocComment)::element_type>())
@@ -3380,9 +3381,6 @@ bool EvalState::accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b
             return true;
     }
 
-    /* hint reserved for the inequality probes added in later commits. */
-    (void) hint;
-
     /* Query-only probe: if BOTH sides have already been walked, their
        NAR hashes decide it outright, without paying any further probe
        or walk. The cheap path of `copyPathToStore` would also hit this,
@@ -3420,6 +3418,35 @@ bool EvalState::accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b
     if (rootProbeOf(a) != rootProbeOf(b)) {
         accessorsKnownInequivalent->insert(cacheKey);
         return false;
+    }
+
+    /* Hint probe: SHA256 of the file at `hint` on each side, when
+       supplied. The caller is presumed to be about to read this
+       subpath anyway (e.g. comparing two roots in a context that
+       will then `import <a>/x.nix` and `<b>/x.nix`); hashing it
+       under the hint contract turns that read into a cheap
+       inequality disproof. Mismatched hashes prove the roots are
+       inequivalent. Match is no info (one matching file says
+       nothing about the rest of the tree). Either side absent or
+       non-regular → no info. */
+    if (hint) {
+        auto hintProbeOf = [&](ref<SourceAccessor> acc) -> std::optional<Hash> {
+            auto key = std::make_pair(&*acc, *hint);
+            if (auto cached = getConcurrent(*accessorHintProbeCache, key))
+                return *cached;
+            std::optional<Hash> result;
+            auto stat = acc->maybeLstat(*hint);
+            if (stat && stat->type == SourceAccessor::Type::tRegular)
+                result = hashString(HashAlgorithm::SHA256, acc->readFile(*hint));
+            accessorHintProbeCache->try_emplace(std::move(key), result);
+            return result;
+        };
+        auto hA = hintProbeOf(a);
+        auto hB = hintProbeOf(b);
+        if (hA && hB && *hA != *hB) {
+            accessorsKnownInequivalent->insert(cacheKey);
+            return false;
+        }
     }
 
     /* The only step that may walk a tree. `copyPathToStore` reads the
