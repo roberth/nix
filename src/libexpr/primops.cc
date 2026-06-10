@@ -743,11 +743,35 @@ struct CompareValues
     EvalState & state;
     const PosIdx pos;
     const std::string_view errorCtx;
+    /* When non-null, the comparator becomes a total preorder
+       whose equivalence classes are the toString-equivalence
+       classes. Any pair of paths and/or strings — cross-type
+       and same-type alike — routes through
+       `EvalState::compareForToStringEquivalence(..., ctx)`,
+       which gives one consistent ordering and equivalence
+       across the path/string subset. Recursive types
+       (nList / nAttrs) recurse with the same ctx so the
+       equivalence reaches arbitrary depth.
 
-    CompareValues(EvalState & state, const PosIdx pos, const std::string_view && errorCtx)
+       Routing path/string uniformly is the whole point: a
+       previous version dispatched per-type (byte compare for
+       same-type strings, classId for cross-type) and the two
+       orderings disagreed on equivalence — non-transitive
+       under `!a<b && !b<a`, which `std::map`'s tree invariants
+       depend on.
+
+       Only `PathEquivalentDedup` passes a ctx; user-visible
+       comparisons (`builtins.lessThan`, `builtins.sort`,
+       plain `genericClosure`) keep their strict-typed language
+       `<` semantics by passing nullptr. */
+    PathEquivalenceContext * ctx = nullptr;
+
+    CompareValues(
+        EvalState & state, const PosIdx pos, const std::string_view && errorCtx, PathEquivalenceContext * ctx = nullptr)
         : state(state)
         , pos(pos)
-        , errorCtx(errorCtx) {};
+        , errorCtx(errorCtx)
+        , ctx(ctx) {};
 
     bool operator()(Value * v1, Value * v2) const
     {
@@ -756,12 +780,37 @@ struct CompareValues
 
     bool operator()(Value * v1, Value * v2, std::string_view errorCtx) const
     {
+        auto throwIncomparable = [&]() -> bool {
+            state
+                .error<EvalError>(
+                    "cannot compare %s with %s; values of that type are incomparable (values are %s and %s)",
+                    showType(*v1),
+                    showType(*v2),
+                    ValuePrinter(state, *v1, errorPrintOptions),
+                    ValuePrinter(state, *v2, errorPrintOptions))
+                .debugThrow();
+        };
         try {
             if (v1->type() == nFloat && v2->type() == nInt)
                 return v1->fpoint() < v2->integer().value;
             if (v1->type() == nInt && v2->type() == nFloat)
                 return v1->integer().value < v2->fpoint();
-            if (v1->type() != v2->type())
+            /* Under ctx: any pair of paths and/or strings reduces to
+               `compareForToStringEquivalence` — the SAME comparator
+               for cross-type and same-type alike, so the resulting
+               equivalence relation is transitive. Without this
+               unification, same-type strings would use byte compare
+               while cross-type would use step 3's classId compare —
+               two orderings that disagree on equivalence and break
+               the strict-weak-order invariant `std::map` needs.
+               Without ctx, the existing per-type dispatch in the
+               switch below preserves the language `<` semantics. */
+            if (ctx && (v1->type() == nPath || v1->type() == nString)
+                && (v2->type() == nPath || v2->type() == nString)) {
+                auto cmp = state.compareForToStringEquivalence(*v1, *v2, pos, errorCtx, ctx);
+                return cmp == std::strong_ordering::less;
+            }
+            if (v1->type() != v2->type()) {
                 state
                     .error<EvalError>(
                         "cannot compare %s with %s; values are %s and %s",
@@ -770,6 +819,7 @@ struct CompareValues
                         ValuePrinter(state, *v1, errorPrintOptions),
                         ValuePrinter(state, *v2, errorPrintOptions))
                     .debugThrow();
+            }
 // Allow selecting a subset of enum values
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wswitch-enum"
@@ -784,13 +834,14 @@ struct CompareValues
                 /* `<` on paths is `toString a < toString b` —
                    the language-level semantic. Delegated to
                    `comparePathsForOrdering`, which tries cheap
-                   discriminations first (same-root subpath
-                   compare; cross-kind storeDir-prefix lex test)
-                   and only materialises via `coerceToString` as
-                   a last resort. For Copyable the fallback
-                   fires `lint-fetch-whole-source-to-store`,
-                   matching the existing behaviour. */
-                return state.comparePathsForOrdering(*v1, *v2, pos, errorCtx) == std::strong_ordering::less;
+                   discriminations first and only materialises
+                   via `coerceToString` as a last resort. Under
+                   ctx, classId equality short-circuits the
+                   materialise; different classes get an
+                   arbitrary-but-stable order by classId number,
+                   preserving the total preorder without firing
+                   `lint-fetch-whole-source-to-store`. */
+                return state.comparePathsForOrdering(*v1, *v2, pos, errorCtx, ctx) == std::strong_ordering::less;
             case nList:
                 // Lexicographic comparison
                 for (size_t i = 0;; i++) {
@@ -798,19 +849,36 @@ struct CompareValues
                         return false;
                     } else if (i == v1->listSize()) {
                         return true;
-                    } else if (!state.eqValues(*v1->listView()[i], *v2->listView()[i], pos, errorCtx)) {
+                    } else if (!state.eqValues(*v1->listView()[i], *v2->listView()[i], pos, errorCtx, ctx)) {
                         return (*this)(v1->listView()[i], v2->listView()[i], "while comparing two list elements");
                     }
                 }
+            case nAttrs: {
+                /* Same recursion pattern as nList: walk pairwise
+                   (Bindings iterates in name order, so the walk
+                   is lex order), compare names, then recurse via
+                   `(*this)(...)` for value ordering. The cross-
+                   type path × string hook fires automatically at
+                   leaves where the recursion hits a path/string
+                   pair. Gated on ctx — user-visible `<` on
+                   attrsets stays incomparable. */
+                if (!ctx)
+                    return throwIncomparable();
+                auto i = v1->attrs()->begin();
+                auto j = v2->attrs()->begin();
+                for (;; ++i, ++j) {
+                    if (j == v2->attrs()->end())
+                        return false;
+                    if (i == v1->attrs()->end())
+                        return true;
+                    if (i->name != j->name)
+                        return i->name < j->name;
+                    if (!state.eqValues(*i->value, *j->value, pos, errorCtx, ctx))
+                        return (*this)(i->value, j->value, "while comparing two attrset values");
+                }
+            }
             default:
-                state
-                    .error<EvalError>(
-                        "cannot compare %s with %s; values of that type are incomparable (values are %s and %s)",
-                        showType(*v1),
-                        showType(*v2),
-                        ValuePrinter(state, *v1, errorPrintOptions),
-                        ValuePrinter(state, *v2, errorPrintOptions))
-                    .debugThrow();
+                return throwIncomparable();
 #pragma GCC diagnostic pop
             }
         } catch (Error & e) {
@@ -820,6 +888,12 @@ struct CompareValues
         }
     }
 };
+
+bool EvalState::compareValues(
+    Value & v1, Value & v2, const PosIdx pos, std::string_view errorCtx, PathEquivalenceContext * ctx)
+{
+    return CompareValues(*this, pos, std::string_view{errorCtx}, ctx)(&v1, &v2);
+}
 
 typedef std::list<Value *, gc_allocator<Value *>> ValueList;
 
@@ -871,115 +945,56 @@ static RegisterPrimOp primop_isPathEquivalent({
 
 /* Dedup bookkeeping for `genericClosure` with `pathEquivalent = true`.
 
-   Three layers:
+   A single sorted map keyed by `Value *`, ordered by the
+   ctx-aware `CompareValues`. The conceptual framework — a total
+   preorder over `Value` whose equivalence classes are the desired
+   dedup classes — is now the implementation:
 
-   - `pathMap` keys on (equivClassId, kind, CanonPath). The
-     equivClassId is *not* `SourceAccessor::number` (which is
-     identity); it's a per-invocation equivalence-class id
-     assigned by `classOfAccessor` so two accessors that would
-     produce the same `toString` map to the same id. This makes
-     `(id, kind, CanonPath)` a correct key for toString-
-     equivalent dedup, including across distinct accessors:
-       * System: all System accessors share one id (toString
-         doesn't depend on which accessor).
-       * Copyable: classes are NAR-equivalence groups. A new
-         accessor is classified by `contentsEqual` against
-         existing class representatives.
-       * Internal: by pointer (toString is undefined; pointer
-         identity is the only well-defined relation, and cross-
-         type compares against the string side will throw via
-         `pathToStringEqual`'s Internal arm if it ever
-         fires).
+   - Same-type path × path collapse via the comparator's Step 3
+     (`classOfAccessor` equivalence, driven by `accessorsEquivalent`'s
+     full probe ladder).
+   - Same-type string × string collapse via Step 2 byte compare.
+   - Cross-type path × string collapse via the unified
+     `compareForToStringEquivalence` routing in `CompareValues`
+     (the SAME comparator drives both directions, so the
+     equivalence relation is transitive — the invariant
+     `std::map` depends on). The string side mounts through
+     `storePathAccessor`, which gives the on-disk source a
+     proper fingerprint and lets the probes decide cheaply
+     against the path side without falling into a no-fingerprint
+     `fetchToStore` (no `_NIX_TEST_BARF_ON_UNCACHEABLE`).
+   - Nested `nList` / `nAttrs` keys recurse via `CompareValues`,
+     so structural keys whose leaves toString-collapse become
+     equivalent at the top level too.
+   - Internal-kinded paths and undecidable cases (a string whose
+     store path isn't mounted and isn't in the underlying store)
+     throw from the comparator, consistent with the never-
+     return-wrong-answers contract — we can't claim equivalence
+     we can't prove, and we can't claim distinctness either when
+     the truth is genuinely undecidable cheaply.
 
-   - `stringMap` keys on the string content, lex compare.
+   Insertion is one `try_emplace`: O(log n) lookups + an
+   O(1)-amortised comparator call per node visited (probes hit
+   their per-accessor caches after the first comparison). No
+   cross-bucket scans, no per-type special-casing.
 
-   - `otherMap` falls through to the regular `CompareValues` for
-     any key type that isn't path or string. Same semantics as the
-     non-pathEquivalent code path — including the existing "throw
-     on int×attrset" failure mode.
-
-   The cross-type check is a linear scan of the *other* map on each
-   insert (O(n×m) worst case). Module-system dedup is overwhelmingly
-   single-type and single-accessor in practice, so the bucket hit
-   resolves most inserts cheaply. Copyable classification calls
-   `contentsEqual` on the lazy accessors when establishing a new
-   class — bounded by the number of distinct fetched trees in
-   the closure, typically small. The future
-   `SourceRoot`-store-path-memoise TODO would let us key
-   directly on the cached storePath string and skip the
-   classification scan entirely. */
+   The Copyable equivalence-class state lives on
+   `PathEquivalenceContext` (carried by the comparator via
+   `ctx`), so all accessors classified during this closure share
+   their per-accessor work driven by `accessorsEquivalent`. */
 struct PathEquivalentDedup
 {
     EvalState & state;
-
-    /* Per-invocation equivalence-class assignment.
-       `classOf` caches the id for each accessor pointer
-       we've seen; `copyableReps` holds a representative
-       accessor for each Copyable class so new accessors can
-       be classified against them via `contentsEqual`.
-       `systemClassId` is the single id shared by all System
-       accessors (assigned on first encounter). */
-    std::unordered_map<const SourceAccessor *, size_t> classOf;
-    std::vector<ref<SourceAccessor>> copyableReps;
-    std::optional<size_t> systemClassId;
-    size_t nextClassId = 0;
-
-    std::map<std::tuple<size_t, SourceRootKind, CanonPath>, Value *> pathMap;
-    std::map<std::string, Value *, std::less<>> stringMap;
+    PathEquivalenceContext ctx;
     CompareValues cmp;
-    std::map<Value *, Value *, CompareValues> otherMap;
+    std::map<Value *, Value *, CompareValues> seenKeys;
 
-    PathEquivalentDedup(EvalState & state, CompareValues cmp)
+    PathEquivalentDedup(EvalState & state, PosIdx pos, std::string_view errorCtx)
         : state(state)
-        , cmp(cmp)
-        , otherMap(cmp)
+        , ctx{state}
+        , cmp(state, pos, std::string_view{errorCtx}, &ctx)
+        , seenKeys(cmp)
     {
-    }
-
-    /* Look up or assign the equivalence-class id for `root`.
-       Two accessors share an id iff their toStrings would
-       agree at the root. */
-    size_t classOfAccessor(const SourceRoot & root)
-    {
-        auto * raw = &*root.accessor;
-        if (auto it = classOf.find(raw); it != classOf.end())
-            return it->second;
-
-        size_t id;
-        switch (root.kind) {
-        case SourceRootKind::System:
-            if (!systemClassId)
-                systemClassId = nextClassId++;
-            id = *systemClassId;
-            break;
-        case SourceRootKind::Copyable: {
-            /* Scan existing Copyable class reps for a NAR-
-               equal match. */
-            for (size_t i = 0; i < copyableReps.size(); ++i) {
-                if (contentsEqual(root.accessor, copyableReps[i])) {
-                    auto repId = classOf.at(&*copyableReps[i]);
-                    classOf[raw] = repId;
-                    return repId;
-                }
-            }
-            /* No match — new class. */
-            id = nextClassId++;
-            copyableReps.push_back(root.accessor);
-            break;
-        }
-        case SourceRootKind::Internal:
-            /* Identity-class per pointer. toString is undefined
-               for Internal, so we can't claim equivalence
-               across distinct Internal accessors — but identity
-               is still well-defined and lets same-accessor
-               Internal paths dedup. Cross-type compares against
-               the string side will throw inside
-               pathToStringEqual if they ever fire. */
-            id = nextClassId++;
-            break;
-        }
-        classOf[raw] = id;
-        return id;
     }
 
     /* Returns true if this is the first sighting of `key` (and
@@ -988,51 +1003,8 @@ struct PathEquivalentDedup
        forced `key`. */
     bool insert(Value * key, Value * elem)
     {
-// We dispatch on a couple of arms and fall through to otherMap for the rest.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wswitch-enum"
-        switch (key->type()) {
-        case nPath: {
-            auto rp = key->rootedPath();
-            auto id = classOfAccessor(*rp.root);
-            auto pk = std::tuple(id, rp.root->kind, rp.path);
-            auto [it, ins] = pathMap.try_emplace(pk, elem);
-            if (!ins)
-                return false;
-            for (auto & [s, _] : stringMap) {
-                if (state.pathToStringEqual(key->path(), rp.root->kind, s)) {
-                    pathMap.erase(it);
-                    return false;
-                }
-            }
-            return true;
-        }
-        case nString: {
-            std::string s(key->string_view());
-            auto [it, ins] = stringMap.try_emplace(s, elem);
-            if (!ins)
-                return false;
-            for (auto & [_, pKey] : pathMap) {
-                /* Re-derive the path key from the stored
-                   element (we kept the element pointer for the
-                   result list; the key Value lives inside its
-                   `key` attribute). */
-                auto * keyAttr = pKey->attrs()->get(state.s.key);
-                assert(keyAttr);
-                auto rp = keyAttr->value->rootedPath();
-                if (state.pathToStringEqual(keyAttr->value->path(), rp.root->kind, s)) {
-                    stringMap.erase(it);
-                    return false;
-                }
-            }
-            return true;
-        }
-        default: {
-            auto [_, ins] = otherMap.try_emplace(key, elem);
-            return ins;
-        }
-        }
-#pragma GCC diagnostic pop
+        auto [_, ins] = seenKeys.try_emplace(key, elem);
+        return ins;
     }
 };
 
@@ -1081,7 +1053,7 @@ static void prim_genericClosure(EvalState & state, const PosIdx pos, Value ** ar
     // Track which element each key came from
     auto cmp = CompareValues(state, noPos, "");
     std::map<Value *, Value *, decltype(cmp)> keyToElem(cmp);
-    PathEquivalentDedup pedup(state, cmp);
+    PathEquivalentDedup pedup(state, noPos, "");
     while (!workSet.empty()) {
         Value * e = *(workSet.begin());
         workSet.pop_front();
@@ -1115,7 +1087,7 @@ static void prim_genericClosure(EvalState & state, const PosIdx pos, Value ** ar
         } catch (Error & err) {
             // Try to find which element we're comparing against
             Value * otherElem = nullptr;
-            auto & scanMap = pathEquivalent ? pedup.otherMap : keyToElem;
+            auto & scanMap = pathEquivalent ? pedup.seenKeys : keyToElem;
             for (auto & [otherKey, elem] : scanMap) {
                 try {
                     cmp(key->value, otherKey);

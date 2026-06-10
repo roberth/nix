@@ -49,6 +49,7 @@ subdir('nix-meson-build-support/common')
 sources = files(
   'attr-pos-path.cc',
   'coerce-to-rooted-path.cc',
+  'compare-for-tostring-equivalence.cc',
   'concat-strings.cc',
   'cur-pos-file.cc',
   'derived-path.cc',

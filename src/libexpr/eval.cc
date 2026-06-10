@@ -1,5 +1,6 @@
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-error.hh"
+#include "nix/util/base-nix-32.hh"
 #include "nix/util/diagnose.hh"
 #include "nix/fetchers/fetch-settings.hh"
 #include "nix/expr/source-root.hh"
@@ -2840,6 +2841,33 @@ StorePath EvalState::copyPathToStore(NixStringContext & context, const RootedPat
     return dstPath;
 }
 
+ref<SourceAccessor> EvalState::storePathAccessor(const StorePath & sp)
+{
+    auto spStr = store->printStorePath(sp);
+    /* Mount table first: anything registered via `mountInput`
+       (lazy fetchTree, builtins.fetchTree, etc.) preserves the
+       fingerprint the mounter set, which is the most accurate
+       identity for that store path. */
+    if (auto m = storeFS->getMount(CanonPath(spStr)))
+        return ref<SourceAccessor>(m);
+    /* Otherwise ask the `Store` itself — works uniformly across
+       local, relocated, and remote stores (the virtual method
+       does the right thing for each). Throws `InvalidPath` if
+       the store path doesn't exist; that's the genuinely
+       undecidable case and the right answer per the never-
+       return-wrong-answers contract. */
+    auto acc = store->requireStoreObjectAccessor(sp);
+    /* Set the fingerprint to the store path string if the
+       accessor doesn't already carry one. Same content-addressed
+       identity that satisfies the fingerprint contract (equal
+       store paths ⇒ equal NAR by construction). Without this,
+       downstream `fetchToStore` sees an unfingerprinted source
+       and trips `_NIX_TEST_BARF_ON_UNCACHEABLE`. */
+    if (!acc->fingerprint)
+        acc->fingerprint = spStr;
+    return acc;
+}
+
 SourcePath EvalState::coerceToPath(const PosIdx pos, Value & v, NixStringContext & context, std::string_view errorCtx)
 {
     try {
@@ -3211,7 +3239,8 @@ void EvalState::assertEqValues(Value & v1, Value & v2, const PosIdx pos, std::st
 }
 
 // This implementation must match assertEqValues
-bool EvalState::eqValues(Value & v1, Value & v2, const PosIdx pos, std::string_view errorCtx)
+bool EvalState::eqValues(
+    Value & v1, Value & v2, const PosIdx pos, std::string_view errorCtx, PathEquivalenceContext * ctx)
 {
     auto _level = addCallDepth(pos);
 
@@ -3230,9 +3259,20 @@ bool EvalState::eqValues(Value & v1, Value & v2, const PosIdx pos, std::string_v
     if (v1.type() == nFloat && v2.type() == nInt)
         return v1.fpoint() == v2.integer().value;
 
-    // All other types are not compatible with each other.
-    if (v1.type() != v2.type())
+    /* Under a PathEquivalenceContext, cross-type path × string is
+       taken as the toString-equivalent comparison (no throw, a real
+       predicate). Enables `genericClosure { pathEquivalent = true; }`'s
+       deep dedup to see through lists/attrsets whose elements mix
+       paths and their toString-forms. Everywhere else cross-type
+       still returns false (the language semantic). */
+    if (v1.type() != v2.type()) {
+        if (ctx && ((v1.type() == nPath && v2.type() == nString) || (v1.type() == nString && v2.type() == nPath))) {
+            Value & pathV = v1.type() == nPath ? v1 : v2;
+            Value & strV = v1.type() == nString ? v1 : v2;
+            return pathToStringEqual(pathV.path(), pathV.pathRoot()->kind, strV.string_view());
+        }
         return false;
+    }
 
     switch (v1.type()) {
     case nInt:
@@ -3246,7 +3286,7 @@ bool EvalState::eqValues(Value & v1, Value & v2, const PosIdx pos, std::string_v
 
     case nPath:
         /* Both operands are paths (the cross-type case was
-           refused above). Defer to the unified toString-
+           handled above). Defer to the unified toString-
            equivalence engine, which decides via:
              - cheap pointer + subpath identity, or
              - eager string reduction for System, or
@@ -3262,7 +3302,7 @@ bool EvalState::eqValues(Value & v1, Value & v2, const PosIdx pos, std::string_v
         if (v1.listSize() != v2.listSize())
             return false;
         for (size_t n = 0; n < v1.listSize(); ++n)
-            if (!eqValues(*v1.listView()[n], *v2.listView()[n], pos, errorCtx))
+            if (!eqValues(*v1.listView()[n], *v2.listView()[n], pos, errorCtx, ctx))
                 return false;
         return true;
 
@@ -3273,7 +3313,7 @@ bool EvalState::eqValues(Value & v1, Value & v2, const PosIdx pos, std::string_v
             auto i = v1.attrs()->get(s.outPath);
             auto j = v2.attrs()->get(s.outPath);
             if (i && j)
-                return eqValues(*i->value, *j->value, pos, errorCtx);
+                return eqValues(*i->value, *j->value, pos, errorCtx, ctx);
         }
 
         if (v1.attrs()->size() != v2.attrs()->size())
@@ -3282,7 +3322,7 @@ bool EvalState::eqValues(Value & v1, Value & v2, const PosIdx pos, std::string_v
         /* Otherwise, compare the attributes one by one. */
         Bindings::const_iterator i, j;
         for (i = v1.attrs()->begin(), j = v2.attrs()->begin(); i != v1.attrs()->end(); ++i, ++j)
-            if (i->name != j->name || !eqValues(*i->value, *j->value, pos, errorCtx))
+            if (i->name != j->name || !eqValues(*i->value, *j->value, pos, errorCtx, ctx))
                 return false;
 
         return true;
@@ -3361,6 +3401,229 @@ bool EvalState::pathToStringEqual(const SourcePath & p, SourceRootKind kind, std
     }
     }
     unreachable();
+}
+
+namespace {
+
+/* Why these helpers are hand-rolled rather than reusing
+   `Store::toStorePath` + `Store::printStorePath`: the round-trip
+   approach would parse via `CanonPath` (which silently
+   canonicalises trailing `/`, `/.`, `/..`), then re-render via
+   `printStorePath` (allocates a `std::string`), then byte-
+   compare against the input to detect non-canonicality. Two
+   allocations and a re-render on every Camp A admission probe,
+   just to reject non-canonical inputs. The strict per-byte
+   rejection below short-circuits on the first non-canonical
+   byte — no allocations, no canonicalisation work to throw
+   away.
+
+   `Store::isInStore` is also off-limits: it's lenient
+   (delegates to `isInDir`'s `lexically_relative`), so a path
+   like `/nix/store/./abc` would be accepted as "in store" —
+   the exact non-canonical inputs we need to reject. It also
+   only returns `bool`, not a cursor into the rest of the
+   bytes. The literal `s.starts_with(storeDir + "/")` below is
+   strict *and* gives us the cursor for the rest of the parse. */
+
+bool isNix32Hash32(std::string_view s)
+{
+    if (s.size() != 32)
+        return false;
+    for (char c : s)
+        if (!BaseNix32::lookupReverse(c))
+            return false;
+    return true;
+}
+
+/* Canonical here means "could appear verbatim in `toString`
+   output of a Copyable path"; rejects trailing `/`, `//`, `/.`,
+   and `/..` components. Empty is canonical (= the root of a
+   Copyable, whose toString emits `storeDir/storeBase` with no
+   trailing slash). */
+bool isCanonicalSubpath(std::string_view s)
+{
+    if (s.empty())
+        return true;
+    if (s[0] != '/' || s.size() == 1 || s.back() == '/')
+        return false;
+    if (s.find("//") != std::string_view::npos)
+        return false;
+    for (size_t i = 0; (i = s.find('/', i)) != std::string_view::npos;) {
+        ++i;
+        size_t end = s.find('/', i);
+        if (end == std::string_view::npos)
+            end = s.size();
+        auto comp = s.substr(i, end - i);
+        if (comp == "." || comp == "..")
+            return false;
+        i = end;
+    }
+    return true;
+}
+
+/* If `s` is byte-for-byte the canonical `toString` of some
+   Copyable — `storeDir + "/" + 32-nix32-hash + "-source"`
+   optionally followed by a canonical subpath — return that
+   subpath (`""` for the root). Otherwise nullopt. The name
+   slot is restricted to "source" because that's the only name
+   a Copyable ever materialises under, so it's the only one our
+   equivalence relation admits. */
+std::optional<std::string_view> parseCanonicalCopyableToString(std::string_view s, std::string_view storeDir)
+{
+    std::string prefix = std::string{storeDir};
+    prefix += '/';
+    if (!s.starts_with(prefix))
+        return std::nullopt;
+    auto rest = s.substr(prefix.size());
+    constexpr size_t hashLen = 32;
+    constexpr std::string_view nameTag = "-source";
+    if (rest.size() < hashLen + nameTag.size())
+        return std::nullopt;
+    if (!isNix32Hash32(rest.substr(0, hashLen)))
+        return std::nullopt;
+    if (rest.substr(hashLen, nameTag.size()) != nameTag)
+        return std::nullopt;
+    auto subpath = rest.substr(hashLen + nameTag.size());
+    if (!isCanonicalSubpath(subpath))
+        return std::nullopt;
+    return subpath;
+}
+
+} // namespace
+
+std::strong_ordering EvalState::compareForToStringEquivalence(
+    Value & a, Value & b, const PosIdx pos, std::string_view errorCtx, PathEquivalenceContext * ctx)
+{
+    forceValue(a, pos);
+    forceValue(b, pos);
+
+    auto cmpStrings = [](std::string_view x, std::string_view y) {
+        auto c = x.compare(y);
+        if (c < 0)
+            return std::strong_ordering::less;
+        if (c > 0)
+            return std::strong_ordering::greater;
+        return std::strong_ordering::equal;
+    };
+
+    /* Classify into Camp A (canonical Copyable-toString shape)
+       or Camp B (everything else). The sub-bytes returned drive
+       step 2:
+         Camp A → the parsed subpath after `-source` (`""` for
+         the root).
+         Camp B → the full bytes (System abspath / string). */
+    struct Classified
+    {
+        bool isA;
+        std::string_view sub;
+    };
+
+    auto classify = [&](Value & v) -> Classified {
+        if (v.type() == nString) {
+            auto s = v.string_view();
+            if (auto sub = parseCanonicalCopyableToString(s, store->storeDir))
+                return {true, *sub};
+            return {false, s};
+        }
+        if (v.type() == nPath) {
+            auto * root = v.pathRoot();
+            switch (root->kind) {
+            case SourceRootKind::Internal:
+                error<EvalError>(
+                    "cannot coerce a path on an internal accessor to a string at '%1%'",
+                    root->accessor->showPath(CanonPath(CanonPath::unchecked_t(), std::string(v.pathStrView()))))
+                    .withTrace(pos, errorCtx)
+                    .debugThrow();
+            case SourceRootKind::Copyable: {
+                /* Copyable is always Camp A. Its toString-subpath
+                   is `absOrEmpty()` — empty for root, `/foo`
+                   otherwise. `pathStrView()` returns the raw
+                   CanonPath bytes, which are `"/"` for root; map
+                   that to `""` to match toString output. */
+                auto abs = v.pathStrView();
+                if (abs == "/")
+                    abs = std::string_view{};
+                return {true, abs};
+            }
+            case SourceRootKind::System: {
+                /* System's `toString` is its abspath; parse to
+                   decide camp. If the abspath is itself a
+                   canonical Copyable-toString shape, the System
+                   path is in store and lands in Camp A — its
+                   classification is the same as a string with
+                   the same bytes. */
+                auto abs = v.pathStrView();
+                if (auto sub = parseCanonicalCopyableToString(abs, store->storeDir))
+                    return {true, *sub};
+                return {false, abs};
+            }
+            }
+            unreachable();
+        }
+        error<EvalError>(
+            "cannot compare %s with %s for toString equivalence; only paths and strings are supported",
+            showType(a),
+            showType(b))
+            .withTrace(pos, errorCtx)
+            .debugThrow();
+    };
+
+    auto ca = classify(a);
+    auto cb = classify(b);
+
+    /* Step 1: camp partition. Camp B < Camp A. */
+    if (ca.isA != cb.isA)
+        return ca.isA ? std::strong_ordering::greater : std::strong_ordering::less;
+
+    /* Step 2: subpath compare (or, for Camp B, full byte compare). */
+    auto subCmp = cmpStrings(ca.sub, cb.sub);
+    if (subCmp != std::strong_ordering::equal)
+        return subCmp;
+
+    /* Step 3: source root equivalence class. Fires only inside
+       Camp A and only when a `ctx` is supplied. Step 2's equal
+       within Camp B already implies toString-equivalence (same
+       bytes ⟺ same toString), so no need to refine there. */
+    if (!ctx || !ca.isA)
+        return std::strong_ordering::equal;
+
+    auto classIdForCampA = [&](Value & v) -> size_t {
+        if (v.type() == nPath) {
+            auto * root = v.pathRoot();
+            if (root->kind == SourceRootKind::Copyable)
+                return ctx->classOfAccessor(*root);
+            /* System in store falls through to the parse +
+               bridge path below — same as a Camp A string. */
+        }
+        auto bytes = v.type() == nString ? v.string_view() : v.pathStrView();
+        auto [storePath, _subpath] = store->toStorePath(bytes);
+        /* `storePathAccessor` returns a fingerprinted accessor for
+           the store path — `storeFS` mount when available,
+           `Store::requireStoreObjectAccessor` otherwise (uniform
+           across local, relocated, and remote stores). The
+           fingerprint lets `accessorsEquivalent`'s downstream
+           layers and `fetchToStore`'s cache treat the mounted
+           side as a proper source. The bare `InvalidPath` that
+           surfaces when the store path is unreachable doesn't
+           name the operation — wrap it so the user sees what
+           comparison was attempted. */
+        try {
+            auto synthRoot = SourceRoot::make(storePathAccessor(storePath), SourceRootKind::Copyable);
+            return ctx->classOfAccessor(*synthRoot);
+        } catch (InvalidPath & e) {
+            e.addTrace(
+                positions[pos],
+                "while comparing store path '%1%' for equivalence against a fetched source",
+                store->printStorePath(storePath));
+            throw;
+        }
+    };
+
+    auto idA = classIdForCampA(a);
+    auto idB = classIdForCampA(b);
+    if (idA == idB)
+        return std::strong_ordering::equal;
+    return idA < idB ? std::strong_ordering::less : std::strong_ordering::greater;
 }
 
 /* Mental note for future profiling: this primitive runs every
@@ -3524,8 +3787,8 @@ std::strong_ordering cmpStrings(std::string_view a, std::string_view b)
 
 } // namespace
 
-std::strong_ordering
-EvalState::comparePathsForOrdering(Value & v1, Value & v2, const PosIdx pos, std::string_view errorCtx)
+std::strong_ordering EvalState::comparePathsForOrdering(
+    Value & v1, Value & v2, const PosIdx pos, std::string_view errorCtx, PathEquivalenceContext * ctx)
 {
     forceValue(v1, pos);
     forceValue(v2, pos);
@@ -3545,6 +3808,21 @@ EvalState::comparePathsForOrdering(Value & v1, Value & v2, const PosIdx pos, std
                 rp->root->accessor->showPath(rp->path))
                 .withTrace(pos, errorCtx)
                 .debugThrow();
+    }
+
+    /* 0. With ctx: classId equality is the cheap toString-
+       equivalence witness. Same classId means the two roots'
+       toString prefixes agree, so subpath drives the order
+       (same as a structural same-prefix). Different classIds
+       get an arbitrary but stable order via the classId number
+       — total preorder usable as a sorted-container key,
+       without firing materialise (and the lint with it). */
+    if (ctx) {
+        auto id1 = ctx->classOfAccessor(*rp1.root);
+        auto id2 = ctx->classOfAccessor(*rp2.root);
+        if (id1 == id2)
+            return cmpStrings(rp1.path.abs(), rp2.path.abs());
+        return id1 < id2 ? std::strong_ordering::less : std::strong_ordering::greater;
     }
 
     /* 1. Shared root prefix → subpath drives the lex order. Raw-
@@ -3598,6 +3876,52 @@ EvalState::comparePathsForOrdering(Value & v1, Value & v2, const PosIdx pos, std
     auto sL = coerceToString(pos, v1, ctxL, errorCtx, /*coerceMore=*/false, /*copyToStore=*/false);
     auto sR = coerceToString(pos, v2, ctxR, errorCtx, /*coerceMore=*/false, /*copyToStore=*/false);
     return cmpStrings(*sL, *sR);
+}
+
+size_t PathEquivalenceContext::classOfAccessor(const SourceRoot & root)
+{
+    auto * raw = &*root.accessor;
+    if (auto it = classOf.find(raw); it != classOf.end())
+        return it->second;
+
+    switch (root.kind) {
+    case SourceRootKind::System: {
+        if (!systemClassId)
+            systemClassId = nextClassId++;
+        classOf[raw] = *systemClassId;
+        return *systemClassId;
+    }
+    case SourceRootKind::Copyable: {
+        /* Scan existing Copyable reps for a NAR-equal match.
+           `contentsEqual`'s own cheap layers (pointer eq,
+           fingerprint match, hint sample) usually short-circuit
+           before the full walk; the walk runs at most once per
+           pair-of-classes, then both accessors share the id and
+           subsequent comparisons are O(1). */
+        for (size_t i = 0; i < copyableReps.size(); ++i) {
+            if (contentsEqual(root.accessor, copyableReps[i])) {
+                auto repId = classOf.at(&*copyableReps[i]);
+                classOf[raw] = repId;
+                return repId;
+            }
+        }
+        /* No match — new class. */
+        auto id = nextClassId++;
+        copyableReps.push_back(root.accessor);
+        classOf[raw] = id;
+        return id;
+    }
+    case SourceRootKind::Internal: {
+        /* Identity-class per pointer. `toString` is undefined
+           for Internal, so cross-accessor equivalence is too —
+           but same-pointer identity is well-defined and lets
+           same-accessor Internal paths dedup. */
+        auto id = nextClassId++;
+        classOf[raw] = id;
+        return id;
+    }
+    }
+    unreachable();
 }
 
 bool EvalState::fullGC()
