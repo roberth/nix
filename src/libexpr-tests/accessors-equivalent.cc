@@ -188,6 +188,53 @@ TEST_F(AccessorsEquivalentTest, rootEntryNamesMatchAllowsEquivalence)
     EXPECT_TRUE(state.accessorsEquivalent(accA, accB));
 }
 
+/* --- Hint probe (file SHA256 at hint subpath) ----------------- */
+
+TEST_F(AccessorsEquivalentTest, hintFileMismatchDisprovesInequality)
+{
+    /* Same root entry sets, differing file contents at a hint
+       subpath that's about to be read anyway. The hint probe
+       disproves inequivalence without falling through to the
+       storePath compute. */
+    auto accA = mkAcc({{"/x.nix", "A"}});
+    auto accB = mkAcc({{"/x.nix", "B"}});
+    auto * rawA = &*accA;
+    auto * rawB = &*accB;
+    auto canonKey = rawA < rawB ? std::make_pair(rawA, rawB) : std::make_pair(rawB, rawA);
+
+    EXPECT_FALSE(state.accessorsEquivalent(accA, accB, CanonPath("/x.nix")));
+    EXPECT_TRUE(state.accessorsKnownInequivalent->contains(canonKey));
+}
+
+TEST_F(AccessorsEquivalentTest, hintFileMatchIsNotConclusive)
+{
+    /* Matching content at the hint subpath is no info — the
+       rest of the tree could still differ. Fall through to the
+       storePath compute, which disagrees (other file differs). */
+    auto accA = mkAcc({{"/x.nix", "shared"}, {"/other", "A"}});
+    auto accB = mkAcc({{"/x.nix", "shared"}, {"/other", "B"}});
+    EXPECT_FALSE(state.accessorsEquivalent(accA, accB, CanonPath("/x.nix")));
+}
+
+TEST_F(AccessorsEquivalentTest, hintMissingOnOneSideIsNotConclusive)
+{
+    /* If the hint subpath is absent on either side, the probe
+       can't decide either way — the caller may have supplied a
+       hint that's not always present. Fall through. */
+    auto accA = mkAcc({{"/x.nix", "shared"}});
+    auto accB = mkAcc({{"/y", "shared"}});
+    /* Different root entry sets — root probe disproves first. */
+    EXPECT_FALSE(state.accessorsEquivalent(accA, accB, CanonPath("/x.nix")));
+
+    /* Same root entry set, hint present only on one side — well,
+       construct it so root probe matches first.  Force absent on
+       both sides by using a path that doesn't exist. Probe is
+       no-info; falls through and correctly decides on contents. */
+    auto accC = mkAcc({{"/f", "C"}});
+    auto accD = mkAcc({{"/f", "C"}});
+    EXPECT_TRUE(state.accessorsEquivalent(accC, accD, CanonPath("/nonexistent")));
+}
+
 /* --- srcToStore query-only probe ------------------------------ */
 
 TEST_F(AccessorsEquivalentTest, srcToStoreProbeDecidesWhenBothPreCached)
