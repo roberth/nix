@@ -3351,6 +3351,40 @@ bool EvalState::eqValues(
     }
 }
 
+bool EvalState::accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b, std::optional<CanonPath> hint)
+{
+    /* Pointer identity. The cheapest decisive layer. */
+    if (&*a == &*b)
+        return true;
+
+    /* Fingerprint match is a one-way positive proof: equal fingerprints
+       AND equal rebased paths guarantee NAR-equal trees (that's the
+       fingerprint contract, see `SourceAccessor::getFingerprint`).
+       Mismatch is no-info — two different fingerprints can back the
+       same NAR (different URLs, different cache rebases). Fall through. */
+    {
+        auto [rebasedA, fpA] = a->getFingerprint(CanonPath::root);
+        auto [rebasedB, fpB] = b->getFingerprint(CanonPath::root);
+        if (fpA && fpB && *fpA == *fpB && rebasedA == rebasedB)
+            return true;
+    }
+
+    /* hint reserved for the inequality probes added in later commits. */
+    (void) hint;
+
+    /* The only step that may walk a tree. `copyPathToStore` reads the
+       cached entry from `srcToStore` when present; otherwise it walks
+       the tree once, computes the storePath, and writes it back. So
+       any Copyable accessor pays at most one walk across the whole
+       evaluation, regardless of how many comparisons reference it. */
+    NixStringContext ctxA, ctxB;
+    auto rootA = SourceRoot::make(a, SourceRootKind::Copyable);
+    auto rootB = SourceRoot::make(b, SourceRootKind::Copyable);
+    auto spA = copyPathToStore(ctxA, RootedPath{rootA, CanonPath::root});
+    auto spB = copyPathToStore(ctxB, RootedPath{rootB, CanonPath::root});
+    return spA == spB;
+}
+
 bool EvalState::pathToStringEqual(const SourcePath & p, SourceRootKind kind, std::string_view s)
 {
     switch (kind) {

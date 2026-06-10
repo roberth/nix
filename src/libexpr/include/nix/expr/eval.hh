@@ -1183,6 +1183,26 @@ public:
     bool pathToStringEqual(const SourcePath & p, SourceRootKind kind, std::string_view s);
 
     /**
+     * Are two Copyable accessors NAR-equivalent — i.e. would
+     * `toString` on roots backed by them produce the same store
+     * path? Always returns a correct answer; never guesses.
+     *
+     * The implementation prefers cheap, decisive probes (pointer
+     * identity, fingerprint match) over walking. When the cheap
+     * probes don't decide, the storeHash is computed and cached
+     * in `srcToStore` so subsequent comparisons of the same
+     * accessor against anything are O(1) lookups. Worst-case
+     * cost across N accessors is O(N) tree walks (not O(N²)).
+     *
+     * The optional `hint` subpath is reserved for future cheap
+     * inequality probes (root directory name set, content hash
+     * at the hint subpath); the minimal implementation ignores
+     * it but the signature is fixed so callers can supply it.
+     */
+    bool
+    accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b, std::optional<CanonPath> hint = std::nullopt);
+
+    /**
      * Total preorder on path-or-string Values whose equivalence
      * classes match toString-equivalence. The between-class
      * ordering itself is NOT toString lex — it's a cheap layered

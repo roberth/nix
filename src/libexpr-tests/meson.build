@@ -47,6 +47,7 @@ config_priv_h = configure_file(
 subdir('nix-meson-build-support/common')
 
 sources = files(
+  'accessors-equivalent.cc',
   'attr-pos-path.cc',
   'coerce-to-rooted-path.cc',
   'compare-for-tostring-equivalence.cc',
