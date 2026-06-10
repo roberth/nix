@@ -517,6 +517,16 @@ public:
        can pin the cache-population contract. */
     const ref<boost::concurrent_flat_set<std::pair<SourceAccessor *, SourceAccessor *>>> accessorsKnownInequivalent;
 
+    /* Per-accessor SHA256 of the sorted name list of its root
+       directory's immediate children, computed lazily on first
+       probe. Stable byte-level signature: NUL-separated names in
+       lex order. Two accessors whose hashes differ cannot be
+       NAR-equivalent (their root nodes already differ at the level
+       of entry sets), so the hash mismatch decisively disproves
+       equivalence. Match is no info — same entry set says nothing
+       about the file contents underneath. */
+    const ref<boost::concurrent_flat_map<SourceAccessor *, Hash>> accessorRootProbeCache;
+
 private:
 
     /* Cache for calls to addToStore(): maps source paths to the store
