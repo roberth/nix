@@ -3734,11 +3734,21 @@ std::strong_ordering EvalState::compareForToStringEquivalence(
     if (!ctx || !ca.isA)
         return std::strong_ordering::equal;
 
+    /* Both Values are now in Camp A and share the same operative
+       subpath (`ca.sub == cb.sub`). Feed that subpath through to
+       `accessorsEquivalent` as the hint so its hint probe at the
+       shared subpath can disprove inequivalence cheaply. Empty
+       subpath (root-level compare) gets no hint — the hint probe
+       only helps on regular files, not on the root itself. */
+    std::optional<CanonPath> hint;
+    if (!ca.sub.empty())
+        hint = CanonPath(ca.sub);
+
     auto classIdForCampA = [&](Value & v) -> size_t {
         if (v.type() == nPath) {
             auto * root = v.pathRoot();
             if (root->kind == SourceRootKind::Copyable)
-                return ctx->classOfAccessor(*root);
+                return ctx->classOfAccessor(*root, hint);
             /* System in store falls through to the parse +
                bridge path below — same as a Camp A string. */
         }
@@ -3758,7 +3768,7 @@ std::strong_ordering EvalState::compareForToStringEquivalence(
            allocation that the SourceRoot& overload above would
            pay per call. */
         try {
-            return ctx->classOfAccessor(storePathAccessor(storePath), SourceRootKind::Copyable);
+            return ctx->classOfAccessor(storePathAccessor(storePath), SourceRootKind::Copyable, hint);
         } catch (InvalidPath & e) {
             e.addTrace(
                 positions[pos],
@@ -4032,12 +4042,13 @@ std::strong_ordering EvalState::comparePathsForOrdering(
     return cmpStrings(*sL, *sR);
 }
 
-size_t PathEquivalenceContext::classOfAccessor(const SourceRoot & root)
+size_t PathEquivalenceContext::classOfAccessor(const SourceRoot & root, std::optional<CanonPath> hint)
 {
-    return classOfAccessor(root.accessor, root.kind);
+    return classOfAccessor(root.accessor, root.kind, std::move(hint));
 }
 
-size_t PathEquivalenceContext::classOfAccessor(ref<SourceAccessor> accessor, SourceRootKind kind)
+size_t PathEquivalenceContext::classOfAccessor(
+    ref<SourceAccessor> accessor, SourceRootKind kind, std::optional<CanonPath> hint)
 {
     auto * raw = &*accessor;
     if (auto it = classOf.find(raw); it != classOf.end())
@@ -4054,14 +4065,15 @@ size_t PathEquivalenceContext::classOfAccessor(ref<SourceAccessor> accessor, Sou
         /* Scan existing Copyable reps for an NAR-equivalent match
            via `accessorsEquivalent`, which prefers cheap probes
            (pointer, fingerprint, srcToStore lookup, root-name
-           SHA256) over walking and only pays a storePath compute
-           as last resort — and that compute lands in `srcToStore`
-           so any future comparison of this accessor is O(1). Worst
-           case across N reps is O(N) probes per new accessor, but
-           in practice the layered probes decide most pairs cheaply
-           and the per-accessor caches amortise the rest. */
+           SHA256, hint SHA256) over walking and only pays a
+           storePath compute as last resort — and that compute
+           lands in `srcToStore` so any future comparison of this
+           accessor is O(1). Worst case across N reps is O(N)
+           probes per new accessor, but in practice the layered
+           probes decide most pairs cheaply and the per-accessor
+           caches amortise the rest. */
         for (size_t i = 0; i < copyableReps.size(); ++i) {
-            if (state.accessorsEquivalent(accessor, copyableReps[i])) {
+            if (state.accessorsEquivalent(accessor, copyableReps[i], hint)) {
                 auto repId = classOf.at(&*copyableReps[i]);
                 classOf[raw] = repId;
                 return repId;

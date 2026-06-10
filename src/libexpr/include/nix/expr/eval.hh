@@ -1640,7 +1640,7 @@ struct PathEquivalenceContext
         → identity-class per pointer (toString is undefined for
         Internal, so the only well-defined relation is pointer
         identity). */
-    size_t classOfAccessor(const SourceRoot & root);
+    size_t classOfAccessor(const SourceRoot & root, std::optional<CanonPath> hint = std::nullopt);
 
     /** Same lookup as above without requiring a `SourceRoot`
         wrapper. Used by `compareForToStringEquivalence`'s step 3
@@ -1648,7 +1648,8 @@ struct PathEquivalenceContext
         `storeFS->getMount` and wrapping it in a fresh
         `SourceRoot` per comparison would be a per-call
         allocation. */
-    size_t classOfAccessor(ref<SourceAccessor> accessor, SourceRootKind kind);
+    size_t
+    classOfAccessor(ref<SourceAccessor> accessor, SourceRootKind kind, std::optional<CanonPath> hint = std::nullopt);
 };
 
 } // namespace nix
