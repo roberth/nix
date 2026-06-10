@@ -152,6 +152,42 @@ TEST_F(AccessorsEquivalentTest, equivalencePairIsNotCached)
     EXPECT_FALSE(state.accessorsKnownInequivalent->contains(canonKey));
 }
 
+/* --- Root probe (top-level entry names) ----------------------- */
+
+TEST_F(AccessorsEquivalentTest, rootEntryNamesDisproveInequality)
+{
+    /* Two accessors whose top-level entry sets differ cannot be
+       NAR-equivalent. The probe decides without ever computing
+       a storePath; the negative result is cached. */
+    auto accA = mkAcc({{"/a-file", "x"}});
+    auto accB = mkAcc({{"/b-file", "x"}});
+    auto * rawA = &*accA;
+    auto * rawB = &*accB;
+    auto canonKey = rawA < rawB ? std::make_pair(rawA, rawB) : std::make_pair(rawB, rawA);
+
+    EXPECT_FALSE(state.accessorsEquivalent(accA, accB));
+    EXPECT_TRUE(state.accessorsKnownInequivalent->contains(canonKey));
+}
+
+TEST_F(AccessorsEquivalentTest, rootEntryNamesMatchIsNotConclusive)
+{
+    /* Identical top-level entry names but different file contents:
+       the probe matches (no info) and the function falls through to
+       the storePath compute, which correctly returns false. */
+    auto accA = mkAcc({{"/f", "A"}});
+    auto accB = mkAcc({{"/f", "B"}});
+    EXPECT_FALSE(state.accessorsEquivalent(accA, accB));
+}
+
+TEST_F(AccessorsEquivalentTest, rootEntryNamesMatchAllowsEquivalence)
+{
+    /* Identical top-level entries AND identical contents:
+       the probe matches, storePath compute confirms equivalence. */
+    auto accA = mkAcc({{"/f", "shared"}});
+    auto accB = mkAcc({{"/f", "shared"}});
+    EXPECT_TRUE(state.accessorsEquivalent(accA, accB));
+}
+
 /* --- srcToStore query-only probe ------------------------------ */
 
 TEST_F(AccessorsEquivalentTest, srcToStoreProbeDecidesWhenBothPreCached)
