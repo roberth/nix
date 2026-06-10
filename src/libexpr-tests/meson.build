@@ -47,6 +47,7 @@ config_priv_h = configure_file(
 subdir('nix-meson-build-support/common')
 
 sources = files(
+  'accessors-equivalent.cc',
   'coerce-to-rooted-path.cc',
   'concat-strings.cc',
   'cur-pos-file.cc',
