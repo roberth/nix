@@ -1178,6 +1178,26 @@ public:
      */
     void assertEqValues(Value & v1, Value & v2, const PosIdx pos, std::string_view errorCtx);
 
+    /**
+     * Are two Copyable accessors NAR-equivalent — i.e. would
+     * `toString` on roots backed by them produce the same store
+     * path? Always returns a correct answer; never guesses.
+     *
+     * The implementation prefers cheap, decisive probes (pointer
+     * identity, fingerprint match) over walking. When the cheap
+     * probes don't decide, the storeHash is computed and cached
+     * in `treeNarHashes` so subsequent comparisons of the same
+     * accessor against anything are O(1) lookups. Worst-case
+     * cost across N accessors is O(N) tree walks (not O(N²)).
+     *
+     * The optional `hint` subpath is reserved for future cheap
+     * inequality probes (root directory name set, content hash
+     * at the hint subpath); the minimal implementation ignores
+     * it but the signature is fixed so callers can supply it.
+     */
+    bool
+    accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b, std::optional<CanonPath> hint = std::nullopt);
+
     bool isFunctor(const Value & fun) const;
 
     void callFunction(Value & fun, std::span<Value * const> args, Value & vRes, const PosIdx pos);

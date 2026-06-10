@@ -223,7 +223,25 @@ public:
 
     /**
      * A string that uniquely represents the contents of this
-     * accessor. This is used for caching lookups (see `fetchToStore()`).
+     * accessor. The contract is one-directional: equal fingerprints
+     * promise equal contents, but different fingerprints don't promise
+     * different contents — two unrelated accessors backing identical
+     * trees are free to expose different fingerprints (or none).
+     *
+     * Implementors must derive the fingerprint from content (e.g. a
+     * NAR hash, a git rev) so the one-directional contract is sound;
+     * a fingerprint derived from a mutable label, URL, or fetch-time
+     * coordinate satisfies the docstring on the surface while letting
+     * `EvalState::accessorsEquivalent` return true on differing
+     * trees. The Copyable
+     * admission seams enforce this by construction (every accessor
+     * admitted as Copyable carries a content-derived fingerprint or
+     * none).
+     *
+     * Used both for caching lookups (see `fetchToStore()`) and as the
+     * equality shortcut in `EvalState::accessorsEquivalent()` — a
+     * match returns true without I/O, a mismatch falls through to
+     * the remaining probes and (last resort) a storePath compute.
      */
     std::optional<std::string> fingerprint;
 
@@ -242,6 +260,12 @@ public:
      * `/nix/store/foo` mounted,
      * `getFingerprint("/nix/store/foo/bar")` will return the path
      * `/bar` and the fingerprint of the `/nix/store/foo` accessor.
+     *
+     * For the fingerprint shortcut in
+     * `EvalState::accessorsEquivalent()` to fire, both sides must
+     * produce the same fingerprint string AND the same rebased path
+     * — same string with different rebased paths is two different
+     * files inside the same fingerprinted tree.
      */
     virtual std::pair<CanonPath, std::optional<std::string>> getFingerprint(const CanonPath & path)
     {
