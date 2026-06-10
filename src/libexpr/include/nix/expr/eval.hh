@@ -527,6 +527,20 @@ public:
        about the file contents underneath. */
     const ref<boost::concurrent_flat_map<SourceAccessor *, Hash>> accessorRootProbeCache;
 
+    /* Per-(accessor, subpath) SHA256 of a regular file's contents
+       at that subpath, computed lazily on first probe. `nullopt`
+       means the subpath isn't a regular file on that accessor
+       (absent, directory, symlink, etc.); cached identically so
+       repeated probes don't re-walk. Used by `accessorsEquivalent`
+       as a hint: when the caller is comparing two roots and is
+       about to read the same subpath on each anyway, hashing it
+       under the hint contract turns the read into a chance to
+       disprove root-equivalence cheaply. Mismatched hashes prove
+       the roots are inequivalent; matching hashes are no info
+       (one matching file says nothing about the rest of the tree). */
+    const ref<boost::concurrent_flat_map<std::pair<SourceAccessor *, CanonPath>, std::optional<Hash>>>
+        accessorHintProbeCache;
+
 private:
 
     /* Cache for calls to addToStore(): maps source paths to the store
@@ -1209,17 +1223,26 @@ public:
      * `toString` on roots backed by them produce the same store
      * path? Always returns a correct answer; never guesses.
      *
-     * The implementation prefers cheap, decisive probes (pointer
-     * identity, fingerprint match) over walking. When the cheap
-     * probes don't decide, the storeHash is computed and cached
-     * in `srcToStore` so subsequent comparisons of the same
-     * accessor against anything are O(1) lookups. Worst-case
-     * cost across N accessors is O(N) tree walks (not O(N²)).
+     * Layered probes, cheapest decisive first:
+     *   1. Pointer identity (positive).
+     *   2. `accessorsKnownInequivalent` cache hit (negative).
+     *   3. Fingerprint match (positive).
+     *   4. `srcToStore` query-only: both cached → compare
+     *      storePaths (decisive both ways).
+     *   5. Root-name-set SHA256 mismatch (negative, per-accessor
+     *      cache).
+     *   6. Hint subpath SHA256 mismatch when `hint` is supplied
+     *      (negative, per-(accessor, subpath) cache).
+     *   7. `copyPathToStore` and compare storePaths. The lint
+     *      trips here by design — same materialisation point
+     *      `toString` would have hit. Result lands in
+     *      `srcToStore`, so subsequent comparisons of either
+     *      accessor are O(1).
      *
-     * The optional `hint` subpath is reserved for future cheap
-     * inequality probes (root directory name set, content hash
-     * at the hint subpath); the minimal implementation ignores
-     * it but the signature is fixed so callers can supply it.
+     * Worst-case cost across N accessors is O(N) tree walks
+     * (each accessor walked at most once), not the O(N²)
+     * pairwise walks a per-call NAR-compare would exhibit
+     * inside a dedup loop.
      */
     bool
     accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b, std::optional<CanonPath> hint = std::nullopt);
