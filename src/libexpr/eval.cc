@@ -3386,6 +3386,29 @@ bool EvalState::accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b
     /* hint reserved for the inequality probes added in later commits. */
     (void) hint;
 
+    /* Query-only `srcToStore` probe: if BOTH sides already have a
+       computed storePath, decide immediately without paying any
+       further probe or walk. The cheap path of `copyPathToStore`
+       would also hit this, but checking it explicitly up front
+       lets us short-circuit the more expensive root/hint probes
+       (added in upcoming commits) in the both-cached case. Either
+       side uncached → no info, fall through. */
+    auto spOf = [&](ref<SourceAccessor> acc) -> std::optional<StorePath> {
+        if (auto cached = getConcurrent(*srcToStore, SourcePath{acc, CanonPath::root}))
+            return cached->first;
+        return std::nullopt;
+    };
+    {
+        auto spA = spOf(a);
+        auto spB = spOf(b);
+        if (spA && spB) {
+            if (*spA == *spB)
+                return true;
+            accessorsKnownInequivalent->insert(cacheKey);
+            return false;
+        }
+    }
+
     /* The only step that may walk a tree. `copyPathToStore` reads the
        cached entry from `srcToStore` when present; otherwise it walks
        the tree once, computes the storePath, and writes it back. So
