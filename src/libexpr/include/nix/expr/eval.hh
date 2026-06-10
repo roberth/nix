@@ -24,6 +24,7 @@
 #include <boost/unordered/unordered_flat_map.hpp>
 #include <boost/unordered/concurrent_flat_map_fwd.hpp>
 
+#include <compare>
 #include <map>
 #include <optional>
 #include <functional>
@@ -1143,6 +1144,43 @@ public:
      * arm) use this directly to skip the reduction step.
      */
     bool pathToStringEqual(const SourcePath & p, SourceRootKind kind, std::string_view s);
+
+    /**
+     * Order two path Values under the language-level `<` semantic
+     * (`toString a < toString b`), committing to a definitive
+     * answer — no `Expensive` state. Cheap branches first;
+     * otherwise materialises via `coerceToString` and string-
+     * compares.
+     *
+     * Internal-kinded operands are rejected upfront with the
+     * same diagnostic `coerceToString` would raise, since their
+     * `toString` is undefined. This lets the cheap branches
+     * speak unconditionally for both operands.
+     *
+     * Cheap discriminations:
+     *   - Same root prefix (same accessor or matching fingerprint
+     *     at root) → subpath compare drives the order, since the
+     *     prefix is shared. Covers the same-path case (returns
+     *     Equal) by construction.
+     *   - Cross-kind System × Copyable: if the System abspath
+     *     lex-precedes `storeDir + "/"`, System < Copyable; if
+     *     lex-after and not starting with the prefix, System >
+     *     Copyable; if it does start with the prefix (System is
+     *     in store) we can't decide without knowing the
+     *     Copyable's hash, so fall through.
+     *
+     * The string-context produced by coercion is discarded;
+     * comparison is about the resulting string, not its
+     * provenance. Materialisation on Copyable fires the
+     * `lint-fetch-whole-source-to-store` knob, as `<` is
+     * semantically a `toString` call.
+     *
+     * Counterpart for equality predicates is `eqValues` /
+     * `toStringEqual` (which return `bool`); they share the
+     * cheap-discrimination strategy but have a different result
+     * space.
+     */
+    std::strong_ordering comparePathsForOrdering(Value & v1, Value & v2, PosIdx pos, std::string_view errorCtx);
 
     bool isFunctor(const Value & fun) const;
 

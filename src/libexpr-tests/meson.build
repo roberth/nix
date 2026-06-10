@@ -65,6 +65,7 @@ sources = files(
   'nix_api_value_internal.cc',
   'path-equality.cc',
   'path-equivalent.cc',
+  'path-ordering.cc',
   'primops.cc',
   'search-path.cc',
   'source-root.cc',
