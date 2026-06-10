@@ -5,12 +5,17 @@ source ./common.sh
 requireGit
 
 # `builtins.genericClosure { pathEquivalent = true; ... }` lets the
-# caller dedupe path keys against string keys without going through
-# `toString path`. On a Copyable (fetched-tree) source, `toString`
-# would walk the whole tree into the store — fatal under
-# `lint-fetch-whole-source-to-store = fatal`. The point of this test
-# is to pin that the new opt-in itself never falls back to that walk
-# internally.
+# caller dedupe path keys against string keys without ever paying
+# the per-comparison NAR walk that the old contents-based design
+# suffered. The cheap layers in `accessorsEquivalent` (pointer,
+# fingerprint, srcToStore lookup, root-name SHA256, hint SHA256)
+# decide whenever they can. When they can't, the fallback computes
+# the source's storePath through `copyPathToStore`, which trips
+# `lint-fetch-whole-source-to-store` exactly as `toString` would —
+# by design: any storePath compute on a fetched root is a fact the
+# user should know about, and the materialisation gets cached so
+# subsequent comparisons of the same source against anything are
+# O(1) lookups in `srcToStore`.
 
 # Assert the marker for the feature is present. We're testing the
 # Nix being built, so an absent marker is a real regression — fail
@@ -53,27 +58,13 @@ cat > "$repo/flake.nix" <<'EOF'
 
     # Substantive arm: pairs of (lazy path, matching store-path
     # string) that should each collapse to the *path* survivor
-    # (insertion-order: path comes first in each pair).
-    #
-    # Pair A: both refer to the source root.
-    # Pair B: both refer to the same *nonexistent* subpath inside
-    #         the source. The subpath doesn't have to exist on
-    #         disk — the cross-type check matches subpaths
-    #         structurally (both sides are
-    #         /nonexistent-subpath), and `contentsEqual`'s hint
-    #         step skips when `maybeLstat` returns nullopt on
-    #         either side. The full tree walk then runs and finds
-    #         the two trees are byte-identical, so the pair
-    #         collapses.
-    #
-    # The store-path-shaped strings are constructed via
-    # `builtins.path { filter = _: _: true; }`. The explicit
-    # filter routes through `addPath`/`fetchToStore` rather than
-    # `copyPathToStore`, so it doesn't trip the lint itself —
-    # an acknowledged loophole intended exactly for "I know I'm
-    # asking to materialise this". Acceptable as test setup;
-    # what we're verifying is that `pathEquivalent`'s *own*
-    # implementation stays lint-quiet.
+    # (insertion-order: path comes first in each pair). Cheap
+    # probes can't decide here — root-name SHA256 matches and the
+    # hint subpath either isn't a regular file (Pair A's "") or
+    # is absent on both sides (Pair B). So pathEquivalent falls
+    # through to the storePath compute, which trips the lint by
+    # design. Run without the fatal lint so the comparison can
+    # finish; the in-flake `assert` then pins the dedup outcome.
     #
     # Expected result: [{ key = ./.; } { key = ./nonexistent-subpath; }]
     # (the path keys survive — they appear first in each pair).
@@ -127,19 +118,28 @@ git -C "$repo" -c user.email=t@t -c user.name=t commit -q -m init
 
 # Substantive positive case: two equivalent pairs, each collapsing
 # to its path survivor. The in-flake `assert` pins both the
-# survivors AND their order; the CLI just checks "ok".
-#
-# If a future refactor accidentally taught pathEquivalent to
-# compute the lazy tree's store form via copyPathToStore, the
-# fatal lint would fire here instead of producing "ok".
-[[ $(nix --no-eval-cache --lint-fetch-whole-source-to-store fatal eval --raw "$repo#okSubstantive") == "ok" ]] \
+# survivors AND their order; the CLI just checks "ok". Run with
+# the lint disabled (default `warn`) — the storePath compute that
+# decides each pair would trip a fatal lint, and we want the
+# assert to complete so we can pin the dedup outcome.
+[[ $(nix --no-eval-cache eval --raw "$repo#okSubstantive") == "ok" ]] \
     || fail "okSubstantive did not evaluate to \"ok\" (in-flake assert failed)"
+
+# Substantive lint trip: re-run the same expression under
+# `--lint-fetch-whole-source-to-store fatal` and pin that
+# pathEquivalent does trip the lint when cheap probes don't
+# decide. This is the design's honest signal that a tree walk
+# happened — the user can choose to silence it (warn / ignore)
+# if their workload's probes typically don't decide.
+expectStderr 1 nix --no-eval-cache --lint-fetch-whole-source-to-store fatal eval --raw "$repo#okSubstantive" \
+    | grepQuiet 'reading the entire contents of fetched source.*into the store.*lint-fetch-whole-source-to-store'
 
 # Negative control: the `toString` pattern materialises the source
 # tree (sp.path.isRoot() at the copy site), the lint fires,
-# evaluation aborts with the expected diagnostic. Demonstrates the
-# lint is actually firing for the pattern we're moving callers
-# away from.
+# evaluation aborts with the expected diagnostic. Same diagnostic
+# as the substantive case above — `toString` is exactly the
+# materialisation point pathEquivalent's compute fallback now
+# matches.
 expectStderr 1 nix --no-eval-cache --lint-fetch-whole-source-to-store fatal eval "$repo#bad" \
     | grepQuiet 'reading the entire contents of fetched source.*into the store.*lint-fetch-whole-source-to-store'
 

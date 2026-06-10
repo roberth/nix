@@ -315,10 +315,10 @@ EvalState::EvalState(
     , debugRepl(nullptr)
     , debugStop(false)
     , trylevel(0)
-    , srcToStore(make_ref<decltype(srcToStore)::element_type>())
     , accessorsKnownInequivalent(make_ref<decltype(accessorsKnownInequivalent)::element_type>())
     , accessorRootProbeCache(make_ref<decltype(accessorRootProbeCache)::element_type>())
     , accessorHintProbeCache(make_ref<decltype(accessorHintProbeCache)::element_type>())
+    , srcToStore(make_ref<decltype(srcToStore)::element_type>())
     , importResolutionCache(make_ref<decltype(importResolutionCache)::element_type>())
     , fileEvalCache(make_ref<decltype(fileEvalCache)::element_type>())
     , positionToDocComment(make_ref<decltype(positionToDocComment)::element_type>())
@@ -4034,14 +4034,17 @@ size_t PathEquivalenceContext::classOfAccessor(ref<SourceAccessor> accessor, Sou
         return *systemClassId;
     }
     case SourceRootKind::Copyable: {
-        /* Scan existing Copyable reps for a NAR-equal match.
-           `contentsEqual`'s own cheap layers (pointer eq,
-           fingerprint match, hint sample) usually short-circuit
-           before the full walk; the walk runs at most once per
-           pair-of-classes, then both accessors share the id and
-           subsequent comparisons are O(1). */
+        /* Scan existing Copyable reps for an NAR-equivalent match
+           via `accessorsEquivalent`, which prefers cheap probes
+           (pointer, fingerprint, srcToStore lookup, root-name
+           SHA256) over walking and only pays a storePath compute
+           as last resort — and that compute lands in `srcToStore`
+           so any future comparison of this accessor is O(1). Worst
+           case across N reps is O(N) probes per new accessor, but
+           in practice the layered probes decide most pairs cheaply
+           and the per-accessor caches amortise the rest. */
         for (size_t i = 0; i < copyableReps.size(); ++i) {
-            if (contentsEqual(accessor, copyableReps[i])) {
+            if (state.accessorsEquivalent(accessor, copyableReps[i])) {
                 auto repId = classOf.at(&*copyableReps[i]);
                 classOf[raw] = repId;
                 return repId;
