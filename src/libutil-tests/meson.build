@@ -95,7 +95,6 @@ sources = files(
   'serialise.cc',
   'sort.cc',
   'source-accessor.cc',
-  'source-path.cc',
   'source-root.cc',
   'spawn.cc',
   'strings.cc',

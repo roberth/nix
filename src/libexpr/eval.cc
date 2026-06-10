@@ -3788,16 +3788,12 @@ std::strong_ordering EvalState::compareForToStringEquivalence(
 /* Mental note for future profiling: this primitive runs every
    path × path == comparison, which on a moderately large
    evaluation can be a lot. When two Copyable paths land here
-   they fall through to `contentsEqual`, which walks the trees.
-   For very tight loops (or very large trees) it might be
-   cheaper to compute and cache each tree's would-be store path
-   string once and compare those — exactly what the toString
-   semantic implies, just memoised. Not done yet: contentsEqual
-   plus its fingerprint shortcut is already very fast in the
-   common cases (same accessor pointer; fingerprint hit), and
-   the eval-cache layer typically takes the brunt above us. If a
-   profile ever shows this primitive dominating, that's the
-   knob. */
+   they fall through to `accessorsEquivalent`, which prefers
+   cheap probes (pointer, fingerprint, srcToStore lookup,
+   root-name SHA256, hint SHA256) and only computes the
+   storePath as last resort — with the result memoised in
+   `srcToStore` so subsequent comparisons of the same accessor
+   are O(1) lookups. */
 bool EvalState::toStringEqual(Value & v1, Value & v2, const PosIdx pos, std::string_view errorCtx)
 {
     forceValue(v1, pos);
