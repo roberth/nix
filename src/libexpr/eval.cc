@@ -3505,11 +3505,22 @@ bool EvalState::pathToStringEqual(const SourcePath & p, SourceRootKind kind, std
     case SourceRootKind::Copyable: {
         /* `toString` on a Copyable path is
            `<storeDir>/<storeBase> + p.path.absOrEmpty()`. Cheap
-           rejects on shape and subpath mismatch; otherwise a
-           `contentsEqual` between the lazy tree and the on-disk
-           store path, with `p.path` as the hint discriminator
-           (the hint is purely an optimisation; it never decides
-           the answer). */
+           rejects on shape and subpath mismatch; otherwise the
+           question is "does `p.accessor` materialise to this
+           specific storePath?" — a one-sided comparison that
+           doesn't fit `accessorsEquivalent`'s two-accessor shape
+           (constructing an on-disk accessor side here would just
+           re-hash the store path uncacheably, no fingerprint).
+
+           Cheap path: query `srcToStore` for `p.accessor`'s
+           root; if cached, compare its storePath to the parsed
+           one and we're done.
+
+           Otherwise: compute `p.accessor`'s storePath via
+           `copyPathToStore` and compare. The lint trips on the
+           compute by design — the same materialisation event
+           that `toString` would have caused, just driven by a
+           comparison instead of a string coercion. */
         if (!store->isInStore(s))
             return false;
         StorePath storePath{StorePath::dummy};
@@ -3524,15 +3535,16 @@ bool EvalState::pathToStringEqual(const SourcePath & p, SourceRootKind kind, std
         }
         if (subpath != p.path)
             return false;
-        try {
-            auto onDisk = makeFSSourceAccessor(std::filesystem::path{store->printStorePath(storePath)});
-            return contentsEqual(p.accessor, onDisk, p.path);
-        } catch (SystemError &) {
-            /* Store path isn't materialised on disk — we can't
-               confirm equivalence either way, so don't claim
-               it. */
-            return false;
-        }
+        if (auto cached = getConcurrent(*srcToStore, SourcePath{p.accessor, CanonPath::root}))
+            return cached->first == storePath;
+        /* No catch: any error from `copyPathToStore` (the lint
+           trip with fatal, a real fetch error) must propagate.
+           Swallowing them would amount to claiming "not
+           equivalent" without proof, which violates the
+           never-return-wrong-answers contract. */
+        NixStringContext ctx;
+        auto root = SourceRoot::make(p.accessor, SourceRootKind::Copyable);
+        return copyPathToStore(ctx, RootedPath{root, CanonPath::root}) == storePath;
     }
     }
     unreachable();
