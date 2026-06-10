@@ -21,8 +21,9 @@ namespace nix {
    - cross-type path × string: kind-dispatched
        System: P.path.abs() == S
        Copyable: S must be /<storeDir>/<storeBase>[/subpath] with
-                 subpath matching P's path; then contentsEqual on
-                 the tree roots with the path's own abs as hint
+                 subpath matching P's path; then srcToStore lookup
+                 or copyPathToStore on P's root to confirm the
+                 storePath matches
        Internal: never equivalent (toString errors on Internal) */
 
 class PathEquivalentTest : public LibExprTest
@@ -110,8 +111,9 @@ protected:
 
     /* In-memory accessor with a single marker file so that two
        such accessors with distinct markers are content-distinct
-       (and `contentsEqual` returns false between them), and two
-       with the same marker compare equal. */
+       (and `accessorsEquivalent` would compute different
+       storePaths for them), and two with the same marker compare
+       equal. */
     ref<MemorySourceAccessor> mkAccessorWithMarker(std::string_view marker)
     {
         auto acc = make_ref<MemorySourceAccessor>();

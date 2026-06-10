@@ -174,7 +174,7 @@ TEST_F(ComparePathsForOrderingTest, matchingFingerprintRootsSubpathDriven)
 {
     /* Distinct accessors but same fingerprint at root → same store
        path prefix → subpath drives the order. Cheap, no
-       contentsEqual scan, no materialisation. */
+       accessorsEquivalent scan, no materialisation. */
     auto [accA, rootA] = mkCopyableRoot(std::string{"shared-fp"});
     auto [accB, rootB] = mkCopyableRoot(std::string{"shared-fp"});
     auto * vA = mkPathPtr(rootA, "/a");

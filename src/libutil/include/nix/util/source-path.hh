@@ -119,42 +119,6 @@ struct SourcePath
 
 std::ostream & operator<<(std::ostream & str, const SourcePath & path);
 
-/**
- * Decide whether two `SourceAccessor`s denote NAR-equivalent trees
- * (compared from their roots).
- *
- * Equality is contents-based: identical NAR serialisations iff
- * true, up to the parts NAR records — file type, regular-file
- * bytes plus the executable bit, symlink target, directory entries
- * (names and types, recursively). Timestamps, ownership, and
- * non-NAR-serialisable node types compare unequal. Both accessors
- * empty at the root compares equal (an empty NAR is still a NAR).
- *
- * The signature takes `ref<SourceAccessor>` rather than
- * `SourcePath`: the operation is rooted by NAR semantics. Callers
- * that need to compare a subtree must wrap a sub-accessor; the
- * SourcePath-with-subpath signature this commit replaces let callers
- * spell that question in a way the primitive couldn't actually
- * answer (the NAR walk always starts at the accessor root). The
- * narrowing is intentional: subtree NARs are a different operation
- * this primitive deliberately doesn't provide.
- *
- * Cheap shortcuts first:
- *  1. Same accessor pointer → true.
- *  2. Both accessors expose a fingerprint at the root and they
- *     agree → true. A disagreement is not conclusive (different
- *     origins can still produce identical contents) and falls
- *     through.
- *  3. If a `hint` subpath is given and exists on both sides,
- *     compare it as a single NAR node (no symlink resolution, no
- *     recursion into directories at the hint). Mismatch → false;
- *     otherwise continue. The hint mechanism is *fast-fail only*:
- *     a matching hint does not fast-confirm equality, since the
- *     rest of the tree could still differ.
- *  4. Walk both trees in lockstep under NAR semantics.
- */
-bool contentsEqual(ref<SourceAccessor> a, ref<SourceAccessor> b, std::optional<CanonPath> hint = std::nullopt);
-
 inline std::size_t hash_value(const SourcePath & path)
 {
     std::size_t hash = 0;

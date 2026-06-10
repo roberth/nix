@@ -224,14 +224,16 @@ public:
      * NAR hash, a git rev) so the one-directional contract is sound;
      * a fingerprint derived from a mutable label, URL, or fetch-time
      * coordinate satisfies the docstring on the surface while letting
-     * `contentsEqual` return true on differing trees. The Copyable
+     * `EvalState::accessorsEquivalent` return true on differing
+     * trees. The Copyable
      * admission seams enforce this by construction (every accessor
      * admitted as Copyable carries a content-derived fingerprint or
      * none).
      *
      * Used both for caching lookups (see `fetchToStore()`) and as the
-     * equality shortcut in `contentsEqual()` — a match returns true
-     * without I/O, a mismatch falls through to walking the contents.
+     * equality shortcut in `EvalState::accessorsEquivalent()` — a
+     * match returns true without I/O, a mismatch falls through to
+     * the remaining probes and (last resort) a storePath compute.
      */
     std::optional<std::string> fingerprint;
 
@@ -251,10 +253,11 @@ public:
      * `getFingerprint("/nix/store/foo/bar")` will return the path
      * `/bar` and the fingerprint of the `/nix/store/foo` accessor.
      *
-     * For `contentsEqual()` to short-circuit between two paths, both
-     * sides must produce the same fingerprint string AND the same
-     * rebased path — same string with different rebased paths is two
-     * different files inside the same fingerprinted tree.
+     * For the fingerprint shortcut in
+     * `EvalState::accessorsEquivalent()` to fire, both sides must
+     * produce the same fingerprint string AND the same rebased path
+     * — same string with different rebased paths is two different
+     * files inside the same fingerprinted tree.
      */
     virtual std::pair<CanonPath, std::optional<std::string>> getFingerprint(const CanonPath & path)
     {

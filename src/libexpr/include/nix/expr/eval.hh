@@ -1194,8 +1194,8 @@ public:
      * string" if possible (nString uses its bytes; nPath with
      * kind System uses its subpath's abspath); a Copyable nPath
      * stays lazy and is matched via a structural check on
-     * subpath + contentsEqual on the roots. Internal-kinded
-     * paths have no defined toString and throw.
+     * subpath + `accessorsEquivalent` on the roots. Internal-
+     * kinded paths have no defined toString and throw.
      *
      * Backs both `eqValues` for the nPath × nPath case and
      * `builtins.isPathEquivalent` for the cross-type cases.
@@ -1208,8 +1208,10 @@ public:
      * `toString p` would produce?", kind-dispatched on `p`. The
      * Copyable arm parses the string as a store path with a
      * trailing subpath, requires the subpath to match `p.path`,
-     * and runs `contentsEqual` on the lazy root vs the on-disk
-     * store path.
+     * and decides via `srcToStore` lookup (cheap when cached)
+     * or a fresh `copyPathToStore` of the accessor root (which
+     * trips `lint-fetch-whole-source-to-store` exactly as
+     * `toString` would have).
      *
      * Lower-level than `toStringEqual`: callers that already
      * have a path Value and a literal string in hand (e.g. the
@@ -1603,9 +1605,11 @@ bool isAllowedURI(std::string_view uri, const Strings & allowedPaths);
  * Per-invocation equivalence-class classifier for
  * `builtins.genericClosure { pathEquivalent = true; … }`'s
  * comparator. Same classId means "the two roots' toStrings
- * would agree" — established cheaply via accessor identity or
- * fingerprint match, or by a `contentsEqual` walk against an
- * existing representative (paid at most once per accessor).
+ * would agree" — established cheaply via accessor identity,
+ * fingerprint match, srcToStore lookup, or one of the
+ * inequality probes in `EvalState::accessorsEquivalent`, with
+ * a storePath compute as last resort (paid at most once per
+ * accessor across the evaluation).
  *
  * The framework: a total preorder over `Value` whose
  * equivalence classes are the dedup classes. Class IDs are the
@@ -1622,9 +1626,8 @@ struct PathEquivalenceContext
 
     /** Cached equivalence-class id per accessor pointer. */
     std::unordered_map<const SourceAccessor *, size_t> classOf;
-    /** Representative accessors per Copyable class, used for
-        the `contentsEqual` scan when classifying a new
-        accessor. */
+    /** Representative accessors per Copyable class, scanned via
+        `accessorsEquivalent` when classifying a new accessor. */
     std::vector<ref<SourceAccessor>> copyableReps;
     /** All System accessors share one id (their toString does
         not depend on the accessor — see `SourceRootKind::System`'s
@@ -1636,10 +1639,10 @@ struct PathEquivalenceContext
     /** Look up or assign the equivalence-class id for `root`.
         Two roots share an id iff their toStrings would agree at
         the root: System → singleton id, Copyable → NAR-equivalence
-        class via `contentsEqual` against existing reps, Internal
-        → identity-class per pointer (toString is undefined for
-        Internal, so the only well-defined relation is pointer
-        identity). */
+        class via `accessorsEquivalent` against existing reps,
+        Internal → identity-class per pointer (toString is
+        undefined for Internal, so the only well-defined relation
+        is pointer identity). */
     size_t classOfAccessor(const SourceRoot & root, std::optional<CanonPath> hint = std::nullopt);
 
     /** Same lookup as above without requiring a `SourceRoot`

@@ -94,8 +94,8 @@ protected:
 
     /* Build an in-memory accessor with a single marker file at
        its root, so two such accessors with distinct markers
-       have distinct content (and so `contentsEqual` returns
-       false between them). */
+       have distinct content (and `accessorsEquivalent` would
+       compute different storePaths for them). */
     ref<MemorySourceAccessor> mkAccessorWithMarker(std::string_view marker)
     {
         auto acc = make_ref<MemorySourceAccessor>();
@@ -434,8 +434,8 @@ TEST_F(CompareForToStringEquivalenceTest, withCtx_copyableSameAccessorEquivalent
 TEST_F(CompareForToStringEquivalenceTest, withCtx_copyableDistinctContentDistinct)
 {
     /* Two Copyable paths wrapping distinct accessors with
-       distinct content → classOfAccessor's contentsEqual scan
-       puts them in different classes → distinct. */
+       distinct content → classOfAccessor's accessorsEquivalent
+       scan puts them in different classes → distinct. */
     PathEquivalenceContext ctx{state};
     auto a_acc = mkAccessorWithMarker("a-content");
     auto b_acc = mkAccessorWithMarker("b-content");

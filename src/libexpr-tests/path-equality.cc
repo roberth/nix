@@ -24,8 +24,10 @@ namespace nix {
    - Both reduced → string equality.
    - One reduced (the other Copyable) → check the eager string
      is store-path-shaped, its subpath matches the Copyable's
-     CanonPath, then contentsEqual on the two roots.
-   - Both Copyable → subpaths match AND contentsEqual on roots.
+     CanonPath, then srcToStore lookup or copyPathToStore on the
+     Copyable root to confirm the storePath matches.
+   - Both Copyable → subpaths match AND accessorsEquivalent on
+     the roots.
 
    System is *not* "by accessor identity"; two System paths with
    the same abspath are equivalent regardless of which accessor
