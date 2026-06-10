@@ -326,6 +326,7 @@ EvalState::EvalState(
     , trylevel(0)
     , treeNarHashes(make_ref<decltype(treeNarHashes)::element_type>())
     , accessorsKnownInequivalent(make_ref<decltype(accessorsKnownInequivalent)::element_type>())
+    , accessorRootProbeCache(make_ref<decltype(accessorRootProbeCache)::element_type>())
     , importResolutionCache(make_ref<decltype(importResolutionCache)::element_type>())
     , fileEvalCache(make_ref<decltype(fileEvalCache)::element_type>())
     , positionToDocComment(make_ref<decltype(positionToDocComment)::element_type>())
@@ -3335,6 +3336,22 @@ bool EvalState::eqValues(Value & v1, Value & v2, const PosIdx pos, std::string_v
     }
 }
 
+/* SHA256 of the accessor's root directory entry names, joined in
+   lex order with NUL separators. Lazy and cached: the read happens
+   once per accessor per evaluation. */
+static Hash computeRootProbe(SourceAccessor & acc)
+{
+    auto entries = acc.readDirectory(CanonPath::root);
+    /* `DirEntries` is `std::map<string, ...>` which already iterates
+       in lex order on the key, so we don't need to sort. */
+    std::string canonical;
+    for (auto & [name, _] : entries) {
+        canonical.append(name);
+        canonical.push_back('\0');
+    }
+    return hashString(HashAlgorithm::SHA256, canonical);
+}
+
 bool EvalState::accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b, std::optional<CanonPath> hint)
 {
     /* Pointer identity. The cheapest decisive layer. */
@@ -3372,10 +3389,10 @@ bool EvalState::accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b
        NAR hashes decide it outright, without paying any further probe
        or walk. The cheap path of `copyPathToStore` would also hit this,
        but checking it explicitly up front lets us short-circuit the
-       more expensive root/hint probes (added in upcoming commits) in
-       the both-walked case. Comparing hashes rather than store paths is
-       what we mean here — two identical trees are equivalent however
-       they are named. Either side unwalked → no info, fall through. */
+       more expensive root/hint probes in the both-walked case.
+       Comparing hashes rather than store paths is what we mean here —
+       two identical trees are equivalent however they are named. Either
+       side unwalked → no info, fall through. */
     auto narHashOf = [&](ref<SourceAccessor> acc) -> std::optional<Hash> {
         return getConcurrent(*treeNarHashes, SourcePath{acc, CanonPath::root});
     };
@@ -3388,6 +3405,23 @@ bool EvalState::accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b
             accessorsKnownInequivalent->insert(cacheKey);
             return false;
         }
+    }
+
+    /* Root probe: SHA256 of each accessor's root-directory entry
+       names. Computed lazily per accessor and memoised. Mismatch
+       decisively disproves equivalence (the root entry sets
+       already disagree). Match is no info — the children could
+       still differ in content. */
+    auto rootProbeOf = [&](ref<SourceAccessor> acc) -> Hash {
+        if (auto cached = getConcurrent(*accessorRootProbeCache, &*acc))
+            return *cached;
+        auto h = computeRootProbe(*acc);
+        accessorRootProbeCache->try_emplace(&*acc, h);
+        return h;
+    };
+    if (rootProbeOf(a) != rootProbeOf(b)) {
+        accessorsKnownInequivalent->insert(cacheKey);
+        return false;
     }
 
     /* The only step that may walk a tree. `copyPathToStore` reads the
