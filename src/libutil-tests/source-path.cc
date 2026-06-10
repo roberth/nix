@@ -75,58 +75,43 @@ struct CountingAccessor : SourceAccessor
 /* =================================================================
  * Tests for `contentsEqual`.
  *
- * The function tested here is the libutil-layer SourcePath equality:
- *   bool contentsEqual(const SourcePath &, const SourcePath &,
+ *   bool contentsEqual(ref<SourceAccessor>, ref<SourceAccessor>,
  *                      std::optional<CanonPath> hint = std::nullopt);
  *
- * Semantics: contents-based under NAR rules (file type, regular
- * contents + executable bit, symlink target, recursive directory
- * entries with names + types), with cheap short-circuits when
- * possible.
+ * Compares two accessors' trees from their roots under NAR
+ * semantics: file type, regular-file contents + executable bit,
+ * symlink target, directory entries recursively. The hint is
+ * purely a cheap discriminator — disagreement at the hint
+ * fast-rejects; agreement does not imply equality, the function
+ * still does the full walk.
  * =================================================================
  */
 
-/* ----- Step 1: file-type ("kind") mismatch ------------------------ */
+/* ----- Same accessor pointer is the trivial yes ------------------ */
 
-TEST(ContentsEqual, kindMismatchIsFalse)
-{
-    auto a = emptyDir();
-    a->addFile(CanonPath("/x"), "hi");
-
-    auto b = make_ref<MemorySourceAccessor>();
-    MemorySink{*b}.createDirectory(CanonPath::root);
-    MemorySink{*b}.createDirectory(CanonPath("/x"));
-
-    /* /x is a regular file on `a` and a directory on `b`. */
-    EXPECT_FALSE(contentsEqual(SourcePath{a, CanonPath("/x")}, SourcePath{b, CanonPath("/x")}));
-}
-
-/* ----- Step 2: same accessor + same path is the trivial yes ------- */
-
-TEST(ContentsEqual, sameAccessorSamePathShortCircuits)
+TEST(ContentsEqual, samePointerShortCircuits)
 {
     auto a = emptyDir();
     a->addFile(CanonPath("/f"), "hi");
     auto counting = make_ref<CountingAccessor>(a.cast<SourceAccessor>());
 
-    EXPECT_TRUE(contentsEqual(SourcePath{counting, CanonPath("/f")}, SourcePath{counting, CanonPath("/f")}));
+    EXPECT_TRUE(contentsEqual(counting, counting));
 
-    /* The shortcut still has to do an lstat (step 1: kind check),
-       but it must not have read the file, the directory, or asked
-       for a fingerprint. Pin the cheap-path invariant. */
+    /* The shortcut must not have read anything or asked for a
+       fingerprint. */
+    EXPECT_EQ(counting->nLstat.load(), 0u);
     EXPECT_EQ(counting->nReadFile.load(), 0u);
     EXPECT_EQ(counting->nReadDir.load(), 0u);
     EXPECT_EQ(counting->nFingerprint.load(), 0u);
 }
 
-/* ----- Step 3: fingerprint shortcut ------------------------------- */
+/* ----- Fingerprint shortcut at the root -------------------------- */
 
 TEST(ContentsEqual, matchingFingerprintShortCircuits)
 {
-    /* Two accessors that — were we to walk them — would disagree on
-       contents (different file bodies). But both expose the same
-       fingerprint at the path, so we should declare equality without
-       ever reading the file. */
+    /* Two accessors whose trees disagree if walked. Both expose
+       the same fingerprint at the root, so the shortcut should
+       declare equality without any I/O. */
     auto a = emptyDir();
     a->addFile(CanonPath("/f"), "alpha");
     a->fingerprint = "shared-fp";
@@ -137,18 +122,19 @@ TEST(ContentsEqual, matchingFingerprintShortCircuits)
     auto ca = make_ref<CountingAccessor>(a.cast<SourceAccessor>());
     auto cb = make_ref<CountingAccessor>(b.cast<SourceAccessor>());
 
-    EXPECT_TRUE(contentsEqual(SourcePath{ca, CanonPath("/f")}, SourcePath{cb, CanonPath("/f")}));
+    EXPECT_TRUE(contentsEqual(ca, cb));
 
-    /* Verified by trust: no file read happened on either side. */
     EXPECT_EQ(ca->nReadFile.load(), 0u);
     EXPECT_EQ(cb->nReadFile.load(), 0u);
+    EXPECT_EQ(ca->nReadDir.load(), 0u);
+    EXPECT_EQ(cb->nReadDir.load(), 0u);
 }
 
 TEST(ContentsEqual, differingFingerprintsFallThrough)
 {
-    /* Different fingerprints but identical contents → must fall
-       through and discover the trees are equal by NAR comparison.
-       This pins "fingerprint disagreement is not a final no". */
+    /* Different fingerprints but identical trees → fall through
+       and discover equality by the contents walk. Pins
+       "fingerprint disagreement is not a final no". */
     auto a = emptyDir();
     a->addFile(CanonPath("/f"), "same");
     a->fingerprint = "fp-A";
@@ -156,7 +142,7 @@ TEST(ContentsEqual, differingFingerprintsFallThrough)
     b->addFile(CanonPath("/f"), "same");
     b->fingerprint = "fp-B";
 
-    EXPECT_TRUE(contentsEqual(SourcePath{a, CanonPath("/f")}, SourcePath{b, CanonPath("/f")}));
+    EXPECT_TRUE(contentsEqual(a, b));
 }
 
 TEST(ContentsEqual, oneFingerprintMissingFallsThrough)
@@ -167,16 +153,16 @@ TEST(ContentsEqual, oneFingerprintMissingFallsThrough)
     auto b = emptyDir();
     b->addFile(CanonPath("/f"), "same"); /* no fingerprint */
 
-    EXPECT_TRUE(contentsEqual(SourcePath{a, CanonPath("/f")}, SourcePath{b, CanonPath("/f")}));
+    EXPECT_TRUE(contentsEqual(a, b));
 }
 
-/* ----- Step 4: hint short-circuit --------------------------------- */
+/* ----- Hint discriminator ---------------------------------------- */
 
 TEST(ContentsEqual, hintMismatchReturnsFalse)
 {
     /* Two trees that agree everywhere except at the hint subpath.
-       The hint should fire and we return false without doing the
-       full walk. */
+       The hint should fire and we return false without walking
+       the rest. */
     auto a = emptyDir();
     a->addFile(CanonPath("/flake.nix"), "{ description = \"A\"; }");
     a->addFile(CanonPath("/big"), std::string(10'000, 'x'));
@@ -187,18 +173,19 @@ TEST(ContentsEqual, hintMismatchReturnsFalse)
     auto ca = make_ref<CountingAccessor>(a.cast<SourceAccessor>());
     auto cb = make_ref<CountingAccessor>(b.cast<SourceAccessor>());
 
-    EXPECT_FALSE(
-        contentsEqual(SourcePath{ca, CanonPath::root}, SourcePath{cb, CanonPath::root}, CanonPath("/flake.nix")));
+    EXPECT_FALSE(contentsEqual(ca, cb, CanonPath("/flake.nix")));
 
-    /* The hint mismatch should short-circuit before any /big read. */
+    /* The hint mismatch should short-circuit before any /big
+       read. */
     EXPECT_EQ(ca->nReadFile.load(), 1u); /* just the hint file */
     EXPECT_EQ(cb->nReadFile.load(), 1u);
 }
 
 TEST(ContentsEqual, hintMatchStillContinuesToFullCompare)
 {
-    /* Hint agrees but trees differ outside the hint. The hint must
-       not be treated as proof of equality. */
+    /* Hint agrees but trees differ outside the hint. The hint
+       must not be treated as proof of equality — the full walk
+       still runs and finds the difference. */
     auto a = emptyDir();
     a->addFile(CanonPath("/flake.nix"), "agree");
     a->addFile(CanonPath("/other"), "X");
@@ -206,8 +193,7 @@ TEST(ContentsEqual, hintMatchStillContinuesToFullCompare)
     b->addFile(CanonPath("/flake.nix"), "agree");
     b->addFile(CanonPath("/other"), "Y");
 
-    EXPECT_FALSE(
-        contentsEqual(SourcePath{a, CanonPath::root}, SourcePath{b, CanonPath::root}, CanonPath("/flake.nix")));
+    EXPECT_FALSE(contentsEqual(a, b, CanonPath("/flake.nix")));
 }
 
 TEST(ContentsEqual, hintAbsentOnOneSideIsSkipped)
@@ -219,42 +205,37 @@ TEST(ContentsEqual, hintAbsentOnOneSideIsSkipped)
     auto b = emptyDir();
     b->addFile(CanonPath("/f"), "same");
 
-    EXPECT_TRUE(
-        contentsEqual(SourcePath{a, CanonPath::root}, SourcePath{b, CanonPath::root}, CanonPath("/never-there")));
+    EXPECT_TRUE(contentsEqual(a, b, CanonPath("/never-there")));
 }
 
 TEST(ContentsEqual, hintIsLowLevelNoSymlinkResolution)
 {
     /* If the hint path lstat()s to a symlink rather than a regular
        file, the function must *not* follow it. We pin this by
-       arranging an `s` on each side that points to different regular
-       files; if symlink resolution were on, the hint compare would
-       fail. With low-level semantics it just compares the symlink
-       targets, which here are equal. */
+       arranging an `s` on each side that points to different
+       regular files; if symlink resolution were on, the hint
+       compare would fail. With low-level semantics it compares
+       the symlink targets, which here are equal, so the hint
+       passes and we fall through. The full compare then finds
+       the trees disagree (realA vs realB) and returns false. */
     auto a = emptyDir();
     a->addFile(CanonPath("/realA"), "differs A");
     MemorySink{*a}.createSymlink(CanonPath("/s"), "realA");
     auto b = emptyDir();
     b->addFile(CanonPath("/realB"), "differs B");
     MemorySink{*b}.createSymlink(CanonPath("/s"), "realA");
-    /* Note: both symlinks have target "realA", but on `b` realA
-       doesn't exist. With low-level semantics we only compare the
-       targets, which match → hint passes → fall through. The full
-       compare will then find the trees disagree (realA vs realB)
-       and return false. We assert false (from the full compare),
-       not from the hint. */
-    EXPECT_FALSE(contentsEqual(SourcePath{a, CanonPath::root}, SourcePath{b, CanonPath::root}, CanonPath("/s")));
+    EXPECT_FALSE(contentsEqual(a, b, CanonPath("/s")));
 }
 
-/* ----- Step 5: full recursive NAR comparison ---------------------- */
+/* ----- Full recursive NAR comparison ----------------------------- */
 
-TEST(ContentsEqual, identicalRegularFilesAreEqual)
+TEST(ContentsEqual, identicalTreesAreEqual)
 {
     auto a = emptyDir();
     a->addFile(CanonPath("/f"), "same");
     auto b = emptyDir();
     b->addFile(CanonPath("/f"), "same");
-    EXPECT_TRUE(contentsEqual(SourcePath{a, CanonPath("/f")}, SourcePath{b, CanonPath("/f")}));
+    EXPECT_TRUE(contentsEqual(a, b));
 }
 
 TEST(ContentsEqual, differingRegularBytesAreUnequal)
@@ -263,7 +244,7 @@ TEST(ContentsEqual, differingRegularBytesAreUnequal)
     a->addFile(CanonPath("/f"), "one");
     auto b = emptyDir();
     b->addFile(CanonPath("/f"), "two");
-    EXPECT_FALSE(contentsEqual(SourcePath{a, CanonPath("/f")}, SourcePath{b, CanonPath("/f")}));
+    EXPECT_FALSE(contentsEqual(a, b));
 }
 
 TEST(ContentsEqual, executableBitMatters)
@@ -275,47 +256,39 @@ TEST(ContentsEqual, executableBitMatters)
     a->addFile(CanonPath("/f"), "same");
     auto b = emptyDir();
     b->addFile(CanonPath("/f"), "same");
-    /* Flip exec bit on a's file directly. */
     auto * fa = a->open(CanonPath("/f"), std::nullopt);
     ASSERT_NE(fa, nullptr);
     std::get<fso::Regular<std::string>>(fa->raw).executable = true;
 
-    EXPECT_FALSE(contentsEqual(SourcePath{a, CanonPath("/f")}, SourcePath{b, CanonPath("/f")}));
+    EXPECT_FALSE(contentsEqual(a, b));
 }
 
 TEST(ContentsEqual, symlinkTargetMatters)
 {
-    auto a = emptyDir();
-    MemorySink{*a}.createSymlink(CanonPath("/s"), "target1");
-    auto b = emptyDir();
-    MemorySink{*b}.createSymlink(CanonPath("/s"), "target1");
-    EXPECT_TRUE(contentsEqual(SourcePath{a, CanonPath("/s")}, SourcePath{b, CanonPath("/s")}));
+    /* Root of each accessor is just a symlink (no surrounding
+       directory). Test the top-level type recognition. */
+    auto a = make_ref<MemorySourceAccessor>();
+    MemorySink{*a}.createSymlink(CanonPath::root, "target1");
+    auto b = make_ref<MemorySourceAccessor>();
+    MemorySink{*b}.createSymlink(CanonPath::root, "target1");
+    EXPECT_TRUE(contentsEqual(a, b));
 
-    auto c = emptyDir();
-    MemorySink{*c}.createSymlink(CanonPath("/s"), "target2");
-    EXPECT_FALSE(contentsEqual(SourcePath{a, CanonPath("/s")}, SourcePath{c, CanonPath("/s")}));
+    auto c = make_ref<MemorySourceAccessor>();
+    MemorySink{*c}.createSymlink(CanonPath::root, "target2");
+    EXPECT_FALSE(contentsEqual(a, c));
 }
 
-TEST(ContentsEqual, directoriesRecursiveEqualAndUnequal)
+TEST(ContentsEqual, fileTypeMismatchInTreeIsFalse)
 {
+    /* /x is a regular file in a's tree and a directory in b's
+       tree. The recursive walk catches the type mismatch. */
     auto a = emptyDir();
-    MemorySink{*a}.createDirectory(CanonPath("/d"));
-    a->addFile(CanonPath("/d/x"), "X");
-    a->addFile(CanonPath("/d/y"), "Y");
+    a->addFile(CanonPath("/x"), "hi");
 
     auto b = emptyDir();
-    MemorySink{*b}.createDirectory(CanonPath("/d"));
-    b->addFile(CanonPath("/d/x"), "X");
-    b->addFile(CanonPath("/d/y"), "Y");
+    MemorySink{*b}.createDirectory(CanonPath("/x"));
 
-    EXPECT_TRUE(contentsEqual(SourcePath{a, CanonPath("/d")}, SourcePath{b, CanonPath("/d")}));
-
-    /* Diverge one byte deep in y. */
-    auto * fy = b->open(CanonPath("/d/y"), std::nullopt);
-    ASSERT_NE(fy, nullptr);
-    std::get<fso::Regular<std::string>>(fy->raw).contents = "Y!";
-
-    EXPECT_FALSE(contentsEqual(SourcePath{a, CanonPath("/d")}, SourcePath{b, CanonPath("/d")}));
+    EXPECT_FALSE(contentsEqual(a, b));
 }
 
 TEST(ContentsEqual, directoryEntrySetDifferenceIsUnequal)
@@ -329,137 +302,99 @@ TEST(ContentsEqual, directoryEntrySetDifferenceIsUnequal)
     b->addFile(CanonPath("/d/x"), "X");
     b->addFile(CanonPath("/d/extra"), "Z");
 
-    EXPECT_FALSE(contentsEqual(SourcePath{a, CanonPath("/d")}, SourcePath{b, CanonPath("/d")}));
+    EXPECT_FALSE(contentsEqual(a, b));
 }
 
 TEST(ContentsEqual, emptyDirectoriesAreEqual)
 {
     auto a = emptyDir();
     auto b = emptyDir();
-    EXPECT_TRUE(contentsEqual(SourcePath{a, CanonPath::root}, SourcePath{b, CanonPath::root}));
+    EXPECT_TRUE(contentsEqual(a, b));
 }
 
-TEST(ContentsEqual, fingerprintHintInteraction)
+TEST(ContentsEqual, deepDirectoryTrees)
 {
-    /* Pin the order: a matching fingerprint should win before the
-       hint is even consulted. We make the hint disagree, which would
-       otherwise force a `false`; if the fingerprint short-circuit
-       runs first the answer is `true`. */
-    auto a = emptyDir();
-    a->addFile(CanonPath("/flake.nix"), "A");
-    a->fingerprint = "fp";
-    auto b = emptyDir();
-    b->addFile(CanonPath("/flake.nix"), "B");
-    b->fingerprint = "fp";
+    /* Build /a/b/c/d/e/file on both sides with the same contents.
+       Diverge only at the leaf to make sure recursion reaches the
+       full depth. */
+    auto build = [](std::string leaf) {
+        auto acc = emptyDir();
+        MemorySink sink{*acc};
+        sink.createDirectory(CanonPath("/a"));
+        sink.createDirectory(CanonPath("/a/b"));
+        sink.createDirectory(CanonPath("/a/b/c"));
+        sink.createDirectory(CanonPath("/a/b/c/d"));
+        sink.createDirectory(CanonPath("/a/b/c/d/e"));
+        acc->addFile(CanonPath("/a/b/c/d/e/file"), std::move(leaf));
+        return acc;
+    };
+    auto a = build("identical"), b = build("identical");
+    EXPECT_TRUE(contentsEqual(a, b));
 
-    EXPECT_TRUE(contentsEqual(SourcePath{a, CanonPath::root}, SourcePath{b, CanonPath::root}, CanonPath("/flake.nix")));
+    auto c = build("different");
+    EXPECT_FALSE(contentsEqual(a, c));
+}
+
+TEST(ContentsEqual, largeRegularFilesByteByByte)
+{
+    /* Two big files that match byte-for-byte. Mostly a sanity
+       check that we're not accidentally comparing sizes only. */
+    std::string body(64 * 1024, '\0');
+    for (size_t i = 0; i < body.size(); ++i)
+        body[i] = static_cast<char>(i & 0xff);
+
+    auto a = emptyDir();
+    a->addFile(CanonPath("/big"), std::string(body));
+    auto b = emptyDir();
+    b->addFile(CanonPath("/big"), std::string(body));
+    EXPECT_TRUE(contentsEqual(a, b));
+
+    body[42] ^= 1;
+    auto c = emptyDir();
+    c->addFile(CanonPath("/big"), std::string(body));
+    EXPECT_FALSE(contentsEqual(a, c));
 }
 
 /* ----- Reflexivity / symmetry ------------------------------------ */
 
 TEST(ContentsEqual, reflexiveOnDeepTree)
 {
-    /* Whatever the algorithm does, comparing a tree to itself must
-       say yes. */
     auto a = emptyDir();
     MemorySink{*a}.createDirectory(CanonPath("/sub"));
     MemorySink{*a}.createDirectory(CanonPath("/sub/inner"));
     a->addFile(CanonPath("/sub/inner/file"), "x");
     MemorySink{*a}.createSymlink(CanonPath("/sub/link"), "inner");
 
-    EXPECT_TRUE(contentsEqual(SourcePath{a, CanonPath::root}, SourcePath{a, CanonPath::root}));
+    EXPECT_TRUE(contentsEqual(a, a));
 }
 
 TEST(ContentsEqual, symmetric)
 {
-    /* `contentsEqual(a, b)` and `contentsEqual(b, a)` should agree,
-       including under fingerprint, hint, and full compares. We
-       exercise each path. */
     auto a = emptyDir();
     a->addFile(CanonPath("/f"), "X");
     a->fingerprint = "fpA";
     auto b = emptyDir();
     b->addFile(CanonPath("/f"), "Y");
     b->fingerprint = "fpB";
-    EXPECT_EQ(
-        contentsEqual(SourcePath{a, CanonPath("/f")}, SourcePath{b, CanonPath("/f")}),
-        contentsEqual(SourcePath{b, CanonPath("/f")}, SourcePath{a, CanonPath("/f")}));
+    EXPECT_EQ(contentsEqual(a, b), contentsEqual(b, a));
 
-    /* Now equal but via fingerprint. */
+    /* And via fingerprint. */
     auto c = emptyDir();
     c->addFile(CanonPath("/f"), "anything"), c->fingerprint = "same-fp";
     auto d = emptyDir();
     d->addFile(CanonPath("/f"), "anything-else"), d->fingerprint = "same-fp";
-    EXPECT_EQ(
-        contentsEqual(SourcePath{c, CanonPath("/f")}, SourcePath{d, CanonPath("/f")}),
-        contentsEqual(SourcePath{d, CanonPath("/f")}, SourcePath{c, CanonPath("/f")}));
+    EXPECT_EQ(contentsEqual(c, d), contentsEqual(d, c));
 }
 
-/* ----- Pointer/path shortcut beats a bad fingerprint -------------- */
+/* ----- Fingerprint with rebased subpath disagreement falls
+ * through --------------------------------------------------------- */
 
-TEST(ContentsEqual, samePointerSamePathBeatsBadFingerprint)
+TEST(ContentsEqual, sameFingerprintDifferentRebasedRootFallsThrough)
 {
-    /* Even if the accessor lies about its fingerprint (and the
-       fingerprint mechanism could otherwise mislead us), the
-       same-accessor-same-path shortcut MUST fire first. */
-    struct LyingFingerprint : SourceAccessor
-    {
-        ref<SourceAccessor> inner;
-
-        explicit LyingFingerprint(ref<SourceAccessor> i)
-            : inner(i)
-        {
-        }
-
-        void anchor() override {}
-
-        std::optional<Stat> maybeLstat(const CanonPath & p) override
-        {
-            return inner->maybeLstat(p);
-        }
-
-        void readFile(const CanonPath & p, Sink & sink, fun<void(uint64_t)> sizeCallback) override
-        {
-            inner->readFile(p, sink, sizeCallback);
-        }
-
-        using SourceAccessor::readFile;
-
-        DirEntries readDirectory(const CanonPath & p) override
-        {
-            return inner->readDirectory(p);
-        }
-
-        std::string readLink(const CanonPath & p) override
-        {
-            return inner->readLink(p);
-        }
-
-        /* Pretend to return a fingerprint but bump the value each call
-           so two consecutive lookups would falsely disagree. */
-        std::atomic<int> calls{0};
-
-        std::pair<CanonPath, std::optional<std::string>> getFingerprint(const CanonPath & p) override
-        {
-            return {p, "ever-changing-" + std::to_string(++calls)};
-        }
-    };
-
-    auto inner = emptyDir();
-    inner->addFile(CanonPath("/f"), "hello");
-    auto liar = make_ref<LyingFingerprint>(inner.cast<SourceAccessor>());
-    EXPECT_TRUE(contentsEqual(SourcePath{liar, CanonPath("/f")}, SourcePath{liar, CanonPath("/f")}));
-}
-
-/* ----- Fingerprint subpath disagreement falls through ------------- */
-
-TEST(ContentsEqual, sameFingerprintDifferentSubpathFallsThrough)
-{
-    /* Two accessors with the same fingerprint string but
-       different rebased subpaths (e.g. the same mounted store path
-       accessed at two different intra-mount offsets) must not be
-       claimed equal by the fingerprint shortcut; the contents-walk
-       resolves it. Here contents differ, so the answer is false. */
+    /* Two accessors expose the same fingerprint string but at
+       different rebased internal paths — e.g. two different
+       mounts inside the same fingerprinted tree. The shortcut
+       must not fire; the full walk decides. */
     struct RebasedFingerprint : SourceAccessor
     {
         ref<SourceAccessor> inner;
@@ -497,7 +432,7 @@ TEST(ContentsEqual, sameFingerprintDifferentSubpathFallsThrough)
             return inner->readLink(p);
         }
 
-        std::pair<CanonPath, std::optional<std::string>> getFingerprint(const CanonPath & p) override
+        std::pair<CanonPath, std::optional<std::string>> getFingerprint(const CanonPath &) override
         {
             return {rebase, fp};
         }
@@ -509,89 +444,7 @@ TEST(ContentsEqual, sameFingerprintDifferentSubpathFallsThrough)
     innerB->addFile(CanonPath("/f"), "B");
     auto a = make_ref<RebasedFingerprint>(innerA.cast<SourceAccessor>(), CanonPath("/store/sub-a"), "shared-fp");
     auto b = make_ref<RebasedFingerprint>(innerB.cast<SourceAccessor>(), CanonPath("/store/sub-b"), "shared-fp");
-    EXPECT_FALSE(contentsEqual(SourcePath{a, CanonPath("/f")}, SourcePath{b, CanonPath("/f")}));
-}
-
-/* ----- Hint at a directory subpath -------------------------------- */
-
-TEST(ContentsEqual, hintAtDirectoryWithDifferingEntriesIsFalse)
-{
-    auto a = emptyDir();
-    MemorySink{*a}.createDirectory(CanonPath("/sub"));
-    a->addFile(CanonPath("/sub/x"), "X");
-
-    auto b = emptyDir();
-    MemorySink{*b}.createDirectory(CanonPath("/sub"));
-    b->addFile(CanonPath("/sub/x"), "X");
-    b->addFile(CanonPath("/sub/extra"), "Z");
-
-    /* Hint catches the entry-set disagreement at /sub without
-       recursing. */
-    EXPECT_FALSE(contentsEqual(SourcePath{a, CanonPath::root}, SourcePath{b, CanonPath::root}, CanonPath("/sub")));
-}
-
-/* ----- Both paths absent --------------------------------------- */
-
-TEST(ContentsEqual, bothPathsAbsentIsFalse)
-{
-    /* Pin the conservative choice: if neither path resolves,
-       contentsEqual returns false rather than vacuously true. */
-    auto a = emptyDir();
-    auto b = emptyDir();
-    EXPECT_FALSE(contentsEqual(SourcePath{a, CanonPath("/nope")}, SourcePath{b, CanonPath("/nope")}));
-}
-
-TEST(ContentsEqual, onePathAbsentIsFalse)
-{
-    auto a = emptyDir();
-    a->addFile(CanonPath("/f"), "X");
-    auto b = emptyDir();
-    EXPECT_FALSE(contentsEqual(SourcePath{a, CanonPath("/f")}, SourcePath{b, CanonPath("/f")}));
-}
-
-/* ----- Larger files / deeper trees -------------------------------- */
-
-TEST(ContentsEqual, largeRegularFilesByteByByte)
-{
-    /* Two big files that match byte-for-byte. Mostly a sanity check
-       that we're not accidentally comparing pointers or sizes only. */
-    std::string body(64 * 1024, '\0');
-    for (size_t i = 0; i < body.size(); ++i)
-        body[i] = static_cast<char>(i & 0xff);
-
-    auto a = emptyDir();
-    a->addFile(CanonPath("/big"), std::string(body));
-    auto b = emptyDir();
-    b->addFile(CanonPath("/big"), std::string(body));
-    EXPECT_TRUE(contentsEqual(SourcePath{a, CanonPath("/big")}, SourcePath{b, CanonPath("/big")}));
-
-    body[42] ^= 1;
-    auto c = emptyDir();
-    c->addFile(CanonPath("/big"), std::string(body));
-    EXPECT_FALSE(contentsEqual(SourcePath{a, CanonPath("/big")}, SourcePath{c, CanonPath("/big")}));
-}
-
-TEST(ContentsEqual, deepDirectoryTrees)
-{
-    /* Build /a/b/c/d/e/file on both sides with the same contents.
-       Diverge only at the leaf to make sure recursion reaches the
-       full depth. */
-    auto build = [](std::string leaf) {
-        auto acc = emptyDir();
-        MemorySink sink{*acc};
-        sink.createDirectory(CanonPath("/a"));
-        sink.createDirectory(CanonPath("/a/b"));
-        sink.createDirectory(CanonPath("/a/b/c"));
-        sink.createDirectory(CanonPath("/a/b/c/d"));
-        sink.createDirectory(CanonPath("/a/b/c/d/e"));
-        acc->addFile(CanonPath("/a/b/c/d/e/file"), std::move(leaf));
-        return acc;
-    };
-    auto a = build("identical"), b = build("identical");
-    EXPECT_TRUE(contentsEqual(SourcePath{a, CanonPath::root}, SourcePath{b, CanonPath::root}));
-
-    auto c = build("different");
-    EXPECT_FALSE(contentsEqual(SourcePath{a, CanonPath::root}, SourcePath{c, CanonPath::root}));
+    EXPECT_FALSE(contentsEqual(a, b));
 }
 
 } // namespace nix
