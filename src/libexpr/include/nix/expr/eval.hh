@@ -23,6 +23,7 @@
 
 #include <boost/unordered/unordered_flat_map.hpp>
 #include <boost/unordered/concurrent_flat_map_fwd.hpp>
+#include <boost/unordered/concurrent_flat_set_fwd.hpp>
 
 #include <compare>
 #include <map>
@@ -504,6 +505,17 @@ public:
      * A cache for evaluation caches, so as to reuse the same root value if possible
      */
     std::map<const Hash, ref<eval_cache::EvalCache>> evalCaches;
+
+    /* Set of accessor pairs known to be NAR-inequivalent, populated
+       by `accessorsEquivalent` when any of its decisive probes (root
+       directory name set, hint subpath SHA256, computed storePath
+       compare) returns false. Membership is symmetric; the canonical
+       key orders the two raw pointers low-then-high. Avoids repeated
+       work across multiple comparisons of the same pair — without
+       this, a pair already disproven by a storePath compare could
+       still pay a hint read on a later call. Public so test code
+       can pin the cache-population contract. */
+    const ref<boost::concurrent_flat_set<std::pair<SourceAccessor *, SourceAccessor *>>> accessorsKnownInequivalent;
 
 private:
 

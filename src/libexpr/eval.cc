@@ -51,6 +51,7 @@
 #include <nlohmann/json.hpp>
 #include <boost/container/small_vector.hpp>
 #include <boost/unordered/concurrent_flat_map.hpp>
+#include <boost/unordered/concurrent_flat_set.hpp>
 
 #include "nix/util/strings-inline.hh"
 
@@ -315,6 +316,7 @@ EvalState::EvalState(
     , debugStop(false)
     , trylevel(0)
     , srcToStore(make_ref<decltype(srcToStore)::element_type>())
+    , accessorsKnownInequivalent(make_ref<decltype(accessorsKnownInequivalent)::element_type>())
     , importResolutionCache(make_ref<decltype(importResolutionCache)::element_type>())
     , fileEvalCache(make_ref<decltype(fileEvalCache)::element_type>())
     , positionToDocComment(make_ref<decltype(positionToDocComment)::element_type>())
@@ -3357,6 +3359,18 @@ bool EvalState::accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b
     if (&*a == &*b)
         return true;
 
+    /* Canonical-order key for the symmetric inequality cache: low
+       raw pointer first. The cache stores only known-inequivalent
+       pairs (proven false). Known-equivalent pairs aren't cached —
+       the cheap positive proofs (pointer, fingerprint) are
+       essentially free to re-check, and `srcToStore`'s hash table
+       already memoises the storePath compute outcome. */
+    auto * rawA = &*a;
+    auto * rawB = &*b;
+    auto cacheKey = rawA < rawB ? std::make_pair(rawA, rawB) : std::make_pair(rawB, rawA);
+    if (accessorsKnownInequivalent->contains(cacheKey))
+        return false;
+
     /* Fingerprint match is a one-way positive proof: equal fingerprints
        AND equal rebased paths guarantee NAR-equal trees (that's the
        fingerprint contract, see `SourceAccessor::getFingerprint`).
@@ -3382,7 +3396,10 @@ bool EvalState::accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b
     auto rootB = SourceRoot::make(b, SourceRootKind::Copyable);
     auto spA = copyPathToStore(ctxA, RootedPath{rootA, CanonPath::root});
     auto spB = copyPathToStore(ctxB, RootedPath{rootB, CanonPath::root});
-    return spA == spB;
+    if (spA == spB)
+        return true;
+    accessorsKnownInequivalent->insert(cacheKey);
+    return false;
 }
 
 bool EvalState::pathToStringEqual(const SourcePath & p, SourceRootKind kind, std::string_view s)
