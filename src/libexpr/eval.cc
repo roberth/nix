@@ -298,7 +298,13 @@ EvalState::EvalState(
     }())
     , corepkgsFS(make_ref<MemorySourceAccessor>())
     , internalFS(make_ref<MemorySourceAccessor>())
-    , rootFSRoot(SourceRoot::make(rootFS, SourceRootKind::System))
+    /* System-rooted paths share the literal `"path:"` identity. The
+       rootFS is unique per EvalState, so the counter that
+       `allocSourceUnpinnedId` assigns is stable for any given run. */
+    , rootFSRoot(SourceRoot::make(rootFS, SourceRootKind::System, "path:"))
+    /* Internal accessors carry deterministic, build-baked content
+       (`corepkgs`, `derivation-internal.nix`); they bypass cache
+       invalidation, so they don't claim an identity. */
     , corepkgsRoot(SourceRoot::make(corepkgsFS.cast<SourceAccessor>(), SourceRootKind::Internal))
     , internalFSRoot(SourceRoot::make(internalFS.cast<SourceAccessor>(), SourceRootKind::Internal))
     , derivationInternal{internalFS->addFile(

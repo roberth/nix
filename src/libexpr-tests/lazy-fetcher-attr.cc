@@ -157,8 +157,11 @@ TEST_F(LazyFetcherAttrTest, lazyEmitProducesPathTypedOutPath)
     auto accessor = make_ref<MemorySourceAccessor>();
     accessor->addFile(CanonPath("/file"), "content");
 
-    fetchers::Input input;
-    input.attrs.insert_or_assign("type", std::string("git"));
+    /* Use a complete input — `emitTreeAttrs` now stamps the SourceRoot's
+       `unpinnedId` via `Input::toUnpinnedURL()`, which requires the
+       Input to have a scheme-renderable URL. Synthetic
+       `{type=git, revCount=7}` fixtures don't satisfy that. */
+    auto input = fetchers::Input::fromURL(state.fetchSettings, "git+https://example.com/foo");
     input.attrs.insert_or_assign("revCount", uint64_t(7));
 
     Value v;

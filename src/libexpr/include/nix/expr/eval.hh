@@ -442,7 +442,15 @@ public:
      * future System or Internal caller without making the cache
      * structurally wrong in the meantime.
      */
-    ref<SourceRoot> getOrCreateRoot(ref<SourceAccessor> accessor, SourceRootKind kind);
+    /**
+     * @param unpinnedId Identity claim from the producer (e.g.
+     * `Input::toUnpinnedURL()` from `fetchTree`). Stamped onto the
+     * SourceRoot on cache miss; ignored on cache hit (the first
+     * admission's id is sticky — see `getOrCreateRoot`'s test for
+     * the rationale).
+     */
+    ref<SourceRoot> getOrCreateRoot(
+        ref<SourceAccessor> accessor, SourceRootKind kind, std::optional<std::string> unpinnedId = std::nullopt);
 
     const SourcePath derivationInternal;
     const SourcePath importedDrvToDerivation;

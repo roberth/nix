@@ -264,7 +264,7 @@ static Flake readFlake(
     SourcePath flakeDir = rootDir;
     if (!resolvedRef.subdir.empty()) {
         auto resolved = joinAndCheckCopyable(
-            state.getOrCreateRoot(rootDir.accessor, SourceRootKind::Copyable),
+            state.getOrCreateRoot(rootDir.accessor, SourceRootKind::Copyable, lockedRef.input.toUnpinnedURL()),
             rootDir.path,
             resolvedRef.subdir,
             SymlinkResolution::Ancestors,
@@ -287,9 +287,10 @@ static Flake readFlake(
        that routed through rootFS. The runtime check below stays
        as a defensive no-op against a future caller breaking
        the invariant (would surface as System routing). */
-    auto root = &*flakePath.accessor == &*state.rootFS
-                    ? state.rootFSRoot
-                    : state.getOrCreateRoot(flakePath.accessor, SourceRootKind::Copyable);
+    auto root =
+        &*flakePath.accessor == &*state.rootFS
+            ? state.rootFSRoot
+            : state.getOrCreateRoot(flakePath.accessor, SourceRootKind::Copyable, lockedRef.input.toUnpinnedURL());
     auto flakeRooted = RootedPath{root, flakePath.path};
     state.evalFile(flakeRooted, vInfo, true);
 
@@ -657,7 +658,10 @@ LockedFlake lockFlake(
                             auto parent = overriddenSourcePath.path.parent();
                             assert(parent);
                             auto resolved = joinAndCheckCopyable(
-                                state.getOrCreateRoot(overriddenSourcePath.accessor, SourceRootKind::Copyable),
+                                state.getOrCreateRoot(
+                                    overriddenSourcePath.accessor,
+                                    SourceRootKind::Copyable,
+                                    input.ref ? std::optional{input.ref->input.toUnpinnedURL()} : std::nullopt),
                                 *parent,
                                 relStr,
                                 SymlinkResolution::Ancestors,
@@ -690,7 +694,10 @@ LockedFlake lockFlake(
                                `readFlake` site. */
                             auto & parentLoc = nodePaths.at(node);
                             auto fullSubdir = joinAndCheckCopyable(
-                                state.getOrCreateRoot(overriddenSourcePath.accessor, SourceRootKind::Copyable),
+                                state.getOrCreateRoot(
+                                    overriddenSourcePath.accessor,
+                                    SourceRootKind::Copyable,
+                                    input.ref ? std::optional{input.ref->input.toUnpinnedURL()} : std::nullopt),
                                 resolvedPath->path,
                                 ref.subdir,
                                 SymlinkResolution::Ancestors,
@@ -862,7 +869,10 @@ LockedFlake lockFlake(
                                        diagnostic. */
                                     auto & parentLoc = nodePaths.at(node);
                                     auto fullSubdir = joinAndCheckCopyable(
-                                        state.getOrCreateRoot(overriddenSourcePath.accessor, SourceRootKind::Copyable),
+                                        state.getOrCreateRoot(
+                                            overriddenSourcePath.accessor,
+                                            SourceRootKind::Copyable,
+                                            input.ref ? std::optional{input.ref->input.toUnpinnedURL()} : std::nullopt),
                                         resolvedPath->path,
                                         input.ref->subdir,
                                         SymlinkResolution::Ancestors,
