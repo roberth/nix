@@ -35,6 +35,15 @@ enum class SourceRootKind : std::uint8_t {
      * `"${...}"` interpolation copies the specific subpath into
      * the store. Matches Nix's historical behaviour for `/etc/foo`,
      * `/nix/store/X-source` literals, etc.
+     *
+     * Assumed singleton in practice: `EvalState::rootFS` is the
+     * one and only System accessor, so two System paths always
+     * share an accessor and the cheap pointer-identity shortcut
+     * in `toStringEqual` does the work. The semantic is
+     * defined for distinct System accessors (compare abspaths),
+     * but if that branch ever fires it means something has
+     * created a second System accessor — at which point it's
+     * worth asking whether they should have shared one.
      */
     System,
 
