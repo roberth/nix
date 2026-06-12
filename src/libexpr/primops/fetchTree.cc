@@ -193,7 +193,9 @@ void emitTreeAttrs(
     if (lazy)
         attrs.alloc(state.s.outPath, callPos)
             .mkPath(
-                RootedPath{state.getOrCreateRoot(tree.accessor(), SourceRootKind::Copyable), CanonPath::root},
+                RootedPath{
+                    state.getOrCreateRoot(tree.accessor(), SourceRootKind::Copyable, input.toUnpinnedURL()),
+                    CanonPath::root},
                 state.mem);
     else
         state.mkStorePathString(tree.storePath.value(), attrs.alloc(state.s.outPath, callPos));

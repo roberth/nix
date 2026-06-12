@@ -177,4 +177,39 @@ TEST_F(SourceRootResolveSymlinksTest, GetOrCreateRootKeysOnAccessorAndKind)
     EXPECT_EQ(&*copyable, &*copyable2) << "same (accessor, kind) must memoise";
 }
 
+/* First admission with an `unpinnedId` stamps it on the cached
+   SourceRoot — the producer's identity claim is captured. */
+TEST_F(SourceRootResolveSymlinksTest, GetOrCreateRootStampsUnpinnedIdOnFirstAdmission)
+{
+    auto accessor = makeFixture().cast<SourceAccessor>();
+    auto root = state.getOrCreateRoot(accessor, SourceRootKind::Copyable, "github:NixOS/nixpkgs");
+    ASSERT_TRUE(root->unpinnedId.has_value());
+    EXPECT_EQ(*root->unpinnedId, "github:NixOS/nixpkgs");
+}
+
+/* The first admission's id is sticky. Subsequent admissions returning
+   the cached SourceRoot keep the original id even if the caller passes
+   a different one. Two producers stamping the same (accessor, kind)
+   with different URLs is not expected in practice; if it happens, the
+   first one wins deterministically. */
+TEST_F(SourceRootResolveSymlinksTest, GetOrCreateRootPreservesFirstIdOnReadmission)
+{
+    auto accessor = makeFixture().cast<SourceAccessor>();
+    auto first = state.getOrCreateRoot(accessor, SourceRootKind::Copyable, "github:NixOS/nixpkgs");
+    auto second = state.getOrCreateRoot(accessor, SourceRootKind::Copyable, "git+https://example.com/other");
+    EXPECT_EQ(&*first, &*second);
+    ASSERT_TRUE(second->unpinnedId.has_value());
+    EXPECT_EQ(*second->unpinnedId, "github:NixOS/nixpkgs");
+}
+
+/* `rootFSRoot` is stamped with the `path:` scheme so System-kinded
+   paths get an identity in the eval cache. Identical across runs
+   for any given EvalState, so cache lookups against rootFS-rooted
+   path values are stable. */
+TEST_F(SourceRootResolveSymlinksTest, RootFSRootStampedWithPathScheme)
+{
+    ASSERT_TRUE(state.rootFSRoot->unpinnedId.has_value());
+    EXPECT_EQ(*state.rootFSRoot->unpinnedId, "path:");
+}
+
 } // namespace nix

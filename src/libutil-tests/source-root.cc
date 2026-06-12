@@ -132,4 +132,47 @@ TEST(RootedPathOrder, equalGivesEquivalent)
     EXPECT_EQ((RootedPath{r1} <=> RootedPath{r2}), std::strong_ordering::equal);
 }
 
+/* =================================================================
+ * unpinnedId — the per-source identifier used by the eval cache as a
+ * SourceRoot identity that is stable across versions of the same
+ * source-of-truth. Populated by producers (fetchTree, mountInput) with
+ * `Input::toUnpinnedURL`. Internal-kinded roots and producers that
+ * don't know an identity leave it as `nullopt`.
+ *
+ * Important: the identifier is metadata. Equality of RootedPath stays
+ * structural on (path, kind, accessor) only; two SourceRoots with the
+ * same accessor+kind but different `unpinnedId` still compare equal.
+ * Otherwise a producer accidentally setting nullopt for an already-
+ * registered accessor would silently shadow the registered identity.
+ * =================================================================
+ */
+
+TEST(SourceRootUnpinnedId, defaultsToNullopt)
+{
+    auto acc = mkAcc();
+    auto r = SourceRoot::make(acc, k0);
+    EXPECT_EQ(r->unpinnedId, std::nullopt);
+}
+
+TEST(SourceRootUnpinnedId, setViaFactory)
+{
+    auto acc = mkAcc();
+    auto r = SourceRoot::make(acc, k0, "github:NixOS/nixpkgs");
+    ASSERT_TRUE(r->unpinnedId.has_value());
+    EXPECT_EQ(*r->unpinnedId, "github:NixOS/nixpkgs");
+}
+
+TEST(SourceRootUnpinnedId, notPartOfRootedPathEquality)
+{
+    /* Two roots wrapping the same (accessor, kind) but with distinct
+       unpinnedIds — including a "stamped vs. unstamped" pair — must
+       still compare equal as RootedPaths. */
+    auto acc = mkAcc();
+    auto rUnstamped = SourceRoot::make(acc, k0);
+    auto rStampedA = SourceRoot::make(acc, k0, "github:NixOS/nixpkgs");
+    auto rStampedB = SourceRoot::make(acc, k0, "git+https://example.com/foo");
+    EXPECT_EQ(RootedPath{rUnstamped}, RootedPath{rStampedA});
+    EXPECT_EQ(RootedPath{rStampedA}, RootedPath{rStampedB});
+}
+
 } // namespace nix
