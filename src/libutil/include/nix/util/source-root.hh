@@ -15,6 +15,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
 
 #include "nix/util/canon-path.hh"
 #include "nix/util/ref.hh"
@@ -46,6 +48,24 @@ struct SourceRoot : std::enable_shared_from_this<SourceRoot>
     ref<SourceAccessor> accessor;
     SourceRootKind kind;
 
+    /* Identifier for the source-of-truth backing this root, stable
+       across versions of the same source (e.g. `github:NixOS/nixpkgs`
+       regardless of locked rev). Set by producers that know what the
+       accessor represents — `fetchTree` via `Input::toUnpinnedURL`,
+       `EvalState`'s constructor for `rootFSRoot` (System), etc. Used
+       as the SourceRoot identity in the eval cache's path-value
+       identifiers.
+
+       `nullopt` means "no identity known" — Internal-kinded helpers
+       (corepkgs, derivation-internal.nix) and any producer that
+       doesn't know an Input. Not part of equality (see
+       `RootedPath::operator==`): the identifier is metadata, not
+       identity. Two SourceRoots wrapping the same (accessor, kind)
+       with different `unpinnedId`s are interchangeable, and an
+       accidentally-unstamped duplicate doesn't shadow the stamped
+       sibling. */
+    std::optional<std::string> unpinnedId;
+
     /* Default construction is forbidden — every SourceRoot must
        name an admission site that chose a kind. libutil cannot pick
        a default because it doesn't know what the values mean. */
@@ -67,9 +87,11 @@ struct SourceRoot : std::enable_shared_from_this<SourceRoot>
      * compile time: every `SourceRoot` exists inside a
      * `shared_ptr` from the moment it's born.
      */
-    static ref<SourceRoot> make(ref<SourceAccessor> accessor, SourceRootKind kind)
+    static ref<SourceRoot>
+    make(ref<SourceAccessor> accessor, SourceRootKind kind, std::optional<std::string> unpinnedId = std::nullopt)
     {
-        return ref<SourceRoot>(std::make_shared<SourceRoot>(Private{}, std::move(accessor), kind));
+        return ref<SourceRoot>(
+            std::make_shared<SourceRoot>(Private{}, std::move(accessor), kind, std::move(unpinnedId)));
     }
 
 private:
@@ -87,9 +109,10 @@ public:
     /* Public for `std::make_shared`'s sake (it needs an
        accessible constructor on the type it allocates); the
        `Private` token gates real callers. */
-    SourceRoot(Private, ref<SourceAccessor> accessor, SourceRootKind kind)
+    SourceRoot(Private, ref<SourceAccessor> accessor, SourceRootKind kind, std::optional<std::string> unpinnedId)
         : accessor(std::move(accessor))
         , kind(kind)
+        , unpinnedId(std::move(unpinnedId))
     {
     }
 };

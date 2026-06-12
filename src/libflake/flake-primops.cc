@@ -88,7 +88,7 @@ PrimOp getFlake(const Settings & settings)
                            storeFS), so the wrapper applies
                            StrictAccessorBoundary. */
                         subdir = nix::flake::joinAndCheckCopyable(
-                            state.getOrCreateRoot(mountRef, SourceRootKind::Copyable),
+                            state.getOrCreateRoot(mountRef, SourceRootKind::Copyable, flakeRef.input.toUnpinnedURL()),
                             subdir,
                             flakeRef.subdir,
                             SymlinkResolution::Ancestors,

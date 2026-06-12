@@ -40,7 +40,8 @@ SourcePath EvalState::storePath(const StorePath & path)
     return {rootFS, CanonPath{store->printStorePath(path)}};
 }
 
-ref<SourceRoot> EvalState::getOrCreateRoot(ref<SourceAccessor> accessor, SourceRootKind kind)
+ref<SourceRoot>
+EvalState::getOrCreateRoot(ref<SourceAccessor> accessor, SourceRootKind kind, std::optional<std::string> unpinnedId)
 {
     auto key = std::pair{&*accessor, kind};
     /* Hot path: read-only lookup. Each (accessor, kind) is admitted
@@ -54,8 +55,10 @@ ref<SourceRoot> EvalState::getOrCreateRoot(ref<SourceAccessor> accessor, SourceR
     /* Miss: allocate, insert. Race-tolerant — each (accessor, kind)
        maps to a single SourceRoot value, so concurrent inserts
        produce structurally identical entries; the loser's allocation
-       is dropped via the visitor. */
-    ref<SourceRoot> result = SourceRoot::make(accessor, kind);
+       is dropped via the visitor. The first admission's `unpinnedId`
+       wins; a later call with a different id (shouldn't happen in
+       practice) is silently ignored. */
+    ref<SourceRoot> result = SourceRoot::make(accessor, kind, std::move(unpinnedId));
     rootCache->emplace_or_visit(key, result, [&](const auto & kv) { result = kv.second; });
     return result;
 }
