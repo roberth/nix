@@ -29,7 +29,7 @@ static void BM_EvalManyBuiltinsMatchSameRegex(benchmark::State & state)
 
         auto stPtr = std::make_shared<EvalState>(LookupPath{}, store, fetchSettings, evalSettings, nullptr);
         auto & st = *stPtr;
-        Expr * expr = st.parseExprFromString(std::string(exprStr), st.rootPath(CanonPath::root));
+        Expr * expr = st.parseExprFromString(std::string(exprStr), st.rootedPath(CanonPath::root));
 
         Value v;
 
