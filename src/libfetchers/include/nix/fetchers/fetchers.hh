@@ -65,6 +65,21 @@ public:
 
     std::string toURLString(const StringMap & extraQuery = {}) const;
 
+    /**
+     * Like `toURLString`, but with version-resolution-output attributes
+     * stripped: `rev`, `revCount`, `narHash`, `lastModified`, `__final`.
+     *
+     * Two `Input`s that resolve to different versions of the same
+     * source-of-truth (e.g. `nixpkgs` at two different revs) produce the
+     * same unpinned URL. Used as the SourceRoot identifier so the eval
+     * cache can share entries across versions of the same source.
+     *
+     * Fields like `ref` are *not* stripped — they identify the
+     * specification, not its resolution output, and two `nixpkgs` inputs
+     * pinned to different branches name different sources.
+     */
+    std::string toUnpinnedURL() const;
+
     std::string to_string() const;
 
     Attrs toAttrs() const;
