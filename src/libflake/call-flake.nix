@@ -58,7 +58,9 @@ let
 
       outPath =
         if !hasOverride && isRelative then
-          parentNode.outPath + (if node.locked.path == "" then "" else "/" + node.locked.path)
+          parentNode.outPath
+          + (if node.locked.path == "" then "" else "/" + node.locked.path)
+          + (if subdir == "" then "" else "/" + subdir)
         else
           sourceInfo.outPath + (if subdir == "" then "" else "/" + subdir);
 

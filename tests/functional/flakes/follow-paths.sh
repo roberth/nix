@@ -431,3 +431,53 @@ cat <<EOF > "$flakeFollowsB"/flake.nix
 EOF
 
 expectStderr 1 nix flake lock "$flakeFollowsA" --recreate-lock-file | grepQuiet "flake input has both a flake reference and a follows attribute"
+
+# Relative-input + ?dir= subdir: the ?dir attribute names a path under
+# the relative input's own subdir, not under the parent flake's
+# accessor root. Layout:
+#
+#   flakeFollowsA/
+#     flake.nix                  -- imports `path:./sub?dir=inner`
+#     sub/
+#       inner/flake.nix          -- the actual input flake
+#     inner/                     -- decoy: bare `inner` under the
+#                                  accessor root; ?dir composition
+#                                  must NOT find this one
+#
+# Pre-fix, readFlake walked `resolvedRef.subdir` from accessor root
+# and would land on /inner (or fail with "flake.nix does not exist"
+# if /inner has none) instead of /sub/inner. The decoy `/inner` makes
+# the misroute observable as wrong-flake-loaded rather than silent
+# "not found".
+mkdir -p "$flakeFollowsA/sub/inner"
+mkdir -p "$flakeFollowsA/inner"
+cat > "$flakeFollowsA/sub/inner/flake.nix" <<EOF
+{
+    description = "correct subdir-inner";
+    outputs = { ... }: { tag = "correct"; };
+}
+EOF
+cat > "$flakeFollowsA/inner/flake.nix" <<EOF
+{
+    description = "decoy at accessor root";
+    outputs = { ... }: { tag = "decoy"; };
+}
+EOF
+cat > "$flakeFollowsA"/flake.nix <<EOF
+{
+    description = "Flake A";
+    inputs = {
+        sub = {
+            url = "path:./sub?dir=inner";
+        };
+    };
+    outputs = { sub, ... }: { tag = sub.tag; };
+}
+EOF
+git -C "$flakeFollowsA" add flake.nix sub/inner/flake.nix inner/flake.nix
+nix flake lock "$flakeFollowsA"
+[[ $(nix eval --raw "$flakeFollowsA"#tag) = "correct" ]]
+# Leftover sub/ and inner/ dirs are harmless: subsequent test blocks
+# rewrite flake.nix from scratch and re-lock, which drops the `sub`
+# input from the lockfile; nothing else references the leftover paths.
+
