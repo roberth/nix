@@ -331,6 +331,8 @@ EvalState::EvalState(
     , lookupPathResolved(make_ref<decltype(lookupPathResolved)::element_type>())
     , regexCache(makeRegexCache())
     , rootCache(make_ref<decltype(rootCache)::element_type>())
+    , sourceUnpinnedIds(make_ref<decltype(sourceUnpinnedIds)::element_type>())
+    , sourceUnpinnedIdCounters(make_ref<decltype(sourceUnpinnedIdCounters)::element_type>())
 #if NIX_USE_BOEHMGC
     , baseEnvP(std::allocate_shared<Env *>(traceable_allocator<Env *>(), &mem.allocEnv(BASE_ENV_SIZE)))
     , baseEnv(**baseEnvP)

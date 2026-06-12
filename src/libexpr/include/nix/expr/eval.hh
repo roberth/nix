@@ -10,6 +10,7 @@
 #include "nix/expr/symbol-table.hh"
 #include "nix/util/configuration.hh"
 #include "nix/util/experimental-features.hh"
+#include "nix/util/sync.hh"
 #include "nix/util/position.hh"
 #include "nix/util/pos-table.hh"
 #include "nix/util/source-accessor.hh"
@@ -640,7 +641,35 @@ private:
      */
     const ref<boost::concurrent_flat_map<std::pair<SourceAccessor *, SourceRootKind>, ref<SourceRoot>>> rootCache;
 
+    /**
+     * Backing maps for `allocSourceUnpinnedId`. Per-EvalState
+     * in-memory; identifiers are not stable across processes (and
+     * don't need to be — replay re-derives them by re-running the
+     * same eval).
+     *
+     * `sourceUnpinnedIds` memoises the `(url, accessor) -> identifier`
+     * decision so two calls for the same root return the same id.
+     * `sourceUnpinnedIdCounters` allocates the next `n` per URL —
+     * `Sync<map>` because the increment-and-emit is one atomic step.
+     *
+     * The accessor pointer in the key is sound for the same reason
+     * `rootCache` is sound: the SourceRoot that holds the accessor
+     * is itself pinned in `rootCache` for the eval's lifetime.
+     */
+    const ref<boost::concurrent_flat_map<std::pair<std::string, SourceAccessor *>, std::string>> sourceUnpinnedIds;
+    const ref<Sync<std::map<std::string, size_t>>> sourceUnpinnedIdCounters;
+
 public:
+
+    /**
+     * Turn a `SourceRoot` into the identifier the eval cache uses to
+     * key path values. Returns `nullopt` for roots without a stamped
+     * `unpinnedId` (Internal helpers, throwaway probes — they bypass
+     * identifier-keyed caching). For stamped roots returns
+     * `"<url>#<n>"` where `n` is a per-URL counter scoped to this
+     * EvalState; the `#<n>` is always emitted.
+     */
+    std::optional<std::string> allocSourceUnpinnedId(SourceRoot & root);
 
     /**
      * @param lookupPath     Only used during construction.

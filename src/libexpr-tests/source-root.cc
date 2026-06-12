@@ -212,4 +212,77 @@ TEST_F(SourceRootResolveSymlinksTest, RootFSRootStampedWithPathScheme)
     EXPECT_EQ(*state.rootFSRoot->unpinnedId, "path:");
 }
 
+/* =================================================================
+ * allocSourceUnpinnedId — turns a `SourceRoot` into the identifier
+ * the eval cache addresses path values by. Shape is always
+ * `<url>#<n>`, where `n` is a per-URL counter scoped to this
+ * EvalState. The `#<n>` is never omitted — two distinct accessors
+ * sharing a URL get distinct identifiers (e.g. two fetches of the
+ * same flake within one eval).
+ *
+ * Roots without an `unpinnedId` (Internal-kinded helpers, throwaway
+ * probes) return `nullopt` — they bypass identifier-keyed caching.
+ * =================================================================
+ */
+
+TEST_F(SourceRootResolveSymlinksTest, AllocSourceUnpinnedIdNulloptWhenRootHasNoId)
+{
+    auto accessor = makeFixture().cast<SourceAccessor>();
+    auto root = SourceRoot::make(accessor, SourceRootKind::Copyable);
+    ASSERT_FALSE(root->unpinnedId.has_value());
+    EXPECT_EQ(state.allocSourceUnpinnedId(*root), std::nullopt);
+}
+
+TEST_F(SourceRootResolveSymlinksTest, AllocSourceUnpinnedIdShapeAlwaysHasCounter)
+{
+    auto accessor = makeFixture().cast<SourceAccessor>();
+    auto root = SourceRoot::make(accessor, SourceRootKind::Copyable, "github:NixOS/nixpkgs");
+    auto id = state.allocSourceUnpinnedId(*root);
+    ASSERT_TRUE(id.has_value());
+    /* `#0` (not `<url>` alone): two-accessor pairs sharing a URL must
+       not collide, so the counter is always emitted. */
+    EXPECT_EQ(*id, "github:NixOS/nixpkgs#0");
+}
+
+TEST_F(SourceRootResolveSymlinksTest, AllocSourceUnpinnedIdStableForSameRoot)
+{
+    auto accessor = makeFixture().cast<SourceAccessor>();
+    auto root = SourceRoot::make(accessor, SourceRootKind::Copyable, "github:NixOS/nixpkgs");
+    auto first = state.allocSourceUnpinnedId(*root);
+    auto second = state.allocSourceUnpinnedId(*root);
+    EXPECT_EQ(first, second);
+}
+
+TEST_F(SourceRootResolveSymlinksTest, AllocSourceUnpinnedIdCounterPerUrl)
+{
+    /* Two distinct accessors stamped with the same URL get distinct
+       identifiers — `#0`, `#1`. */
+    auto accA = makeFixture().cast<SourceAccessor>();
+    auto accB = makeFixture().cast<SourceAccessor>();
+    auto rootA = SourceRoot::make(accA, SourceRootKind::Copyable, "github:NixOS/nixpkgs");
+    auto rootB = SourceRoot::make(accB, SourceRootKind::Copyable, "github:NixOS/nixpkgs");
+    auto idA = state.allocSourceUnpinnedId(*rootA);
+    auto idB = state.allocSourceUnpinnedId(*rootB);
+    ASSERT_TRUE(idA.has_value());
+    ASSERT_TRUE(idB.has_value());
+    EXPECT_EQ(*idA, "github:NixOS/nixpkgs#0");
+    EXPECT_EQ(*idB, "github:NixOS/nixpkgs#1");
+}
+
+TEST_F(SourceRootResolveSymlinksTest, AllocSourceUnpinnedIdCountersAreIndependentPerUrl)
+{
+    /* Counters are scoped per URL — the second URL starts at #0, not
+       continuing the first URL's counter. */
+    auto accA = makeFixture().cast<SourceAccessor>();
+    auto accB = makeFixture().cast<SourceAccessor>();
+    auto rootA = SourceRoot::make(accA, SourceRootKind::Copyable, "github:NixOS/nixpkgs");
+    auto rootB = SourceRoot::make(accB, SourceRootKind::Copyable, "git+https://example.com/other");
+    auto idA = state.allocSourceUnpinnedId(*rootA);
+    auto idB = state.allocSourceUnpinnedId(*rootB);
+    ASSERT_TRUE(idA.has_value());
+    ASSERT_TRUE(idB.has_value());
+    EXPECT_EQ(*idA, "github:NixOS/nixpkgs#0");
+    EXPECT_EQ(*idB, "git+https://example.com/other#0");
+}
+
 } // namespace nix

@@ -40,6 +40,36 @@ SourcePath EvalState::storePath(const StorePath & path)
     return {rootFS, CanonPath{store->printStorePath(path)}};
 }
 
+std::optional<std::string> EvalState::allocSourceUnpinnedId(SourceRoot & root)
+{
+    if (!root.unpinnedId)
+        return std::nullopt;
+    const auto & url = *root.unpinnedId;
+    auto key = std::pair{url, &*root.accessor};
+
+    /* Hot path: same (url, accessor) already memoised → return the
+       stored identifier. */
+    std::optional<std::string> hit;
+    sourceUnpinnedIds->cvisit(key, [&](const auto & kv) { hit = kv.second; });
+    if (hit)
+        return *hit;
+
+    /* Miss: allocate the next counter for this URL atomically, format
+       `<url>#<n>`, and insert. `Sync<map>` for the counter — the
+       fetch-and-increment is one critical section. The visitor on
+       the `concurrent_flat_map::emplace_or_visit` covers the race
+       where two threads miss the lookup for the same key: the loser
+       drops its allocation and adopts the winner's identifier. */
+    size_t n;
+    {
+        auto counters(sourceUnpinnedIdCounters->lock());
+        n = (*counters)[url]++;
+    }
+    std::string id = url + "#" + std::to_string(n);
+    sourceUnpinnedIds->emplace_or_visit(key, id, [&](const auto & kv) { id = kv.second; });
+    return id;
+}
+
 ref<SourceRoot>
 EvalState::getOrCreateRoot(ref<SourceAccessor> accessor, SourceRootKind kind, std::optional<std::string> unpinnedId)
 {
