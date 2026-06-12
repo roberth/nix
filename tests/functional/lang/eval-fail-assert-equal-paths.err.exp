@@ -5,4 +5,4 @@ error:
              | ^
             2| throw "unreachable"
 
-       error: path '/pwd/lang/foo' is not equal to path '/pwd/lang/bar'
+       error: path '/pwd/lang/foo' is not equal to path '/pwd/lang/bar' (different subpaths)

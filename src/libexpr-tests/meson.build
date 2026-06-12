@@ -4,7 +4,7 @@ project(
   version : files('.version'),
   default_options : [
     'cpp_std=c++23',
-    # TODO(Qyriad): increase the warning level
+    #TODO(Qyriad) : increase the warning level
     'warning_level=1',
     'errorlogs=true', # Please print logs for tests that fail
   ],
@@ -53,6 +53,7 @@ sources = files(
   'derived-path.cc',
   'error_traces.cc',
   'eval.cc',
+  'is-path-equivalent.cc',
   'json.cc',
   'lazy-fetcher-attr.cc',
   'lock-input.cc',
@@ -61,6 +62,8 @@ sources = files(
   'nix_api_external.cc',
   'nix_api_value.cc',
   'nix_api_value_internal.cc',
+  'path-equality.cc',
+  'path-equivalent.cc',
   'primops.cc',
   'search-path.cc',
   'source-root.cc',
@@ -79,7 +82,7 @@ this_exe = executable(
   config_priv_h,
   dependencies : deps_private_subproject + deps_private + deps_other,
   include_directories : include_dirs,
-  # TODO: -lrapidcheck, see ../libutil-support/build.meson
+  #TODO : -lrapidcheck, see../ libutil - support / build.meson
   link_args : linker_export_flags + [ '-lrapidcheck' ],
   install : true,
   cpp_pch : do_pch ? [ 'pch/precompiled-headers.hh' ] : [],
@@ -96,7 +99,7 @@ test(
   protocol : 'gtest',
 )
 
-# Build benchmarks if enabled
+#Build benchmarks if enabled
 if get_option('benchmarks')
   gbenchmark = dependency('benchmark', required : true)
 
