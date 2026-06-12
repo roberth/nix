@@ -40,6 +40,7 @@ suites += {
     'type-error-fallback.sh',
     'lazy-paths-submodule.sh',
     'lint-fetch-whole-source-to-store.sh',
+    'generic-closure-path-equivalent.sh',
   ],
   'workdir' : meson.current_source_dir(),
 }

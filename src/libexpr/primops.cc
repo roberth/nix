@@ -817,6 +817,219 @@ struct CompareValues
 
 typedef std::list<Value *, gc_allocator<Value *>> ValueList;
 
+/* `pathToStringEqual` and `toStringEqual` live on
+   EvalState in eval.cc — both are needed from both eval.cc
+   (eqValues nPath) and here (isPathEquivalent + the cross-type
+   scan in PathEquivalentDedup). */
+
+/* `builtins.isPathEquivalent a b`. Thin wrapper around
+   `EvalState::toStringEqual`, which carries the unified
+   semantic (`toString a == toString b` for the four
+   string/path × string/path combinations, computed lazily). */
+static void prim_isPathEquivalent(EvalState & state, const PosIdx pos, Value ** args, Value & v)
+{
+    v.mkBool(state.toStringEqual(*args[0], *args[1], pos, "while evaluating arguments to builtins.isPathEquivalent"));
+}
+
+static RegisterPrimOp primop_isPathEquivalent({
+    .name = "__isPathEquivalent",
+    .args = {"a", "b"},
+    .doc = R"(
+      Return `true` if *a* and *b* are equivalent under the
+      path-aware `toString` semantic, `false` otherwise.
+
+      Defined for path-and-path, string-and-string, and the two
+      cross-type pairings:
+
+      - Same-type comparisons use the same equality as `==`.
+      - For path-and-string (in either order), `a` and `b` are
+        equivalent iff calling `toString` on the path would
+        yield the string — but computed without actually
+        materialising the path's source tree (so callers can
+        stay lazy under `lint-fetch-whole-source-to-store`).
+
+      Anything else (an int, an attrset, etc.) is an error.
+
+      The builtin's presence is itself the marker callers probe
+      to decide whether to use this equivalence in place of a
+      `toString`-based dedup:
+
+      ```nix
+      if builtins ? isPathEquivalent
+      then ...use builtins.isPathEquivalent / genericClosure pathEquivalent...
+      else ...fallback for older Nix...
+      ```
+    )",
+    .impl = prim_isPathEquivalent,
+});
+
+/* Dedup bookkeeping for `genericClosure` with `pathEquivalent = true`.
+
+   Three layers:
+
+   - `pathMap` keys on (equivClassId, kind, CanonPath). The
+     equivClassId is *not* `SourceAccessor::number` (which is
+     identity); it's a per-invocation equivalence-class id
+     assigned by `classOfAccessor` so two accessors that would
+     produce the same `toString` map to the same id. This makes
+     `(id, kind, CanonPath)` a correct key for toString-
+     equivalent dedup, including across distinct accessors:
+       * System: all System accessors share one id (toString
+         doesn't depend on which accessor).
+       * Copyable: classes are NAR-equivalence groups. A new
+         accessor is classified by `contentsEqual` against
+         existing class representatives.
+       * Internal: by pointer (toString is undefined; pointer
+         identity is the only well-defined relation, and cross-
+         type compares against the string side will throw via
+         `pathToStringEqual`'s Internal arm if it ever
+         fires).
+
+   - `stringMap` keys on the string content, lex compare.
+
+   - `otherMap` falls through to the regular `CompareValues` for
+     any key type that isn't path or string. Same semantics as the
+     non-pathEquivalent code path — including the existing "throw
+     on int×attrset" failure mode.
+
+   The cross-type check is a linear scan of the *other* map on each
+   insert (O(n×m) worst case). Module-system dedup is overwhelmingly
+   single-type and single-accessor in practice, so the bucket hit
+   resolves most inserts cheaply. Copyable classification calls
+   `contentsEqual` on the lazy accessors when establishing a new
+   class — bounded by the number of distinct fetched trees in
+   the closure, typically small. The future
+   `SourceRoot`-store-path-memoise TODO would let us key
+   directly on the cached storePath string and skip the
+   classification scan entirely. */
+struct PathEquivalentDedup
+{
+    EvalState & state;
+
+    /* Per-invocation equivalence-class assignment.
+       `classOf` caches the id for each accessor pointer
+       we've seen; `copyableReps` holds a representative
+       accessor for each Copyable class so new accessors can
+       be classified against them via `contentsEqual`.
+       `systemClassId` is the single id shared by all System
+       accessors (assigned on first encounter). */
+    std::unordered_map<const SourceAccessor *, size_t> classOf;
+    std::vector<ref<SourceAccessor>> copyableReps;
+    std::optional<size_t> systemClassId;
+    size_t nextClassId = 0;
+
+    std::map<std::tuple<size_t, SourceRootKind, CanonPath>, Value *> pathMap;
+    std::map<std::string, Value *, std::less<>> stringMap;
+    CompareValues cmp;
+    std::map<Value *, Value *, CompareValues> otherMap;
+
+    PathEquivalentDedup(EvalState & state, CompareValues cmp)
+        : state(state)
+        , cmp(cmp)
+        , otherMap(cmp)
+    {
+    }
+
+    /* Look up or assign the equivalence-class id for `root`.
+       Two accessors share an id iff their toStrings would
+       agree at the root. */
+    size_t classOfAccessor(const SourceRoot & root)
+    {
+        auto * raw = &*root.accessor;
+        if (auto it = classOf.find(raw); it != classOf.end())
+            return it->second;
+
+        size_t id;
+        switch (root.kind) {
+        case SourceRootKind::System:
+            if (!systemClassId)
+                systemClassId = nextClassId++;
+            id = *systemClassId;
+            break;
+        case SourceRootKind::Copyable: {
+            /* Scan existing Copyable class reps for a NAR-
+               equal match. */
+            for (size_t i = 0; i < copyableReps.size(); ++i) {
+                if (contentsEqual(root.accessor, copyableReps[i])) {
+                    auto repId = classOf.at(&*copyableReps[i]);
+                    classOf[raw] = repId;
+                    return repId;
+                }
+            }
+            /* No match — new class. */
+            id = nextClassId++;
+            copyableReps.push_back(root.accessor);
+            break;
+        }
+        case SourceRootKind::Internal:
+            /* Identity-class per pointer. toString is undefined
+               for Internal, so we can't claim equivalence
+               across distinct Internal accessors — but identity
+               is still well-defined and lets same-accessor
+               Internal paths dedup. Cross-type compares against
+               the string side will throw inside
+               pathToStringEqual if they ever fire. */
+            id = nextClassId++;
+            break;
+        }
+        classOf[raw] = id;
+        return id;
+    }
+
+    /* Returns true if this is the first sighting of `key` (and
+       caller should append `elem` to the result list); false if
+       it duplicates an earlier-seen key. Caller must have already
+       forced `key`. */
+    bool insert(Value * key, Value * elem)
+    {
+// We dispatch on a couple of arms and fall through to otherMap for the rest.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wswitch-enum"
+        switch (key->type()) {
+        case nPath: {
+            auto rp = key->rootedPath();
+            auto id = classOfAccessor(*rp.root);
+            auto pk = std::tuple(id, rp.root->kind, rp.path);
+            auto [it, ins] = pathMap.try_emplace(pk, elem);
+            if (!ins)
+                return false;
+            for (auto & [s, _] : stringMap) {
+                if (state.pathToStringEqual(key->path(), rp.root->kind, s)) {
+                    pathMap.erase(it);
+                    return false;
+                }
+            }
+            return true;
+        }
+        case nString: {
+            std::string s(key->string_view());
+            auto [it, ins] = stringMap.try_emplace(s, elem);
+            if (!ins)
+                return false;
+            for (auto & [_, pKey] : pathMap) {
+                /* Re-derive the path key from the stored
+                   element (we kept the element pointer for the
+                   result list; the key Value lives inside its
+                   `key` attribute). */
+                auto * keyAttr = pKey->attrs()->get(state.s.key);
+                assert(keyAttr);
+                auto rp = keyAttr->value->rootedPath();
+                if (state.pathToStringEqual(keyAttr->value->path(), rp.root->kind, s)) {
+                    stringMap.erase(it);
+                    return false;
+                }
+            }
+            return true;
+        }
+        default: {
+            auto [_, ins] = otherMap.try_emplace(key, elem);
+            return ins;
+        }
+        }
+#pragma GCC diagnostic pop
+    }
+};
+
 static void prim_genericClosure(EvalState & state, const PosIdx pos, Value ** args, Value & v)
 {
     state.forceAttrs(*args[0], noPos, "while evaluating the first argument passed to builtins.genericClosure");
@@ -845,6 +1058,16 @@ static void prim_genericClosure(EvalState & state, const PosIdx pos, Value ** ar
     state.forceFunction(
         *op->value, noPos, "while evaluating the 'operator' attribute passed as argument to builtins.genericClosure");
 
+    /* Optional opt-in: cross-type path↔string dedup based on
+       semantic `toString`. Probed by callers via
+       `builtins.hasFeature "genericClosure-pathEquivalent"`. */
+    bool pathEquivalent = false;
+    if (auto pe = args[0]->attrs()->get(state.symbols.create("pathEquivalent"))) {
+        state.forceValue(*pe->value, noPos);
+        pathEquivalent = state.forceBool(
+            *pe->value, noPos, "while evaluating the 'pathEquivalent' attribute passed to builtins.genericClosure");
+    }
+
     /* Construct the closure by applying the operator to elements of
        `workSet', adding the result to `workSet', continuing until
        no new elements are found. */
@@ -852,6 +1075,7 @@ static void prim_genericClosure(EvalState & state, const PosIdx pos, Value ** ar
     // Track which element each key came from
     auto cmp = CompareValues(state, noPos, "");
     std::map<Value *, Value *, decltype(cmp)> keyToElem(cmp);
+    PathEquivalentDedup pedup(state, cmp);
     while (!workSet.empty()) {
         Value * e = *(workSet.begin());
         workSet.pop_front();
@@ -873,13 +1097,20 @@ static void prim_genericClosure(EvalState & state, const PosIdx pos, Value ** ar
         state.forceValue(*key->value, noPos);
 
         try {
-            auto [it, inserted] = keyToElem.insert({key->value, e});
+            bool inserted;
+            if (pathEquivalent) {
+                inserted = pedup.insert(key->value, e);
+            } else {
+                auto [it, ins] = keyToElem.insert({key->value, e});
+                inserted = ins;
+            }
             if (!inserted)
                 continue;
         } catch (Error & err) {
             // Try to find which element we're comparing against
             Value * otherElem = nullptr;
-            for (auto & [otherKey, elem] : keyToElem) {
+            auto & scanMap = pathEquivalent ? pedup.otherMap : keyToElem;
+            for (auto & [otherKey, elem] : scanMap) {
                 try {
                     cmp(key->value, otherKey);
                 } catch (Error &) {

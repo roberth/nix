@@ -3044,22 +3044,24 @@ void EvalState::assertEqValues(Value & v1, Value & v2, const PosIdx pos, std::st
         }
         return;
 
-    case nPath:
-        if (&*v1.pathRoot()->accessor != &*v2.pathRoot()->accessor) {
-            error<AssertionError>(
-                "path '%s' is not equal to path '%s' because their accessors are different",
-                ValuePrinter(*this, v1, errorPrintOptions),
-                ValuePrinter(*this, v2, errorPrintOptions))
-                .debugThrow();
-        }
-        if (v1.pathStrView() != v2.pathStrView()) {
-            error<AssertionError>(
-                "path '%s' is not equal to path '%s'",
-                ValuePrinter(*this, v1, errorPrintOptions),
-                ValuePrinter(*this, v2, errorPrintOptions))
-                .debugThrow();
-        }
-        return;
+    case nPath: {
+        /* assertEqValues is only called after eqValues returned
+           false; eqValues' nPath case delegates to
+           toStringEqual, so we already know the two paths
+           are not toString-equivalent. Surface a coarse reason
+           — subpath mismatch vs root mismatch — that covers the
+           common cases without trying to reproduce the full
+           dispatch. A structural diff is out of scope. */
+        auto rp1 = v1.rootedPath();
+        auto rp2 = v2.rootedPath();
+        const char * reason = rp1.path != rp2.path ? "different subpaths" : "different roots";
+        error<AssertionError>(
+            "path '%s' is not equal to path '%s' (%s)",
+            ValuePrinter(*this, v1, errorPrintOptions),
+            ValuePrinter(*this, v2, errorPrintOptions),
+            reason)
+            .debugThrow();
+    }
 
     case nNull:
         return;
@@ -3226,9 +3228,15 @@ bool EvalState::eqValues(Value & v1, Value & v2, const PosIdx pos, std::string_v
         return v1.string_view() == v2.string_view();
 
     case nPath:
-        return
-            // FIXME: compare accessors by their fingerprint.
-            &*v1.pathRoot()->accessor == &*v2.pathRoot()->accessor && v1.pathStrView() == v2.pathStrView();
+        /* Both operands are paths (the cross-type case was
+           refused above). Defer to the unified toString-
+           equivalence engine, which decides via:
+             - cheap pointer + subpath identity, or
+             - eager string reduction for System, or
+             - lazy contents compare for Copyable.
+           Internal paths throw if the cheap shortcut doesn't
+           fire — matching that `toString` is undefined on them. */
+        return toStringEqual(v1, v2, pos, errorCtx);
 
     case nNull:
         return true;
@@ -3284,6 +3292,160 @@ bool EvalState::eqValues(Value & v1, Value & v2, const PosIdx pos, std::string_v
             .withTrace(pos, errorCtx)
             .panic();
     }
+}
+
+bool EvalState::pathToStringEqual(const SourcePath & p, SourceRootKind kind, std::string_view s)
+{
+    switch (kind) {
+    case SourceRootKind::Internal:
+        /* Mirrors coerceToString's Internal arm: an Internal
+           path has no defined toString, so equivalence against
+           any string is undefined too. Throwing surfaces a
+           usage bug; silently returning false would mask it. */
+        error<EvalError>(
+            "cannot compare a path on an internal accessor at '%1%' to the string '%2%' for equivalence",
+            p.accessor->showPath(p.path),
+            s)
+            .debugThrow();
+    case SourceRootKind::System:
+        /* `toString` on a System path is just its abspath. */
+        return p.path.abs() == s;
+    case SourceRootKind::Copyable: {
+        /* `toString` on a Copyable path is
+           `<storeDir>/<storeBase> + p.path.absOrEmpty()`. Cheap
+           rejects on shape and subpath mismatch; otherwise a
+           `contentsEqual` between the lazy tree and the on-disk
+           store path, with `p.path` as the hint discriminator
+           (the hint is purely an optimisation; it never decides
+           the answer). */
+        if (!store->isInStore(s))
+            return false;
+        StorePath storePath{StorePath::dummy};
+        CanonPath subpath{""};
+        try {
+            std::tie(storePath, subpath) = store->toStorePath(s);
+        } catch (BadStorePath &) {
+            /* Right shape (starts with storeDir) but the
+               storeBase isn't a valid store name. Not
+               equivalent. */
+            return false;
+        }
+        if (subpath != p.path)
+            return false;
+        try {
+            auto onDisk = makeFSSourceAccessor(std::filesystem::path{store->printStorePath(storePath)});
+            return contentsEqual(p.accessor, onDisk, p.path);
+        } catch (SystemError &) {
+            /* Store path isn't materialised on disk — we can't
+               confirm equivalence either way, so don't claim
+               it. */
+            return false;
+        }
+    }
+    }
+    unreachable();
+}
+
+/* Mental note for future profiling: this primitive runs every
+   path × path == comparison, which on a moderately large
+   evaluation can be a lot. When two Copyable paths land here
+   they fall through to `contentsEqual`, which walks the trees.
+   For very tight loops (or very large trees) it might be
+   cheaper to compute and cache each tree's would-be store path
+   string once and compare those — exactly what the toString
+   semantic implies, just memoised. Not done yet: contentsEqual
+   plus its fingerprint shortcut is already very fast in the
+   common cases (same accessor pointer; fingerprint hit), and
+   the eval-cache layer typically takes the brunt above us. If a
+   profile ever shows this primitive dominating, that's the
+   knob. */
+bool EvalState::toStringEqual(Value & v1, Value & v2, const PosIdx pos, std::string_view errorCtx)
+{
+    forceValue(v1, pos);
+    forceValue(v2, pos);
+
+    auto isAllowed = [](ValueType t) { return t == nPath || t == nString; };
+    if (!isAllowed(v1.type()) || !isAllowed(v2.type())) {
+        error<EvalError>(
+            "toStringEqual: arguments must be paths or strings, got %1% and %2%", showType(v1), showType(v2))
+            .withTrace(pos, errorCtx)
+            .debugThrow();
+    }
+
+    /* Cheap identity shortcut: identical bytes (for strings),
+       or — for paths — same accessor pointer + same kind + same
+       subpath. The kind check matters: a System path and a
+       Copyable path backed by the same accessor at the same
+       subpath have different toStrings (System gives the
+       abspath, Copyable gives the store-path + subpath). The
+       shortcut also covers Internal × Internal cheaply, which
+       otherwise would throw in the reduction. */
+    if (v1.type() == nString && v2.type() == nString)
+        return v1.string_view() == v2.string_view();
+    if (v1.type() == nPath && v2.type() == nPath) {
+        auto rp1 = v1.rootedPath();
+        auto rp2 = v2.rootedPath();
+        if (rp1.root->kind == rp2.root->kind && &*rp1.root->accessor == &*rp2.root->accessor && rp1.path == rp2.path)
+            return true;
+    }
+
+    /* Reduce each operand to its "eager string" — the literal
+       toString result — if possible. nString uses its bytes; a
+       System path uses its subpath's abspath; a Copyable path
+       stays None (computing the storeHash is what we're
+       avoiding); an Internal path throws.
+
+       The result owns its bytes (string, not string_view).
+       Returning a view into `rp.path.abs()` would dangle once
+       this lambda returns — `rp` is a local `RootedPath` and
+       `abs()` is a reference into its internal storage. */
+    auto eagerOf = [&](Value & v) -> std::optional<std::string> {
+        if (v.type() == nString)
+            return std::string(v.string_view());
+        auto rp = v.rootedPath();
+        switch (rp.root->kind) {
+        case SourceRootKind::System:
+            return rp.path.abs();
+        case SourceRootKind::Copyable:
+            return std::nullopt;
+        case SourceRootKind::Internal:
+            error<EvalError>(
+                "cannot compute toString-equivalence on an internal-accessor path at '%1%'",
+                rp.root->accessor->showPath(rp.path))
+                .withTrace(pos, errorCtx)
+                .debugThrow();
+        }
+        unreachable();
+    };
+
+    auto e1 = eagerOf(v1);
+    auto e2 = eagerOf(v2);
+
+    /* Both reduced to a literal string: a straight bytes
+       compare. Catches String × String, System × System, and
+       String × System. */
+    if (e1 && e2)
+        return *e1 == *e2;
+
+    /* One reduced, one lazy (the lazy side is necessarily a
+       Copyable path). Defer to `pathToStringEqual`. */
+    if (e1) {
+        auto rp2 = v2.rootedPath();
+        return pathToStringEqual(v2.path(), rp2.root->kind, *e1);
+    }
+    if (e2) {
+        auto rp1 = v1.rootedPath();
+        return pathToStringEqual(v1.path(), rp1.root->kind, *e2);
+    }
+
+    /* Both lazy: both Copyable paths. Subpaths must match (else
+       their toStrings differ in the trailing component);
+       contentsEqual decides whether the storeHashes do. */
+    auto p1 = v1.path();
+    auto p2 = v2.path();
+    if (p1.path != p2.path)
+        return false;
+    return contentsEqual(p1.accessor, p2.accessor, p1.path);
 }
 
 bool EvalState::fullGC()
