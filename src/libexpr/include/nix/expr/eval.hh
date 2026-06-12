@@ -1246,6 +1246,43 @@ public:
     bool
     accessorsEquivalent(ref<SourceAccessor> a, ref<SourceAccessor> b, std::optional<CanonPath> hint = std::nullopt);
 
+    /**
+     * Are these two values equivalent under the path-aware
+     * `toString` semantic, i.e. would `toString a == toString b`
+     * have held — but computed without ever invoking `toString`
+     * on a Copyable path (which would hash the whole tree)?
+     *
+     * Defined for the four combinations of `nString` and `nPath`.
+     * The implementation reduces each operand to a "static
+     * string" if possible (nString uses its bytes; nPath with
+     * kind System uses its subpath's abspath); a Copyable nPath
+     * stays lazy and is matched via a structural check on
+     * subpath + `accessorsEquivalent` on the roots. Internal-
+     * kinded paths have no defined toString and throw.
+     *
+     * Backs both `eqValues` for the nPath × nPath case and
+     * `builtins.isPathEquivalent` for the cross-type cases.
+     * Errors on unsupported argument types (int, attrset, etc.).
+     */
+    bool toStringEqual(Value & v1, Value & v2, const PosIdx pos, std::string_view errorCtx);
+
+    /**
+     * Path × store-path-string equivalence: "is the string what
+     * `toString p` would produce?", kind-dispatched on `p`. The
+     * Copyable arm parses the string as a store path with a
+     * trailing subpath, requires the subpath to match `p.path`,
+     * and decides via `treeNarHashes` lookup (cheap when cached)
+     * or a fresh `copyPathToStore` of the accessor root (which
+     * trips `lint-fetch-whole-source-to-store` exactly as
+     * `toString` would have).
+     *
+     * Lower-level than `toStringEqual`: callers that already
+     * have a path Value and a literal string in hand (e.g. the
+     * cross-type dedup scan in `genericClosure`'s pathEquivalent
+     * arm) use this directly to skip the reduction step.
+     */
+    bool pathToStringEqual(const SourcePath & p, SourceRootKind kind, std::string_view s);
+
     bool isFunctor(const Value & fun) const;
 
     void callFunction(Value & fun, std::span<Value * const> args, Value & vRes, const PosIdx pos);
