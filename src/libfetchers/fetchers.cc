@@ -145,6 +145,18 @@ std::string Input::toURLString(const StringMap & extraQuery) const
     return url.to_string();
 }
 
+std::string Input::toUnpinnedURL() const
+{
+    /* Strip version-resolution-output attributes by round-tripping
+       through a copy. `toURL` is computed from the scheme's view of
+       the (filtered) attrs, so the URL the scheme emits is also
+       unpinned. */
+    Input copy(*this);
+    for (const auto * attr : {"rev", "revCount", "narHash", "lastModified", "__final"})
+        copy.attrs.erase(attr);
+    return copy.toURL().to_string();
+}
+
 std::string Input::to_string() const
 {
     return toURL().to_string();
