@@ -1431,6 +1431,15 @@ std::optional<Fingerprint> LockedFlake::getFingerprint(Store & store, const fetc
     if (auto lastModified = flake.lockedRef.input.getLastModified())
         *fingerprint += fmt(";lastModified=%d", *lastModified);
 
+    /* `defaultCopyToStore` (and any other flakes-level config that
+       changes the meaning of the evaluated outputs) has to be part
+       of the fingerprint. The coarse eval cache stores leaf values
+       like `pkg.drvPath` directly and returns them without
+       re-evaluating; if the key doesn't depend on the setting, the
+       first invocation's cached drvPath leaks back to a later
+       invocation under the opposite setting. */
+    *fingerprint += fmt(";defaultCopyToStore=%d", defaultCopyToStore);
+
     // FIXME: as an optimization, if the flake contains a lock file
     // and we haven't changed it, then it's sufficient to use
     // flake.sourceInfo.storePath for the fingerprint.

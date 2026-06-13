@@ -102,3 +102,40 @@ EOF
 result=$(nix --option flake-default-copy-to-store true eval --no-eval-cache --raw "$unsetHostDir#myPathDirStr")
 [[ "$result" == "$storeDir" ]] || fail "default-copy-to-store: expected $storeDir, got: $result"
 
+
+# --- coarse eval cache must key on the global setting -----------------
+# `flake-default-copy-to-store` changes the meaning of the evaluated
+# flake's outputs (the imported `flake.nix` becomes a store-path
+# string vs. a path Value), so it has to be part of the coarse eval
+# cache's fingerprint — otherwise evaluating the same locked flake
+# with the setting flipped returns a stale result.
+
+cacheFlakeDir=$TEST_ROOT/cache-flake
+createGitRepo "$cacheFlakeDir"
+cat > "$cacheFlakeDir/flake.nix" <<EOF2
+{
+  outputs = { self }: {
+    # The derivation name discriminates lazy vs eager mode:
+    # lazy mode has dirOf ./. saturating back to the source storepath
+    # (baseNameOf gives <hash>-source); eager mode walks to the
+    # parent (baseNameOf gives "store"). The drvPath differs.
+    pkg = derivation {
+      name = baseNameOf (toString (builtins.dirOf ./.));
+      system = "x86_64-linux";
+      builder = "/bin/sh";
+    };
+  };
+}
+EOF2
+git -C "$cacheFlakeDir" add flake.nix
+git -C "$cacheFlakeDir" commit -m initial
+
+cacheFlakeRef="git+file://$cacheFlakeDir"
+
+# Two `nix build --dry-run` invocations with the eval cache *on* —
+# the cursor's cached drvPath is returned directly without
+# re-evaluation, so a wrong cache key produces a stale drvPath.
+drv1=$(nix --option flake-default-copy-to-store false build --dry-run --json "$cacheFlakeRef#pkg" | jq -r '.[0].drvPath')
+drv2=$(nix --option flake-default-copy-to-store true  build --dry-run --json "$cacheFlakeRef#pkg" | jq -r '.[0].drvPath')
+
+[[ "$drv1" != "$drv2" ]] || fail "coarse eval cache returned a stale drvPath when flake-default-copy-to-store changed: '$drv1' == '$drv2'"
