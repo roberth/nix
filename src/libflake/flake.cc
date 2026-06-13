@@ -84,7 +84,14 @@ static void expectType(EvalState & state, ValueType type, Value & value, const P
         throw Error("expected %s but got %s at %s", showType(type), showType(value.type()), state.positions[pos]);
 }
 
-static std::pair<std::map<FlakeId, FlakeInput>, fetchers::Attrs> parseFlakeInputs(
+struct ParsedFlakeInputs
+{
+    std::map<FlakeId, FlakeInput> inputs;
+    fetchers::Attrs selfAttrs;
+    std::optional<bool> selfCopyToStore;
+};
+
+static ParsedFlakeInputs parseFlakeInputs(
     EvalState & state,
     Value * value,
     const PosIdx pos,
@@ -180,7 +187,7 @@ static FlakeInput parseFlakeInput(
                 input.copyToStore = attr.value->boolean();
             } else if (attr.name == sInputs) {
                 input.overrides =
-                    parseFlakeInputs(state, attr.value, attr.pos, lockRootAttrPath, flakeDir, false).first;
+                    std::move(parseFlakeInputs(state, attr.value, attr.pos, lockRootAttrPath, flakeDir, false).inputs);
             } else if (attr.name == sFollows) {
                 expectType(state, nString, *attr.value, attr.pos);
                 auto follows(parseInputAttrPath(attr.value->string_view()));
@@ -216,7 +223,7 @@ static FlakeInput parseFlakeInput(
     return input;
 }
 
-static std::pair<std::map<FlakeId, FlakeInput>, fetchers::Attrs> parseFlakeInputs(
+static ParsedFlakeInputs parseFlakeInputs(
     EvalState & state,
     Value * value,
     const PosIdx pos,
@@ -224,10 +231,11 @@ static std::pair<std::map<FlakeId, FlakeInput>, fetchers::Attrs> parseFlakeInput
     const SourcePath & flakeDir,
     bool allowSelf)
 {
-    std::map<FlakeId, FlakeInput> inputs;
-    fetchers::Attrs selfAttrs;
+    ParsedFlakeInputs result;
 
     expectType(state, nAttrs, *value, pos);
+
+    auto sCopyToStore = state.symbols.create("copyToStore");
 
     for (auto & inputAttr : *value->attrs()) {
         auto inputName = state.symbols[inputAttr.name];
@@ -235,15 +243,23 @@ static std::pair<std::map<FlakeId, FlakeInput>, fetchers::Attrs> parseFlakeInput
             if (!allowSelf)
                 throw Error("'self' input attribute not allowed at %s", state.positions[inputAttr.pos]);
             expectType(state, nAttrs, *inputAttr.value, inputAttr.pos);
-            for (auto & attr : *inputAttr.value->attrs())
-                parseFlakeInputAttr(state, attr, selfAttrs);
+            for (auto & attr : *inputAttr.value->attrs()) {
+                /* `copyToStore` is flakes-level, not a fetcher attr —
+                   peel it off here rather than letting it land in
+                   `selfAttrs` (which is `fetchers::Attrs`). */
+                if (attr.name == sCopyToStore) {
+                    expectType(state, nBool, *attr.value, attr.pos);
+                    result.selfCopyToStore = attr.value->boolean();
+                } else
+                    parseFlakeInputAttr(state, attr, result.selfAttrs);
+            }
         } else {
-            inputs.emplace(
+            result.inputs.emplace(
                 inputName, parseFlakeInput(state, inputAttr.value, inputAttr.pos, lockRootAttrPath, flakeDir));
         }
     }
 
-    return {inputs, selfAttrs};
+    return result;
 }
 
 static Flake readFlake(
@@ -315,10 +331,10 @@ static Flake readFlake(
     auto sInputs = state.symbols.create("inputs");
 
     if (auto inputs = vInfo.attrs()->get(sInputs)) {
-        auto [flakeInputs, selfAttrs] =
-            parseFlakeInputs(state, inputs->value, inputs->pos, lockRootAttrPath, flakeDir, true);
-        flake.inputs = std::move(flakeInputs);
-        flake.selfAttrs = std::move(selfAttrs);
+        auto parsed = parseFlakeInputs(state, inputs->value, inputs->pos, lockRootAttrPath, flakeDir, true);
+        flake.inputs = std::move(parsed.inputs);
+        flake.selfAttrs = std::move(parsed.selfAttrs);
+        flake.selfCopyToStore = parsed.selfCopyToStore;
     }
 
     auto sOutputs = state.symbols.create("outputs");
@@ -400,16 +416,11 @@ static FlakeRef applySelfAttrs(const FlakeRef & ref, const Flake & flake)
 {
     auto newRef(ref);
 
-    /* `copyToStore` is honoured at `callFlake` emit time (see the
-       root-node lookup there), not by the fetcher — listing it here
-       just keeps the "is this allowed" guard from rejecting it. */
-    StringSet allowedAttrs{"submodules", "lfs", "copyToStore"};
+    StringSet allowedAttrs{"submodules", "lfs"};
 
     for (auto & attr : flake.selfAttrs) {
         if (!allowedAttrs.contains(attr.first))
             throw Error("flake 'self' attribute '%s' is not supported", attr.first);
-        if (attr.first == "copyToStore")
-            continue;
         newRef.input.attrs.insert_or_assign(attr.first, attr.second);
     }
 
@@ -1084,7 +1095,10 @@ LockedFlake lockFlake(
         }
 
         return LockedFlake{
-            .flake = std::move(flake), .lockFile = std::move(newLockFile), .nodePaths = std::move(nodePaths)};
+            .flake = std::move(flake),
+            .lockFile = std::move(newLockFile),
+            .nodePaths = std::move(nodePaths),
+            .defaultCopyToStore = settings.defaultCopyToStore};
 
     } catch (Error & e) {
         e.addTrace({}, "while updating the lock file of flake '%s'", flake.lockedRef.to_string());
@@ -1153,7 +1167,7 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
     auto overrides = state.buildBindings(lockedFlake.nodePaths.size());
 
     for (auto & [node, info] : lockedFlake.nodePaths) {
-        auto override = state.buildBindings(3);
+        auto override = state.buildBindings(2);
 
         auto & vSourceInfo = override.alloc(state.symbols.create("sourceInfo"));
 
@@ -1171,20 +1185,19 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
            children inherit their own flake's config. The lookup
            matches the lockfile key directly because root keys carry
            no path prefix. */
-        bool copyToStoreOutPath = false;
+        /* Determine whether this node opts into the eager shape
+           (flake.nix imported as a store-path string, structural
+           primops walk through the storepath). Per-input flags
+           (`inputs.<name>.copyToStore` for child inputs,
+           `inputs.self.copyToStore` for the root) win over the
+           global default (`flake-default-copy-to-store`, snapshotted
+           on `lockedFlake.defaultCopyToStore` at lock time). */
+        bool copyToStoreOutPath = lockedFlake.defaultCopyToStore;
         if (auto inputIt = lockedFlake.flake.inputs.find(key->second);
             inputIt != lockedFlake.flake.inputs.end() && inputIt->second.copyToStore)
-            copyToStoreOutPath = true;
-        /* `inputs.self.copyToStore = true` opts the root flake itself
-           into the eager System-rooted shape, mirroring how
-           `inputs.<name>.copyToStore` does it for inputs. The flag
-           lives on `flake.selfAttrs` (parsed by `parseFlakeInputs`
-           and survived `applySelfAttrs`). */
-        if (node == ref<Node>(lockedFlake.lockFile.root)) {
-            if (auto it = lockedFlake.flake.selfAttrs.find("copyToStore"); it != lockedFlake.flake.selfAttrs.end())
-                if (auto b = std::get_if<Explicit<bool>>(&it->second); b && b->t)
-                    copyToStoreOutPath = true;
-        }
+            copyToStoreOutPath = *inputIt->second.copyToStore;
+        if (node == ref<Node>(lockedFlake.lockFile.root) && lockedFlake.flake.selfCopyToStore)
+            copyToStoreOutPath = *lockedFlake.flake.selfCopyToStore;
 
         /* `lazy` follows whether we know the storePath: nodePaths
            entries from getFlake/computeLocks went through lockInput
@@ -1223,16 +1236,9 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
             vSourceInfo,
             /*emptyRevFallback=*/false,
             /*forceDirty=*/!lockedNode && lockedFlake.flake.forceDirty,
-            lazy,
-            copyToStoreOutPath);
+            lazy);
 
         override.alloc(state.symbols.create("dir")).mkString(info.subdir, state.mem);
-
-        /* Signal to `call-flake.nix` whether to keep `outPath` as a
-           path Value (true) or stringify it via `"${...}"` (the
-           default, for back-compat with the lazy / string-with-context
-           shapes the existing consumers expect). */
-        override.alloc(state.symbols.create("copyToStore")).mkBool(copyToStoreOutPath);
 
         overrides.alloc(state.symbols.create(key->second)).mkAttrs(override);
     }

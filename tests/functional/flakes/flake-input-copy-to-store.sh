@@ -4,90 +4,101 @@ source ./common.sh
 
 requireGit
 
-# `inputs.*.copyToStore = true` opts an input back into pre-lazy-paths
-# behaviour: the input's tree is materialised at fetch time, and the
-# flake's `outputs` function sees `outPath` as a path Value whose
-# CanonPath is the storepath. That makes `dirOf`/`baseNameOf` walk
-# through the storepath structurally — which is what downstream code
-# in nixpkgs (`lib.fileset`, `documentation.nix`, ...) anchors on.
+# `inputs.*.copyToStore = true` opts a flake input back into
+# pre-lazy-paths behaviour. The visible contract:
+#
+#   - `outPath` stays a *string* regardless. That's the
+#     legacy/expected shape for `inputs.<name>.outPath`.
+#   - Path expressions *inside* the imported flake (`./.`, `./foo`,
+#     etc.) become System-rooted with the storepath as their
+#     CanonPath, so structural primops (`dirOf`, `baseNameOf`,
+#     everything routing through `lib.path.deconstructPath`) walk
+#     through the storepath the way they did before lazy-paths.
+#     That's what `lib.fileset` actually anchors on.
+
+storeDir=$(nix eval --raw --impure --expr 'builtins.storeDir')
+
+# --- inputs.self.copyToStore ------------------------------------------
+# The root flake opts itself in. This is the path needed for the
+# v12-on-v12 case where the root flake's own source needs structural
+# walking (e.g. `lib.fileset` over `./.`).
+
+selfHostDir=$TEST_ROOT/selfhost
+mkdir -p "$selfHostDir"
+cat > "$selfHostDir"/flake.nix <<EOF
+{
+  inputs.self.copyToStore = true;
+  outputs = { self }: {
+    outPathType  = builtins.typeOf self.outPath;
+    myPathType   = builtins.typeOf ./.;
+    myPathDirType = builtins.typeOf (builtins.dirOf ./.);
+    myPathDirStr = toString (builtins.dirOf ./.);
+  };
+}
+EOF
+
+# `self.outPath` stays a string.
+result=$(nix eval --no-eval-cache --json "$selfHostDir#outPathType")
+[[ "$result" == '"string"' ]] || fail "self.outPathType: expected \"string\", got: $result"
+
+# But `./.` inside the imported flake is a path Value, System-rooted
+# at the storepath. `dirOf` walks through.
+result=$(nix eval --no-eval-cache --json "$selfHostDir#myPathType")
+[[ "$result" == '"path"' ]] || fail "self ./. type: expected \"path\", got: $result"
+
+result=$(nix eval --no-eval-cache --json "$selfHostDir#myPathDirType")
+[[ "$result" == '"path"' ]] || fail "self dirOf ./. type: expected \"path\", got: $result"
+
+result=$(nix eval --no-eval-cache --raw "$selfHostDir#myPathDirStr")
+[[ "$result" == "$storeDir" ]] || fail "self dirOf ./. str: expected $storeDir, got: $result"
+
+# --- inputs.<name>.copyToStore on a non-flake input -------------------
+# A `flake = false` input with `copyToStore = true` still has
+# string-typed `outPath`. There's no imported flake.nix here, so the
+# path-Value-inside-the-imported-flake half doesn't apply — we just
+# pin that `outPath` is a string.
 
 sourceDir=$TEST_ROOT/source
 createGitRepo "$sourceDir"
-echo 'hello' > "$sourceDir"/file
-git -C "$sourceDir" add file
+mkdir -p "$sourceDir"/lib
+echo 'keep me' > "$sourceDir"/lib/keep
+git -C "$sourceDir" add lib
 git -C "$sourceDir" commit -m initial
 
 hostDir=$TEST_ROOT/host
 mkdir -p "$hostDir"
 cat > "$hostDir"/flake.nix <<EOF
 {
-  inputs.src = {
-    url = "git+file://$sourceDir";
-    flake = false;
-    copyToStore = true;
-  };
+  inputs.src = { url = "git+file://$sourceDir"; flake = false; copyToStore = true; };
   outputs = { src, self }: {
-    outPathType  = builtins.typeOf src.outPath;
-    outPathStr   = toString src.outPath;
-    dirOfType    = builtins.typeOf (builtins.dirOf src.outPath);
-    dirOfStr     = toString (builtins.dirOf src.outPath);
-    twiceDirStr  = toString (builtins.dirOf (builtins.dirOf src.outPath));
-    rootDirStr   = toString (builtins.dirOf (builtins.dirOf (builtins.dirOf src.outPath)));
+    outPathType = builtins.typeOf src.outPath;
+    outPathStr  = toString src.outPath;
   };
 }
 EOF
 
 result=$(nix eval --no-eval-cache --json "$hostDir#outPathType")
-[[ "$result" == '"path"' ]] || fail "outPathType: expected \"path\", got: $result"
+[[ "$result" == '"string"' ]] || fail "src.outPathType: expected \"string\", got: $result"
 
-# Tests run with a sandboxed nix store at $TEST_ROOT/store, so the
-# storepath prefix isn't `/nix/store`. Match on the structure
-# instead.
-storeDir=$(nix eval --raw --impure --expr 'builtins.storeDir')
 result=$(nix eval --no-eval-cache --raw "$hostDir#outPathStr")
-[[ "$result" =~ ^${storeDir}/[a-z0-9]+-source$ ]] || fail "outPathStr: expected ${storeDir}/<hash>-source, got: $result"
+[[ "$result" =~ ^${storeDir}/[a-z0-9]+-source$ ]] || fail "src.outPathStr: expected ${storeDir}/<hash>-source, got: $result"
 
-# Without copyToStore (current lazy-paths default), dirOf would
-# saturate immediately: same string as outPath. With copyToStore,
-# dirOf must walk through.
-result=$(nix eval --no-eval-cache --json "$hostDir#dirOfType")
-[[ "$result" == '"path"' ]] || fail "dirOfType: expected \"path\", got: $result"
+# --- flake-default-copy-to-store --------------------------------------
+# When the flake doesn't set `copyToStore` and the global setting is
+# on, the same shape applies. Lets users of flakes that target older
+# Nix versions (which don't recognise the attribute) opt into the
+# eager shape without modifying those flakes.
 
-result=$(nix eval --no-eval-cache --raw "$hostDir#dirOfStr")
-[[ "$result" == "$storeDir" ]] || fail "dirOfStr: expected $storeDir, got: $result"
-
-result=$(nix eval --no-eval-cache --raw "$hostDir#twiceDirStr")
-[[ "$result" == "$(dirname "$storeDir")" ]] || fail "twiceDirStr: expected $(dirname "$storeDir"), got: $result"
-
-# Walk all the way to root: dirname repeatedly until we hit "/"
-rootDir=$(dirname "$(dirname "$storeDir")")
-[[ "$rootDir" == "/" ]] && expectedRoot=/ || expectedRoot=$rootDir
-result=$(nix eval --no-eval-cache --raw "$hostDir#rootDirStr")
-[[ "$result" == "$expectedRoot" ]] || fail "rootDirStr: expected $expectedRoot, got: $result"
-
-# --- inputs.self.copyToStore ------------------------------------------
-# The same opt-in applies to the root flake via `inputs.self`. This is
-# the path needed for the v12-on-v12 case where the root flake's own
-# source needs structural walking (e.g. `lib.fileset` over `./.`).
-
-selfHostDir=$TEST_ROOT/selfhost
-mkdir -p "$selfHostDir"
-cat > "$selfHostDir"/flake.nix <<EOF2
+unsetHostDir=$TEST_ROOT/unsethost
+mkdir -p "$unsetHostDir"
+cat > "$unsetHostDir"/flake.nix <<EOF
 {
-  inputs.self.copyToStore = true;
   outputs = { self }: {
-    op_type    = builtins.typeOf self.outPath;
-    dirOf_type = builtins.typeOf (builtins.dirOf self.outPath);
-    dirOf_str  = toString (builtins.dirOf self.outPath);
+    myPathDirStr = toString (builtins.dirOf ./.);
   };
 }
-EOF2
+EOF
 
-result=$(nix eval --no-eval-cache --json "$selfHostDir#op_type")
-[[ "$result" == '"path"' ]] || fail "self.op_type: expected \"path\", got: $result"
+result=$(nix --option flake-default-copy-to-store true eval --no-eval-cache --raw "$unsetHostDir#myPathDirStr")
+[[ "$result" == "$storeDir" ]] || fail "default-copy-to-store: expected $storeDir, got: $result"
 
-result=$(nix eval --no-eval-cache --json "$selfHostDir#dirOf_type")
-[[ "$result" == '"path"' ]] || fail "self.dirOf_type: expected \"path\", got: $result"
-
-result=$(nix eval --no-eval-cache --raw "$selfHostDir#dirOf_str")
-[[ "$result" == "$storeDir" ]] || fail "self.dirOf_str: expected $storeDir, got: $result"

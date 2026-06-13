@@ -179,8 +179,7 @@ void emitTreeAttrs(
     Value & v,
     bool emptyRevFallback,
     bool forceDirty,
-    bool lazy,
-    bool copyToStoreOutPath)
+    bool lazy)
 {
     auto attrs = state.buildBindings(100);
     if (lazy)
@@ -190,20 +189,7 @@ void emitTreeAttrs(
                     state.getOrCreateRoot(tree.accessor(), SourceRootKind::Copyable, input.toUnpinnedURL()),
                     CanonPath::root},
                 state.mem);
-    else if (copyToStoreOutPath) {
-        /* Pre-lazy-paths shape: a path Value rooted at System rootFS
-           with the materialised storepath as its CanonPath. `dirOf`
-           and friends walk through it structurally, restoring the
-           behaviour that downstream consumers anchored on. The
-           storepath has been materialised by the caller (see
-           `callFlake`'s mountInput call). */
-        attrs.alloc(state.s.outPath)
-            .mkPath(
-                RootedPath{
-                    state.rootFSRoot,
-                    CanonPath(state.systemEnvironment->store->printStorePath(tree.storePath.value()))},
-                state.mem);
-    } else
+    else
         state.mkStorePathString(tree.storePath.value(), attrs.alloc(state.s.outPath));
     addFetchTreeMetadataAttrs(state, input, attrs, emptyRevFallback, forceDirty);
     v.mkAttrs(attrs);
