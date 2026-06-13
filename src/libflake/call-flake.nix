@@ -78,6 +78,17 @@ let
 
       flake = import (flakePath + "/flake.nix");
 
+      # `copyToStore` (set by callFlake when the user wrote
+      # `inputs.<name>.copyToStore = true`) keeps `outPath` as a
+      # path Value rather than stringifying it. The path Value is
+      # already System-rooted with the storepath as its CanonPath
+      # (see emitTreeAttrs' copyToStoreOutPath branch), so
+      # `dirOf`/`baseNameOf` walk through structurally — pre-lazy-paths
+      # behaviour. Without this branch the `"${...}"` interpolation
+      # below would convert to string-with-context, dropping the
+      # structural identity downstream consumers need.
+      copyToStore = overrides.${key}.copyToStore or false;
+
       # User-facing string outPath: built by string concatenation so
       # the subdir appends to the root storePath. Coercing
       # `flakePath` directly would copy the subdir as a leaf-named
@@ -99,12 +110,19 @@ let
           parentNode.outPath
           + (if node.locked.path == "" then "" else "/" + node.locked.path)
           + (if subdir == "" then "" else "/" + subdir)
+        else if copyToStore then
+          fetchResult.outPath + (if subdir == "" then "" else "/" + subdir)
         else
           "${fetchResult.outPath}" + (if subdir == "" then "" else "/" + subdir);
 
-      sourceInfo = fetchResult // {
-        outPath = "${fetchResult.outPath}";
-      };
+      sourceInfo =
+        if copyToStore then
+          fetchResult
+        else
+          fetchResult
+          // {
+            outPath = "${fetchResult.outPath}";
+          };
 
       inputs = mapAttrs (inputName: inputSpec: allNodes.${resolveInput inputSpec}.result) (
         node.inputs or { }

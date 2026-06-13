@@ -146,6 +146,7 @@ static FlakeInput parseFlakeInput(
     auto sUrl = state.symbols.create("url");
     auto sFlake = state.symbols.create("flake");
     auto sFollows = state.symbols.create("follows");
+    auto sCopyToStore = state.symbols.create("copyToStore");
 
     fetchers::Attrs attrs;
     std::optional<std::string> url;
@@ -174,6 +175,9 @@ static FlakeInput parseFlakeInput(
             } else if (attr.name == sFlake) {
                 expectType(state, nBool, *attr.value, attr.pos);
                 input.isFlake = attr.value->boolean();
+            } else if (attr.name == sCopyToStore) {
+                expectType(state, nBool, *attr.value, attr.pos);
+                input.copyToStore = attr.value->boolean();
             } else if (attr.name == sInputs) {
                 input.overrides =
                     parseFlakeInputs(state, attr.value, attr.pos, lockRootAttrPath, flakeDir, false).first;
@@ -743,6 +747,31 @@ LockedFlake lockFlake(
 
                         node->inputs.insert_or_assign(id, childNode);
 
+                        /* When the parent flake declared `inputs.<name>.copyToStore = true`
+                           on this input, populate `nodePaths` even on a cache-hit lock so
+                           `callFlake`'s loop sees the input and can emit the
+                           System-rooted `outPath`. The accessor comes from the input
+                           cache — same fingerprint, no network refetch. Other inputs
+                           keep their pre-existing fast path (no `nodePaths` entry; their
+                           outPath flows through `fetchTreeFinal` in `call-flake.nix`). */
+                        if (input.copyToStore) {
+                            auto cachedInput = state.inputCache->getAccessor(
+                                state.fetchSettings,
+                                *state.systemEnvironment->store,
+                                oldLock->lockedRef.input,
+                                useRegistriesInputs);
+                            nodePaths.emplace(
+                                childNode,
+                                NodeLocation{
+                                    .tree =
+                                        fetchers::MountableTree{
+                                            .storePath = std::nullopt,
+                                            .accessor = cachedInput.accessor,
+                                        },
+                                    .subdir = oldLock->lockedRef.subdir,
+                                });
+                        }
+
                         /* If we have this input in updateInputs, then we
                            must fetch the flake to update it. */
                         auto lb = lockFlags.inputUpdates.lower_bound(nonEmptyInputAttrPath);
@@ -1119,13 +1148,28 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
     auto overrides = state.buildBindings(lockedFlake.nodePaths.size());
 
     for (auto & [node, info] : lockedFlake.nodePaths) {
-        auto override = state.buildBindings(2);
+        auto override = state.buildBindings(3);
 
         auto & vSourceInfo = override.alloc(state.symbols.create("sourceInfo"));
 
         auto lockedNode = node.dynamic_pointer_cast<const LockedNode>();
 
         const auto & lockedRef = lockedNode ? lockedNode->lockedRef : lockedFlake.flake.lockedRef;
+
+        auto key = keyMap.find(node);
+        assert(key != keyMap.end());
+
+        /* `inputs.<name>.copyToStore = true` opts a root input back
+           into pre-lazy-paths shape: `outPath` is a System-rooted
+           path Value with the materialised storepath as its
+           CanonPath. Only root inputs honour this — transitive
+           children inherit their own flake's config. The lookup
+           matches the lockfile key directly because root keys carry
+           no path prefix. */
+        bool copyToStoreOutPath = false;
+        if (auto inputIt = lockedFlake.flake.inputs.find(key->second);
+            inputIt != lockedFlake.flake.inputs.end() && inputIt->second.copyToStore)
+            copyToStoreOutPath = true;
 
         /* `lazy` follows whether we know the storePath: nodePaths
            entries from getFlake/computeLocks went through lockInput
@@ -1136,19 +1180,44 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
            must render eagerly because the accessor isn't scoped to
            the tree. */
         bool lazy = !info.tree.storePath.has_value();
+
+        /* For copyToStore, we need the storePath up front. If the
+           input came through getFlake (lazy + no storePath),
+           materialise it now via `copyPathToStore` on the
+           accessor's root — that's the same machinery `toString`
+           uses, with the `srcToStore` cache making it
+           single-walk. Use a throwaway context so the storepath
+           doesn't leak into a `NixStringContext` we don't own. */
+        std::optional<fetchers::MountableTree> eagerTree;
+        if (copyToStoreOutPath && !info.tree.storePath.has_value()) {
+            NixStringContext discardContext;
+            auto storePath = state.copyPathToStore(
+                discardContext,
+                RootedPath{
+                    state.getOrCreateRoot(
+                        info.tree.accessor(), SourceRootKind::Copyable, lockedRef.input.toUnpinnedURL()),
+                    CanonPath::root});
+            eagerTree = fetchers::MountableTree{.storePath = storePath, .accessor = info.tree.accessor};
+            lazy = false;
+        }
+
         emitTreeAttrs(
             state,
-            info.tree,
+            eagerTree ? *eagerTree : info.tree,
             lockedRef.input,
             vSourceInfo,
             /*emptyRevFallback=*/false,
             /*forceDirty=*/!lockedNode && lockedFlake.flake.forceDirty,
-            lazy);
-
-        auto key = keyMap.find(node);
-        assert(key != keyMap.end());
+            lazy,
+            copyToStoreOutPath);
 
         override.alloc(state.symbols.create("dir")).mkString(info.subdir, state.mem);
+
+        /* Signal to `call-flake.nix` whether to keep `outPath` as a
+           path Value (true) or stringify it via `"${...}"` (the
+           default, for back-compat with the lazy / string-with-context
+           shapes the existing consumers expect). */
+        override.alloc(state.symbols.create("copyToStore")).mkBool(copyToStoreOutPath);
 
         overrides.alloc(state.symbols.create(key->second)).mkAttrs(override);
     }

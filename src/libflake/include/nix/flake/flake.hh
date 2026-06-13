@@ -65,6 +65,20 @@ struct FlakeInput
      * false = (fetched) static source path
      */
     bool isFlake = true;
+    /**
+     * If true, opt this input back into pre-lazy-paths behaviour: the
+     * tree is materialised to the store at fetch time and the flake's
+     * `outputs` function sees `outPath` as a path Value whose
+     * CanonPath is the storepath. Structural primops (`dirOf`,
+     * `baseNameOf`, anything routing through `lib.path.deconstructPath`)
+     * then walk through the storepath the way they did before
+     * lazy-paths, which is what some downstream consumers (e.g.
+     * nixpkgs' `lib.fileset`, `documentation.nix`) anchor on. The
+     * default (false) keeps the lazy-paths shape: `outPath` is a
+     * Copyable nPath at the fetcher accessor's root, and `dirOf`
+     * saturates there.
+     */
+    bool copyToStore = false;
     std::optional<InputAttrPath> follows;
     FlakeInputs overrides;
 };
