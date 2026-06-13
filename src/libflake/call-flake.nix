@@ -83,6 +83,13 @@ let
       # `flakePath` directly would copy the subdir as a leaf-named
       # store object.
       #
+      # `outPath` is a string regardless of `copyToStore` - the
+      # path-Value shape only flows through `flakePath` (used for
+      # `import`). That way `import (flakePath + "/flake.nix")`
+      # walks structurally when `copyToStore` puts a System-rooted
+      # path Value into `fetchResult.outPath`, while
+      # `inputs.<name>.outPath` keeps its historic string shape.
+      #
       # Why this stays a string and not a path value (i.e. why
       # there's no `inputs.self.lazyPath` here): a flake.outPath
       # has to identify *both* the flake's source tree and its

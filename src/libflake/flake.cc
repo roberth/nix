@@ -82,7 +82,14 @@ static void expectType(EvalState & state, ValueType type, Value & value, const P
         throw Error("expected %s but got %s at %s", showType(type), showType(value.type()), state.positions[pos]);
 }
 
-static std::pair<std::map<FlakeId, FlakeInput>, fetchers::Attrs> parseFlakeInputs(
+struct ParsedFlakeInputs
+{
+    std::map<FlakeId, FlakeInput> inputs;
+    fetchers::Attrs selfAttrs;
+    std::optional<bool> selfCopyToStore;
+};
+
+static ParsedFlakeInputs parseFlakeInputs(
     EvalState & state,
     Value * value,
     const PosIdx pos,
@@ -144,6 +151,7 @@ static FlakeInput parseFlakeInput(
     auto sUrl = state.symbols.create("url");
     auto sFlake = state.symbols.create("flake");
     auto sFollows = state.symbols.create("follows");
+    auto sCopyToStore = state.symbols.create("copyToStore");
 
     fetchers::Attrs attrs;
     std::optional<std::string> url;
@@ -172,9 +180,12 @@ static FlakeInput parseFlakeInput(
             } else if (attr.name == sFlake) {
                 expectType(state, nBool, *attr.value, attr.pos);
                 input.isFlake = attr.value->boolean();
+            } else if (attr.name == sCopyToStore) {
+                expectType(state, nBool, *attr.value, attr.pos);
+                input.copyToStore = attr.value->boolean();
             } else if (attr.name == sInputs) {
                 input.overrides =
-                    parseFlakeInputs(state, attr.value, attr.pos, lockRootAttrPath, flakeDir, false).first;
+                    std::move(parseFlakeInputs(state, attr.value, attr.pos, lockRootAttrPath, flakeDir, false).inputs);
             } else if (attr.name == sFollows) {
                 expectType(state, nString, *attr.value, attr.pos);
                 auto follows(parseInputAttrPath(attr.value->string_view()));
@@ -210,7 +221,7 @@ static FlakeInput parseFlakeInput(
     return input;
 }
 
-static std::pair<std::map<FlakeId, FlakeInput>, fetchers::Attrs> parseFlakeInputs(
+static ParsedFlakeInputs parseFlakeInputs(
     EvalState & state,
     Value * value,
     const PosIdx pos,
@@ -218,10 +229,11 @@ static std::pair<std::map<FlakeId, FlakeInput>, fetchers::Attrs> parseFlakeInput
     const SourcePath & flakeDir,
     bool allowSelf)
 {
-    std::map<FlakeId, FlakeInput> inputs;
-    fetchers::Attrs selfAttrs;
+    ParsedFlakeInputs result;
 
     expectType(state, nAttrs, *value, pos);
+
+    auto sCopyToStore = state.symbols.create("copyToStore");
 
     for (auto & inputAttr : *value->attrs()) {
         auto inputName = state.symbols[inputAttr.name];
@@ -229,15 +241,23 @@ static std::pair<std::map<FlakeId, FlakeInput>, fetchers::Attrs> parseFlakeInput
             if (!allowSelf)
                 throw Error("'self' input attribute not allowed at %s", state.positions[inputAttr.pos]);
             expectType(state, nAttrs, *inputAttr.value, inputAttr.pos);
-            for (auto & attr : *inputAttr.value->attrs())
-                parseFlakeInputAttr(state, attr, selfAttrs);
+            for (auto & attr : *inputAttr.value->attrs()) {
+                /* `copyToStore` is flakes-level, not a fetcher attr —
+                   peel it off here rather than letting it land in
+                   `selfAttrs` (which is `fetchers::Attrs`). */
+                if (attr.name == sCopyToStore) {
+                    expectType(state, nBool, *attr.value, attr.pos);
+                    result.selfCopyToStore = attr.value->boolean();
+                } else
+                    parseFlakeInputAttr(state, attr, result.selfAttrs);
+            }
         } else {
-            inputs.emplace(
+            result.inputs.emplace(
                 inputName, parseFlakeInput(state, inputAttr.value, inputAttr.pos, lockRootAttrPath, flakeDir));
         }
     }
 
-    return {inputs, selfAttrs};
+    return result;
 }
 
 static Flake readFlake(
@@ -309,10 +329,10 @@ static Flake readFlake(
     auto sInputs = state.symbols.create("inputs");
 
     if (auto inputs = vInfo.attrs()->get(sInputs)) {
-        auto [flakeInputs, selfAttrs] =
-            parseFlakeInputs(state, inputs->value, inputs->pos, lockRootAttrPath, flakeDir, true);
-        flake.inputs = std::move(flakeInputs);
-        flake.selfAttrs = std::move(selfAttrs);
+        auto parsed = parseFlakeInputs(state, inputs->value, inputs->pos, lockRootAttrPath, flakeDir, true);
+        flake.inputs = std::move(parsed.inputs);
+        flake.selfAttrs = std::move(parsed.selfAttrs);
+        flake.selfCopyToStore = parsed.selfCopyToStore;
     }
 
     auto sOutputs = state.symbols.create("outputs");
@@ -741,6 +761,28 @@ LockedFlake lockFlake(
 
                         node->inputs.insert_or_assign(id, childNode);
 
+                        /* When the parent flake declared `inputs.<name>.copyToStore = true`
+                           on this input, populate `nodePaths` even on a cache-hit lock so
+                           `callFlake`'s loop sees the input and can emit the
+                           System-rooted `outPath`. The accessor comes from the input
+                           cache — same fingerprint, no network refetch. Other inputs
+                           keep their pre-existing fast path (no `nodePaths` entry; their
+                           outPath flows through `fetchTreeFinal` in `call-flake.nix`). */
+                        if (input.copyToStore) {
+                            auto cachedInput = state.inputCache->getAccessor(
+                                state.fetchSettings, *state.store, oldLock->lockedRef.input, useRegistriesInputs);
+                            nodePaths.emplace(
+                                childNode,
+                                NodeLocation{
+                                    .tree =
+                                        fetchers::MountableTree{
+                                            .storePath = std::nullopt,
+                                            .accessor = cachedInput.accessor,
+                                        },
+                                    .subdir = oldLock->lockedRef.subdir,
+                                });
+                        }
+
                         /* If we have this input in updateInputs, then we
                            must fetch the flake to update it. */
                         auto lb = lockFlags.inputUpdates.lower_bound(nonEmptyInputAttrPath);
@@ -1045,7 +1087,10 @@ LockedFlake lockFlake(
         }
 
         return LockedFlake{
-            .flake = std::move(flake), .lockFile = std::move(newLockFile), .nodePaths = std::move(nodePaths)};
+            .flake = std::move(flake),
+            .lockFile = std::move(newLockFile),
+            .nodePaths = std::move(nodePaths),
+            .defaultCopyToStore = settings.defaultCopyToStore};
 
     } catch (Error & e) {
         e.addTrace({}, "while updating the lock file of flake '%s'", flake.lockedRef.to_string());
@@ -1123,6 +1168,30 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
 
         const auto & lockedRef = lockedNode ? lockedNode->lockedRef : lockedFlake.flake.lockedRef;
 
+        auto key = keyMap.find(node);
+        assert(key != keyMap.end());
+
+        /* `inputs.<name>.copyToStore = true` opts a root input back
+           into pre-lazy-paths shape: `outPath` is a System-rooted
+           path Value with the materialised storepath as its
+           CanonPath. Only root inputs honour this — transitive
+           children inherit their own flake's config. The lookup
+           matches the lockfile key directly because root keys carry
+           no path prefix. */
+        /* Determine whether this node opts into the eager shape
+           (flake.nix imported as a store-path string, structural
+           primops walk through the storepath). Per-input flags
+           (`inputs.<name>.copyToStore` for child inputs,
+           `inputs.self.copyToStore` for the root) win over the
+           global default (`flake-default-copy-to-store`, snapshotted
+           on `lockedFlake.defaultCopyToStore` at lock time). */
+        bool copyToStoreOutPath = lockedFlake.defaultCopyToStore;
+        if (auto inputIt = lockedFlake.flake.inputs.find(key->second);
+            inputIt != lockedFlake.flake.inputs.end() && inputIt->second.copyToStore)
+            copyToStoreOutPath = *inputIt->second.copyToStore;
+        if (node == ref<Node>(lockedFlake.lockFile.root) && lockedFlake.flake.selfCopyToStore)
+            copyToStoreOutPath = *lockedFlake.flake.selfCopyToStore;
+
         /* `lazy` follows whether we know the storePath: nodePaths
            entries from getFlake/computeLocks went through lockInput
            (no mountInput, no storePath; the accessor is the fetcher's
@@ -1132,18 +1201,36 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
            must render eagerly because the accessor isn't scoped to
            the tree. */
         bool lazy = !info.tree.storePath.has_value();
+
+        /* For copyToStore, we need the storePath up front. If the
+           input came through getFlake (lazy + no storePath),
+           materialise it now via `copyPathToStore` on the
+           accessor's root — that's the same machinery `toString`
+           uses, with the `srcToStore` cache making it
+           single-walk. Use a throwaway context so the storepath
+           doesn't leak into a `NixStringContext` we don't own. */
+        std::optional<fetchers::MountableTree> eagerTree;
+        if (copyToStoreOutPath && !info.tree.storePath.has_value()) {
+            NixStringContext discardContext;
+            auto storePath = state.copyPathToStore(
+                discardContext,
+                RootedPath{
+                    state.getOrCreateRoot(
+                        info.tree.accessor(), SourceRootKind::Copyable, lockedRef.input.toUnpinnedURL()),
+                    CanonPath::root});
+            eagerTree = fetchers::MountableTree{.storePath = storePath, .accessor = info.tree.accessor};
+            lazy = false;
+        }
+
         emitTreeAttrs(
             state,
             noPos,
-            info.tree,
+            eagerTree ? *eagerTree : info.tree,
             lockedRef.input,
             vSourceInfo,
             /*emptyRevFallback=*/false,
             /*forceDirty=*/!lockedNode && lockedFlake.flake.forceDirty,
             lazy);
-
-        auto key = keyMap.find(node);
-        assert(key != keyMap.end());
 
         override.alloc(state.symbols.create("dir")).mkString(info.subdir, state.mem);
 
@@ -1194,6 +1281,15 @@ std::optional<Fingerprint> LockedFlake::getFingerprint(Store & store, const fetc
     }
     if (auto lastModified = flake.lockedRef.input.getLastModified())
         *fingerprint += fmt(";lastModified=%d", *lastModified);
+
+    /* `defaultCopyToStore` (and any other flakes-level config that
+       changes the meaning of the evaluated outputs) has to be part
+       of the fingerprint. The coarse eval cache stores leaf values
+       like `pkg.drvPath` directly and returns them without
+       re-evaluating; if the key doesn't depend on the setting, the
+       first invocation's cached drvPath leaks back to a later
+       invocation under the opposite setting. */
+    *fingerprint += fmt(";defaultCopyToStore=%d", defaultCopyToStore);
 
     // FIXME: as an optimization, if the flake contains a lock file
     // and we haven't changed it, then it's sufficient to use
