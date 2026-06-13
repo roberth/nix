@@ -56,9 +56,29 @@ ref<Object> CoarseEvalCache::mkString(const std::string & s)
     return inner->mkString(s);
 }
 
+ref<Object> CoarseEvalCache::mkInt(NixInt i)
+{
+    return inner->mkInt(i);
+}
+
+ref<Object> CoarseEvalCache::mkBool(bool b)
+{
+    return inner->mkBool(b);
+}
+
+ref<Object> CoarseEvalCache::mkPath(const RootedPath & path)
+{
+    return inner->mkPath(path);
+}
+
 ref<Object> CoarseEvalCache::mkAttrs(const std::map<std::string, ref<Object>> & attrs)
 {
     return inner->mkAttrs(attrs);
+}
+
+ref<Object> CoarseEvalCache::getInternalPrimOp(const std::string & name)
+{
+    return inner->getInternalPrimOp(name);
 }
 
 ref<Object> CoarseEvalCache::apply(ref<Object> fn, ref<Object> arg)

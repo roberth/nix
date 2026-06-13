@@ -348,9 +348,29 @@ ref<Object> TracingReplayEvaluator::mkString(const std::string & s)
     return inner->mkString(s);
 }
 
+ref<Object> TracingReplayEvaluator::mkInt(NixInt i)
+{
+    return inner->mkInt(i);
+}
+
+ref<Object> TracingReplayEvaluator::mkBool(bool b)
+{
+    return inner->mkBool(b);
+}
+
+ref<Object> TracingReplayEvaluator::mkPath(const RootedPath & path)
+{
+    return inner->mkPath(path);
+}
+
 ref<Object> TracingReplayEvaluator::mkAttrs(const std::map<std::string, ref<Object>> & attrs)
 {
     return inner->mkAttrs(attrs);
+}
+
+ref<Object> TracingReplayEvaluator::getInternalPrimOp(const std::string & name)
+{
+    return inner->getInternalPrimOp(name);
 }
 
 ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)

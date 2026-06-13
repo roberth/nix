@@ -182,9 +182,29 @@ ref<Object> ProvenanceEvaluator::mkString(const std::string & s)
     return wrap(inner->mkString(s));
 }
 
+ref<Object> ProvenanceEvaluator::mkInt(NixInt i)
+{
+    return wrap(inner->mkInt(i));
+}
+
+ref<Object> ProvenanceEvaluator::mkBool(bool b)
+{
+    return wrap(inner->mkBool(b));
+}
+
+ref<Object> ProvenanceEvaluator::mkPath(const RootedPath & path)
+{
+    return wrap(inner->mkPath(path));
+}
+
 ref<Object> ProvenanceEvaluator::mkAttrs(const std::map<std::string, ref<Object>> & attrs)
 {
     return wrap(inner->mkAttrs(attrs));
+}
+
+ref<Object> ProvenanceEvaluator::getInternalPrimOp(const std::string & name)
+{
+    return wrap(inner->getInternalPrimOp(name));
 }
 
 ref<Object> ProvenanceEvaluator::apply(ref<Object> fn, ref<Object> arg)

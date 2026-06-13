@@ -157,6 +157,60 @@ ref<Object> TracingEvaluator::mkString(const std::string & s)
     return TracingObject::create(result, writer, v, triePos);
 }
 
+ref<Object> TracingEvaluator::mkInt(NixInt i)
+{
+    auto result = inner->mkInt(i);
+    auto hash = hashString(HashAlgorithm::SHA256, "mkInt:" + std::to_string(i.value));
+    auto hashStr = hash.to_string(HashFormat::Base16, false);
+    auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
+    auto v = writer.getSink().allocValue();
+    return TracingObject::create(result, writer, v, triePos);
+}
+
+ref<Object> TracingEvaluator::mkBool(bool b)
+{
+    auto result = inner->mkBool(b);
+    auto hash = hashString(HashAlgorithm::SHA256, b ? "mkBool:true" : "mkBool:false");
+    auto hashStr = hash.to_string(HashFormat::Base16, false);
+    auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
+    auto v = writer.getSink().allocValue();
+    return TracingObject::create(result, writer, v, triePos);
+}
+
+ref<Object> TracingEvaluator::mkPath(const RootedPath & path)
+{
+    auto result = inner->mkPath(path);
+    /* Identity from the SourceRoot's unpinnedId + canon path. The
+       unpinnedId strips revision-output attrs from the URL, so the
+       same logical source at two different revs produces the same
+       identity — exactly the property the trie needs to replay across
+       upgrades of an input. SourceRoots without an unpinnedId (e.g.
+       internal-helper accessors) fall back to a per-instance address;
+       those are typically process-scoped and don't need cross-run
+       replay anyway. */
+    std::string content = "mkPath:";
+    if (path.root->unpinnedId)
+        content += *path.root->unpinnedId;
+    else
+        content += fmt("addr:%p", (void *) &*path.root);
+    content += ":" + path.path.abs();
+    auto hash = hashString(HashAlgorithm::SHA256, content);
+    auto hashStr = hash.to_string(HashFormat::Base16, false);
+    auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
+    auto v = writer.getSink().allocValue();
+    return TracingObject::create(result, writer, v, triePos);
+}
+
+ref<Object> TracingEvaluator::getInternalPrimOp(const std::string & name)
+{
+    auto result = inner->getInternalPrimOp(name);
+    auto hash = hashString(HashAlgorithm::SHA256, "internalPrimOp:" + name);
+    auto hashStr = hash.to_string(HashFormat::Base16, false);
+    auto triePos = TriePosition{.resultNodeHash = hash, .queryHashStr = hashStr};
+    auto v = writer.getSink().allocValue();
+    return TracingObject::create(result, writer, v, triePos);
+}
+
 ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> & attrs)
 {
     auto result = inner->mkAttrs(attrs);

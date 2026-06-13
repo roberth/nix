@@ -7,6 +7,7 @@
 #include "nix/expr/eval-inline.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/eval-error.hh"
+#include "nix/expr/eval-settings.hh"
 #include "nix/expr/evaluation-helpers.hh"
 #include "nix/flake/flake.hh"
 #include "nix/expr/eval-cache.hh"
@@ -148,6 +149,26 @@ DerivedPathsWithInfo InstallableFlake::toDerivedPaths()
 
 std::pair<Value *, PosIdx> InstallableFlake::toValue(EvalState & state)
 {
+    /* When tracing is on, route through `getRootObject` (which calls
+       `callFlakeViaEvaluator`) and walk the attr path via the Object
+       interface, so the work is recorded/replayed by the trie. The
+       cursor-based fall-through uses `openEvalCache`'s legacy path and
+       bypasses the trie. */
+    if (state.settings.useTracingEvalCache) {
+        auto root = getRootObject();
+        auto attrPaths = getActualAttrPaths();
+        auto attrResult = expr::helpers::tryAttrPaths(*root, attrPaths, state);
+        if (!attrResult)
+            throw Error(
+                attrResult.getSuggestions(),
+                "flake '%s' does not provide attribute %s",
+                flakeRef,
+                showAttrPaths(attrPaths));
+        auto [attr, attrPath] = *attrResult;
+        auto v = attr->defeatCache();
+        state.forceValue(**v, noPos);
+        return {*v, attr->getPos()};
+    }
     return {&getCursor(state)->forceValue(), noPos};
 }
 
@@ -186,6 +207,21 @@ std::vector<ref<eval_cache::AttrCursor>> InstallableFlake::getCursors(EvalState 
 
 ref<Object> InstallableFlake::getRootObject()
 {
+    /* With tracing-eval-cache on, route through the trie via the
+       Evaluator-interface re-expression of `callFlake`. The lazy
+       paths inside each input's `sourceInfo.outPath` carry the
+       input's unpinned URL as identity, so the trie keys on the
+       structurally-decomposed call (evalFile + mkString + per-input
+       mkAttrs + apply chain) rather than on a coarse fingerprint
+       that would itself presuppose eager input fetching. The legacy
+       `eval-cache` path stays as-is for users who haven't opted in.
+
+       Mutual exclusion: `eval-cache` is treated as the legacy coarse
+       knob; when `tracing-eval-cache` is on it wins regardless of
+       `eval-cache`. */
+    if (state->settings.useTracingEvalCache) {
+        return flake::callFlakeViaEvaluator(*evaluator, *state, *getLockedFlake());
+    }
     // openEvalCache is memoized in state.evalCaches by fingerprint
     auto evalCache = openEvalCache(*state, getLockedFlake());
     return coarseEvalCache->getRoot(evalCache);

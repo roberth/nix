@@ -33,6 +33,7 @@
 #include "nix/expr/eval-inline.hh"
 #include "nix/store/store-api.hh"
 #include "nix/fetchers/fetchers.hh"
+#include "nix/fetchers/attrs.hh"
 #include "nix/util/finally.hh"
 #include "nix/fetchers/fetch-settings.hh"
 #include "nix/flake/settings.hh"
@@ -1164,6 +1165,148 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
 
     Value * args[] = {vLocks, &vOverrides, *vFetchFinalTree};
     state.callFunction(*vCallFlake, args, vRes, noPos);
+}
+
+/* Mirror `addFetchTreeMetadataAttrs` at the Object level.
+
+   LazyAttrs (the shape `lockInput` installs for narHash and revCount
+   on freshly-fingerprinted inputs) are *forced* here rather than
+   emitted as a Nix-side thunk. Rationale: we don't have an
+   `Evaluator`-interface thunk primitive, and on warm runs the
+   `sourcePathToHash`/`fetchToStore2` caches make the force cheap.
+   Lockfile-resident inputs come with concrete narHash/revCount on
+   `input.attrs` and short-circuit before any walk. */
+static void addFetchTreeMetadataAttrsViaEvaluator(
+    Evaluator & evaluator,
+    EvalState & state,
+    const fetchers::Input & input,
+    bool emptyRevFallback,
+    bool forceDirty,
+    std::map<std::string, ref<Object>> & attrs)
+{
+    auto resolveLazyString = [](const fetchers::LazyAttr & l) -> std::optional<std::string> {
+        auto v = l->compute();
+        if (auto * s = std::get_if<std::string>(&v))
+            return *s;
+        return {};
+    };
+    auto resolveLazyInt = [](const fetchers::LazyAttr & l) -> std::optional<uint64_t> {
+        auto v = l->compute();
+        if (auto * i = std::get_if<uint64_t>(&v))
+            return *i;
+        return {};
+    };
+
+    if (auto narHashLazy = fetchers::maybeGetLazyAttr(input.attrs, "narHash")) {
+        if (auto s = resolveLazyString(*narHashLazy))
+            attrs.emplace("narHash", evaluator.mkString(*s));
+    } else if (auto narHash = input.getNarHash()) {
+        attrs.emplace("narHash", evaluator.mkString(narHash->to_string(HashFormat::SRI, true)));
+    }
+
+    if (input.getType() == "git")
+        attrs.emplace(
+            "submodules", evaluator.mkBool(fetchers::maybeGetBoolAttr(input.attrs, "submodules").value_or(false)));
+
+    if (!forceDirty) {
+        if (auto rev = input.getRev()) {
+            attrs.emplace("rev", evaluator.mkString(rev->gitRev()));
+            attrs.emplace("shortRev", evaluator.mkString(rev->gitShortRev()));
+        } else if (emptyRevFallback) {
+            auto emptyHash = Hash(HashAlgorithm::SHA1);
+            attrs.emplace("rev", evaluator.mkString(emptyHash.gitRev()));
+            attrs.emplace("shortRev", evaluator.mkString(emptyHash.gitShortRev()));
+        }
+
+        if (auto revCountLazy = fetchers::maybeGetLazyAttr(input.attrs, "revCount")) {
+            if (auto n = resolveLazyInt(*revCountLazy))
+                attrs.emplace("revCount", evaluator.mkInt(NixInt(int64_t(*n))));
+        } else if (auto revCount = input.getRevCount()) {
+            attrs.emplace("revCount", evaluator.mkInt(NixInt(int64_t(*revCount))));
+        } else if (emptyRevFallback) {
+            attrs.emplace("revCount", evaluator.mkInt(NixInt(0)));
+        }
+    }
+
+    if (auto dirtyRev = fetchers::maybeGetStrAttr(input.attrs, "dirtyRev")) {
+        attrs.emplace("dirtyRev", evaluator.mkString(*dirtyRev));
+        attrs.emplace("dirtyShortRev", evaluator.mkString(*fetchers::maybeGetStrAttr(input.attrs, "dirtyShortRev")));
+    }
+
+    if (auto lastModified = input.getLastModified()) {
+        attrs.emplace("lastModified", evaluator.mkInt(NixInt(int64_t(*lastModified))));
+        attrs.emplace(
+            "lastModifiedDate",
+            evaluator.mkString(fmt("%s", std::put_time(std::gmtime(&*lastModified), "%Y%m%d%H%M%S"))));
+    }
+    (void) state;
+}
+
+/* Mirror `emitTreeAttrs(..., lazy=true)` at the Object level. */
+static ref<Object> emitTreeAttrsViaEvaluator(
+    Evaluator & evaluator,
+    EvalState & state,
+    const fetchers::MountableTree & tree,
+    const fetchers::Input & input,
+    bool emptyRevFallback,
+    bool forceDirty)
+{
+    std::map<std::string, ref<Object>> attrs;
+    /* `lazy = true`: outPath is rooted at the fetcher's accessor with
+       the input's unpinned URL as identity, exactly like
+       `emitTreeAttrs(lazy=true)`. No mountInput, no store walk. */
+    attrs.emplace(
+        "outPath",
+        evaluator.mkPath(
+            RootedPath{
+                state.getOrCreateRoot(tree.accessor(), SourceRootKind::Copyable, input.toUnpinnedURL()),
+                CanonPath::root}));
+    addFetchTreeMetadataAttrsViaEvaluator(evaluator, state, input, emptyRevFallback, forceDirty, attrs);
+    return evaluator.mkAttrs(attrs);
+}
+
+ref<Object> callFlakeViaEvaluator(Evaluator & evaluator, EvalState & state, const LockedFlake & lockedFlake)
+{
+    experimentalFeatureSettings.require(Xp::Flakes);
+
+    auto [lockFileStr, keyMap] = lockedFlake.lockFile.to_string();
+
+    std::map<std::string, ref<Object>> overrideAttrs;
+    for (auto & [node, info] : lockedFlake.nodePaths) {
+        auto lockedNode = node.dynamic_pointer_cast<const LockedNode>();
+        const auto & lockedRef = lockedNode ? lockedNode->lockedRef : lockedFlake.flake.lockedRef;
+        /* As in `callFlake`: `lazy` mirrors whether `mountInput` ran;
+           with lazy-paths that's tied to whether we know the
+           storePath. We're using `mkPath` keyed on unpinned URL
+           either way — the Object-level call doesn't itself care
+           about lazy vs eager, but we keep the semantics aligned with
+           the Value-level path so the produced trees are
+           interchangeable on a cache fall-through. */
+        auto sourceInfo = emitTreeAttrsViaEvaluator(
+            evaluator,
+            state,
+            info.tree,
+            lockedRef.input,
+            /*emptyRevFallback=*/false,
+            /*forceDirty=*/!lockedNode && lockedFlake.flake.forceDirty);
+
+        auto override = evaluator.mkAttrs({{"sourceInfo", sourceInfo}, {"dir", evaluator.mkString(info.subdir)}});
+
+        auto key = keyMap.find(node);
+        assert(key != keyMap.end());
+        overrideAttrs.emplace(key->second, override);
+    }
+
+    auto vOverrides = evaluator.mkAttrs(overrideAttrs);
+
+    auto vCallFlake = evaluator.evalFile(
+        RootedPath{callFlakeInternalRoot, CanonPath("call-flake.nix")}, "«flakes-internal»/call-flake.nix");
+
+    auto vLocks = evaluator.mkString(lockFileStr);
+
+    auto vFetchFinalTree = evaluator.getInternalPrimOp("fetchFinalTree");
+
+    return evaluator.apply(evaluator.apply(evaluator.apply(vCallFlake, vLocks), vOverrides), vFetchFinalTree);
 }
 
 std::optional<Fingerprint> LockedFlake::getFingerprint(Store & store, const fetchers::Settings & fetchSettings) const

@@ -63,6 +63,35 @@ ref<Object> Interpreter::mkString(const std::string & s)
     return make_ref<InterpreterObject>(*evalState, allocRootValue(v));
 }
 
+ref<Object> Interpreter::mkInt(NixInt i)
+{
+    auto v = evalState->allocValue();
+    v->mkInt(i);
+    return make_ref<InterpreterObject>(*evalState, allocRootValue(v));
+}
+
+ref<Object> Interpreter::mkBool(bool b)
+{
+    auto v = evalState->allocValue();
+    v->mkBool(b);
+    return make_ref<InterpreterObject>(*evalState, allocRootValue(v));
+}
+
+ref<Object> Interpreter::mkPath(const RootedPath & path)
+{
+    auto v = evalState->allocValue();
+    v->mkPath(path, evalState->mem);
+    return make_ref<InterpreterObject>(*evalState, allocRootValue(v));
+}
+
+ref<Object> Interpreter::getInternalPrimOp(const std::string & name)
+{
+    auto it = evalState->internalPrimOps.find(name);
+    if (it == evalState->internalPrimOps.end())
+        throw Error("no internal primop named '%s'", name);
+    return make_ref<InterpreterObject>(*evalState, allocRootValue(it->second));
+}
+
 ref<Object> Interpreter::mkAttrs(const std::map<std::string, ref<Object>> & attrs)
 {
     auto v = evalState->allocValue();

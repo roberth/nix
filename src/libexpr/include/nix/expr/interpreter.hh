@@ -36,7 +36,15 @@ public:
 
     ref<Object> mkString(const std::string & s) override;
 
+    ref<Object> mkInt(NixInt i) override;
+
+    ref<Object> mkBool(bool b) override;
+
+    ref<Object> mkPath(const RootedPath & path) override;
+
     ref<Object> mkAttrs(const std::map<std::string, ref<Object>> & attrs) override;
+
+    ref<Object> getInternalPrimOp(const std::string & name) override;
 
     ref<Object> apply(ref<Object> fn, ref<Object> arg) override;
 

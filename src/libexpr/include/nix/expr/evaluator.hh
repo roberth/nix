@@ -264,11 +264,43 @@ public:
     virtual ref<Object> mkString(const std::string & s) = 0;
 
     /**
+     * Construct an integer Object.
+     * Identity in the tracing trie is content-derived.
+     */
+    virtual ref<Object> mkInt(NixInt i) = 0;
+
+    /**
+     * Construct a boolean Object.
+     * Identity in the tracing trie is content-derived.
+     */
+    virtual ref<Object> mkBool(bool b) = 0;
+
+    /**
+     * Construct a path Object.
+     *
+     * Identity in the tracing trie is derived from the SourceRoot's
+     * `unpinnedId` (the source's URL stripped of resolution outputs)
+     * plus the canon path. This is what lets the cache share entries
+     * across two revisions of the same source: both rev `abc` and rev
+     * `def` of `github:NixOS/nixpkgs` produce the same identity, so
+     * subsequent attr accesses replay as long as the read content
+     * matches at validation time.
+     */
+    virtual ref<Object> mkPath(const RootedPath & path) = 0;
+
+    /**
      * Construct an attrset Object from a map of string to Object.
      * @param attrs The attributes as a map
      * @return An Object representing the attrset
      */
     virtual ref<Object> mkAttrs(const std::map<std::string, ref<Object>> & attrs) = 0;
+
+    /**
+     * Get an Object wrapping one of the evaluator-internal primops by
+     * name. Identity in the tracing trie is derived from the name, so
+     * the trie keys consistently across runs.
+     */
+    virtual ref<Object> getInternalPrimOp(const std::string & name) = 0;
 
     /**
      * Apply a function to an argument.

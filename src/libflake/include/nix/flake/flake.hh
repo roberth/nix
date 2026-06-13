@@ -6,6 +6,7 @@
 #include "nix/flake/flakeref.hh"
 #include "nix/flake/lockfile.hh"
 #include "nix/expr/value.hh"
+#include "nix/expr/evaluator.hh"
 #include "nix/expr/eval-cache.hh"
 
 namespace nix {
@@ -264,6 +265,24 @@ LockedFlake lockFlake(
     const LockFlags & lockFlags);
 
 void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & v);
+
+/**
+ * Evaluate a locked flake's outputs via the Evaluator interface.
+ *
+ * Produces the same Value as `callFlake`, but expresses the call as
+ * a composition of `evalFile` / `mkString` / `mkInt` / `mkBool` /
+ * `mkPath` / `mkAttrs` / `getInternalPrimOp` / `apply` invocations so
+ * the tracing trie can record and replay it. Each per-input
+ * `sourceInfo.outPath` is `mkPath`'d at the input's
+ * SourceRoot (whose `unpinnedId` is the input's URL stripped of
+ * resolution attributes), so the trie can share entries across two
+ * revisions of the same source.
+ *
+ * `mkPath` here mirrors `emitTreeAttrs(..., lazy=true)` — no
+ * `mountInput`, no store materialisation; paths stay routed through
+ * the fetcher's accessor.
+ */
+ref<Object> callFlakeViaEvaluator(Evaluator & evaluator, EvalState & state, const LockedFlake & lockedFlake);
 
 /**
  * Open an evaluation cache for a flake.
