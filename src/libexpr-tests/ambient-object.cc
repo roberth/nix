@@ -1,8 +1,16 @@
 #include <gtest/gtest.h>
 
 #include "nix/expr/ambient-object.hh"
+#include "nix/util/source-accessor.hh"
 
 namespace nix {
+
+/* lazy-paths: tests don't exercise `getPath`, so any SourceRoot
+   suffices for the constructor — just stub one out. */
+static ref<SourceRoot> stubAmbientRoot()
+{
+    return SourceRoot::make(getFSSourceAccessor(), SourceRootKind::Internal);
+}
 
 /**
  * Mock resolver: maps (objectId, tag) to predetermined results.
@@ -37,26 +45,29 @@ static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> r
 
 TEST(AmbientObjectTest, GetType)
 {
-    auto obj = std::make_shared<AmbientObject>(AmbientId(0), mockResolver({{"getType:0", trace::ResultType{"int"}}}));
+    auto obj = std::make_shared<AmbientObject>(
+        AmbientId(0), mockResolver({{"getType:0", trace::ResultType{"int"}}}), stubAmbientRoot());
     EXPECT_EQ(obj->getType(), nInt);
 }
 
 TEST(AmbientObjectTest, GetInt)
 {
-    auto obj = std::make_shared<AmbientObject>(AmbientId(0), mockResolver({{"getInt:0", trace::ResultInt{42}}}));
+    auto obj = std::make_shared<AmbientObject>(
+        AmbientId(0), mockResolver({{"getInt:0", trace::ResultInt{42}}}), stubAmbientRoot());
     EXPECT_EQ(obj->getInt().value, 42);
 }
 
 TEST(AmbientObjectTest, GetString)
 {
-    auto obj =
-        std::make_shared<AmbientObject>(AmbientId(0), mockResolver({{"getString:0", trace::ResultString{"hello"}}}));
+    auto obj = std::make_shared<AmbientObject>(
+        AmbientId(0), mockResolver({{"getString:0", trace::ResultString{"hello"}}}), stubAmbientRoot());
     EXPECT_EQ(obj->getStringIgnoreContext(), "hello");
 }
 
 TEST(AmbientObjectTest, GetBool)
 {
-    auto obj = std::make_shared<AmbientObject>(AmbientId(0), mockResolver({{"getBool:0", trace::ResultBool{true}}}));
+    auto obj = std::make_shared<AmbientObject>(
+        AmbientId(0), mockResolver({{"getBool:0", trace::ResultBool{true}}}), stubAmbientRoot());
     EXPECT_TRUE(obj->getBool());
 }
 
@@ -67,7 +78,8 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
         mockResolver({
             {"getAttr:0", trace::ResultMaybeType{std::optional<std::string>{"int"}}},
             {"getInt:1", trace::ResultInt{99}},
-        }));
+        }),
+        stubAmbientRoot());
     auto child = obj->maybeGetAttr("x");
     ASSERT_NE(child, nullptr);
     EXPECT_EQ(child->getInt().value, 99);
@@ -76,7 +88,7 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
 TEST(AmbientObjectTest, GetAttrMissing)
 {
     auto obj = std::make_shared<AmbientObject>(
-        AmbientId(0), mockResolver({{"getAttr:0", trace::ResultMaybeType{std::nullopt}}}));
+        AmbientId(0), mockResolver({{"getAttr:0", trace::ResultMaybeType{std::nullopt}}}), stubAmbientRoot());
     EXPECT_EQ(obj->maybeGetAttr("missing"), nullptr);
 }
 
@@ -87,7 +99,8 @@ TEST(AmbientObjectTest, GetListElem)
         mockResolver({
             {"getListElem:0", trace::ResultType{"string"}},
             {"getString:1", trace::ResultString{"world"}},
-        }));
+        }),
+        stubAmbientRoot());
     auto child = obj->getListElem(1);
     ASSERT_NE(child, nullptr);
     EXPECT_EQ(child->getStringIgnoreContext(), "world");
@@ -96,7 +109,9 @@ TEST(AmbientObjectTest, GetListElem)
 TEST(AmbientObjectTest, GetAttrNames)
 {
     auto obj = std::make_shared<AmbientObject>(
-        AmbientId(0), mockResolver({{"getAttrNames:0", trace::ResultListOfStrings{{"a", "b", "c"}}}}));
+        AmbientId(0),
+        mockResolver({{"getAttrNames:0", trace::ResultListOfStrings{{"a", "b", "c"}}}}),
+        stubAmbientRoot());
     auto names = obj->getAttrNames();
     EXPECT_EQ(names.size(), 3u);
     EXPECT_EQ(names[0], "a");

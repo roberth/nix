@@ -27,10 +27,12 @@ static ObjectType stringToObjectTypeAmbient(const std::string & type)
     throw Error("unknown object type: %s", type);
 }
 
-AmbientObject::AmbientObject(AmbientId id, AmbientQueryFn queryFn, AmbientApplyFn applyFn)
+AmbientObject::AmbientObject(
+    AmbientId id, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn)
     : id(id)
     , queryFn(std::move(queryFn))
     , applyFn(std::move(applyFn))
+    , ambientRootFSRoot(std::move(ambientRootFSRoot))
 {
 }
 
@@ -42,7 +44,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
         return nullptr;
     if (!qr.childId)
         throw Error("ambient maybeGetAttr: resolver didn't return child id");
-    return std::make_shared<AmbientObject>(*qr.childId, queryFn, applyFn);
+    return std::make_shared<AmbientObject>(*qr.childId, queryFn, ambientRootFSRoot, applyFn);
 }
 
 std::vector<std::string> AmbientObject::getAttrNames()
@@ -86,11 +88,12 @@ RootedPath AmbientObject::getPath()
     auto * r = std::get_if<trace::ResultPath>(&qr.result);
     if (!r)
         throw Error("ambient getPath: unexpected result type");
-    /* lazy-paths: wrap the system-FS accessor in a one-off System
-       SourceRoot. The path came from the ambient (outer) evaluator
-       via the root FS; admitting it as System matches how
-       rootFSRoot is stamped in EvalState. */
-    return RootedPath{SourceRoot::make(getFSSourceAccessor(), SourceRootKind::System), CanonPath(r->path)};
+    /* lazy-paths: reuse the outer EvalState's `rootFSRoot` so the
+       SourceRoot outlives the Value the outer evaluator constructs
+       from this path. A one-off `SourceRoot::make` here would be
+       freed when the returned RootedPath drops, leaving Value's raw
+       SourceRoot pointer dangling. */
+    return RootedPath{ambientRootFSRoot, CanonPath(r->path)};
 }
 
 bool AmbientObject::getBool(std::string_view)
@@ -134,7 +137,7 @@ std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
     auto qr = queryFn(id, trace::QueryGetListElem{std::to_string(id.value()), index});
     if (!qr.childId)
         throw Error("ambient getListElem: resolver didn't return child id");
-    return std::make_shared<AmbientObject>(*qr.childId, queryFn, applyFn);
+    return std::make_shared<AmbientObject>(*qr.childId, queryFn, ambientRootFSRoot, applyFn);
 }
 
 ObjectType AmbientObject::getTypeLazy()
@@ -180,7 +183,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
     if (!applyFn)
         throw Error("ambient apply: no apply callback");
     auto resultId = applyFn(id, std::move(argObj));
-    return std::make_shared<AmbientObject>(resultId, queryFn, applyFn);
+    return std::make_shared<AmbientObject>(resultId, queryFn, ambientRootFSRoot, applyFn);
 }
 
 } // namespace nix

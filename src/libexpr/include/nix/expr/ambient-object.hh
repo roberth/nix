@@ -9,6 +9,7 @@
  */
 
 #include "nix/expr/evaluator.hh"
+#include "nix/expr/source-root.hh"
 #include "nix/expr/trace-ids.hh"
 #include "nix/expr/trace-types.hh"
 
@@ -51,9 +52,15 @@ class AmbientObject : public Object
     AmbientId id;           ///< Integer id in the resolver
     AmbientQueryFn queryFn; ///< Callback to issue ambient queries
     AmbientApplyFn applyFn; ///< Callback for function application (may be null)
+    /* lazy-paths: stable SourceRoot for paths returned by `getPath`.
+       Held as a member so the SourceRoot outlives the Value the
+       outer evaluator constructs from the RootedPath (Value stores a
+       raw SourceRoot pointer). Resolved at construction by the
+       resolver from the outer EvalState's `rootFSRoot`. */
+    ref<SourceRoot> ambientRootFSRoot;
 
 public:
-    AmbientObject(AmbientId id, AmbientQueryFn queryFn, AmbientApplyFn applyFn = {});
+    AmbientObject(AmbientId id, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

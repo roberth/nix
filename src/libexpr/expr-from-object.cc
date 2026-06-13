@@ -213,7 +213,12 @@ static PrimOp * makeCachedFnPrimOp(
                             });
                             return resultId;
                         };
-                        auto contraArg = make_ref<AmbientObject>(rootId, std::move(queryFn), std::move(applyFn));
+                        /* lazy-paths: pin AmbientObject's path SourceRoot
+                           on the outer EvalState's `rootFSRoot` so the
+                           SourceRoot outlives the Values the outer
+                           evaluator builds from any returned RootedPaths. */
+                        auto contraArg =
+                            make_ref<AmbientObject>(rootId, std::move(queryFn), state.rootFSRoot, std::move(applyFn));
                         auto result = innerEval->apply(ref<Object>(fnObj), contraArg);
                         ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
                     },
