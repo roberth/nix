@@ -42,7 +42,7 @@ public:
 /**
  * Manages trace file storage.
  *
- * Traces are stored in ~/.cache/nix/eval-tracing-v0/traces/ as
+ * Traces are stored in ~/.cache/nix/eval-tracing-v1/traces/ as
  * individual JSON files. A "latest.json" symlink points to the most
  * recent trace.
  */

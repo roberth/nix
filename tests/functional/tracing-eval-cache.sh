@@ -7,9 +7,9 @@ source common.sh
 # where NIX_CONF_DIR is unset (the system nix daemon owns its own conf).
 echo "tracing-eval-cache = true" >> "$test_nix_conf"
 
-# getCacheDir() returns $HOME/.cache/nix; TracingDatabase appends eval-tracing-v0/traces
-tracesDir="$TEST_HOME/.cache/nix/eval-tracing-v0/traces"
-latestSymlink="$TEST_HOME/.cache/nix/eval-tracing-v0/latest.json"
+# getCacheDir() returns $HOME/.cache/nix; TracingDatabase appends eval-tracing-v1/traces
+tracesDir="$TEST_HOME/.cache/nix/eval-tracing-v1/traces"
+latestSymlink="$TEST_HOME/.cache/nix/eval-tracing-v1/latest.json"
 
 # Evaluate a simple expression with tracing enabled.
 # This should create a trace file.

@@ -85,7 +85,7 @@ class TracingIndex
 public:
     /**
      * Open or create a tracing index at the default location.
-     * Default: ~/.cache/nix/eval-tracing-index-v1/index.sqlite
+     * Default: ~/.cache/nix/eval-tracing-index-v2/index.sqlite
      */
     TracingIndex();
 

@@ -38,7 +38,7 @@ void TraceFile::log(const nlohmann::json & entry)
 }
 
 TracingDatabase::TracingDatabase()
-    : basePath(std::filesystem::path(getCacheDir()) / "eval-tracing-v0")
+    : basePath(std::filesystem::path(getCacheDir()) / "eval-tracing-v1")
 {
     createDirs(tracesDir());
 }

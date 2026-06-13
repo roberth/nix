@@ -4,7 +4,7 @@ source common.sh
 
 enableFeatures "tracing-eval-cache"
 
-cacheDir="$TEST_HOME/.cache/nix/eval-tracing-index-v1"
+cacheDir="$TEST_HOME/.cache/nix/eval-tracing-index-v2"
 
 clearCache() {
     rm -rf "$cacheDir"
@@ -408,7 +408,7 @@ echo '14' > "$TEST_ROOT/rv-leaf.nix"
 # chain so the outer trace records them as dependencies.
 
 
-latestSymlink="$TEST_HOME/.cache/nix/eval-tracing-v0/latest.json"
+latestSymlink="$TEST_HOME/.cache/nix/eval-tracing-v1/latest.json"
 
 # Enable outer tracing
 echo "tracing-eval-cache = true" >> "$test_nix_conf"

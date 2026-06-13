@@ -336,7 +336,7 @@ struct CmdEvalCacheStats : Command
         // and count shortcuts, queries, results
         auto shortcuts = index.selectShortcuts(Hash(HashAlgorithm::SHA256)); // dummy, we need a stats method
         // For now, just show what we can access
-        std::cout << "Trie location: ~/.cache/nix/eval-tracing-index-v1/index.sqlite\n";
+        std::cout << "Trie location: ~/.cache/nix/eval-tracing-index-v2/index.sqlite\n";
         std::cout << "(Use 'nix eval-cache inspect <hash>' to explore nodes)\n";
     }
 };

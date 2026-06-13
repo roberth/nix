@@ -318,7 +318,7 @@ private:
 
 static std::filesystem::path defaultDbPath()
 {
-    auto cacheDir = std::filesystem::path(getCacheDir()) / "eval-tracing-index-v1";
+    auto cacheDir = std::filesystem::path(getCacheDir()) / "eval-tracing-index-v2";
     return cacheDir / "index.sqlite";
 }
 
