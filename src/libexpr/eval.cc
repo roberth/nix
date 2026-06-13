@@ -2709,13 +2709,16 @@ BackedStringView EvalState::coerceToString(
             return std::string{rp.path.abs()};
         case SourceRootKind::Copyable: {
             /* Fetched-tree path: materialise the tree's root (a
-               storepath) and append the subpath. Matches what
-               `"${...}"` interpolation produces, so `toString p ==
-               "${p}"` for fetched-tree paths. The `srcToStore`
-               cache short-circuits subsequent calls. */
+               storepath) and append the subpath. The string form
+               matches `"${...}"` interpolation, but the *context*
+               must stay empty — `toString p` has always been
+               contextless on path Values, and NixOS modules rely on
+               it. Materialise into a throwaway context; the
+               `srcToStore` cache short-circuits subsequent calls. */
+            NixStringContext discardContext;
             auto storePath = [&]() {
                 try {
-                    return copyPathToStore(context, RootedPath{rp.root, CanonPath::root});
+                    return copyPathToStore(discardContext, RootedPath{rp.root, CanonPath::root});
                 } catch (Error & e) {
                     e.addTrace(
                         positions[pos], "while coercing path '%s' on a fetched source to a string", rp.path.abs());
