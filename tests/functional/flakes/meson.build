@@ -42,6 +42,7 @@ suites += {
     'lint-fetch-whole-source-to-store.sh',
     'generic-closure-path-equivalent.sh',
     'builtins-path-filter-arg.sh',
+    'flake-input-copy-to-store.sh',
   ],
   'workdir' : meson.current_source_dir(),
 }

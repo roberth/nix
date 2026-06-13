@@ -64,6 +64,21 @@ struct FlakeInput
      * false = (fetched) static source path
      */
     bool isFlake = true;
+    /**
+     * If true, opt this input back into pre-lazy-paths behaviour: the
+     * tree is materialised to the store at fetch time and the flake's
+     * `outputs` function sees `outPath` as a path Value whose
+     * CanonPath is the storepath. Structural primops (`dirOf`,
+     * `baseNameOf`, anything routing through `lib.path.deconstructPath`)
+     * then walk through the storepath the way they did before
+     * lazy-paths, which is what some downstream consumers (e.g.
+     * nixpkgs' `lib.fileset`, `documentation.nix`) anchor on.
+     *
+     * `std::nullopt` means "not set explicitly": fall back to the
+     * `flake-default-copy-to-store` setting. The default for that
+     * setting is `false`, which keeps the lazy-paths shape.
+     */
+    std::optional<bool> copyToStore;
     std::optional<InputAttrPath> follows;
     FlakeInputs overrides;
 };
@@ -123,9 +138,19 @@ struct Flake
 
     /**
      * Attributes to be retroactively applied to the `self` input
-     * (such as `submodules = true`).
+     * (such as `submodules = true`). Only fetcher-shaped attrs go
+     * here; flakes-level attrs (e.g. `copyToStore`) live alongside
+     * as their own fields.
      */
     fetchers::Attrs selfAttrs;
+
+    /**
+     * `inputs.self.copyToStore`, mirroring `FlakeInput::copyToStore`
+     * for the root flake. Not a fetcher attribute (`copyToStore`
+     * isn't a libfetchers concept) — stored separately so it
+     * doesn't leak into `selfAttrs` / `FlakeRef::input::attrs`.
+     */
+    std::optional<bool> selfCopyToStore;
 
     /**
      * 'nixConfig' attribute
@@ -159,6 +184,16 @@ struct LockedFlake
      * walk it to access input trees through the lazy accessor.
      */
     std::map<ref<Node>, NodeLocation> nodePaths;
+
+    /**
+     * Snapshot of `Settings::defaultCopyToStore` taken at
+     * `lockFlake` time. `callFlake` reads it as the fallback when
+     * neither `inputs.<name>.copyToStore` nor
+     * `inputs.self.copyToStore` is set. Captured here so `callFlake`
+     * doesn't need to take a `Settings` parameter just for one bit
+     * of state.
+     */
+    bool defaultCopyToStore = false;
 
     std::optional<Fingerprint> getFingerprint(Store & store, const fetchers::Settings & fetchSettings) const;
 };
