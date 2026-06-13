@@ -64,3 +64,30 @@ rootDir=$(dirname "$(dirname "$storeDir")")
 [[ "$rootDir" == "/" ]] && expectedRoot=/ || expectedRoot=$rootDir
 result=$(nix eval --no-eval-cache --raw "$hostDir#rootDirStr")
 [[ "$result" == "$expectedRoot" ]] || fail "rootDirStr: expected $expectedRoot, got: $result"
+
+# --- inputs.self.copyToStore ------------------------------------------
+# The same opt-in applies to the root flake via `inputs.self`. This is
+# the path needed for the v12-on-v12 case where the root flake's own
+# source needs structural walking (e.g. `lib.fileset` over `./.`).
+
+selfHostDir=$TEST_ROOT/selfhost
+mkdir -p "$selfHostDir"
+cat > "$selfHostDir"/flake.nix <<EOF2
+{
+  inputs.self.copyToStore = true;
+  outputs = { self }: {
+    op_type    = builtins.typeOf self.outPath;
+    dirOf_type = builtins.typeOf (builtins.dirOf self.outPath);
+    dirOf_str  = toString (builtins.dirOf self.outPath);
+  };
+}
+EOF2
+
+result=$(nix eval --no-eval-cache --json "$selfHostDir#op_type")
+[[ "$result" == '"path"' ]] || fail "self.op_type: expected \"path\", got: $result"
+
+result=$(nix eval --no-eval-cache --json "$selfHostDir#dirOf_type")
+[[ "$result" == '"path"' ]] || fail "self.dirOf_type: expected \"path\", got: $result"
+
+result=$(nix eval --no-eval-cache --raw "$selfHostDir#dirOf_str")
+[[ "$result" == "$storeDir" ]] || fail "self.dirOf_str: expected $storeDir, got: $result"

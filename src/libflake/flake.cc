@@ -400,11 +400,16 @@ static FlakeRef applySelfAttrs(const FlakeRef & ref, const Flake & flake)
 {
     auto newRef(ref);
 
-    StringSet allowedAttrs{"submodules", "lfs"};
+    /* `copyToStore` is honoured at `callFlake` emit time (see the
+       root-node lookup there), not by the fetcher — listing it here
+       just keeps the "is this allowed" guard from rejecting it. */
+    StringSet allowedAttrs{"submodules", "lfs", "copyToStore"};
 
     for (auto & attr : flake.selfAttrs) {
         if (!allowedAttrs.contains(attr.first))
             throw Error("flake 'self' attribute '%s' is not supported", attr.first);
+        if (attr.first == "copyToStore")
+            continue;
         newRef.input.attrs.insert_or_assign(attr.first, attr.second);
     }
 
@@ -1170,6 +1175,16 @@ void callFlake(EvalState & state, const LockedFlake & lockedFlake, Value & vRes)
         if (auto inputIt = lockedFlake.flake.inputs.find(key->second);
             inputIt != lockedFlake.flake.inputs.end() && inputIt->second.copyToStore)
             copyToStoreOutPath = true;
+        /* `inputs.self.copyToStore = true` opts the root flake itself
+           into the eager System-rooted shape, mirroring how
+           `inputs.<name>.copyToStore` does it for inputs. The flag
+           lives on `flake.selfAttrs` (parsed by `parseFlakeInputs`
+           and survived `applySelfAttrs`). */
+        if (node == ref<Node>(lockedFlake.lockFile.root)) {
+            if (auto it = lockedFlake.flake.selfAttrs.find("copyToStore"); it != lockedFlake.flake.selfAttrs.end())
+                if (auto b = std::get_if<Explicit<bool>>(&it->second); b && b->t)
+                    copyToStoreOutPath = true;
+        }
 
         /* `lazy` follows whether we know the storePath: nodePaths
            entries from getFlake/computeLocks went through lockInput
