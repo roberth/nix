@@ -1662,7 +1662,11 @@ public:
     realiseString(Value & str, StorePathSet * storePathsOutMaybe, bool isIFD = true, const PosIdx pos = noPos);
 
     /* Call the binary path filter predicate used builtins.path etc. */
-    bool callPathFilter(Value * filterFun, const SourcePath & path, PosIdx pos);
+    bool callPathFilter(
+        Value * filterFun,
+        const SourcePath & path,
+        PosIdx pos,
+        std::optional<std::string_view> arg1Override = std::nullopt);
 
     DocComment getDocCommentForPos(PosIdx pos);
 

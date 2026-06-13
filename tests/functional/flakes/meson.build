@@ -41,6 +41,7 @@ suites += {
     'lazy-paths-submodule.sh',
     'lint-fetch-whole-source-to-store.sh',
     'generic-closure-path-equivalent.sh',
+    'builtins-path-filter-arg.sh',
   ],
   'workdir' : meson.current_source_dir(),
 }

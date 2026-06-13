@@ -3107,14 +3107,23 @@ static RegisterPrimOp primop_toFile({
     .impl = prim_toFile,
 });
 
-bool EvalState::callPathFilter(Value * filterFun, const SourcePath & path, PosIdx pos)
+bool EvalState::callPathFilter(
+    Value * filterFun, const SourcePath & path, PosIdx pos, std::optional<std::string_view> arg1Override)
 {
     auto st = path.lstat();
 
     /* Call the filter function.  The first argument is the path, the
-       second is a string indicating the type of the file. */
+       second is a string indicating the type of the file.
+
+       `arg1Override` lets the caller swap in a different string —
+       used by `builtins.path`/`filterSource` on a Copyable-rooted
+       source so the filter sees the `toString`-equivalent
+       (source-storepath + relative path) instead of the bare
+       accessor-relative path. Existing filter functions that anchor
+       regexes on `toString src` (e.g. nixpkgs'
+       `documentation.nix`) rely on this. */
     Value arg1;
-    arg1.mkString(path.path.abs(), mem);
+    arg1.mkString(arg1Override.value_or(path.path.abs()), mem);
 
     // assert that type is not "unknown"
     Value * args[]{&arg1, const_cast<Value *>(&fileTypeToString(*this, st.type))};
@@ -3128,7 +3137,7 @@ static void addPath(
     EvalState & state,
     const PosIdx pos,
     std::string_view name,
-    SourcePath path,
+    RootedPath path,
     Value * filterFun,
     ContentAddressMethod method,
     const std::optional<Hash> expectedHash,
@@ -3138,24 +3147,47 @@ static void addPath(
     try {
         StorePathSet refs;
 
-        if (path.accessor == state.systemEnvironment->rootFSAccessor
-            && state.systemEnvironment->store->isInStore(path.path.abs()) && !context.empty()) {
+        auto sp = path.sourcePath();
+        if (sp.accessor == state.systemEnvironment->rootFSAccessor
+            && state.systemEnvironment->store->isInStore(sp.path.abs()) && !context.empty()) {
             // FIXME: handle CA derivation outputs (where path needs to
             // be rewritten to the actual output).
             auto rewrites = state.realiseContext(context);
-            path = {path.accessor, CanonPath(rewriteStrings(path.path.abs(), rewrites))};
-            auto [storePath, subPath] = state.systemEnvironment->store->toStorePath(path.path.abs());
+            path = RootedPath{path.root, CanonPath(rewriteStrings(sp.path.abs(), rewrites))};
+            sp = path.sourcePath();
+            auto [storePath, subPath] = state.systemEnvironment->store->toStorePath(sp.path.abs());
             try {
                 refs = state.systemEnvironment->store->queryPathInfo(storePath)->references;
             } catch (Error &) { // FIXME: should be InvalidPathError
             }
         }
 
+        /* For Copyable-rooted sources, materialise the source's
+           storepath once up front so the filter callback can hand
+           the user filter the `toString`-equivalent string
+           (`srcStorePath + relative-path`) rather than the bare
+           accessor-relative path. NixOS modules anchor regexes on
+           `toString src` and require this. The materialisation is
+           cached via `srcToStore`, so it doesn't add walks beyond
+           what `fetchToStore` below was going to do anyway. */
+        std::optional<std::string> srcStorePathPrefix;
+        if (filterFun && path.root->kind == SourceRootKind::Copyable) {
+            NixStringContext discardContext;
+            auto srcStorePath = state.copyPathToStore(discardContext, RootedPath{path.root, CanonPath::root});
+            srcStorePathPrefix = state.systemEnvironment->store->printStorePath(srcStorePath);
+        }
+
         std::unique_ptr<PathFilter> filter;
         if (filterFun)
-            filter = std::make_unique<PathFilter>([&](const std::string & p) {
+            filter = std::make_unique<PathFilter>([&, srcStorePathPrefix](const std::string & p) {
                 auto p2 = CanonPath(p);
-                return state.callPathFilter(filterFun, {path.accessor, p2}, pos);
+                std::optional<std::string> argOverride;
+                if (srcStorePathPrefix)
+                    argOverride = *srcStorePathPrefix + p2.abs();
+                std::optional<std::string_view> argOverrideView;
+                if (argOverride)
+                    argOverrideView = *argOverride;
+                return state.callPathFilter(filterFun, {path.root->accessor, p2}, pos, argOverrideView);
             });
 
         std::optional<StorePath> expectedStorePath;
@@ -3168,7 +3200,7 @@ static void addPath(
             auto dstPath = refs.empty() ? fetchToStore(
                                               state.fetchSettings,
                                               *state.systemEnvironment->store,
-                                              path.resolveSymlinks(),
+                                              path.sourcePath().resolveSymlinks(),
                                               settings.readOnlyMode ? FetchMode::DryRun : FetchMode::Copy,
                                               name,
                                               method,
@@ -3176,7 +3208,7 @@ static void addPath(
                                               state.repair)
                                         : state.systemEnvironment->store->addToStore(
                                               name,
-                                              path.resolveSymlinks(),
+                                              path.sourcePath().resolveSymlinks(),
                                               method,
                                               HashAlgorithm::SHA256,
                                               refs,
@@ -3198,7 +3230,11 @@ static void addPath(
 static void prim_filterSource(EvalState & state, const PosIdx pos, Value ** args, Value & v)
 {
     NixStringContext context;
-    auto path = state.coerceToPath(
+    /* `coerceToRootedPath` keeps the SourceRoot's kind, which
+       `addPath` needs to decide whether to hand the user filter
+       function the `toString`-equivalent arg (Copyable) or the
+       bare absolute path (System). */
+    auto path = state.coerceToRootedPath(
         pos,
         *args[1],
         context,
@@ -3206,7 +3242,15 @@ static void prim_filterSource(EvalState & state, const PosIdx pos, Value ** args
     state.forceFunction(*args[0], pos, "while evaluating the first argument passed to builtins.filterSource");
 
     addPath(
-        state, pos, path.baseName(), path, args[0], ContentAddressMethod::Raw::NixArchive, std::nullopt, v, context);
+        state,
+        pos,
+        path.path.baseName().value_or(""),
+        path,
+        args[0],
+        ContentAddressMethod::Raw::NixArchive,
+        std::nullopt,
+        v,
+        context);
 }
 
 static RegisterPrimOp primop_filterSource({
@@ -3266,7 +3310,7 @@ static RegisterPrimOp primop_filterSource({
 
 static void prim_path(EvalState & state, const PosIdx pos, Value ** args, Value & v)
 {
-    std::optional<SourcePath> path;
+    std::optional<RootedPath> path;
     std::string_view name;
     Value * filterFun = nullptr;
     auto method = ContentAddressMethod::Raw::NixArchive;
@@ -3278,7 +3322,7 @@ static void prim_path(EvalState & state, const PosIdx pos, Value ** args, Value 
     for (auto & attr : *args[0]->attrs()) {
         auto n = state.symbols[attr.name];
         if (n == "path")
-            path.emplace(state.coerceToPath(
+            path.emplace(state.coerceToRootedPath(
                 attr.pos, *attr.value, context, "while evaluating the 'path' attribute passed to 'builtins.path'"));
         else if (attr.name == state.s.name)
             name = state.forceStringNoCtx(
@@ -3306,7 +3350,7 @@ static void prim_path(EvalState & state, const PosIdx pos, Value ** args, Value 
             .atPos(pos)
             .debugThrow();
     if (name.empty())
-        name = path->baseName();
+        name = path->path.baseName().value_or("");
 
     addPath(state, pos, name, *path, filterFun, method, expectedHash, v, context);
 }
