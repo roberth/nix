@@ -2714,7 +2714,14 @@ BackedStringView EvalState::coerceToString(
                must stay empty — `toString p` has always been
                contextless on path Values, and NixOS modules rely on
                it. Materialise into a throwaway context; the
-               `srcToStore` cache short-circuits subsequent calls. */
+               `srcToStore` cache short-circuits subsequent calls.
+               Also register the original accessor on `storeFS` for
+               the resulting storepath, so downstream consumers that
+               read through `storePathAccessor` find the lazy
+               accessor — same shape `mountInput` sets up. Without
+               this, code that takes the storepath string from
+               `toString` and tries to read it back fails the
+               lookup. */
             NixStringContext discardContext;
             auto storePath = [&]() {
                 try {
@@ -2725,7 +2732,9 @@ BackedStringView EvalState::coerceToString(
                     throw;
                 }
             }();
-            return systemEnvironment->store->printStorePath(storePath) + rp.path.absOrEmpty();
+            auto spStr = systemEnvironment->store->printStorePath(storePath);
+            systemEnvironment->storeFS->mount(CanonPath(spStr), [accessor = rp.root->accessor]() { return accessor; });
+            return spStr + rp.path.absOrEmpty();
         }
         }
         unreachable();

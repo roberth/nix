@@ -23,14 +23,23 @@ class ToStringPathContextTest : public LibExprTest
 protected:
     /* Construct a Copyable-rooted accessor + a path Value at its
        root, mirroring how a fetched tree's `outPath` surfaces under
-       `emitTreeAttrs(lazy=true)`. */
+       `emitTreeAttrs(lazy=true)`.
+
+       Going through `state.parseExprFromFile`/`state.eval` is what
+       keeps the `SourceRoot` alive: `EvalState` interns it via
+       `getOrCreateRoot` during parsing, so the raw pointer
+       `Value::mkPath` stores stays valid for the test's lifetime.
+       A directly-`mkPath`'d Value over a stack-local `SourceRoot`
+       would dangle once the helper returns. */
     std::pair<Value, ref<MemorySourceAccessor>> makeCopyablePath()
     {
         auto acc = make_ref<MemorySourceAccessor>();
-        acc->addFile(CanonPath("/file"), "contents\n");
+        acc->addFile(CanonPath("/test.nix"), "./.");
         auto root = SourceRoot::make(acc.cast<SourceAccessor>(), SourceRootKind::Copyable);
+        auto * expr = state.parseExprFromFile(RootedPath{root, CanonPath("/test.nix")});
         Value v;
-        v.mkPath(RootedPath{root, CanonPath::root}, state.mem);
+        state.eval(expr, v);
+        state.forceValue(v, noPos);
         return {std::move(v), acc};
     }
 };
