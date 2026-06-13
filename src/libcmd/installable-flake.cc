@@ -57,7 +57,14 @@ InstallableFlake::InstallableFlake(
     Strings attrPaths,
     Strings prefixes,
     const flake::LockFlags & lockFlags)
-    : InstallableValue(state, make_ref<CoarseEvalCache>(make_ref<Interpreter>(state)))
+    /* Wrap whatever Evaluator the caller's EvalState already exposes —
+       under tracing-eval-cache that is the
+       TracingReplayEvaluator → TracingEvaluator → Interpreter stack
+       pre-populated by EvalCommand::getEvalState(), so flake-installable
+       traffic flows through the trie like attr-path traffic already
+       does. With tracing off, `toEvaluatorCompat()` falls back to a
+       plain Interpreter — same shape as before. */
+    : InstallableValue(state, make_ref<CoarseEvalCache>(state->toEvaluatorCompat()))
     , flakeRef(flakeRef)
     , attrPaths(fragment == "" ? attrPaths : Strings{(std::string) fragment})
     , prefixes(fragment == "" ? Strings{} : prefixes)

@@ -5,7 +5,6 @@
  */
 
 #include "nix/expr/evaluator.hh"
-#include "nix/expr/interpreter.hh"
 #include "nix/util/ref.hh"
 
 namespace nix {
@@ -23,18 +22,21 @@ class EvalCache;
  *
  * Since the Evaluator interface serves as a general entrypoint, but coarse
  * caching requires custom setup and circumstances, most operations that
- * implement Evaluator here just delegate to an inner Interpreter; the same
- * that evaluates for cache misses.
+ * implement Evaluator here just delegate to the inner Evaluator; the same
+ * that evaluates for cache misses. The inner Evaluator may itself be a
+ * tracing stack (TracingReplayEvaluator → TracingEvaluator → Interpreter)
+ * when `tracing-eval-cache` is enabled — wrapping rather than replacing,
+ * so both the coarse disk cache and the per-query trie cache compose.
  */
 // Implementation note: EvalState is aware of coarse eval caches, so little
 // bookkeeping is needed here. If we want to keep the coarse cache, we could
 // consider moving some of its implementation into this class.
 class CoarseEvalCache : public Evaluator
 {
-    ref<Interpreter> inner;
+    ref<Evaluator> inner;
 
 public:
-    explicit CoarseEvalCache(ref<Interpreter> inner);
+    explicit CoarseEvalCache(ref<Evaluator> inner);
 
     /**
      * Get the root Object from an EvalCache.

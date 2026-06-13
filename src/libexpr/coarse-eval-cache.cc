@@ -5,7 +5,7 @@
 
 namespace nix {
 
-CoarseEvalCache::CoarseEvalCache(ref<Interpreter> inner)
+CoarseEvalCache::CoarseEvalCache(ref<Evaluator> inner)
     : inner(inner)
 {
 }
