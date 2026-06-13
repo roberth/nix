@@ -68,6 +68,8 @@ struct InstallableFlake : InstallableValue
 
     std::pair<Value *, PosIdx> toValue(EvalState & state) override;
 
+    std::pair<Value *, PosIdx> toValueCached(EvalState & state) override;
+
     /**
      * @deprecated Use Evaluator and Object instead.
      * Get a cursor to every attrpath in getActualAttrPaths() that

@@ -12,6 +12,7 @@
 #include "nix/flake/flake.hh"
 #include "nix/expr/eval-cache.hh"
 #include "nix/expr/coarse-eval-cache.hh"
+#include "nix/expr/expr-from-object.hh"
 #include "nix/expr/interpreter.hh"
 
 #include <nlohmann/json.hpp>
@@ -170,6 +171,33 @@ std::pair<Value *, PosIdx> InstallableFlake::toValue(EvalState & state)
         return {*v, attr->getPos()};
     }
     return {&getCursor(state)->forceValue(), noPos};
+}
+
+std::pair<Value *, PosIdx> InstallableFlake::toValueCached(EvalState & state)
+{
+    /* When tracing is on, return a lazy thunk that evaluates through
+       the Object interface (via `ExprFromObject`), so the trie's
+       cache-replay path stays engaged at leaf-force time too — the
+       same shape `InstallableAttrPath::toValueCached` uses. Defeating
+       the cache eagerly (as `toValue` must, to return a forced Value)
+       throws away the replay we just won. */
+    if (state.settings.useTracingEvalCache) {
+        auto root = getRootObject();
+        auto attrPaths = getActualAttrPaths();
+        auto attrResult = expr::helpers::tryAttrPaths(*root, attrPaths, state);
+        if (!attrResult)
+            throw Error(
+                attrResult.getSuggestions(),
+                "flake '%s' does not provide attribute %s",
+                flakeRef,
+                showAttrPaths(attrPaths));
+        auto [attr, attrPath] = *attrResult;
+        auto * v = state.allocValue();
+        auto * expr = new ExprFromObject(attr, evaluator.get_ptr(), nullptr);
+        state.mkThunk_(*v, expr);
+        return {v, attr->getPos()};
+    }
+    return InstallableValue::toValueCached(state);
 }
 
 std::vector<ref<eval_cache::AttrCursor>> InstallableFlake::getCursors(EvalState & state)
