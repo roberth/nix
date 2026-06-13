@@ -99,7 +99,6 @@ value the paths under it represent:
   `/etc/foo`, `/nix/store/X-source`, and other literal-rooted paths.
 - **Copyable** — a fetched tree. Both `toString` and `${...}`
   materialise the root once and render as `<storePath>/<subpath>`.
-  The category the abstract-form work is structurally about.
 - **Internal** — nix-internal scaffolding (corepkgs, derivation
   helpers). `toString` is undefined and throws; positions resolve
   to `null`; copies are rejected. The kind exists so that leaking
