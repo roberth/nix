@@ -3,40 +3,9 @@
 #include "nix/expr/environment.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/interpreter-object.hh"
+#include "nix/expr/object-type.hh"
 
 namespace nix {
-
-// TODO: share with tracing-object.cc, tracing-replay-object.cc, ambient-object.cc
-static std::string objectTypeToStringExpr(ObjectType type)
-{
-    switch (type) {
-    case nAttrs:
-        return "set";
-    case nList:
-        return "list";
-    case nString:
-        return "string";
-    case nPath:
-        return "path";
-    case nInt:
-        return "int";
-    case nFloat:
-        return "float";
-    case nBool:
-        return "bool";
-    case nNull:
-        return "null";
-    case nFunction:
-        return "lambda";
-    case nExternal:
-        return "external";
-    case nThunk:
-        return "thunk";
-    case nFailed:
-        return "failed";
-    }
-    return "unknown";
-}
 
 /**
  * Stateful resolver that maps virtual value ids to outer Objects.
@@ -90,15 +59,14 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
                     auto obj = resolve(objectId);
 
                     if constexpr (std::is_same_v<Q, trace::QueryGetType>) {
-                        return {trace::ResultType{objectTypeToStringExpr(obj->getType())}, std::nullopt};
+                        return {trace::ResultType{objectTypeToString(obj->getType())}, std::nullopt};
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetAttr>) {
                         auto child = obj->maybeGetAttr(query.name);
                         if (!child)
                             return {trace::ResultMaybeType{std::nullopt}, std::nullopt};
                         auto childId = registerOuter(child);
                         return {
-                            trace::ResultMaybeType{
-                                std::optional<std::string>{objectTypeToStringExpr(child->getType())}},
+                            trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}},
                             childId};
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetString>) {
                         return {trace::ResultString{obj->getStringIgnoreContext()}, std::nullopt};
@@ -121,7 +89,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
                         auto child = obj->getListElem(query.index);
                         auto childId = registerOuter(child);
-                        return {trace::ResultType{objectTypeToStringExpr(child->getType())}, childId};
+                        return {trace::ResultType{objectTypeToString(child->getType())}, childId};
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetPath>) {
                         return {trace::ResultPath{obj->getPath().path.abs()}, std::nullopt};
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetFunctionInfo>) {

@@ -1,31 +1,8 @@
 #include "nix/expr/ambient-object.hh"
-#include "nix/expr/source-root.hh"
+#include "nix/expr/object-type.hh"
 #include "nix/util/source-accessor.hh"
 
 namespace nix {
-
-static ObjectType stringToObjectTypeAmbient(const std::string & type)
-{
-    if (type == "set")
-        return nAttrs;
-    if (type == "list")
-        return nList;
-    if (type == "string")
-        return nString;
-    if (type == "path")
-        return nPath;
-    if (type == "int")
-        return nInt;
-    if (type == "float")
-        return nFloat;
-    if (type == "bool")
-        return nBool;
-    if (type == "null")
-        return nNull;
-    if (type == "lambda")
-        return nFunction;
-    throw Error("unknown object type: %s", type);
-}
 
 AmbientObject::AmbientObject(
     AmbientId id, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn)
@@ -151,7 +128,7 @@ ObjectType AmbientObject::getType()
     auto * r = std::get_if<trace::ResultType>(&qr.result);
     if (!r)
         throw Error("ambient getType: unexpected result type");
-    return stringToObjectTypeAmbient(r->type);
+    return stringToObjectType(r->type);
 }
 
 RootValue AmbientObject::defeatCache()

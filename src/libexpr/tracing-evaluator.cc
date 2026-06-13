@@ -11,39 +11,9 @@
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/util/hash.hh"
 #include "nix/util/logging.hh"
+#include "nix/expr/object-type.hh"
 
 namespace nix {
-
-static std::string objectTypeToStringEval(ObjectType type)
-{
-    switch (type) {
-    case nAttrs:
-        return "set";
-    case nList:
-        return "list";
-    case nString:
-        return "string";
-    case nPath:
-        return "path";
-    case nInt:
-        return "int";
-    case nFloat:
-        return "float";
-    case nBool:
-        return "bool";
-    case nNull:
-        return "null";
-    case nFunction:
-        return "lambda";
-    case nThunk:
-        return "thunk";
-    case nExternal:
-        return "external";
-    case nFailed:
-        return "failed";
-    }
-    return "unknown";
-}
 
 TracingEvaluator::TracingEvaluator(TracingWriter & writer, ref<Evaluator> inner, TracingDatabase * db)
     : writer(writer)
@@ -152,7 +122,7 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     auto [v, qh] = writer.logRootQuery(trace::QueryImport{displayPath});
     auto result = inner->evalFile(path, displayPath);
     auto type = result->getType();
-    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToStringEval(type)}, qh);
+    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
     return TracingObject::create(result, writer, v, triePos);
 }
 
@@ -163,7 +133,7 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     auto [v, qh] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
     auto result = inner->evalExpr(expr, basePath);
     auto type = result->getType();
-    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToStringEval(type)}, qh);
+    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
     return TracingObject::create(result, writer, v, triePos);
 }
 

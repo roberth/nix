@@ -8,38 +8,12 @@
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/util/logging.hh"
 #include "nix/util/util.hh"
+#include "nix/expr/object-type.hh"
 
 #include <nlohmann/json.hpp>
 #include <set>
 
 namespace nix {
-
-static ObjectType stringToObjectType(const std::string & type)
-{
-    if (type == "set")
-        return nAttrs;
-    if (type == "list")
-        return nList;
-    if (type == "string")
-        return nString;
-    if (type == "path")
-        return nPath;
-    if (type == "int")
-        return nInt;
-    if (type == "float")
-        return nFloat;
-    if (type == "bool")
-        return nBool;
-    if (type == "null")
-        return nNull;
-    if (type == "lambda")
-        return nFunction;
-    if (type == "thunk")
-        return nThunk;
-    if (type == "external")
-        return nExternal;
-    throw Error("unknown type in trace: %s", type);
-}
 
 TracingReplayObject::TracingReplayObject(
     TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner)

@@ -6,6 +6,7 @@
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/util/logging.hh"
 #include "nix/util/util.hh"
+#include "nix/expr/object-type.hh"
 
 #include <nlohmann/json.hpp>
 
@@ -113,37 +114,6 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
         tracingCacheLog("replay: failed to get current response: %s", e.what());
     }
     return std::nullopt;
-}
-
-static std::string objectTypeToString(ObjectType type)
-{
-    switch (type) {
-    case nAttrs:
-        return "set";
-    case nList:
-        return "list";
-    case nString:
-        return "string";
-    case nPath:
-        return "path";
-    case nInt:
-        return "int";
-    case nFloat:
-        return "float";
-    case nBool:
-        return "bool";
-    case nNull:
-        return "null";
-    case nFunction:
-        return "lambda";
-    case nThunk:
-        return "thunk";
-    case nExternal:
-        return "external";
-    case nFailed:
-        return "failed";
-    }
-    return "unknown";
 }
 
 std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nlohmann::json & reqJson)

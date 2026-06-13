@@ -37,7 +37,7 @@ void CachedEvalError::force()
         state, "evaluation of cached failed attribute '%s' unexpectedly succeeded", cursor->getAttrPathStr(attr));
 }
 
-static const char * schema = R"sql(
+static const char * evalCacheSchema = R"sql(
 create table if not exists Attributes (
     parent      integer not null,
     name        text,
@@ -100,7 +100,7 @@ struct AttrDb
         debug("opening eval cache database: %s", dbPath.string());
         state->db = SQLite(dbPath, {.useWAL = settings.useSQLiteWAL});
         state->db.isCache();
-        state->db.exec(schema);
+        state->db.exec(evalCacheSchema);
 
         state->insertAttribute.create(
             state->db, "insert or replace into Attributes(parent, name, type, value) values (?, ?, ?, ?)");

@@ -1,38 +1,8 @@
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/trace-types.hh"
+#include "nix/expr/object-type.hh"
 
 namespace nix {
-
-static std::string objectTypeToString(ObjectType type)
-{
-    switch (type) {
-    case nAttrs:
-        return "set";
-    case nList:
-        return "list";
-    case nString:
-        return "string";
-    case nPath:
-        return "path";
-    case nInt:
-        return "int";
-    case nFloat:
-        return "float";
-    case nBool:
-        return "bool";
-    case nNull:
-        return "null";
-    case nFunction:
-        return "lambda";
-    case nThunk:
-        return "thunk";
-    case nExternal:
-        return "external";
-    case nFailed:
-        return "failed";
-    }
-    return "unknown";
-}
 
 TracingObject::TracingObject(
     ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos)

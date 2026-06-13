@@ -155,6 +155,7 @@ sources = files(
   'interpreter.cc',
   'json-to-value.cc',
   'nixexpr.cc',
+  'object-type.cc',
   'paths.cc',
   'primops.cc',
   'print-ambiguous.cc',

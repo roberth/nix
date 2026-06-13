@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 namespace nix {
 
 /**
@@ -32,5 +34,8 @@ typedef enum {
     nFunction,
     nExternal,
 } ObjectType;
+
+std::string objectTypeToString(ObjectType type);
+ObjectType stringToObjectType(const std::string & type);
 
 } // namespace nix

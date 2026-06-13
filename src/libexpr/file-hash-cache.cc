@@ -9,7 +9,7 @@
 
 namespace nix {
 
-static const char * schema = R"sql(
+static const char * fileHashCacheSchema = R"sql(
 create table if not exists FileHashes (
     path text primary key,
     mtime integer not null,
@@ -57,13 +57,13 @@ void FileHashCache::ensureOpen(FileHashCache::State & state)
 
         state.db = SQLite(dbPath, {.mode = SQLiteOpenMode::Normal, .useWAL = true});
         state.db.isCache();
-        state.db.exec(schema);
+        state.db.exec(fileHashCacheSchema);
     } catch (std::exception & e) {
         // Fall back to in-memory database if the on-disk cache can't be opened
         // (e.g. read-only filesystem, sandboxed builds).
         debug("file hash cache: falling back to in-memory database: %s", e.what());
         state.db = SQLite(":memory:", {.mode = SQLiteOpenMode::Normal});
-        state.db.exec(schema);
+        state.db.exec(fileHashCacheSchema);
     }
 
     state.queryHash.create(state.db, "select mtime, hash from FileHashes where path = ?");
