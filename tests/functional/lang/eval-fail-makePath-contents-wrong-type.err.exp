@@ -1,0 +1,15 @@
+error:
+       … while calling the 'readFile' builtin
+         at /pwd/lang/eval-fail-makePath-contents-wrong-type.nix:1:1:
+            1| builtins.readFile (
+             | ^
+            2|   builtins.makePath {
+
+       … while accessing '«makePath»/' through 'builtins.makePath'
+
+       error: 'contents' attribute of a 'builtins.makePath' regular is an integer, expected a string or a path
+       at /pwd/lang/eval-fail-makePath-contents-wrong-type.nix:5:7:
+            4|       type = "regular";
+            5|       contents = 42;
+             |       ^
+            6|     };

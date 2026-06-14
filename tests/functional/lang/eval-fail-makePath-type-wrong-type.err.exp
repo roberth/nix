@@ -1,0 +1,22 @@
+error:
+       … while calling the 'readFileType' builtin
+         at /pwd/lang/eval-fail-makePath-type-wrong-type.nix:1:1:
+            1| builtins.readFileType (
+             | ^
+            2|   builtins.makePath {
+
+       … while accessing '«makePath»/' through 'builtins.makePath'
+
+       … while evaluating the 'type' attribute of a 'builtins.makePath' node
+         at /pwd/lang/eval-fail-makePath-type-wrong-type.nix:4:7:
+            3|     root = {
+            4|       type = 42;
+             |       ^
+            5|     };
+
+       error: expected a string but found an integer: 42
+       at /pwd/lang/eval-fail-makePath-type-wrong-type.nix:4:7:
+            3|     root = {
+            4|       type = 42;
+             |       ^
+            5|     };

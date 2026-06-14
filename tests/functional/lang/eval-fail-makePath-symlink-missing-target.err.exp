@@ -1,0 +1,15 @@
+error:
+       … while calling the 'readSymlink' builtin
+         at /pwd/lang/eval-fail-makePath-symlink-missing-target.nix:1:1:
+            1| builtins.readSymlink (
+             | ^
+            2|   builtins.makePath {
+
+       … while accessing '«makePath»/' through 'builtins.makePath'
+
+       error: symlink node is missing required attribute 'target'
+       at /pwd/lang/eval-fail-makePath-symlink-missing-target.nix:3:12:
+            2|   builtins.makePath {
+            3|     root = {
+             |            ^
+            4|       type = "symlink";

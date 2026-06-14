@@ -1,0 +1,15 @@
+error:
+       … while calling the 'readDir' builtin
+         at /pwd/lang/eval-fail-makePath-directory-missing-entries.nix:1:1:
+            1| builtins.readDir (
+             | ^
+            2|   builtins.makePath {
+
+       … while accessing '«makePath»/' through 'builtins.makePath'
+
+       error: directory node is missing required attribute 'entries'
+       at /pwd/lang/eval-fail-makePath-directory-missing-entries.nix:3:12:
+            2|   builtins.makePath {
+            3|     root = {
+             |            ^
+            4|       type = "directory";
