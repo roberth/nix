@@ -343,4 +343,48 @@ TEST_F(TracingReplayTest, EnvVarValidationUsesEnvironment)
     unsetenv("NIX_TEST_REPLAY_ENV");
 }
 
+/* When two traces touch the same shortcut Query, the recorder
+   can stitch a d=0 Query marker and Results owned by other
+   queries between the shortcut and its target Result. The
+   walker has to traverse those concurrent pass-through nodes
+   to reach the target — before the fix it only matched direct
+   child Results and only descended through d>0 child Queries,
+   so this chain shape misses. */
+TEST_F(TracingReplayTest, FindResultConcurrentChain)
+{
+    TracingIndex index(dbPath);
+
+    auto qhShortcut = hashString(HashAlgorithm::SHA256, "shortcut-query");
+    auto qhMarker = hashString(HashAlgorithm::SHA256, "marker-query");
+    auto qhOwner = hashString(HashAlgorithm::SHA256, "owner-query");
+
+    // Shortcut Query (d=0): the target Result's owning query.
+    NodeHash nShortcut = index.insertQuery(std::nullopt, qhShortcut, "shortcut-payload", std::nullopt, 0);
+
+    // d=0 Query marker on the chain — not an environment event.
+    NodeHash nMarker = index.insertQuery(nShortcut, qhMarker, "marker-payload", std::nullopt, 0);
+
+    // Owner Query for the non-target Result (d=0, so its Result is also pass-through).
+    NodeHash nOwner = index.insertQuery(std::nullopt, qhOwner, "owner-payload", std::nullopt, 0);
+
+    // Non-target Result chained after the marker, owned by nOwner.
+    NodeHash nNonTarget = index.insertResult(nMarker, "non-target-payload", nOwner);
+
+    // Target Result chained after the non-target Result, owned by the shortcut.
+    NodeHash nTarget = index.insertResult(nNonTarget, "target-payload", nShortcut);
+
+    TracingIndex::flushAllWriteQueues();
+
+    bool validatorCalled = false;
+    auto result = index.findResult(nShortcut, [&](auto, auto, auto) {
+        validatorCalled = true;
+        return true;
+    });
+
+    ASSERT_TRUE(result.has_value()) << "walker failed to reach target through pass-through chain";
+    EXPECT_EQ(result->nodeHash, nTarget);
+    EXPECT_EQ(result->payload, "target-payload");
+    EXPECT_FALSE(validatorCalled) << "no d>0 events on chain, validator should not run";
+}
+
 } // namespace nix
