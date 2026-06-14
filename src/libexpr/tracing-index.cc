@@ -15,6 +15,7 @@
 #include <mutex>
 #include <set>
 #include <thread>
+#include <unordered_set>
 #include <variant>
 
 namespace nix {
@@ -673,42 +674,98 @@ std::optional<ResultNode> TracingIndex::findResult(
         return q.getBlob(0);
     };
 
-    // Recursive walk with backtracking on d>0 event Results.
-    // The chain from a Query to its Result contains only d>0 events.
-    // D=0 children and non-target Results are from other queries
-    // sharing this node — skip them. When multiple d>0 event Results
-    // exist (from different recordings), try each with backtracking.
-    std::function<std::optional<ResultNode>(const NodeHash &, int)> walk;
-    walk = [&](const NodeHash & current, int depth) -> std::optional<ResultNode> {
-        if (depth > 100000)
+    auto queryByNodeHash = [&](const NodeHash & nh) -> std::optional<QueryNode> {
+        auto q = state->getQuery.use();
+        bindBlob(q, hashToBlob(nh));
+        if (!q.next())
+            return std::nullopt;
+        return QueryNode{
+            .nodeHash = readHash(q, 0),
+            .queryHash = readHash(q, 1),
+            .afterHash = readHashOpt(q, 2),
+            .structuralParent = readHashOpt(q, 3),
+            .depth = static_cast<int>(q.getInt(4)),
+        };
+    };
+
+    /* Recursive forward walk with backtracking. The walker has to
+       reach the target Result, which may sit several pass-through
+       nodes downstream of the shortcut start (the recording layer
+       can insert intermediate d=0 Query markers and Results
+       belonging to other queries between a Query and its own
+       Result). The walker traverses those pass-through nodes
+       transparently while still validating every d>0 environment
+       event it encounters on the path. The `seen` set caps the
+       worst case at O(N) — three traversal branches without it
+       can revisit nodes combinatorially on dense subtries. */
+    std::unordered_set<NodeHash> seen;
+    std::function<std::optional<ResultNode>(const NodeHash &)> walk;
+    walk = [&](const NodeHash & current) -> std::optional<ResultNode> {
+        if (!seen.insert(current).second)
             return std::nullopt;
 
-        // Check for target Result
-        for (const auto & r : childResults(current)) {
+        auto results = childResults(current);
+
+        // Target Result is a direct child — exact match wins.
+        for (const auto & r : results) {
             if (r.queryNodeHash && *r.queryNodeHash == queryNodeHash)
                 return r;
         }
 
-        // Try d>0 child queries with backtracking
-        for (const auto & child : childQueries(current)) {
+        auto queries = childQueries(current);
+
+        /* d>0 child Queries: each represents an environment event
+           that has to validate before we can traverse its branch. */
+        for (const auto & child : queries) {
             if (child.depth == 0)
                 continue;
-
             auto payload = queryPayload(child.queryHash);
             if (!payload)
                 continue;
-
             for (const auto & eventResult : childResults(child.nodeHash)) {
                 if (validator(*payload, eventResult.nodeHash, eventResult.payload)) {
-                    if (auto found = walk(eventResult.nodeHash, depth + 1))
+                    if (auto found = walk(eventResult.nodeHash))
                         return found;
                 }
             }
         }
+
+        /* d=0 child Queries are pure trie position markers — not
+           environment events. Walk through them transparently. */
+        for (const auto & child : queries) {
+            if (child.depth != 0)
+                continue;
+            if (auto found = walk(child.nodeHash))
+                return found;
+        }
+
+        /* Non-target child Results: chained Results from other
+           queries. If the owning Query is d>0 the Result represents
+           an environment event and must be validated like an
+           ordinary d>0 child; if the owning Query is d=0 (or
+           absent) the Result is a pass-through and we just
+           traverse. */
+        for (const auto & r : results) {
+            if (r.queryNodeHash && *r.queryNodeHash == queryNodeHash)
+                continue; // handled by target check above
+
+            bool validated = true;
+            if (r.queryNodeHash) {
+                if (auto owner = queryByNodeHash(*r.queryNodeHash); owner && owner->depth > 0) {
+                    auto payload = queryPayload(owner->queryHash);
+                    validated = payload && validator(*payload, r.nodeHash, r.payload);
+                }
+            }
+            if (!validated)
+                continue;
+            if (auto found = walk(r.nodeHash))
+                return found;
+        }
+
         return std::nullopt;
     };
 
-    return walk(queryNodeHash, 0);
+    return walk(queryNodeHash);
 }
 
 std::vector<std::pair<QueryNode, ResultNode>> TracingIndex::selectDependencies(const NodeHash & queryNodeHash)
