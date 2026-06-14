@@ -2704,10 +2704,10 @@ static RegisterPrimOp primop_readFileType({
 /* Read the target of a symlink. */
 static void prim_readSymlink(EvalState & state, const PosIdx pos, Value ** args, Value & v)
 {
-    const auto path = state.realisePath(pos, *args[0], SymlinkResolution::Ancestors);
-    const auto target = path.readLink();
+    const auto path = state.realiseRootedPath(pos, *args[0], SymlinkResolution::Ancestors);
+    const auto target = path.sourcePath().readLink();
     const auto parent = path.parent();
-    v.mkPath(SourcePath(path.accessor, CanonPath(target, parent.path)), state.mem);
+    v.mkPath(RootedPath{parent.root, CanonPath(target, parent.path)}, state.mem);
 }
 
 static RegisterPrimOp primop_readSymlink({
@@ -2718,7 +2718,7 @@ static RegisterPrimOp primop_readSymlink({
 
       If *path* does not refer to a symlink, an error is thrown.
     )",
-    .fun = prim_readSymlink,
+    .impl = prim_readSymlink,
 });
 
 /* Read a directory (without . or ..) */

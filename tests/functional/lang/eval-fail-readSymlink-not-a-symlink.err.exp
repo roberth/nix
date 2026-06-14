@@ -1,1 +1,8 @@
-error: filesystem error: read_symlink: not a symlink [/pwd/lang/readDir/bar]
+error:
+       … while calling the 'readSymlink' builtin
+         at /pwd/lang/eval-fail-readSymlink-not-a-symlink.nix:1:1:
+            1| builtins.readSymlink ./readDir/bar
+             | ^
+            2|
+
+       error: file '/pwd/lang/readDir/bar' is not a symlink
