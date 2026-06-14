@@ -16,6 +16,7 @@
 #include "nix/util/util.hh"
 #include "nix/util/os-string.hh"
 #include "nix/util/processes.hh"
+#include "nix/expr/value-source-accessor.hh"
 #include "nix/expr/value-to-json.hh"
 #include "nix/expr/value-to-xml.hh"
 #include "nix/expr/primops.hh"
@@ -3411,6 +3412,90 @@ static RegisterPrimOp primop_path({
           when the `pure-eval` nix config option is on.
     )",
     .impl = prim_path,
+});
+
+static void prim_makePath(EvalState & state, const PosIdx pos, Value ** args, Value & v)
+{
+    state.forceAttrs(*args[0], pos, "while evaluating the argument passed to 'builtins.makePath'");
+
+    Value * rootVal = nullptr;
+    for (auto & attr : *args[0]->attrs()) {
+        auto n = state.symbols[attr.name];
+        if (n == "root")
+            rootVal = attr.value;
+        else
+            state.error<EvalError>("unsupported argument '%1%' to '%2%'", n, "builtins.makePath")
+                .atPos(attr.pos)
+                .debugThrow();
+    }
+    if (!rootVal)
+        state.error<EvalError>("missing required '%1%' attribute in the argument to '%2%'", "root", "builtins.makePath")
+            .atPos(pos)
+            .debugThrow();
+
+    auto accessor = make_ref<ValueSourceAccessor>(state, *rootVal);
+    auto root = state.getOrCreateRoot(accessor, SourceRootKind::Copyable);
+    v.mkPath(RootedPath{root, CanonPath::root}, state.mem);
+}
+
+static RegisterPrimOp primop_makePath({
+    .name = "__makePath",
+    .args = {"args"},
+    .doc = R"(
+      Construct a [path](@docroot@/language/types.md#type-path) value whose contents are described by an attribute set.
+
+      The attribute set *args* has one required attribute:
+
+        - `root`:
+          The node at the root of the tree. May be a node of any `type`; the root is not required to be a directory.
+
+      A *node* is either a [path](@docroot@/language/types.md#type-path) value or an attribute set with a `type` attribute. A path-valued node mounts the referenced path at the node's position. An attribute-set node carries one of the strings returned by [`builtins.readFileType`](#builtins-readFileType) as its `type`, which determines the further attributes that must be present:
+
+        - `type = "regular"`:
+          A [regular file](@docroot@/store/file-system-object.md#regular). The `contents` attribute holds the file's bytes, either as a string or as a [path](@docroot@/language/types.md#type-path) to be read for its contents. The optional `executable` attribute is a boolean and defaults to `false`.
+
+        - `type = "directory"`:
+          A [directory](@docroot@/store/file-system-object.md#directory). The `entries` attribute is an attribute set mapping each child's name to a *node*. A name absent from `entries` is not in the directory.
+
+        - `type = "symlink"`:
+          A [symbolic link](@docroot@/store/file-system-object.md#symlink). The `target` attribute holds the link's target as a string. Operations that read through the symlink reject targets that escape the tree (absolute paths, or `..` segments that reach above the root). After materialisation to a store path, reads go through the real symlink and follow the usual filesystem rules.
+
+        - `type = "unknown"`:
+          A file system entry that is not part of Nix's [file system object](@docroot@/store/file-system-object.md) model, such as a socket, device node, or named pipe. The node has no further attributes. Reading, listing, or following it fails the same way it would on the real filesystem; consumers that skip past it (for example via a [`builtins.path`](#builtins-path) `filter`) are unaffected.
+
+      Returns a [path](@docroot@/language/types.md#type-path) addressing the `root` node. Like the system root `/`, this path has no basename and is its own parent — [`baseNameOf`](#builtins-baseNameOf) returns `""`, and [`dirOf`](#builtins-dirOf) returns the path itself. The root here is the `root` node, not the system root; [`dirOf`](#builtins-dirOf) does not climb out of the tree.
+
+      > **Example**
+      >
+      > ```nix
+      > let
+      >   p = builtins.makePath {
+      >     root = {
+      >       type = "directory";
+      >       entries = {
+      >         "default.nix" = { type = "regular"; contents = "1 + 1"; };
+      >         "broken.txt" = throw "illustratively broken";
+      >       };
+      >     };
+      >   };
+      > in import p
+      > ```
+      >
+      > evaluates to `2`.
+
+      The argument is not walked at the call itself. Each read against the resulting path forces only the part of the `root` tree it needs to answer: listing a directory forces its `entries` attribute set but no child's body; reading a file or symlink forces that node's `contents` or `target` but no sibling. A node's `type` is forced only when something queries that position in the tree.
+
+      String-coercing the result, or interpolating it into a string, materialises the tree to the store as a store path named `source`. To choose a different name, wrap the result with [`builtins.path`](#builtins-path) and set its `name` attribute.
+
+      > **Note**
+      >
+      > Comparing two distinct `makePath` results materialises both sides, even when the `root` arguments are structurally identical. Reuse the same `makePath` value to compare without that cost.
+
+      Available in [pure evaluation mode](@docroot@/command-ref/conf-file.md#conf-pure-eval). Reads through a path-valued node remain subject to the rules pure mode imposes on the underlying path.
+
+      See also [File System Object](@docroot@/store/file-system-object.md).
+    )",
+    .impl = prim_makePath,
 });
 
 /*************************************************************

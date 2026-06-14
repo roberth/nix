@@ -1,0 +1,11 @@
+error:
+       … while calling the 'readFile' builtin
+         at /pwd/lang/eval-fail-makePath-missing-entry.nix:16:1:
+           15| in
+           16| builtins.readFile (p + "/absent")
+             | ^
+           17|
+
+       … while accessing '«makePath»/absent' through 'builtins.makePath'
+
+       error: '«makePath»/absent' does not exist

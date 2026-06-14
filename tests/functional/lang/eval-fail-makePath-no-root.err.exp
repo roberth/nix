@@ -1,0 +1,8 @@
+error:
+       … while calling the 'makePath' builtin
+         at /pwd/lang/eval-fail-makePath-no-root.nix:1:1:
+            1| builtins.makePath { }
+             | ^
+            2|
+
+       error: missing required 'root' attribute in the argument to 'builtins.makePath'

@@ -1,0 +1,14 @@
+error:
+       … while calling the 'readFileType' builtin
+         at /pwd/lang/eval-fail-makePath-type-invalid.nix:1:1:
+            1| builtins.readFileType (builtins.makePath { root = { type = "foo"; }; })
+             | ^
+            2|
+
+       … while accessing '«makePath»/' through 'builtins.makePath'
+
+       error: node has unrecognised type 'foo'; expected one of 'regular', 'directory', 'symlink', 'unknown'
+       at /pwd/lang/eval-fail-makePath-type-invalid.nix:1:53:
+            1| builtins.readFileType (builtins.makePath { root = { type = "foo"; }; })
+             |                                                     ^
+            2|

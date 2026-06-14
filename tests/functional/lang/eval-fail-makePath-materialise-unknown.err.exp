@@ -1,0 +1,11 @@
+error:
+       … while calling the 'toString' builtin
+         at /pwd/lang/eval-fail-makePath-materialise-unknown.nix:4:1:
+            3| # tree containing an `"unknown"`-typed node fails the NAR dump.
+            4| toString (builtins.makePath {
+             | ^
+            5|   root = {
+
+       … while coercing path '/' on a fetched source to a string
+
+       error: file '/socket' has an unsupported type

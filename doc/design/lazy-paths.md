@@ -97,8 +97,9 @@ value the paths under it represent:
 - **System** — a real filesystem location. `toString` returns the
   absolute path; `${...}` copies the subpath into the store. Models
   `/etc/foo`, `/nix/store/X-source`, and other literal-rooted paths.
-- **Copyable** — a fetched tree. Both `toString` and `${...}`
-  materialise the root once and render as `<storePath>/<subpath>`.
+- **Copyable** — a fetched tree, or an in-language tree built via
+  `builtins.makePath`. Both `toString` and `${...}` materialise the
+  root once and render as `<storePath>/<subpath>`.
 - **Internal** — nix-internal scaffolding (corepkgs, derivation
   helpers). `toString` is undefined and throws; positions resolve
   to `null`; copies are rejected. The kind exists so that leaking

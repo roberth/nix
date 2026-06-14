@@ -1,0 +1,20 @@
+error:
+       … while calling the 'readFile' builtin
+         at /pwd/lang/eval-fail-makePath-not-a-directory.nix:16:1:
+           15| in
+           16| builtins.readFile (p + "/default.nix/cantwork")
+             | ^
+           17|
+
+       … while realising the context of path '«makePath»/default.nix/cantwork'
+
+       … while accessing '«makePath»/default.nix/cantwork' through 'builtins.makePath'
+
+       … in 'builtins.makePath' entry '«makePath»/default.nix'
+         at /pwd/lang/eval-fail-makePath-not-a-directory.nix:8:9:
+            7|       entries = {
+            8|         "default.nix" = {
+             |         ^
+            9|           type = "regular";
+
+       error: '«makePath»/default.nix' is not a directory

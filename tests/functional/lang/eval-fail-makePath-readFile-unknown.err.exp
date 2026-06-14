@@ -1,0 +1,11 @@
+error:
+       … while calling the 'readFile' builtin
+         at /pwd/lang/eval-fail-makePath-readFile-unknown.nix:4:1:
+            3| # unsupported type.
+            4| builtins.readFile (builtins.makePath { root = { type = "unknown"; }; })
+             | ^
+            5|
+
+       … while accessing '«makePath»/' through 'builtins.makePath'
+
+       error: not a regular file

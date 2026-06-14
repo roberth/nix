@@ -1,0 +1,216 @@
+error:
+       … while calling the 'readFile' builtin
+         at /pwd/lang/eval-fail-makePath-recursion-limit.nix:20:1:
+           19| in
+           20| builtins.readFile (cyc + (selfs + "/leaf"))
+             | ^
+           21|
+
+       … while realising the context of path '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/leaf'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self/self' through 'builtins.makePath'
+
+       … while accessing '«makePath»/self' through 'builtins.makePath'
+         at /pwd/lang/eval-fail-makePath-recursion-limit.nix:14:9:
+           13|         };
+           14|         "self" = cyc;
+             |         ^
+           15|       };
+
+       error: stack overflow; max-call-depth exceeded

@@ -1,0 +1,23 @@
+error:
+       … while calling the 'readFile' builtin
+         at /pwd/lang/eval-fail-makePath-contents-path-missing.nix:18:1:
+           17| in
+           18| builtins.readFile (p + "/f")
+             | ^
+           19|
+
+       … while accessing '«makePath»/f' through 'builtins.makePath'
+         at /pwd/lang/eval-fail-makePath-contents-path-missing.nix:10:9:
+            9|       entries = {
+           10|         "f" = {
+             |         ^
+           11|           type = "regular";
+
+       … while reading the path referenced by the 'contents' attribute
+         at /pwd/lang/eval-fail-makePath-contents-path-missing.nix:12:11:
+           11|           type = "regular";
+           12|           contents = ./this-does-not-exist;
+             |           ^
+           13|         };
+
+       error: path '/pwd/lang/this-does-not-exist' does not exist

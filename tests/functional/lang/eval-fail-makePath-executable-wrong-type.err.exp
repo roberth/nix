@@ -1,0 +1,22 @@
+error:
+       … while calling the 'readFileType' builtin
+         at /pwd/lang/eval-fail-makePath-executable-wrong-type.nix:1:1:
+            1| builtins.readFileType (builtins.makePath {
+             | ^
+            2|   root = {
+
+       … while accessing '«makePath»/' through 'builtins.makePath'
+
+       … while evaluating the 'executable' attribute of a 'builtins.makePath' regular
+         at /pwd/lang/eval-fail-makePath-executable-wrong-type.nix:5:5:
+            4|     contents = "";
+            5|     executable = "yes";
+             |     ^
+            6|   };
+
+       error: expected a Boolean but found a string: "yes"
+       at /pwd/lang/eval-fail-makePath-executable-wrong-type.nix:5:5:
+            4|     contents = "";
+            5|     executable = "yes";
+             |     ^
+            6|   };

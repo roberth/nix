@@ -1,0 +1,16 @@
+error:
+       … while calling the 'readDir' builtin
+         at /pwd/lang/eval-fail-makePath-entry-name-slash.nix:3:1:
+            2| # and should be rejected when the directory is enumerated.
+            3| builtins.readDir (builtins.makePath {
+             | ^
+            4|   root = {
+
+       … while accessing '«makePath»/' through 'builtins.makePath'
+
+       error: invalid entry name 'a/b'
+       at /pwd/lang/eval-fail-makePath-entry-name-slash.nix:7:7:
+            6|     entries = {
+            7|       "a/b" = {
+             |       ^
+            8|         type = "regular";

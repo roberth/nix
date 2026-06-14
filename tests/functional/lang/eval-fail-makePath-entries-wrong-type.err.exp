@@ -1,0 +1,17 @@
+error:
+       … while calling the 'readDir' builtin
+         at /pwd/lang/eval-fail-makePath-entries-wrong-type.nix:1:1:
+            1| builtins.readDir (builtins.makePath {
+             | ^
+            2|   root = {
+
+       … while accessing '«makePath»/' through 'builtins.makePath'
+
+       … while evaluating the 'entries' attribute of a 'builtins.makePath' directory
+         at /pwd/lang/eval-fail-makePath-entries-wrong-type.nix:4:5:
+            3|     type = "directory";
+            4|     entries = "nope";
+             |     ^
+            5|   };
+
+       error: expected a set but found a string: "nope"
