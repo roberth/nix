@@ -35,6 +35,7 @@ headers = [ config_pub_h ] + files(
   'source-root.hh',
   'static-string-data.hh',
   'symbol-table.hh',
+  'value-source-accessor.hh',
   'value-to-json.hh',
   'value-to-xml.hh',
   'value.hh',

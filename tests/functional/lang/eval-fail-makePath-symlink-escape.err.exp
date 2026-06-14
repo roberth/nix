@@ -1,0 +1,11 @@
+error:
+       … while calling the 'readFile' builtin
+         at /pwd/lang/eval-fail-makePath-symlink-escape.nix:14:1:
+           13| in
+           14| builtins.readFile (p + "/link")
+             | ^
+           15|
+
+       … while realising the context of path '«makePath»/link'
+
+       error: '..' would escape the source tree at «makePath»/

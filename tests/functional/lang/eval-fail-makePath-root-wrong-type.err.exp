@@ -1,0 +1,10 @@
+error:
+       … while calling the 'readFileType' builtin
+         at /pwd/lang/eval-fail-makePath-root-wrong-type.nix:1:1:
+            1| builtins.readFileType (builtins.makePath { root = 42; })
+             | ^
+            2|
+
+       … while accessing '«makePath»/' through 'builtins.makePath'
+
+       error: node is an integer, expected an attribute set or a path

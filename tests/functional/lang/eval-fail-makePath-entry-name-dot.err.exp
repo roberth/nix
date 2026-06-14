@@ -1,0 +1,16 @@
+error:
+       … while calling the 'readDir' builtin
+         at /pwd/lang/eval-fail-makePath-entry-name-dot.nix:4:1:
+            3| # enumerated.
+            4| builtins.readDir (
+             | ^
+            5|   builtins.makePath {
+
+       … while accessing '«makePath»/' through 'builtins.makePath'
+
+       error: invalid entry name '.'
+       at /pwd/lang/eval-fail-makePath-entry-name-dot.nix:9:9:
+            8|       entries = {
+            9|         "." = {
+             |         ^
+           10|           type = "regular";

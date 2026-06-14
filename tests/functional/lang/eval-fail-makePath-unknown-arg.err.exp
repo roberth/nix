@@ -1,0 +1,14 @@
+error:
+       … while calling the 'makePath' builtin
+         at /pwd/lang/eval-fail-makePath-unknown-arg.nix:5:1:
+            4| # = ...; name = ...; }` at the materialisation site).
+            5| builtins.makePath {
+             | ^
+            6|   root = {
+
+       error: unsupported argument 'name' to 'builtins.makePath'
+       at /pwd/lang/eval-fail-makePath-unknown-arg.nix:10:3:
+            9|   };
+           10|   name = "tempting-but-rejected";
+             |   ^
+           11| }

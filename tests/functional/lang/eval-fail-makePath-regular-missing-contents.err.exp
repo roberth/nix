@@ -1,0 +1,15 @@
+error:
+       … while calling the 'readFile' builtin
+         at /pwd/lang/eval-fail-makePath-regular-missing-contents.nix:1:1:
+            1| builtins.readFile (
+             | ^
+            2|   builtins.makePath {
+
+       … while accessing '«makePath»/' through 'builtins.makePath'
+
+       error: regular node is missing required attribute 'contents'
+       at /pwd/lang/eval-fail-makePath-regular-missing-contents.nix:3:12:
+            2|   builtins.makePath {
+            3|     root = {
+             |            ^
+            4|       type = "regular";
