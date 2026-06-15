@@ -578,6 +578,47 @@ TEST_F(TracingReplayTest, SetsLearningPassNarrowsPreconditions)
     EXPECT_EQ(index.runLearningPass(qh), 0u);
 }
 
+TEST_F(TracingReplayTest, SetsLearningPassEvictsSubsumedBindings)
+{
+    /* When two Bindings share a Response and one's precondition is
+       a strict subset of the other's, the wider Binding is
+       redundant — any hit it would serve is already served by the
+       narrower one. The learning pass evicts it. */
+    TracingIndex index(dbPath);
+
+    auto qh = hashString(HashAlgorithm::SHA256, "queryHash-evict");
+
+    auto pWide = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2")});
+    auto pNarrow = makeSorted({makeMember("q1", "r1")});
+
+    auto pwh = index.insertPreconditionSet(pWide);
+    auto pnh = index.insertPreconditionSet(pNarrow);
+    auto rh = index.insertSetResponse("shared-answer");
+    index.insertBinding(qh, pwh, rh);
+    index.insertBinding(qh, pnh, rh);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    ASSERT_EQ(index.countBindings(qh), 2u) << "two Bindings pre-compact";
+
+    /* Learning shouldn't insert anything new — the intersection of
+       pWide and pNarrow is pNarrow itself, already a Binding. But
+       it should evict pWide as subsumed. */
+    auto inserted = index.runLearningPass(qh);
+    EXPECT_EQ(inserted, 0u) << "no new Bindings to learn — narrow already exists";
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    EXPECT_EQ(index.countBindings(qh), 1u) << "wider Binding should be evicted";
+
+    /* Verify lookup still works — same currents that hit pWide
+       before now hit pNarrow. */
+    auto current = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2")});
+    auto hit = index.lookupSetsReplay(qh, current);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(*hit, "shared-answer");
+}
+
 TEST_F(TracingReplayTest, SetsLearningPassSkipsDifferentResponses)
 {
     /* If the two Bindings have different Responses, no intersection

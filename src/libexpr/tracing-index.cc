@@ -1075,6 +1075,19 @@ bool TracingIndex::isSubset(const SetMembers & precondition, const SetMembers & 
     return true;
 }
 
+size_t TracingIndex::countBindings(const QueryHash & queryHash)
+{
+    auto state(_state->lock());
+    state->checkpoint();
+    SQLiteStmt stmt;
+    stmt.create(state->db, "SELECT COUNT(*) FROM Bindings WHERE queryHash = ?");
+    auto q = stmt.use();
+    bindBlob(q, hashToBlob(queryHash));
+    if (!q.next())
+        return 0;
+    return static_cast<size_t>(q.getInt(0));
+}
+
 std::pair<size_t, size_t> TracingIndex::runGC()
 {
     /* Delete PreconditionSets / SetResponses rows not referenced by

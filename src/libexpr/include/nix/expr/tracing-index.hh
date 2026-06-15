@@ -411,6 +411,12 @@ public:
     std::vector<QueryHash> listBindingQueryHashes();
 
     /**
+     * Count Bindings under a given queryHash. Primarily for tests
+     * and for the eval-cache stats CLI.
+     */
+    size_t countBindings(const QueryHash & queryHash);
+
+    /**
      * Delete PreconditionSets and SetResponses rows that no Binding
      * references. Intended to run after a compaction pass that
      * evicted Bindings (which may have left their PreconditionSet
