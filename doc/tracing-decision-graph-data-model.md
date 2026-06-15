@@ -78,61 +78,83 @@ members of this set" or "is this set in the pool?".
 
 The decision graph is a relational structure over storage hashes.
 
-Two node-typed positions, both identified by storage hashes:
+Within the evaluation of a specific d=0 Query `Q`, the box's next
+ask is determined by `(Q, current RS)`: the *same* RS reached during
+two different `Q` evaluations may have entirely different next-asks,
+because the d=0 query itself drives what's needed. So decision-graph
+positions on the asks side are pairs:
 
-- **RS positions** — identified by an RS storage hash. Represents
-  "the box has observed exactly these Facts as context."
-- **QS positions** — identified by a QS storage hash. Represents
-  "the set of queries the box asks next, as a single transition."
+- **`(Q, RS)` positions** — identified by `(q_hash, rs_hash)`.
+  Represents "while evaluating `Q`, the box has observed exactly
+  these Facts." The `Q` is d=0; the facts in `RS` are
+  `(d=1 query, d=1 response)` pairs.
+- **QS positions** — identified by a QS storage hash alone.
+  Represents "this set of d=1 queries the box asks next." QS
+  positions are Q-free because the QS → next-RS transition is a
+  pure structural union and doesn't depend on which `Q` is in
+  flight; multiple `Q`s that happen to dispatch the same QS share
+  the same outgoing keyed children.
 
 Three edge types:
 
-- **RS ──asks──▶ QS** — at this RS, the box's next set of asks is
-  this QS. After Patricia normalisation, an RS has pairwise-disjoint
+- **`(Q, RS) ──asks──▶ QS`** — while evaluating `Q` from this RS,
+  the box's next set of asks is this QS. After Patricia
+  normalisation, a `(Q, RS)` position has pairwise-disjoint
   outgoing QS edges (and almost always exactly one — see below).
-- **QS ──tup──▶ RS** keyed by **response tuple** — given those
+- **`QS ──tup──▶ RS`** keyed by **response tuple** — given those
   responses to the asked queries, the resulting RS is the union of
-  the source RS's facts and the new (query, response) facts. Multiple
-  observed response tuples produce multiple keyed children of the
-  same QS.
-- **RS ──terminal──▶ Response** for a particular d=0 Query `Q` —
-  this RS is a recorded precondition under which `Q`'s d=0 Response
-  is the recorded one. A single RS may carry terminal edges for
-  multiple `Q`s.
+  the source RS's Facts and the new `(query, response)` Facts.
+  Multiple observed response tuples produce multiple keyed
+  children of the same QS. This edge is Q-free.
+- **`(Q, RS) ──terminal──▶ Response`** — this RS is a recorded
+  precondition under which `Q`'s d=0 Response is the recorded one.
 
 A trace through the graph for evaluating `Q` is therefore the
 alternating chain:
 
 ```
-(entry RS) ──asks──▶ QS ──tup──▶ RS ──asks──▶ QS ──tup──▶ ... ──terminal──▶ R
+(Q, entry RS) ──asks──▶ QS ──tup──▶ (Q, RS') ──asks──▶ QS ──tup──▶ ... ──terminal──▶ R
 ```
 
-The decision graph is per-`Q` only in the sense of where terminal
-edges attach. Every RS and QS position is shared across all `Q`s by
-content addressing — when two unrelated `Q`s happen to see the same
-intermediate context, they reference the same storage RS hash and
-share the same position in the graph.
+The `Q` carries through every position; the `RS` accumulates Facts;
+the QS positions in between are Q-free.
 
-Implementation-wise this is three edge tables:
+Storage-level sharing is automatic at every layer:
 
-- `Asks(rs_hash, qs_hash)` — outgoing QS edges per RS.
-- `Outcomes(qs_hash, response_tuple, next_rs_hash)` — keyed children
-  per QS.
-- `Terminals(rs_hash, q_hash, response_hash)` — terminal Response
-  edges per RS per d=0 Query.
+- **RS hashes** are shared across all `Q`s by content addressing.
+  Two unrelated `Q`s whose evaluations pass through the same Fact
+  set reference the same RS hash, even though they occupy distinct
+  `(Q, RS)` positions in the decision graph.
+- **QS hashes** are shared across all `Q`s. When two `Q`s' Asks
+  edges point at the same QS, they collapse onto the same
+  `QS ──tup──▶ RS` keyed children.
+- **Outcomes** (QS → next RS) are shared because they're Q-free.
 
-Plus an entry-point index `Entries(q_hash, entry_rs_hash)` to find
-where to start traversal for a given `Q`. None of these tables hold
-set content; they hold references into the storage layer.
+Implementation-wise this is three edge tables plus an entry-point
+index:
 
-### Invariant: pairwise-disjoint outgoing QS edges per RS
+- `Asks(q_hash, rs_hash, qs_hash)` — outgoing QS edges per
+  `(Q, RS)` position.
+- `Outcomes(qs_hash, response_tuple, next_rs_hash)` — keyed
+  children per QS. Q-free.
+- `Terminals(q_hash, rs_hash, response_hash)` — terminal Response
+  edges per `(Q, RS)` position.
+- `Entries(q_hash, entry_rs_hash)` — where to start traversal for
+  a given `Q`.
+
+None of these tables hold set content; they hold references into
+the storage layer.
+
+### Invariant: pairwise-disjoint outgoing QS edges per (Q, RS)
 
 After Patricia normalisation (below), the outgoing QS edges from a
-single RS are pairwise disjoint as sets. Overlap is removed by
-factoring the shared prefix into a separate edge.
+single `(Q, RS)` position are pairwise disjoint as sets. Overlap is
+removed by factoring the shared prefix into a separate edge. (Two
+different `Q`s at the same RS hash naturally have independent edge
+sets — the invariant is per-position, not per-RS-hash.)
 
 A consequence: in any deterministic, perfectly-attributed evaluation,
-every RS has exactly one outgoing QS edge. Multiple outgoing edges
+every `(Q, RS)` position has exactly one outgoing QS edge. Multiple outgoing edges
 means either the box is nondeterministic at this precondition (rare in
 real Nix) or the precondition over-approximates — the recorder
 attributed Facts to this RS that weren't actually dependencies, and the
@@ -209,8 +231,8 @@ evaluator on miss.
 walk(Q, entryRS):
   rs = entryRS
   loop:
-    if rs has a terminal edge for Q: return its Response
-    outgoing = rs's outgoing QS edges
+    if Terminals has (Q, rs, R): return R
+    outgoing = Asks(Q, rs)  # the outgoing QS edges for this (Q, rs)
     if outgoing is empty: miss
     next_qs = pick from outgoing
     # Edge QS may include queries whose responses are already in rs
@@ -221,7 +243,7 @@ walk(Q, entryRS):
     for q in to_dispatch:
         fresh[q] = walk(q, …)  # recursive d>0 lookup
     tup = canonical_tuple(next_qs, source: rs.facts ∪ fresh)
-    rs' = lookup edge (next_qs → ?) keyed by tup
+    rs' = Outcomes(next_qs, tup)
     if not found: miss
     rs = rs'
 ```
@@ -260,19 +282,24 @@ At d=0 finalisation:
 record(Q, trace):
   rs = Q's entry RS
   for each step (observed_qs, observed_tuple) in trace:
-    existing = rs's outgoing QS edges
+    existing = Asks(Q, rs)  # outgoing QS edges at this (Q, rs)
     case observed_qs vs existing:
-      ─ exact match with some e ∈ existing:
-          rs' = lookup e's child keyed by observed_tuple
-          if missing: insert (e → new RS, keyed by observed_tuple)
+      ─ exact match with some qs ∈ existing:
+          rs' = Outcomes(qs, observed_tuple)
+          if missing: insert Outcomes(qs, observed_tuple, new_rs)
           rs = rs'
-      ─ disjoint from every e ∈ existing:
-          insert (rs → observed_qs → new RS, keyed by observed_tuple)
-          rs = new RS
-      ─ overlaps some e ∈ existing:
-          Patricia-split (above); retry this step
-  insert terminal: rs → Response R for Q
+      ─ disjoint from every qs ∈ existing:
+          insert Asks(Q, rs, observed_qs)
+          insert Outcomes(observed_qs, observed_tuple, new_rs)
+          rs = new_rs
+      ─ overlaps some qs ∈ existing:
+          Patricia-split (below); retry this step
+  insert Terminals(Q, rs, R)
 ```
+
+Patricia split mutates `Asks` and `Outcomes` for the affected
+`(Q, rs)` position; it does not change `(Q, rs)` itself, only its
+outgoing structure.
 
 Storage operations are content-addressed `INSERT OR IGNORE`s, so
 recurring nodes deduplicate. Per step cost is O(1) hash lookups, plus
