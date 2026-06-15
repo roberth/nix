@@ -99,14 +99,14 @@ overlapping edge is split:
 Before:                       After:
    RS                            RS
    |                             |
-  QS_existing ─▶ RS_existing    QS_shared = QS_existing ∩ QS_new
-                                 │
+  QS_existing ─▶ RS_existing    QS_shared  (new content-addressed
+                                 │          node = QS_existing ∩ QS_new)
                                  ▼
                                 RS_intermediate
                                ╱              ╲
-                  QS_existing \ QS_shared    QS_new \ QS_shared
-                              ▼                       ▼
-                       RS_existing                  RS_new
+                          QS_existing       QS_new
+                              ▼                ▼
+                       RS_existing          RS_new
 ```
 
 `RS_intermediate` is content-addressed by `RS ∪ (responses to
@@ -115,6 +115,25 @@ queries, they converge on the same `RS_intermediate` automatically by
 content addressing; if they disagreed, they end up at different
 `RS_intermediate` nodes keyed on the differing response tuples (this is
 the ordinary QS→RS keyed-child mechanism).
+
+**Edge labels are whole-set references, not computed deltas.** Both
+tail edges keep references to the *original* QuerySet nodes
+(`QS_existing` and `QS_new`) that the recorder observed — the same
+nodes that the QuerySets table already stores by content hash. Only
+`QS_shared` is a freshly inserted QuerySet node, and it deduplicates
+against any other recording that happened to produce the same
+intersection. This means a split inserts at most one new QuerySet node
+regardless of how often the same tail QSes appear elsewhere in the
+graph.
+
+A consequence is that an edge's QS may contain queries whose responses
+are already in the current RS at that edge's source — the queries
+asked along the way to that RS. Replay dispatches only the difference:
+`edge.QS \ {queries already in current RS}`, sourcing the
+already-observed responses from current RS and dispatching only the
+new ones. The response tuple keyed on the edge still covers all of
+`edge.QS` (already-observed plus freshly dispatched), so QS→RS keyed
+children are well-defined and content-addressed RS dedup still works.
 
 The split is *set intersection used structurally* for storage and
 dispatch sharing. It is distinct from the precondition intersection
@@ -143,9 +162,14 @@ walk(Q, entryRS):
     outgoing = rs's outgoing QS edges
     if outgoing is empty: miss
     next_qs = pick from outgoing
-    tup = []
-    for q in next_qs (in canonical order):
-        tup.append(walk(q, …))   # recursive d>0 lookup
+    # Edge QS may include queries whose responses are already in rs
+    # (the shared prefix from a previous Patricia split). Source those
+    # from rs; dispatch only the rest.
+    to_dispatch = next_qs \ {queries present in rs.facts}
+    fresh = {}
+    for q in to_dispatch:
+        fresh[q] = walk(q, …)  # recursive d>0 lookup
+    tup = canonical_tuple(next_qs, source: rs.facts ∪ fresh)
     rs' = lookup edge (next_qs → ?) keyed by tup
     if not found: miss
     rs = rs'
@@ -153,7 +177,9 @@ walk(Q, entryRS):
 
 Cost: O(trace length) hash lookups plus the unavoidable cost of
 recursively replaying each d>0 query. No scans, no probabilistic
-filters.
+filters. The `next_qs \ rs.facts` subtraction is the price of
+whole-set edge labels — paid in O(|next_qs| + |rs|) per step, which is
+dominated by the dispatch work itself.
 
 The `pick from outgoing` step has only one choice in the
 common case (single outgoing edge after Patricia normalisation).
