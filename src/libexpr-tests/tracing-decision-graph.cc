@@ -337,6 +337,167 @@ TEST_F(TracingDecisionGraphTest, TerminalIsolatedByQ)
     EXPECT_FALSE(g.getTerminal(q2, factSet).has_value());
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   record() and walk() — end-to-end Phase 1 behaviour
+   ───────────────────────────────────────────────────────────────────── */
+
+TEST_F(TracingDecisionGraphTest, RecordThenWalkSimpleHit)
+{
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto req1 = sha("req1"), resp1 = sha("resp1");
+    auto req2 = sha("req2"), resp2 = sha("resp2");
+    auto result = sha("R");
+
+    /* Build the factSet the recorder would have observed. */
+    auto factSetHash = g.insertFactSet({
+        {req1, resp1},
+        {req2, resp2},
+    });
+
+    g.record(q, factSetHash, result);
+
+    /* Walk with a dispatch that returns the same Responses the
+       recorder saw — we should hit. */
+    auto hit = g.walk(q, [&](const Hash & req) {
+        if (req == req1) return resp1;
+        if (req == req2) return resp2;
+        ADD_FAILURE() << "unexpected dispatch for " << req.to_string(HashFormat::Base16, false);
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(*hit, result);
+}
+
+TEST_F(TracingDecisionGraphTest, WalkMissesWhenDispatchReturnsDifferentResponse)
+{
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto req = sha("req"), resp = sha("resp"), wrongResp = sha("wrong");
+    auto result = sha("R");
+
+    auto factSetHash = g.insertFactSet({{req, resp}});
+    g.record(q, factSetHash, result);
+
+    /* Replay with a different Response: should miss. */
+    auto miss = g.walk(q, [&](const Hash &) { return wrongResp; });
+    EXPECT_FALSE(miss.has_value());
+}
+
+TEST_F(TracingDecisionGraphTest, WalkMissesOnEmptyGraph)
+{
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto miss = g.walk(q, [](const Hash &) { return Hash(HashAlgorithm::SHA256); });
+    EXPECT_FALSE(miss.has_value());
+}
+
+TEST_F(TracingDecisionGraphTest, TwoRec_TwoFactsEach_DivergentSecond)
+{
+    /* Two recordings, each with two Facts. Both share the FIRST
+       canonical Fact (same Request, same Response). They diverge
+       at the second canonical step. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+
+    /* Use names chosen so that "AAA" < "BBB" < "CCC" by SHA-256
+       lexicographic order. */
+    auto reqA = sha("a-shared"), respA = sha("a-resp");
+    auto reqB = sha("b-only-in-fs1"), respB = sha("b-resp");
+    auto reqC = sha("c-only-in-fs2"), respC = sha("c-resp");
+    auto r1 = sha("R1"), r2 = sha("R2");
+
+    auto fs1 = g.insertFactSet({{reqA, respA}, {reqB, respB}});
+    auto fs2 = g.insertFactSet({{reqA, respA}, {reqC, respC}});
+    g.record(q, fs1, r1);
+    g.record(q, fs2, r2);
+
+    /* Replay where reqC's response doesn't match fs2's stored
+       response — fs2's path is unreachable; the walk must take
+       fs1's path. */
+    auto hit1 = g.walk(q, [&](const Hash & req) {
+        if (req == reqA) return respA;
+        if (req == reqB) return respB;
+        if (req == reqC) return sha("bogus-c-resp");
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(hit1.has_value());
+    EXPECT_EQ(*hit1, r1);
+}
+
+TEST_F(TracingDecisionGraphTest, DivergentResponses_Minimal)
+{
+    /* Two recordings of Q where Q's first asked Request gets two
+       different Responses across recordings. Smallest possible
+       version to expose any logic bug.  */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto reqA = sha("reqA");
+    auto v1 = sha("v1");
+    auto v2 = sha("v2");
+    auto r1 = sha("R1"), r2 = sha("R2");
+
+    auto fs1 = g.insertFactSet({{reqA, v1}});
+    auto fs2 = g.insertFactSet({{reqA, v2}});
+    g.record(q, fs1, r1);
+    g.record(q, fs2, r2);
+
+    auto hit1 = g.walk(q, [&](const Hash &) { return v1; });
+    ASSERT_TRUE(hit1.has_value());
+    EXPECT_EQ(*hit1, r1);
+
+    auto hit2 = g.walk(q, [&](const Hash &) { return v2; });
+    ASSERT_TRUE(hit2.has_value());
+    EXPECT_EQ(*hit2, r2);
+}
+
+TEST_F(TracingDecisionGraphTest, DivergentResponses_OnlyOneRecording)
+{
+    /* Sanity: with just recording 1, walking with v1 world should hit. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto reqA = sha("read a.nix");
+    auto contentV1 = sha("v1");
+    auto reqB = sha("read b.nix"), respB = sha("b-bytes");
+
+    auto factSet1 = g.insertFactSet({
+        {reqA, contentV1},
+        {reqB, respB},
+    });
+    auto r1 = sha("Result-1");
+    g.record(q, factSet1, r1);
+
+    auto hit = g.walk(q, [&](const Hash & req) {
+        if (req == reqA) return contentV1;
+        if (req == reqB) return respB;
+        ADD_FAILURE() << "unexpected dispatch";
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(*hit, r1);
+}
+
+TEST_F(TracingDecisionGraphTest, IdempotentRecord)
+{
+    /* Recording the same (Q, factSet, result) twice is a no-op:
+       INSERT OR IGNORE absorbs the duplicates at every step. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto factSet = g.insertFactSet({{sha("r1"), sha("v1")}, {sha("r2"), sha("v2")}});
+    auto result = sha("R");
+
+    g.record(q, factSet, result);
+    g.record(q, factSet, result);
+
+    auto hit = g.walk(q, [&](const Hash & req) {
+        if (req == sha("r1")) return sha("v1");
+        if (req == sha("r2")) return sha("v2");
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(*hit, result);
+}
+
 TEST_F(TracingDecisionGraphTest, PersistsAcrossReopen)
 {
     auto q = sha("Q");

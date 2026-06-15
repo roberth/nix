@@ -24,6 +24,7 @@
 #include "nix/util/sync.hh"
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -160,6 +161,33 @@ public:
        if a Terminal exists. (Phase 1: only one Terminal per
        position is expected; nondeterminism handling is deferred.) */
     std::optional<ResultHash> getTerminal(const QueryHash & q, const SetHash & factSet);
+
+    /* ─────────────────────────────────────────────────────────────────
+       Recording and replay
+       ───────────────────────────────────────────────────────────────── */
+
+    /* Integrate (q, factSet, result) into the decision graph as a
+       recording. Walks the factSet's Facts in canonical order,
+       writing one singleton Asks edge per Fact and a Terminal at
+       the end. Idempotent on repeat: duplicate edges and terminals
+       are absorbed by INSERT OR IGNORE.
+
+       Set canonicity dedupes shared prefixes across recordings of
+       the same Q automatically; different Responses to the same
+       Request land at different (Q, FactSet) positions and so
+       coexist without conflict. Patricia split for the residual
+       multi-Request-overlap case is a deferred optimisation. */
+    void record(const QueryHash & q, const SetHash & factSet, const ResultHash & result);
+
+    /* Navigate from (Q, ∅) using `dispatch` to evaluate Requests
+       the recorded path needs. Returns the Result hash on hit,
+       nullopt on miss. The dispatch callback is invoked for each
+       Request whose Response isn't already in the accumulated
+       FactSet (in this Phase 1 cut, that's every Request along
+       the path). */
+    std::optional<ResultHash> walk(
+        const QueryHash & q,
+        const std::function<ResponseHash(const RequestHash &)> & dispatch);
 
     /* ─────────────────────────────────────────────────────────────────
        Maintenance

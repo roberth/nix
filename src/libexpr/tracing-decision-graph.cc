@@ -459,4 +459,95 @@ TracingDecisionGraph::getTerminal(const QueryHash & q, const SetHash & factSet)
     return blobToHash(query.getBlob(0));
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   Recording and replay
+   ───────────────────────────────────────────────────────────────────── */
+
+void TracingDecisionGraph::record(
+    const QueryHash & q,
+    const SetHash & factSetHash,
+    const ResultHash & result)
+{
+    auto facts = getFactSet(factSetHash);
+    if (!facts)
+        throw Error("decision-graph: record(Q, factSet, result) called with FactSet hash not in storage");
+
+    /* Walk the Facts in canonical order (already sorted by getFactSet),
+       writing one singleton Asks edge per Fact and extending cur. */
+    auto cur = emptySetHash();
+    for (const auto & f : *facts) {
+        auto requestSetHash = insertRequestSet({f.request});
+        insertAsks(q, cur, requestSetHash);
+        cur = extendFactSet(cur, {f});
+    }
+    insertTerminal(q, factSetHash, result);
+}
+
+std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
+    const QueryHash & q,
+    const std::function<ResponseHash(const RequestHash &)> & dispatch)
+{
+    auto cur = emptySetHash();
+    for (;;) {
+        if (auto term = getTerminal(q, cur))
+            return *term;
+
+        auto outgoing = getAsks(q, cur);
+        if (outgoing.empty())
+            return std::nullopt; // no path forward, no terminal
+
+        /* Try each outgoing edge until one leads to a FactSet that
+           exists in storage. With singleton-step canonical recording
+           the common case has exactly one outgoing edge; the loop
+           still covers the path-divergence case where multiple
+           singletons coexist at a position (each leading to a
+           different next FactSet depending on Response). */
+        auto curFactsOpt = getFactSet(cur);
+        if (!curFactsOpt)
+            return std::nullopt; // shouldn't happen — cur was reachable
+        const auto & curFacts = *curFactsOpt;
+        std::set<RequestHash> curRequests;
+        for (const auto & f : curFacts)
+            curRequests.insert(f.request);
+
+        bool advanced = false;
+        for (const auto & requestSetHash : outgoing) {
+            auto requestSetOpt = getRequestSet(requestSetHash);
+            if (!requestSetOpt)
+                continue;
+
+            /* Useful dispatch: the edge's Requests minus what's
+               already in cur. With singleton-step recording the
+               edge is a singleton; this loop just yields one
+               Request. */
+            std::vector<Fact> newFacts;
+            for (const auto & req : *requestSetOpt) {
+                if (curRequests.count(req))
+                    continue;
+                auto resp = dispatch(req);
+                newFacts.push_back({req, resp});
+            }
+            if (newFacts.empty())
+                continue; // edge would add nothing; degenerate
+
+            /* Compute the candidate next FactSet hash WITHOUT
+               inserting it into the pool — we only want to follow
+               edges that some recording actually placed there. */
+            std::vector<Fact> candidate = curFacts;
+            candidate.insert(candidate.end(), newFacts.begin(), newFacts.end());
+            auto nextCur = computeFactSetHash(candidate);
+
+            if (!getFactSet(nextCur))
+                continue; // next FactSet not in storage — wrong branch
+
+            cur = nextCur;
+            advanced = true;
+            break;
+        }
+
+        if (!advanced)
+            return std::nullopt;
+    }
+}
+
 } // namespace nix
