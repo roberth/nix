@@ -69,4 +69,8 @@ sleep 1; echo "data99" > data.txt; echo "flagX" > flag.txt
 check "post-compact novel state"   '"data99\n|flagX\n"' "$(eval)"
 
 echo
+echo "=== Final stats (after re-verify evals) ==="
+nix eval-cache stats --extra-experimental-features nix-command
+
+echo
 echo "ALL CHECKS PASSED"
