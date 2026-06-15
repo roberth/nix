@@ -31,48 +31,99 @@ batch maintenance, which the design conversation explicitly rejected.
 The replacement is a navigated decision graph with structural sharing
 in storage and no scanning at lookup.
 
-## Concepts
+## Two layers
 
-- **Fact** — a `(d>0 query, d>0 response)` pair. Content-addressed by
+The model has two layers that should not be conflated:
+
+1. **Storage layer** — content-addressed pools of sets and atoms. No
+   graph structure; no notion of "what comes next". A flat pool of
+   canonical identifiers.
+2. **Decision graph layer** — a relational structure built on top of
+   the storage layer using set hashes as identifiers. Encodes the
+   box's observed behaviour as edges between storage hashes.
+
+Edges in the decision graph reference storage hashes; they do not own
+or duplicate the sets themselves. Multiple positions in the decision
+graph reference the same storage hash whenever the underlying set is
+identical, by content addressing.
+
+## Storage layer
+
+Atomic content-addressed entities (each its own table or column,
+keyed by content hash):
+
+- **Fact** — a `(d>0 query, d>0 response)` pair. Hash:
   `SHA-256(queryHash || responseHash)`. The atomic unit of observed
   evaluation context.
-- **ResponseSet (RS)** — an unordered set of Facts. Content-addressed by
-  hash of sorted member-Fact-hashes.
-- **QuerySet (QS)** — an unordered set of d>0 queries. Content-addressed
-  by hash of sorted member-queryHashes.
-- **d=0 Query** — a top-level query (`evalFile`, `getAttr`, etc.),
-  identified by its `queryHash` (operation + params + inputHashes).
-- **d=0 Response** — a recorded result for a d=0 Query, identified by
-  its `responseHash` over the serialised payload.
+- **d=0 Query** — a top-level query, identified by its `queryHash`
+  (operation + params + inputHashes).
+- **d=0 Response** — a recorded result, identified by its
+  `responseHash` over the serialised payload.
 
-Sets are stored as `(setHash, parentHash, extraMembers)`: every new set
-is a delta from some existing parent, and the parent chain encodes the
-sharing. Multiple decompositions of the same set may coexist (whichever
-parent the recorder picked); `setHash` is canonical, so content-equivalent
-sets always identify the same node regardless of how they were built.
+Set pools with parent-pointer delta encoding per L7881:
 
-## The decision graph
+- **QuerySet (QS) pool** — `(setHash, parentHash, extraQueries)`.
+  Each set is stored as a delta from some existing parent set; the
+  parent chain encodes structural sharing. `setHash` is canonical,
+  so content-equivalent sets always have the same hash regardless of
+  how they were built.
+- **ResponseSet (RS) pool** — `(setHash, parentHash, extraFacts)`.
+  Same scheme for sets of Facts.
 
-Per d=0 Query `Q`, the recorded traces of evaluating `Q` form a graph
-with bipartite-alternating edges between RS and QS nodes:
+The storage layer has no per-`Q` structure, no notion of edges, no
+notion of "next". It is queried purely by content hash: "give me the
+members of this set" or "is this set in the pool?".
+
+## Decision graph layer
+
+The decision graph is a relational structure over storage hashes.
+
+Two node-typed positions, both identified by storage hashes:
+
+- **RS positions** — identified by an RS storage hash. Represents
+  "the box has observed exactly these Facts as context."
+- **QS positions** — identified by a QS storage hash. Represents
+  "the set of queries the box asks next, as a single transition."
+
+Three edge types:
+
+- **RS ──asks──▶ QS** — at this RS, the box's next set of asks is
+  this QS. After Patricia normalisation, an RS has pairwise-disjoint
+  outgoing QS edges (and almost always exactly one — see below).
+- **QS ──tup──▶ RS** keyed by **response tuple** — given those
+  responses to the asked queries, the resulting RS is the union of
+  the source RS's facts and the new (query, response) facts. Multiple
+  observed response tuples produce multiple keyed children of the
+  same QS.
+- **RS ──terminal──▶ Response** for a particular d=0 Query `Q` —
+  this RS is a recorded precondition under which `Q`'s d=0 Response
+  is the recorded one. A single RS may carry terminal edges for
+  multiple `Q`s.
+
+A trace through the graph for evaluating `Q` is therefore the
+alternating chain:
 
 ```
-(entry RS) ──QS──▶ RS ──QS──▶ RS ──…──▶ RS ──Response──▶ R
+(entry RS) ──asks──▶ QS ──tup──▶ RS ──asks──▶ QS ──tup──▶ ... ──terminal──▶ R
 ```
 
-- **`RS ──QS──▶ RS'` edges** carry a QuerySet labelling what the box
-  asked next from this context. The child `RS'` is `RS ∪ (the responses
-  to the asked queries)`. The QS→RS step is keyed by the **response
-  tuple**: multiple recorded response tuples for the same QS produce
-  multiple keyed children.
-- **`RS ──Response──▶ R` terminal edges** mark RS as a recorded
-  precondition under which `Q`'s d=0 Response is `R`. A single RS may
-  carry terminal edges for multiple `Q`s.
+The decision graph is per-`Q` only in the sense of where terminal
+edges attach. Every RS and QS position is shared across all `Q`s by
+content addressing — when two unrelated `Q`s happen to see the same
+intermediate context, they reference the same storage RS hash and
+share the same position in the graph.
 
-The graph is per-`Q` only in the sense of where terminal Response edges
-attach. Internal RS and QS nodes are shared across all `Q`s by content
-addressing — when two unrelated `Q`s happen to see the same intermediate
-context, they hit the same RS node and dedupe naturally.
+Implementation-wise this is three edge tables:
+
+- `Asks(rs_hash, qs_hash)` — outgoing QS edges per RS.
+- `Outcomes(qs_hash, response_tuple, next_rs_hash)` — keyed children
+  per QS.
+- `Terminals(rs_hash, q_hash, response_hash)` — terminal Response
+  edges per RS per d=0 Query.
+
+Plus an entry-point index `Entries(q_hash, entry_rs_hash)` to find
+where to start traversal for a given `Q`. None of these tables hold
+set content; they hold references into the storage layer.
 
 ### Invariant: pairwise-disjoint outgoing QS edges per RS
 
