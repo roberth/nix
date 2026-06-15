@@ -355,32 +355,39 @@ record(Q, factSet, result):
   while cur ≠ factSet:
     remaining = requestsOf(factSet) \ requestsOf(cur)
     existing = Asks(Q, cur)
-    e = some edge ∈ existing whose RequestSet overlaps remaining, or None
+    # Eagerly Patricia-split every outgoing edge that partially
+    # overlaps `remaining`. After this pass every outgoing edge at
+    # (Q, cur) is either fully within `remaining` or fully disjoint
+    # from it — no "partial overlap" state is left to deal with.
+    for e in existing:
+      shared = e.requestSet ∩ remaining
+      if ∅ ⊊ shared ⊊ e.requestSet:
+        patricia_split(Q, cur, e, shared)
+    # Pick an outgoing edge whose RequestSet ⊆ remaining (after the
+    # splits, this means following the shared prefix of some former
+    # overlap, or following an edge that always was ⊆ remaining).
+    existing = Asks(Q, cur)
+    e = find e in existing where e.requestSet ⊆ remaining, or None
     if e is None:
-      # No existing edge to integrate with; one new edge gets us there.
+      # No followable edge; add a fresh one covering what's left.
       insert Asks(Q, cur, remaining)
       cur = factSet
     else:
-      shared = e.requestSet ∩ remaining
-      if shared ⊊ e.requestSet:
-        # Patricia-split e at `shared` (see "Patricia split" above):
-        # one new intermediate FactSet node, two re-pointed edges.
-        patricia_split(Q, cur, e, shared)
-      # Advance through the shared portion. The next iteration handles
-      # whatever's left of `remaining`.
-      cur = storage.extend(cur, factsForRequests(shared, factSet))
+      cur = storage.extend(cur, factsForRequests(e.requestSet, factSet))
   insert Terminals(Q, factSet, result)
 ```
 
-Each iteration either follows an existing edge (no split needed when
-the edge's RequestSet is a subset of `remaining`), splits an existing
-edge to factor out the shared prefix, or adds a fresh edge when no
-overlap exists. The pairwise-disjoint outgoing invariant is preserved
-at every `(Q, cur)` position throughout.
+After the eager split pass each iteration, the pairwise-disjoint
+invariant holds *and* every outgoing edge at `(Q, cur)` has a
+RequestSet that is either entirely inside or entirely outside
+`remaining`. Advancing through any inside edge consumes part of
+`remaining`; the loop reduces `remaining` strictly until cur reaches
+`factSet`.
 
 Per `record` cost: O(|factSet|) iterations in the worst case, each
-O(1) hash lookups plus an `INSERT OR IGNORE`; Patricia split adds
-O(|requestSet|) when triggered. Per event: O(1).
+O(|existing|) split candidates checked plus an `INSERT OR IGNORE` or
+a follow; Patricia split adds O(|requestSet|) when triggered. Per
+event: O(1).
 
 ## What Phase 1 covers
 
