@@ -144,7 +144,7 @@ A trace through the graph for evaluating `Q` is therefore the
 chain:
 
 ```
-(Q, entry FactSet)
+(Q, ∅)
    │ asks
    ▼
    RequestSet
@@ -175,18 +175,23 @@ Storage-level sharing is automatic at every layer:
 - **Fact hashes** are shared across all FactSets that contain them,
   via the FactSet pool's parent-pointer delta encoding.
 
-Implementation-wise this is two edge tables plus an entry-point
-index:
+Implementation-wise this is two edge tables:
 
 - `Asks(queryHash, factSetHash, requestSetHash)` — outgoing
   RequestSet edge per `(Q, FactSet)` position.
 - `Terminals(queryHash, factSetHash, resultHash)` — terminal Result
   edges per `(Q, FactSet)` position.
-- `Entries(queryHash, entryFactSetHash)` — where to start traversal
-  for a given `Q`.
 
-None of these tables hold set content or Responses; they hold
-references into the storage layer.
+The entry FactSet for every `Q` is the empty FactSet `∅`. A walk
+always starts at `(Q, ∅)`; an entry-point index is unnecessary. Any
+Facts the box implicitly carried into `Q`'s evaluation from earlier
+session state are captured along `Q`'s tree as the box re-observes
+them; if the box silently reused a Fact without re-observing it, the
+recording wouldn't see it, but that's a question for whatever
+mechanism would expose such reuse (out of scope here).
+
+Neither table holds set content or Responses; they hold references
+into the storage layer.
 
 ### Invariant: pairwise-disjoint outgoing RequestSet edges per (Q, FactSet)
 
@@ -276,8 +281,8 @@ navigates the graph independently and only falls back to the inner
 evaluator on miss.
 
 ```
-walk(Q, entryFactSet):
-  factSet = entryFactSet
+walk(Q):
+  factSet = ∅
   loop:
     if Terminals has (Q, factSet, R): return R
     outgoing = Asks(Q, factSet)
@@ -330,7 +335,7 @@ At Query finalisation:
 
 ```
 record(Q, trace):
-  factSet = Q's entry FactSet
+  factSet = ∅
   for each step (observedRequestSet, observedFacts) in trace:
     # observedFacts are the Facts the recorder saw at this step,
     # one per Request in observedRequestSet.
@@ -381,13 +386,11 @@ diverts the path to a previously-unseen FactSet hash, and Phase 1
 sees that as a miss — even if the flipped Response was irrelevant to
 the eventual Result.
 
-This isn't about preconditions being wider than necessary
-(over-approximation is structural, a consequence of treating the box
-as opaque, and applies to Phase 2 too). And it isn't about fan-out in
-storage (each next-FactSet is O(1) to look up; growth is proportional
-to observed variation and untracked otherwise). It's specifically
-about not having a mechanism to recognise that two recorded paths to
-the same Result diverged on Facts that didn't matter.
+What's missing is a mechanism to recognise that two recorded paths
+to the same Result diverged on Facts that didn't matter. (The
+recorded preconditions are over-approximated, as they always are with
+a black-box recorder; Phase 1 just has no way to discover where the
+slack is.)
 
 Phase 2's job is exactly that recognition: when two `(Q, Result)`
 terminals exist with overlapping but distinct FactSets, the
