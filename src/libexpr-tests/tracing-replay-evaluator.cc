@@ -619,6 +619,51 @@ TEST_F(TracingReplayTest, SetsLearningPassEvictsSubsumedBindings)
     EXPECT_EQ(*hit, "shared-answer");
 }
 
+TEST_F(TracingReplayTest, SetsRunGCDropsOrphans)
+{
+    /* Insert two PreconditionSets and two SetResponses, only one of
+       each is referenced by a Binding. The other should be a
+       reachable-from-nowhere orphan that runGC drops. */
+    TracingIndex index(dbPath);
+
+    auto qh = hashString(HashAlgorithm::SHA256, "queryHash-gc");
+
+    auto pUsed = makeSorted({makeMember("q1", "r1")});
+    auto pOrphan = makeSorted({makeMember("q2", "r2")});
+
+    auto puh = index.insertPreconditionSet(pUsed);
+    auto poh = index.insertPreconditionSet(pOrphan);
+    auto rUsed = index.insertSetResponse("kept");
+    auto rOrphan = index.insertSetResponse("dropped");
+
+    /* Only one (precondition, response) pair is wired into a Binding;
+       the other two rows are intentional orphans. */
+    index.insertBinding(qh, puh, rUsed);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    /* Pre-GC: both PreconditionSets and both Responses are present. */
+    ASSERT_TRUE(index.getPreconditionSet(puh).has_value());
+    ASSERT_TRUE(index.getPreconditionSet(poh).has_value()) << "orphan PreconditionSet present pre-GC";
+    ASSERT_TRUE(index.getSetResponse(rUsed).has_value());
+    ASSERT_TRUE(index.getSetResponse(rOrphan).has_value()) << "orphan SetResponse present pre-GC";
+
+    auto [preDel, respDel] = index.runGC();
+    EXPECT_EQ(preDel, 1u) << "exactly one orphan PreconditionSet should be dropped";
+    EXPECT_EQ(respDel, 1u) << "exactly one orphan SetResponse should be dropped";
+
+    /* Post-GC: orphans are gone, referenced rows remain. */
+    EXPECT_TRUE(index.getPreconditionSet(puh).has_value());
+    EXPECT_FALSE(index.getPreconditionSet(poh).has_value());
+    EXPECT_TRUE(index.getSetResponse(rUsed).has_value());
+    EXPECT_FALSE(index.getSetResponse(rOrphan).has_value());
+
+    /* The surviving Binding still resolves correctly. */
+    auto hit = index.lookupSetsReplay(qh, pUsed);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(*hit, "kept");
+}
+
 TEST_F(TracingReplayTest, SetsLearningPassSkipsDifferentResponses)
 {
     /* If the two Bindings have different Responses, no intersection
