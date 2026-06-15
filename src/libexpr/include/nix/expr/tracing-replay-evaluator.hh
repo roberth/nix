@@ -70,6 +70,27 @@ class TracingReplayEvaluator : public Evaluator
     std::optional<AmbientReplayState> ambientState;
 
     /**
+     * Sets-based replay state: the accumulated (queryHash, responseHash)
+     * pairs observed so far in this replay session. Kept sorted by
+     * queryHash so isSubset can compare in linear merge.
+     *
+     * Used by `lookup<Q>` to consult the sets-based index in addition
+     * to the temporal-trie walker. Each successful lookup (sets-based
+     * or trie) appends its (queryHash, responseHash) so downstream
+     * lookups see this query as part of their precondition context.
+     */
+    TracingIndex::SetMembers currentSetMembers;
+
+    /**
+     * Insert (queryHash, responseHash) into currentSetMembers,
+     * maintaining the sorted invariant. If a duplicate queryHash with
+     * a different responseHash is inserted, the new value overrides
+     * (the more recent observation wins — should be a no-op in
+     * deterministic evaluation but defended for safety).
+     */
+    void addToCurrentSetMembers(const QueryHash & queryHash, const Hash & responseHash);
+
+    /**
      * Dispatch an ambient query against the current Objects.
      * Returns serialized CBOR result, or nullopt if the query can't
      * be dispatched (unknown id, unsupported query type).

@@ -230,10 +230,42 @@ bool TracingReplayEvaluator::validateDeps(const std::vector<std::pair<QueryNode,
     return true;
 }
 
+void TracingReplayEvaluator::addToCurrentSetMembers(const QueryHash & queryHash, const Hash & responseHash)
+{
+    TracingIndex::SetMember m{queryHash, responseHash};
+    /* Binary search the insertion point. Vector is small enough that
+       O(N) insertion is fine — N is bounded by per-evaluation event
+       count and is typically < 1000. */
+    auto it = std::lower_bound(currentSetMembers.begin(), currentSetMembers.end(), m);
+    if (it != currentSetMembers.end() && it->queryHash == queryHash) {
+        // Duplicate queryHash: update or ignore.
+        it->responseHash = responseHash;
+    } else {
+        currentSetMembers.insert(it, m);
+    }
+}
+
 template<typename Q>
 std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::lookup(const Q & query)
 {
     auto queryHash = TracingIndex::computeQueryHash(query);
+
+    /* Sets-based index lookup: try it first because it's O(k · |P|)
+       and indexed by queryHash. A hit means we've found a Binding
+       whose precondition is a subset of currentSetMembers, which is
+       the strongest cache guarantee available. */
+    if (auto setsHit = tracingIndex.lookupSetsReplay(queryHash, currentSetMembers)) {
+        auto responseHash = TracingIndex::computeResponseHash(*setsHit);
+        addToCurrentSetMembers(queryHash, responseHash);
+        tracingCacheLog("replay hit (sets): %s", Q::tag);
+        return std::make_pair(
+            *setsHit,
+            TriePosition{
+                .resultNodeHash = responseHash, // for downstream structural references
+                .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
+            });
+    }
+
     auto shortcuts = tracingIndex.selectShortcuts(queryHash);
     tracingCacheLog(
         "lookup %s: %zu shortcuts for queryHash=%s",
@@ -276,6 +308,12 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
             markValidated(h);
         validatedNodes.insert(resultNode->nodeHash);
         temporalCursor = resultNode->nodeHash;
+
+        /* Cross-feed the sets-based index: a trie hit gives us a
+           validated (queryHash, response) pair that downstream
+           sets-based lookups can use as part of their context. */
+        addToCurrentSetMembers(queryHash, TracingIndex::computeResponseHash(resultNode->payload));
+
         tracingCacheLog("replay hit: %s", Q::tag);
         return std::make_pair(
             resultNode->payload,
