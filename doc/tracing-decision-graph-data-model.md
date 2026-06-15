@@ -325,44 +325,60 @@ runtime; storage is invariant to it.
 
 ### Recording
 
-The recorder observes the interpreter as a black box. Per-event cost is
-O(1): each observed `(Request, Response)` is appended to the in-flight
-session's running Fact list. A RequestSet is closed when the recorder
-has stable evidence that the batch is complete (e.g., the next response
-wave arrives, or the Query finalisation triggers).
-
-At Query finalisation:
+The recorder consumes a single event stream from the box and
+multiplexes it across the Queries currently in flight. For each
+in-flight `Q` the recorder maintains a **mux entry** holding `Q`'s
+FactSet-so-far. While multiple Queries are in flight, every event
+observed during a given `Q`'s in-flight window is attributed to that
+`Q` — the over-approximation that lets the model treat the
+interpreter as a single opaque box, accepting wider-than-necessary
+preconditions in return.
 
 ```
-record(Q, trace):
-  factSet = ∅
-  for each step (observedRequestSet, observedFacts) in trace:
-    # observedFacts are the Facts the recorder saw at this step,
-    # one per Request in observedRequestSet.
-    existing = Asks(Q, factSet)
-    case observedRequestSet vs existing:
-      ─ exact match with some rs ∈ existing:
-          # The RequestSet edge already exists. Compute the next FactSet
-          # by storage-layer extension; storage adds it if novel.
-          factSet' = storage.extend(factSet, observedFacts)
-          factSet = factSet'
-      ─ disjoint from every rs ∈ existing:
-          insert Asks(Q, factSet, observedRequestSet)
-          factSet' = storage.extend(factSet, observedFacts)
-          factSet = factSet'
-      ─ overlaps some rs ∈ existing:
-          Patricia-split (above); retry this step
-  insert Terminals(Q, factSet, Result R)
+state: mux  # map from in-flight Query -> { factSet }
+
+on_event(e):
+  case e:
+    QueryStart(Q):
+      mux[Q] = { factSet = ∅ }
+
+    ResponseReceived(req, resp):
+      for each Q in mux:
+        record(Q, req, resp)
+
+    ResultProduced(Q, result):
+      insert Terminals(Q, mux[Q].factSet, result)
+      remove mux[Q]
 ```
 
-Patricia split mutates `Asks` for the affected `(Q, factSet)`
-position and inserts new FactSet nodes via storage-layer extension;
-it does not change `(Q, factSet)` itself, only its outgoing structure.
+`record` advances one mux entry by one step. In the singleton-step
+form (commit per Response) the RequestSet is the singleton `{req}`:
+
+```
+record(Q, req, resp):
+  m = mux[Q]
+  requestSet = {req}
+  existing = Asks(Q, m.factSet)
+  case requestSet vs existing:
+    ─ exact match with some rs ∈ existing: edge already there, no insert
+    ─ disjoint from every rs ∈ existing: insert Asks(Q, m.factSet, requestSet)
+    ─ overlaps some rs ∈ existing:        Patricia-split (above)
+  m.factSet = storage.extend(m.factSet, {Fact(req, resp)})
+```
 
 Storage operations are content-addressed `INSERT OR IGNORE`s, so
-recurring nodes deduplicate. Per step cost is O(1) hash lookups, plus
-O(|requestSet|) when a split occurs. Per-trace cost is therefore
-O(trace length + splits · |requestSet|).
+recurring nodes deduplicate. Per event cost: O(1) hash lookups plus
+the O(1) storage extension. Per `Q`-lifetime cost: O(trace length).
+Patricia split adds O(|requestSet|) when triggered.
+
+**Batching is a knob.** Singleton-per-Response is the simplest form
+and matches synchronous interpreters where one Request is outstanding
+at a time. A batching policy that accumulates multiple Requests into
+a single step (commit when all pendingRequests have Responses, or
+on a window boundary) lets Patricia split do meaningful prefix
+sharing when shape divergence has a common Request prefix. The
+decision-graph structure is invariant to the choice; only the
+granularity of `Asks` edges changes.
 
 ## What Phase 1 covers
 
