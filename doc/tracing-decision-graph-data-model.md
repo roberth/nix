@@ -39,7 +39,7 @@ The model has two layers that should not be conflated:
    graph structure; no notion of "what comes next". A flat pool of
    canonical identifiers.
 2. **Decision graph layer** — a relational structure built on top of
-   the storage layer using set hashes as identifiers. Encodes the
+   the storage layer using storage hashes as identifiers. Encodes the
    box's observed behaviour as edges between storage hashes.
 
 Edges in the decision graph reference storage hashes; they do not own
@@ -60,11 +60,8 @@ Two distinct roles, kept separate at the schema level:
   Response has its own `responseHash`. Pairs of `(Request,
   Response)` form Facts.
 
-Query/Result and Request/Response don't share tables or hash spaces
-— they're different roles. (The previous model conflated them in a
-single shared table to make the algorithm generalise cleanly to
-`builtins.cache`-style `d=2`; we revisit that when builtins.cache
-comes into scope. For now, separate.)
+Query/Result and Request/Response don't share tables or hash spaces;
+they're different roles.
 
 Atomic content-addressed entities:
 
@@ -78,14 +75,11 @@ Atomic content-addressed entities:
 
 Set pools with parent-pointer delta encoding per L7881:
 
-- **QuerySet (QS) pool** — `(setHash, parentHash, extraRequests)`.
-  A set of Requests. (Historical name from when the d=1 entities
-  were called queries; members are Requests under the current
-  naming.) Each new set is a delta from some existing parent set;
-  the parent chain encodes structural sharing.
-- **ResponseSet (RS) pool** — `(setHash, parentHash, extraFacts)`.
-  A set of Facts. (Historical name; each member Fact pairs a
-  Request with the Response the box observed.)
+- **RequestSet pool** — `(setHash, parentHash, extraRequests)`.
+  A set of Requests. Each new set is a delta from some existing
+  parent set; the parent chain encodes structural sharing.
+- **FactSet pool** — `(setHash, parentHash, extraFacts)`.
+  A set of Facts.
 
 The `setHash` is canonical: content-equivalent sets always have the
 same hash regardless of how they were built. Multiple parent-pointer
@@ -93,9 +87,9 @@ decompositions of the same `setHash` may coexist (whichever parent
 the recorder picked).
 
 Set extension is the storage-layer operation that the decision
-graph relies on for transitions: given an RS hash and a set of new
-Facts, produce the new RS hash. The choice of set-hashing scheme
-(canonical sorted-Merkle vs. additive/xor) is a storage-layer
+graph relies on for transitions: given a FactSet hash and a set of
+new Facts, produce the new FactSet hash. The choice of set-hashing
+scheme (canonical sorted-Merkle vs. additive/xor) is a storage-layer
 design knob that affects the cost of extension but not the
 decision-graph semantics — recorded here only as a flag, not a
 decision.
@@ -109,161 +103,169 @@ set-extension operation.
 The decision graph is a relational structure over storage hashes.
 
 Within the evaluation of a specific Query `Q`, the box's next ask
-is determined by `(Q, current RS)`: the *same* RS reached during
-two different `Q` evaluations may have entirely different next-asks,
-because the Query itself drives what's needed. So decision-graph
-positions on the asks side are pairs:
+is determined by `(Q, current FactSet)`: the *same* FactSet reached
+during two different `Q` evaluations may have entirely different
+next-asks, because the Query itself drives what's needed. So
+decision-graph positions on the asks side are pairs:
 
-- **`(Q, RS)` positions** — identified by `(queryHash, rsHash)`.
-  Represents "while evaluating `Q`, the box has observed exactly
-  these Facts."
-- **QS positions** — identified by a QS storage hash alone.
-  Represents "this set of Requests the box asks next." QS
-  positions are Q-free because the QS → next-RS transition is a
-  pure structural union and doesn't depend on which `Q` is in
-  flight; multiple `Q`s that happen to dispatch the same QS share
-  the same downstream structure.
+- **`(Q, FactSet)` positions** — identified by
+  `(queryHash, factSetHash)`. Represents "while evaluating `Q`, the
+  box has observed exactly these Facts."
+- **RequestSet positions** — identified by a RequestSet storage hash
+  alone. Represents "this set of Requests the box asks next."
+  RequestSet positions are Q-free because the RequestSet → next-FactSet
+  transition is a pure structural union and doesn't depend on which
+  `Q` is in flight; multiple `Q`s that happen to dispatch the same
+  RequestSet share the same downstream structure.
 
 Two edge types:
 
-- **`(Q, RS) ──asks──▶ QS`** — while evaluating `Q` from this RS,
-  the box's next set of Requests is this QS. After Patricia
-  normalisation, a `(Q, RS)` position has pairwise-disjoint
-  outgoing QS edges (and almost always exactly one — see below).
-- **`(Q, RS) ──terminal──▶ Result`** — this RS is a recorded
-  precondition under which `Q`'s recorded Result is the named one.
+- **`(Q, FactSet) ──asks──▶ RequestSet`** — while evaluating `Q`
+  from this FactSet, the box's next set of Requests is this
+  RequestSet. After Patricia normalisation, a `(Q, FactSet)`
+  position has pairwise-disjoint outgoing RequestSet edges (and
+  almost always exactly one — see below).
+- **`(Q, FactSet) ──terminal──▶ Result`** — this FactSet is a
+  recorded precondition under which `Q`'s recorded Result is the
+  named one.
 
-There is no third edge type for "QS to next RS". The transition is
-implicit: after dispatching the QS and observing Responses, the
-new Facts are computed (pairing each Request in QS with its
-Response), and the next RS is the storage-layer extension of the
-source RS by those new Facts. The next-RS hash is computable from
-the source RS hash and the new Facts via the storage layer's
-set-extension operation. The decision graph never names a tuple of
-Responses because the Responses are transient data used to compute
-Facts; they live in the dispatch path at replay/recording time, not
-in the schema.
+There is no third edge type for "RequestSet to next FactSet". The
+transition is implicit: after dispatching the RequestSet and
+observing Responses, the new Facts are computed (pairing each
+Request with its Response), and the next FactSet is the storage-layer
+extension of the source FactSet by those new Facts. The next-FactSet
+hash is computable from the source FactSet hash and the new Facts
+via the storage layer's set-extension operation. The decision graph
+never names a tuple of Responses because the Responses are transient
+data used to compute Facts; they live in the dispatch path at
+replay/recording time, not in the schema.
 
 A trace through the graph for evaluating `Q` is therefore the
 chain:
 
 ```
-(Q, entry RS)
+(Q, entry FactSet)
    │ asks
    ▼
-   QS
-   │  (dispatch QS's Requests; observe Responses;
-   │   form new Facts; extend source RS in storage layer)
+   RequestSet
+   │  (dispatch RequestSet's Requests; observe Responses;
+   │   form new Facts; extend source FactSet in storage layer)
    ▼
-(Q, RS')
+(Q, FactSet')
    │ asks
    ▼
-   QS
+   RequestSet
    │  ...
    ▼
-(Q, RS_final) ── terminal ──▶ Result R
+(Q, FactSet_final) ── terminal ──▶ Result R
 ```
 
-`Q` carries through every position; `RS` accumulates Facts; QSes
-appear as edge labels.
+`Q` carries through every position; `FactSet` accumulates Facts;
+RequestSets appear as edge labels.
 
 Storage-level sharing is automatic at every layer:
 
-- **RS hashes** are shared across all `Q`s by content addressing.
-  Two unrelated `Q`s whose evaluations pass through the same Fact
-  set reference the same RS hash, even though they occupy distinct
-  `(Q, RS)` positions in the decision graph.
-- **QS hashes** are shared across all `Q`s. When two `Q`s' Asks
-  edges point at the same QS, the QS itself is one stored node.
-- **Fact hashes** are shared across all RSes that contain them, via
-  the RS pool's parent-pointer delta encoding.
+- **FactSet hashes** are shared across all `Q`s by content
+  addressing. Two unrelated `Q`s whose evaluations pass through the
+  same Fact set reference the same FactSet hash, even though they
+  occupy distinct `(Q, FactSet)` positions in the decision graph.
+- **RequestSet hashes** are shared across all `Q`s. When two `Q`s'
+  Asks edges point at the same RequestSet, the RequestSet itself is
+  one stored node.
+- **Fact hashes** are shared across all FactSets that contain them,
+  via the FactSet pool's parent-pointer delta encoding.
 
 Implementation-wise this is two edge tables plus an entry-point
 index:
 
-- `Asks(queryHash, rsHash, qsHash)` — outgoing QS edge per
-  `(Q, RS)` position.
-- `Terminals(queryHash, rsHash, resultHash)` — terminal Result
-  edges per `(Q, RS)` position.
-- `Entries(queryHash, entryRsHash)` — where to start traversal for
-  a given `Q`.
+- `Asks(queryHash, factSetHash, requestSetHash)` — outgoing
+  RequestSet edge per `(Q, FactSet)` position.
+- `Terminals(queryHash, factSetHash, resultHash)` — terminal Result
+  edges per `(Q, FactSet)` position.
+- `Entries(queryHash, entryFactSetHash)` — where to start traversal
+  for a given `Q`.
 
 None of these tables hold set content or Responses; they hold
 references into the storage layer.
 
-### Invariant: pairwise-disjoint outgoing QS edges per (Q, RS)
+### Invariant: pairwise-disjoint outgoing RequestSet edges per (Q, FactSet)
 
-After Patricia normalisation (below), the outgoing QS edges from a
-single `(Q, RS)` position are pairwise disjoint as sets. Overlap is
-removed by factoring the shared prefix into a separate edge. (Two
-different `Q`s at the same RS hash naturally have independent edge
-sets — the invariant is per-position, not per-RS-hash.)
+After Patricia normalisation (below), the outgoing RequestSet edges
+from a single `(Q, FactSet)` position are pairwise disjoint as sets.
+Overlap is removed by factoring the shared prefix into a separate
+edge. (Two different `Q`s at the same FactSet hash naturally have
+independent edge sets — the invariant is per-position, not
+per-FactSet-hash.)
 
 A consequence: in any deterministic, perfectly-attributed evaluation,
-every `(Q, RS)` position has exactly one outgoing QS edge. Multiple outgoing edges
-means either the box is nondeterministic at this precondition (rare in
-real Nix) or the precondition over-approximates — the recorder
-attributed Facts to this RS that weren't actually dependencies, and the
-divergence is driven by something not represented here. The latter is
-the dominant case in practice and is exactly the symptom Phase 2 will
+every `(Q, FactSet)` position has exactly one outgoing RequestSet
+edge. Multiple outgoing edges means either the box is
+nondeterministic at this precondition (rare in real Nix) or the
+precondition over-approximates — the recorder attributed Facts to
+this FactSet that weren't actually dependencies, and the divergence
+is driven by something not represented here. The latter is the
+dominant case in practice and is exactly the symptom Phase 2 will
 collapse.
 
 ### Patricia split
 
-When a recording extends the graph at RS with an observed next-QS that
-overlaps but does not equal an existing outgoing edge's QS, the
-overlapping edge is split:
+When a recording extends the graph at FactSet with an observed
+next-RequestSet that overlaps but does not equal an existing
+outgoing edge's RequestSet, the overlapping edge is split:
 
 ```
-Before:                       After:
-   RS                            RS
-   |                             |
-  QS_existing ─▶ RS_existing    QS_shared  (new content-addressed
-                                 │          node = QS_existing ∩ QS_new)
-                                 ▼
-                                RS_intermediate
-                               ╱              ╲
-                          QS_existing       QS_new
-                              ▼                ▼
-                       RS_existing          RS_new
+Before:                              After:
+   FactSet                              FactSet
+   │                                    │
+  requestSet_existing                   requestSet_shared
+        │                               │  (new content-addressed node =
+        ▼                               │   requestSet_existing ∩ requestSet_new)
+  FactSet_existing                      ▼
+                                        FactSet_intermediate
+                                       ╱                    ╲
+                                requestSet_existing       requestSet_new
+                                       ▼                       ▼
+                                FactSet_existing           FactSet_new
 ```
 
-`RS_intermediate` is content-addressed by `RS ∪ (responses to
-QS_shared)`. If the two traces agreed on the responses to the shared
-queries, they converge on the same `RS_intermediate` automatically by
+`FactSet_intermediate` is content-addressed by `FactSet ∪ (Facts
+formed from requestSet_shared and the observed Responses)`. If the
+two traces agreed on the Responses to the shared Requests, they
+converge on the same `FactSet_intermediate` automatically by
 content addressing; if they disagreed, they end up at different
-`RS_intermediate` nodes keyed on the differing response tuples (this is
-the ordinary QS→RS keyed-child mechanism).
+`FactSet_intermediate` nodes (the ordinary content-addressed
+FactSet fork).
 
 **Edge labels are whole-set references, not computed deltas.** Both
-tail edges keep references to the *original* QuerySet nodes
-(`QS_existing` and `QS_new`) that the recorder observed — the same
-nodes that the QuerySets table already stores by content hash. Only
-`QS_shared` is a freshly inserted QuerySet node, and it deduplicates
-against any other recording that happened to produce the same
-intersection. This means a split inserts at most one new QuerySet node
-regardless of how often the same tail QSes appear elsewhere in the
-graph.
+tail edges keep references to the *original* RequestSet nodes
+(`requestSet_existing` and `requestSet_new`) that the recorder
+observed — the same nodes that the RequestSet pool already stores by
+content hash. Only `requestSet_shared` is a freshly inserted
+RequestSet node, and it deduplicates against any other recording
+that happened to produce the same intersection. This means a split
+inserts at most one new RequestSet node regardless of how often the
+same tail RequestSets appear elsewhere in the graph.
 
-A consequence is that an edge's QS may contain queries whose responses
-are already in the current RS at that edge's source — the queries
-asked along the way to that RS. Replay dispatches only the difference:
-`edge.QS \ {queries already in current RS}`, sourcing the
-already-observed responses from current RS and dispatching only the
-new ones. The response tuple keyed on the edge still covers all of
-`edge.QS` (already-observed plus freshly dispatched), so QS→RS keyed
-children are well-defined and content-addressed RS dedup still works.
+A consequence is that an edge's RequestSet may contain Requests
+whose Responses are already in the current FactSet at that edge's
+source — the Requests asked along the way to that FactSet. Replay
+dispatches only the difference: `edge.requestSet \ {Requests already
+in current FactSet}`, sourcing the already-observed Responses from
+the current FactSet and dispatching only the rest. Content-addressed
+FactSet dedup keeps the next-FactSet identity correct regardless.
 
 The split is *set intersection used structurally* for storage and
 dispatch sharing. It is distinct from the precondition intersection
 Phase 2 will introduce, even though both use the same set-intersection
 primitive.
 
-When the two QSes are fully disjoint (`QS_shared = ∅`), the split
-degenerates: `RS_intermediate = RS`, the shared edge is a no-op, and we
-fall back to RS carrying two parallel outgoing QS edges. In practice
-this is rare for real Nix evaluations, which routinely share common
-prefix queries (builtins access, environment reads, common imports).
+When the two RequestSets are fully disjoint
+(`requestSet_shared = ∅`), the split degenerates:
+`FactSet_intermediate = FactSet`, the shared edge is a no-op, and we
+fall back to FactSet carrying two parallel outgoing RequestSet edges.
+In practice this is rare for real Nix evaluations, which routinely
+share common-prefix Requests (builtins access, environment reads,
+common imports).
 
 ## Operations
 
@@ -274,43 +276,44 @@ navigates the graph independently and only falls back to the inner
 evaluator on miss.
 
 ```
-walk(Q, entryRS):
-  rs = entryRS
+walk(Q, entryFactSet):
+  factSet = entryFactSet
   loop:
-    if Terminals has (Q, rs, R): return R
-    outgoing = Asks(Q, rs)  # the outgoing QS edges for this (Q, rs)
+    if Terminals has (Q, factSet, R): return R
+    outgoing = Asks(Q, factSet)
     if outgoing is empty: miss
-    next_qs = pick from outgoing
-    # Edge QS may include Requests whose Responses are already in
-    # rs (the shared prefix from a previous Patricia split). Source
-    # those from rs; dispatch only the rest.
-    to_dispatch = next_qs \ {Requests present in rs.facts}
+    nextRequestSet = pick from outgoing
+    # Edge RequestSet may include Requests whose Responses are already
+    # in factSet (the shared prefix from a previous Patricia split).
+    # Source those from factSet; dispatch only the rest.
+    toDispatch = nextRequestSet \ {Requests present in factSet.facts}
     fresh = {}
-    for req in to_dispatch:
+    for req in toDispatch:
         fresh[req] = walk_request(req, …)  # recursive Request lookup
-    new_facts = {Fact(req, fresh[req]) for req in to_dispatch}
-              ∪ {Fact(req, rs.responseFor(req)) for req in next_qs \ to_dispatch}
-    rs' = storage.extend(rs, new_facts)  # next_rs_hash by set extension
-    if rs' is not in the RS pool: miss
-    rs = rs'
+    newFacts = {Fact(req, fresh[req])           for req in toDispatch}
+             ∪ {Fact(req, factSet.responseFor(req)) for req in nextRequestSet \ toDispatch}
+    factSet' = storage.extend(factSet, newFacts)
+    if factSet' is not in the FactSet pool: miss
+    factSet = factSet'
 ```
 
 Cost: O(trace length) hash lookups plus the unavoidable cost of
 recursively replaying each Request. No scans, no probabilistic
-filters. The `next_qs \ rs.facts` subtraction is the price of
-whole-set edge labels — paid in O(|next_qs| + |rs|) per step, which is
-dominated by the dispatch work itself.
+filters. The `nextRequestSet \ factSet.facts` subtraction is the price
+of whole-set edge labels — paid in O(|nextRequestSet| + |factSet|) per
+step, which is dominated by the dispatch work itself.
 
-The `pick from outgoing` step has only one choice in the
-common case (single outgoing edge after Patricia normalisation).
-When multiple edges are present, the choice is a knob:
+The `pick from outgoing` step has only one choice in the common case
+(single outgoing edge after Patricia normalisation). When multiple
+edges are present, the choice is a knob:
 
 - **Single-edge dispatch**: pick one, follow it; on miss, optionally
   retry the next. Cheapest per step but loses parallelism across
   branches.
-- **Parallel dispatch**: dispatch the union of all outgoing QSes; at
-  most one branch's response-tuple key matches and we follow it.
-  Wasted work on the others, but the results are cached.
+- **Parallel dispatch**: dispatch the union of all outgoing
+  RequestSets; only one branch's next-FactSet will exist in storage,
+  and we follow it. Wasted work on the others, but the results are
+  cached.
 
 Either is correct. The choice is local to replay and changeable at
 runtime; storage is invariant to it.
@@ -318,43 +321,43 @@ runtime; storage is invariant to it.
 ### Recording
 
 The recorder observes the interpreter as a black box. Per-event cost is
-O(1): each observed `(q, r)` is appended to the in-flight session's
-running Fact list. A QuerySet is closed when the recorder has stable
-evidence that the batch is complete (e.g., the next response wave
-arrives, or the Query finalisation triggers).
+O(1): each observed `(Request, Response)` is appended to the in-flight
+session's running Fact list. A RequestSet is closed when the recorder
+has stable evidence that the batch is complete (e.g., the next response
+wave arrives, or the Query finalisation triggers).
 
 At Query finalisation:
 
 ```
 record(Q, trace):
-  rs = Q's entry RS
-  for each step (observed_qs, observed_facts) in trace:
-    # observed_facts are the Facts the recorder saw at this step,
-    # one per Request in observed_qs.
-    existing = Asks(Q, rs)  # outgoing QS edges at this (Q, rs)
-    case observed_qs vs existing:
-      ─ exact match with some qs ∈ existing:
-          # The QS edge already exists. Compute the next RS by
-          # storage-layer extension; storage adds it if novel.
-          rs' = storage.extend(rs, observed_facts)
-          rs = rs'
-      ─ disjoint from every qs ∈ existing:
-          insert Asks(Q, rs, observed_qs)
-          rs' = storage.extend(rs, observed_facts)
-          rs = rs'
-      ─ overlaps some qs ∈ existing:
-          Patricia-split (below); retry this step
-  insert Terminals(Q, rs, Result R)
+  factSet = Q's entry FactSet
+  for each step (observedRequestSet, observedFacts) in trace:
+    # observedFacts are the Facts the recorder saw at this step,
+    # one per Request in observedRequestSet.
+    existing = Asks(Q, factSet)
+    case observedRequestSet vs existing:
+      ─ exact match with some rs ∈ existing:
+          # The RequestSet edge already exists. Compute the next FactSet
+          # by storage-layer extension; storage adds it if novel.
+          factSet' = storage.extend(factSet, observedFacts)
+          factSet = factSet'
+      ─ disjoint from every rs ∈ existing:
+          insert Asks(Q, factSet, observedRequestSet)
+          factSet' = storage.extend(factSet, observedFacts)
+          factSet = factSet'
+      ─ overlaps some rs ∈ existing:
+          Patricia-split (above); retry this step
+  insert Terminals(Q, factSet, Result R)
 ```
 
-Patricia split mutates `Asks` for the affected `(Q, rs)` position
-and inserts new RS nodes via storage-layer extension; it does not
-change `(Q, rs)` itself, only its outgoing structure.
+Patricia split mutates `Asks` for the affected `(Q, factSet)`
+position and inserts new FactSet nodes via storage-layer extension;
+it does not change `(Q, factSet)` itself, only its outgoing structure.
 
 Storage operations are content-addressed `INSERT OR IGNORE`s, so
 recurring nodes deduplicate. Per step cost is O(1) hash lookups, plus
-O(|qs|) when a split occurs. Per-trace cost is therefore
-O(trace length + splits · |qs|).
+O(|requestSet|) when a split occurs. Per-trace cost is therefore
+O(trace length + splits · |requestSet|).
 
 ## What this does and does not solve
 
@@ -364,21 +367,23 @@ Phase 1 alone:
 - ✓ Recording is incremental and O(events) total.
 - ✓ Storage shares structure via content addressing and parent-pointer
   deltas.
-- ✓ Patricia split keeps shape divergence cheap on the QS axis.
+- ✓ Patricia split keeps shape divergence cheap on the RequestSet
+  axis.
 - ✗ Preconditions can still be wider than necessary (over-approximation
   from concurrent in-flight Queries). A successful navigation
-  terminates at an RS that includes Facts the Result did not
+  terminates at a FactSet that includes Facts the Result did not
   actually depend on.
-- ✗ The fan-out of next-RSes from a single QS grows with content edits:
-  each unique combination of Responses produces a new next-RS hash in
-  the storage layer, even if many of those next-RSes ultimately lead
-  to the same Result.
+- ✗ The fan-out of next-FactSets from a single RequestSet grows with
+  content edits: each unique combination of Responses produces a new
+  next-FactSet hash in the storage layer, even if many of those
+  next-FactSets ultimately lead to the same Result.
 
 Both unaddressed items are the substance Phase 2 will tackle by
 discovering, when two `(Q, R)` terminals exist with overlapping but
 distinct preconditions, that the actually-required precondition is
-their intersection. The structural foundation (content-addressed RS
-nodes, parent-pointer delta, alternating graph) makes that work cheap.
+their intersection. The structural foundation (content-addressed
+FactSet nodes, parent-pointer delta, alternating graph) makes that
+work cheap.
 
 ## Explicitly out of scope
 
@@ -387,9 +392,7 @@ nodes, parent-pointer delta, alternating graph) makes that work cheap.
 - **Ambient incoming events (the model's "next layer up")** — handled
   by a different mechanism, not part of this model. Generalising the
   decision graph to that layer is the eventual home of
-  `builtins.cache`-style scoping; the previous shared-table convention
-  in the storage layer was set up to make that generalisation easier
-  and may be reintroduced when that work begins.
+  `builtins.cache`-style scoping.
 - **Replay-time nondeterminism handling** — a model-layer concern. If
   the box truly produces multiple Responses under the same precondition,
   the data structure can store both but the choice of which to serve is
@@ -403,7 +406,7 @@ nodes, parent-pointer delta, alternating graph) makes that work cheap.
   how does it interact with the per-(Q, R) terminal cluster?
 - Inverted Fact index for the "find shortcuts whose precondition is a
   subset of current context" lookup that the cold fallback path needs.
-- Eviction of subsumed terminal edges (edge-only; RS nodes remain for
-  navigation).
-- Recorder's QS batching policy: per-event singletons vs. accumulated
-  batches, and the trade-off against post-Phase-1 sharing.
+- Eviction of subsumed terminal edges (edge-only; FactSet nodes remain
+  for navigation).
+- Recorder's RequestSet batching policy: per-event singletons vs.
+  accumulated batches, and the trade-off against post-Phase-1 sharing.
