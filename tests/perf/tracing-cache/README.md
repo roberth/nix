@@ -52,6 +52,16 @@ Bindings delta.
 bash multi-branch-bench.sh [repo_path] [expr]
 ```
 
+## A note on filesystem mtime granularity
+
+The synthetic harness inserts `sleep 1` between file mutations
+because the `readFile` accessor caches responses by mtime, and a
+write that happens within the same second as a prior write to the
+same path leaves mtime unchanged — the cache then serves the stale
+value. The bench harnesses already insert the sleep where needed.
+If you script your own evals against this cache, hold the same
+discipline (or `touch -d` the file with an explicit later mtime).
+
 ## Interpreting results
 
 - **Bindings delta** is the most informative metric: it tells you how
