@@ -5,6 +5,15 @@ Bench harnesses for the sets-based tracing eval cache (see
 automated tests — they require pointing at a built `nix` binary and a
 target git repository.
 
+## Isolating the cache without changing $HOME
+
+The bench scripts redirect `$HOME` for hermetic cache isolation,
+which also isolates other Nix state (`~/.nix-defexpr`,
+`~/.nix-profile`, etc.). If you want to share your main Nix state
+but isolate only the tracing cache, set `NIX_TRACING_CACHE_DIR=/some/dir`
+in your environment — it overrides the default `~/.cache/nix/eval-tracing-index-v2`
+without touching `$HOME`.
+
 ## Common environment
 
 All scripts expect:
