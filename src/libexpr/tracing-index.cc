@@ -137,8 +137,19 @@ struct WriteInsertBinding
     std::string responseHash;
 };
 
-using WriteOp = std::
-    variant<WriteInsertQuery, WriteInsertResult, WriteInsertPreconditionSet, WriteInsertSetResponse, WriteInsertBinding>;
+struct WriteDeleteBinding
+{
+    std::string queryHash;
+    std::string preconditionHash;
+};
+
+using WriteOp = std::variant<
+    WriteInsertQuery,
+    WriteInsertResult,
+    WriteInsertPreconditionSet,
+    WriteInsertSetResponse,
+    WriteInsertBinding,
+    WriteDeleteBinding>;
 
 // ---- Reader state (main thread) ----
 
@@ -300,6 +311,8 @@ private:
                 db,
                 "INSERT OR IGNORE INTO Bindings(queryHash, preconditionHash, responseHash) "
                 "VALUES (?, ?, ?)");
+            SQLiteStmt deleteBinding;
+            deleteBinding.create(db, "DELETE FROM Bindings WHERE queryHash = ? AND preconditionHash = ?");
 
             while (true) {
                 std::vector<WriteOp> batch;
@@ -378,6 +391,12 @@ private:
                                 bindBlob(use, w.queryHash);
                                 bindBlob(use, w.preconditionHash);
                                 bindBlob(use, w.responseHash);
+                                use.exec();
+                            },
+                            [&](const WriteDeleteBinding & w) {
+                                auto use = deleteBinding.use();
+                                bindBlob(use, w.queryHash);
+                                bindBlob(use, w.preconditionHash);
                                 use.exec();
                             },
                         },
@@ -1143,9 +1162,41 @@ size_t TracingIndex::runLearningPass(const QueryHash & queryHash)
                 .responseHash = hashToBlob(bs[i].respHash),
             });
             known.insert(newPreHash); // future iterations see it as known
+            bs.push_back(B{newPreHash, bs[i].respHash, intersection});
             ++inserted;
         }
     }
+
+    /* Evict subsumed wider Bindings: if B_narrow.precondition is a
+       strict subset of B_wide.precondition and they share Response,
+       B_wide can never give a hit that B_narrow doesn't also give.
+       Drop B_wide to reclaim storage; correctness preserved by
+       construction. We delete in a second pass so the indices stay
+       stable; the loop is O(k²) which matches the learning pass
+       above. */
+    std::set<Hash> deleted;
+    for (size_t i = 0; i < bs.size(); ++i) {
+        if (deleted.count(bs[i].precondHash))
+            continue;
+        for (size_t j = 0; j < bs.size(); ++j) {
+            if (i == j || deleted.count(bs[j].precondHash))
+                continue;
+            if (bs[i].respHash != bs[j].respHash)
+                continue;
+            if (bs[i].members.size() >= bs[j].members.size())
+                continue;
+            // bs[i] is potentially narrower than bs[j]; verify strict subset.
+            if (!isSubset(bs[i].members, bs[j].members))
+                continue;
+            // bs[j] is subsumed by bs[i].
+            _writeQueue->enqueue(WriteDeleteBinding{
+                .queryHash = hashToBlob(queryHash),
+                .preconditionHash = hashToBlob(bs[j].precondHash),
+            });
+            deleted.insert(bs[j].precondHash);
+        }
+    }
+
     return inserted;
 }
 
