@@ -1096,6 +1096,12 @@ std::pair<size_t, size_t> TracingIndex::runGC()
     state->db.exec("DELETE FROM SetResponses WHERE responseHash NOT IN (SELECT responseHash FROM Bindings)");
     size_t respDeleted = sqlite3_changes(state->db);
 
+    /* Reclaim freed pages so the on-disk DB file actually shrinks.
+       VACUUM rewrites the entire DB so it's expensive — only worth
+       it after a substantial DELETE pass. */
+    if (preDeleted > 0 || respDeleted > 0)
+        state->db.exec("VACUUM");
+
     return {preDeleted, respDeleted};
 }
 
