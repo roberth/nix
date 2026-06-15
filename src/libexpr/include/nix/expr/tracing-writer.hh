@@ -73,7 +73,16 @@ class TracingWriter
        which it started, and on finalize its precondition is the
        sort+dedup of the slice from that index to the current end.
        This lets us produce per-Query preconditions without paying for
-       sorted insertion on every observed event. */
+       sorted insertion on every observed event.
+
+       Exception safety: a Nix evaluation that throws between
+       logQuery and its matching logResult leaves stale frames on
+       inFlightStack and stale members in observedMembers. In
+       single-shot CLI mode the process exits and the leak is
+       inconsequential. Long-lived hosts (a hypothetical daemon
+       embedding TracingWriter) should destroy the writer between
+       user requests for the same reason TracingReplayEvaluator
+       documents. */
     std::vector<TracingIndex::SetMember> observedMembers;
 
     struct InFlightQuery
