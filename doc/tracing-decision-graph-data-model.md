@@ -329,9 +329,10 @@ The recorder observes the box's event stream and maintains a single
 global `factSet` that grows monotonically as Responses arrive. There
 is no per-`Q` state and no muxing: when a Result is produced for
 some `Q`, the recorder samples the current global `factSet` and
-pairs it with `Q`. The over-approximation falls out naturally:
-`Q`'s recorded precondition is everything observed in the session
-up to `Q`'s Result, regardless of whether `Q` "caused" it.
+pairs it with `Q`. This mirrors the natural and necessary
+over-approximation of the black-box model — the recorder can't tell
+which events `Q` "caused" and which were unrelated in-flight work,
+and the model is built to absorb that ambiguity.
 
 ```
 state: factSet  # one global accumulating set, starts at ∅
