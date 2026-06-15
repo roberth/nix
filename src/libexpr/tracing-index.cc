@@ -1068,6 +1068,36 @@ void TracingIndex::insertBinding(
     });
 }
 
+TracingIndex::Bloom TracingIndex::computeBloom(const SetMembers & members)
+{
+    /* For each member, hash the concatenation (queryHash || responseHash)
+       to derive 8 × 32-bit indices, mod 256, and set those bits. SHA-256
+       is 32 bytes = 8 × 32-bit lanes — exactly the right shape. */
+    Bloom out{};
+    for (const auto & m : members) {
+        HashSink sink(HashAlgorithm::SHA256);
+        sink(std::string_view(hashToBlob(m.queryHash)));
+        sink(std::string_view(hashToBlob(m.responseHash)));
+        auto h = sink.finish().hash;
+        for (size_t i = 0; i < 8; ++i) {
+            uint32_t lane = (uint32_t(h.hash[i * 4 + 0]) << 24) | (uint32_t(h.hash[i * 4 + 1]) << 16)
+                          | (uint32_t(h.hash[i * 4 + 2]) << 8) | uint32_t(h.hash[i * 4 + 3]);
+            size_t bit = lane % (kBloomBytes * 8);
+            out[bit / 8] |= uint8_t(1u << (bit % 8));
+        }
+    }
+    return out;
+}
+
+bool TracingIndex::bloomMayBeSubset(const Bloom & p, const Bloom & c)
+{
+    for (size_t i = 0; i < kBloomBytes; ++i) {
+        if ((p[i] & c[i]) != p[i])
+            return false;
+    }
+    return true;
+}
+
 TracingIndex::SetMembers TracingIndex::intersectSets(const SetMembers & a, const SetMembers & b)
 {
     /* Linear merge over sorted inputs. Keep entries that agree on

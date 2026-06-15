@@ -391,6 +391,32 @@ public:
     static SetMembers intersectSets(const SetMembers & a, const SetMembers & b);
 
     /**
+     * 256-bit Bloom filter summary of a SetMembers vector. The
+     * filter encodes membership of each (queryHash, responseHash)
+     * pair: 8 bit positions per member, derived by chunking
+     * SHA256(queryHash || responseHash) into 8 × 32-bit indices
+     * mod 256.
+     *
+     * For subset prescreen, `(P_bloom & C_bloom) == P_bloom`
+     * implies "P may be a subset of C" (with false positives at
+     * the rate of standard Bloom analysis). `==` failing implies
+     * definitely-not-subset, so the slow HAMT-walking subset test
+     * can be skipped on those candidates. Building block for the
+     * lookupSetsReplay prescreen wiring; not yet stored alongside
+     * PreconditionSets.
+     */
+    static constexpr size_t kBloomBytes = 32;
+    using Bloom = std::array<uint8_t, kBloomBytes>;
+    static Bloom computeBloom(const SetMembers & members);
+
+    /**
+     * `(P_bloom & C_bloom) == P_bloom`. Returns true when P_bloom
+     * may be a subset of C_bloom (false positives possible);
+     * false when it is definitely not.
+     */
+    static bool bloomMayBeSubset(const Bloom & p, const Bloom & c);
+
+    /**
      * Run an intersection-learning pass for a single queryHash.
      *
      * For each pair of existing Bindings with the same queryHash and

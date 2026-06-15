@@ -576,6 +576,34 @@ TEST_F(TracingReplayTest, SetsLearningPassNarrowsPreconditions)
     EXPECT_EQ(index.runLearningPass(qh), 0u);
 }
 
+TEST_F(TracingReplayTest, SetsBloomSubsetPositive)
+{
+    /* If P ⊆ C as actual sets, P's Bloom is a subset of C's Bloom
+       too — bloomMayBeSubset must return true. */
+    auto p = makeSorted({makeMember("q1", "r1")});
+    auto c = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2"), makeMember("q3", "r3")});
+    EXPECT_TRUE(TracingIndex::bloomMayBeSubset(TracingIndex::computeBloom(p), TracingIndex::computeBloom(c)));
+}
+
+TEST_F(TracingReplayTest, SetsBloomSubsetNegative)
+{
+    /* If P contains a member that C does not, P's Bloom has bits
+       that C's Bloom does not — bloomMayBeSubset must return false
+       (with overwhelming probability; the test seeds are stable). */
+    auto p = makeSorted({makeMember("q-unique", "r-unique")});
+    auto c = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2")});
+    EXPECT_FALSE(TracingIndex::bloomMayBeSubset(TracingIndex::computeBloom(p), TracingIndex::computeBloom(c)));
+}
+
+TEST_F(TracingReplayTest, SetsBloomEmpty)
+{
+    /* Empty P always vacuously a subset (all bits zero). */
+    TracingIndex::SetMembers empty;
+    auto c = makeSorted({makeMember("q1", "r1")});
+    EXPECT_TRUE(TracingIndex::bloomMayBeSubset(TracingIndex::computeBloom(empty), TracingIndex::computeBloom(c)));
+    EXPECT_TRUE(TracingIndex::bloomMayBeSubset(TracingIndex::computeBloom(empty), TracingIndex::computeBloom(empty)));
+}
+
 TEST_F(TracingReplayTest, SetsLearningPassEvictsSubsumedBindings)
 {
     /* When two Bindings share a Response and one's precondition is
