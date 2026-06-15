@@ -164,7 +164,7 @@ Pathological growth modes worth flagging:
 
 The recorder observes a single event stream from the interpreter. Attributing each d>0 event to the right pending Query's precondition is exact when at most one Query is outstanding, and an over-approximation when multiple are in flight (each in-flight Query absorbs every observed d>0 event into its precondition).
 
-Over-approximation is sound: the recorded precondition is always a superset of the Query's true dependencies, so lookup still validates correctly when current `C ⊇ precondition`. The cost is bloated precondition size and reduced hit rate, both of which the intersection-learning future work is designed to recover.
+Over-approximation is sound: the recorded precondition is always a superset of the Query's true dependencies, so lookup still validates correctly when current `C ⊇ precondition`. The cost is bloated precondition size and reduced hit rate, both of which the shipped intersection-learning pass (run by `nix eval-cache compact[-all]`) is designed to recover from once enough recordings of the same queryHash accumulate.
 
 ## Known limitations and future work
 
