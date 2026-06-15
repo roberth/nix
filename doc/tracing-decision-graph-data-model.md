@@ -49,30 +49,55 @@ identical, by content addressing.
 
 ## Storage layer
 
-Atomic content-addressed entities (each its own table or column,
-keyed by content hash):
+Two distinct query/response notions, kept separate at the schema
+level:
 
-- **Fact** — a `(d>0 query, d>0 response)` pair. Hash:
-  `SHA-256(queryHash || responseHash)`. The atomic unit of observed
-  evaluation context.
-- **d=0 Query** — a top-level query, identified by its `queryHash`
-  (operation + params + inputHashes).
-- **d=0 Response** — a recorded result, identified by its
-  `responseHash` over the serialised payload.
+- **d=0 Query / d=0 Response** — the thing the cache exists to
+  answer; the outside of the black box. A d=0 Query has its own
+  `queryHash` (operation + params + inputHashes); a d=0 Response
+  is a recorded result with its own `responseHash`.
+- **d=1 query / d=1 response** — what the box asks of the
+  environment during evaluation. d=1 queries have their own
+  `queryHash`; d=1 responses have their own `responseHash`. Pairs
+  of these form Facts.
+
+Despite the names, the d=0 and d=1 worlds don't share tables or
+hash spaces — they're different roles played in the model.
+
+Atomic content-addressed entities:
+
+- **d=0 Query** — `(queryHash, payload)`.
+- **d=0 Response** — `(responseHash, payload)`.
+- **d=1 query** — `(queryHash, payload)`.
+- **d=1 response** — `(responseHash, payload)`.
+- **Fact** — a `(d=1 queryHash, d=1 responseHash)` pair. Hash:
+  `SHA-256(d=1 queryHash || d=1 responseHash)`. The atomic unit of
+  observed evaluation context.
 
 Set pools with parent-pointer delta encoding per L7881:
 
-- **QuerySet (QS) pool** — `(setHash, parentHash, extraQueries)`.
-  Each set is stored as a delta from some existing parent set; the
-  parent chain encodes structural sharing. `setHash` is canonical,
-  so content-equivalent sets always have the same hash regardless of
-  how they were built.
+- **QuerySet (QS) pool** — `(setHash, parentHash, extraD1Queries)`.
+  A set of d=1 queries. Each new set is a delta from some existing
+  parent set; the parent chain encodes structural sharing.
 - **ResponseSet (RS) pool** — `(setHash, parentHash, extraFacts)`.
-  Same scheme for sets of Facts.
+  A set of Facts.
+
+The `setHash` is canonical: content-equivalent sets always have the
+same hash regardless of how they were built. Multiple parent-pointer
+decompositions of the same `setHash` may coexist (whichever parent
+the recorder picked).
+
+Set extension is the storage-layer operation that the decision
+graph relies on for transitions: given an RS hash and a set of new
+Facts, produce the new RS hash. The choice of set-hashing scheme
+(canonical sorted-Merkle vs. additive/xor) is a storage-layer
+design knob that affects the cost of extension but not the
+decision-graph semantics — recorded here only as a flag, not a
+decision.
 
 The storage layer has no per-`Q` structure, no notion of edges, no
-notion of "next". It is queried purely by content hash: "give me the
-members of this set" or "is this set in the pool?".
+notion of "next". It is queried purely by content hash, or by the
+set-extension operation.
 
 ## Decision graph layer
 
@@ -95,29 +120,48 @@ positions on the asks side are pairs:
   flight; multiple `Q`s that happen to dispatch the same QS share
   the same outgoing keyed children.
 
-Three edge types:
+Two edge types:
 
 - **`(Q, RS) ──asks──▶ QS`** — while evaluating `Q` from this RS,
   the box's next set of asks is this QS. After Patricia
   normalisation, a `(Q, RS)` position has pairwise-disjoint
   outgoing QS edges (and almost always exactly one — see below).
-- **`QS ──tup──▶ RS`** keyed by **response tuple** — given those
-  responses to the asked queries, the resulting RS is the union of
-  the source RS's Facts and the new `(query, response)` Facts.
-  Multiple observed response tuples produce multiple keyed
-  children of the same QS. This edge is Q-free.
-- **`(Q, RS) ──terminal──▶ Response`** — this RS is a recorded
+- **`(Q, RS) ──terminal──▶ d=0 Response`** — this RS is a recorded
   precondition under which `Q`'s d=0 Response is the recorded one.
 
+There is no third edge type for "QS to next RS". The transition is
+implicit: after dispatching the QS and observing d=1 responses,
+the new Facts are computed (pairing each d=1 query in QS with its
+d=1 response), and the next RS is the storage-layer extension of
+the source RS by those new Facts. The next-RS hash is computable
+from the source RS hash and the new Facts via the storage layer's
+set-extension operation. The decision graph never names a "response
+tuple" because the tuple is just the d=1 responses themselves,
+transient data used to compute Facts; it lives in the dispatch path
+at replay/recording time, not in the schema.
+
 A trace through the graph for evaluating `Q` is therefore the
-alternating chain:
+chain:
 
 ```
-(Q, entry RS) ──asks──▶ QS ──tup──▶ (Q, RS') ──asks──▶ QS ──tup──▶ ... ──terminal──▶ R
+(Q, entry RS)
+   │ asks
+   ▼
+   QS
+   │  (dispatch QS's d=1 queries; observe d=1 responses;
+   │   form new Facts; extend source RS in storage layer)
+   ▼
+(Q, RS')
+   │ asks
+   ▼
+   QS
+   │  ...
+   ▼
+(Q, RS_final) ── terminal ──▶ d=0 Response R
 ```
 
-The `Q` carries through every position; the `RS` accumulates Facts;
-the QS positions in between are Q-free.
+`Q` carries through every position; `RS` accumulates Facts; QSes
+appear as edge labels.
 
 Storage-level sharing is automatic at every layer:
 
@@ -126,24 +170,22 @@ Storage-level sharing is automatic at every layer:
   set reference the same RS hash, even though they occupy distinct
   `(Q, RS)` positions in the decision graph.
 - **QS hashes** are shared across all `Q`s. When two `Q`s' Asks
-  edges point at the same QS, they collapse onto the same
-  `QS ──tup──▶ RS` keyed children.
-- **Outcomes** (QS → next RS) are shared because they're Q-free.
+  edges point at the same QS, the QS itself is one stored node.
+- **Fact hashes** are shared across all RSes that contain them, via
+  the RS pool's parent-pointer delta encoding.
 
-Implementation-wise this is three edge tables plus an entry-point
+Implementation-wise this is two edge tables plus an entry-point
 index:
 
-- `Asks(q_hash, rs_hash, qs_hash)` — outgoing QS edges per
+- `Asks(q_hash, rs_hash, qs_hash)` — outgoing QS edge per
   `(Q, RS)` position.
-- `Outcomes(qs_hash, response_tuple, next_rs_hash)` — keyed
-  children per QS. Q-free.
-- `Terminals(q_hash, rs_hash, response_hash)` — terminal Response
-  edges per `(Q, RS)` position.
+- `Terminals(q_hash, rs_hash, d0_response_hash)` — terminal d=0
+  Response edges per `(Q, RS)` position.
 - `Entries(q_hash, entry_rs_hash)` — where to start traversal for
   a given `Q`.
 
-None of these tables hold set content; they hold references into
-the storage layer.
+None of these tables hold set content or response tuples; they hold
+references into the storage layer.
 
 ### Invariant: pairwise-disjoint outgoing QS edges per (Q, RS)
 
@@ -235,16 +277,17 @@ walk(Q, entryRS):
     outgoing = Asks(Q, rs)  # the outgoing QS edges for this (Q, rs)
     if outgoing is empty: miss
     next_qs = pick from outgoing
-    # Edge QS may include queries whose responses are already in rs
-    # (the shared prefix from a previous Patricia split). Source those
-    # from rs; dispatch only the rest.
+    # Edge QS may include queries whose d=1 responses are already in
+    # rs (the shared prefix from a previous Patricia split). Source
+    # those from rs; dispatch only the rest.
     to_dispatch = next_qs \ {queries present in rs.facts}
     fresh = {}
     for q in to_dispatch:
-        fresh[q] = walk(q, …)  # recursive d>0 lookup
-    tup = canonical_tuple(next_qs, source: rs.facts ∪ fresh)
-    rs' = Outcomes(next_qs, tup)
-    if not found: miss
+        fresh[q] = walk(q, …)  # recursive d=1 lookup
+    new_facts = {Fact(q, fresh[q]) for q in to_dispatch}
+              ∪ {Fact(q, rs.responseFor(q)) for q in next_qs \ to_dispatch}
+    rs' = storage.extend(rs, new_facts)  # next_rs_hash by set extension
+    if rs' is not in the RS pool: miss
     rs = rs'
 ```
 
@@ -281,25 +324,28 @@ At d=0 finalisation:
 ```
 record(Q, trace):
   rs = Q's entry RS
-  for each step (observed_qs, observed_tuple) in trace:
+  for each step (observed_qs, observed_facts) in trace:
+    # observed_facts are the Facts the recorder saw at this step,
+    # one per d=1 query in observed_qs.
     existing = Asks(Q, rs)  # outgoing QS edges at this (Q, rs)
     case observed_qs vs existing:
       ─ exact match with some qs ∈ existing:
-          rs' = Outcomes(qs, observed_tuple)
-          if missing: insert Outcomes(qs, observed_tuple, new_rs)
+          # The QS edge already exists. Compute the next RS by
+          # storage-layer extension; storage adds it if novel.
+          rs' = storage.extend(rs, observed_facts)
           rs = rs'
       ─ disjoint from every qs ∈ existing:
           insert Asks(Q, rs, observed_qs)
-          insert Outcomes(observed_qs, observed_tuple, new_rs)
-          rs = new_rs
+          rs' = storage.extend(rs, observed_facts)
+          rs = rs'
       ─ overlaps some qs ∈ existing:
           Patricia-split (below); retry this step
-  insert Terminals(Q, rs, R)
+  insert Terminals(Q, rs, d=0 Response R)
 ```
 
-Patricia split mutates `Asks` and `Outcomes` for the affected
-`(Q, rs)` position; it does not change `(Q, rs)` itself, only its
-outgoing structure.
+Patricia split mutates `Asks` for the affected `(Q, rs)` position
+and inserts new RS nodes via storage-layer extension; it does not
+change `(Q, rs)` itself, only its outgoing structure.
 
 Storage operations are content-addressed `INSERT OR IGNORE`s, so
 recurring nodes deduplicate. Per step cost is O(1) hash lookups, plus
