@@ -181,6 +181,6 @@ Cross-branch reuse (evaluating `lib.version` against upstream/main then against 
 
 The two branches produce different `lib.version` outputs, yet switching from upstream/main's cached state to lazy-paths-v3 only added one new binding (the one whose precondition includes the changed `.version` file). All other intermediate Queries hit the cache.
 
-Bench harnesses live at `/tmp/sets-validation/` in the sandbox: `synthetic.sh` (correctness on edit/revert), `git-history-bench.sh` (cross-commit cache reuse), `multi-branch-bench.sh` (cross-branch cache reuse). They're sandbox-specific (hardcoded paths) and not yet integrated into the test suite.
+Bench harnesses live under [`tests/perf/tracing-cache/`](../tests/perf/tracing-cache/) — three scripts (`synthetic.sh`, `git-history-bench.sh`, `multi-branch-bench.sh`) plus a shared `common.sh` that derives the nix binary location from the repo layout. They're developer tools, not CI-automated tests; the readme covers usage and result interpretation.
 
 
