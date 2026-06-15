@@ -165,6 +165,7 @@ sources = files(
   'trace-file.cc',
   'trace-types.cc',
   'tracing-environment.cc',
+  'tracing-decision-graph.cc',
   'tracing-evaluator.cc',
   'tracing-index.cc',
   'tracing-object.cc',
