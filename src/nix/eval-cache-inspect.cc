@@ -375,7 +375,9 @@ struct CmdEvalCacheCompactAll : Command, MixJSON
 {
     std::string description() override
     {
-        return "Run intersection-learning on every queryHash in the sets-based cache.";
+        return "Maintain the sets-based cache: run intersection-learning across every queryHash, "
+               "evict subsumed wider Bindings, garbage-collect orphan PreconditionSets and SetResponses, "
+               "and VACUUM to reclaim the on-disk file size.";
     }
 
     Category category() override
@@ -413,7 +415,8 @@ struct CmdEvalCacheCompactOne : Command
 
     std::string description() override
     {
-        return "Run intersection-learning for the given queryHash(es).";
+        return "Run intersection-learning for the given queryHash(es). Use compact-all to run "
+               "across every queryHash plus GC + VACUUM.";
     }
 
     Category category() override
