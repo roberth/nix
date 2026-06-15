@@ -325,60 +325,56 @@ runtime; storage is invariant to it.
 
 ### Recording
 
-The recorder consumes a single event stream from the box and
-multiplexes it across the Queries currently in flight. For each
-in-flight `Q` the recorder maintains a **mux entry** holding `Q`'s
-FactSet-so-far. While multiple Queries are in flight, every event
-observed during a given `Q`'s in-flight window is attributed to that
-`Q` — the over-approximation that lets the model treat the
-interpreter as a single opaque box, accepting wider-than-necessary
-preconditions in return.
+The recorder observes the box's event stream. For each `Q` in
+flight, it accumulates the Facts observed during that `Q`'s
+in-flight window — over-approximation: every event observed while
+`Q` is in flight goes into `Q`'s accumulator, whether or not it was
+"really" caused by `Q`. There is no muxing in the routing sense;
+the per-`Q` state is identical apart from each `Q`'s start time.
 
 ```
-state: mux  # map from in-flight Query -> { factSet }
+state: mux  # map from in-flight Query -> accumulating factSet
 
 on_event(e):
   case e:
     QueryStart(Q):
-      mux[Q] = { factSet = ∅ }
-
+      mux[Q] = ∅
     ResponseReceived(req, resp):
       for each Q in mux:
-        record(Q, req, resp)
-
+        mux[Q] = mux[Q] ∪ {Fact(req, resp)}
     ResultProduced(Q, result):
-      insert Terminals(Q, mux[Q].factSet, result)
+      record(Q, mux[Q], result)
       remove mux[Q]
 ```
 
-`record` advances one mux entry by one step. In the singleton-step
-form (commit per Response) the RequestSet is the singleton `{req}`:
+Per-event cost: O(1) per in-flight `Q`. Per `Q`-lifetime, only one
+thing actually needs to land in storage, and only at the end —
+`record` writes `Q`'s contribution to the decision graph.
 
 ```
-record(Q, req, resp):
-  m = mux[Q]
-  requestSet = {req}
-  existing = Asks(Q, m.factSet)
-  case requestSet vs existing:
-    ─ exact match with some rs ∈ existing: edge already there, no insert
-    ─ disjoint from every rs ∈ existing: insert Asks(Q, m.factSet, requestSet)
-    ─ overlaps some rs ∈ existing:        Patricia-split (above)
-  m.factSet = storage.extend(m.factSet, {Fact(req, resp)})
+record(Q, factSet, result):
+  cur = ∅
+  for fact = (req, resp) in canonical_order(factSet):
+    insert Asks(Q, cur, {req})                  # INSERT OR IGNORE
+    cur = storage.extend(cur, {fact})
+  insert Terminals(Q, factSet, result)
 ```
 
-Storage operations are content-addressed `INSERT OR IGNORE`s, so
-recurring nodes deduplicate. Per event cost: O(1) hash lookups plus
-the O(1) storage extension. Per `Q`-lifetime cost: O(trace length).
-Patricia split adds O(|requestSet|) when triggered.
+The `Asks` chain runs along a canonical ordering of `factSet` (e.g.
+by Fact hash). The box's actual order of asks doesn't matter for
+navigation correctness — replay can dispatch in any order that
+reaches the target FactSet, and canonical ordering at record time
+maximises prefix sharing with other recordings whose `factSet`
+overlaps.
 
-**Batching is a knob.** Singleton-per-Response is the simplest form
-and matches synchronous interpreters where one Request is outstanding
-at a time. A batching policy that accumulates multiple Requests into
-a single step (commit when all pendingRequests have Responses, or
-on a window boundary) lets Patricia split do meaningful prefix
-sharing when shape divergence has a common Request prefix. The
-decision-graph structure is invariant to the choice; only the
-granularity of `Asks` edges changes.
+Per `record` cost: O(|factSet|) `INSERT OR IGNORE`s. Per event:
+O(1). Patricia split (above) runs naturally at record time as the
+canonical chain converges with existing recordings — when two
+canonical orderings produce overlapping but non-equal multi-element
+steps, the same split applies. With singleton steps and canonical
+ordering, two recordings whose factSets share a prefix end up
+sharing the corresponding `Asks` edges by content addressing
+without an explicit split.
 
 ## What Phase 1 covers
 
