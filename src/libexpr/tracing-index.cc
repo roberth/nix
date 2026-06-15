@@ -1008,6 +1008,30 @@ void TracingIndex::insertBinding(
     });
 }
 
+TracingIndex::SetMembers TracingIndex::intersectSets(const SetMembers & a, const SetMembers & b)
+{
+    /* Linear merge over sorted inputs. Keep entries that agree on
+       both queryHash AND responseHash; drop entries unique to one
+       side and drop entries with matching queryHash but conflicting
+       responseHash (contradictory observation). */
+    SetMembers out;
+    out.reserve(std::min(a.size(), b.size()));
+    size_t i = 0, j = 0;
+    while (i < a.size() && j < b.size()) {
+        if (a[i].queryHash == b[j].queryHash) {
+            if (a[i].responseHash == b[j].responseHash)
+                out.push_back(a[i]);
+            ++i;
+            ++j;
+        } else if (a[i].queryHash < b[j].queryHash) {
+            ++i;
+        } else {
+            ++j;
+        }
+    }
+    return out;
+}
+
 bool TracingIndex::isSubset(const SetMembers & precondition, const SetMembers & current)
 {
     /* Linear two-pointer merge. Both inputs are sorted ascending by

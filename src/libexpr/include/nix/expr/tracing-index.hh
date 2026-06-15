@@ -362,6 +362,22 @@ public:
      */
     static bool isSubset(const SetMembers & precondition, const SetMembers & current);
 
+    /**
+     * Intersection of two SetMembers under equality (queryHash AND
+     * responseHash). Members appearing in both inputs are kept;
+     * members appearing in only one are dropped. Members with the
+     * same queryHash but differing responseHash are dropped from
+     * both — that's a contradictory observation.
+     *
+     * Both inputs must be sorted ascending by queryHash. Output is
+     * sorted by construction. Building block for the future
+     * intersection-learning step where two bindings for the same
+     * queryHash producing the same Response with differing
+     * preconditions can be combined into a tighter, learned
+     * precondition.
+     */
+    static SetMembers intersectSets(const SetMembers & a, const SetMembers & b);
+
 private:
     struct State;
 

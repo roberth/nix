@@ -391,6 +391,40 @@ TEST_F(TracingReplayTest, SetsIsSubsetResponseMismatch)
     EXPECT_FALSE(TracingIndex::isSubset(b, a));
 }
 
+TEST_F(TracingReplayTest, SetsIntersectEmpty)
+{
+    TracingIndex::SetMembers empty;
+    auto a = makeSorted({makeMember("q1", "r1")});
+    EXPECT_EQ(TracingIndex::intersectSets(empty, empty), empty);
+    EXPECT_EQ(TracingIndex::intersectSets(empty, a), empty);
+    EXPECT_EQ(TracingIndex::intersectSets(a, empty), empty);
+}
+
+TEST_F(TracingReplayTest, SetsIntersectKeepsCommon)
+{
+    auto a = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2")});
+    auto b = makeSorted({makeMember("q1", "r1"), makeMember("q3", "r3")});
+    auto expected = makeSorted({makeMember("q1", "r1")});
+    EXPECT_EQ(TracingIndex::intersectSets(a, b), expected);
+    EXPECT_EQ(TracingIndex::intersectSets(b, a), expected);
+}
+
+TEST_F(TracingReplayTest, SetsIntersectDropsConflictingResponses)
+{
+    /* Same queryHash, different responseHash on each side — that's
+       contradictory; intersection drops both. */
+    auto a = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2")});
+    auto b = makeSorted({makeMember("q1", "r1-other"), makeMember("q2", "r2")});
+    auto expected = makeSorted({makeMember("q2", "r2")});
+    EXPECT_EQ(TracingIndex::intersectSets(a, b), expected);
+}
+
+TEST_F(TracingReplayTest, SetsIntersectFullOverlap)
+{
+    auto a = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2")});
+    EXPECT_EQ(TracingIndex::intersectSets(a, a), a);
+}
+
 TEST_F(TracingReplayTest, SetsIsSubsetDisjoint)
 {
     auto a = makeSorted({makeMember("q1", "r1")});
