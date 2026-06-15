@@ -365,7 +365,7 @@ struct CmdEvalCacheCompactAll : Command
             total += index.runLearningPass(qh);
         /* Drain the writer queue before GC so the eviction DELETEs
            land before we look for orphan rows. */
-        TracingIndex::flushAllWriteQueues();
+        index.waitForWrites();
         auto [preGc, respGc] = index.runGC();
         std::cout << "scanned " << scanned << " queryHash(es); inserted " << total
                   << " new Binding(s); GC dropped " << preGc << " PreconditionSet(s) and " << respGc

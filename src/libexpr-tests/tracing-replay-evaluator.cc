@@ -555,7 +555,7 @@ TEST_F(TracingReplayTest, SetsLearningPassNarrowsPreconditions)
        destructive (it joins the writer thread, after which any
        further enqueue is dead-letter), so the test uses a small
        sleep instead and reserves the single flush for the very end. */
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    index.waitForWrites();
 
     /* Before learning: a context containing only q1=r1 wouldn't match
        either P1 or P2 (P1 needs q2 too, P2 needs q3 too). */
@@ -567,7 +567,7 @@ TEST_F(TracingReplayTest, SetsLearningPassNarrowsPreconditions)
     auto inserted = index.runLearningPass(qh);
     ASSERT_EQ(inserted, 1u) << "exactly one new intersected Binding expected";
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    index.waitForWrites();
 
     /* After learning: the intersection (q1=r1) is its own Binding. */
     auto hit = index.lookupSetsReplay(qh, onlyShared);
@@ -597,7 +597,7 @@ TEST_F(TracingReplayTest, SetsLearningPassEvictsSubsumedBindings)
     index.insertBinding(qh, pwh, rh);
     index.insertBinding(qh, pnh, rh);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    index.waitForWrites();
 
     ASSERT_EQ(index.countBindings(qh), 2u) << "two Bindings pre-compact";
 
@@ -607,7 +607,7 @@ TEST_F(TracingReplayTest, SetsLearningPassEvictsSubsumedBindings)
     auto inserted = index.runLearningPass(qh);
     EXPECT_EQ(inserted, 0u) << "no new Bindings to learn — narrow already exists";
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    index.waitForWrites();
 
     EXPECT_EQ(index.countBindings(qh), 1u) << "wider Binding should be evicted";
 
@@ -617,6 +617,26 @@ TEST_F(TracingReplayTest, SetsLearningPassEvictsSubsumedBindings)
     auto hit = index.lookupSetsReplay(qh, current);
     ASSERT_TRUE(hit.has_value());
     EXPECT_EQ(*hit, "shared-answer");
+}
+
+TEST_F(TracingReplayTest, SetsWaitForWritesNonDestructive)
+{
+    /* waitForWrites should drain the writer queue without joining
+       the thread. After it returns, subsequent inserts continue to
+       work, unlike flushAllWriteQueues which kills the writer. */
+    TracingIndex index(dbPath);
+
+    auto members1 = makeSorted({makeMember("q1", "r1")});
+    auto h1 = index.insertPreconditionSet(members1);
+    index.waitForWrites();
+    EXPECT_TRUE(index.getPreconditionSet(h1).has_value());
+
+    /* Second batch of inserts after the first flush — these must
+       also land if waitForWrites is non-destructive. */
+    auto members2 = makeSorted({makeMember("q2", "r2")});
+    auto h2 = index.insertPreconditionSet(members2);
+    index.waitForWrites();
+    EXPECT_TRUE(index.getPreconditionSet(h2).has_value()) << "second-batch write must succeed after first waitForWrites";
 }
 
 TEST_F(TracingReplayTest, SetsRunGCDropsOrphans)
@@ -640,7 +660,7 @@ TEST_F(TracingReplayTest, SetsRunGCDropsOrphans)
        the other two rows are intentional orphans. */
     index.insertBinding(qh, puh, rUsed);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    index.waitForWrites();
 
     /* Pre-GC: both PreconditionSets and both Responses are present. */
     ASSERT_TRUE(index.getPreconditionSet(puh).has_value());
@@ -681,7 +701,7 @@ TEST_F(TracingReplayTest, SetsLearningPassSkipsDifferentResponses)
     index.insertBinding(qh, p1h, r1);
     index.insertBinding(qh, p2h, r2);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    index.waitForWrites();
 
     EXPECT_EQ(index.runLearningPass(qh), 0u);
 }

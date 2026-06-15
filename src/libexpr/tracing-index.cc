@@ -231,6 +231,17 @@ struct TracingIndex::WriteQueue
     std::thread thread;
     std::atomic<bool> done{false};
 
+    /* Drain tracking: enqueueCount counts ops as they're handed off,
+       processCount is bumped by the writer thread once a batch has
+       been committed to disk. waitDrained snapshots enqueueCount and
+       waits until processCount catches up — does NOT join the
+       thread, so the WriteQueue remains usable afterwards (unlike
+       shutdown / flushAll). */
+    std::atomic<uint64_t> enqueueCount{0};
+    std::atomic<uint64_t> processCount{0};
+    std::mutex drainMutex;
+    std::condition_variable drainWakeup;
+
     /**
      * Global registry of active WriteQueues. Ensures all background writer
      * threads are joined and data is flushed before process exit, even when
@@ -275,16 +286,33 @@ struct TracingIndex::WriteQueue
         if (!done.exchange(true)) {
             wakeup.notify_one();
             thread.join();
+            /* Unblock any waitDrained callers that snapshotted before
+               we set done — they'll see done=true and exit. */
+            {
+                std::lock_guard<std::mutex> lock(drainMutex);
+            }
+            drainWakeup.notify_all();
         }
     }
 
     void enqueue(WriteOp op)
     {
+        enqueueCount.fetch_add(1);
         {
             auto q = pending.lock();
             q->push_back(std::move(op));
         }
         wakeup.notify_one();
+    }
+
+    /* Wait until every op enqueued before this call has been
+       committed by the writer thread. Returns without joining the
+       thread; subsequent enqueues continue to work. */
+    void waitDrained()
+    {
+        uint64_t target = enqueueCount.load();
+        std::unique_lock<std::mutex> lock(drainMutex);
+        drainWakeup.wait(lock, [&] { return processCount.load() >= target || done.load(); });
     }
 
 private:
@@ -410,6 +438,14 @@ private:
                 // destructor may never run — we can't defer this to
                 // shutdown.
                 db.exec("PRAGMA wal_checkpoint(PASSIVE)");
+
+                /* Mark this batch's ops as processed and notify any
+                   thread blocked in waitDrained. */
+                processCount.fetch_add(batch.size());
+                {
+                    std::lock_guard<std::mutex> lock(drainMutex);
+                }
+                drainWakeup.notify_all();
             }
         } catch (std::exception & e) {
             ignoreExceptionInDestructor();
@@ -489,6 +525,11 @@ TracingIndex::~TracingIndex()
 void TracingIndex::flushAllWriteQueues()
 {
     WriteQueue::flushAll();
+}
+
+void TracingIndex::waitForWrites()
+{
+    _writeQueue->waitDrained();
 }
 
 // (hash utilities moved above WriteQueue)

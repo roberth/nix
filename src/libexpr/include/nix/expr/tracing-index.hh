@@ -99,8 +99,20 @@ public:
     /**
      * Flush all active WriteQueues process-wide. Call before exec()
      * or other operations that bypass normal C++ destruction.
+     *
+     * Destructive: joins the writer threads. Subsequent writes to
+     * any TracingIndex in this process will not actually be
+     * persisted. Use `waitForWrites` for a non-destructive flush
+     * confined to a single index.
      */
     static void flushAllWriteQueues();
+
+    /**
+     * Block until every write enqueued to this index before the
+     * call has been committed and checkpointed. Non-destructive:
+     * the writer thread keeps running and subsequent writes work.
+     */
+    void waitForWrites();
 
     TracingIndex(const TracingIndex &) = delete;
     TracingIndex & operator=(const TracingIndex &) = delete;
