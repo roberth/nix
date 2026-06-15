@@ -1,8 +1,6 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <filesystem>
-#include <thread>
-#include <chrono>
 
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-object.hh"
