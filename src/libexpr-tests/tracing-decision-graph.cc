@@ -650,4 +650,145 @@ TEST_F(TracingDecisionGraphTest, DeepRecordingPersistsAcrossReopen)
     EXPECT_EQ(*hit, r);
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   End-to-end simulation: mimic the on_event recorder + walk replayer
+   pattern that integration will eventually use.
+   ───────────────────────────────────────────────────────────────────── */
+
+namespace {
+
+/* A minimal recorder that mimics on_event semantics: one global
+   factSet that grows as Responses arrive, and a record() call when
+   a Result is produced. */
+struct OnEventRecorder
+{
+    TracingDecisionGraph & graph;
+    std::vector<TracingDecisionGraph::Fact> factSet; // mutable, sorted on demand
+
+    void onResponse(const Hash & request, const Hash & response)
+    {
+        factSet.push_back({request, response});
+    }
+
+    void onResult(const Hash & queryHash, const Hash & resultHash)
+    {
+        auto fsHash = graph.insertFactSet(factSet);
+        graph.record(queryHash, fsHash, resultHash);
+    }
+};
+
+} // namespace
+
+TEST_F(TracingDecisionGraphTest, EndToEndOnEventThenWalk)
+{
+    /* A realistic flow: simulate the box doing two evaluations of
+       the same Query, one in each of two "worlds" (different
+       Responses for the second Request). Then replay each world
+       and verify the correct Result. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("import_a_dot_nix");
+    auto reqA = sha("read_a.nix");
+    auto reqB = sha("read_b.nix");
+    auto contentA_v1 = sha("a_v1");
+    auto contentA_v2 = sha("a_v2");
+    auto contentB = sha("b_bytes");
+    auto result_v1 = sha("evaluated_with_v1");
+    auto result_v2 = sha("evaluated_with_v2");
+
+    /* Session 1: box reads a.nix→v1, then b.nix→b_bytes, produces result_v1. */
+    {
+        OnEventRecorder rec{g, {}};
+        rec.onResponse(reqA, contentA_v1);
+        rec.onResponse(reqB, contentB);
+        rec.onResult(q, result_v1);
+    }
+    /* Session 2: box reads a.nix→v2 (new content), then b.nix→b_bytes, produces result_v2. */
+    {
+        OnEventRecorder rec{g, {}};
+        rec.onResponse(reqA, contentA_v2);
+        rec.onResponse(reqB, contentB);
+        rec.onResult(q, result_v2);
+    }
+
+    /* Replay in v1 world: dispatch returns contentA_v1 for reqA. */
+    auto hit_v1 = g.walk(q, [&](const Hash & req) {
+        if (req == reqA) return contentA_v1;
+        if (req == reqB) return contentB;
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(hit_v1.has_value());
+    EXPECT_EQ(*hit_v1, result_v1);
+
+    /* Replay in v2 world: dispatch returns contentA_v2 for reqA. */
+    auto hit_v2 = g.walk(q, [&](const Hash & req) {
+        if (req == reqA) return contentA_v2;
+        if (req == reqB) return contentB;
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(hit_v2.has_value());
+    EXPECT_EQ(*hit_v2, result_v2);
+
+    /* Replay in a third world (a.nix is some unknown content):
+       should miss because no recording covers this scenario. */
+    auto miss = g.walk(q, [&](const Hash & req) {
+        if (req == reqA) return sha("a_unknown_v3");
+        if (req == reqB) return contentB;
+        return Hash(HashAlgorithm::SHA256);
+    });
+    EXPECT_FALSE(miss.has_value());
+}
+
+TEST_F(TracingDecisionGraphTest, EndToEndNestedQueries)
+{
+    /* Simulates nested Queries within one session: outer Q invokes
+       sub-Q1 and sub-Q2 as recursive d=0 evaluations.
+
+       In our global-factSet model, sub-Q's recorded factSet
+       includes the parent's prior Facts (the over-approximation
+       documented in the data model). Then in a different parent
+       context, the same sub-Q would record with different
+       parent-context Facts. Both recordings should still be
+       replayable when their respective contexts are provided. */
+    TracingDecisionGraph g(dbPath);
+    auto outerQ = sha("outer-Q");
+    auto innerQ = sha("inner-Q");
+    auto outerReq = sha("outer-Req");
+    auto innerReq = sha("inner-Req");
+    auto outerResp = sha("outer-Resp");
+    auto innerResp = sha("inner-Resp");
+
+    /* Session 1: outer asks outerReq, then inner asks innerReq,
+       inner produces innerResult, outer produces outerResult. */
+    OnEventRecorder rec{g, {}};
+    rec.onResponse(outerReq, outerResp);
+    /* At this point inner-Q starts its evaluation. The recorder
+       continues to accumulate facts; in our model the inner's
+       recorded factSet includes outer's prior Facts. */
+    rec.onResponse(innerReq, innerResp);
+    auto innerResult = sha("inner-Result");
+    auto outerResult = sha("outer-Result");
+    rec.onResult(innerQ, innerResult);
+    rec.onResult(outerQ, outerResult);
+
+    /* Replay inner-Q: must provide both outerReq's and innerReq's
+       responses because inner's recorded precondition includes
+       both. */
+    auto innerHit = g.walk(innerQ, [&](const Hash & req) {
+        if (req == outerReq) return outerResp;
+        if (req == innerReq) return innerResp;
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(innerHit.has_value());
+    EXPECT_EQ(*innerHit, innerResult);
+
+    /* Replay outer-Q similarly. */
+    auto outerHit = g.walk(outerQ, [&](const Hash & req) {
+        if (req == outerReq) return outerResp;
+        if (req == innerReq) return innerResp;
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(outerHit.has_value());
+    EXPECT_EQ(*outerHit, outerResult);
+}
+
 } // namespace nix
