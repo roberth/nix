@@ -289,6 +289,18 @@ In practice this is rare for real Nix evaluations, which routinely
 share common-prefix Requests (environment reads, common imports,
 shared source-file lookups).
 
+**Overlap rarely fires Patricia in practice.** RequestSet is
+canonical (a set, not a sequence), so two recordings of the same
+`Q` that ask the same Requests in different orders produce the same
+label and dedupe via content addressing — no overlap. Different
+Responses to the same Requests likewise produce the same label and
+diverge cleanly on the FactSet axis at the next position rather
+than colliding as overlapping labels at this one. What's left is
+genuine nondeterminism in *which* Requests the box asks for the
+same `Q` across recordings, which is rare in real Nix. The split
+machinery is here for those residual cases; it isn't expected to
+fire often under typical workloads.
+
 ## Operations
 
 ### Replay
