@@ -264,8 +264,8 @@ When the two RequestSets are fully disjoint
 `FactSet_intermediate = FactSet`, the shared edge is a no-op, and we
 fall back to FactSet carrying two parallel outgoing RequestSet edges.
 In practice this is rare for real Nix evaluations, which routinely
-share common-prefix Requests (builtins access, environment reads,
-common imports).
+share common-prefix Requests (environment reads, common imports,
+shared source-file lookups).
 
 ## Operations
 
