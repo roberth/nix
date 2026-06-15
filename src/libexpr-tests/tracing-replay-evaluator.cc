@@ -645,6 +645,38 @@ TEST_F(TracingReplayTest, SetsLearningPassEvictsSubsumedBindings)
     EXPECT_EQ(*hit, "shared-answer");
 }
 
+TEST_F(TracingReplayTest, SetsGetStatsStorageCounters)
+{
+    /* Insert a known set of rows and verify getStats() reports the
+       expected counts. Complements SetsLookupCountersTrackHitsAndMisses
+       which exercises the process-local fields. */
+    TracingIndex index(dbPath);
+
+    auto qhA = hashString(HashAlgorithm::SHA256, "qhA");
+    auto qhB = hashString(HashAlgorithm::SHA256, "qhB");
+    auto pA1 = makeSorted({makeMember("q1", "r1")});
+    auto pA2 = makeSorted({makeMember("q2", "r2")});
+    auto pB1 = makeSorted({makeMember("q3", "r3")});
+    auto pA1h = index.insertPreconditionSet(pA1);
+    auto pA2h = index.insertPreconditionSet(pA2);
+    auto pB1h = index.insertPreconditionSet(pB1);
+    auto rh1 = index.insertSetResponse("payload-1");
+    auto rh2 = index.insertSetResponse("payload-2");
+    /* qhA gets two Bindings (different preconditions, different responses);
+       qhB gets one Binding. */
+    index.insertBinding(qhA, pA1h, rh1);
+    index.insertBinding(qhA, pA2h, rh2);
+    index.insertBinding(qhB, pB1h, rh1);
+
+    index.waitForWrites();
+
+    auto s = index.getStats();
+    EXPECT_EQ(s.queryHashesWithBindings, 2u);
+    EXPECT_EQ(s.totalBindings, 3u);
+    EXPECT_EQ(s.preconditionSets, 3u);
+    EXPECT_EQ(s.setResponses, 2u);
+}
+
 TEST_F(TracingReplayTest, SetsWaitForWritesNonDestructive)
 {
     /* waitForWrites should drain the writer queue without joining
