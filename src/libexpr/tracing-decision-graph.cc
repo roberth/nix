@@ -103,7 +103,7 @@ static Hash blobToHash(std::string_view blob)
 
 static void bindBlob(SQLiteStmt::Use & use, std::string_view blob)
 {
-    use(std::string(blob), true /* binary */);
+    use(reinterpret_cast<const unsigned char *>(blob.data()), blob.size(), true /* notNull */);
 }
 
 template<typename T>
@@ -276,7 +276,7 @@ ATOM_INSERT(Result, resultHash)
         bindBlob(query, hashToBlob(h));                                         \
         if (!query.next())                                                      \
             return std::nullopt;                                                \
-        return query.getStr(0);                                                 \
+        return query.getBlob(0);                                                 \
     }
 
 ATOM_GET(Request)
@@ -381,7 +381,7 @@ TracingDecisionGraph::getRequestSet(const SetHash & h)
     bindBlob(query, hashToBlob(h));
     if (!query.next())
         return std::nullopt;
-    return deserialiseRequestMembers(query.getStr(0));
+    return deserialiseRequestMembers(query.getBlob(0));
 }
 
 std::optional<std::vector<TracingDecisionGraph::Fact>>
@@ -394,7 +394,7 @@ TracingDecisionGraph::getFactSet(const SetHash & h)
     bindBlob(query, hashToBlob(h));
     if (!query.next())
         return std::nullopt;
-    return deserialiseFactMembers(query.getStr(0));
+    return deserialiseFactMembers(query.getBlob(0));
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -421,7 +421,7 @@ TracingDecisionGraph::getAsks(const QueryHash & q, const SetHash & factSet)
     bindBlob(query, hashToBlob(factSet));
     std::vector<SetHash> out;
     while (query.next())
-        out.push_back(blobToHash(query.getStr(0)));
+        out.push_back(blobToHash(query.getBlob(0)));
     return out;
 }
 
@@ -456,7 +456,7 @@ TracingDecisionGraph::getTerminal(const QueryHash & q, const SetHash & factSet)
     bindBlob(query, hashToBlob(factSet));
     if (!query.next())
         return std::nullopt;
-    return blobToHash(query.getStr(0));
+    return blobToHash(query.getBlob(0));
 }
 
 } // namespace nix

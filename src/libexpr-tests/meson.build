@@ -81,6 +81,7 @@ sources = files(
   'tostring-path-context.cc',
   'trace-file.cc',
   'trace-types.cc',
+  'tracing-decision-graph.cc',
   'tracing-evaluator.cc',
   'tracing-replay-evaluator.cc',
   'trivial.cc',
