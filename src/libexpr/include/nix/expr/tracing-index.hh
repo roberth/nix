@@ -18,6 +18,7 @@
 #include "nix/util/sync.hh"
 
 #include <filesystem>
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <set>
@@ -490,6 +491,12 @@ public:
         size_t totalBindings;
         size_t preconditionSets;
         size_t setResponses;
+        /* Process-local counters: incremented during lookupSetsReplay.
+           Don't persist across process restarts — they describe the
+           cache layer's effectiveness in this session. */
+        uint64_t lookupHits;
+        uint64_t lookupMisses;
+        uint64_t lookupBloomPrescreenSkips;
     };
     CacheStats getStats();
 
@@ -500,6 +507,13 @@ private:
     struct WriteQueue;
     std::unique_ptr<Sync<State>> _state;
     std::unique_ptr<WriteQueue> _writeQueue;
+
+    /* Process-local lookup counters. Atomic so the lookup path can
+       bump them without taking the state lock; getStats() reads
+       them with relaxed ordering since they're advisory. */
+    std::atomic<uint64_t> _lookupHits{0};
+    std::atomic<uint64_t> _lookupMisses{0};
+    std::atomic<uint64_t> _lookupBloomPrescreenSkips{0};
 };
 
 // -------------------------------------------------------------------------

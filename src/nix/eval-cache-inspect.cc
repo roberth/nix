@@ -341,6 +341,15 @@ struct CmdEvalCacheStats : Command
             double avg = double(s.totalBindings) / double(s.queryHashesWithBindings);
             std::cout << "  avg Bindings per queryHash: " << avg << "\n";
         }
+        /* Process-local counters — only meaningful when invoked
+           after some lookups have actually run in this process. In
+           the CLI invocation they'll be zero. Show them anyway so
+           callers using TracingIndex::getStats() from longer-lived
+           hosts see the field exists. */
+        std::cout << "\nProcess-local lookup counters (this invocation only):\n"
+                  << "  hits   : " << s.lookupHits << "\n"
+                  << "  misses : " << s.lookupMisses << "\n"
+                  << "  Bloom prescreen skips : " << s.lookupBloomPrescreenSkips << "\n";
         std::cout << "\nDB location: ~/.cache/nix/eval-tracing-index-v2/index.sqlite\n"
                      "Run 'nix eval-cache compact-all' to apply intersection learning + GC.\n";
     }

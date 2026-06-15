@@ -1224,6 +1224,9 @@ TracingIndex::CacheStats TracingIndex::getStats()
     s.totalBindings = count("SELECT COUNT(*) FROM Bindings");
     s.preconditionSets = count("SELECT COUNT(*) FROM PreconditionSets");
     s.setResponses = count("SELECT COUNT(*) FROM SetResponses");
+    s.lookupHits = _lookupHits.load(std::memory_order_relaxed);
+    s.lookupMisses = _lookupMisses.load(std::memory_order_relaxed);
+    s.lookupBloomPrescreenSkips = _lookupBloomPrescreenSkips.load(std::memory_order_relaxed);
     return s;
 }
 
@@ -1398,14 +1401,19 @@ std::optional<std::string> TracingIndex::lookupSetsReplay(const QueryHash & quer
     Bloom currentBloom = computeBloom(current);
 
     for (const auto & c : candidates) {
-        if (c.bloom && !bloomMayBeSubset(*c.bloom, currentBloom))
+        if (c.bloom && !bloomMayBeSubset(*c.bloom, currentBloom)) {
+            _lookupBloomPrescreenSkips.fetch_add(1, std::memory_order_relaxed);
             continue;
+        }
         auto pre = getPreconditionSet(c.preconditionHash);
         if (!pre)
             continue;
-        if (isSubset(*pre, current))
+        if (isSubset(*pre, current)) {
+            _lookupHits.fetch_add(1, std::memory_order_relaxed);
             return getSetResponse(c.responseHash);
+        }
     }
+    _lookupMisses.fetch_add(1, std::memory_order_relaxed);
     return std::nullopt;
 }
 
