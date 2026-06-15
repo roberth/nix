@@ -165,6 +165,13 @@ History-walking bench (5 sequential nixpkgs commits, `lib.version`, same on-disk
 
 Commit 2 has lib content identical to commit 1 (its diff touches nixos modules only), so it hits the cache fully: zero new bindings, ~22× warm speedup. Subsequent commits add only the bindings that genuinely changed — concrete demonstration of incremental cross-commit reuse. The cache stayed at 1 MB after walking 5 commits.
 
+Extended to 10 commits, 3 commits hit fully cached (~70ms each) — the ones whose diffs don't touch `lib/`. Total cache grew from 408 KB to 1.6 MB, averaging ~150 KB per non-trivial commit. The growth is dominated by the legacy temporal-trie tables, not the sets-based index:
+
+- Legacy trie tables (Queries, Results, Shortcuts, + their indexes): ~2 MB (86% of storage)
+- Sets-based tables (PreconditionSets, SetResponses, Bindings, + their indexes): ~318 KB (14% of storage)
+
+When the sets-based path serves all lookups (no fall-through to the trie walker), the per-event d>0 Query and Result writes become redundant and can be dropped — a future optimization.
+
 Bench harnesses live at `/tmp/sets-validation/` in the sandbox: `synthetic.sh` (correctness on edit/revert) and `git-history-bench.sh` (cross-commit cache reuse). They're sandbox-specific (hardcoded paths) and not yet integrated into the test suite.
 
 
