@@ -266,6 +266,100 @@ public:
             bool(const std::string & queryPayload, const NodeHash & resultNodeHash, const std::string & resultPayload)>
             validator);
 
+    // -------------------------------------------------------------------------
+    // Sets-based index (see doc/tracing-sets-index-data-model.md)
+    //
+    // Each Binding maps (queryHash, precondition ResponseSet) to a Response.
+    // A precondition ResponseSet is an unordered set of (d>0 queryHash,
+    // d>0 responseHash) pairs that the box observed while computing the
+    // Response. Lookup finds a Binding whose precondition is a subset of
+    // the current ResponseSet.
+    // -------------------------------------------------------------------------
+
+    /**
+     * One member of a ResponseSet: a (d>0 queryHash, d>0 responseHash) pair.
+     */
+    struct SetMember
+    {
+        QueryHash queryHash;
+        Hash responseHash;
+
+        bool operator==(const SetMember & other) const
+        {
+            return queryHash == other.queryHash && responseHash == other.responseHash;
+        }
+
+        bool operator<(const SetMember & other) const
+        {
+            return queryHash < other.queryHash
+                   || (queryHash == other.queryHash && responseHash < other.responseHash);
+        }
+    };
+
+    /**
+     * A ResponseSet's contents as a vector sorted by queryHash. Two
+     * SetMembers with the same queryHash but different responseHash are
+     * a contradiction at recording time and should not coexist.
+     */
+    using SetMembers = std::vector<SetMember>;
+
+    /**
+     * Canonical content hash of a SetMembers vector. Members must be
+     * sorted ascending by queryHash.
+     */
+    static Hash computePreconditionSetHash(const SetMembers & members);
+
+    /**
+     * Canonical content hash of a response payload.
+     */
+    static Hash computeResponseHash(const std::string & payload);
+
+    /**
+     * Insert a PreconditionSet. Idempotent: returns the same setHash
+     * for identical inputs.
+     *
+     * @param members must be sorted ascending by queryHash.
+     * @return The setHash.
+     */
+    Hash insertPreconditionSet(const SetMembers & members);
+
+    /**
+     * Fetch the members of a stored PreconditionSet.
+     */
+    std::optional<SetMembers> getPreconditionSet(const Hash & setHash);
+
+    /**
+     * Insert a response payload. Idempotent.
+     */
+    Hash insertSetResponse(const std::string & payload);
+
+    /**
+     * Fetch a stored response payload.
+     */
+    std::optional<std::string> getSetResponse(const Hash & responseHash);
+
+    /**
+     * Insert a Binding. Idempotent on (queryHash, preconditionHash).
+     */
+    void insertBinding(const QueryHash & queryHash, const Hash & preconditionHash, const Hash & responseHash);
+
+    /**
+     * Look up a cached Response for a Query in the current context.
+     *
+     * Iterates the Bindings for `queryHash` and returns the response of
+     * the first one whose precondition is a subset of `current`.
+     *
+     * @param current must be sorted ascending by queryHash.
+     */
+    std::optional<std::string> lookupSetsReplay(const QueryHash & queryHash, const SetMembers & current);
+
+    /**
+     * Test whether `precondition` is a subset of `current`. Both must
+     * be sorted ascending by queryHash. Exposed for tests and for
+     * callers that already have the materialised members.
+     */
+    static bool isSubset(const SetMembers & precondition, const SetMembers & current);
+
 private:
     struct State;
 

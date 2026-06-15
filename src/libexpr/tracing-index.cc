@@ -67,6 +67,35 @@ CREATE INDEX IF NOT EXISTS ResultsAfter ON Results(afterHash);
 
 -- Index for structural lookup
 CREATE INDEX IF NOT EXISTS QueriesStructural ON Queries(structuralParent, queryHash);
+
+-- Sets-based index (see doc/tracing-sets-index-data-model.md).
+-- PreconditionSets: content-addressed unordered sets of
+--   (d>0 queryHash, d>0 responseHash) pairs. `members` is the CBOR
+--   encoding of those pairs in queryHash-sorted order; `setHash` is
+--   the SHA-256 of `members`.
+CREATE TABLE IF NOT EXISTS PreconditionSets (
+    setHash BLOB PRIMARY KEY,
+    members BLOB NOT NULL
+);
+
+-- SetResponses: response payloads referenced by Bindings.
+-- responseHash = SHA-256 of the CBOR payload.
+CREATE TABLE IF NOT EXISTS SetResponses (
+    responseHash BLOB PRIMARY KEY,
+    payload BLOB NOT NULL
+);
+
+-- Bindings: for each granular Query (queryHash), the recorded
+-- Response when its precondition holds.
+CREATE TABLE IF NOT EXISTS Bindings (
+    queryHash BLOB NOT NULL,
+    preconditionHash BLOB NOT NULL,
+    responseHash BLOB NOT NULL,
+    createdAt INTEGER DEFAULT (unixepoch()),
+    PRIMARY KEY (queryHash, preconditionHash)
+);
+
+CREATE INDEX IF NOT EXISTS BindingsByQueryHash ON Bindings(queryHash);
 )sql";
 
 // ---- Write operations queued for background persistence ----
@@ -89,7 +118,27 @@ struct WriteInsertResult
     std::optional<std::string> queryNodeHash;
 };
 
-using WriteOp = std::variant<WriteInsertQuery, WriteInsertResult>;
+struct WriteInsertPreconditionSet
+{
+    std::string setHash;
+    std::string members; // binary: N × (queryHash || responseHash)
+};
+
+struct WriteInsertSetResponse
+{
+    std::string responseHash;
+    std::string payload;
+};
+
+struct WriteInsertBinding
+{
+    std::string queryHash;
+    std::string preconditionHash;
+    std::string responseHash;
+};
+
+using WriteOp = std::
+    variant<WriteInsertQuery, WriteInsertResult, WriteInsertPreconditionSet, WriteInsertSetResponse, WriteInsertBinding>;
 
 // ---- Reader state (main thread) ----
 
@@ -122,6 +171,11 @@ struct TracingIndex::State
     SQLiteStmt selectChildQueries;
     SQLiteStmt selectChildResults;
     SQLiteStmt selectStructuralChildren;
+
+    // Sets-based index statements
+    SQLiteStmt getPreconditionSet;
+    SQLiteStmt getSetResponse;
+    SQLiteStmt selectBindings;
 };
 
 // ---- Hash ↔ blob helpers ----
@@ -230,6 +284,7 @@ private:
             db.isCache();
 
             SQLiteStmt insertQuery, insertQueryPayload, insertResult, insertShortcut;
+            SQLiteStmt insertPreconditionSet, insertSetResponse, insertBinding;
             insertQuery.create(
                 db,
                 "INSERT OR IGNORE INTO Queries(nodeHash, queryHash, afterHash, structuralParent, depth) "
@@ -238,6 +293,13 @@ private:
             insertResult.create(
                 db, "INSERT OR IGNORE INTO Results(nodeHash, afterHash, payload, queryNodeHash) VALUES (?, ?, ?, ?)");
             insertShortcut.create(db, "INSERT OR IGNORE INTO Shortcuts(queryHash, nodeHash) VALUES (?, ?)");
+            insertPreconditionSet.create(
+                db, "INSERT OR IGNORE INTO PreconditionSets(setHash, members) VALUES (?, ?)");
+            insertSetResponse.create(db, "INSERT OR IGNORE INTO SetResponses(responseHash, payload) VALUES (?, ?)");
+            insertBinding.create(
+                db,
+                "INSERT OR IGNORE INTO Bindings(queryHash, preconditionHash, responseHash) "
+                "VALUES (?, ?, ?)");
 
             while (true) {
                 std::vector<WriteOp> batch;
@@ -297,6 +359,25 @@ private:
                                     bindBlob(use, *w.queryNodeHash);
                                 else
                                     use.bind();
+                                use.exec();
+                            },
+                            [&](const WriteInsertPreconditionSet & w) {
+                                auto use = insertPreconditionSet.use();
+                                bindBlob(use, w.setHash);
+                                use(reinterpret_cast<const unsigned char *>(w.members.data()), w.members.size());
+                                use.exec();
+                            },
+                            [&](const WriteInsertSetResponse & w) {
+                                auto use = insertSetResponse.use();
+                                bindBlob(use, w.responseHash);
+                                use(reinterpret_cast<const unsigned char *>(w.payload.data()), w.payload.size());
+                                use.exec();
+                            },
+                            [&](const WriteInsertBinding & w) {
+                                auto use = insertBinding.use();
+                                bindBlob(use, w.queryHash);
+                                bindBlob(use, w.preconditionHash);
+                                bindBlob(use, w.responseHash);
                                 use.exec();
                             },
                         },
@@ -369,6 +450,12 @@ TracingIndex::TracingIndex(const std::filesystem::path & dbPath)
         state->db,
         "SELECT nodeHash, queryHash, afterHash, structuralParent, depth FROM Queries "
         "WHERE structuralParent = ? AND queryHash = ?");
+
+    state->getPreconditionSet.create(state->db, "SELECT members FROM PreconditionSets WHERE setHash = ?");
+    state->getSetResponse.create(state->db, "SELECT payload FROM SetResponses WHERE responseHash = ?");
+    state->selectBindings.create(
+        state->db,
+        "SELECT preconditionHash, responseHash FROM Bindings WHERE queryHash = ? ORDER BY createdAt DESC");
 
     // Background writer opens its own connection
     _writeQueue = std::make_unique<WriteQueue>(dbPath);
@@ -859,6 +946,167 @@ std::vector<std::pair<QueryNode, ResultNode>> TracingIndex::selectDependenciesUn
     // Reverse to get validated-to-query order
     std::reverse(result.begin(), result.end());
     return result;
+}
+
+// -----------------------------------------------------------------------------
+// Sets-based index
+// -----------------------------------------------------------------------------
+
+namespace {
+
+/* On-disk format for a PreconditionSet.members blob:
+   concatenation of N records, each (queryHashSize + responseHashSize)
+   bytes. Both hashes are SHA-256 (32 bytes). Records are sorted
+   ascending by queryHash bytes, then by responseHash bytes.
+
+   Format chosen for trivial iteration (read fixed-size records) and
+   trivial sortedness checking (lexicographic on the raw bytes). */
+
+constexpr size_t kPreconditionRecordSize = 64; // 32 + 32
+
+std::string serializeMembers(const TracingIndex::SetMembers & members)
+{
+    std::string out;
+    out.reserve(members.size() * kPreconditionRecordSize);
+    for (const auto & m : members) {
+        auto qb = hashToBlob(m.queryHash);
+        auto rb = hashToBlob(m.responseHash);
+        assert(qb.size() == 32 && rb.size() == 32);
+        out.append(qb);
+        out.append(rb);
+    }
+    return out;
+}
+
+TracingIndex::SetMembers deserializeMembers(const std::string & blob)
+{
+    if (blob.size() % kPreconditionRecordSize != 0)
+        throw Error("corrupt PreconditionSet members blob: size %zu not a multiple of %zu",
+                    blob.size(), kPreconditionRecordSize);
+    TracingIndex::SetMembers out;
+    out.reserve(blob.size() / kPreconditionRecordSize);
+    for (size_t off = 0; off < blob.size(); off += kPreconditionRecordSize) {
+        out.push_back(TracingIndex::SetMember{
+            .queryHash = blobToHash(blob.substr(off, 32)),
+            .responseHash = blobToHash(blob.substr(off + 32, 32)),
+        });
+    }
+    return out;
+}
+
+} // namespace
+
+Hash TracingIndex::computePreconditionSetHash(const SetMembers & members)
+{
+    HashSink sink(HashAlgorithm::SHA256);
+    auto blob = serializeMembers(members);
+    sink(std::string_view(blob));
+    return sink.finish().hash;
+}
+
+Hash TracingIndex::computeResponseHash(const std::string & payload)
+{
+    HashSink sink(HashAlgorithm::SHA256);
+    sink(std::string_view(payload));
+    return sink.finish().hash;
+}
+
+Hash TracingIndex::insertPreconditionSet(const SetMembers & members)
+{
+    auto setHash = computePreconditionSetHash(members);
+    _writeQueue->enqueue(WriteInsertPreconditionSet{
+        .setHash = hashToBlob(setHash),
+        .members = serializeMembers(members),
+    });
+    return setHash;
+}
+
+std::optional<TracingIndex::SetMembers> TracingIndex::getPreconditionSet(const Hash & setHash)
+{
+    auto state(_state->lock());
+    state->checkpoint();
+    auto q = state->getPreconditionSet.use();
+    bindBlob(q, hashToBlob(setHash));
+    if (!q.next())
+        return std::nullopt;
+    return deserializeMembers(q.getBlob(0));
+}
+
+Hash TracingIndex::insertSetResponse(const std::string & payload)
+{
+    auto responseHash = computeResponseHash(payload);
+    _writeQueue->enqueue(WriteInsertSetResponse{
+        .responseHash = hashToBlob(responseHash),
+        .payload = payload,
+    });
+    return responseHash;
+}
+
+std::optional<std::string> TracingIndex::getSetResponse(const Hash & responseHash)
+{
+    auto state(_state->lock());
+    state->checkpoint();
+    auto q = state->getSetResponse.use();
+    bindBlob(q, hashToBlob(responseHash));
+    if (!q.next())
+        return std::nullopt;
+    return q.getBlob(0);
+}
+
+void TracingIndex::insertBinding(
+    const QueryHash & queryHash, const Hash & preconditionHash, const Hash & responseHash)
+{
+    _writeQueue->enqueue(WriteInsertBinding{
+        .queryHash = hashToBlob(queryHash),
+        .preconditionHash = hashToBlob(preconditionHash),
+        .responseHash = hashToBlob(responseHash),
+    });
+}
+
+bool TracingIndex::isSubset(const SetMembers & precondition, const SetMembers & current)
+{
+    /* Linear two-pointer merge. Both inputs are sorted ascending by
+       queryHash (and by responseHash within equal queryHashes). For
+       every entry in `precondition` we need an entry in `current`
+       with the same queryHash AND the same responseHash. */
+    size_t i = 0, j = 0;
+    while (i < precondition.size()) {
+        if (j >= current.size())
+            return false;
+        if (precondition[i].queryHash == current[j].queryHash) {
+            if (precondition[i].responseHash != current[j].responseHash)
+                return false;
+            ++i;
+            ++j;
+        } else if (current[j].queryHash < precondition[i].queryHash) {
+            ++j;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<std::string> TracingIndex::lookupSetsReplay(const QueryHash & queryHash, const SetMembers & current)
+{
+    std::vector<std::pair<Hash, Hash>> candidates;
+    {
+        auto state(_state->lock());
+        state->checkpoint();
+        auto q = state->selectBindings.use();
+        bindBlob(q, hashToBlob(queryHash));
+        while (q.next())
+            candidates.emplace_back(readHash(q, 0), readHash(q, 1));
+    }
+
+    for (const auto & [preconditionHash, responseHash] : candidates) {
+        auto pre = getPreconditionSet(preconditionHash);
+        if (!pre)
+            continue;
+        if (isSubset(*pre, current))
+            return getSetResponse(responseHash);
+    }
+    return std::nullopt;
 }
 
 } // namespace nix

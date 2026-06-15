@@ -387,4 +387,145 @@ TEST_F(TracingReplayTest, FindResultConcurrentChain)
     EXPECT_FALSE(validatorCalled) << "no d>0 events on chain, validator should not run";
 }
 
+// -----------------------------------------------------------------------------
+// Sets-based index tests
+// -----------------------------------------------------------------------------
+
+namespace {
+
+TracingIndex::SetMember makeMember(std::string_view qSeed, std::string_view rSeed)
+{
+    return TracingIndex::SetMember{
+        .queryHash = hashString(HashAlgorithm::SHA256, qSeed),
+        .responseHash = hashString(HashAlgorithm::SHA256, rSeed),
+    };
+}
+
+TracingIndex::SetMembers makeSorted(std::vector<TracingIndex::SetMember> members)
+{
+    std::sort(members.begin(), members.end());
+    return members;
+}
+
+} // namespace
+
+TEST_F(TracingReplayTest, SetsIsSubsetEmpty)
+{
+    TracingIndex::SetMembers empty;
+    auto a = makeSorted({makeMember("q1", "r1")});
+    EXPECT_TRUE(TracingIndex::isSubset(empty, empty));
+    EXPECT_TRUE(TracingIndex::isSubset(empty, a));
+    EXPECT_FALSE(TracingIndex::isSubset(a, empty));
+}
+
+TEST_F(TracingReplayTest, SetsIsSubsetExactAndProper)
+{
+    auto a = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2")});
+    auto b = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2"), makeMember("q3", "r3")});
+    EXPECT_TRUE(TracingIndex::isSubset(a, a));
+    EXPECT_TRUE(TracingIndex::isSubset(a, b));
+    EXPECT_FALSE(TracingIndex::isSubset(b, a));
+}
+
+TEST_F(TracingReplayTest, SetsIsSubsetResponseMismatch)
+{
+    auto a = makeSorted({makeMember("q1", "r1")});
+    auto b = makeSorted({makeMember("q1", "r1-different")});
+    EXPECT_FALSE(TracingIndex::isSubset(a, b));
+    EXPECT_FALSE(TracingIndex::isSubset(b, a));
+}
+
+TEST_F(TracingReplayTest, SetsIsSubsetDisjoint)
+{
+    auto a = makeSorted({makeMember("q1", "r1")});
+    auto b = makeSorted({makeMember("q2", "r2")});
+    EXPECT_FALSE(TracingIndex::isSubset(a, b));
+    EXPECT_FALSE(TracingIndex::isSubset(b, a));
+}
+
+TEST_F(TracingReplayTest, SetsRoundTripPreconditionAndResponse)
+{
+    TracingIndex index(dbPath);
+
+    auto members = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2")});
+    auto setHash = index.insertPreconditionSet(members);
+    auto responseHash = index.insertSetResponse("the-payload");
+
+    TracingIndex::flushAllWriteQueues();
+
+    auto roundtripMembers = index.getPreconditionSet(setHash);
+    ASSERT_TRUE(roundtripMembers.has_value());
+    EXPECT_EQ(*roundtripMembers, members);
+
+    auto roundtripPayload = index.getSetResponse(responseHash);
+    ASSERT_TRUE(roundtripPayload.has_value());
+    EXPECT_EQ(*roundtripPayload, "the-payload");
+}
+
+TEST_F(TracingReplayTest, SetsIdempotentInsert)
+{
+    TracingIndex index(dbPath);
+
+    auto members = makeSorted({makeMember("q1", "r1")});
+    auto h1 = index.insertPreconditionSet(members);
+    auto h2 = index.insertPreconditionSet(members);
+    EXPECT_EQ(h1, h2);
+
+    auto r1 = index.insertSetResponse("same");
+    auto r2 = index.insertSetResponse("same");
+    EXPECT_EQ(r1, r2);
+}
+
+TEST_F(TracingReplayTest, SetsLookupHitAndMiss)
+{
+    TracingIndex index(dbPath);
+
+    auto qh = hashString(HashAlgorithm::SHA256, "queryHash-A");
+    auto precondition = makeSorted({makeMember("q1", "r1")});
+    auto preconditionHash = index.insertPreconditionSet(precondition);
+    auto responseHash = index.insertSetResponse("cached-value");
+    index.insertBinding(qh, preconditionHash, responseHash);
+
+    TracingIndex::flushAllWriteQueues();
+
+    auto current = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2")});
+    auto hit = index.lookupSetsReplay(qh, current);
+    ASSERT_TRUE(hit.has_value()) << "lookup should hit when precondition is a subset of current";
+    EXPECT_EQ(*hit, "cached-value");
+
+    auto missing = makeSorted({makeMember("q2", "r2")});
+    auto miss = index.lookupSetsReplay(qh, missing);
+    EXPECT_FALSE(miss.has_value());
+
+    auto wrongQh = hashString(HashAlgorithm::SHA256, "queryHash-B");
+    auto wrongMiss = index.lookupSetsReplay(wrongQh, current);
+    EXPECT_FALSE(wrongMiss.has_value());
+}
+
+TEST_F(TracingReplayTest, SetsLookupPicksFirstValidBinding)
+{
+    TracingIndex index(dbPath);
+
+    auto qh = hashString(HashAlgorithm::SHA256, "queryHash-multi");
+
+    // Binding whose precondition matches current.
+    auto p1 = makeSorted({makeMember("q1", "r1")});
+    auto p1h = index.insertPreconditionSet(p1);
+    auto r1 = index.insertSetResponse("answer-1");
+    index.insertBinding(qh, p1h, r1);
+
+    // Binding whose precondition is incompatible with current (same Query, different Response).
+    auto p2 = makeSorted({makeMember("q1", "r1-different")});
+    auto p2h = index.insertPreconditionSet(p2);
+    auto r2 = index.insertSetResponse("answer-2");
+    index.insertBinding(qh, p2h, r2);
+
+    TracingIndex::flushAllWriteQueues();
+
+    auto current = makeSorted({makeMember("q1", "r1")});
+    auto hit = index.lookupSetsReplay(qh, current);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(*hit, "answer-1") << "must skip the binding whose precondition's response doesn't match";
+}
+
 } // namespace nix
