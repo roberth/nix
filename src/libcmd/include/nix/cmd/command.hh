@@ -24,6 +24,7 @@ struct LocalFSStore;
 class TraceFile;
 class TracingDatabase;
 class TracingIndex;
+class TracingDecisionGraph;
 class TracingWriter;
 
 static constexpr Command::Category catHelp = -1;
@@ -132,6 +133,9 @@ private:
     std::unique_ptr<TracingDatabase> tracingDb;
     std::unique_ptr<TraceFile> traceFile;
     std::unique_ptr<TracingIndex> tracingIndex;
+    /* v13 decision-graph index, instantiated alongside v12 for the
+       gradual migration. Not yet wired into recording or replay. */
+    std::unique_ptr<TracingDecisionGraph> tracingDecisionGraph;
     std::unique_ptr<TracingWriter> tracingWriter;
     std::shared_ptr<Evaluator> evaluatorCompat;
     std::shared_ptr<EvalState> evalState;

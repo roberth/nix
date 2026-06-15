@@ -177,8 +177,10 @@ static std::vector<TracingDecisionGraph::Fact> deserialiseFactMembers(std::strin
 
 static std::filesystem::path defaultDbPath()
 {
+    /* Use a distinct filename so v12 and v13 can coexist in the
+       same directory during the migration period. */
     if (auto override = getEnvNonEmpty("NIX_TRACING_CACHE_DIR"))
-        return std::filesystem::path(*override) / "index.sqlite";
+        return std::filesystem::path(*override) / "decision-graph.sqlite";
     auto cacheDir = std::filesystem::path(getCacheDir()) / "eval-tracing-decision-graph";
     return cacheDir / "index.sqlite";
 }

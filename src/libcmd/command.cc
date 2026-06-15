@@ -11,6 +11,7 @@
 #include "nix/expr/nixexpr.hh"
 #include "nix/expr/environment/system.hh"
 #include "nix/expr/trace-file.hh"
+#include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-environment.hh"
 #include "nix/expr/tracing-index.hh"
 #include "nix/expr/tracing-writer.hh"
@@ -180,6 +181,7 @@ ref<EvalState> EvalCommand::getEvalState()
             traceFile = std::make_unique<TraceFile>(
                 tracePath, [this, tracePath]() { tracingDb->updateLatestSymlink(tracePath); });
             tracingIndex = std::make_unique<TracingIndex>();
+            tracingDecisionGraph = std::make_unique<TracingDecisionGraph>();
             tracingWriter = std::make_unique<TracingWriter>(*traceFile, tracingIndex.get());
             auto sysEnv = make_ref<SystemEnvironment>(evalSettings, getEvalStore(), getStore());
             auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *tracingWriter);
