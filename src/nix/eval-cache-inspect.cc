@@ -316,7 +316,7 @@ struct CmdEvalCacheShortcuts : Command
 
 // ---- nix eval-cache stats ----
 
-struct CmdEvalCacheStats : Command
+struct CmdEvalCacheStats : Command, MixJSON
 {
     std::string description() override
     {
@@ -332,6 +332,20 @@ struct CmdEvalCacheStats : Command
     {
         TracingIndex index;
         auto s = index.getStats();
+
+        if (json) {
+            nlohmann::json out;
+            out["queryHashesWithBindings"] = s.queryHashesWithBindings;
+            out["totalBindings"] = s.totalBindings;
+            out["preconditionSets"] = s.preconditionSets;
+            out["setResponses"] = s.setResponses;
+            out["lookupHits"] = s.lookupHits;
+            out["lookupMisses"] = s.lookupMisses;
+            out["lookupBloomPrescreenSkips"] = s.lookupBloomPrescreenSkips;
+            printJSON(out);
+            return;
+        }
+
         std::cout << "Sets-based index:\n"
                   << "  queryHashes with Bindings : " << s.queryHashesWithBindings << "\n"
                   << "  total Bindings            : " << s.totalBindings << "\n"
