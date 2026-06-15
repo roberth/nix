@@ -183,4 +183,14 @@ The two branches produce different `lib.version` outputs, yet switching from ups
 
 Bench harnesses live under [`tests/perf/tracing-cache/`](../tests/perf/tracing-cache/) — three scripts (`synthetic.sh`, `git-history-bench.sh`, `multi-branch-bench.sh`) plus a shared `common.sh` that derives the nix binary location from the repo layout. They're developer tools, not CI-automated tests; the readme covers usage and result interpretation.
 
+### Intersection learning observed effect
+
+The `nix eval-cache compact` and `compact-all` subcommands run the intersection-learning pass (see `runLearningPass` in `tracing-index.hh`). Empirical findings:
+
+- **Single fresh eval (NixOS bench, 17 queryHashes × 1 binding each)**: 0 intersections found. Learning needs ≥2 bindings per queryHash to produce evidence.
+- **History walk (10 nixpkgs commits on `lib.version`)**: dominant queryHash had 7 bindings (one per content-state variation); learning inserted 6 intersected bindings. Other queryHashes with single bindings were unchanged.
+- **Synthetic test (6 invocations across 4 content states)**: dominant structural queryHash had 4 bindings (all same Response); learning inserted 5 intersected bindings.
+
+In all scenarios learning is **purely additive** — the wider preconditions are not evicted. This grows the `PreconditionSets` table (466 KB after the 10-commit history walk + compact) but enables hits in narrower contexts. Eviction of subsumed bindings is a future optimization.
+
 
