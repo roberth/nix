@@ -341,8 +341,44 @@ struct CmdEvalCacheStats : Command
     }
 };
 
+// ---- nix eval-cache compact ----
+
+struct CmdEvalCacheCompactOne : Command
+{
+    std::vector<std::string> queryHashHexes;
+
+    CmdEvalCacheCompactOne()
+    {
+        expectArgs({.label = "queryHashes", .handler = {&queryHashHexes}});
+    }
+
+    std::string description() override
+    {
+        return "Run intersection-learning for the given queryHash(es).";
+    }
+
+    Category category() override
+    {
+        return catUtility;
+    }
+
+    void run() override
+    {
+        TracingIndex index;
+        size_t total = 0;
+        for (const auto & h : queryHashHexes) {
+            auto qh = Hash::parseAny(h, HashAlgorithm::SHA256);
+            auto n = index.runLearningPass(qh);
+            std::cout << qh.to_string(HashFormat::Base16, false).substr(0, 16) << ": +" << n << " bindings\n";
+            total += n;
+        }
+        std::cout << "total: +" << total << " bindings inserted\n";
+    }
+};
+
 static auto rInspect = registerCommand2<CmdEvalCacheInspect>({"eval-cache", "inspect"});
 static auto rTraceBack = registerCommand2<CmdEvalCacheTraceBack>({"eval-cache", "trace-back"});
 static auto rTree = registerCommand2<CmdEvalCacheTree>({"eval-cache", "tree"});
 static auto rShortcuts = registerCommand2<CmdEvalCacheShortcuts>({"eval-cache", "shortcuts"});
 static auto rStats = registerCommand2<CmdEvalCacheStats>({"eval-cache", "stats"});
+static auto rCompactOne = registerCommand2<CmdEvalCacheCompactOne>({"eval-cache", "compact"});
