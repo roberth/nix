@@ -125,6 +125,7 @@ if get_option('benchmarks')
     'dynamic-attrs-bench.cc',
     'get-drvs-bench.cc',
     'regex-cache-bench.cc',
+    'tracing-decision-graph-bench.cc',
   )
 
   benchmark_exe = executable(
