@@ -443,5 +443,3 @@ attach.
   subset of current context" lookup that the cold fallback path needs.
 - Eviction of subsumed terminal edges (edge-only; FactSet nodes remain
   for navigation).
-- Recorder's RequestSet batching policy: per-event singletons vs.
-  accumulated batches, and the trade-off against post-Phase-1 sharing.
