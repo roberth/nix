@@ -9,15 +9,15 @@ will be specified separately and grounded in this baseline.
 
 ## Motivation
 
-The shipped sets-based index records each d=0 Query's preconditions as
+The shipped sets-based index records each Query's preconditions as
 flat content-addressed CBOR blobs and looks them up by scanning every
 recorded Binding for the queryHash and filtering by Bloom. Two failure
 modes follow:
 
 - **`k` grows with content edits**, not just with new dependency shapes.
-  Each `(queryHash, preconditionHash)` is a fresh row whenever any d>0
-  response changes, even when the dependency *shape* (which queries the
-  box asks) didn't. Repeated edits to source files produce a row per
+  Each `(queryHash, preconditionHash)` is a fresh row whenever any
+  Response changes, even when the dependency *shape* (which Requests
+  the box makes) didn't. Repeated edits to source files produce a row per
   content combination. The dominant per-queryHash bucket grows
   unboundedly.
 - **Lookup is a candidate scan, not navigation**. The Bloom prefilter is
@@ -49,38 +49,43 @@ identical, by content addressing.
 
 ## Storage layer
 
-Two distinct query/response notions, kept separate at the schema
-level:
+Two distinct roles, kept separate at the schema level:
 
-- **d=0 Query / d=0 Response** — the thing the cache exists to
-  answer; the outside of the black box. A d=0 Query has its own
-  `queryHash` (operation + params + inputHashes); a d=0 Response
-  is a recorded result with its own `responseHash`.
-- **d=1 query / d=1 response** — what the box asks of the
-  environment during evaluation. d=1 queries have their own
-  `queryHash`; d=1 responses have their own `responseHash`. Pairs
-  of these form Facts.
+- **Query / Result** — the thing the cache exists to answer; the
+  outside of the black box. A Query has its own `queryHash`
+  (operation + params + inputHashes); a Result is a recorded answer
+  with its own `resultHash`.
+- **Request / Response** — what the box asks of the environment
+  during evaluation. A Request has its own `requestHash`; a
+  Response has its own `responseHash`. Pairs of `(Request,
+  Response)` form Facts.
 
-Despite the names, the d=0 and d=1 worlds don't share tables or
-hash spaces — they're different roles played in the model.
+Query/Result and Request/Response don't share tables or hash spaces
+— they're different roles. (The previous model conflated them in a
+single shared table to make the algorithm generalise cleanly to
+`builtins.cache`-style `d=2`; we revisit that when builtins.cache
+comes into scope. For now, separate.)
 
 Atomic content-addressed entities:
 
-- **d=0 Query** — `(queryHash, payload)`.
-- **d=0 Response** — `(responseHash, payload)`.
-- **d=1 query** — `(queryHash, payload)`.
-- **d=1 response** — `(responseHash, payload)`.
-- **Fact** — a `(d=1 queryHash, d=1 responseHash)` pair. Hash:
-  `SHA-256(d=1 queryHash || d=1 responseHash)`. The atomic unit of
+- **Query** — `(queryHash, payload)`.
+- **Result** — `(resultHash, payload)`.
+- **Request** — `(requestHash, payload)`.
+- **Response** — `(responseHash, payload)`.
+- **Fact** — a `(requestHash, responseHash)` pair. Hash:
+  `SHA-256(requestHash || responseHash)`. The atomic unit of
   observed evaluation context.
 
 Set pools with parent-pointer delta encoding per L7881:
 
-- **QuerySet (QS) pool** — `(setHash, parentHash, extraD1Queries)`.
-  A set of d=1 queries. Each new set is a delta from some existing
-  parent set; the parent chain encodes structural sharing.
+- **QuerySet (QS) pool** — `(setHash, parentHash, extraRequests)`.
+  A set of Requests. (Historical name from when the d=1 entities
+  were called queries; members are Requests under the current
+  naming.) Each new set is a delta from some existing parent set;
+  the parent chain encodes structural sharing.
 - **ResponseSet (RS) pool** — `(setHash, parentHash, extraFacts)`.
-  A set of Facts.
+  A set of Facts. (Historical name; each member Fact pairs a
+  Request with the Response the box observed.)
 
 The `setHash` is canonical: content-equivalent sets always have the
 same hash regardless of how they were built. Multiple parent-pointer
@@ -103,42 +108,41 @@ set-extension operation.
 
 The decision graph is a relational structure over storage hashes.
 
-Within the evaluation of a specific d=0 Query `Q`, the box's next
-ask is determined by `(Q, current RS)`: the *same* RS reached during
+Within the evaluation of a specific Query `Q`, the box's next ask
+is determined by `(Q, current RS)`: the *same* RS reached during
 two different `Q` evaluations may have entirely different next-asks,
-because the d=0 query itself drives what's needed. So decision-graph
+because the Query itself drives what's needed. So decision-graph
 positions on the asks side are pairs:
 
-- **`(Q, RS)` positions** — identified by `(q_hash, rs_hash)`.
+- **`(Q, RS)` positions** — identified by `(queryHash, rsHash)`.
   Represents "while evaluating `Q`, the box has observed exactly
-  these Facts." The `Q` is d=0; the facts in `RS` are
-  `(d=1 query, d=1 response)` pairs.
+  these Facts."
 - **QS positions** — identified by a QS storage hash alone.
-  Represents "this set of d=1 queries the box asks next." QS
+  Represents "this set of Requests the box asks next." QS
   positions are Q-free because the QS → next-RS transition is a
   pure structural union and doesn't depend on which `Q` is in
   flight; multiple `Q`s that happen to dispatch the same QS share
-  the same outgoing keyed children.
+  the same downstream structure.
 
 Two edge types:
 
 - **`(Q, RS) ──asks──▶ QS`** — while evaluating `Q` from this RS,
-  the box's next set of asks is this QS. After Patricia
+  the box's next set of Requests is this QS. After Patricia
   normalisation, a `(Q, RS)` position has pairwise-disjoint
   outgoing QS edges (and almost always exactly one — see below).
-- **`(Q, RS) ──terminal──▶ d=0 Response`** — this RS is a recorded
-  precondition under which `Q`'s d=0 Response is the recorded one.
+- **`(Q, RS) ──terminal──▶ Result`** — this RS is a recorded
+  precondition under which `Q`'s recorded Result is the named one.
 
 There is no third edge type for "QS to next RS". The transition is
-implicit: after dispatching the QS and observing d=1 responses,
-the new Facts are computed (pairing each d=1 query in QS with its
-d=1 response), and the next RS is the storage-layer extension of
-the source RS by those new Facts. The next-RS hash is computable
-from the source RS hash and the new Facts via the storage layer's
-set-extension operation. The decision graph never names a "response
-tuple" because the tuple is just the d=1 responses themselves,
-transient data used to compute Facts; it lives in the dispatch path
-at replay/recording time, not in the schema.
+implicit: after dispatching the QS and observing Responses, the
+new Facts are computed (pairing each Request in QS with its
+Response), and the next RS is the storage-layer extension of the
+source RS by those new Facts. The next-RS hash is computable from
+the source RS hash and the new Facts via the storage layer's
+set-extension operation. The decision graph never names a tuple of
+Responses because the Responses are transient data used to compute
+Facts; they live in the dispatch path at replay/recording time, not
+in the schema.
 
 A trace through the graph for evaluating `Q` is therefore the
 chain:
@@ -148,7 +152,7 @@ chain:
    │ asks
    ▼
    QS
-   │  (dispatch QS's d=1 queries; observe d=1 responses;
+   │  (dispatch QS's Requests; observe Responses;
    │   form new Facts; extend source RS in storage layer)
    ▼
 (Q, RS')
@@ -157,7 +161,7 @@ chain:
    QS
    │  ...
    ▼
-(Q, RS_final) ── terminal ──▶ d=0 Response R
+(Q, RS_final) ── terminal ──▶ Result R
 ```
 
 `Q` carries through every position; `RS` accumulates Facts; QSes
@@ -177,14 +181,14 @@ Storage-level sharing is automatic at every layer:
 Implementation-wise this is two edge tables plus an entry-point
 index:
 
-- `Asks(q_hash, rs_hash, qs_hash)` — outgoing QS edge per
+- `Asks(queryHash, rsHash, qsHash)` — outgoing QS edge per
   `(Q, RS)` position.
-- `Terminals(q_hash, rs_hash, d0_response_hash)` — terminal d=0
-  Response edges per `(Q, RS)` position.
-- `Entries(q_hash, entry_rs_hash)` — where to start traversal for
+- `Terminals(queryHash, rsHash, resultHash)` — terminal Result
+  edges per `(Q, RS)` position.
+- `Entries(queryHash, entryRsHash)` — where to start traversal for
   a given `Q`.
 
-None of these tables hold set content or response tuples; they hold
+None of these tables hold set content or Responses; they hold
 references into the storage layer.
 
 ### Invariant: pairwise-disjoint outgoing QS edges per (Q, RS)
@@ -277,22 +281,22 @@ walk(Q, entryRS):
     outgoing = Asks(Q, rs)  # the outgoing QS edges for this (Q, rs)
     if outgoing is empty: miss
     next_qs = pick from outgoing
-    # Edge QS may include queries whose d=1 responses are already in
+    # Edge QS may include Requests whose Responses are already in
     # rs (the shared prefix from a previous Patricia split). Source
     # those from rs; dispatch only the rest.
-    to_dispatch = next_qs \ {queries present in rs.facts}
+    to_dispatch = next_qs \ {Requests present in rs.facts}
     fresh = {}
-    for q in to_dispatch:
-        fresh[q] = walk(q, …)  # recursive d=1 lookup
-    new_facts = {Fact(q, fresh[q]) for q in to_dispatch}
-              ∪ {Fact(q, rs.responseFor(q)) for q in next_qs \ to_dispatch}
+    for req in to_dispatch:
+        fresh[req] = walk_request(req, …)  # recursive Request lookup
+    new_facts = {Fact(req, fresh[req]) for req in to_dispatch}
+              ∪ {Fact(req, rs.responseFor(req)) for req in next_qs \ to_dispatch}
     rs' = storage.extend(rs, new_facts)  # next_rs_hash by set extension
     if rs' is not in the RS pool: miss
     rs = rs'
 ```
 
 Cost: O(trace length) hash lookups plus the unavoidable cost of
-recursively replaying each d>0 query. No scans, no probabilistic
+recursively replaying each Request. No scans, no probabilistic
 filters. The `next_qs \ rs.facts` subtraction is the price of
 whole-set edge labels — paid in O(|next_qs| + |rs|) per step, which is
 dominated by the dispatch work itself.
@@ -317,16 +321,16 @@ The recorder observes the interpreter as a black box. Per-event cost is
 O(1): each observed `(q, r)` is appended to the in-flight session's
 running Fact list. A QuerySet is closed when the recorder has stable
 evidence that the batch is complete (e.g., the next response wave
-arrives, or the d=0 finalisation triggers).
+arrives, or the Query finalisation triggers).
 
-At d=0 finalisation:
+At Query finalisation:
 
 ```
 record(Q, trace):
   rs = Q's entry RS
   for each step (observed_qs, observed_facts) in trace:
     # observed_facts are the Facts the recorder saw at this step,
-    # one per d=1 query in observed_qs.
+    # one per Request in observed_qs.
     existing = Asks(Q, rs)  # outgoing QS edges at this (Q, rs)
     case observed_qs vs existing:
       ─ exact match with some qs ∈ existing:
@@ -340,7 +344,7 @@ record(Q, trace):
           rs = rs'
       ─ overlaps some qs ∈ existing:
           Patricia-split (below); retry this step
-  insert Terminals(Q, rs, d=0 Response R)
+  insert Terminals(Q, rs, Result R)
 ```
 
 Patricia split mutates `Asks` for the affected `(Q, rs)` position
@@ -362,12 +366,13 @@ Phase 1 alone:
   deltas.
 - ✓ Patricia split keeps shape divergence cheap on the QS axis.
 - ✗ Preconditions can still be wider than necessary (over-approximation
-  from concurrent in-flight d=0 Queries). A successful navigation
-  terminates at an RS that includes Facts the d=0 Response did not
+  from concurrent in-flight Queries). A successful navigation
+  terminates at an RS that includes Facts the Result did not
   actually depend on.
-- ✗ The QS→RS response-tuple fan-out grows with content edits: each
-  unique combination of d>0 responses produces a new keyed child, even
-  if many of them lead to the same d=0 Response.
+- ✗ The fan-out of next-RSes from a single QS grows with content edits:
+  each unique combination of Responses produces a new next-RS hash in
+  the storage layer, even if many of those next-RSes ultimately lead
+  to the same Result.
 
 Both unaddressed items are the substance Phase 2 will tackle by
 discovering, when two `(Q, R)` terminals exist with overlapping but
@@ -379,8 +384,12 @@ nodes, parent-pointer delta, alternating graph) makes that work cheap.
 
 - **`builtins.cache`** — explicit user-controlled cache scopes need
   separate theory.
-- **d≥2 (ambient incoming events)** — handled by a different mechanism,
-  not part of this model.
+- **Ambient incoming events (the model's "next layer up")** — handled
+  by a different mechanism, not part of this model. Generalising the
+  decision graph to that layer is the eventual home of
+  `builtins.cache`-style scoping; the previous shared-table convention
+  in the storage layer was set up to make that generalisation easier
+  and may be reintroduced when that work begins.
 - **Replay-time nondeterminism handling** — a model-layer concern. If
   the box truly produces multiple Responses under the same precondition,
   the data structure can store both but the choice of which to serve is
