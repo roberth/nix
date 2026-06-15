@@ -1056,6 +1056,84 @@ bool TracingIndex::isSubset(const SetMembers & precondition, const SetMembers & 
     return true;
 }
 
+size_t TracingIndex::runLearningPass(const QueryHash & queryHash)
+{
+    /* Read every Binding for queryHash + its materialised
+       precondition members, then compute pairwise intersections for
+       those that share the same Response and insert tighter ones. */
+    struct B {
+        Hash precondHash;
+        Hash respHash;
+        SetMembers members;
+    };
+    std::vector<B> bs;
+    {
+        /* Collect all Bindings for this queryHash. Don't interleave
+           getPreconditionSet calls inside this loop — multiple
+           prepared-statement cursors on the same connection have
+           confused the iteration in practice. */
+        auto state(_state->lock());
+        state->checkpoint();
+        auto q = state->selectBindings.use();
+        bindBlob(q, hashToBlob(queryHash));
+        while (q.next())
+            bs.push_back({readHash(q, 0), readHash(q, 1), {}});
+    }
+    /* Now materialise each precondition. getPreconditionSet takes
+       the lock internally so we run it without holding it here.
+       Drop any Binding whose precondition can't be loaded — that's
+       a corrupted entry, not a legitimate empty precondition. */
+    std::vector<B> loaded;
+    loaded.reserve(bs.size());
+    for (auto & b : bs) {
+        auto m = getPreconditionSet(b.precondHash);
+        if (!m)
+            continue;
+        b.members = std::move(*m);
+        loaded.push_back(std::move(b));
+    }
+    bs = std::move(loaded);
+
+    /* Build a set of preconditionHashes already known for this
+       queryHash, so we can detect when an intersection would just
+       duplicate an existing Binding. */
+    std::set<Hash> known;
+    for (const auto & b : bs)
+        known.insert(b.precondHash);
+
+    /* Pairwise: any two Bindings agreeing on Response are evidence
+       that their shared (Query, Response) subset suffices. The
+       intersection captures that shared subset; insert it as a new
+       Binding if it's strictly tighter than both inputs AND not
+       already present. */
+    size_t inserted = 0;
+    for (size_t i = 0; i < bs.size(); ++i) {
+        for (size_t j = i + 1; j < bs.size(); ++j) {
+            if (bs[i].respHash != bs[j].respHash)
+                continue;
+            auto intersection = intersectSets(bs[i].members, bs[j].members);
+            if (intersection.size() >= bs[i].members.size()
+                || intersection.size() >= bs[j].members.size())
+                continue;
+            auto newPreHash = computePreconditionSetHash(intersection);
+            if (known.count(newPreHash))
+                continue;
+            _writeQueue->enqueue(WriteInsertPreconditionSet{
+                .setHash = hashToBlob(newPreHash),
+                .members = serializeMembers(intersection),
+            });
+            _writeQueue->enqueue(WriteInsertBinding{
+                .queryHash = hashToBlob(queryHash),
+                .preconditionHash = hashToBlob(newPreHash),
+                .responseHash = hashToBlob(bs[i].respHash),
+            });
+            known.insert(newPreHash); // future iterations see it as known
+            ++inserted;
+        }
+    }
+    return inserted;
+}
+
 std::optional<std::string> TracingIndex::lookupSetsReplay(const QueryHash & queryHash, const SetMembers & current)
 {
     std::vector<std::pair<Hash, Hash>> candidates;

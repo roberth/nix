@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include <memory>
 #include <filesystem>
+#include <thread>
+#include <chrono>
 
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-object.hh"
@@ -529,6 +531,73 @@ TEST_F(TracingReplayTest, SetsRecordingViaTracingEvaluatorProducesBinding)
     auto roundtrip = index.getPreconditionSet(emptyHash);
     EXPECT_TRUE(roundtrip.has_value()) << "evalExpr should have produced at least one Binding "
                                           "with an empty precondition (i.e. inserted the empty set)";
+}
+
+TEST_F(TracingReplayTest, SetsLearningPassNarrowsPreconditions)
+{
+    /* Two Bindings for the same queryHash with overlapping preconditions
+       but the same Response. Learning pass should insert a third Binding
+       whose precondition is the intersection — narrower, so a current
+       context that contains only the intersection now hits the cache. */
+    TracingIndex index(dbPath);
+
+    auto qh = hashString(HashAlgorithm::SHA256, "queryHash-learning");
+
+    auto p1 = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2")});
+    auto p2 = makeSorted({makeMember("q1", "r1"), makeMember("q3", "r3")});
+    auto p1h = index.insertPreconditionSet(p1);
+    auto p2h = index.insertPreconditionSet(p2);
+    auto rh = index.insertSetResponse("shared-answer");
+    index.insertBinding(qh, p1h, rh);
+    index.insertBinding(qh, p2h, rh);
+
+    /* Give the async writer time to commit. flushAllWriteQueues is
+       destructive (it joins the writer thread, after which any
+       further enqueue is dead-letter), so the test uses a small
+       sleep instead and reserves the single flush for the very end. */
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    /* Before learning: a context containing only q1=r1 wouldn't match
+       either P1 or P2 (P1 needs q2 too, P2 needs q3 too). */
+    auto onlyShared = makeSorted({makeMember("q1", "r1")});
+    EXPECT_FALSE(index.lookupSetsReplay(qh, onlyShared).has_value())
+        << "before learning, intersection-only context shouldn't hit";
+
+    /* Run learning. */
+    auto inserted = index.runLearningPass(qh);
+    ASSERT_EQ(inserted, 1u) << "exactly one new intersected Binding expected";
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    /* After learning: the intersection (q1=r1) is its own Binding. */
+    auto hit = index.lookupSetsReplay(qh, onlyShared);
+    ASSERT_TRUE(hit.has_value()) << "after learning, intersection-only context should hit";
+    EXPECT_EQ(*hit, "shared-answer");
+
+    /* Idempotent: running the pass again inserts nothing new. */
+    EXPECT_EQ(index.runLearningPass(qh), 0u);
+}
+
+TEST_F(TracingReplayTest, SetsLearningPassSkipsDifferentResponses)
+{
+    /* If the two Bindings have different Responses, no intersection
+       is inserted — they're not evidence for the same precondition. */
+    TracingIndex index(dbPath);
+
+    auto qh = hashString(HashAlgorithm::SHA256, "queryHash-no-learning");
+
+    auto p1 = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2")});
+    auto p2 = makeSorted({makeMember("q1", "r1"), makeMember("q3", "r3")});
+    auto p1h = index.insertPreconditionSet(p1);
+    auto p2h = index.insertPreconditionSet(p2);
+    auto r1 = index.insertSetResponse("answer-1");
+    auto r2 = index.insertSetResponse("answer-2");
+    index.insertBinding(qh, p1h, r1);
+    index.insertBinding(qh, p2h, r2);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    EXPECT_EQ(index.runLearningPass(qh), 0u);
 }
 
 TEST_F(TracingReplayTest, SetsLookupPicksFirstValidBinding)

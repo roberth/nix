@@ -378,6 +378,29 @@ public:
      */
     static SetMembers intersectSets(const SetMembers & a, const SetMembers & b);
 
+    /**
+     * Run an intersection-learning pass for a single queryHash.
+     *
+     * For each pair of existing Bindings with the same queryHash and
+     * the same Response but different preconditions, compute the
+     * intersection of those preconditions and insert it as a new
+     * Binding if it's strictly smaller than both inputs.
+     *
+     * The new tighter Binding doesn't replace the old ones — they
+     * coexist; lookup will hit on the smallest precondition that
+     * subset-matches the current context. Idempotent on repeated
+     * runs: a recorded intersection that's already in the table is
+     * a no-op insert.
+     *
+     * Cost: O(k²) materialise+intersect+insert work where k is the
+     * number of Bindings for `queryHash`. Designed to run from a
+     * compaction / maintenance entrypoint rather than on every
+     * write, so a noisy queryHash (large k) doesn't slow recording.
+     *
+     * @return number of new Bindings inserted.
+     */
+    size_t runLearningPass(const QueryHash & queryHash);
+
 private:
     struct State;
 
