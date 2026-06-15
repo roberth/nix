@@ -358,18 +358,10 @@ struct CmdEvalCacheCompactAll : Command
     void run() override
     {
         TracingIndex index;
-        auto queryHashes = index.listBindingQueryHashes();
-        size_t total = 0;
-        size_t scanned = queryHashes.size();
-        for (const auto & qh : queryHashes)
-            total += index.runLearningPass(qh);
-        /* Drain the writer queue before GC so the eviction DELETEs
-           land before we look for orphan rows. */
-        index.waitForWrites();
-        auto [preGc, respGc] = index.runGC();
-        std::cout << "scanned " << scanned << " queryHash(es); inserted " << total
-                  << " new Binding(s); GC dropped " << preGc << " PreconditionSet(s) and " << respGc
-                  << " SetResponse(s)\n";
+        auto r = index.compactAll();
+        std::cout << "scanned " << r.scannedQueryHashes << " queryHash(es); inserted " << r.bindingsInserted
+                  << " new Binding(s); GC dropped " << r.preconditionSetsDropped << " PreconditionSet(s) and "
+                  << r.setResponsesDropped << " SetResponse(s)\n";
     }
 };
 

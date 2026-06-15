@@ -464,6 +464,22 @@ public:
      */
     std::pair<size_t, size_t> runGC();
 
+    /**
+     * One-shot maintenance pass: enumerate every queryHash that has
+     * any Binding, run intersection-learning + eviction on each,
+     * wait for the writer to drain, then run runGC (which also
+     * VACUUMs). Returned struct summarises the cleanup so a CLI or
+     * scheduled task can report what changed.
+     */
+    struct CompactResult
+    {
+        size_t scannedQueryHashes;
+        size_t bindingsInserted;
+        size_t preconditionSetsDropped;
+        size_t setResponsesDropped;
+    };
+    CompactResult compactAll();
+
 private:
     struct State;
 

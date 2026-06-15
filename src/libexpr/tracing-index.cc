@@ -1207,6 +1207,20 @@ std::pair<size_t, size_t> TracingIndex::runGC()
     return {preDeleted, respDeleted};
 }
 
+TracingIndex::CompactResult TracingIndex::compactAll()
+{
+    CompactResult r{};
+    auto qhs = listBindingQueryHashes();
+    r.scannedQueryHashes = qhs.size();
+    for (auto & qh : qhs)
+        r.bindingsInserted += runLearningPass(qh);
+    waitForWrites();
+    auto [pre, resp] = runGC();
+    r.preconditionSetsDropped = pre;
+    r.setResponsesDropped = resp;
+    return r;
+}
+
 std::vector<QueryHash> TracingIndex::listBindingQueryHashes()
 {
     std::vector<QueryHash> result;

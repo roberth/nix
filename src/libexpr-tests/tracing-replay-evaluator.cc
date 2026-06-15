@@ -665,6 +665,48 @@ TEST_F(TracingReplayTest, SetsWaitForWritesNonDestructive)
     EXPECT_TRUE(index.getPreconditionSet(h2).has_value()) << "second-batch write must succeed after first waitForWrites";
 }
 
+TEST_F(TracingReplayTest, SetsCompactAllEndToEnd)
+{
+    /* End-to-end maintenance: insert bindings that learn AND
+       leave orphans, then compactAll. Verify all the reported
+       counters and the resulting state. */
+    TracingIndex index(dbPath);
+
+    auto qh = hashString(HashAlgorithm::SHA256, "queryHash-compact");
+
+    /* Two bindings sharing a Response — intersection learning will
+       insert one new tighter Binding and evict the wider one. */
+    auto p1 = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2")});
+    auto p2 = makeSorted({makeMember("q1", "r1"), makeMember("q3", "r3")});
+    auto p1h = index.insertPreconditionSet(p1);
+    auto p2h = index.insertPreconditionSet(p2);
+    auto rh = index.insertSetResponse("shared");
+    index.insertBinding(qh, p1h, rh);
+    index.insertBinding(qh, p2h, rh);
+
+    /* An orphan PreconditionSet + SetResponse not wired into any Binding. */
+    auto pOrphan = makeSorted({makeMember("q-orphan", "r-orphan")});
+    index.insertPreconditionSet(pOrphan);
+    index.insertSetResponse("orphan-response");
+
+    index.waitForWrites();
+    ASSERT_EQ(index.countBindings(qh), 2u);
+
+    auto r = index.compactAll();
+    EXPECT_EQ(r.scannedQueryHashes, 1u);
+    EXPECT_EQ(r.bindingsInserted, 1u) << "intersection inserted as a tighter Binding";
+    EXPECT_GE(r.preconditionSetsDropped, 1u) << "orphan PreconditionSet should be dropped (subsumed ones too)";
+    EXPECT_GE(r.setResponsesDropped, 1u) << "orphan SetResponse should be dropped";
+
+    /* Post-compact: only the intersected Binding survives. */
+    EXPECT_EQ(index.countBindings(qh), 1u);
+
+    /* Lookup with the original wide context still hits the intersected Binding. */
+    auto hit = index.lookupSetsReplay(qh, p1);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(*hit, "shared");
+}
+
 TEST_F(TracingReplayTest, SetsRunGCDropsOrphans)
 {
     /* Insert two PreconditionSets and two SetResponses, only one of
