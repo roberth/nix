@@ -325,31 +325,27 @@ runtime; storage is invariant to it.
 
 ### Recording
 
-The recorder observes the box's event stream. For each `Q` in
-flight, it accumulates the Facts observed during that `Q`'s
-in-flight window — over-approximation: every event observed while
-`Q` is in flight goes into `Q`'s accumulator, whether or not it was
-"really" caused by `Q`. There is no muxing in the routing sense;
-the per-`Q` state is identical apart from each `Q`'s start time.
+The recorder observes the box's event stream and maintains a single
+global `factSet` that grows monotonically as Responses arrive. There
+is no per-`Q` state and no muxing: when a Result is produced for
+some `Q`, the recorder samples the current global `factSet` and
+pairs it with `Q`. The over-approximation falls out naturally:
+`Q`'s recorded precondition is everything observed in the session
+up to `Q`'s Result, regardless of whether `Q` "caused" it.
 
 ```
-state: mux  # map from in-flight Query -> accumulating factSet
+state: factSet  # one global accumulating set, starts at ∅
 
 on_event(e):
   case e:
-    QueryStart(Q):
-      mux[Q] = ∅
     ResponseReceived(req, resp):
-      for each Q in mux:
-        mux[Q] = mux[Q] ∪ {Fact(req, resp)}
+      factSet = factSet ∪ {Fact(req, resp)}
     ResultProduced(Q, result):
-      record(Q, mux[Q], result)
-      remove mux[Q]
+      record(Q, factSet, result)
 ```
 
-Per-event cost: O(1) per in-flight `Q`. Per `Q`-lifetime, only one
-thing actually needs to land in storage, and only at the end —
-`record` writes `Q`'s contribution to the decision graph.
+Per-event cost: O(1). All work for `Q`'s decision-graph contribution
+happens at `ResultProduced` time, via `record`.
 
 ```
 record(Q, factSet, result):
