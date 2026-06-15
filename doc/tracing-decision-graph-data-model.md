@@ -193,14 +193,31 @@ mechanism would expose such reuse (out of scope here).
 Neither table holds set content or Responses; they hold references
 into the storage layer.
 
-### Invariant: pairwise-disjoint outgoing RequestSet edges per (Q, FactSet)
+### Invariant: pairwise-disjoint *useful dispatches* per (Q, FactSet)
 
 After Patricia normalisation (below), the outgoing RequestSet edges
-from a single `(Q, FactSet)` position are pairwise disjoint as sets.
-Overlap is removed by factoring the shared prefix into a separate
-edge. (Two different `Q`s at the same FactSet hash naturally have
-independent edge sets — the invariant is per-position, not
-per-FactSet-hash.)
+from a single `(Q, FactSet)` position have pairwise-disjoint **useful
+dispatches**:
+
+```
+usefulDispatch(edge, FactSet) = edge.requestSet \ requestsOf(FactSet.facts)
+```
+
+Whole-set labels may still overlap at Requests already in `FactSet`
+(this is exactly what Patricia split produces: tail edges keep
+whole-set references that include the factored shared prefix, but
+that prefix is in the intermediate FactSet's facts). The parts that
+would actually be dispatched at this position — what we call the
+useful dispatch — are pairwise disjoint. (Two different `Q`s at the
+same FactSet hash naturally have independent edge sets — the
+invariant is per-position, not per-FactSet-hash.)
+
+This is the standard Patricia "children distinguishable at branch
+point" invariant, generalised from single-character discriminators
+to sets of Requests. Stating it on whole labels would be too strong
+and would in fact be violated by Patricia split's own output;
+stating it on useful dispatches matches both the split's output and
+what replay needs to navigate unambiguously.
 
 A consequence: in any deterministic, perfectly-attributed evaluation,
 every `(Q, FactSet)` position has exactly one outgoing RequestSet
@@ -355,19 +372,22 @@ record(Q, factSet, result):
   while cur ≠ factSet:
     remaining = requestsOf(factSet) \ requestsOf(cur)
     existing = Asks(Q, cur)
-    # Eagerly Patricia-split every outgoing edge that partially
-    # overlaps `remaining`. After this pass every outgoing edge at
-    # (Q, cur) is either fully within `remaining` or fully disjoint
-    # from it — no "partial overlap" state is left to deal with.
+    # Eagerly Patricia-split every outgoing edge whose USEFUL
+    # DISPATCH partially overlaps `remaining`. After this pass every
+    # outgoing edge's useful dispatch at (Q, cur) is either fully
+    # inside `remaining` or fully disjoint from it.
     for e in existing:
-      shared = e.requestSet ∩ remaining
-      if ∅ ⊊ shared ⊊ e.requestSet:
+      usefulE = e.requestSet \ requestsOf(cur.facts)
+      shared = usefulE ∩ remaining
+      if ∅ ⊊ shared ⊊ usefulE:
         patricia_split(Q, cur, e, shared)
-    # Pick an outgoing edge whose RequestSet ⊆ remaining (after the
-    # splits, this means following the shared prefix of some former
-    # overlap, or following an edge that always was ⊆ remaining).
+    # Pick an outgoing edge whose useful dispatch ⊆ remaining (after
+    # the splits, every overlapping edge's useful dispatch is fully
+    # inside remaining).
     existing = Asks(Q, cur)
-    e = find e in existing where e.requestSet ⊆ remaining, or None
+    e = find e in existing where (e.requestSet \ requestsOf(cur.facts)) ⊆ remaining
+                              and (e.requestSet \ requestsOf(cur.facts)) ≠ ∅,
+        or None
     if e is None:
       # No followable edge; add a fresh one covering what's left.
       insert Asks(Q, cur, remaining)
@@ -377,17 +397,25 @@ record(Q, factSet, result):
   insert Terminals(Q, factSet, result)
 ```
 
-After the eager split pass each iteration, the pairwise-disjoint
-invariant holds *and* every outgoing edge at `(Q, cur)` has a
-RequestSet that is either entirely inside or entirely outside
-`remaining`. Advancing through any inside edge consumes part of
-`remaining`; the loop reduces `remaining` strictly until cur reaches
-`factSet`.
+After the eager split pass each iteration, the useful-dispatch
+invariant holds *and* every outgoing edge's useful dispatch is either
+entirely inside or entirely outside `remaining`. Advancing through
+any inside edge consumes part of `remaining`; the loop reduces
+`remaining` strictly until `cur` reaches `factSet`.
 
 Per `record` cost: O(|factSet|) iterations in the worst case, each
 O(|existing|) split candidates checked plus an `INSERT OR IGNORE` or
 a follow; Patricia split adds O(|requestSet|) when triggered. Per
 event: O(1).
+
+**Volume risk on fan-out and a possible mitigation.** If many
+recordings introduce different next-Request shapes at the same
+`(Q, cur)`, the number of outgoing edges grows and the per-iteration
+overlap scan becomes O(|existing|). A reverse index — Request → set
+of edges at `(Q, cur)` whose useful dispatch contains that Request —
+reduces the overlap search to O(|remaining|) lookups. The index has
+one entry per Request per edge, maintained on insert/split. Flagged
+as an optimisation; the basic algorithm above doesn't depend on it.
 
 ## What Phase 1 covers
 
