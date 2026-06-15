@@ -346,32 +346,41 @@ on_event(e):
 ```
 
 Per-event cost: O(1). All work for `Q`'s decision-graph contribution
-happens at `ResultProduced` time, via `record`.
+happens at `ResultProduced` time, via `record`, which integrates the
+new `factSet` into `Q`'s Patricia tree.
 
 ```
 record(Q, factSet, result):
   cur = ∅
-  for fact = (req, resp) in canonical_order(factSet):
-    insert Asks(Q, cur, {req})                  # INSERT OR IGNORE
-    cur = storage.extend(cur, {fact})
+  while cur ≠ factSet:
+    remaining = requestsOf(factSet) \ requestsOf(cur)
+    existing = Asks(Q, cur)
+    e = some edge ∈ existing whose RequestSet overlaps remaining, or None
+    if e is None:
+      # No existing edge to integrate with; one new edge gets us there.
+      insert Asks(Q, cur, remaining)
+      cur = factSet
+    else:
+      shared = e.requestSet ∩ remaining
+      if shared ⊊ e.requestSet:
+        # Patricia-split e at `shared` (see "Patricia split" above):
+        # one new intermediate FactSet node, two re-pointed edges.
+        patricia_split(Q, cur, e, shared)
+      # Advance through the shared portion. The next iteration handles
+      # whatever's left of `remaining`.
+      cur = storage.extend(cur, factsForRequests(shared, factSet))
   insert Terminals(Q, factSet, result)
 ```
 
-The `Asks` chain runs along a canonical ordering of `factSet` (e.g.
-by Fact hash). The box's actual order of asks doesn't matter for
-navigation correctness — replay can dispatch in any order that
-reaches the target FactSet, and canonical ordering at record time
-maximises prefix sharing with other recordings whose `factSet`
-overlaps.
+Each iteration either follows an existing edge (no split needed when
+the edge's RequestSet is a subset of `remaining`), splits an existing
+edge to factor out the shared prefix, or adds a fresh edge when no
+overlap exists. The pairwise-disjoint outgoing invariant is preserved
+at every `(Q, cur)` position throughout.
 
-Per `record` cost: O(|factSet|) `INSERT OR IGNORE`s. Per event:
-O(1). Patricia split (above) runs naturally at record time as the
-canonical chain converges with existing recordings — when two
-canonical orderings produce overlapping but non-equal multi-element
-steps, the same split applies. With singleton steps and canonical
-ordering, two recordings whose factSets share a prefix end up
-sharing the corresponding `Asks` edges by content addressing
-without an explicit split.
+Per `record` cost: O(|factSet|) iterations in the worst case, each
+O(1) hash lookups plus an `INSERT OR IGNORE`; Patricia split adds
+O(|requestSet|) when triggered. Per event: O(1).
 
 ## What Phase 1 covers
 
