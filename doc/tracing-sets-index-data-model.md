@@ -172,6 +172,15 @@ Extended to 10 commits, 3 commits hit fully cached (~70ms each) — the ones who
 
 When the sets-based path serves all lookups (no fall-through to the trie walker), the per-event d>0 Query and Result writes become redundant and can be dropped — a future optimization.
 
-Bench harnesses live at `/tmp/sets-validation/` in the sandbox: `synthetic.sh` (correctness on edit/revert) and `git-history-bench.sh` (cross-commit cache reuse). They're sandbox-specific (hardcoded paths) and not yet integrated into the test suite.
+Cross-branch reuse (evaluating `lib.version` against upstream/main then against lazy-paths-v3, both branches having slightly different `.version` content):
+
+| Branch | Result hash | Bindings added |
+|--------|-------------|----------------|
+| upstream/main      | 77591fa322de | +3 (cold) |
+| lazy-paths-v3      | 410e4847695f | +1        |
+
+The two branches produce different `lib.version` outputs, yet switching from upstream/main's cached state to lazy-paths-v3 only added one new binding (the one whose precondition includes the changed `.version` file). All other intermediate Queries hit the cache.
+
+Bench harnesses live at `/tmp/sets-validation/` in the sandbox: `synthetic.sh` (correctness on edit/revert), `git-history-bench.sh` (cross-commit cache reuse), `multi-branch-bench.sh` (cross-branch cache reuse). They're sandbox-specific (hardcoded paths) and not yet integrated into the test suite.
 
 
