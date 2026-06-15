@@ -277,9 +277,8 @@ the current FactSet and dispatching only the rest. Content-addressed
 FactSet dedup keeps the next-FactSet identity correct regardless.
 
 The split is *set intersection used structurally* for storage and
-dispatch sharing. It is distinct from the precondition intersection
-Phase 2 will introduce, even though both use the same set-intersection
-primitive.
+dispatch sharing, distinct from any precondition-narrowing logic
+Phase 2 may add on top.
 
 When the two RequestSets are fully disjoint
 (`requestSet_shared = ∅`), the split degenerates:
@@ -452,26 +451,96 @@ as an optimisation; the basic algorithm above doesn't depend on it.
 
 Phase 1 hits only **exact-response paths**: at every step the actual
 Responses must extend the source FactSet to a next-FactSet hash that
-already exists in storage. A source edit that flips even one Response
-diverts the path to a previously-unseen FactSet hash, and Phase 1
-sees that as a miss — even if the flipped Response was irrelevant to
+already exists in storage. A source edit that flips a Response
+diverts the path to a previously-unseen FactSet hash and Phase 1
+sees that as a miss, even if the flipped Response was irrelevant to
 the eventual Result.
 
-What's missing is a mechanism to recognise that two recorded paths
-to the same Result diverged on Facts that didn't matter. (The
-recorded preconditions are over-approximated, as they always are with
-a black-box recorder; Phase 1 just has no way to discover where the
-slack is.)
+Phase 1 also has no notion of trace length. Recordings made under
+over-approximated context (`nix eval .#a .#b` lands a wide factSet
+in `Q_a`'s recording, including `Q_b`'s asks) end up storing wider
+traces than necessary, and Phase 1 can't tell that a leaner later
+recording of the same Q would be preferable.
 
-Phase 2's job is exactly that recognition: when two `(Q, Result)`
-terminals exist with overlapping but distinct FactSets, the
-intersection of those FactSets identifies the Facts that actually
-mattered for the Result. A shortcut Terminal placed at the
-intersection FactSet hub lets future navigations hit without needing
-the irrelevant Facts to match. The Phase 1 structural foundation
-(content-addressed FactSet nodes, parent-pointer delta, alternating
-graph) is what makes that intersection cheap to discover and to
-attach.
+## Phase 2 sketch
+
+Two mostly-independent pieces, both incremental, both preserving
+"no batch maintenance".
+
+### Recording: passive-replay-before-insert
+
+At `ResultProduced(Q, R)`, before calling `record(Q, factSet, R)`,
+do a **passive replay** from `(Q, ∅)` using only the Facts already
+in `factSet` — no new Request dispatch. Walk as far as the existing
+graph allows:
+
+- **Reach a Terminal for `R`**: existing graph already produces
+  this Result for some subset of our Facts. Skip `record`; we'd
+  only be adding a redundant superset Terminal.
+- **Reach a Terminal for a different `R'`**: model-level ambiguity
+  (genuine nondeterminism, or stale wider precondition that no
+  longer holds). Policy question — store both, invalidate existing,
+  etc. Deferred.
+- **Stuck at some `(Q, cur)` with no followable edge** (the
+  existing chain requires Facts we don't have): fall through to
+  normal `record` from `cur`. The new recording integrates as a
+  sibling path; pre-existing wider Terminals coexist until evicted.
+
+What this suppresses: future recordings whose `factSet` is a
+superset of an already-reachable Terminal's precondition. What it
+doesn't shrink: pre-existing wider Terminals (lazy eviction is a
+separate piece, deferred).
+
+### Replay: distance-to-any-R as navigation heuristic
+
+Per `(Q, cur)` node, store one number: the minimum number of Facts
+on the shortest known path from `cur` to any downstream Terminal
+for `Q`. Per node, not per-`R` — that map would be heavy and would
+have to be maintained on every split.
+
+At multi-outgoing-edge positions, replay's `pick from outgoing`
+consults this distance: pick the edge whose target has the smallest
+`|usefulDispatch(edge)| + dist(target)`. The chosen edge is most
+likely to reach a hit with the fewest Request dispatches.
+
+Maintenance:
+
+- **Terminal insert at `(Q, factSet)`**: `dist := 0`. Walk back
+  along the Asks chain; at each ancestor,
+  `dist(ancestor) := min(dist(ancestor),
+                         |usefulDispatch(edge_to_child)| + dist(child))`.
+  Stop when no update is needed. O(path length).
+- **Patricia split**: at split time the new intermediate's distance
+  is set from its single known outgoing tail (the existing branch):
+  `dist(intermediate) := |usefulDispatch(tail_existing)| + dist(factSet_existing)`.
+  The new branch's contribution arrives later when the recording
+  completes and the Terminal-insert back-walk passes through the
+  intermediate, lowering its distance and propagating up. The
+  split itself doesn't change `dist(cur)` — it inserts an
+  intermediate hop whose total cost equals the original edge's
+  cost; only future improvements propagate upward.
+- **Eviction** (deferred): a node's distance may *increase* when a
+  Terminal disappears, requiring re-derivation from surviving
+  children.
+
+Correctness in a deterministic-box model: any Terminal we reach
+gives a correct Result; the heuristic only affects how many
+Requests get dispatched en route, not the answer. With genuine
+nondeterminism the heuristic might serve a different Terminal than
+another policy would, but that's a model-level ambiguity.
+
+Where it doesn't help: single-outgoing-edge positions (the common
+Patricia-normalised case). It earns its keep at path-divergence
+forks (`a.nix → b/c` vs `d`).
+
+### Together
+
+Recording-side stops adding redundant supersets going forward.
+Replay-side picks shortest-known path among outgoing edges. Over
+time, the cache accumulates shorter chains for each Q as new
+recordings prove they're shorter; the heuristic exploits them at
+lookup. Eviction of stale wider Terminals once a strictly-shorter
+one exists is a third, deferred piece.
 
 ## Explicitly out of scope
 
@@ -490,9 +559,14 @@ attach.
 
 ## Open questions left to Phase 2
 
-- Where does precondition intersection live in the operation order, and
-  how does it interact with the per-(Q, R) terminal cluster?
-- Inverted Fact index for the "find shortcuts whose precondition is a
-  subset of current context" lookup that the cold fallback path needs.
-- Eviction of subsumed terminal edges (edge-only; FactSet nodes remain
-  for navigation).
+- Eviction policy for pre-existing wider Terminals once a strictly
+  shorter Terminal for the same `(Q, R)` exists. Includes the
+  distance-recomputation problem on eviction (a node's distance may
+  increase, requiring re-derivation from surviving children).
+- Conflicting-Result Terminals encountered during passive replay —
+  whether to invalidate, store both, or escalate as a policy
+  question.
+- Whether to add precondition-intersection learning on top of
+  passive-replay-before-insert, for cases where no single session
+  produces a minimal trace and the cache stays stuck at the
+  wider-than-necessary first recording.
