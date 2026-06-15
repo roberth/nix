@@ -371,7 +371,7 @@ struct CmdEvalCacheStats : Command, MixJSON
 
 // ---- nix eval-cache compact ----
 
-struct CmdEvalCacheCompactAll : Command
+struct CmdEvalCacheCompactAll : Command, MixJSON
 {
     std::string description() override
     {
@@ -387,6 +387,15 @@ struct CmdEvalCacheCompactAll : Command
     {
         TracingIndex index;
         auto r = index.compactAll();
+        if (json) {
+            nlohmann::json out;
+            out["scannedQueryHashes"] = r.scannedQueryHashes;
+            out["bindingsInserted"] = r.bindingsInserted;
+            out["preconditionSetsDropped"] = r.preconditionSetsDropped;
+            out["setResponsesDropped"] = r.setResponsesDropped;
+            printJSON(out);
+            return;
+        }
         std::cout << "scanned " << r.scannedQueryHashes << " queryHash(es); inserted " << r.bindingsInserted
                   << " new Binding(s); GC dropped " << r.preconditionSetsDropped << " PreconditionSet(s) and "
                   << r.setResponsesDropped << " SetResponse(s)\n";
