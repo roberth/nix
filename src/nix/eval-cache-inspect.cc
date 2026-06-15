@@ -363,7 +363,13 @@ struct CmdEvalCacheCompactAll : Command
         size_t scanned = queryHashes.size();
         for (const auto & qh : queryHashes)
             total += index.runLearningPass(qh);
-        std::cout << "scanned " << scanned << " queryHash(es); inserted " << total << " new Binding(s)\n";
+        /* Drain the writer queue before GC so the eviction DELETEs
+           land before we look for orphan rows. */
+        TracingIndex::flushAllWriteQueues();
+        auto [preGc, respGc] = index.runGC();
+        std::cout << "scanned " << scanned << " queryHash(es); inserted " << total
+                  << " new Binding(s); GC dropped " << preGc << " PreconditionSet(s) and " << respGc
+                  << " SetResponse(s)\n";
     }
 };
 

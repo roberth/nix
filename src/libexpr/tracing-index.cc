@@ -1075,6 +1075,30 @@ bool TracingIndex::isSubset(const SetMembers & precondition, const SetMembers & 
     return true;
 }
 
+std::pair<size_t, size_t> TracingIndex::runGC()
+{
+    /* Delete PreconditionSets / SetResponses rows not referenced by
+       any Binding. Use the state's connection directly — it has write
+       access (Normal+WAL mode) and this is a maintenance operation,
+       not a hot-path write, so going around the background writer
+       queue is fine. We must avoid races with the writer though:
+       drain pending writes first by flushing all queues. */
+    auto state(_state->lock());
+    state->checkpoint();
+
+    /* Direct DELETE WHERE NOT IN — SQLite handles this efficiently
+       enough at our scale. sqlite3_changes returns the row count
+       affected by the LAST modification statement, so we read it
+       immediately after each exec(). */
+    state->db.exec("DELETE FROM PreconditionSets WHERE setHash NOT IN (SELECT preconditionHash FROM Bindings)");
+    size_t preDeleted = sqlite3_changes(state->db);
+
+    state->db.exec("DELETE FROM SetResponses WHERE responseHash NOT IN (SELECT responseHash FROM Bindings)");
+    size_t respDeleted = sqlite3_changes(state->db);
+
+    return {preDeleted, respDeleted};
+}
+
 std::vector<QueryHash> TracingIndex::listBindingQueryHashes()
 {
     std::vector<QueryHash> result;

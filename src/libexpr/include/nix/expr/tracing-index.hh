@@ -410,6 +410,16 @@ public:
      */
     std::vector<QueryHash> listBindingQueryHashes();
 
+    /**
+     * Delete PreconditionSets and SetResponses rows that no Binding
+     * references. Intended to run after a compaction pass that
+     * evicted Bindings (which may have left their PreconditionSet
+     * and Response rows orphaned).
+     *
+     * @return (preconditionSets_deleted, setResponses_deleted).
+     */
+    std::pair<size_t, size_t> runGC();
+
 private:
     struct State;
 
