@@ -365,6 +365,7 @@ struct CmdEvalCacheStats : Command, MixJSON
                   << "  misses : " << s.lookupMisses << "\n"
                   << "  Bloom prescreen skips : " << s.lookupBloomPrescreenSkips << "\n";
         std::cout << "\nDB location: ~/.cache/nix/eval-tracing-index-v2/index.sqlite\n"
+                     "(override with NIX_TRACING_CACHE_DIR=/some/dir).\n"
                      "Run 'nix eval-cache compact-all' to apply intersection learning + GC.\n";
     }
 };

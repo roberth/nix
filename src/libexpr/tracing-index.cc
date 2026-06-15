@@ -3,6 +3,7 @@
 #include "nix/expr/tracing-writer.hh"
 #include "nix/store/sqlite.hh"
 #include <sqlite3.h>
+#include "nix/util/environment-variables.hh"
 #include "nix/util/file-system.hh"
 #include "nix/util/hash.hh"
 #include "nix/util/logging.hh"
@@ -458,6 +459,10 @@ private:
 
 static std::filesystem::path defaultDbPath()
 {
+    /* NIX_TRACING_CACHE_DIR overrides the default location so tests
+       and benches can isolate their cache from the user's main one. */
+    if (auto override = getEnvNonEmpty("NIX_TRACING_CACHE_DIR"))
+        return std::filesystem::path(*override) / "index.sqlite";
     auto cacheDir = std::filesystem::path(getCacheDir()) / "eval-tracing-index-v2";
     return cacheDir / "index.sqlite";
 }
