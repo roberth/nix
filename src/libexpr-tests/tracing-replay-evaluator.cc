@@ -665,6 +665,40 @@ TEST_F(TracingReplayTest, SetsWaitForWritesNonDestructive)
     EXPECT_TRUE(index.getPreconditionSet(h2).has_value()) << "second-batch write must succeed after first waitForWrites";
 }
 
+TEST_F(TracingReplayTest, SetsLookupCountersTrackHitsAndMisses)
+{
+    /* Bump lookupSetsReplay across hit, miss, and Bloom-skip
+       scenarios and verify the process-local counters track them. */
+    TracingIndex index(dbPath);
+
+    auto qh = hashString(HashAlgorithm::SHA256, "queryHash-counters");
+    auto p = makeSorted({makeMember("q1", "r1")});
+    auto ph = index.insertPreconditionSet(p);
+    auto rh = index.insertSetResponse("answer");
+    index.insertBinding(qh, ph, rh);
+    index.waitForWrites();
+
+    auto initial = index.getStats();
+    ASSERT_EQ(initial.lookupHits, 0u);
+    ASSERT_EQ(initial.lookupMisses, 0u);
+
+    /* Hit: current ⊇ precondition. */
+    auto hitContext = makeSorted({makeMember("q1", "r1"), makeMember("q2", "r2")});
+    EXPECT_TRUE(index.lookupSetsReplay(qh, hitContext).has_value());
+
+    /* Miss via Bloom prescreen: current Bloom doesn't include the
+       precondition's bits. */
+    auto missContext = makeSorted({makeMember("q-other", "r-other")});
+    EXPECT_FALSE(index.lookupSetsReplay(qh, missContext).has_value());
+
+    auto after = index.getStats();
+    EXPECT_EQ(after.lookupHits, 1u);
+    EXPECT_EQ(after.lookupMisses, 1u);
+    /* The Bloom prescreen counter is also bumped on the miss path
+       (we expect exactly one prescreen skip for this miss). */
+    EXPECT_GE(after.lookupBloomPrescreenSkips, 1u);
+}
+
 TEST_F(TracingReplayTest, SetsCompactAllEndToEnd)
 {
     /* End-to-end maintenance: insert bindings that learn AND
