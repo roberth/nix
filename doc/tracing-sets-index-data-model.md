@@ -218,6 +218,8 @@ The `nix eval-cache compact` and `compact-all` subcommands run the intersection-
 - **History walk (10 nixpkgs commits on `lib.version`)**: dominant queryHash had 7 bindings (one per content-state variation); learning inserted 6 intersected bindings. Other queryHashes with single bindings were unchanged.
 - **Synthetic test (6 invocations across 4 content states)**: dominant structural queryHash had 4 bindings (all same Response); learning inserted 5 intersected bindings.
 
-In all scenarios learning is **purely additive** — the wider preconditions are not evicted. This grows the `PreconditionSets` table (466 KB after the 10-commit history walk + compact) but enables hits in narrower contexts. Eviction of subsumed bindings is a future optimization.
+In all scenarios learning is **purely additive** — the wider preconditions are not evicted. This grows the `PreconditionSets` table (466 KB after the 10-commit history walk + compact) but enables hits in narrower contexts. (Update: eviction of subsumed bindings is now implemented; see "Try it" → `compact-all`.)
+
+**Safety of empty-precondition Bindings.** After learning, some Bindings collapse to an empty precondition — a "matches any context" hit. This is *safe* because the `queryHash` itself carries Merkle provenance via `inputHashes`: a queryHash refers to a particular Query asked on a specific cached Result, so the empty-precondition Binding only fires for lookups on that exact identity. Cross-context contamination is structurally impossible — the synthetic test confirms this by correctly returning `data99|flagX` against a cache that has an empty-precondition Binding for the earlier `data1|flagA` result, because the two evaluations produce different intermediate Results with different `inputHashes`.
 
 
