@@ -67,6 +67,11 @@ TEST_F(FileHashCacheTest, LookupReturnsNulloptOnMiss)
 TEST_F(FileHashCacheTest, LookupReturnsHashAfterGet)
 {
     writeFile("lookup test");
+    /* Sleep past the second boundary so the rounding guard in
+       getHash permits caching. Without this, getHash refuses to
+       record an entry whose mtime equals the current second (see
+       RefusesToCacheSameSecondWrite for the safety rationale). */
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
 
     FileHashCache cache{dbPath};
     auto hash = cache.getHash(testFile);
@@ -101,6 +106,54 @@ TEST_F(FileHashCacheTest, DetectsMtimeChange)
 
     auto hash2 = cache.getHash(testFile);
     EXPECT_NE(hash1, hash2);
+}
+
+TEST_F(FileHashCacheTest, RefusesToCacheSameSecondWrite)
+{
+    /* A write that lands in the current wall-clock second leaves
+       getHash unable to prove the contents won't change before the
+       second rolls over (POSIX mtime has 1-second granularity, so
+       another write this same second can mutate the bytes without
+       advancing mtime). getHash must still return the correct hash,
+       but must NOT cache the entry — otherwise a subsequent
+       same-second mutation would be served stale. */
+    writeFile("fresh content");
+
+    FileHashCache cache{dbPath};
+    auto hash = cache.getHash(testFile);
+
+    /* No cache entry yet — getHash refused because the write was
+       too recent. */
+    auto immediate = cache.lookup(testFile);
+    EXPECT_FALSE(immediate.has_value()) << "must not cache an entry whose mtime equals the current second";
+
+    /* Wait past the second boundary so the file's mtime is strictly
+       in the past, then re-request. This call should cache. */
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    cache.getHash(testFile);
+    auto ripened = cache.lookup(testFile);
+    ASSERT_TRUE(ripened.has_value()) << "must cache once the file's mtime is strictly older than now";
+    EXPECT_EQ(*ripened, hash);
+}
+
+TEST_F(FileHashCacheTest, ServesNoStaleHashAfterSameSecondMutation)
+{
+    /* The end-to-end safety property: write A, hash it, overwrite
+       with B in the same second (mtime unchanged), then re-query.
+       With the rounding guard, we must NOT receive H_A on the
+       second call. Without the guard we did (which is why this
+       test exists). */
+    writeFile("A");
+
+    FileHashCache cache{dbPath};
+    auto h1 = cache.getHash(testFile);
+
+    /* Same-second overwrite. The mtime stays at the current second
+       (still ≤ now). */
+    writeFile("BB");
+    auto h2 = cache.getHash(testFile);
+
+    EXPECT_NE(h1, h2) << "must compute B's hash, not serve the cached A";
 }
 
 TEST_F(FileHashCacheTest, ConstructorPerformsNoIO)

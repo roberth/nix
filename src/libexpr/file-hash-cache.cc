@@ -6,6 +6,7 @@
 #include "nix/util/users.hh"
 
 #include <sys/stat.h>
+#include <ctime>
 
 namespace nix {
 
@@ -110,14 +111,54 @@ Hash FileHashCache::getHash(const std::filesystem::path & path)
 
     debug("file hash cache miss: %s", path.string());
 
-    auto hash = hashFile(HashAlgorithm::SHA256, path);
-    auto mtime = getMtime(path);
-    if (!mtime)
+    /* Stat-hash-stat sandwich with the freshness check sampled
+       *before* the hash:
+
+       (a) `nowAtStart > mtimeBefore` rules out the same-second
+           TOCTOU. POSIX mtime has 1-second granularity, so a
+           write within the same wall-clock second as the file's
+           current mtime mutates the file invisibly. The check has
+           to hold at hash *start* — not after — because a slow
+           hash could span into the next second and pass an
+           after-the-fact check while a write that happened in
+           second `mtimeBefore` *during* the hash leaves
+           `mtimeAfter == mtimeBefore` and goes undetected. By
+           establishing the freshness before reading the file, we
+           know any subsequent write must land in a strictly later
+           second and therefore advance mtime, which step (b)
+           catches.
+
+       (b) `mtimeBefore == mtimeAfter` rules out a mid-hash write
+           that bumped mtime into a new second. Combined with (a)
+           this is sufficient: writes in second `mtimeBefore` are
+           impossible (the second was already over), and writes in
+           any later second would have bumped mtime. */
+    auto mtimeBefore = getMtime(path);
+    if (!mtimeBefore)
         throw Error("cannot stat file '%s'", path.string());
 
-    auto state(_state->lock());
-    ensureOpen(*state);
-    state->insertHash.use()(path.string())(static_cast<int64_t>(*mtime))(hash.to_string(HashFormat::SRI, true)).exec();
+    auto nowAtStart = ::time(nullptr);
+
+    auto hash = hashFile(HashAlgorithm::SHA256, path);
+
+    auto mtimeAfter = getMtime(path);
+    if (!mtimeAfter)
+        throw Error("cannot stat file '%s'", path.string());
+
+    if (*mtimeBefore == *mtimeAfter && nowAtStart > *mtimeBefore) {
+        auto state(_state->lock());
+        ensureOpen(*state);
+        state->insertHash.use()(path.string())(static_cast<int64_t>(*mtimeBefore))(
+            hash.to_string(HashFormat::SRI, true))
+            .exec();
+    } else {
+        debug(
+            "file hash cache: not caching %s (mtimeBefore=%d, mtimeAfter=%d, nowAtStart=%d)",
+            path.string(),
+            static_cast<int64_t>(*mtimeBefore),
+            static_cast<int64_t>(*mtimeAfter),
+            static_cast<int64_t>(nowAtStart));
+    }
 
     return hash;
 }
