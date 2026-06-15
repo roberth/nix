@@ -75,7 +75,8 @@ CREATE INDEX IF NOT EXISTS QueriesStructural ON Queries(structuralParent, queryH
 --   the SHA-256 of `members`.
 CREATE TABLE IF NOT EXISTS PreconditionSets (
     setHash BLOB PRIMARY KEY,
-    members BLOB NOT NULL
+    members BLOB NOT NULL,
+    bloom BLOB
 );
 
 -- SetResponses: response payloads referenced by Bindings.
@@ -122,6 +123,7 @@ struct WriteInsertPreconditionSet
 {
     std::string setHash;
     std::string members; // binary: N × (queryHash || responseHash)
+    std::string bloom;   // kBloomBytes
 };
 
 struct WriteInsertSetResponse
@@ -333,7 +335,7 @@ private:
                 db, "INSERT OR IGNORE INTO Results(nodeHash, afterHash, payload, queryNodeHash) VALUES (?, ?, ?, ?)");
             insertShortcut.create(db, "INSERT OR IGNORE INTO Shortcuts(queryHash, nodeHash) VALUES (?, ?)");
             insertPreconditionSet.create(
-                db, "INSERT OR IGNORE INTO PreconditionSets(setHash, members) VALUES (?, ?)");
+                db, "INSERT OR IGNORE INTO PreconditionSets(setHash, members, bloom) VALUES (?, ?, ?)");
             insertSetResponse.create(db, "INSERT OR IGNORE INTO SetResponses(responseHash, payload) VALUES (?, ?)");
             insertBinding.create(
                 db,
@@ -406,6 +408,7 @@ private:
                                 auto use = insertPreconditionSet.use();
                                 bindBlob(use, w.setHash);
                                 use(reinterpret_cast<const unsigned char *>(w.members.data()), w.members.size());
+                                use(reinterpret_cast<const unsigned char *>(w.bloom.data()), w.bloom.size());
                                 use.exec();
                             },
                             [&](const WriteInsertSetResponse & w) {
@@ -478,6 +481,17 @@ TracingIndex::TracingIndex(const std::filesystem::path & dbPath)
     state->db.isCache();
     state->db.exec(tracingIndexSchema);
 
+    /* Migrations: ALTER TABLE for additive columns. ALTER fails
+       with "duplicate column name" if the column already exists
+       — that's the no-op-on-recent-schema case we want, so swallow
+       only that specific error. */
+    try {
+        state->db.exec("ALTER TABLE PreconditionSets ADD COLUMN bloom BLOB");
+    } catch (SQLiteError & e) {
+        if (std::string(e.what()).find("duplicate column") == std::string::npos)
+            throw;
+    }
+
     // Prepare read statements (0..1)
     state->getQuery.create(
         state->db, "SELECT nodeHash, queryHash, afterHash, structuralParent, depth FROM Queries WHERE nodeHash = ?");
@@ -510,7 +524,9 @@ TracingIndex::TracingIndex(const std::filesystem::path & dbPath)
     state->getSetResponse.create(state->db, "SELECT payload FROM SetResponses WHERE responseHash = ?");
     state->selectBindings.create(
         state->db,
-        "SELECT preconditionHash, responseHash FROM Bindings WHERE queryHash = ? ORDER BY createdAt DESC");
+        "SELECT b.preconditionHash, b.responseHash, p.bloom FROM Bindings b "
+        "LEFT JOIN PreconditionSets p ON b.preconditionHash = p.setHash "
+        "WHERE b.queryHash = ? ORDER BY b.createdAt DESC");
 
     // Background writer opens its own connection
     _writeQueue = std::make_unique<WriteQueue>(dbPath);
@@ -1019,9 +1035,11 @@ Hash TracingIndex::computeResponseHash(const std::string & payload)
 Hash TracingIndex::insertPreconditionSet(const SetMembers & members)
 {
     auto setHash = computePreconditionSetHash(members);
+    auto bloom = computeBloom(members);
     _writeQueue->enqueue(WriteInsertPreconditionSet{
         .setHash = hashToBlob(setHash),
         .members = serializeMembers(members),
+        .bloom = std::string(reinterpret_cast<const char *>(bloom.data()), bloom.size()),
     });
     return setHash;
 }
@@ -1316,22 +1334,43 @@ size_t TracingIndex::runLearningPass(const QueryHash & queryHash)
 
 std::optional<std::string> TracingIndex::lookupSetsReplay(const QueryHash & queryHash, const SetMembers & current)
 {
-    std::vector<std::pair<Hash, Hash>> candidates;
+    struct Candidate {
+        Hash preconditionHash;
+        Hash responseHash;
+        std::optional<Bloom> bloom;
+    };
+    std::vector<Candidate> candidates;
     {
         auto state(_state->lock());
         state->checkpoint();
         auto q = state->selectBindings.use();
         bindBlob(q, hashToBlob(queryHash));
-        while (q.next())
-            candidates.emplace_back(readHash(q, 0), readHash(q, 1));
+        while (q.next()) {
+            Candidate c{readHash(q, 0), readHash(q, 1), std::nullopt};
+            if (!q.isNull(2)) {
+                auto blob = q.getBlob(2);
+                if (blob.size() == kBloomBytes) {
+                    Bloom b;
+                    std::memcpy(b.data(), blob.data(), kBloomBytes);
+                    c.bloom = b;
+                }
+            }
+            candidates.push_back(c);
+        }
     }
 
-    for (const auto & [preconditionHash, responseHash] : candidates) {
-        auto pre = getPreconditionSet(preconditionHash);
+    /* Compute the current context's Bloom once — used to skip
+       candidates whose recorded Bloom isn't a subset of it. */
+    Bloom currentBloom = computeBloom(current);
+
+    for (const auto & c : candidates) {
+        if (c.bloom && !bloomMayBeSubset(*c.bloom, currentBloom))
+            continue;
+        auto pre = getPreconditionSet(c.preconditionHash);
         if (!pre)
             continue;
         if (isSubset(*pre, current))
-            return getSetResponse(responseHash);
+            return getSetResponse(c.responseHash);
     }
     return std::nullopt;
 }
