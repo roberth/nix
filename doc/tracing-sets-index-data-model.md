@@ -43,65 +43,86 @@ The aim is for lookup to descend a decision tree keyed on these pairs and reach 
 
 ## Storage Model
 
-Two layers:
-
-- **HAMT-shared ResponseSets.** A ResponseSet is stored as a hash-array-mapped trie keyed by Query, mapping each member Query to its Response. Construction is by extension from a parent ResponseSet — the new root shares all unchanged structure with the parent. Roots are content-addressed: two ResponseSets with the same `(Query, Response)` members produce the same root hash, so all sharing is automatic across all queries' Bindings. The HAMT is the global storage; `queryHash` indexes and Bindings reference it.
-- **Bloom summary per ResponseSet root.** A fixed-width bitmap derived from member Query hashes, stored alongside the HAMT root. Used to reject obvious non-subsets in O(1) before the HAMT walk.
-
-The Bindings table is the per-`queryHash` index into this shared storage:
+Three SQLite tables:
 
 ```
-Bindings(
-  queryHash       BLOB,   -- granular Query identity (operation, params, inputHashes)
-  preconditionRoot BLOB,  -- ResponseSet HAMT root
-  responseHash    BLOB,   -- the recorded Response for this Query under this precondition
-  PRIMARY KEY (queryHash, preconditionRoot)
+PreconditionSets(
+  setHash  BLOB PRIMARY KEY,  -- SHA-256 of the sorted members CBOR
+  members  BLOB NOT NULL,     -- CBOR of [(queryHash, responseHash), ...] sorted by queryHash
+  bloom    BLOB               -- 256-bit Bloom summary of member queryHashes
 )
-INDEX BindingsByQueryHash ON Bindings(queryHash);
+
+SetResponses(
+  responseHash BLOB PRIMARY KEY,
+  payload      BLOB NOT NULL  -- CBOR-serialised d=0 Response
+)
+
+Bindings(
+  queryHash        BLOB NOT NULL,
+  preconditionHash BLOB NOT NULL,  -- references PreconditionSets.setHash
+  responseHash     BLOB NOT NULL,  -- references SetResponses.responseHash
+  createdAt        INTEGER DEFAULT (unixepoch()),
+  PRIMARY KEY (queryHash, preconditionHash)
+)
+CREATE INDEX BindingsByQueryHash ON Bindings(queryHash);
 ```
+
+PreconditionSets and SetResponses are content-addressed: two recordings that observe the same precondition (or produce the same response) share storage automatically via `INSERT OR IGNORE` on the hash key. Bindings is the per-`queryHash` index into the two content-addressed pools.
 
 There is no separate "Shortcut" table — `BindingsByQueryHash` *is* the shortcut. The synthetic key remains `queryHash`, exactly as in the existing design; only what lives inside each bucket changes.
 
+The current implementation stores each PreconditionSet as a single flat CBOR blob rather than a HAMT — see *HAMT-shared ResponseSets* under Known limitations for why structural sharing across sets was deferred.
+
 ## Operations
 
-Notation: `H(set)` is the HAMT root hash of `set`; `B(set)` is its Bloom summary.
+Notation: `H(set)` is the SHA-256 of `set`'s sorted CBOR encoding; `B(set)` is its Bloom summary; `mems(set)` is its decoded sorted member list.
 
 ### Subset test (the hot inner loop)
 
 ```
 isSubset(P, C):
-  # P precondition, C current; both are ResponseSet roots
-  if B(P) & B(C) != B(P): return false           # Bloom rejects definite non-subsets
-  for (q, r) in walk(P):                          # HAMT iteration over P's members
-    if lookup(C, q) != r: return false            # HAMT lookup in C
+  # P precondition, C current; both as decoded sorted member lists
+  if B(P) & B(C) != B(P): return false   # Bloom rejects definite non-subsets
+  # Linear two-pointer merge: every (q, r) in P must appear in C.
+  i = j = 0
+  while i < |P|:
+    if j == |C|: return false
+    if P[i].q == C[j].q:
+      if P[i].r != C[j].r: return false
+      i += 1; j += 1
+    elif C[j].q < P[i].q: j += 1
+    else: return false
   return true
 ```
 
-Cost: Bloom step is O(1). HAMT step is O(|P|·log n) where n is the HAMT branching factor (constant in practice). Total: O(|P|).
+Cost: Bloom is O(1) on a 32-byte word; the merge is O(|P| + |C|).
 
 ### Replay lookup
 
 ```
 lookupReplay(queryHash, C):
-  candidates = SELECT preconditionRoot, responseHash
-               FROM Bindings WHERE queryHash = ?
-  for (P, response) in candidates:
-    if isSubset(P, C):
-      return response
+  # Pull (preconditionHash, responseHash, bloom) for this queryHash in one join.
+  candidates = SELECT b.preconditionHash, b.responseHash, p.bloom
+               FROM Bindings b LEFT JOIN PreconditionSets p
+                 ON b.preconditionHash = p.setHash
+               WHERE b.queryHash = ?
+  for (preHash, response, bloom) in candidates:
+    if not bloomMayBeSubset(bloom, B(C)): continue   # cheap reject
+    P = mems(getPreconditionSet(preHash))            # blob load + CBOR decode
+    if isSubset(P, C): return response
   return MISS
 ```
 
-Cost: O(k · |P_avg|) where k = |candidates for this queryHash|. k grows with how many distinct preconditions have been recorded for the same Query.
+Cost: O(k · (|P| + |C|)) worst case, where k = candidates for this queryHash. The Bloom prefilter cuts most candidates to O(1) once preconditions diverge enough.
 
 ### Recording
 
 ```
 startRecording(queryHash, startingResponseSet):
-  return { qh: queryHash, observed: startingResponseSet, base: startingResponseSet }
+  return { qh: queryHash, observed: copy(startingResponseSet) }
 
 observeChildQuery(rec, childQh, childResponse):
-  rec.observed = extend(rec.observed, childQh, childResponse)
-  # extend returns a new HAMT root sharing structure with rec.observed.
+  insertSorted(rec.observed, (childQh, childResponse))
 
 finalizeRecording(rec, finalResponse):
   insertBinding(rec.qh, precondition = rec.observed, response = finalResponse)
@@ -113,40 +134,31 @@ A precondition is exactly what the recorder observed during the Query's evaluati
 
 ```
 insertBinding(qh, precondition, response):
-  ensureHAMTRoot(precondition)       # idempotent: writes if not present
-  ensureBloom(precondition)          # idempotent
-  INSERT OR IGNORE INTO Bindings(qh, H(precondition), H(response))
+  setHash      = H(precondition)
+  responseHash = SHA-256(response.payload)
+  INSERT OR IGNORE INTO PreconditionSets(setHash, members, bloom)
+    VALUES (setHash, CBOR(precondition), bloomOf(precondition))
+  INSERT OR IGNORE INTO SetResponses(responseHash, payload)
+  INSERT OR IGNORE INTO Bindings(qh, setHash, responseHash)
 ```
 
-Idempotent on `(queryHash, preconditionRoot)`: a recording that observed the same precondition and response as a prior one is a no-op write.
-
-### HAMT extension
-
-```
-extend(C, q, r):
-  return hamtInsert(C, q, r)
-  # hamtInsert produces a new root that shares all unchanged nodes with C.
-  # New nodes are written to the HAMT storage if not already present
-  # (content-addressed).
-```
-
-Cost: O(log n) new nodes per extension (path-copy along the trie path to the inserted key).
+Idempotent on `(queryHash, preconditionHash)`: a recording that observed the same precondition and response as a prior one is a no-op write.
 
 ## Cost analysis
 
 For an evaluation that issues N Queries against a cache with average k Bindings per queryHash and average precondition size |P|:
 
-- **Per Query lookup**: O(k · |P|). The Bloom prefilter rejects unrelated preconditions in O(1); confirmed candidates cost O(|P|) HAMT lookups.
-- **Per Query insert** (cache miss path): O(|P| · log n) for HAMT extension, O(1) for Bloom update, O(1) for Binding insert.
-- **Per evaluation total**: O(N · k_avg · |P_avg|).
+- **Per Query lookup**: one indexed `SELECT` on Bindings (O(log total_bindings)); for each candidate, an O(1) Bloom test and (if it passes) an O(|P| + |C|) merge after a blob load.
+- **Per Query insert** (cache miss path): three `INSERT OR IGNORE`s, each O(log total) on their respective primary-key indexes; serialising the precondition CBOR is O(|P|).
+- **Per evaluation total**: O(N · k_avg · (|P_avg| + |C_avg|)) in the worst case; k_avg is suppressed in practice by content-addressed deduplication of identical preconditions.
 
-For typical workloads (repeated runs of the same expressions on stable sources), k_avg stays small because identical recordings collapse via content addressing. |P_avg| is bounded by the eval depth at which the Query is issued. The hot-path cost is therefore close to O(N).
+For typical workloads (repeated runs of the same expressions on stable sources), k_avg stays small because identical recordings collapse via the `INSERT OR IGNORE` on `(queryHash, preconditionHash)`. |P_avg| is bounded by the eval depth at which the Query is issued. The hot-path cost is therefore close to O(N).
 
 Pathological growth modes worth flagging:
 
-- **k_avg blowup**: a single queryHash recorded under many distinct preconditions (e.g. across many configurations). Mitigations: LRU eviction on Bindings, or an inverted index `(queryHash, memberQuery) → Bindings` so lookup can pick the most selective member of `C` to narrow the candidate set.
-- **|P_avg| blowup**: preconditions grow with the depth at which a Query is issued and with concurrent in-flight Queries (see "Recording attribution" below). Intersection-learning future work shrinks them.
-- **Bloom false positives**: with a fixed-width filter, false-positive rate is `(1 − e^(−mk/n))^k` for n bits, k hashes, m members. Tuning is straightforward; recommend 256 bits and 4 hashes for member counts up to ~100.
+- **k_avg blowup**: a single queryHash recorded under many distinct preconditions (e.g. across many configurations). Mitigations: time-based eviction on Bindings, or an inverted index `(queryHash, memberQuery) → Bindings` so lookup can pick the most selective member of `C` to narrow the candidate set.
+- **|P_avg| blowup**: preconditions grow with the depth at which a Query is issued and with concurrent in-flight Queries (see "Recording attribution" below). Intersection-learning (now shipped — see Known limitations) shrinks them by deriving smaller equivalent preconditions from pairs of same-response Bindings.
+- **Bloom false positives**: with a fixed-width filter, false-positive rate is `(1 − e^(−mk/n))^k` for n bits, k hashes, m members. The current 256-bit / 4-hash configuration is fine for member counts up to ~100; larger preconditions would warrant widening.
 
 ## Recording attribution
 
@@ -156,7 +168,8 @@ Over-approximation is sound: the recorded precondition is always a superset of t
 
 ## Known limitations and future work
 
-- **Intersection learning**: when two recordings of the same queryHash produce different preconditions but identical Responses, the actually-required precondition is their intersection. Recording this back as a third (smaller) precondition lets future lookups match more contexts. Deferred to v2.
+- **Intersection learning (implemented)**: when two recordings of the same queryHash produce different preconditions but identical Responses, the actually-required precondition is their intersection. `runLearningPass` (invoked by `compactAll` or `nix eval-cache compact <queryHash>`) records that intersection as a third Binding and then evicts the two original Bindings strictly subsumed by it. Bench-validated: a 6-invocation synthetic walk collapses 6 Bindings → 3 post-compact.
+- **HAMT-shared ResponseSets**: stored preconditions could share structure across recordings via a HAMT keyed by Query, so an `extend` operation would write O(log n) new nodes rather than re-CBOR-encoding the whole set. The current flat-CBOR-blob storage avoided the implementation cost at the price of duplicated bytes across overlapping preconditions. Worth revisiting if profiling on long-lived caches shows `PreconditionSets` bytes dominating.
 - **Prefetch hints**: per-queryHash union of past recordings' precondition QuerySets, used to fire d>0 lookups concurrently rather than waiting for the box to ask each in turn. Pure perf, layered on top.
 - **Bloom prescreen (implemented)**: a 256-bit Bloom filter is stored alongside every PreconditionSet and used in `lookupSetsReplay` to skip candidates whose precondition is definitely not a subset of the current context. At the current bench scale (single-digit candidates per queryHash) the prescreen doesn't show measurable timing impact because the per-candidate subset test was already fast; the benefit shows up once a single queryHash accumulates many recorded Bindings (e.g. after extensive intersection learning across long-lived caches). The skip counter is reported by `nix eval-cache stats` (`lookupBloomPrescreenSkips`) so its effectiveness can be measured per session.
 - **compactAll cost (measured)**: on a representative history-bench cache (3 queryHashes, 9 Bindings, 287 SetResponses, 1.66 MB DB) the first compactAll completes in 57 ms (learning + eviction + GC + VACUUM). The idempotent second run is 54 ms — essentially the cost of opening the DB, counting rows, and discovering nothing changed. Fast enough that an opt-in end-of-session auto-trigger is plausible; on by default would still add 50 ms to short-eval shutdowns.
