@@ -288,18 +288,24 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
 
         // Walk forward: Query → (depth>0 Query/Result)* → Result(depth=0)
         std::vector<NodeHash> pendingValidated;
+        std::vector<std::pair<QueryHash, std::string>> pendingCrossFeed; // (qh, resultPayload) per validated d>0 event
         auto resultNode = tracingIndex.findResult(
             shortcut.nodeHash,
-            [&](const std::string & queryPayload, const NodeHash & resultNodeHash, const std::string & resultPayload) {
+            [&](const QueryHash & d0Qh,
+                const std::string & queryPayload,
+                const NodeHash & resultNodeHash,
+                const std::string & resultPayload) {
                 auto currentResponse = getCurrentResponse(queryPayload);
                 if (!currentResponse || resultPayload != *currentResponse)
                     return false;
                 pendingValidated.push_back(resultNodeHash);
+                pendingCrossFeed.emplace_back(d0Qh, resultPayload);
                 return true;
             });
 
         if (!resultNode) {
             pendingValidated.clear();
+            pendingCrossFeed.clear();
             continue;
         }
 
@@ -311,7 +317,12 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
 
         /* Cross-feed the sets-based index: a trie hit gives us a
            validated (queryHash, response) pair that downstream
-           sets-based lookups can use as part of their context. */
+           sets-based lookups can use as part of their context.
+           Feed the top-level Query AND every validated d>0 event
+           along the chain, so sub-queries whose precondition
+           includes those events can hit sets-based on next lookup. */
+        for (const auto & [d0Qh, d0Payload] : pendingCrossFeed)
+            addToCurrentSetMembers(d0Qh, TracingIndex::computeResponseHash(d0Payload));
         addToCurrentSetMembers(queryHash, TracingIndex::computeResponseHash(resultNode->payload));
 
         tracingCacheLog("replay hit: %s", Q::tag);

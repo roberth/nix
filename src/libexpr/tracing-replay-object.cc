@@ -66,7 +66,10 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
         pendingValidated.clear();
         return tracingIndex.findResult(
             child.nodeHash,
-            [&](const std::string & queryPayload, const NodeHash & resultNodeHash, const std::string & resultPayload) {
+            [&](const QueryHash &,
+                const std::string & queryPayload,
+                const NodeHash & resultNodeHash,
+                const std::string & resultPayload) {
                 auto currentResponse = evaluator.getCurrentResponse(queryPayload);
                 if (!currentResponse || resultPayload != *currentResponse)
                     return false;
@@ -184,7 +187,10 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
         pendingValidated.clear();
         return tracingIndex.findResult(
             child.nodeHash,
-            [&](const std::string & queryPayload, const NodeHash & resultNodeHash, const std::string & resultPayload) {
+            [&](const QueryHash &,
+                const std::string & queryPayload,
+                const NodeHash & resultNodeHash,
+                const std::string & resultPayload) {
                 auto currentResponse = evaluator.getCurrentResponse(queryPayload);
                 if (!currentResponse || resultPayload != *currentResponse)
                     return false;

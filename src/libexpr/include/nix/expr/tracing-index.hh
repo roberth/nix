@@ -262,9 +262,11 @@ public:
      */
     std::optional<ResultNode> findResult(
         const NodeHash & queryNodeHash,
-        std::function<
-            bool(const std::string & queryPayload, const NodeHash & resultNodeHash, const std::string & resultPayload)>
-            validator);
+        std::function<bool(
+            const QueryHash & d0EventQueryHash,
+            const std::string & queryPayload,
+            const NodeHash & resultNodeHash,
+            const std::string & resultPayload)> validator);
 
     // -------------------------------------------------------------------------
     // Sets-based index (see doc/tracing-sets-index-data-model.md)
