@@ -343,6 +343,30 @@ struct CmdEvalCacheStats : Command
 
 // ---- nix eval-cache compact ----
 
+struct CmdEvalCacheCompactAll : Command
+{
+    std::string description() override
+    {
+        return "Run intersection-learning on every queryHash in the sets-based cache.";
+    }
+
+    Category category() override
+    {
+        return catUtility;
+    }
+
+    void run() override
+    {
+        TracingIndex index;
+        auto queryHashes = index.listBindingQueryHashes();
+        size_t total = 0;
+        size_t scanned = queryHashes.size();
+        for (const auto & qh : queryHashes)
+            total += index.runLearningPass(qh);
+        std::cout << "scanned " << scanned << " queryHash(es); inserted " << total << " new Binding(s)\n";
+    }
+};
+
 struct CmdEvalCacheCompactOne : Command
 {
     std::vector<std::string> queryHashHexes;
@@ -382,3 +406,4 @@ static auto rTree = registerCommand2<CmdEvalCacheTree>({"eval-cache", "tree"});
 static auto rShortcuts = registerCommand2<CmdEvalCacheShortcuts>({"eval-cache", "shortcuts"});
 static auto rStats = registerCommand2<CmdEvalCacheStats>({"eval-cache", "stats"});
 static auto rCompactOne = registerCommand2<CmdEvalCacheCompactOne>({"eval-cache", "compact"});
+static auto rCompactAll = registerCommand2<CmdEvalCacheCompactAll>({"eval-cache", "compact-all"});

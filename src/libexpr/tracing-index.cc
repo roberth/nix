@@ -1056,6 +1056,21 @@ bool TracingIndex::isSubset(const SetMembers & precondition, const SetMembers & 
     return true;
 }
 
+std::vector<QueryHash> TracingIndex::listBindingQueryHashes()
+{
+    std::vector<QueryHash> result;
+    auto state(_state->lock());
+    state->checkpoint();
+    /* Ad-hoc query — no prepared statement for this since it's a
+       maintenance entrypoint, not on a hot path. */
+    SQLiteStmt stmt;
+    stmt.create(state->db, "SELECT DISTINCT queryHash FROM Bindings");
+    auto q = stmt.use();
+    while (q.next())
+        result.push_back(readHash(q, 0));
+    return result;
+}
+
 size_t TracingIndex::runLearningPass(const QueryHash & queryHash)
 {
     /* Read every Binding for queryHash + its materialised

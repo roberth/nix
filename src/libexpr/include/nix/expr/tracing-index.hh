@@ -401,6 +401,15 @@ public:
      */
     size_t runLearningPass(const QueryHash & queryHash);
 
+    /**
+     * Iterate every distinct queryHash that has at least one
+     * Binding in the sets-based index. Pulls them all in memory; the
+     * count is bounded by the number of distinct granular Queries
+     * that recordings have ever produced (typically thousands at
+     * most, easily held in memory).
+     */
+    std::vector<QueryHash> listBindingQueryHashes();
+
 private:
     struct State;
 
