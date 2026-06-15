@@ -520,4 +520,134 @@ TEST_F(TracingDecisionGraphTest, PersistsAcrossReopen)
     }
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   Scale / stress: many Qs × many recordings, verify isolation,
+   measure storage, exercise walk under load.
+   ───────────────────────────────────────────────────────────────────── */
+
+TEST_F(TracingDecisionGraphTest, ManyQueriesAreIsolated)
+{
+    /* Record N distinct Queries, each with a different FactSet and
+       Result. Verify each can be replayed back to its own Result
+       and that no cross-contamination happens. */
+    TracingDecisionGraph g(dbPath);
+    constexpr size_t N = 100;
+
+    std::vector<Hash> qs, results;
+    std::vector<TracingDecisionGraph::SetHash> factSets;
+    for (size_t i = 0; i < N; ++i) {
+        auto q = sha("Q-" + std::to_string(i));
+        auto req = sha("req-" + std::to_string(i));
+        auto resp = sha("resp-" + std::to_string(i));
+        auto fs = g.insertFactSet({{req, resp}});
+        auto r = sha("R-" + std::to_string(i));
+
+        g.record(q, fs, r);
+        qs.push_back(q);
+        factSets.push_back(fs);
+        results.push_back(r);
+    }
+
+    /* Replay each Q with the *correct* dispatch — should hit its
+       own Result. */
+    for (size_t i = 0; i < N; ++i) {
+        auto hit = g.walk(qs[i], [&](const Hash & req) {
+            EXPECT_EQ(req, sha("req-" + std::to_string(i)))
+                << "dispatch invoked with unexpected Request for Q " << i;
+            return sha("resp-" + std::to_string(i));
+        });
+        ASSERT_TRUE(hit.has_value()) << "Q " << i << " missed";
+        EXPECT_EQ(*hit, results[i]) << "Q " << i << " hit wrong Result";
+    }
+
+    /* Replay Q[0] with Q[1]'s response — should miss (wrong
+       Response → wrong next FactSet hash). */
+    auto wrongMiss = g.walk(qs[0], [&](const Hash &) {
+        return sha("resp-1");
+    });
+    EXPECT_FALSE(wrongMiss.has_value())
+        << "Q[0] should miss when given Q[1]'s response, not return stale Q[1] result";
+}
+
+TEST_F(TracingDecisionGraphTest, ManyRecordingsSameQDeepRecordings)
+{
+    /* One Q, many recordings with varying-content FactSets, each
+       of moderate depth (10 Facts). Stress-tests record() and walk()
+       at realistic per-Q breadth. */
+    TracingDecisionGraph g(dbPath);
+    constexpr size_t N_RECORDINGS = 50;
+    constexpr size_t FACTS_PER = 10;
+
+    auto q = sha("Q");
+    std::vector<std::vector<TracingDecisionGraph::Fact>> allFactSets;
+    std::vector<Hash> allResults;
+
+    for (size_t i = 0; i < N_RECORDINGS; ++i) {
+        std::vector<TracingDecisionGraph::Fact> facts;
+        for (size_t j = 0; j < FACTS_PER; ++j) {
+            auto req = sha("rec-" + std::to_string(i) + "-req-" + std::to_string(j));
+            auto resp = sha("rec-" + std::to_string(i) + "-resp-" + std::to_string(j));
+            facts.push_back({req, resp});
+        }
+        auto fs = g.insertFactSet(facts);
+        auto r = sha("R-" + std::to_string(i));
+        g.record(q, fs, r);
+        allFactSets.push_back(std::move(facts));
+        allResults.push_back(r);
+    }
+
+    /* Every recording should be replayable with its own dispatch
+       table. */
+    for (size_t i = 0; i < N_RECORDINGS; ++i) {
+        std::map<Hash, Hash> table;
+        for (const auto & f : allFactSets[i])
+            table.emplace(f.request, f.response);
+
+        auto hit = g.walk(q, [&](const Hash & req) -> Hash {
+            auto it = table.find(req);
+            if (it == table.end()) {
+                /* This is the wrong-branch case: walk speculated an
+                   edge from another recording. Return a deliberately
+                   wrong response so the candidate FactSet doesn't
+                   match storage and we fall through to the right
+                   branch. */
+                return sha("bogus-" + req.to_string(HashFormat::Base16, false).substr(0, 8));
+            }
+            return it->second;
+        });
+        ASSERT_TRUE(hit.has_value()) << "recording " << i << " missed";
+        EXPECT_EQ(*hit, allResults[i]) << "recording " << i << " hit wrong Result";
+    }
+}
+
+TEST_F(TracingDecisionGraphTest, DeepRecordingPersistsAcrossReopen)
+{
+    /* A 50-fact deep recording survives a database close/reopen. */
+    constexpr size_t DEPTH = 50;
+    auto q = sha("deep-Q");
+    auto r = sha("deep-R");
+    {
+        TracingDecisionGraph g(dbPath);
+        std::vector<TracingDecisionGraph::Fact> facts;
+        for (size_t i = 0; i < DEPTH; ++i)
+            facts.push_back({sha("dr-" + std::to_string(i)), sha("dv-" + std::to_string(i))});
+        auto fs = g.insertFactSet(facts);
+        g.record(q, fs, r);
+    }
+    /* Reopen and walk; the recording should be replayable. */
+    TracingDecisionGraph g(dbPath);
+    auto hit = g.walk(q, [](const Hash & req) {
+        /* Use the same naming convention; extract i from the seeded
+           Request name doesn't work without round-tripping. Instead
+           build a static dispatch table on demand. */
+        for (size_t i = 0; i < 1000; ++i) {
+            if (req == hashString(HashAlgorithm::SHA256, "dr-" + std::to_string(i)))
+                return hashString(HashAlgorithm::SHA256, "dv-" + std::to_string(i));
+        }
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(*hit, r);
+}
+
 } // namespace nix
