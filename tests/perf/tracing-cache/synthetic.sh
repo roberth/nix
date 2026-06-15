@@ -39,12 +39,12 @@ check() {
 
 check "cold"                 '"data1\n|flagA\n"' "$(eval)"
 check "warm-same"            '"data1\n|flagA\n"' "$(eval)"
-sleep 1; echo "data2" > data.txt
+echo "data2" > data.txt
 check "after data-edit"      '"data2\n|flagA\n"' "$(eval)"
 check "warm with new data"   '"data2\n|flagA\n"' "$(eval)"
-sleep 1; echo "flagB" > flag.txt
+echo "flagB" > flag.txt
 check "after flag-edit"      '"data2\n|flagB\n"' "$(eval)"
-sleep 1; echo "data1" > data.txt
+echo "data1" > data.txt
 check "after data revert"    '"data1\n|flagB\n"' "$(eval)"
 
 echo
@@ -61,11 +61,11 @@ nix eval-cache stats --extra-experimental-features nix-command
 
 echo
 echo "=== Re-verify correctness on the compacted cache ==="
-sleep 1; echo "data1" > data.txt; echo "flagA" > flag.txt
+echo "data1" > data.txt; echo "flagA" > flag.txt
 check "post-compact data1/flagA"   '"data1\n|flagA\n"' "$(eval)"
-sleep 1; echo "data2" > data.txt; echo "flagB" > flag.txt
+echo "data2" > data.txt; echo "flagB" > flag.txt
 check "post-compact data2/flagB"   '"data2\n|flagB\n"' "$(eval)"
-sleep 1; echo "data99" > data.txt; echo "flagX" > flag.txt
+echo "data99" > data.txt; echo "flagX" > flag.txt
 check "post-compact novel state"   '"data99\n|flagX\n"' "$(eval)"
 
 echo
