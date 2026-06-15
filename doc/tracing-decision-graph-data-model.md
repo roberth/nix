@@ -359,31 +359,45 @@ recurring nodes deduplicate. Per step cost is O(1) hash lookups, plus
 O(|requestSet|) when a split occurs. Per-trace cost is therefore
 O(trace length + splits · |requestSet|).
 
-## What this does and does not solve
+## What Phase 1 covers
 
-Phase 1 alone:
+- Navigated replay: O(trace length) hash lookups + the unavoidable
+  cost of recursively replaying each Request. No candidate scans, no
+  probabilistic prefilters.
+- Incremental recording: O(events) total, with O(|requestSet|) per
+  Patricia split when one is triggered.
+- Structural sharing: content-addressed RequestSet and FactSet
+  pools with parent-pointer delta encoding. Shared prefixes across
+  unrelated `Q`s collapse automatically.
+- Patricia split keeps shape divergence cheap on the RequestSet
+  axis without introducing speculation at lookup.
 
-- ✓ Replay is navigated, not scanned. Hot path is O(trace length).
-- ✓ Recording is incremental and O(events) total.
-- ✓ Storage shares structure via content addressing and parent-pointer
-  deltas.
-- ✓ Patricia split keeps shape divergence cheap on the RequestSet
-  axis.
-- ✗ Preconditions can still be wider than necessary (over-approximation
-  from concurrent in-flight Queries). A successful navigation
-  terminates at a FactSet that includes Facts the Result did not
-  actually depend on.
-- ✗ The fan-out of next-FactSets from a single RequestSet grows with
-  content edits: each unique combination of Responses produces a new
-  next-FactSet hash in the storage layer, even if many of those
-  next-FactSets ultimately lead to the same Result.
+## The Phase 1 limitation Phase 2 addresses
 
-Both unaddressed items are the substance Phase 2 will tackle by
-discovering, when two `(Q, R)` terminals exist with overlapping but
-distinct preconditions, that the actually-required precondition is
-their intersection. The structural foundation (content-addressed
-FactSet nodes, parent-pointer delta, alternating graph) makes that
-work cheap.
+Phase 1 hits only **exact-response paths**: at every step the actual
+Responses must extend the source FactSet to a next-FactSet hash that
+already exists in storage. A source edit that flips even one Response
+diverts the path to a previously-unseen FactSet hash, and Phase 1
+sees that as a miss — even if the flipped Response was irrelevant to
+the eventual Result.
+
+This isn't about preconditions being wider than necessary
+(over-approximation is structural, a consequence of treating the box
+as opaque, and applies to Phase 2 too). And it isn't about fan-out in
+storage (each next-FactSet is O(1) to look up; growth is proportional
+to observed variation and untracked otherwise). It's specifically
+about not having a mechanism to recognise that two recorded paths to
+the same Result diverged on Facts that didn't matter.
+
+Phase 2's job is exactly that recognition: when two `(Q, Result)`
+terminals exist with overlapping but distinct FactSets, the
+intersection of those FactSets identifies the Facts that actually
+mattered for the Result. A shortcut Terminal placed at the
+intersection FactSet hub lets future navigations hit without needing
+the irrelevant Facts to match. The Phase 1 structural foundation
+(content-addressed FactSet nodes, parent-pointer delta, alternating
+graph) is what makes that intersection cheap to discover and to
+attach.
 
 ## Explicitly out of scope
 
