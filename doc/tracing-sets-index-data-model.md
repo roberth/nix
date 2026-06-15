@@ -1,5 +1,30 @@
 # Trace Index Data Model (Sets-Based)
 
+## Try it
+
+With a build of this branch (`build/src/nix/nix` on `PATH`,
+`build/src/lib*` on `LD_LIBRARY_PATH`):
+
+```sh
+# Cold + warm an eval with the tracing cache enabled.
+nix eval --impure --option tracing-eval-cache true \
+    .#nixosConfigurations.X.config.system.build.toplevel.drvPath
+
+# Inspect what landed in the sets-based index.
+nix eval-cache stats
+
+# Run intersection-learning + GC + VACUUM across every queryHash.
+nix eval-cache compact-all
+
+# Or, on a single queryHash you got from another inspection tool:
+nix eval-cache compact <queryHash>
+```
+
+The bench harnesses under `tests/perf/tracing-cache/` (synthetic
+file-edit correctness, git-history cross-commit reuse, multi-branch
+cross-branch reuse) exercise the cache end-to-end against any local
+nix repo.
+
 ## Motivation
 
 The tracing cache layer records cache traces as it observes a Nix interpreter that, treated as a black box, computes several answers concurrently and interleaves their environment queries into a single event stream.
