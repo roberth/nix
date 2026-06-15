@@ -68,6 +68,49 @@ class TracingWriter
     std::map<Object *, VirtualRootId> virtualRootRegistry;
     std::vector<ref<Object>> virtualRootObjects; // extends Object lifetime
 
+    /* Sets-based recording state. `observedMembers` is append-only
+       during a recording; each in-flight Query captures the index at
+       which it started, and on finalize its precondition is the
+       sort+dedup of the slice from that index to the current end.
+       This lets us produce per-Query preconditions without paying for
+       sorted insertion on every observed event. */
+    std::vector<TracingIndex::SetMember> observedMembers;
+
+    struct InFlightQuery
+    {
+        QueryHash queryHash;
+        size_t startingIndex; // observedMembers.size() at push time
+    };
+    std::vector<InFlightQuery> inFlightStack;
+
+    /* Finalise the top-of-stack Query: pop it, compute its precondition
+       from the slice of observedMembers added since its start, and
+       write a Binding mapping (queryHash, precondition) → responseHash.
+       The slice is sorted and deduplicated; the source slice in
+       observedMembers is left intact so outer in-flight Queries still
+       see it. */
+    void finaliseSetsBinding(const Hash & responseHash)
+    {
+        if (!index || inFlightStack.empty())
+            return;
+        auto top = inFlightStack.back();
+        inFlightStack.pop_back();
+
+        TracingIndex::SetMembers precondition(
+            observedMembers.begin() + top.startingIndex, observedMembers.end());
+        std::sort(precondition.begin(), precondition.end());
+        precondition.erase(std::unique(precondition.begin(), precondition.end()), precondition.end());
+
+        auto preconditionHash = index->insertPreconditionSet(precondition);
+        index->insertBinding(top.queryHash, preconditionHash, responseHash);
+
+        /* When the stack drains, this recording session is done.
+           Drop the accumulated observations so a long-running writer
+           (daemon mode, repeated top-level evals) doesn't leak. */
+        if (inFlightStack.empty())
+            observedMembers.clear();
+    }
+
 public:
     TracingWriter(TraceSink & sink, TracingIndex * index = nullptr)
         : sink(sink)
@@ -118,6 +161,8 @@ public:
         auto queryNodeHash = index->insertQuery(afterHash, queryHash, jsonToCborString(j));
         afterHash = queryNodeHash;
 
+        inFlightStack.push_back({queryHash, observedMembers.size()});
+
         return {valueNum, {queryHash, queryNodeHash}};
     }
 
@@ -141,6 +186,8 @@ public:
         auto queryNodeHash = index->insertQuery(afterHash, queryHash, jsonToCborString(j), structuralParent);
         afterHash = queryNodeHash;
 
+        inFlightStack.push_back({queryHash, observedMembers.size()});
+
         return {valueNum, {queryHash, queryNodeHash}};
     }
 
@@ -160,8 +207,15 @@ public:
         auto queryHash = TracingIndex::computeQueryHash(resp.request);
         auto queryNodeHash =
             index->insertQuery(afterHash, queryHash, jsonToCborString(reqJson), std::nullopt, /*depth=*/1);
-        auto resultNodeHash = index->insertResult(queryNodeHash, jsonToCborString(respJson), queryNodeHash);
+        auto respPayload = jsonToCborString(respJson);
+        auto resultNodeHash = index->insertResult(queryNodeHash, respPayload, queryNodeHash);
         afterHash = resultNodeHash;
+
+        /* Record this d>0 observation for the sets-based index too.
+           Every active in-flight Query will pick this up via its
+           startingIndex when it finalises. */
+        auto responseHash = index->insertSetResponse(respPayload);
+        observedMembers.push_back({queryHash, responseHash});
     }
 
     /**
@@ -180,8 +234,12 @@ public:
         auto queryHash = std::visit([](const auto & q) { return TracingIndex::computeQueryHash(q); }, query);
         auto queryNodeHash =
             index->insertQuery(afterHash, queryHash, jsonToCborString(queryJson), std::nullopt, /*depth=*/1);
-        auto resultNodeHash = index->insertResult(queryNodeHash, jsonToCborString(resultJson), queryNodeHash);
+        auto resultPayload = jsonToCborString(resultJson);
+        auto resultNodeHash = index->insertResult(queryNodeHash, resultPayload, queryNodeHash);
         afterHash = resultNodeHash;
+
+        auto responseHash = index->insertSetResponse(resultPayload);
+        observedMembers.push_back({queryHash, responseHash});
     }
 
     /**
@@ -197,8 +255,13 @@ public:
             return std::nullopt;
 
         nlohmann::json j = result;
-        auto resultNodeHash = index->insertResult(*afterHash, jsonToCborString(j), qh.queryNodeHash);
+        auto resultPayload = jsonToCborString(j);
+        auto resultNodeHash = index->insertResult(*afterHash, resultPayload, qh.queryNodeHash);
         afterHash = resultNodeHash;
+
+        auto responseHash = index->insertSetResponse(resultPayload);
+        finaliseSetsBinding(responseHash);
+        observedMembers.push_back({*qh.queryHash, responseHash});
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,

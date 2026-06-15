@@ -502,6 +502,45 @@ TEST_F(TracingReplayTest, SetsLookupHitAndMiss)
     EXPECT_FALSE(wrongMiss.has_value());
 }
 
+TEST_F(TracingReplayTest, SetsRecordingViaTracingEvaluatorProducesBinding)
+{
+    /* End-to-end: run a recording through TracingEvaluator (which uses
+       TracingWriter under the hood) and verify that at least one
+       Binding lands in the sets-based index for the recorded Query.
+       The simplest case: evalExpr "42" produces one top-level Query
+       (evalExpr) with no d>0 events, so its precondition is empty. */
+    TracingIndex index(dbPath);
+
+    {
+        auto sink = std::make_shared<CollectingTraceSink>();
+        TracingWriter writer(*sink, &index);
+        auto interpreter = make_ref<Interpreter>(makeState());
+        TracingEvaluator tracing(writer, interpreter);
+        auto obj = tracing.evalExpr("42", state->rootedPath(CanonPath::root));
+        obj->getInt();
+        // Capture the queryHash of evalExpr "42" so we can probe Bindings for it.
+        // The query's structure is fixed; reproduce its hash via the same path.
+    }
+
+    TracingIndex::flushAllWriteQueues();
+
+    /* Probe: lookupSetsReplay for an empty current context should
+       succeed for any Binding whose precondition is empty. Iterate
+       all known queryHashes is awkward without the queryHash itself,
+       so instead just verify Bindings table is non-empty by trying
+       lookupSetsReplay on the queryHashes appearing in Shortcuts. */
+    auto state(index.selectShortcuts(hashString(HashAlgorithm::SHA256, "nonexistent")));
+    // (We don't know the recorded queryHashes here without intercepting
+    // TracingWriter; instead, verify indirectly: SELECT COUNT(*) > 0.)
+    // The simplest direct check is to query SQLite via getPreconditionSet
+    // on the well-known empty-set hash.
+    TracingIndex::SetMembers empty;
+    auto emptyHash = TracingIndex::computePreconditionSetHash(empty);
+    auto roundtrip = index.getPreconditionSet(emptyHash);
+    EXPECT_TRUE(roundtrip.has_value()) << "evalExpr should have produced at least one Binding "
+                                          "with an empty precondition (i.e. inserted the empty set)";
+}
+
 TEST_F(TracingReplayTest, SetsLookupPicksFirstValidBinding)
 {
     TracingIndex index(dbPath);
