@@ -78,6 +78,16 @@ class TracingReplayEvaluator : public Evaluator
      * to the temporal-trie walker. Each successful lookup (sets-based
      * or trie) appends its (queryHash, responseHash) so downstream
      * lookups see this query as part of their precondition context.
+     *
+     * Lifetime: tied to this `TracingReplayEvaluator` instance and
+     * grows monotonically. Single-shot CLI invocations create a fresh
+     * instance per session so this is naturally bounded. Long-lived
+     * hosts (a daemon embedding TracingReplayEvaluator) should
+     * destroy and recreate the evaluator between user requests to
+     * avoid cross-request context leakage (which would be merely
+     * inefficient — not incorrect, since each (queryHash,
+     * responseHash) is content-addressed and false hits would
+     * require both colliding hashes).
      */
     TracingIndex::SetMembers currentSetMembers;
 
