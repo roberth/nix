@@ -331,13 +331,18 @@ struct CmdEvalCacheStats : Command
     void run() override
     {
         TracingIndex index;
-
-        // Find all root queries (afterHash = NULL)
-        // and count shortcuts, queries, results
-        auto shortcuts = index.selectShortcuts(Hash(HashAlgorithm::SHA256)); // dummy, we need a stats method
-        // For now, just show what we can access
-        std::cout << "Trie location: ~/.cache/nix/eval-tracing-index-v2/index.sqlite\n";
-        std::cout << "(Use 'nix eval-cache inspect <hash>' to explore nodes)\n";
+        auto s = index.getStats();
+        std::cout << "Sets-based index:\n"
+                  << "  queryHashes with Bindings : " << s.queryHashesWithBindings << "\n"
+                  << "  total Bindings            : " << s.totalBindings << "\n"
+                  << "  PreconditionSets stored   : " << s.preconditionSets << "\n"
+                  << "  SetResponses stored       : " << s.setResponses << "\n";
+        if (s.totalBindings > 0 && s.queryHashesWithBindings > 0) {
+            double avg = double(s.totalBindings) / double(s.queryHashesWithBindings);
+            std::cout << "  avg Bindings per queryHash: " << avg << "\n";
+        }
+        std::cout << "\nDB location: ~/.cache/nix/eval-tracing-index-v2/index.sqlite\n"
+                     "Run 'nix eval-cache compact-all' to apply intersection learning + GC.\n";
     }
 };
 

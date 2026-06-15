@@ -480,6 +480,19 @@ public:
     };
     CompactResult compactAll();
 
+    /**
+     * Sets-based cache statistics for the eval-cache stats CLI and
+     * dev tooling. Cheap COUNT queries — no traversal.
+     */
+    struct CacheStats
+    {
+        size_t queryHashesWithBindings;
+        size_t totalBindings;
+        size_t preconditionSets;
+        size_t setResponses;
+    };
+    CacheStats getStats();
+
 private:
     struct State;
 

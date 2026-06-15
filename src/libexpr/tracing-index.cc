@@ -1207,6 +1207,26 @@ std::pair<size_t, size_t> TracingIndex::runGC()
     return {preDeleted, respDeleted};
 }
 
+TracingIndex::CacheStats TracingIndex::getStats()
+{
+    CacheStats s{};
+    auto state(_state->lock());
+    state->checkpoint();
+    auto count = [&](const std::string & sql) -> size_t {
+        SQLiteStmt stmt;
+        stmt.create(state->db, sql);
+        auto q = stmt.use();
+        if (!q.next())
+            return 0;
+        return static_cast<size_t>(q.getInt(0));
+    };
+    s.queryHashesWithBindings = count("SELECT COUNT(DISTINCT queryHash) FROM Bindings");
+    s.totalBindings = count("SELECT COUNT(*) FROM Bindings");
+    s.preconditionSets = count("SELECT COUNT(*) FROM PreconditionSets");
+    s.setResponses = count("SELECT COUNT(*) FROM SetResponses");
+    return s;
+}
+
 TracingIndex::CompactResult TracingIndex::compactAll()
 {
     CompactResult r{};
