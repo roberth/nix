@@ -153,4 +153,18 @@ NixOS bench (`nixosConfigurations.test...drvPath`):
 - Warm: 60ms across three consecutive runs (≈ 240× speedup).
 - DB size after one cold+warm cycle: 80 KB.
 
+History-walking bench (5 sequential nixpkgs commits, `lib.version`, same on-disk path so paths match across commits):
+
+| Commit | Time | Bindings added |
+|--------|------|----------------|
+| b2d6ae39 (cold)              | 1.544s | +12 |
+| 1da9d535                     | 0.069s | 0   |
+| 08325fd4                     | 1.492s | +2  |
+| bf574729                     | 1.503s | +1  |
+| 2670f356                     | 1.502s | +1  |
+
+Commit 2 has lib content identical to commit 1 (its diff touches nixos modules only), so it hits the cache fully: zero new bindings, ~22× warm speedup. Subsequent commits add only the bindings that genuinely changed — concrete demonstration of incremental cross-commit reuse. The cache stayed at 1 MB after walking 5 commits.
+
+Bench harnesses live at `/tmp/sets-validation/` in the sandbox: `synthetic.sh` (correctness on edit/revert) and `git-history-bench.sh` (cross-commit cache reuse). They're sandbox-specific (hardcoded paths) and not yet integrated into the test suite.
+
 
