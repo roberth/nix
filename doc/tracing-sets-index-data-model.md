@@ -133,8 +133,24 @@ Over-approximation is sound: the recorded precondition is always a superset of t
 
 - **Intersection learning**: when two recordings of the same queryHash produce different preconditions but identical Responses, the actually-required precondition is their intersection. Recording this back as a third (smaller) precondition lets future lookups match more contexts. Deferred to v2.
 - **Prefetch hints**: per-queryHash union of past recordings' precondition QuerySets, used to fire d>0 lookups concurrently rather than waiting for the box to ask each in turn. Pure perf, layered on top.
+- **Cross-feed from legacy trie walker**: when the temporal-trie walker validates d>0 events on the path to a shortcut Result, those (queryHash, responseHash) pairs should be added to `currentSetMembers` so subsequent sets-based lookups see them. The current implementation only cross-feeds the top-level Query's (queryHash, responseHash) pair, leaving sub-queries that depend on intermediate d>0 events to fall back to the trie. Perf only — correctness is preserved because the trie still hits.
 - **GC**: Bindings with no recent matches and HAMT nodes with no live references should be evicted. Deferred.
 - **`d=2` (ambient incoming)**: handled out of band by a different mechanism, not modelled here.
 - **`builtins.cache`**: requires extra theory around explicit user-controlled cache scopes; out of scope for the initial implementation.
+
+## Observed validation results (v1)
+
+Synthetic test fixture (two file reads + concatenation, mutated across six invocations):
+
+- All six invocations return correct values across cold/warm/edit/revert scenarios.
+- 6 Bindings recorded across 4 distinct (data, flag) content combinations.
+- The dominant queryHash gets the same Response across all 4 preconditions (a structural query whose answer doesn't actually depend on the file contents) — concrete evidence of the *wide precondition* pattern that intersection learning addresses.
+- 5 PreconditionSets stored: 1 empty + 4 with 3 members each (the recorder pulls in two file reads + the parent eval per recording context).
+
+NixOS bench (`nixosConfigurations.test...drvPath`):
+
+- Cold: 14.6s (recording).
+- Warm: 60ms across three consecutive runs (≈ 240× speedup).
+- DB size after one cold+warm cycle: 80 KB.
 
 
