@@ -229,6 +229,19 @@ public:
         const std::unordered_map<Hash, Hash> & responseFor,
         const std::unordered_set<Hash> & allRequests);
 
+    /* Fastest overload: caller also supplies the canonical RequestSet
+       hash for the *current* allRequests (e.g. from an incremental
+       TrieBuilder). When record() falls through to the whole-remaining
+       insert at cur=∅, it uses this precomputed hash directly and
+       avoids re-running insertRequestSet over allRequests. */
+    void record(
+        const QueryHash & q,
+        const SetHash & factSet,
+        const ResultHash & result,
+        const std::unordered_map<Hash, Hash> & responseFor,
+        const std::unordered_set<Hash> & allRequests,
+        const SetHash & allRequestsRsHash);
+
     /* Navigate from (Q, ∅) using `dispatch` to evaluate Requests
        the recorded path needs. Returns the Result hash on hit,
        nullopt on miss. The dispatch callback is invoked for each
@@ -238,6 +251,56 @@ public:
     std::optional<ResultHash> walk(
         const QueryHash & q,
         const std::function<ResponseHash(const RequestHash &)> & dispatch);
+
+    /* Persist one trie node by hash. Idempotent (INSERT OR IGNORE +
+       in-process cache short-circuit). Used by TrieBuilder to push
+       its dirty nodes to storage. */
+    void persistRequestSetNode(const Hash & nodeHash, std::string_view payload);
+
+    /* ─────────────────────────────────────────────────────────────────
+       Incremental RequestSet builder
+       ─────────────────────────────────────────────────────────────────
+
+       Maintains an in-memory hash-prefix trie that grows by one
+       Request hash at a time. Used by TracingWriter to keep a
+       running canonical RequestSet hash for the global v13FactSet's
+       requests without paying O(N) per logResult.
+
+       Insertion is O(log N) amortised — one path-copy from leaf to
+       root, with a split at the leaf if it would exceed
+       TRIE_SPLIT_THRESHOLD. The root hash is computed lazily and
+       cached; calling rootHash() after a mutation re-walks only the
+       dirty path.
+
+       persist(decisionGraph) flushes any unpersisted nodes into the
+       RequestSetNodes pool. Subsequent reads of the same root hash
+       via getRequestSet() will see the trie via the existing
+       per-node payload cache. */
+    class TrieBuilder
+    {
+    public:
+        TrieBuilder();
+        ~TrieBuilder();
+
+        TrieBuilder(const TrieBuilder &) = delete;
+        TrieBuilder & operator=(const TrieBuilder &) = delete;
+
+        /* Insert one Request hash into the trie. Duplicate inserts
+           are no-ops. */
+        void insert(const Hash & request);
+
+        /* Current root hash. Recomputes the dirty subtree if anything
+           changed since the last call. */
+        Hash rootHash();
+
+        /* Push any unpersisted nodes into the RequestSetNodes pool.
+           Idempotent. */
+        void persist(TracingDecisionGraph & g);
+
+    private:
+        struct Node;
+        std::unique_ptr<Node> root;
+    };
 
     /* ─────────────────────────────────────────────────────────────────
        Maintenance

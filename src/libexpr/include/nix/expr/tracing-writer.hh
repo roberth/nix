@@ -75,6 +75,9 @@ class TracingWriter
        Handed to record() by reference so it doesn't rebuild
        O(N) per call. */
     std::unordered_map<Hash, Hash> responseFor;
+    /* Incremental trie of allRequests; gives record() the canonical
+       RequestSet hash for the whole-remaining edge in O(1). */
+    TracingDecisionGraph::TrieBuilder allRequestsTrie;
 
     uint64_t nextVirtualRoot = 0;
     std::map<Object *, VirtualRootId> virtualRootRegistry;
@@ -164,6 +167,7 @@ public:
             v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 v13FactSetHash, queryHash, responseHash);
             responseFor.emplace(queryHash, responseHash);
+            allRequestsTrie.insert(queryHash);
         }
     }
 
@@ -187,6 +191,7 @@ public:
             v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 v13FactSetHash, queryHash, responseHash);
             responseFor.emplace(queryHash, responseHash);
+            allRequestsTrie.insert(queryHash);
         }
     }
 
@@ -213,10 +218,18 @@ public:
            makes the members available to record() via getFactSet
            without rebuilding the hash. responseFor + seenRequests
            are passed by reference so record() doesn't re-build its
-           per-call lookup map and remaining set. */
+           per-call lookup map and remaining set.
+
+           allRequestsTrie is maintained incrementally per fact and
+           gives us the canonical RequestSet root hash for the
+           current allRequests in O(1). Persist any unwritten nodes
+           and hand the root hash to record() as the precomputed RS
+           hash for the whole-remaining edge — record() can then
+           skip its insertRequestSet(remainingVec) call. */
         decisionGraph->primeFactSetCache(v13FactSetHash, v13FactSet);
+        allRequestsTrie.persist(*decisionGraph);
         decisionGraph->record(*qh.queryHash, v13FactSetHash, resultNodeHash,
-            responseFor, seenRequests);
+            responseFor, seenRequests, allRequestsTrie.rootHash());
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,

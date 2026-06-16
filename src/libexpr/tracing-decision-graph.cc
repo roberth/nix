@@ -644,6 +644,127 @@ Hash TracingDecisionGraph::xorFactIntoHash(
     return dg_xorHash(h, dg_factElementHash(request, response));
 }
 
+void TracingDecisionGraph::persistRequestSetNode(
+    const Hash & nodeHash, std::string_view payload)
+{
+    auto state(_state->lock());
+    auto [it, inserted] = state->requestSetNodePayloadCache.try_emplace(
+        nodeHash, std::optional<std::string>{std::string(payload)});
+    if (!inserted)
+        return;
+    auto use = state->insertRequestSetNode.use();
+    dg_bindBlob(use, dg_hashToBlob(nodeHash));
+    dg_bindBlob(use, payload);
+    use.exec();
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   TrieBuilder — incremental in-memory RequestSet trie
+   ────────────────────────────────────────────────────────────────────── */
+
+struct TracingDecisionGraph::TrieBuilder::Node
+{
+    bool isLeaf = true;
+    std::vector<Hash> leafMembers; // sorted while isLeaf
+    std::array<std::unique_ptr<Node>, TRIE_RADIX> children;
+    std::optional<Hash> cachedHash;
+    bool persisted = false;
+
+    /* Build the payload bytes for this node's current state. */
+    std::string buildPayload()
+    {
+        if (isLeaf)
+            return dg_trieLeafPayload(leafMembers);
+        std::vector<std::pair<uint8_t, Hash>> kids;
+        kids.reserve(TRIE_RADIX);
+        for (uint8_t i = 0; i < TRIE_RADIX; ++i)
+            if (children[i])
+                kids.emplace_back(i, children[i]->ensureHash());
+        return dg_trieInternalPayload(kids);
+    }
+
+    /* Compute (or recompute) this node's hash, recursing into dirty
+       children. cachedHash is populated; returns the hash. */
+    Hash ensureHash()
+    {
+        if (cachedHash)
+            return *cachedHash;
+        cachedHash = hashString(HashAlgorithm::SHA256, buildPayload());
+        return *cachedHash;
+    }
+
+    /* Insert a hash into this subtree at the given trie depth.
+       Invalidates cachedHash and persisted flag along the affected
+       path. */
+    void insertAtDepth(const Hash & h, int depth)
+    {
+        cachedHash.reset();
+        persisted = false;
+        if (isLeaf) {
+            auto pos = std::lower_bound(leafMembers.begin(), leafMembers.end(), h);
+            if (pos != leafMembers.end() && *pos == h)
+                return; // duplicate; nothing to do
+            leafMembers.insert(pos, h);
+            if (leafMembers.size() > TRIE_SPLIT_THRESHOLD) {
+                /* Split: convert leaf to internal, redistribute. */
+                std::vector<Hash> oldMembers;
+                oldMembers.swap(leafMembers);
+                isLeaf = false;
+                for (const auto & m : oldMembers) {
+                    auto bucket = dg_bucketAt(m, depth);
+                    if (!children[bucket])
+                        children[bucket] = std::make_unique<Node>();
+                    children[bucket]->insertAtDepth(m, depth + 1);
+                }
+            }
+        } else {
+            auto bucket = dg_bucketAt(h, depth);
+            if (!children[bucket])
+                children[bucket] = std::make_unique<Node>();
+            children[bucket]->insertAtDepth(h, depth + 1);
+        }
+    }
+
+    /* Recursively persist this and any unpersisted subtrees. */
+    void persistTree(TracingDecisionGraph & g)
+    {
+        if (persisted)
+            return;
+        if (!isLeaf) {
+            for (auto & c : children)
+                if (c)
+                    c->persistTree(g);
+        }
+        auto payload = buildPayload();
+        auto hash = cachedHash.value_or(hashString(HashAlgorithm::SHA256, payload));
+        cachedHash = hash;
+        g.persistRequestSetNode(hash, payload);
+        persisted = true;
+    }
+};
+
+TracingDecisionGraph::TrieBuilder::TrieBuilder()
+    : root(std::make_unique<Node>())
+{
+}
+
+TracingDecisionGraph::TrieBuilder::~TrieBuilder() = default;
+
+void TracingDecisionGraph::TrieBuilder::insert(const Hash & request)
+{
+    root->insertAtDepth(request, 0);
+}
+
+Hash TracingDecisionGraph::TrieBuilder::rootHash()
+{
+    return root->ensureHash();
+}
+
+void TracingDecisionGraph::TrieBuilder::persist(TracingDecisionGraph & g)
+{
+    root->persistTree(g);
+}
+
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::extendRequestSet(const SetHash & parent, const std::vector<RequestHash> & extras)
 {
@@ -819,7 +940,8 @@ static void dg_recordImpl(
     const Hash & factSetHash,
     const Hash & result,
     const std::unordered_map<Hash, Hash> & responseFor,
-    const std::unordered_set<Hash> & allRequests)
+    const std::unordered_set<Hash> & allRequests,
+    const Hash * allRequestsRsHash = nullptr)
 {
     auto cur = TracingDecisionGraph::emptySetHash();
     std::unordered_set<Hash> curRequests;
@@ -894,6 +1016,16 @@ static void dg_recordImpl(
         if (followUseful) {
             extendCur(*followUseful);
         } else {
+            /* Fast path: at cur=∅ with consumed.empty(), the
+               whole-remaining is allRequests itself. If the caller
+               supplied its canonical RS hash, skip insertRequestSet
+               and jump straight to factSet — cur ⊕ allFacts =
+               factSetHash by construction. */
+            if (curRequests.empty() && allRequestsRsHash) {
+                g.insertAsks(q, cur, *allRequestsRsHash);
+                cur = factSetHash;
+                break;
+            }
             std::vector<Hash> remainingVec;
             remainingVec.reserve(allRequests.size() - curRequests.size());
             for (const auto & req : allRequests)
@@ -939,6 +1071,17 @@ void TracingDecisionGraph::record(
     const std::unordered_set<Hash> & allRequests)
 {
     dg_recordImpl(*this, q, factSetHash, result, responseFor, allRequests);
+}
+
+void TracingDecisionGraph::record(
+    const QueryHash & q,
+    const SetHash & factSetHash,
+    const ResultHash & result,
+    const std::unordered_map<Hash, Hash> & responseFor,
+    const std::unordered_set<Hash> & allRequests,
+    const SetHash & allRequestsRsHash)
+{
+    dg_recordImpl(*this, q, factSetHash, result, responseFor, allRequests, &allRequestsRsHash);
 }
 
 bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factSet)
