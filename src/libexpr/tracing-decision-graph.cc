@@ -105,32 +105,6 @@ struct TracingDecisionGraph::State
     std::unordered_map<Hash, std::optional<std::vector<TracingDecisionGraph::Fact>>> factSetCache;
     std::unordered_map<Hash, std::optional<std::string>> requestPayloadCache;
     std::unordered_map<Hash, std::optional<std::string>> resultPayloadCache;
-
-    /* walk() extends the cur FactSet by one Fact per step and re-hashes
-       the whole canonical form to identify the child. Naively that's
-       O(N²) work per walk; cache (parent, request, response) → child
-       so repeated walks across shared prefixes pay it once. */
-    struct FactExtKey
-    {
-        Hash parent;
-        Hash request;
-        Hash response;
-        bool operator==(const FactExtKey & o) const noexcept
-        {
-            return parent == o.parent && request == o.request && response == o.response;
-        }
-    };
-    struct FactExtKeyHash
-    {
-        size_t operator()(const FactExtKey & k) const noexcept
-        {
-            auto h = std::hash<Hash>{}(k.parent);
-            h ^= std::hash<Hash>{}(k.request) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-            h ^= std::hash<Hash>{}(k.response) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
-            return h;
-        }
-    };
-    std::unordered_map<FactExtKey, Hash, FactExtKeyHash> factSetExtCache;
 };
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -155,6 +129,40 @@ static Hash dg_blobToHash(std::string_view blob)
 static void dg_bindBlob(SQLiteStmt::Use & use, std::string_view blob)
 {
     use(reinterpret_cast<const unsigned char *>(blob.data()), blob.size(), true /* notNull */);
+}
+
+/* Per-element hashes for set hashing.
+   H_element(req) and H_element(fact) are SHA-256 of the element's
+   canonical bytes — re-hashing gives domain separation so a Hash
+   that happens to appear both as a RequestHash and as a fact's
+   request component doesn't XOR to the same set-element value.
+   With set hash defined as XOR over per-element hashes, set
+   extension is O(1) instead of O(N) (no re-sort, no rehash of the
+   full set), at the cost of a weaker hash: an attacker who can
+   choose set members can construct collisions algebraically. For
+   an internal eval cache this is acceptable — the worst case is a
+   wrong cache hit which is detected on next use. */
+static Hash dg_requestElementHash(const Hash & req)
+{
+    return hashString(HashAlgorithm::SHA256,
+        std::string_view(reinterpret_cast<const char *>(req.hash), req.hashSize));
+}
+
+static Hash dg_factElementHash(const Hash & request, const Hash & response)
+{
+    std::string buf;
+    buf.reserve(request.hashSize + response.hashSize);
+    buf.append(reinterpret_cast<const char *>(request.hash), request.hashSize);
+    buf.append(reinterpret_cast<const char *>(response.hash), response.hashSize);
+    return hashString(HashAlgorithm::SHA256, buf);
+}
+
+static Hash dg_xorHash(const Hash & a, const Hash & b)
+{
+    Hash out = a;
+    for (size_t i = 0; i < out.hashSize; ++i)
+        out.hash[i] ^= b.hash[i];
+    return out;
 }
 
 /* Set-pool serialisation. The pool blobs are internal; they don't need
@@ -368,27 +376,31 @@ static std::vector<T> dg_sortAndDedup(std::vector<T> members)
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::computeRequestSetHash(const std::vector<RequestHash> & members)
 {
-    auto canonical = dg_sortAndDedup(members);
-    auto bytes = dg_serialiseMembers(canonical);
-    return hashString(HashAlgorithm::SHA256, bytes);
+    auto canonical = dg_sortAndDedup(members); // dedup so XOR doesn't cancel
+    SetHash out = emptySetHash();
+    for (const auto & h : canonical)
+        out = dg_xorHash(out, dg_requestElementHash(h));
+    return out;
 }
 
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::computeFactSetHash(const std::vector<Fact> & members)
 {
     auto canonical = dg_sortAndDedup(members);
-    auto bytes = dg_serialiseMembers(canonical);
-    return hashString(HashAlgorithm::SHA256, bytes);
+    SetHash out = emptySetHash();
+    for (const auto & f : canonical)
+        out = dg_xorHash(out, dg_factElementHash(f.request, f.response));
+    return out;
 }
 
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::emptySetHash()
 {
-    /* Empty list, CBOR-encoded, SHA-256'd. Computed once and cached. */
+    /* All-zero hash: XOR identity, so H(∅ ∪ {e}) = H_element(e). */
     static const SetHash h = []() {
-        std::vector<Hash> empty;
-        auto bytes = dg_serialiseMembers(empty);
-        return hashString(HashAlgorithm::SHA256, bytes);
+        SetHash z(HashAlgorithm::SHA256);
+        std::memset(z.hash, 0, z.hashSize);
+        return z;
     }();
     return h;
 }
@@ -397,8 +409,12 @@ TracingDecisionGraph::SetHash
 TracingDecisionGraph::insertRequestSet(std::vector<RequestHash> members)
 {
     auto canonical = dg_sortAndDedup(std::move(members));
+    /* setHash = XOR-fold per computeRequestSetHash; storage payload is
+       the raw concat of canonical members for parseability. */
+    SetHash setHash = emptySetHash();
+    for (const auto & h : canonical)
+        setHash = dg_xorHash(setHash, dg_requestElementHash(h));
     auto bytes = dg_serialiseMembers(canonical);
-    auto setHash = hashString(HashAlgorithm::SHA256, bytes);
     auto state(_state->lock());
     auto use = state->insertRequestSet.use();
     dg_bindBlob(use, dg_hashToBlob(setHash));
@@ -416,8 +432,9 @@ TracingDecisionGraph::insertFactSet(std::vector<Fact> members)
        caller (record / walk) can still inspect them within one
        invocation. */
     auto canonical = dg_sortAndDedup(std::move(members));
-    auto bytes = dg_serialiseMembers(canonical);
-    auto setHash = hashString(HashAlgorithm::SHA256, bytes);
+    SetHash setHash = emptySetHash();
+    for (const auto & f : canonical)
+        setHash = dg_xorHash(setHash, dg_factElementHash(f.request, f.response));
     auto state(_state->lock());
     state->factSetCache.try_emplace(setHash, std::optional{std::move(canonical)});
     return setHash;
@@ -548,17 +565,14 @@ void TracingDecisionGraph::record(
         throw Error("decision-graph: record(Q, factSet, result) called with FactSet hash not in the in-process cache");
 
     /* Walk the Facts in canonical order (already sorted by getFactSet),
-       writing one singleton Asks edge per Fact and extending cur.
-       The intermediate FactSets are kept only in the in-process cache,
-       not persisted. */
+       writing one singleton Asks edge per Fact and extending cur via
+       XOR. No need to materialise intermediate vectors — set hash
+       extension is O(1). */
     auto cur = emptySetHash();
-    std::vector<Fact> curFacts;
-    curFacts.reserve(facts->size());
     for (const auto & f : *facts) {
         auto requestSetHash = insertRequestSet({f.request});
         insertAsks(q, cur, requestSetHash);
-        curFacts.push_back(f);
-        cur = insertFactSet(curFacts); // in-memory only
+        cur = dg_xorHash(cur, dg_factElementHash(f.request, f.response));
     }
     insertTerminal(q, factSetHash, result);
 }
@@ -584,11 +598,10 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
     const std::function<ResponseHash(const RequestHash &)> & dispatch)
 {
     auto cur = emptySetHash();
-    /* Maintain curFacts and curRequests in this walk's locals.
-       FactSets aren't persisted, so we can't fetch them mid-walk;
-       reconstruct as we go. curRequests speeds up the "is this
-       request already in cur?" filter on each edge. */
-    std::vector<Fact> curFacts;
+    /* curRequests speeds up the "is this request already in cur?"
+       filter on each edge, and (since dispatch filters them out
+       too) guarantees the XOR-extension below isn't fed a fact
+       that's already folded into cur. */
     std::unordered_set<RequestHash> curRequests;
     for (;;) {
         if (auto term = getTerminal(q, cur))
@@ -608,52 +621,29 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
                already in cur. With singleton-step recording the
                edge is a singleton; this loop just yields one
                Request. */
-            std::vector<Fact> newFacts;
+            Hash nextCur = cur;
+            std::vector<RequestHash> consumed;
+            bool anyDispatched = false;
             for (const auto & req : *requestSetOpt) {
                 if (curRequests.count(req))
                     continue;
                 auto resp = dispatch(req);
-                newFacts.push_back({req, resp});
+                nextCur = dg_xorHash(nextCur, dg_factElementHash(req, resp));
+                consumed.push_back(req);
+                anyDispatched = true;
             }
-            if (newFacts.empty())
+            if (!anyDispatched)
                 continue; // edge would add nothing; degenerate
 
-            /* Compute the candidate next FactSet hash. For the common
-               singleton-step case, consult the (parent, request,
-               response) → child cache before recomputing. */
-            Hash nextCur(HashAlgorithm::SHA256);
-            bool cached = false;
-            std::optional<State::FactExtKey> cacheKey;
-            if (newFacts.size() == 1) {
-                cacheKey = State::FactExtKey{cur, newFacts[0].request, newFacts[0].response};
-                auto state(_state->lock());
-                if (auto it = state->factSetExtCache.find(*cacheKey);
-                    it != state->factSetExtCache.end()) {
-                    nextCur = it->second;
-                    cached = true;
-                }
-            }
-            if (!cached) {
-                std::vector<Fact> candidate = curFacts;
-                candidate.insert(candidate.end(), newFacts.begin(), newFacts.end());
-                nextCur = computeFactSetHash(candidate);
-                if (cacheKey) {
-                    auto state(_state->lock());
-                    state->factSetExtCache.emplace(*cacheKey, nextCur);
-                }
-            }
-
             /* Validate that some recording for THIS query reaches
-               (Q, nextCur). With FactSets gone, this is the
-               on-the-Q-graph membership check. */
+               (Q, nextCur) — i.e., the dispatched responses lead to
+               a position where the recording continues or terminates. */
             if (!hasAnyEdge(q, nextCur))
                 continue; // wrong branch
 
             cur = nextCur;
-            for (const auto & f : newFacts) {
-                curFacts.push_back(f);
-                curRequests.insert(f.request);
-            }
+            for (const auto & req : consumed)
+                curRequests.insert(req);
             advanced = true;
             break;
         }
