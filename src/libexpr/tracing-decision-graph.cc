@@ -84,15 +84,16 @@ struct TracingDecisionGraph::State
 };
 
 /* ─────────────────────────────────────────────────────────────────────
-   Helpers
+   Helpers. Names are dg_-prefixed because unity builds merge this
+   TU with tracing-index.cc which defines same-named statics.
    ───────────────────────────────────────────────────────────────────── */
 
-static std::string hashToBlob(const Hash & h)
+static std::string dg_hashToBlob(const Hash & h)
 {
     return std::string(reinterpret_cast<const char *>(h.hash), h.hashSize);
 }
 
-static Hash blobToHash(std::string_view blob)
+static Hash dg_blobToHash(std::string_view blob)
 {
     if (blob.size() != Hash(HashAlgorithm::SHA256).hashSize)
         throw Error("decision-graph: malformed hash blob (size=%d)", blob.size());
@@ -101,16 +102,16 @@ static Hash blobToHash(std::string_view blob)
     return h;
 }
 
-static void bindBlob(SQLiteStmt::Use & use, std::string_view blob)
+static void dg_bindBlob(SQLiteStmt::Use & use, std::string_view blob)
 {
     use(reinterpret_cast<const unsigned char *>(blob.data()), blob.size(), true /* notNull */);
 }
 
 template<typename T>
-static std::string serialiseMembers(const std::vector<T> & members);
+static std::string dg_serialiseMembers(const std::vector<T> & members);
 
 template<>
-std::string serialiseMembers<Hash>(const std::vector<Hash> & members)
+std::string dg_serialiseMembers<Hash>(const std::vector<Hash> & members)
 {
     /* CBOR-encoded array of byte strings. */
     nlohmann::json j = nlohmann::json::array();
@@ -122,7 +123,7 @@ std::string serialiseMembers<Hash>(const std::vector<Hash> & members)
 }
 
 template<>
-std::string serialiseMembers<TracingDecisionGraph::Fact>(
+std::string dg_serialiseMembers<TracingDecisionGraph::Fact>(
     const std::vector<TracingDecisionGraph::Fact> & members)
 {
     /* CBOR-encoded array of [requestHash, responseHash] pairs. */
@@ -139,20 +140,20 @@ std::string serialiseMembers<TracingDecisionGraph::Fact>(
     return std::string(cbor.begin(), cbor.end());
 }
 
-static std::vector<Hash> deserialiseRequestMembers(std::string_view bytes)
+static std::vector<Hash> dg_deserialiseRequestMembers(std::string_view bytes)
 {
     auto j = nlohmann::json::from_cbor(std::vector<uint8_t>(bytes.begin(), bytes.end()));
     std::vector<Hash> out;
     out.reserve(j.size());
     for (const auto & item : j) {
         const auto & bin = item.get_binary();
-        out.push_back(blobToHash(std::string_view(
+        out.push_back(dg_blobToHash(std::string_view(
             reinterpret_cast<const char *>(bin.data()), bin.size())));
     }
     return out;
 }
 
-static std::vector<TracingDecisionGraph::Fact> deserialiseFactMembers(std::string_view bytes)
+static std::vector<TracingDecisionGraph::Fact> dg_deserialiseFactMembers(std::string_view bytes)
 {
     auto j = nlohmann::json::from_cbor(std::vector<uint8_t>(bytes.begin(), bytes.end()));
     std::vector<TracingDecisionGraph::Fact> out;
@@ -161,9 +162,9 @@ static std::vector<TracingDecisionGraph::Fact> deserialiseFactMembers(std::strin
         const auto & req = item.at(0).get_binary();
         const auto & resp = item.at(1).get_binary();
         TracingDecisionGraph::Fact f{
-            .request = blobToHash(std::string_view(
+            .request = dg_blobToHash(std::string_view(
                 reinterpret_cast<const char *>(req.data()), req.size())),
-            .response = blobToHash(std::string_view(
+            .response = dg_blobToHash(std::string_view(
                 reinterpret_cast<const char *>(resp.data()), resp.size())),
         };
         out.push_back(f);
@@ -175,7 +176,7 @@ static std::vector<TracingDecisionGraph::Fact> deserialiseFactMembers(std::strin
    Construction / database path
    ───────────────────────────────────────────────────────────────────── */
 
-static std::filesystem::path defaultDbPath()
+static std::filesystem::path dg_defaultDbPath()
 {
     /* Use a distinct filename so v12 and v13 can coexist in the
        same directory during the migration period. */
@@ -186,7 +187,7 @@ static std::filesystem::path defaultDbPath()
 }
 
 TracingDecisionGraph::TracingDecisionGraph()
-    : TracingDecisionGraph(defaultDbPath())
+    : TracingDecisionGraph(dg_defaultDbPath())
 {
 }
 
@@ -258,8 +259,8 @@ void TracingDecisionGraph::waitForWrites()
     {                                                                            \
         auto state(_state->lock());                                              \
         auto use = state->insert##NAME.use();                                    \
-        bindBlob(use, hashToBlob(h));                                            \
-        bindBlob(use, p);                                                        \
+        dg_bindBlob(use, dg_hashToBlob(h));                                            \
+        dg_bindBlob(use, p);                                                        \
         use.exec();                                                              \
     }
 
@@ -275,7 +276,7 @@ ATOM_INSERT(Result, resultHash)
     {                                                                           \
         auto state(_state->lock());                                             \
         auto query = state->select##NAME.use();                                 \
-        bindBlob(query, hashToBlob(h));                                         \
+        dg_bindBlob(query, dg_hashToBlob(h));                                         \
         if (!query.next())                                                      \
             return std::nullopt;                                                \
         return query.getBlob(0);                                                 \
@@ -292,7 +293,7 @@ ATOM_GET(Result)
    ───────────────────────────────────────────────────────────────────── */
 
 template<typename T>
-static std::vector<T> sortAndDedup(std::vector<T> members)
+static std::vector<T> dg_sortAndDedup(std::vector<T> members)
 {
     std::sort(members.begin(), members.end());
     members.erase(std::unique(members.begin(), members.end()), members.end());
@@ -302,16 +303,16 @@ static std::vector<T> sortAndDedup(std::vector<T> members)
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::computeRequestSetHash(const std::vector<RequestHash> & members)
 {
-    auto canonical = sortAndDedup(members);
-    auto bytes = serialiseMembers(canonical);
+    auto canonical = dg_sortAndDedup(members);
+    auto bytes = dg_serialiseMembers(canonical);
     return hashString(HashAlgorithm::SHA256, bytes);
 }
 
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::computeFactSetHash(const std::vector<Fact> & members)
 {
-    auto canonical = sortAndDedup(members);
-    auto bytes = serialiseMembers(canonical);
+    auto canonical = dg_sortAndDedup(members);
+    auto bytes = dg_serialiseMembers(canonical);
     return hashString(HashAlgorithm::SHA256, bytes);
 }
 
@@ -321,7 +322,7 @@ TracingDecisionGraph::emptySetHash()
     /* Empty list, CBOR-encoded, SHA-256'd. Computed once and cached. */
     static const SetHash h = []() {
         std::vector<Hash> empty;
-        auto bytes = serialiseMembers(empty);
+        auto bytes = dg_serialiseMembers(empty);
         return hashString(HashAlgorithm::SHA256, bytes);
     }();
     return h;
@@ -330,13 +331,13 @@ TracingDecisionGraph::emptySetHash()
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::insertRequestSet(std::vector<RequestHash> members)
 {
-    auto canonical = sortAndDedup(std::move(members));
-    auto bytes = serialiseMembers(canonical);
+    auto canonical = dg_sortAndDedup(std::move(members));
+    auto bytes = dg_serialiseMembers(canonical);
     auto setHash = hashString(HashAlgorithm::SHA256, bytes);
     auto state(_state->lock());
     auto use = state->insertRequestSet.use();
-    bindBlob(use, hashToBlob(setHash));
-    bindBlob(use, bytes);
+    dg_bindBlob(use, dg_hashToBlob(setHash));
+    dg_bindBlob(use, bytes);
     use.exec();
     return setHash;
 }
@@ -344,13 +345,13 @@ TracingDecisionGraph::insertRequestSet(std::vector<RequestHash> members)
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::insertFactSet(std::vector<Fact> members)
 {
-    auto canonical = sortAndDedup(std::move(members));
-    auto bytes = serialiseMembers(canonical);
+    auto canonical = dg_sortAndDedup(std::move(members));
+    auto bytes = dg_serialiseMembers(canonical);
     auto setHash = hashString(HashAlgorithm::SHA256, bytes);
     auto state(_state->lock());
     auto use = state->insertFactSet.use();
-    bindBlob(use, hashToBlob(setHash));
-    bindBlob(use, bytes);
+    dg_bindBlob(use, dg_hashToBlob(setHash));
+    dg_bindBlob(use, bytes);
     use.exec();
     return setHash;
 }
@@ -380,10 +381,10 @@ TracingDecisionGraph::getRequestSet(const SetHash & h)
         return std::vector<RequestHash>{};
     auto state(_state->lock());
     auto query = state->selectRequestSet.use();
-    bindBlob(query, hashToBlob(h));
+    dg_bindBlob(query, dg_hashToBlob(h));
     if (!query.next())
         return std::nullopt;
-    return deserialiseRequestMembers(query.getBlob(0));
+    return dg_deserialiseRequestMembers(query.getBlob(0));
 }
 
 std::optional<std::vector<TracingDecisionGraph::Fact>>
@@ -393,10 +394,10 @@ TracingDecisionGraph::getFactSet(const SetHash & h)
         return std::vector<Fact>{};
     auto state(_state->lock());
     auto query = state->selectFactSet.use();
-    bindBlob(query, hashToBlob(h));
+    dg_bindBlob(query, dg_hashToBlob(h));
     if (!query.next())
         return std::nullopt;
-    return deserialiseFactMembers(query.getBlob(0));
+    return dg_deserialiseFactMembers(query.getBlob(0));
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -408,9 +409,9 @@ void TracingDecisionGraph::insertAsks(
 {
     auto state(_state->lock());
     auto use = state->insertAsks.use();
-    bindBlob(use, hashToBlob(q));
-    bindBlob(use, hashToBlob(factSet));
-    bindBlob(use, hashToBlob(requestSet));
+    dg_bindBlob(use, dg_hashToBlob(q));
+    dg_bindBlob(use, dg_hashToBlob(factSet));
+    dg_bindBlob(use, dg_hashToBlob(requestSet));
     use.exec();
 }
 
@@ -419,11 +420,11 @@ TracingDecisionGraph::getAsks(const QueryHash & q, const SetHash & factSet)
 {
     auto state(_state->lock());
     auto query = state->selectAsks.use();
-    bindBlob(query, hashToBlob(q));
-    bindBlob(query, hashToBlob(factSet));
+    dg_bindBlob(query, dg_hashToBlob(q));
+    dg_bindBlob(query, dg_hashToBlob(factSet));
     std::vector<SetHash> out;
     while (query.next())
-        out.push_back(blobToHash(query.getBlob(0)));
+        out.push_back(dg_blobToHash(query.getBlob(0)));
     return out;
 }
 
@@ -432,9 +433,9 @@ void TracingDecisionGraph::removeAsks(
 {
     auto state(_state->lock());
     auto use = state->deleteAsks.use();
-    bindBlob(use, hashToBlob(q));
-    bindBlob(use, hashToBlob(factSet));
-    bindBlob(use, hashToBlob(requestSet));
+    dg_bindBlob(use, dg_hashToBlob(q));
+    dg_bindBlob(use, dg_hashToBlob(factSet));
+    dg_bindBlob(use, dg_hashToBlob(requestSet));
     use.exec();
 }
 
@@ -443,9 +444,9 @@ void TracingDecisionGraph::insertTerminal(
 {
     auto state(_state->lock());
     auto use = state->insertTerminal.use();
-    bindBlob(use, hashToBlob(q));
-    bindBlob(use, hashToBlob(factSet));
-    bindBlob(use, hashToBlob(result));
+    dg_bindBlob(use, dg_hashToBlob(q));
+    dg_bindBlob(use, dg_hashToBlob(factSet));
+    dg_bindBlob(use, dg_hashToBlob(result));
     use.exec();
 }
 
@@ -454,11 +455,11 @@ TracingDecisionGraph::getTerminal(const QueryHash & q, const SetHash & factSet)
 {
     auto state(_state->lock());
     auto query = state->selectTerminal.use();
-    bindBlob(query, hashToBlob(q));
-    bindBlob(query, hashToBlob(factSet));
+    dg_bindBlob(query, dg_hashToBlob(q));
+    dg_bindBlob(query, dg_hashToBlob(factSet));
     if (!query.next())
         return std::nullopt;
-    return blobToHash(query.getBlob(0));
+    return dg_blobToHash(query.getBlob(0));
 }
 
 /* ─────────────────────────────────────────────────────────────────────
