@@ -181,6 +181,14 @@ public:
         return tracingIndex;
     }
 
+    /**
+     * Try a v13 walk lookup for the given queryHash. Returns the
+     * Result payload on hit, nullopt on miss or if v13 isn't wired.
+     * Shared between TracingReplayEvaluator::lookup<Q> and
+     * TracingReplayObject's lookup paths.
+     */
+    std::optional<std::pair<std::string, Hash>> v13Walk(const QueryHash & queryHash);
+
     bool isReadOnly() const override;
     Store & getStore() override;
     const fetchers::Settings & getFetchSettings() override;

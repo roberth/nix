@@ -304,18 +304,15 @@ public:
         /* v13: record this Q's recording. factSetHash is the
            canonical hash of everything observed up to now; record()
            writes the Asks chain + Terminal mapping (Q, factSet) -> R.
-           We don't clear v13FactSet — it grows monotonically per the
-           model (any later Q's recording will sample this plus
-           whatever it adds). Also insert the Result payload so
-           walk()'s caller can fetch the payload from a ResultHash. */
+           v13FactSet grows monotonically with d>0 Facts only — the
+           v13 model's Facts are (Request, Response) pairs of d>0
+           events. We do NOT add the d=0 (Q, R) here because that
+           pair isn't a Request walk's dispatch can satisfy. */
         if (decisionGraph && qh.queryHash) {
             decisionGraph->insertResult(responseHash, resultPayload);
             auto factSetHash = decisionGraph->insertFactSet(v13FactSet);
             decisionGraph->record(*qh.queryHash, factSetHash, responseHash);
         }
-
-        if (decisionGraph)
-            v13FactSet.push_back({*qh.queryHash, responseHash});
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,

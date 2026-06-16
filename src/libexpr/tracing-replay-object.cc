@@ -55,6 +55,21 @@ std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
     auto & tracingIndex = evaluator.getTracingIndex();
     auto queryHash = TracingIndex::computeQueryHash(query);
 
+    /* v13 walk: queryHash is the full Merkle identity (it includes
+       the parent's queryHash via the `from` field), so walk from
+       (Q, empty) is enough — we don't need to anchor at triePos. */
+    if (auto v13 = evaluator.v13Walk(queryHash)) {
+        const auto & [payload, _] = *v13;
+        try {
+            auto j = cborStringToJson(payload);
+            tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
+            return j.template get<R>();
+        } catch (const nlohmann::json::exception & e) {
+            tracingCacheLog("replay: v13 payload parse failed: %s", e.what());
+            /* Fall through to v12. */
+        }
+    }
+
     // Reset temporal cursor to this object's position. The cursor is
     // shared across all objects on this evaluator, so a prior lookup on
     // a different object may have moved it. Our children chain from

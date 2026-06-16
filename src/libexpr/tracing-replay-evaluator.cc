@@ -27,6 +27,28 @@ TracingReplayEvaluator::TracingReplayEvaluator(
 {
 }
 
+std::optional<std::pair<std::string, Hash>>
+TracingReplayEvaluator::v13Walk(const QueryHash & queryHash)
+{
+    if (!decisionGraph)
+        return std::nullopt;
+    auto walkHit = decisionGraph->walk(queryHash, [&](const Hash & requestHash) -> Hash {
+        auto requestPayload = decisionGraph->getRequestPayload(requestHash);
+        if (!requestPayload)
+            return Hash(HashAlgorithm::SHA256);
+        auto currentResp = getCurrentResponse(*requestPayload);
+        if (!currentResp)
+            return Hash(HashAlgorithm::SHA256);
+        return TracingIndex::computeResponseHash(*currentResp);
+    });
+    if (!walkHit)
+        return std::nullopt;
+    auto payload = decisionGraph->getResultPayload(*walkHit);
+    if (!payload)
+        return std::nullopt;
+    return std::make_pair(std::move(*payload), *walkHit);
+}
+
 bool TracingReplayEvaluator::validateDependencies(const NodeHash & queryNodeHash)
 {
     if (validatedNodes.count(queryNodeHash))
@@ -256,33 +278,16 @@ std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::look
 {
     auto queryHash = TracingIndex::computeQueryHash(query);
 
-    /* v13 walk: navigate the decision graph from (Q, empty),
-       dispatching Requests via getCurrentResponse against the
-       current environment. A hit returns the recorded Result hash;
-       fetch its payload from v13's Results pool and return. */
-    if (decisionGraph) {
-        auto walkHit = decisionGraph->walk(queryHash, [&](const Hash & requestHash) -> Hash {
-            auto requestPayload = decisionGraph->getRequestPayload(requestHash);
-            if (!requestPayload)
-                return Hash(HashAlgorithm::SHA256);
-            auto currentResp = getCurrentResponse(*requestPayload);
-            if (!currentResp)
-                return Hash(HashAlgorithm::SHA256);
-            return TracingIndex::computeResponseHash(*currentResp);
-        });
-        if (walkHit) {
-            auto payload = decisionGraph->getResultPayload(*walkHit);
-            if (payload) {
-                addToCurrentSetMembers(queryHash, *walkHit);
-                tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
-                return std::make_pair(
-                    *payload,
-                    TriePosition{
-                        .resultNodeHash = *walkHit,
-                        .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
-                    });
-            }
-        }
+    if (auto v13 = v13Walk(queryHash)) {
+        const auto & [payload, resultHash] = *v13;
+        addToCurrentSetMembers(queryHash, resultHash);
+        tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
+        return std::make_pair(
+            payload,
+            TriePosition{
+                .resultNodeHash = resultHash,
+                .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
+            });
     }
 
     /* Sets-based index lookup: try it first because it's O(k · |P|)
