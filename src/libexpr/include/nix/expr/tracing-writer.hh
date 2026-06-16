@@ -11,6 +11,7 @@
 
 #include <map>
 #include <optional>
+#include <unordered_set>
 #include <vector>
 
 namespace nix {
@@ -60,8 +61,16 @@ class TracingWriter
        session per the design doc. Sampled at each logResult and
        fed into decisionGraph->record(). Only d>0 (Request, Response)
        Facts are added; d=0 Q→R pairs are not (the walk dispatch
-       can't fetch them). */
+       can't fetch them).
+
+       The factSet hash is maintained incrementally via XOR-fold on
+       each new Fact, and a seenRequests set dedupes per request.
+       This makes the per-logResult cost O(1) instead of O(|factSet|)
+       for the hash computation: insertFactSet (which would re-sort
+       and re-fold all members) is bypassed via primeFactSetCache. */
     std::vector<TracingDecisionGraph::Fact> v13FactSet;
+    TracingDecisionGraph::SetHash v13FactSetHash;
+    std::unordered_set<Hash> seenRequests;
 
     uint64_t nextVirtualRoot = 0;
     std::map<Object *, VirtualRootId> virtualRootRegistry;
@@ -71,6 +80,7 @@ public:
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
         : sink(sink)
         , decisionGraph(decisionGraph)
+        , v13FactSetHash(TracingDecisionGraph::emptySetHash())
     {
     }
 
@@ -145,7 +155,11 @@ public:
         auto queryHash = TracingDecisionGraph::computeQueryHash(resp.request);
         auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(respJson));
         decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
-        v13FactSet.push_back({queryHash, responseHash});
+        if (seenRequests.insert(queryHash).second) {
+            v13FactSet.push_back({queryHash, responseHash});
+            v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
+                v13FactSetHash, queryHash, responseHash);
+        }
     }
 
     /**
@@ -163,7 +177,11 @@ public:
             [](const auto & q) { return TracingDecisionGraph::computeQueryHash(q); }, query);
         auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(resultJson));
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-        v13FactSet.push_back({queryHash, responseHash});
+        if (seenRequests.insert(queryHash).second) {
+            v13FactSet.push_back({queryHash, responseHash});
+            v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
+                v13FactSetHash, queryHash, responseHash);
+        }
     }
 
     /**
@@ -184,8 +202,12 @@ public:
         auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
         decisionGraph->insertResult(resultNodeHash, resultPayload);
 
-        auto factSetHash = decisionGraph->insertFactSet(v13FactSet);
-        decisionGraph->record(*qh.queryHash, factSetHash, resultNodeHash);
+        /* v13FactSetHash is maintained incrementally per fact; skip
+           insertFactSet's O(N log N) sort + fold. primeFactSetCache
+           makes the members available to record() via getFactSet
+           without rebuilding the hash. */
+        decisionGraph->primeFactSetCache(v13FactSetHash, v13FactSet);
+        decisionGraph->record(*qh.queryHash, v13FactSetHash, resultNodeHash);
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,

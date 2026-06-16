@@ -627,6 +627,23 @@ TracingDecisionGraph::insertFactSet(std::vector<Fact> members)
     return setHash;
 }
 
+void TracingDecisionGraph::primeFactSetCache(
+    const SetHash & hash, const std::vector<Fact> & members)
+{
+    auto state(_state->lock());
+    /* Always store the latest snapshot — the caller's growing v13FactSet
+       supersedes any prior shorter version recorded under the same
+       hash. Distinct factSet hashes never collide so this only
+       overwrites when the caller has re-primed at the same hash. */
+    state->factSetCache.insert_or_assign(hash, std::optional{members});
+}
+
+Hash TracingDecisionGraph::xorFactIntoHash(
+    const Hash & h, const Hash & request, const Hash & response)
+{
+    return dg_xorHash(h, dg_factElementHash(request, response));
+}
+
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::extendRequestSet(const SetHash & parent, const std::vector<RequestHash> & extras)
 {
