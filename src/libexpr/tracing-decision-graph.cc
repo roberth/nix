@@ -81,6 +81,17 @@ struct TracingDecisionGraph::State
     /* Decision graph layer */
     SQLiteStmt insertAsks, selectAsks, deleteAsks;
     SQLiteStmt insertTerminal, selectTerminal;
+
+    /* In-memory caches of parsed sets and payloads. Populated lazily on
+       first read or write so that subsequent operations within the same
+       process avoid the SQLite round-trip and the CBOR decode.
+       std::optional<vector<...>> distinguishes a known-empty result from
+       a known-missing one. */
+    std::unordered_map<Hash, std::optional<std::vector<Hash>>> requestSetCache;
+    std::unordered_map<Hash, std::optional<std::vector<TracingDecisionGraph::Fact>>> factSetCache;
+    std::unordered_map<Hash, std::optional<std::string>> requestPayloadCache;
+    std::unordered_map<Hash, std::optional<std::string>> responsePayloadCache;
+    std::unordered_map<Hash, std::optional<std::string>> resultPayloadCache;
 };
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -259,39 +270,69 @@ void TracingDecisionGraph::waitForWrites()
    Storage layer: atoms
    ───────────────────────────────────────────────────────────────────── */
 
-#define ATOM_INSERT(NAME, FIELD)                                                 \
+#define ATOM_INSERT_CACHED(NAME, CACHE)                                          \
     void TracingDecisionGraph::insert##NAME(const Hash & h, std::string_view p) \
     {                                                                            \
         auto state(_state->lock());                                              \
         auto use = state->insert##NAME.use();                                    \
-        dg_bindBlob(use, dg_hashToBlob(h));                                            \
-        dg_bindBlob(use, p);                                                        \
+        dg_bindBlob(use, dg_hashToBlob(h));                                      \
+        dg_bindBlob(use, p);                                                     \
+        use.exec();                                                              \
+        /* Mirror INSERT OR IGNORE: only the first payload wins. */              \
+        state->CACHE.try_emplace(h, std::optional{std::string(p)});              \
+    }
+
+#define ATOM_INSERT_PLAIN(NAME)                                                  \
+    void TracingDecisionGraph::insert##NAME(const Hash & h, std::string_view p) \
+    {                                                                            \
+        auto state(_state->lock());                                              \
+        auto use = state->insert##NAME.use();                                    \
+        dg_bindBlob(use, dg_hashToBlob(h));                                      \
+        dg_bindBlob(use, p);                                                     \
         use.exec();                                                              \
     }
 
-ATOM_INSERT(Request, requestHash)
-ATOM_INSERT(Response, responseHash)
-ATOM_INSERT(Query, queryHash)
-ATOM_INSERT(Result, resultHash)
-#undef ATOM_INSERT
+ATOM_INSERT_CACHED(Request, requestPayloadCache)
+ATOM_INSERT_CACHED(Response, responsePayloadCache)
+ATOM_INSERT_PLAIN(Query)
+ATOM_INSERT_CACHED(Result, resultPayloadCache)
+#undef ATOM_INSERT_CACHED
+#undef ATOM_INSERT_PLAIN
 
-#define ATOM_GET(NAME)                                                          \
+#define ATOM_GET_CACHED(NAME, CACHE)                                            \
+    std::optional<std::string> TracingDecisionGraph::get##NAME##Payload(        \
+        const Hash & h)                                                         \
+    {                                                                           \
+        auto state(_state->lock());                                             \
+        if (auto it = state->CACHE.find(h); it != state->CACHE.end())           \
+            return it->second;                                                  \
+        auto query = state->select##NAME.use();                                 \
+        dg_bindBlob(query, dg_hashToBlob(h));                                   \
+        std::optional<std::string> payload;                                     \
+        if (query.next())                                                       \
+            payload = query.getBlob(0);                                         \
+        state->CACHE.emplace(h, payload);                                       \
+        return payload;                                                         \
+    }
+
+#define ATOM_GET_PLAIN(NAME)                                                    \
     std::optional<std::string> TracingDecisionGraph::get##NAME##Payload(        \
         const Hash & h)                                                         \
     {                                                                           \
         auto state(_state->lock());                                             \
         auto query = state->select##NAME.use();                                 \
-        dg_bindBlob(query, dg_hashToBlob(h));                                         \
+        dg_bindBlob(query, dg_hashToBlob(h));                                   \
         if (!query.next())                                                      \
             return std::nullopt;                                                \
-        return query.getBlob(0);                                                 \
+        return query.getBlob(0);                                                \
     }
 
-ATOM_GET(Request)
-ATOM_GET(Response)
-ATOM_GET(Query)
-ATOM_GET(Result)
-#undef ATOM_GET
+ATOM_GET_CACHED(Request, requestPayloadCache)
+ATOM_GET_CACHED(Response, responsePayloadCache)
+ATOM_GET_PLAIN(Query)
+ATOM_GET_CACHED(Result, resultPayloadCache)
+#undef ATOM_GET_CACHED
+#undef ATOM_GET_PLAIN
 
 /* ─────────────────────────────────────────────────────────────────────
    Storage layer: sets
@@ -344,6 +385,7 @@ TracingDecisionGraph::insertRequestSet(std::vector<RequestHash> members)
     dg_bindBlob(use, dg_hashToBlob(setHash));
     dg_bindBlob(use, bytes);
     use.exec();
+    state->requestSetCache.try_emplace(setHash, std::optional{std::move(canonical)});
     return setHash;
 }
 
@@ -358,6 +400,7 @@ TracingDecisionGraph::insertFactSet(std::vector<Fact> members)
     dg_bindBlob(use, dg_hashToBlob(setHash));
     dg_bindBlob(use, bytes);
     use.exec();
+    state->factSetCache.try_emplace(setHash, std::optional{std::move(canonical)});
     return setHash;
 }
 
@@ -385,11 +428,15 @@ TracingDecisionGraph::getRequestSet(const SetHash & h)
     if (h == emptySetHash())
         return std::vector<RequestHash>{};
     auto state(_state->lock());
+    if (auto it = state->requestSetCache.find(h); it != state->requestSetCache.end())
+        return it->second;
     auto query = state->selectRequestSet.use();
     dg_bindBlob(query, dg_hashToBlob(h));
-    if (!query.next())
-        return std::nullopt;
-    return dg_deserialiseRequestMembers(query.getBlob(0));
+    std::optional<std::vector<RequestHash>> parsed;
+    if (query.next())
+        parsed = dg_deserialiseRequestMembers(query.getBlob(0));
+    state->requestSetCache.emplace(h, parsed);
+    return parsed;
 }
 
 std::optional<std::vector<TracingDecisionGraph::Fact>>
@@ -398,11 +445,15 @@ TracingDecisionGraph::getFactSet(const SetHash & h)
     if (h == emptySetHash())
         return std::vector<Fact>{};
     auto state(_state->lock());
+    if (auto it = state->factSetCache.find(h); it != state->factSetCache.end())
+        return it->second;
     auto query = state->selectFactSet.use();
     dg_bindBlob(query, dg_hashToBlob(h));
-    if (!query.next())
-        return std::nullopt;
-    return dg_deserialiseFactMembers(query.getBlob(0));
+    std::optional<std::vector<Fact>> parsed;
+    if (query.next())
+        parsed = dg_deserialiseFactMembers(query.getBlob(0));
+    state->factSetCache.emplace(h, parsed);
+    return parsed;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
