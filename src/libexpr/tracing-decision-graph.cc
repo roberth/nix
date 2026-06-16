@@ -146,68 +146,65 @@ static void dg_bindBlob(SQLiteStmt::Use & use, std::string_view blob)
     use(reinterpret_cast<const unsigned char *>(blob.data()), blob.size(), true /* notNull */);
 }
 
+/* Set-pool serialisation. The pool blobs are internal; they don't need
+   to be human-readable or self-describing. SHA-256 hashes are fixed
+   size, so a raw concatenation of canonical members is both the
+   storage form and the hash input. This avoids per-call CBOR
+   encode/decode through nlohmann::json, which dominated walk()
+   profiles. Format version is implicit in the schema: changing it
+   invalidates the on-disk cache. */
 template<typename T>
 static std::string dg_serialiseMembers(const std::vector<T> & members);
 
 template<>
 std::string dg_serialiseMembers<Hash>(const std::vector<Hash> & members)
 {
-    /* CBOR-encoded array of byte strings. */
-    nlohmann::json j = nlohmann::json::array();
+    const size_t hs = members.empty() ? Hash(HashAlgorithm::SHA256).hashSize : members[0].hashSize;
+    std::string out;
+    out.reserve(members.size() * hs);
     for (const auto & h : members)
-        j.push_back(nlohmann::json::binary(
-            std::vector<uint8_t>(h.hash, h.hash + h.hashSize)));
-    auto cbor = nlohmann::json::to_cbor(j);
-    return std::string(cbor.begin(), cbor.end());
+        out.append(reinterpret_cast<const char *>(h.hash), h.hashSize);
+    return out;
 }
 
 template<>
 std::string dg_serialiseMembers<TracingDecisionGraph::Fact>(
     const std::vector<TracingDecisionGraph::Fact> & members)
 {
-    /* CBOR-encoded array of [requestHash, responseHash] pairs. */
-    nlohmann::json j = nlohmann::json::array();
+    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
+    std::string out;
+    out.reserve(members.size() * hs * 2);
     for (const auto & f : members) {
-        nlohmann::json pair = nlohmann::json::array();
-        pair.push_back(nlohmann::json::binary(
-            std::vector<uint8_t>(f.request.hash, f.request.hash + f.request.hashSize)));
-        pair.push_back(nlohmann::json::binary(
-            std::vector<uint8_t>(f.response.hash, f.response.hash + f.response.hashSize)));
-        j.push_back(std::move(pair));
+        out.append(reinterpret_cast<const char *>(f.request.hash), f.request.hashSize);
+        out.append(reinterpret_cast<const char *>(f.response.hash), f.response.hashSize);
     }
-    auto cbor = nlohmann::json::to_cbor(j);
-    return std::string(cbor.begin(), cbor.end());
+    return out;
 }
 
 static std::vector<Hash> dg_deserialiseRequestMembers(std::string_view bytes)
 {
-    auto j = nlohmann::json::from_cbor(std::vector<uint8_t>(bytes.begin(), bytes.end()));
+    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
+    if (bytes.size() % hs != 0)
+        throw Error("decision-graph: malformed RequestSet blob (size=%d)", bytes.size());
     std::vector<Hash> out;
-    out.reserve(j.size());
-    for (const auto & item : j) {
-        const auto & bin = item.get_binary();
-        out.push_back(dg_blobToHash(std::string_view(
-            reinterpret_cast<const char *>(bin.data()), bin.size())));
-    }
+    out.reserve(bytes.size() / hs);
+    for (size_t i = 0; i < bytes.size(); i += hs)
+        out.push_back(dg_blobToHash(bytes.substr(i, hs)));
     return out;
 }
 
 static std::vector<TracingDecisionGraph::Fact> dg_deserialiseFactMembers(std::string_view bytes)
 {
-    auto j = nlohmann::json::from_cbor(std::vector<uint8_t>(bytes.begin(), bytes.end()));
+    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
+    if (bytes.size() % (2 * hs) != 0)
+        throw Error("decision-graph: malformed FactSet blob (size=%d)", bytes.size());
     std::vector<TracingDecisionGraph::Fact> out;
-    out.reserve(j.size());
-    for (const auto & item : j) {
-        const auto & req = item.at(0).get_binary();
-        const auto & resp = item.at(1).get_binary();
-        TracingDecisionGraph::Fact f{
-            .request = dg_blobToHash(std::string_view(
-                reinterpret_cast<const char *>(req.data()), req.size())),
-            .response = dg_blobToHash(std::string_view(
-                reinterpret_cast<const char *>(resp.data()), resp.size())),
-        };
-        out.push_back(f);
-    }
+    out.reserve(bytes.size() / (2 * hs));
+    for (size_t i = 0; i < bytes.size(); i += 2 * hs)
+        out.push_back({
+            dg_blobToHash(bytes.substr(i, hs)),
+            dg_blobToHash(bytes.substr(i + hs, hs)),
+        });
     return out;
 }
 
