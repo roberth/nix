@@ -23,6 +23,8 @@
 #include "nix/util/hash.hh"
 #include "nix/util/sync.hh"
 
+#include <nlohmann/json.hpp>
+
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -68,6 +70,14 @@ public:
             return response < o.response;
         }
     };
+
+    /* Compute the canonical Query hash for a Query type. JSON-serialise
+       and SHA-256. */
+    template<typename Q>
+    static QueryHash computeQueryHash(const Q & query);
+
+    /* Compute the canonical Response hash for a serialised payload. */
+    static Hash computeResponseHash(const std::string & payload);
 
     /* Open or create a decision-graph index at the default location.
        Default: ~/.cache/nix/eval-tracing-decision-graph/index.sqlite
@@ -200,5 +210,16 @@ private:
     struct State;
     std::unique_ptr<Sync<State>> _state;
 };
+
+template<typename Q>
+TracingDecisionGraph::QueryHash TracingDecisionGraph::computeQueryHash(const Q & query)
+{
+    /* Serialise the query to JSON and SHA-256 it. The Query's
+       "from" field carries the parent's queryHash (Merkle identity),
+       so the resulting hash encodes the full provenance chain. */
+    nlohmann::json j = query;
+    auto serialised = j.dump();
+    return hashString(HashAlgorithm::SHA256, serialised);
+}
 
 } // namespace nix

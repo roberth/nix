@@ -186,6 +186,11 @@ static std::filesystem::path dg_defaultDbPath()
     return cacheDir / "index.sqlite";
 }
 
+Hash TracingDecisionGraph::computeResponseHash(const std::string & payload)
+{
+    return hashString(HashAlgorithm::SHA256, payload);
+}
+
 TracingDecisionGraph::TracingDecisionGraph()
     : TracingDecisionGraph(dg_defaultDbPath())
 {
