@@ -136,9 +136,7 @@ echo "=== Final DB stats ==="
 sqlite3 "$dir/decision-graph.sqlite" \
     "SELECT 'asks=' || COUNT(*) FROM Asks
      UNION ALL SELECT 'terminals=' || COUNT(*) FROM Terminals
-     UNION ALL SELECT 'factsets=' || COUNT(*) FROM FactSets
-     UNION ALL SELECT 'requestsets=' || COUNT(*) FROM RequestSets
+     UNION ALL SELECT 'requestSetNodes=' || COUNT(*) FROM RequestSetNodes
      UNION ALL SELECT 'queries=' || COUNT(*) FROM Queries
      UNION ALL SELECT 'requests=' || COUNT(*) FROM Requests
-     UNION ALL SELECT 'responses=' || COUNT(*) FROM Responses
      UNION ALL SELECT 'results=' || COUNT(*) FROM Results"

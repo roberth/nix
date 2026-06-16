@@ -610,11 +610,40 @@ What this buys, end-to-end on a K=10000 nixpkgs-attr sweep:
 | Warm-replay at K=10000 | unmeasurable | 329s (still O(K²) — Phase 2 target) |
 | DB size at K=10000   | extrapolated GBs | 41 MB |
 
-The warm-replay K² is structural to Phase 1's over-approximation
-model and not addressable by code-level optimisation — see the
-Phase 2 sketch above. The cold-record K² that the prior bullet
-also expected ("O(events) total, with O(|requestSet|) per
-Patricia split") needed the incremental `TrieBuilder` to actually
-deliver, since `insertRequestSet` over the global allRequests
-would otherwise re-sort and re-trie the whole growing factSet on
-every `record()`.
+The cold-record K² that the prior bullet also expected ("O(events)
+total, with O(|requestSet|) per Patricia split") needed the
+incremental `TrieBuilder` to actually deliver, since
+`insertRequestSet` over the global allRequests would otherwise
+re-sort and re-trie the whole growing factSet on every `record()`.
+
+The warm-replay K² turned out to be addressable too without
+moving to Phase 2, by exploiting the same trie structure on the
+replay side:
+
+- The replay evaluator tracks `lastQFactsHash` (the cur the last
+  successful walk landed at) and a `dispatchedTrie` (cumulative
+  in-memory TrieBuilder of all requests it's dispatched).
+- `v13Walk` fast-paths via `TrieBuilder::diff(otherRoot)`, a
+  parallel descent of the in-memory trie and the recorded edge's
+  stored RS trie. Matching subtree hashes short-circuit instantly
+  (content-addressed structural sharing), so the diff returns
+  the symmetric difference in O(|delta|·branching) work.
+- Dispatch only `delta_add` (new requests Q needs), XOR their
+  fact-element hashes into `lastQFactsHash`; undo `delta_rm`
+  (requests we dispatched that Q's RS doesn't include) with the
+  same XOR using already-cached responses. Check
+  `Terminal(Q, candidateCur)`. On hit, commit; on miss, fall
+  back to `walk()` from ∅.
+
+For mapAttrs-style sequential recordings where each Q_k's
+factSet is mostly a strict superset of Q_{k-1}'s, per-Q warm
+cost drops from O(|Q.RS|) to O(|delta|·log N). At K=10000 the
+warm wallclock fell from 329s to **2.2s** — 150× — and per-Q
+cost is now bounded by a Q's *actual new file reads*, not by
+session length.
+
+Phase 2's passive-replay-before-insert and distance heuristic
+remain the right move for cross-session amortisation and
+post-Patricia-split divergence handling, but the basic K²
+behaviour Phase 2 was sketched against is no longer load-bearing
+on within-session scaling.
