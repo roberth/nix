@@ -614,12 +614,64 @@ void TracingDecisionGraph::record(
         }
     };
 
+    /* Compute the FactSet hash reached by extending cur with the given
+       requests' (request, response) facts. Pure: doesn't touch any
+       state. Used by Patricia split to identify the intermediate
+       position without mutating cur. */
+    auto curExtendedBy = [&](const std::vector<RequestHash> & reqs) -> Hash {
+        Hash h = cur;
+        for (const auto & req : reqs) {
+            assert(!curRequests.count(req));
+            auto it = responseFor.find(req);
+            assert(it != responseFor.end());
+            h = dg_xorHash(h, dg_factElementHash(req, it->second));
+        }
+        return h;
+    };
+
     while (!remaining.empty()) {
-        /* Search outgoing edges for a "followable" one — useful
-           dispatch is non-empty and entirely within remaining. */
-        auto existing = getAsks(q, cur);
+        /* Eager Patricia split pass: at this (Q, cur), find any
+           existing edge whose usefulDispatch partially overlaps
+           `remaining` (∅ ⊊ shared ⊊ usefulE) and split it. After
+           this pass every outgoing edge's usefulDispatch is either
+           entirely inside `remaining` or entirely outside. */
+        for (const auto & rsHash : getAsks(q, cur)) {
+            auto rsMembers = getRequestSet(rsHash);
+            if (!rsMembers)
+                continue;
+            auto useful = usefulDispatch(*rsMembers, curRequests);
+            if (useful.empty())
+                continue;
+
+            std::vector<RequestHash> shared;
+            shared.reserve(useful.size());
+            for (const auto & req : useful)
+                if (remaining.count(req))
+                    shared.push_back(req);
+
+            /* Patricia split only when shared is a proper subset of
+               useful AND non-empty. Otherwise the edge is either
+               fully followable (handled below) or fully disjoint. */
+            if (shared.empty() || shared.size() == useful.size())
+                continue;
+
+            /* Insert the shared-prefix RS and the new shared edge
+               (Q, cur) → (via RS{shared}) → intermediate. */
+            auto sharedRsHash = insertRequestSet(shared);
+            auto intermediate = curExtendedBy(shared);
+            insertAsks(q, cur, sharedRsHash);
+            /* Re-point the old edge: it now starts at intermediate.
+               Its original RS hash is preserved (whole-set edge
+               label per design lines 261–268). */
+            insertAsks(q, intermediate, rsHash);
+            removeAsks(q, cur, rsHash);
+        }
+
+        /* Search the (possibly newly-split) outgoing edges for a
+           followable one — useful dispatch non-empty and entirely
+           within remaining. */
         std::optional<std::vector<RequestHash>> followUseful;
-        for (const auto & rsHash : existing) {
+        for (const auto & rsHash : getAsks(q, cur)) {
             auto rsMembers = getRequestSet(rsHash);
             if (!rsMembers)
                 continue;
