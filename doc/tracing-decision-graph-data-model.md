@@ -570,3 +570,51 @@ one exists is a third, deferred piece.
   passive-replay-before-insert, for cases where no single session
   produces a minimal trace and the cache stays stuck at the
   wider-than-necessary first recording.
+
+## Implementation notes (Phase 1 as shipped)
+
+Diversions from the storage-layer sketches above, all driven by
+profiling at K=1..10000 nixpkgs-attr workloads:
+
+- **FactSet hash: XOR over per-element hashes, not canonical-sort
+  Merkle.** Set extension is O(1) (`H(S ∪ {e}) = H(S) ⊕ H_e(e)`
+  given `e ∉ S`); insertion is order-independent so canonical;
+  algebraically weaker than SHA-Merkle, fine for an internal
+  cache. FactSets are not persisted at all — Asks/Terminals are
+  keyed by hash but walk reconstructs `cur` and `curRequests`
+  incrementally per call.
+- **RequestSet pool: hash-prefix trie of content-addressed nodes**,
+  not parent-pointer delta encoding. 16-way fanout, leaves split
+  past `TRIE_SPLIT_THRESHOLD = 16`. Two RequestSets that overlap
+  share their subtrees automatically via content addressing of
+  node payloads.
+- **Response payloads not persisted.** Walk dispatch recomputes
+  from the live environment; only the hash participates in cur
+  extension. Request payloads stay (walk needs the path to dispatch).
+- **`TracingWriter` maintains the v13FactSet's running hash,
+  `seenRequests`, `responseFor`, and an incremental
+  `TrieBuilder` for allRequests.** Each `logResponse` is O(log N)
+  for the trie insert; each `logResult` is O(1) for the cached
+  factSet hash + trie root hash, plus persisting any new trie
+  nodes since the last `logResult`. `record()`'s fast-path
+  overload takes the precomputed RS hash and jumps `cur` straight
+  to `factSetHash` for fresh-Q whole-remaining edges, skipping
+  `insertRequestSet` entirely.
+
+What this buys, end-to-end on a K=10000 nixpkgs-attr sweep:
+
+| metric              |  starting | shipped Phase 1 |
+|---------------------|----------:|----------------:|
+| Cold-record at K=10000 | ~3+ hours (extrapolated) | 277s (17s overhead) |
+| Per-attr record cost | super-linear in K | constant ~1.7 ms/attr |
+| Warm-replay at K=10000 | unmeasurable | 329s (still O(K²) — Phase 2 target) |
+| DB size at K=10000   | extrapolated GBs | 41 MB |
+
+The warm-replay K² is structural to Phase 1's over-approximation
+model and not addressable by code-level optimisation — see the
+Phase 2 sketch above. The cold-record K² that the prior bullet
+also expected ("O(events) total, with O(|requestSet|) per
+Patricia split") needed the incremental `TrieBuilder` to actually
+deliver, since `insertRequestSet` over the global allRequests
+would otherwise re-sort and re-trie the whole growing factSet on
+every `record()`.
