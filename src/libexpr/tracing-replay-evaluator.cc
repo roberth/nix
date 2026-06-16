@@ -21,13 +21,18 @@ TracingReplayEvaluator::TracingReplayEvaluator(
     , decisionGraph(decisionGraph)
     , writer(writer)
     , validationEnv(validationEnv)
+    , lastQFactsHash(TracingDecisionGraph::emptySetHash())
 {
 }
 
 std::optional<std::pair<std::string, Hash>>
 TracingReplayEvaluator::v13Walk(const Hash & queryHash)
 {
-    auto walkHit = decisionGraph.walk(queryHash, [&](const Hash & requestHash) -> Hash {
+    /* Dispatcher: turns a Request hash into the current Response
+       hash, memoised in dispatchCache so the file read + CBOR
+       encode + SHA-256 happens at most once per request per
+       process. */
+    auto dispatch = [&](const Hash & requestHash) -> Hash {
         if (auto it = dispatchCache.find(requestHash); it != dispatchCache.end())
             return it->second;
         auto requestPayload = decisionGraph.getRequestPayload(requestHash);
@@ -39,7 +44,66 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash)
         auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
         dispatchCache.emplace(requestHash, h);
         return h;
-    });
+    };
+
+    /* Fast path: leverage the trie's structural sharing.
+
+       For sequential mapAttrs-style replays the next Q's recorded
+       factSet is almost always a strict superset of the last Q's.
+       Instead of walking from (Q, ∅) and re-dispatching the whole
+       chain, ask the RequestSet trie: which Requests does this Q's
+       RS contain that we haven't already dispatched, and vice
+       versa? That's a trie-diff in O(|delta|·branching) — the
+       hash-equal shared subtrees short-circuit instantly.
+
+       Then XOR-extend lastQFactsHash by the fact-element hashes
+       for the delta-add (using live dispatch) and undo the
+       delta-rm (using cached responses), giving the cur Q's
+       recorded chain would have landed at. If Terminals has an
+       entry there for Q, hit; otherwise fall back to walk(). */
+    auto outgoing = decisionGraph.getAsks(queryHash, TracingDecisionGraph::emptySetHash());
+    if (outgoing.size() == 1) {
+        const Hash & edgeRsHash = outgoing[0];
+        std::vector<Hash> onlyInDispatched;
+        std::vector<Hash> onlyInEdge;
+        dispatchedTrie.diff(decisionGraph, edgeRsHash, onlyInDispatched, onlyInEdge);
+
+        Hash candidateCur = lastQFactsHash;
+        bool dispatchFailed = false;
+        for (const auto & req : onlyInEdge) {
+            auto resp = dispatch(req);
+            if (resp == Hash(HashAlgorithm::SHA256)) {
+                dispatchFailed = true;
+                break;
+            }
+            candidateCur = TracingDecisionGraph::xorFactIntoHash(candidateCur, req, resp);
+        }
+        if (!dispatchFailed) {
+            for (const auto & req : onlyInDispatched) {
+                auto it = dispatchCache.find(req);
+                if (it == dispatchCache.end()) { dispatchFailed = true; break; }
+                /* XOR is self-inverse: same op undoes the previous fold-in. */
+                candidateCur = TracingDecisionGraph::xorFactIntoHash(candidateCur, req, it->second);
+            }
+        }
+        if (!dispatchFailed) {
+            if (auto term = decisionGraph.getTerminal(queryHash, candidateCur)) {
+                auto payload = decisionGraph.getResultPayload(*term);
+                if (payload) {
+                    /* Commit the side effects: the delta-add requests
+                       are now part of our cumulative dispatched set;
+                       cur has moved to candidateCur. */
+                    for (const auto & req : onlyInEdge)
+                        dispatchedTrie.insert(req);
+                    lastQFactsHash = candidateCur;
+                    return std::make_pair(std::move(*payload), *term);
+                }
+            }
+        }
+    }
+
+    /* Fall back to a regular walk from ∅. */
+    auto walkHit = decisionGraph.walk(queryHash, dispatch);
     if (!walkHit)
         return std::nullopt;
     auto payload = decisionGraph.getResultPayload(*walkHit);

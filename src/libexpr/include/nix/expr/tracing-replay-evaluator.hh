@@ -44,6 +44,16 @@ class TracingReplayEvaluator : public Evaluator
        CBOR encode + SHA-256 happens once per request. */
     std::unordered_map<Hash, Hash> dispatchCache;
 
+    /* Replay-side "where we left off" — see design comment in
+       v13Walk. lastQFactsHash is the cur where the last successful
+       walk landed; dispatchedTrie is the cumulative set of requests
+       we've dispatched (or whose responses we've taken from
+       dispatchCache) in this process. Together they let the next
+       walk skip the shared prefix via a trie-diff against the new
+       Q's recorded RS. */
+    TracingDecisionGraph::SetHash lastQFactsHash;
+    TracingDecisionGraph::TrieBuilder dispatchedTrie;
+
     std::optional<std::string> dispatchAmbientQuery(const nlohmann::json & reqJson);
 
     template<typename Q>

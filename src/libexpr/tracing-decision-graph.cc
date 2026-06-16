@@ -741,7 +741,141 @@ struct TracingDecisionGraph::TrieBuilder::Node
         g.persistRequestSetNode(hash, payload);
         persisted = true;
     }
+
+    /* Collect all members under this subtree into out (no order
+       guarantee — caller sorts if needed). */
+    void collectAllMembers(std::vector<Hash> & out) const
+    {
+        if (isLeaf) {
+            for (const auto & h : leafMembers)
+                out.push_back(h);
+        } else {
+            for (const auto & c : children)
+                if (c)
+                    c->collectAllMembers(out);
+        }
+    }
 };
+
+/* Collect all members under a stored trie subtree. */
+static void dg_collectStoredMembers(
+    TracingDecisionGraph & g, const Hash & nodeHash, std::vector<Hash> & out)
+{
+    auto payload = g.getRequestSetNodePayload(nodeHash);
+    if (!payload)
+        return;
+    auto node = dg_parseTrieNode(*payload);
+    if (node.isLeaf) {
+        for (const auto & m : node.members)
+            out.push_back(m);
+    } else {
+        for (const auto & [bucket, child] : node.children)
+            dg_collectStoredMembers(g, child, out);
+    }
+}
+
+/* Set difference of two sorted vectors A and B: appends elements
+   in A but not B to onlyInA, elements in B but not A to onlyInB. */
+static void dg_sortedSymDiff(
+    std::vector<Hash> a, std::vector<Hash> b,
+    std::vector<Hash> & onlyInA, std::vector<Hash> & onlyInB)
+{
+    std::sort(a.begin(), a.end());
+    std::sort(b.begin(), b.end());
+    auto ai = a.begin();
+    auto bi = b.begin();
+    while (ai != a.end() && bi != b.end()) {
+        if (*ai < *bi) { onlyInA.push_back(*ai); ++ai; }
+        else if (*bi < *ai) { onlyInB.push_back(*bi); ++bi; }
+        else { ++ai; ++bi; }
+    }
+    while (ai != a.end()) onlyInA.push_back(*ai++);
+    while (bi != b.end()) onlyInB.push_back(*bi++);
+}
+
+/* Recursive trie-vs-trie diff. `a` may be null (no in-memory subtree
+   at this position). `bHash` may be nullopt (no stored subtree).
+   When both are present and their root hashes match, returns
+   immediately — that's the structural-sharing short-circuit. */
+static void dg_diffTries(
+    TracingDecisionGraph & g,
+    TracingDecisionGraph::TrieBuilder::Node * a,
+    const std::optional<Hash> & bHash,
+    int depth,
+    std::vector<Hash> & onlyInThis,
+    std::vector<Hash> & onlyInOther)
+{
+    /* Both empty: nothing to do. */
+    if (!a && !bHash)
+        return;
+
+    /* Only one side present: every member of that subtree is in
+       the diff in that direction. */
+    if (a && !bHash) {
+        a->collectAllMembers(onlyInThis);
+        return;
+    }
+    if (!a && bHash) {
+        dg_collectStoredMembers(g, *bHash, onlyInOther);
+        return;
+    }
+
+    /* Both present. Hash equality means structurally identical → no
+       contribution to the diff. */
+    if (a->ensureHash() == *bHash)
+        return;
+
+    /* Both present, differing hashes. Look inside the stored side
+       and decide based on each side's leaf-ness. */
+    auto payload = g.getRequestSetNodePayload(*bHash);
+    if (!payload) {
+        /* Stored node missing — treat as empty. */
+        a->collectAllMembers(onlyInThis);
+        return;
+    }
+    auto bNode = dg_parseTrieNode(*payload);
+
+    if (a->isLeaf && bNode.isLeaf) {
+        dg_sortedSymDiff(a->leafMembers, std::move(bNode.members), onlyInThis, onlyInOther);
+        return;
+    }
+
+    /* For mixed or both-internal cases, bucket each side's contents
+       at the current depth and recurse per bucket. A's children:
+       direct pointers. B's children: sparse list keyed by bucket. */
+    std::array<TracingDecisionGraph::TrieBuilder::Node *, TRIE_RADIX> aBuckets{};
+    /* Need to construct virtual "leaf" subtrees for A if A is a leaf
+       with members that distribute across multiple buckets. Simpler:
+       collect A's members and diff against B's full member set —
+       but that defeats the early-skip on shared subtrees.
+
+       Take the slow path when types mismatch: collect all members of
+       both subtrees and do a sorted-merge diff. The hash short-circuit
+       above already handled the common case where the subtrees are
+       identical; this branch only fires when A is a leaf and B is
+       internal (or vice versa) AND they actually differ, which is
+       infrequent and bounded by the small leaf size on one side. */
+    if (a->isLeaf != bNode.isLeaf) {
+        std::vector<Hash> aMembers;
+        a->collectAllMembers(aMembers);
+        std::vector<Hash> bMembers = std::move(bNode.members);
+        if (!bNode.isLeaf) {
+            bMembers.clear();
+            dg_collectStoredMembers(g, *bHash, bMembers);
+        }
+        dg_sortedSymDiff(std::move(aMembers), std::move(bMembers), onlyInThis, onlyInOther);
+        return;
+    }
+
+    /* Both internal: per-bucket recursion. */
+    for (uint8_t i = 0; i < TRIE_RADIX; ++i)
+        aBuckets[i] = a->children[i].get();
+    std::array<std::optional<Hash>, TRIE_RADIX> bBuckets{};
+    for (const auto & [bucket, h] : bNode.children)
+        bBuckets[bucket] = h;
+    for (uint8_t i = 0; i < TRIE_RADIX; ++i)
+        dg_diffTries(g, aBuckets[i], bBuckets[i], depth + 1, onlyInThis, onlyInOther);
+}
 
 TracingDecisionGraph::TrieBuilder::TrieBuilder()
     : root(std::make_unique<Node>())
@@ -763,6 +897,15 @@ Hash TracingDecisionGraph::TrieBuilder::rootHash()
 void TracingDecisionGraph::TrieBuilder::persist(TracingDecisionGraph & g)
 {
     root->persistTree(g);
+}
+
+void TracingDecisionGraph::TrieBuilder::diff(
+    TracingDecisionGraph & g,
+    const Hash & otherRoot,
+    std::vector<Hash> & onlyInThis,
+    std::vector<Hash> & onlyInOther)
+{
+    dg_diffTries(g, root.get(), std::optional<Hash>{otherRoot}, 0, onlyInThis, onlyInOther);
 }
 
 TracingDecisionGraph::SetHash

@@ -297,8 +297,24 @@ public:
            Idempotent. */
         void persist(TracingDecisionGraph & g);
 
-    private:
+        /* Compute the symmetric difference between this in-memory
+           trie and a stored trie rooted at `otherRoot`. Appends
+           elements only in this to `onlyInThis`, elements only in
+           the stored trie to `onlyInOther`. Skips subtrees whose
+           root hashes already match — for `dispatched ⊆ recordedRS`
+           this collapses to O(|delta| · branching_factor) work
+           regardless of how big either side is. */
+        void diff(
+            TracingDecisionGraph & g,
+            const Hash & otherRoot,
+            std::vector<Hash> & onlyInThis,
+            std::vector<Hash> & onlyInOther);
+
+        /* Forward-declared so static helpers in the .cc can name the
+           type; defined in the .cc. */
         struct Node;
+
+    private:
         std::unique_ptr<Node> root;
     };
 
@@ -316,8 +332,11 @@ private:
     /* RequestSet trie internals — see schema comment and definitions
        in tracing-decision-graph.cc. */
     Hash insertTrieRecursive(std::vector<Hash> sortedMembers, int depth);
-    std::optional<std::string> getRequestSetNodePayload(const Hash & nodeHash);
     bool collectTrieMembers(const Hash & nodeHash, std::vector<RequestHash> & out);
+public:
+    /* Public so TrieBuilder::diff (defined in the .cc) can fetch
+       stored node payloads. Not intended for general use. */
+    std::optional<std::string> getRequestSetNodePayload(const Hash & nodeHash);
 };
 
 template<typename Q>
