@@ -5,6 +5,7 @@
  */
 
 #include "nix/expr/trace-sink.hh"
+#include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-index.hh"
 #include "nix/util/ref.hh"
 
@@ -63,6 +64,13 @@ class TracingWriter
 {
     TraceSink & sink;
     TracingIndex * index; // nullptr if trie recording disabled
+    /* v13 decision-graph index for the parallel migration path.
+       nullptr until the eval-cache wiring opts in. */
+    TracingDecisionGraph * decisionGraph;
+    /* v13 global factSet, accumulating monotonically across the
+       session per the design doc. Sampled at each logResult and
+       fed into decisionGraph->record(). */
+    std::vector<TracingDecisionGraph::Fact> v13FactSet;
     std::optional<NodeHash> afterHash;
     uint64_t nextVirtualRoot = 0;
     std::map<Object *, VirtualRootId> virtualRootRegistry;
@@ -121,9 +129,13 @@ class TracingWriter
     }
 
 public:
-    TracingWriter(TraceSink & sink, TracingIndex * index = nullptr)
+    TracingWriter(
+        TraceSink & sink,
+        TracingIndex * index = nullptr,
+        TracingDecisionGraph * decisionGraph = nullptr)
         : sink(sink)
         , index(index)
+        , decisionGraph(decisionGraph)
     {
     }
 
@@ -225,6 +237,12 @@ public:
            startingIndex when it finalises. */
         auto responseHash = index->insertSetResponse(respPayload);
         observedMembers.push_back({queryHash, responseHash});
+
+        /* v13 global factSet — the Request hash is what v12 calls
+           queryHash here (this method handles d>0 query/response
+           pairs). responseHash dittos as the v13 ResponseHash. */
+        if (decisionGraph)
+            v13FactSet.push_back({queryHash, responseHash});
     }
 
     /**
@@ -249,6 +267,9 @@ public:
 
         auto responseHash = index->insertSetResponse(resultPayload);
         observedMembers.push_back({queryHash, responseHash});
+
+        if (decisionGraph)
+            v13FactSet.push_back({queryHash, responseHash});
     }
 
     /**
@@ -271,6 +292,20 @@ public:
         auto responseHash = index->insertSetResponse(resultPayload);
         finaliseSetsBinding(responseHash);
         observedMembers.push_back({*qh.queryHash, responseHash});
+
+        /* v13: record this Q's recording. factSetHash is the
+           canonical hash of everything observed up to now; record()
+           writes the Asks chain + Terminal mapping (Q, factSet) -> R.
+           We don't clear v13FactSet — it grows monotonically per the
+           model (any later Q's recording will sample this plus
+           whatever it adds). */
+        if (decisionGraph && qh.queryHash) {
+            auto factSetHash = decisionGraph->insertFactSet(v13FactSet);
+            decisionGraph->record(*qh.queryHash, factSetHash, responseHash);
+        }
+
+        if (decisionGraph)
+            v13FactSet.push_back({*qh.queryHash, responseHash});
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,
