@@ -787,4 +787,275 @@ TEST_F(TracingDecisionGraphTest, EndToEndNestedQueries)
     EXPECT_EQ(*outerHit, outerResult);
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   Phase 1 design tests
+   ─────────────────────────────────────────────────────────────────────
+   Specification-by-test for the faithful Phase 1 record() at
+   doc/tracing-decision-graph-data-model.md lines 386–415.
+
+   These tests will FAIL against the current per-fact singleton-edge
+   strawman in record() and provide the green target for the rewrite.
+
+   The semantic spec, briefly:
+     - First-time recording of Q at (∅): one Asks edge whose
+       RequestSet is the *whole* remaining set, not one edge per
+       fact.
+     - Subsequent recording whose remaining is a strict superset of
+       an existing edge's useful dispatch: follow that edge to its
+       target FactSet, then continue recording from there. No
+       duplicate Asks row.
+     - Subsequent recording whose remaining partially overlaps an
+       existing edge's useful dispatch: Patricia-split the existing
+       edge so the shared prefix becomes a single edge to a fresh
+       intermediate FactSet, and both the old and new tails fan out
+       from that intermediate. The split inserts at most one fresh
+       RequestSet node (the shared prefix); tail edges keep their
+       original RS references.
+     - RequestSet pool is content-addressed and shared across Qs.
+   ───────────────────────────────────────────────────────────────────── */
+
+TEST_F(TracingDecisionGraphTest, Phase1_RecordEmitsSingleEdgeForFirstRecording)
+{
+    /* First-time recording of Q with N>1 facts: the design's
+       record() emits ONE Asks edge from (Q, ∅) whose RequestSet
+       contains all N requests, not N singleton edges. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto req1 = sha("req1"), resp1 = sha("resp1");
+    auto req2 = sha("req2"), resp2 = sha("resp2");
+    auto req3 = sha("req3"), resp3 = sha("resp3");
+    auto result = sha("R");
+
+    auto factSet = g.insertFactSet({
+        {req1, resp1},
+        {req2, resp2},
+        {req3, resp3},
+    });
+    g.record(q, factSet, result);
+
+    /* Exactly one outgoing edge at (Q, ∅). */
+    auto outgoing = g.getAsks(q, TracingDecisionGraph::emptySetHash());
+    ASSERT_EQ(outgoing.size(), 1u)
+        << "first-time recording with " << 3 << " facts should emit one Asks edge, "
+        << "got " << outgoing.size();
+
+    /* That edge's RequestSet contains all three requests. */
+    auto rs = g.getRequestSet(outgoing[0]);
+    ASSERT_TRUE(rs.has_value());
+    std::set<Hash> got(rs->begin(), rs->end());
+    std::set<Hash> want{req1, req2, req3};
+    EXPECT_EQ(got, want);
+
+    /* Replay still works end-to-end. */
+    auto hit = g.walk(q, [&](const Hash & req) {
+        if (req == req1) return resp1;
+        if (req == req2) return resp2;
+        if (req == req3) return resp3;
+        ADD_FAILURE() << "unexpected dispatch";
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(*hit, result);
+}
+
+TEST_F(TracingDecisionGraphTest, Phase1_RecordReusesEdgeWhenExtendingSuperset)
+{
+    /* Two recordings of the same Q where the second's factSet is a
+       strict superset of the first's. The design's record() should:
+         - First call:  Asks(Q, ∅, RS{r1,r2}) → factSet1; Terminal at factSet1.
+         - Second call: follow the existing Asks(Q, ∅, RS{r1,r2}) edge to
+                        factSet1, then insert Asks(Q, factSet1, RS{r3}) → factSet2;
+                        Terminal at factSet2.
+       Net: 2 Asks rows, 2 Terminals — *not* the 5 the strawman would emit. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto r1 = sha("r1"), v1 = sha("v1");
+    auto r2 = sha("r2"), v2 = sha("v2");
+    auto r3 = sha("r3"), v3 = sha("v3");
+
+    auto fs1 = g.insertFactSet({{r1, v1}, {r2, v2}});
+    auto fs2 = g.insertFactSet({{r1, v1}, {r2, v2}, {r3, v3}});
+    g.record(q, fs1, sha("R1"));
+    g.record(q, fs2, sha("R2"));
+
+    /* (Q, ∅) carries one edge; that edge's RS is the first
+       recording's full request set {r1, r2}. */
+    auto rootEdges = g.getAsks(q, TracingDecisionGraph::emptySetHash());
+    ASSERT_EQ(rootEdges.size(), 1u);
+    auto rs0 = g.getRequestSet(rootEdges[0]);
+    ASSERT_TRUE(rs0.has_value());
+    std::set<Hash> root_want{r1, r2};
+    std::set<Hash> root_got(rs0->begin(), rs0->end());
+    EXPECT_EQ(root_got, root_want);
+
+    /* (Q, fs1) carries one edge for the second recording's
+       extension; its RS = {r3}. */
+    auto fs1Edges = g.getAsks(q, fs1);
+    ASSERT_EQ(fs1Edges.size(), 1u);
+    auto rs1 = g.getRequestSet(fs1Edges[0]);
+    ASSERT_TRUE(rs1.has_value());
+    std::set<Hash> ext_want{r3};
+    std::set<Hash> ext_got(rs1->begin(), rs1->end());
+    EXPECT_EQ(ext_got, ext_want);
+
+    /* Both walks still hit correctly. */
+    auto dispatch = [&](const Hash & req) {
+        if (req == r1) return v1;
+        if (req == r2) return v2;
+        if (req == r3) return v3;
+        ADD_FAILURE() << "unexpected dispatch";
+        return Hash(HashAlgorithm::SHA256);
+    };
+    auto hit1 = g.walk(q, dispatch);
+    ASSERT_TRUE(hit1.has_value());
+    /* Walk hits the SHORTER recording (fs1, R1) first because
+       walk checks Terminal at every intermediate cur. After
+       dispatching {r1,r2} it reaches fs1, where Terminal(Q, fs1, R1)
+       is present. */
+    EXPECT_EQ(*hit1, sha("R1"));
+}
+
+TEST_F(TracingDecisionGraphTest, Phase1_PatriciaSplitsOnOverlappingDivergence)
+{
+    /* Two recordings of Q that share a request prefix but diverge:
+         rec1: factSet1 covers {a, b, c}  (R1)
+         rec2: factSet2 covers {a, b, d}  (R2)        — same a/b responses
+       After both records, the design's algorithm Patricia-splits so
+       the shared prefix RS{a,b} is one edge from ∅ to an intermediate
+       FactSet, and {c} vs {d} fan out from there.
+
+       Structurally:
+         (Q, ∅) ── RS{a,b} ──▶ FS_int
+         (Q, FS_int) ── RS{a,b,c} ──▶ FS1   (kept its original RS reference)
+         (Q, FS_int) ── RS{a,b,d} ──▶ FS2   (kept its original RS reference)
+
+       i.e., (Q, ∅) has exactly one outgoing edge after the split. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto a = sha("a"), va = sha("va");
+    auto b = sha("b"), vb = sha("vb");
+    auto c = sha("c"), vc = sha("vc");
+    auto d = sha("d"), vd = sha("vd");
+
+    auto fs1 = g.insertFactSet({{a, va}, {b, vb}, {c, vc}});
+    auto fs2 = g.insertFactSet({{a, va}, {b, vb}, {d, vd}});
+    g.record(q, fs1, sha("R1"));
+    g.record(q, fs2, sha("R2"));
+
+    /* After split: exactly one edge from (Q, ∅), labelled with the
+       shared prefix RS{a,b}. */
+    auto root = g.getAsks(q, TracingDecisionGraph::emptySetHash());
+    ASSERT_EQ(root.size(), 1u)
+        << "after Patricia split (Q, ∅) should have exactly one outgoing edge";
+
+    auto rsShared = g.getRequestSet(root[0]);
+    ASSERT_TRUE(rsShared.has_value());
+    std::set<Hash> shared_got(rsShared->begin(), rsShared->end());
+    std::set<Hash> shared_want{a, b};
+    EXPECT_EQ(shared_got, shared_want)
+        << "the single outgoing edge's RS should be the shared prefix {a,b}";
+
+    /* Both walks reach the correct terminal. */
+    auto hit1 = g.walk(q, [&](const Hash & req) {
+        if (req == a) return va;
+        if (req == b) return vb;
+        if (req == c) return vc;
+        if (req == d) return vd;
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(hit1.has_value());
+    /* With both responses available, walk will reach whichever
+       terminal sits at the cur it converges to — but it must reach
+       *some* recorded Result, not miss. */
+    EXPECT_TRUE(*hit1 == sha("R1") || *hit1 == sha("R2"));
+
+    /* Walk where d's response is wrong: only the c-branch survives,
+       must hit R1. */
+    auto hitC = g.walk(q, [&](const Hash & req) {
+        if (req == a) return va;
+        if (req == b) return vb;
+        if (req == c) return vc;
+        if (req == d) return sha("wrong-d");
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(hitC.has_value());
+    EXPECT_EQ(*hitC, sha("R1"));
+
+    /* Walk where c's response is wrong: only the d-branch survives,
+       must hit R2. */
+    auto hitD = g.walk(q, [&](const Hash & req) {
+        if (req == a) return va;
+        if (req == b) return vb;
+        if (req == c) return sha("wrong-c");
+        if (req == d) return vd;
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(hitD.has_value());
+    EXPECT_EQ(*hitD, sha("R2"));
+}
+
+TEST_F(TracingDecisionGraphTest, Phase1_RequestSetSharedAcrossQs)
+{
+    /* Two distinct Qs recorded with the same factSet. RequestSets is
+       content-addressed; both Qs' Asks edges should point to the SAME
+       RequestSet hash — one row in the RequestSet pool, two in Asks. */
+    TracingDecisionGraph g(dbPath);
+    auto q1 = sha("Q1"), q2 = sha("Q2");
+    auto r1 = sha("r1"), v1 = sha("v1");
+    auto r2 = sha("r2"), v2 = sha("v2");
+
+    auto fs = g.insertFactSet({{r1, v1}, {r2, v2}});
+    g.record(q1, fs, sha("R1"));
+    g.record(q2, fs, sha("R2"));
+
+    auto q1Edges = g.getAsks(q1, TracingDecisionGraph::emptySetHash());
+    auto q2Edges = g.getAsks(q2, TracingDecisionGraph::emptySetHash());
+    ASSERT_EQ(q1Edges.size(), 1u);
+    ASSERT_EQ(q2Edges.size(), 1u);
+    EXPECT_EQ(q1Edges[0], q2Edges[0])
+        << "Q1 and Q2 record the same factSet — their Asks edges should "
+        << "point to the same content-addressed RequestSet";
+}
+
+TEST_F(TracingDecisionGraphTest, Phase1_WalkDispatchesMultiElementRequestSet)
+{
+    /* Walk must correctly handle an edge whose RequestSet has > 1
+       element: dispatch each request, XOR all (req, resp) facts into
+       cur in one step (still O(1) per fact, but one Asks-table hop
+       per edge, not per fact). */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    /* Use enough facts that the singleton-strawman vs design difference
+       is unambiguous. */
+    constexpr int N = 10;
+    std::vector<TracingDecisionGraph::Fact> facts;
+    std::map<Hash, Hash> dispatchMap;
+    for (int i = 0; i < N; ++i) {
+        auto req = sha("req-" + std::to_string(i));
+        auto resp = sha("resp-" + std::to_string(i));
+        facts.push_back({req, resp});
+        dispatchMap.emplace(req, resp);
+    }
+    auto fs = g.insertFactSet(facts);
+    g.record(q, fs, sha("R"));
+
+    /* One Asks edge total at (Q, ∅); its RS has N members. */
+    auto edges = g.getAsks(q, TracingDecisionGraph::emptySetHash());
+    ASSERT_EQ(edges.size(), 1u);
+    auto rs = g.getRequestSet(edges[0]);
+    ASSERT_TRUE(rs.has_value());
+    EXPECT_EQ(rs->size(), static_cast<size_t>(N));
+
+    auto hit = g.walk(q, [&](const Hash & req) {
+        auto it = dispatchMap.find(req);
+        if (it == dispatchMap.end()) {
+            ADD_FAILURE() << "unexpected dispatch";
+            return Hash(HashAlgorithm::SHA256);
+        }
+        return it->second;
+    });
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ(*hit, sha("R"));
+}
+
 } // namespace nix
