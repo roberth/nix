@@ -37,9 +37,9 @@ count_logs() {
     local stderr_file="$1"
     local v13hits v12hits misses
     v13hits=$(grep -c "replay hit (v13 walk)" "$stderr_file" || true)
-    v12hits=$(grep -c "replay hit (sets\|trie\|shortcut)" "$stderr_file" || true)
+    v12hits=$(grep -cE "replay hit \((sets|trie|shortcut)" "$stderr_file" || true)
     misses=$(grep -c "replay miss" "$stderr_file" || true)
-    echo "v13_walk_hits=$v13hits v12_hits=$v12hits misses=$misses"
+    echo "v13_walk_hits=${v13hits:-0} v12_hits=${v12hits:-0} misses=${misses:-0}"
 }
 
 run_eval() {
