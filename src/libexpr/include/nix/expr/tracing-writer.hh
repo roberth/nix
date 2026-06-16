@@ -71,6 +71,10 @@ class TracingWriter
     std::vector<TracingDecisionGraph::Fact> v13FactSet;
     TracingDecisionGraph::SetHash v13FactSetHash;
     std::unordered_set<Hash> seenRequests;
+    /* request → response lookup, maintained as facts arrive.
+       Handed to record() by reference so it doesn't rebuild
+       O(N) per call. */
+    std::unordered_map<Hash, Hash> responseFor;
 
     uint64_t nextVirtualRoot = 0;
     std::map<Object *, VirtualRootId> virtualRootRegistry;
@@ -159,6 +163,7 @@ public:
             v13FactSet.push_back({queryHash, responseHash});
             v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 v13FactSetHash, queryHash, responseHash);
+            responseFor.emplace(queryHash, responseHash);
         }
     }
 
@@ -181,6 +186,7 @@ public:
             v13FactSet.push_back({queryHash, responseHash});
             v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 v13FactSetHash, queryHash, responseHash);
+            responseFor.emplace(queryHash, responseHash);
         }
     }
 
@@ -205,9 +211,12 @@ public:
         /* v13FactSetHash is maintained incrementally per fact; skip
            insertFactSet's O(N log N) sort + fold. primeFactSetCache
            makes the members available to record() via getFactSet
-           without rebuilding the hash. */
+           without rebuilding the hash. responseFor + seenRequests
+           are passed by reference so record() doesn't re-build its
+           per-call lookup map and remaining set. */
         decisionGraph->primeFactSetCache(v13FactSetHash, v13FactSet);
-        decisionGraph->record(*qh.queryHash, v13FactSetHash, resultNodeHash);
+        decisionGraph->record(*qh.queryHash, v13FactSetHash, resultNodeHash,
+            responseFor, seenRequests);
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,

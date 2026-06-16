@@ -31,6 +31,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -214,6 +215,19 @@ public:
        coexist without conflict. Patricia split for the residual
        multi-Request-overlap case is a deferred optimisation. */
     void record(const QueryHash & q, const SetHash & factSet, const ResultHash & result);
+
+    /* Fast-path overload: the caller maintains responseFor (request →
+       response) and allRequests (= factSet.requests) incrementally,
+       handing them in by reference so record() skips the O(N)
+       rebuild of these structures from getFactSet() members on every
+       call. TracingWriter uses this; tests use the simpler overload
+       above. */
+    void record(
+        const QueryHash & q,
+        const SetHash & factSet,
+        const ResultHash & result,
+        const std::unordered_map<Hash, Hash> & responseFor,
+        const std::unordered_set<Hash> & allRequests);
 
     /* Navigate from (Q, ∅) using `dispatch` to evaluate Requests
        the recorded path needs. Returns the Result hash on hit,

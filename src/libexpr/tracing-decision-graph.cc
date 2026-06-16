@@ -809,57 +809,36 @@ TracingDecisionGraph::getTerminal(const QueryHash & q, const SetHash & factSet)
    Recording and replay
    ───────────────────────────────────────────────────────────────────── */
 
-void TracingDecisionGraph::record(
-    const QueryHash & q,
-    const SetHash & factSetHash,
-    const ResultHash & result)
+/* Inner body of record(). Both overloads call this with their
+   pre-built (responseFor, allRequests). The body doesn't mutate
+   either; it tracks a local curRequests for "what I've consumed
+   so far". remaining-as-set = allRequests \ curRequests. */
+static void dg_recordImpl(
+    TracingDecisionGraph & g,
+    const Hash & q,
+    const Hash & factSetHash,
+    const Hash & result,
+    const std::unordered_map<Hash, Hash> & responseFor,
+    const std::unordered_set<Hash> & allRequests)
 {
-    auto facts = getFactSet(factSetHash);
-    if (!facts)
-        throw Error("decision-graph: record(Q, factSet, result) called with FactSet hash not in the in-process cache");
+    auto cur = TracingDecisionGraph::emptySetHash();
+    std::unordered_set<Hash> curRequests;
 
-    /* Faithful Phase 1 record() per doc §Recording (lines 386–415).
+    auto isInRemaining = [&](const Hash & req) {
+        return allRequests.count(req) && !curRequests.count(req);
+    };
 
-       For each step: see if some existing outgoing edge's useful
-       dispatch is a subset of what's left to consume; if yes, follow
-       it. Otherwise insert a fresh edge whose RequestSet is the
-       *whole remaining set* and step straight to factSet.
-
-       Patricia split (collapse overlapping but not-equal edges into
-       a shared prefix + divergent tails) is handled in Step D; this
-       step still records correctly without it, just with extra
-       outgoing edges at split-eligible positions. */
-
-    /* Request → response lookup for this recording. Used to extend
-       cur as we follow or insert edges. */
-    std::unordered_map<Hash, Hash> responseFor;
-    responseFor.reserve(facts->size());
-    std::unordered_set<RequestHash> remaining;
-    remaining.reserve(facts->size());
-    for (const auto & f : *facts) {
-        responseFor.emplace(f.request, f.response);
-        remaining.insert(f.request);
-    }
-
-    auto cur = emptySetHash();
-    std::unordered_set<RequestHash> curRequests;
-
-    auto extendCur = [&](const std::vector<RequestHash> & reqs) {
+    auto extendCur = [&](const std::vector<Hash> & reqs) {
         for (const auto & req : reqs) {
             assert(!curRequests.count(req));
             auto it = responseFor.find(req);
             assert(it != responseFor.end());
             cur = dg_xorHash(cur, dg_factElementHash(req, it->second));
             curRequests.insert(req);
-            remaining.erase(req);
         }
     };
 
-    /* Compute the FactSet hash reached by extending cur with the given
-       requests' (request, response) facts. Pure: doesn't touch any
-       state. Used by Patricia split to identify the intermediate
-       position without mutating cur. */
-    auto curExtendedBy = [&](const std::vector<RequestHash> & reqs) -> Hash {
+    auto curExtendedBy = [&](const std::vector<Hash> & reqs) -> Hash {
         Hash h = cur;
         for (const auto & req : reqs) {
             assert(!curRequests.count(req));
@@ -870,57 +849,42 @@ void TracingDecisionGraph::record(
         return h;
     };
 
-    while (!remaining.empty()) {
-        /* Eager Patricia split pass: at this (Q, cur), find any
-           existing edge whose usefulDispatch partially overlaps
-           `remaining` (∅ ⊊ shared ⊊ usefulE) and split it. After
-           this pass every outgoing edge's usefulDispatch is either
-           entirely inside `remaining` or entirely outside. */
-        for (const auto & rsHash : getAsks(q, cur)) {
-            auto rsMembers = getRequestSet(rsHash);
+    while (curRequests.size() < allRequests.size()) {
+        /* Eager Patricia split pass: any existing edge whose
+           usefulDispatch partially overlaps remaining gets split. */
+        for (const auto & rsHash : g.getAsks(q, cur)) {
+            auto rsMembers = g.getRequestSet(rsHash);
             if (!rsMembers)
                 continue;
-            auto useful = usefulDispatch(*rsMembers, curRequests);
+            auto useful = TracingDecisionGraph::usefulDispatch(*rsMembers, curRequests);
             if (useful.empty())
                 continue;
 
-            std::vector<RequestHash> shared;
+            std::vector<Hash> shared;
             shared.reserve(useful.size());
             for (const auto & req : useful)
-                if (remaining.count(req))
+                if (isInRemaining(req))
                     shared.push_back(req);
-
-            /* Patricia split only when shared is a proper subset of
-               useful AND non-empty. Otherwise the edge is either
-               fully followable (handled below) or fully disjoint. */
             if (shared.empty() || shared.size() == useful.size())
                 continue;
 
-            /* Insert the shared-prefix RS and the new shared edge
-               (Q, cur) → (via RS{shared}) → intermediate. */
-            auto sharedRsHash = insertRequestSet(shared);
+            auto sharedRsHash = g.insertRequestSet(shared);
             auto intermediate = curExtendedBy(shared);
-            insertAsks(q, cur, sharedRsHash);
-            /* Re-point the old edge: it now starts at intermediate.
-               Its original RS hash is preserved (whole-set edge
-               label per design lines 261–268). */
-            insertAsks(q, intermediate, rsHash);
-            removeAsks(q, cur, rsHash);
+            g.insertAsks(q, cur, sharedRsHash);
+            g.insertAsks(q, intermediate, rsHash);
+            g.removeAsks(q, cur, rsHash);
         }
 
-        /* Search the (possibly newly-split) outgoing edges for a
-           followable one — useful dispatch non-empty and entirely
-           within remaining. */
-        std::optional<std::vector<RequestHash>> followUseful;
-        for (const auto & rsHash : getAsks(q, cur)) {
-            auto rsMembers = getRequestSet(rsHash);
+        std::optional<std::vector<Hash>> followUseful;
+        for (const auto & rsHash : g.getAsks(q, cur)) {
+            auto rsMembers = g.getRequestSet(rsHash);
             if (!rsMembers)
                 continue;
-            auto useful = usefulDispatch(*rsMembers, curRequests);
+            auto useful = TracingDecisionGraph::usefulDispatch(*rsMembers, curRequests);
             if (useful.empty())
                 continue;
             bool subset = std::all_of(useful.begin(), useful.end(),
-                [&](const auto & req) { return remaining.count(req); });
+                [&](const auto & req) { return isInRemaining(req); });
             if (subset) {
                 followUseful = std::move(useful);
                 break;
@@ -930,15 +894,51 @@ void TracingDecisionGraph::record(
         if (followUseful) {
             extendCur(*followUseful);
         } else {
-            std::vector<RequestHash> remainingVec(remaining.begin(), remaining.end());
-            auto rsHash = insertRequestSet(remainingVec);
-            insertAsks(q, cur, rsHash);
+            std::vector<Hash> remainingVec;
+            remainingVec.reserve(allRequests.size() - curRequests.size());
+            for (const auto & req : allRequests)
+                if (!curRequests.count(req))
+                    remainingVec.push_back(req);
+            auto rsHash = g.insertRequestSet(remainingVec);
+            g.insertAsks(q, cur, rsHash);
             extendCur(remainingVec);
         }
     }
 
-    /* By construction cur now equals factSetHash. */
-    insertTerminal(q, factSetHash, result);
+    g.insertTerminal(q, factSetHash, result);
+}
+
+void TracingDecisionGraph::record(
+    const QueryHash & q,
+    const SetHash & factSetHash,
+    const ResultHash & result)
+{
+    auto facts = getFactSet(factSetHash);
+    if (!facts)
+        throw Error("decision-graph: record(Q, factSet, result) called with FactSet hash not in the in-process cache");
+
+    /* Build the per-call responseFor / allRequests from the cached
+       factSet members. Callers with these maintained incrementally
+       should use the fast-path overload below instead. */
+    std::unordered_map<Hash, Hash> responseFor;
+    responseFor.reserve(facts->size());
+    std::unordered_set<Hash> allRequests;
+    allRequests.reserve(facts->size());
+    for (const auto & f : *facts) {
+        responseFor.emplace(f.request, f.response);
+        allRequests.insert(f.request);
+    }
+    dg_recordImpl(*this, q, factSetHash, result, responseFor, allRequests);
+}
+
+void TracingDecisionGraph::record(
+    const QueryHash & q,
+    const SetHash & factSetHash,
+    const ResultHash & result,
+    const std::unordered_map<Hash, Hash> & responseFor,
+    const std::unordered_set<Hash> & allRequests)
+{
+    dg_recordImpl(*this, q, factSetHash, result, responseFor, allRequests);
 }
 
 bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factSet)
