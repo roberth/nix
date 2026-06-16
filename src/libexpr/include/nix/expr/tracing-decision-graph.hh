@@ -31,6 +31,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 namespace nix {
@@ -143,6 +144,16 @@ public:
        hash isn't in the pool. */
     std::optional<std::vector<RequestHash>> getRequestSet(const SetHash & h);
     std::optional<std::vector<Fact>> getFactSet(const SetHash & h);
+
+    /* Useful dispatch: the subset of an edge's requestSet whose
+       Responses aren't already in cur's facts. This is what record()
+       inspects when deciding whether to follow or split an existing
+       edge, and what walk() actually dispatches at each step.
+       Doc reference: §"Invariant: pairwise-disjoint useful
+       dispatches per (Q, FactSet)". */
+    static std::vector<RequestHash> usefulDispatch(
+        const std::vector<RequestHash> & edgeRequestSet,
+        const std::unordered_set<RequestHash> & curRequests);
 
     /* ─────────────────────────────────────────────────────────────────
        Decision graph layer: edges keyed by (Q, factSet)

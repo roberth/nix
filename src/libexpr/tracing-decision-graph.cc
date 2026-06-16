@@ -405,6 +405,19 @@ TracingDecisionGraph::emptySetHash()
     return h;
 }
 
+std::vector<TracingDecisionGraph::RequestHash>
+TracingDecisionGraph::usefulDispatch(
+    const std::vector<RequestHash> & edgeRequestSet,
+    const std::unordered_set<RequestHash> & curRequests)
+{
+    std::vector<RequestHash> out;
+    out.reserve(edgeRequestSet.size());
+    for (const auto & req : edgeRequestSet)
+        if (!curRequests.count(req))
+            out.push_back(req);
+    return out;
+}
+
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::insertRequestSet(std::vector<RequestHash> members)
 {
@@ -564,16 +577,74 @@ void TracingDecisionGraph::record(
     if (!facts)
         throw Error("decision-graph: record(Q, factSet, result) called with FactSet hash not in the in-process cache");
 
-    /* Walk the Facts in canonical order (already sorted by getFactSet),
-       writing one singleton Asks edge per Fact and extending cur via
-       XOR. No need to materialise intermediate vectors — set hash
-       extension is O(1). */
-    auto cur = emptySetHash();
+    /* Faithful Phase 1 record() per doc §Recording (lines 386–415).
+
+       For each step: see if some existing outgoing edge's useful
+       dispatch is a subset of what's left to consume; if yes, follow
+       it. Otherwise insert a fresh edge whose RequestSet is the
+       *whole remaining set* and step straight to factSet.
+
+       Patricia split (collapse overlapping but not-equal edges into
+       a shared prefix + divergent tails) is handled in Step D; this
+       step still records correctly without it, just with extra
+       outgoing edges at split-eligible positions. */
+
+    /* Request → response lookup for this recording. Used to extend
+       cur as we follow or insert edges. */
+    std::unordered_map<Hash, Hash> responseFor;
+    responseFor.reserve(facts->size());
+    std::unordered_set<RequestHash> remaining;
+    remaining.reserve(facts->size());
     for (const auto & f : *facts) {
-        auto requestSetHash = insertRequestSet({f.request});
-        insertAsks(q, cur, requestSetHash);
-        cur = dg_xorHash(cur, dg_factElementHash(f.request, f.response));
+        responseFor.emplace(f.request, f.response);
+        remaining.insert(f.request);
     }
+
+    auto cur = emptySetHash();
+    std::unordered_set<RequestHash> curRequests;
+
+    auto extendCur = [&](const std::vector<RequestHash> & reqs) {
+        for (const auto & req : reqs) {
+            assert(!curRequests.count(req));
+            auto it = responseFor.find(req);
+            assert(it != responseFor.end());
+            cur = dg_xorHash(cur, dg_factElementHash(req, it->second));
+            curRequests.insert(req);
+            remaining.erase(req);
+        }
+    };
+
+    while (!remaining.empty()) {
+        /* Search outgoing edges for a "followable" one — useful
+           dispatch is non-empty and entirely within remaining. */
+        auto existing = getAsks(q, cur);
+        std::optional<std::vector<RequestHash>> followUseful;
+        for (const auto & rsHash : existing) {
+            auto rsMembers = getRequestSet(rsHash);
+            if (!rsMembers)
+                continue;
+            auto useful = usefulDispatch(*rsMembers, curRequests);
+            if (useful.empty())
+                continue;
+            bool subset = std::all_of(useful.begin(), useful.end(),
+                [&](const auto & req) { return remaining.count(req); });
+            if (subset) {
+                followUseful = std::move(useful);
+                break;
+            }
+        }
+
+        if (followUseful) {
+            extendCur(*followUseful);
+        } else {
+            std::vector<RequestHash> remainingVec(remaining.begin(), remaining.end());
+            auto rsHash = insertRequestSet(remainingVec);
+            insertAsks(q, cur, rsHash);
+            extendCur(remainingVec);
+        }
+    }
+
+    /* By construction cur now equals factSetHash. */
     insertTerminal(q, factSetHash, result);
 }
 
@@ -617,23 +688,19 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
             if (!requestSetOpt)
                 continue;
 
-            /* Useful dispatch: the edge's Requests minus what's
-               already in cur. With singleton-step recording the
-               edge is a singleton; this loop just yields one
-               Request. */
+            /* Dispatch only the useful part of the edge — the requests
+               not already in cur's facts. The dispatched (req, resp)
+               pairs are by construction disjoint from cur, so XOR-fold
+               is a safe set extension. */
+            auto useful = usefulDispatch(*requestSetOpt, curRequests);
+            if (useful.empty())
+                continue; // degenerate edge — all its requests already in cur
+
             Hash nextCur = cur;
-            std::vector<RequestHash> consumed;
-            bool anyDispatched = false;
-            for (const auto & req : *requestSetOpt) {
-                if (curRequests.count(req))
-                    continue;
+            for (const auto & req : useful) {
                 auto resp = dispatch(req);
                 nextCur = dg_xorHash(nextCur, dg_factElementHash(req, resp));
-                consumed.push_back(req);
-                anyDispatched = true;
             }
-            if (!anyDispatched)
-                continue; // edge would add nothing; degenerate
 
             /* Validate that some recording for THIS query reaches
                (Q, nextCur) — i.e., the dispatched responses lead to
@@ -642,7 +709,7 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
                 continue; // wrong branch
 
             cur = nextCur;
-            for (const auto & req : consumed)
+            for (const auto & req : useful)
                 curRequests.insert(req);
             advanced = true;
             break;
