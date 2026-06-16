@@ -6,6 +6,7 @@
 #include "nix/util/ref.hh"
 
 #include <map>
+#include <unordered_map>
 #include <vector>
 
 namespace nix {
@@ -36,6 +37,12 @@ class TracingReplayEvaluator : public Evaluator
     };
 
     std::optional<AmbientReplayState> ambientState;
+
+    /* Walks across the same process invocation re-dispatch the same
+       Requests many times (each top-level lookup re-walks the shared
+       prefix). Memoize requestHash -> responseHash so the file read +
+       CBOR encode + SHA-256 happens once per request. */
+    std::unordered_map<Hash, Hash> dispatchCache;
 
     std::optional<std::string> dispatchAmbientQuery(const nlohmann::json & reqJson);
 

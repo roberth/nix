@@ -8,6 +8,8 @@
 
 #include <nlohmann/json.hpp>
 #include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace nix {
 
@@ -92,6 +94,32 @@ struct TracingDecisionGraph::State
     std::unordered_map<Hash, std::optional<std::string>> requestPayloadCache;
     std::unordered_map<Hash, std::optional<std::string>> responsePayloadCache;
     std::unordered_map<Hash, std::optional<std::string>> resultPayloadCache;
+
+    /* walk() extends the cur FactSet by one Fact per step and re-hashes
+       the whole canonical form to identify the child. Naively that's
+       O(N²) work per walk; cache (parent, request, response) → child
+       so repeated walks across shared prefixes pay it once. */
+    struct FactExtKey
+    {
+        Hash parent;
+        Hash request;
+        Hash response;
+        bool operator==(const FactExtKey & o) const noexcept
+        {
+            return parent == o.parent && request == o.request && response == o.response;
+        }
+    };
+    struct FactExtKeyHash
+    {
+        size_t operator()(const FactExtKey & k) const noexcept
+        {
+            auto h = std::hash<Hash>{}(k.parent);
+            h ^= std::hash<Hash>{}(k.request) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+            h ^= std::hash<Hash>{}(k.response) + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
+    std::unordered_map<FactExtKey, Hash, FactExtKeyHash> factSetExtCache;
 };
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -547,6 +575,11 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
     const std::function<ResponseHash(const RequestHash &)> & dispatch)
 {
     auto cur = emptySetHash();
+    /* curRequests mirrors the cur FactSet's requests for fast
+       membership tests when filtering edge requests below. Build it
+       once for the empty start and extend it incrementally as the
+       walk advances; rebuilding every iteration was O(N²). */
+    std::unordered_set<RequestHash> curRequests;
     for (;;) {
         if (auto term = getTerminal(q, cur))
             return *term;
@@ -565,9 +598,6 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
         if (!curFactsOpt)
             return std::nullopt; // shouldn't happen — cur was reachable
         const auto & curFacts = *curFactsOpt;
-        std::set<RequestHash> curRequests;
-        for (const auto & f : curFacts)
-            curRequests.insert(f.request);
 
         bool advanced = false;
         for (const auto & requestSetHash : outgoing) {
@@ -591,15 +621,39 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
 
             /* Compute the candidate next FactSet hash WITHOUT
                inserting it into the pool — we only want to follow
-               edges that some recording actually placed there. */
-            std::vector<Fact> candidate = curFacts;
-            candidate.insert(candidate.end(), newFacts.begin(), newFacts.end());
-            auto nextCur = computeFactSetHash(candidate);
+               edges that some recording actually placed there.
+
+               For the common singleton-step case, consult the
+               (parent, request, response) → child cache before
+               re-canonicalising and re-hashing the full FactSet. */
+            Hash nextCur(HashAlgorithm::SHA256);
+            bool cached = false;
+            std::optional<State::FactExtKey> cacheKey;
+            if (newFacts.size() == 1) {
+                cacheKey = State::FactExtKey{cur, newFacts[0].request, newFacts[0].response};
+                auto state(_state->lock());
+                if (auto it = state->factSetExtCache.find(*cacheKey);
+                    it != state->factSetExtCache.end()) {
+                    nextCur = it->second;
+                    cached = true;
+                }
+            }
+            if (!cached) {
+                std::vector<Fact> candidate = curFacts;
+                candidate.insert(candidate.end(), newFacts.begin(), newFacts.end());
+                nextCur = computeFactSetHash(candidate);
+                if (cacheKey) {
+                    auto state(_state->lock());
+                    state->factSetExtCache.emplace(*cacheKey, nextCur);
+                }
+            }
 
             if (!getFactSet(nextCur))
                 continue; // next FactSet not in storage — wrong branch
 
             cur = nextCur;
+            for (const auto & f : newFacts)
+                curRequests.insert(f.request);
             advanced = true;
             break;
         }

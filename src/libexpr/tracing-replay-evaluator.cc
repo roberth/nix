@@ -28,13 +28,17 @@ std::optional<std::pair<std::string, Hash>>
 TracingReplayEvaluator::v13Walk(const Hash & queryHash)
 {
     auto walkHit = decisionGraph.walk(queryHash, [&](const Hash & requestHash) -> Hash {
+        if (auto it = dispatchCache.find(requestHash); it != dispatchCache.end())
+            return it->second;
         auto requestPayload = decisionGraph.getRequestPayload(requestHash);
         if (!requestPayload)
             return Hash(HashAlgorithm::SHA256);
         auto currentResp = getCurrentResponse(*requestPayload);
         if (!currentResp)
             return Hash(HashAlgorithm::SHA256);
-        return TracingDecisionGraph::computeResponseHash(*currentResp);
+        auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
+        dispatchCache.emplace(requestHash, h);
+        return h;
     });
     if (!walkHit)
         return std::nullopt;
