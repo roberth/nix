@@ -49,7 +49,6 @@ class Evaluator;
 class Object;
 class TraceSink;
 class TracingWriter;
-class TracingIndex;
 
 namespace fetchers {
 struct Settings;
@@ -552,28 +551,17 @@ public:
      */
     std::weak_ptr<Evaluator> evaluatorCompat;
 
-    /**
-     * TracingIndex shared between the root evaluator and builtins.cache.
-     * Non-owning — lifetime managed by EvalCommand (if root tracing is
-     * enabled) or by CacheState (if only builtins.cache is used).
-     * Set by EvalCommand::getEvalState() when tracing-eval-cache is on.
-     */
-    TracingIndex * rootTracingIndex = nullptr;
+    /* TracingDecisionGraph is constructed by EvalCommand and threaded
+       through TracingWriter/TracingReplayEvaluator directly. */
 
     /**
-     * State for builtins.cache calls.
-     *
-     * Bundles the shared TracingIndex and per-call resources that must
-     * outlive Object references returned to the outer evaluator.
-     * Destruction order matters: resources are destroyed before the
-     * TracingIndex they reference.
+     * State for builtins.cache calls (stubbed under v13; see
+     * src/libexpr/primops/cache.cc).
      */
     struct CacheState
     {
         ~CacheState();
 
-        /** Owned TracingIndex, used only when rootTracingIndex is null. */
-        std::unique_ptr<TracingIndex> ownedTracingIndex;
 
         /** Per-call state that must remain alive while thunks can be forced. */
         struct CallState

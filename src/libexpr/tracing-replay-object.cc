@@ -1,7 +1,7 @@
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/expr/tracing-writer.hh"
-#include "nix/expr/tracing-index.hh"
+#include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/value/context.hh"
 #include "nix/store/store-api.hh"
 #include "nix/util/error.hh"
@@ -52,260 +52,40 @@ ref<Object> TracingReplayObject::ensureInner() const
 template<typename Q, typename R>
 std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
 {
-    auto & tracingIndex = evaluator.getTracingIndex();
-    auto queryHash = TracingIndex::computeQueryHash(query);
-
-    /* v13 walk: queryHash is the full Merkle identity (it includes
-       the parent's queryHash via the `from` field), so walk from
-       (Q, empty) is enough — we don't need to anchor at triePos. */
-    if (auto v13 = evaluator.v13Walk(queryHash)) {
-        const auto & [payload, _] = *v13;
-        try {
-            auto j = cborStringToJson(payload);
-            tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
-            return j.template get<R>();
-        } catch (const nlohmann::json::exception & e) {
-            tracingCacheLog("replay: v13 payload parse failed: %s", e.what());
-            /* Fall through to v12. */
-        }
+    auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+    auto v13 = evaluator.v13Walk(queryHash);
+    if (!v13)
+        return std::nullopt;
+    try {
+        auto j = cborStringToJson(v13->first);
+        tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
+        return j.template get<R>();
+    } catch (const nlohmann::json::exception & e) {
+        tracingCacheLog("replay: v13 payload parse failed: %s", e.what());
+        return std::nullopt;
     }
-
-    // Reset temporal cursor to this object's position. The cursor is
-    // shared across all objects on this evaluator, so a prior lookup on
-    // a different object may have moved it. Our children chain from
-    // our own resultNodeHash, not wherever the cursor drifted.
-    evaluator.setTemporalCursor(triePos.resultNodeHash);
-
-    std::vector<NodeHash> pendingValidated;
-    auto findResult = [&](const QueryNode & child) -> std::optional<ResultNode> {
-        pendingValidated.clear();
-        return tracingIndex.findResult(
-            child.nodeHash,
-            [&](const QueryHash &,
-                const std::string & queryPayload,
-                const NodeHash & resultNodeHash,
-                const std::string & resultPayload) {
-                auto currentResponse = evaluator.getCurrentResponse(queryPayload);
-                if (!currentResponse || resultPayload != *currentResponse)
-                    return false;
-                pendingValidated.push_back(resultNodeHash);
-                return true;
-            });
-    };
-    auto commitValidated = [&]() {
-        for (const auto & h : pendingValidated)
-            evaluator.markValidated(h);
-        pendingValidated.clear();
-    };
-
-    auto parseResult = [&](const ResultNode & resultNode) -> std::optional<R> {
-        try {
-            auto j = cborStringToJson(resultNode.payload);
-            return j.template get<R>();
-        } catch (const nlohmann::json::exception & e) {
-            tracingCacheLog("replay: failed to parse result: %s", e.what());
-            return std::nullopt;
-        }
-    };
-
-    // Helper: on successful lookup, commit pending validated nodes
-    auto onHit = [&](const ResultNode & resultNode, const char * strategy) -> void {
-        commitValidated();
-        evaluator.markValidated(resultNode.nodeHash);
-        evaluator.setTemporalCursor(resultNode.nodeHash);
-        tracingCacheLog("replay hit (%s): %s", strategy, Q::tag);
-    };
-
-    std::set<NodeHash> triedNodes;
-
-    // Strategy 1: Trie following — direct lookup from the evaluator's temporal cursor
-    if (auto cursor = evaluator.getTemporalCursor()) {
-        auto nodeHash = TracingIndex::computeQueryNodeHash(*cursor, queryHash);
-        if (auto child = tracingIndex.getQuery(nodeHash)) {
-            triedNodes.insert(child->nodeHash);
-
-            if (evaluator.validateToValidatedNode(child->nodeHash)) {
-                if (auto resultNode = findResult(*child)) {
-                    if (auto result = parseResult(*resultNode)) {
-                        onHit(*resultNode, "trie");
-                        return result;
-                    }
-                }
-            }
-        }
-    }
-
-    // Strategy 2: Structural lookup — structural children
-    auto structuralChildren = tracingIndex.selectStructuralChildren(triePos.resultNodeHash, queryHash);
-    for (const auto & child : structuralChildren) {
-        if (triedNodes.count(child.nodeHash))
-            continue;
-        triedNodes.insert(child.nodeHash);
-
-        if (!evaluator.validateToValidatedNode(child.nodeHash)) {
-            tracingCacheLog("replay: structural validation failed for %s", Q::tag);
-            continue;
-        }
-
-        if (auto resultNode = findResult(child)) {
-            if (auto result = parseResult(*resultNode)) {
-                onHit(*resultNode, "structural");
-                return result;
-            }
-        }
-    }
-
-    // Strategy 3: Shortcut lookup — global table
-    auto shortcuts = tracingIndex.selectShortcuts(queryHash);
-    for (const auto & shortcut : shortcuts) {
-        if (triedNodes.count(shortcut.nodeHash))
-            continue;
-        triedNodes.insert(shortcut.nodeHash);
-
-        auto queryNode = tracingIndex.getQuery(shortcut.nodeHash);
-        if (!queryNode)
-            continue;
-
-        if (!evaluator.validateDependencies(shortcut.nodeHash)) {
-            tracingCacheLog("replay: shortcut validation failed for %s", Q::tag);
-            continue;
-        }
-
-        if (auto resultNode = findResult(*queryNode)) {
-            if (auto result = parseResult(*resultNode)) {
-                onHit(*resultNode, "shortcut");
-                return result;
-            }
-        }
-    }
-
-    tracingCacheLog("replay miss: %s", Q::tag);
-    return std::nullopt;
 }
 
-/**
- * Cascading lookup for structural children (getAttr, getListElem).
- * Same three strategies as lookupResult, but returns a TriePosition
- * for the child so further traversal can continue from that point.
- */
 template<typename Q, typename R>
 std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralChild(const Q & query) const
 {
-    auto & tracingIndex = evaluator.getTracingIndex();
-    auto queryHash = TracingIndex::computeQueryHash(query);
-
-    // Reset temporal cursor to this object's position (see lookupResult).
-    evaluator.setTemporalCursor(triePos.resultNodeHash);
-
-    std::vector<NodeHash> pendingValidated;
-    auto findResult = [&](const QueryNode & child) -> std::optional<ResultNode> {
-        pendingValidated.clear();
-        return tracingIndex.findResult(
-            child.nodeHash,
-            [&](const QueryHash &,
-                const std::string & queryPayload,
-                const NodeHash & resultNodeHash,
-                const std::string & resultPayload) {
-                auto currentResponse = evaluator.getCurrentResponse(queryPayload);
-                if (!currentResponse || resultPayload != *currentResponse)
-                    return false;
-                pendingValidated.push_back(resultNodeHash);
-                return true;
-            });
-    };
-    auto commitValidated = [&]() {
-        for (const auto & h : pendingValidated)
-            evaluator.markValidated(h);
-        pendingValidated.clear();
-    };
-
-    auto parseResultWithPos = [&](const ResultNode & resultNode) -> std::optional<std::pair<R, TriePosition>> {
-        try {
-            auto j = cborStringToJson(resultNode.payload);
-            R result = j.template get<R>();
-            auto childPos = TriePosition{
-                .resultNodeHash = resultNode.nodeHash,
+    auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+    auto v13 = evaluator.v13Walk(queryHash);
+    if (!v13)
+        return std::nullopt;
+    try {
+        auto j = cborStringToJson(v13->first);
+        tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
+        return std::make_pair(
+            j.template get<R>(),
+            TriePosition{
+                .resultNodeHash = v13->second,
                 .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
-            };
-            return std::make_pair(result, childPos);
-        } catch (const nlohmann::json::exception & e) {
-            tracingCacheLog("replay: failed to parse result: %s", e.what());
-            return std::nullopt;
-        }
-    };
-
-    auto onHit = [&](const ResultNode & resultNode, const char * strategy) -> void {
-        commitValidated();
-        evaluator.markValidated(resultNode.nodeHash);
-        evaluator.setTemporalCursor(resultNode.nodeHash);
-        tracingCacheLog("replay hit (%s): %s", strategy, Q::tag);
-    };
-
-    std::set<NodeHash> triedNodes;
-
-    // Strategy 1: Trie following
-    if (auto cursor = evaluator.getTemporalCursor()) {
-        auto nodeHash = TracingIndex::computeQueryNodeHash(*cursor, queryHash);
-        if (auto child = tracingIndex.getQuery(nodeHash)) {
-            triedNodes.insert(child->nodeHash);
-
-            if (evaluator.validateToValidatedNode(child->nodeHash)) {
-                if (auto resultNode = findResult(*child)) {
-                    if (auto result = parseResultWithPos(*resultNode)) {
-                        onHit(*resultNode, "trie");
-                        return result;
-                    }
-                }
-            }
-        }
+            });
+    } catch (const nlohmann::json::exception & e) {
+        tracingCacheLog("replay: v13 payload parse failed: %s", e.what());
+        return std::nullopt;
     }
-
-    // Strategy 2: Structural lookup
-    auto structuralChildren = tracingIndex.selectStructuralChildren(triePos.resultNodeHash, queryHash);
-    for (const auto & child : structuralChildren) {
-        if (triedNodes.count(child.nodeHash))
-            continue;
-        triedNodes.insert(child.nodeHash);
-
-        if (!evaluator.validateToValidatedNode(child.nodeHash)) {
-            tracingCacheLog("replay: structural validation failed for %s", Q::tag);
-            continue;
-        }
-
-        if (auto resultNode = findResult(child)) {
-            if (auto result = parseResultWithPos(*resultNode)) {
-                onHit(*resultNode, "structural");
-                return result;
-            }
-        }
-    }
-
-    // Strategy 3: Shortcut lookup
-    auto shortcuts = tracingIndex.selectShortcuts(queryHash);
-    for (const auto & shortcut : shortcuts) {
-        if (triedNodes.count(shortcut.nodeHash))
-            continue;
-        triedNodes.insert(shortcut.nodeHash);
-
-        auto queryNode = tracingIndex.getQuery(shortcut.nodeHash);
-        if (!queryNode)
-            continue;
-
-        if (!evaluator.validateDependencies(shortcut.nodeHash)) {
-            tracingCacheLog("replay: shortcut validation failed for %s", Q::tag);
-            continue;
-        }
-
-        if (auto resultNode = findResult(*queryNode)) {
-            if (auto result = parseResultWithPos(*resultNode)) {
-                onHit(*resultNode, "shortcut");
-                return result;
-            }
-        }
-    }
-
-    tracingCacheLog("replay miss: %s", Q::tag);
-    return std::nullopt;
 }
 
 std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & name)

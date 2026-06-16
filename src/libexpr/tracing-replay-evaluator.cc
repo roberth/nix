@@ -2,7 +2,6 @@
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-decision-graph.hh"
-#include "nix/expr/tracing-index.hh"
 #include "nix/expr/environment.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/util/logging.hh"
@@ -15,12 +14,10 @@ namespace nix {
 
 TracingReplayEvaluator::TracingReplayEvaluator(
     ref<Evaluator> inner,
-    TracingIndex & tracingIndex,
     Environment & validationEnv,
     TracingWriter & writer,
-    TracingDecisionGraph * decisionGraph)
+    TracingDecisionGraph & decisionGraph)
     : inner(inner)
-    , tracingIndex(tracingIndex)
     , decisionGraph(decisionGraph)
     , writer(writer)
     , validationEnv(validationEnv)
@@ -28,103 +25,29 @@ TracingReplayEvaluator::TracingReplayEvaluator(
 }
 
 std::optional<std::pair<std::string, Hash>>
-TracingReplayEvaluator::v13Walk(const QueryHash & queryHash)
+TracingReplayEvaluator::v13Walk(const Hash & queryHash)
 {
-    if (!decisionGraph)
-        return std::nullopt;
-    auto walkHit = decisionGraph->walk(queryHash, [&](const Hash & requestHash) -> Hash {
-        auto requestPayload = decisionGraph->getRequestPayload(requestHash);
+    auto walkHit = decisionGraph.walk(queryHash, [&](const Hash & requestHash) -> Hash {
+        auto requestPayload = decisionGraph.getRequestPayload(requestHash);
         if (!requestPayload)
             return Hash(HashAlgorithm::SHA256);
         auto currentResp = getCurrentResponse(*requestPayload);
         if (!currentResp)
             return Hash(HashAlgorithm::SHA256);
-        return TracingIndex::computeResponseHash(*currentResp);
+        return TracingDecisionGraph::computeResponseHash(*currentResp);
     });
     if (!walkHit)
         return std::nullopt;
-    auto payload = decisionGraph->getResultPayload(*walkHit);
+    auto payload = decisionGraph.getResultPayload(*walkHit);
     if (!payload)
         return std::nullopt;
     return std::make_pair(std::move(*payload), *walkHit);
-}
-
-bool TracingReplayEvaluator::validateDependencies(const NodeHash & queryNodeHash)
-{
-    if (validatedNodes.count(queryNodeHash))
-        return true;
-
-    auto deps = tracingIndex.selectDependencies(queryNodeHash);
-    // Multiple recordings may share the same query node prefix,
-    // producing deps from different sessions. Group by request
-    // and validate: at least one result per unique request must match.
-    if (!validateDepsAnyMatch(deps))
-        return false;
-
-    validatedNodes.insert(queryNodeHash);
-    return true;
-}
-
-bool TracingReplayEvaluator::validateToValidatedNode(const NodeHash & queryNodeHash)
-{
-    if (validatedNodes.count(queryNodeHash))
-        return true;
-
-    bool reachedValidated = false;
-    auto deps = tracingIndex.selectDependenciesUntilValidated(queryNodeHash, validatedNodes, reachedValidated);
-
-    if (!validateDeps(deps))
-        return false;
-
-    validatedNodes.insert(queryNodeHash);
-    return true;
-}
-
-void TracingReplayEvaluator::markValidated(const NodeHash & nodeHash)
-{
-    validatedNodes.insert(nodeHash);
-}
-
-bool TracingReplayEvaluator::isValidated(const NodeHash & nodeHash) const
-{
-    return validatedNodes.count(nodeHash) > 0;
-}
-
-bool TracingReplayEvaluator::validateDepsAnyMatch(const std::vector<std::pair<QueryNode, ResultNode>> & deps)
-{
-    // Group deps by query payload. Multiple recordings from the same
-    // trie prefix produce duplicate entries for the same file/env.
-    // For each unique request, at least one result must validate.
-    std::map<QueryHash, bool> requestValidated;
-
-    for (const auto & [qNode, rNode] : deps) {
-        if (validatedNodes.count(rNode.nodeHash))
-            continue;
-
-        auto it = requestValidated.find(qNode.queryHash);
-        if (it != requestValidated.end() && it->second)
-            continue; // already have a valid result for this request
-
-        if (validateDeps({{qNode, rNode}})) {
-            requestValidated[qNode.queryHash] = true;
-        } else {
-            if (requestValidated.find(qNode.queryHash) == requestValidated.end())
-                requestValidated[qNode.queryHash] = false;
-        }
-    }
-
-    for (auto & [req, valid] : requestValidated) {
-        if (!valid)
-            return false;
-    }
-    return true;
 }
 
 std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std::string & requestCbor)
 {
     try {
         auto reqJson = cborStringToJson(requestCbor);
-
         if (reqJson.contains("absPath")) {
             std::string path = reqJson["absPath"];
             auto currentHash = validationEnv.getFileHash(path);
@@ -149,20 +72,16 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
     auto tag = reqJson["query"].get<std::string>();
     auto & params = reqJson["params"];
 
-    // Extract target Object from the id mapping
     std::string fromId;
     if (params.contains("from"))
         fromId = params["from"].get<std::string>();
     else if (tag == "apply")
-        return std::nullopt; // Apply replay not yet implemented
+        return std::nullopt;
     else
         return std::nullopt;
 
     auto it = ambientState->idToObject.find(fromId);
     if (it == ambientState->idToObject.end()) {
-        // Lazy unification: map the unknown id to the next available Object.
-        // First try pending children (from previous getAttr/getListElem),
-        // then unresolved roots (the apply operands).
         std::shared_ptr<Object> obj;
         if (!ambientState->pendingChildren.empty()) {
             obj = ambientState->pendingChildren.front();
@@ -171,7 +90,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
             obj = ambientState->unresolvedRoots.front();
             ambientState->unresolvedRoots.erase(ambientState->unresolvedRoots.begin());
         } else {
-            tracingCacheLog("replay: unknown ambient id %s, no pending objects", fromId);
+            tracingCacheLog("replay: unknown ambient id %s", fromId);
             return std::nullopt;
         }
         ambientState->idToObject[fromId] = obj;
@@ -180,7 +99,6 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
 
     auto & obj = it->second;
     nlohmann::json resultJson;
-
     if (tag == "getType") {
         resultJson = trace::ResultType{objectTypeToString(obj->getType())};
     } else if (tag == "getAttr") {
@@ -224,157 +142,27 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
         else
             resultJson = trace::ResultFunctionInfo{true, info->formals, info->ellipsis};
     } else {
-        tracingCacheLog("replay: unsupported ambient query tag: %s", tag);
         return std::nullopt;
     }
-
     return jsonToCborString(resultJson);
 }
 
-bool TracingReplayEvaluator::validateDeps(const std::vector<std::pair<QueryNode, ResultNode>> & deps)
-{
-    for (const auto & [qNode, rNode] : deps) {
-        if (validatedNodes.count(rNode.nodeHash))
-            continue;
-
-        auto payloadOpt = tracingIndex.getQueryPayload(qNode.queryHash);
-        if (!payloadOpt) {
-            tracingCacheLog("replay: missing query payload for dependency");
-            return false;
-        }
-
-        auto currentResponse = getCurrentResponse(*payloadOpt);
-        if (!currentResponse) {
-            tracingCacheLog("replay invalidated: could not compute current response");
-            return false;
-        }
-        if (rNode.payload != *currentResponse) {
-            tracingCacheLog("replay invalidated: dependency response changed");
-            return false;
-        }
-
-        validatedNodes.insert(rNode.nodeHash);
-    }
-    return true;
-}
-
-void TracingReplayEvaluator::addToCurrentSetMembers(const QueryHash & queryHash, const Hash & responseHash)
-{
-    TracingIndex::SetMember m{queryHash, responseHash};
-    /* Binary search the insertion point. Vector is small enough that
-       O(N) insertion is fine — N is bounded by per-evaluation event
-       count and is typically < 1000. */
-    auto it = std::lower_bound(currentSetMembers.begin(), currentSetMembers.end(), m);
-    if (it != currentSetMembers.end() && it->queryHash == queryHash) {
-        // Duplicate queryHash: update or ignore.
-        it->responseHash = responseHash;
-    } else {
-        currentSetMembers.insert(it, m);
-    }
-}
-
 template<typename Q>
-std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::lookup(const Q & query)
+std::optional<std::pair<std::string, TriePosition>>
+TracingReplayEvaluator::lookup(const Q & query)
 {
-    auto queryHash = TracingIndex::computeQueryHash(query);
-
-    if (auto v13 = v13Walk(queryHash)) {
-        const auto & [payload, resultHash] = *v13;
-        addToCurrentSetMembers(queryHash, resultHash);
-        tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
-        return std::make_pair(
-            payload,
-            TriePosition{
-                .resultNodeHash = resultHash,
-                .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
-            });
-    }
-
-    /* Sets-based index lookup: try it first because it's O(k · |P|)
-       and indexed by queryHash. A hit means we've found a Binding
-       whose precondition is a subset of currentSetMembers, which is
-       the strongest cache guarantee available. */
-    if (auto setsHit = tracingIndex.lookupSetsReplay(queryHash, currentSetMembers)) {
-        auto responseHash = TracingIndex::computeResponseHash(*setsHit);
-        addToCurrentSetMembers(queryHash, responseHash);
-        tracingCacheLog("replay hit (sets): %s", Q::tag);
-        return std::make_pair(
-            *setsHit,
-            TriePosition{
-                .resultNodeHash = responseHash, // for downstream structural references
-                .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
-            });
-    }
-
-    auto shortcuts = tracingIndex.selectShortcuts(queryHash);
-    tracingCacheLog(
-        "lookup %s: %zu shortcuts for queryHash=%s",
-        Q::tag,
-        shortcuts.size(),
-        queryHash.to_string(HashFormat::Base16, false).substr(0, 16));
-
-    for (const auto & shortcut : shortcuts) {
-        if (!validateDependencies(shortcut.nodeHash)) {
-            tracingCacheLog(
-                "lookup %s: shortcut %s deps invalid",
-                Q::tag,
-                shortcut.nodeHash.to_string(HashFormat::Base16, false).substr(0, 16));
-            continue;
-        }
-
-        auto queryNode = tracingIndex.getQuery(shortcut.nodeHash);
-        if (!queryNode)
-            continue;
-
-        // Walk forward: Query → (depth>0 Query/Result)* → Result(depth=0)
-        std::vector<NodeHash> pendingValidated;
-        std::vector<std::pair<QueryHash, std::string>> pendingCrossFeed; // (qh, resultPayload) per validated d>0 event
-        auto resultNode = tracingIndex.findResult(
-            shortcut.nodeHash,
-            [&](const QueryHash & d0Qh,
-                const std::string & queryPayload,
-                const NodeHash & resultNodeHash,
-                const std::string & resultPayload) {
-                auto currentResponse = getCurrentResponse(queryPayload);
-                if (!currentResponse || resultPayload != *currentResponse)
-                    return false;
-                pendingValidated.push_back(resultNodeHash);
-                pendingCrossFeed.emplace_back(d0Qh, resultPayload);
-                return true;
-            });
-
-        if (!resultNode) {
-            pendingValidated.clear();
-            pendingCrossFeed.clear();
-            continue;
-        }
-
-        // Commit validated nodes only on success
-        for (const auto & h : pendingValidated)
-            markValidated(h);
-        validatedNodes.insert(resultNode->nodeHash);
-        temporalCursor = resultNode->nodeHash;
-
-        /* Cross-feed the sets-based index: a trie hit gives us a
-           validated (queryHash, response) pair that downstream
-           sets-based lookups can use as part of their context.
-           Feed the top-level Query AND every validated d>0 event
-           along the chain, so sub-queries whose precondition
-           includes those events can hit sets-based on next lookup. */
-        for (const auto & [d0Qh, d0Payload] : pendingCrossFeed)
-            addToCurrentSetMembers(d0Qh, TracingIndex::computeResponseHash(d0Payload));
-        addToCurrentSetMembers(queryHash, TracingIndex::computeResponseHash(resultNode->payload));
-
-        tracingCacheLog("replay hit: %s", Q::tag);
-        return std::make_pair(
-            resultNode->payload,
-            TriePosition{
-                .resultNodeHash = resultNode->nodeHash,
-                .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
-            });
-    }
-
-    return std::nullopt;
+    auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+    auto v13 = v13Walk(queryHash);
+    if (!v13)
+        return std::nullopt;
+    const auto & [payload, resultHash] = *v13;
+    tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
+    return std::make_pair(
+        payload,
+        TriePosition{
+            .resultNodeHash = resultHash,
+            .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
+        });
 }
 
 bool TracingReplayEvaluator::isReadOnly() const
@@ -401,13 +189,9 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
 {
     if (auto result = lookup(trace::QueryImport{displayPath})) {
         tracingCacheLog("replay hit: evalFile %s", displayPath);
-        // Don't sync writer afterHash — let re-recordings after a
-        // miss start from a fresh position, keeping their temporal
-        // chains separate from previous recordings.
         return make_ref<TracingReplayObject>(
             *this, result->second, [this, path, displayPath]() { return inner->evalFile(path, displayPath); });
     }
-
     tracingCacheLog("replay miss: evalFile %s", displayPath);
     return inner->evalFile(path, displayPath);
 }
@@ -416,13 +200,9 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Roo
 {
     if (auto result = lookup(trace::QueryExpr{expr, basePath.path.abs()})) {
         tracingCacheLog("replay hit: evalExpr");
-        // Don't sync writer afterHash — let re-recordings after a
-        // miss start from a fresh position, keeping their temporal
-        // chains separate from previous recordings.
         return make_ref<TracingReplayObject>(
             *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); });
     }
-
     tracingCacheLog("replay miss: evalExpr");
     return inner->evalExpr(expr, basePath);
 }
@@ -432,31 +212,14 @@ ref<Object> TracingReplayEvaluator::evalExprLazy(const std::string & expr, const
     return inner->evalExprLazy(expr, basePath);
 }
 
-ref<Object> TracingReplayEvaluator::mkString(const std::string & s)
-{
-    return inner->mkString(s);
-}
-
-ref<Object> TracingReplayEvaluator::mkInt(NixInt i)
-{
-    return inner->mkInt(i);
-}
-
-ref<Object> TracingReplayEvaluator::mkBool(bool b)
-{
-    return inner->mkBool(b);
-}
-
-ref<Object> TracingReplayEvaluator::mkPath(const RootedPath & path)
-{
-    return inner->mkPath(path);
-}
-
+ref<Object> TracingReplayEvaluator::mkString(const std::string & s) { return inner->mkString(s); }
+ref<Object> TracingReplayEvaluator::mkInt(NixInt i) { return inner->mkInt(i); }
+ref<Object> TracingReplayEvaluator::mkBool(bool b) { return inner->mkBool(b); }
+ref<Object> TracingReplayEvaluator::mkPath(const RootedPath & path) { return inner->mkPath(path); }
 ref<Object> TracingReplayEvaluator::mkAttrs(const std::map<std::string, ref<Object>> & attrs)
 {
     return inner->mkAttrs(attrs);
 }
-
 ref<Object> TracingReplayEvaluator::getInternalPrimOp(const std::string & name)
 {
     return inner->getInternalPrimOp(name);
@@ -464,7 +227,6 @@ ref<Object> TracingReplayEvaluator::getInternalPrimOp(const std::string & name)
 
 ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
-    // Try to get identity from TracingObject/TracingReplayObject
     auto getId = [](Object & obj) -> std::optional<std::string> {
         if (auto * to = dynamic_cast<TracingObject *>(&obj))
             return to->getQueryHashStr();
@@ -475,19 +237,11 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     auto fnId = getId(*fn);
     auto argId = getId(*arg);
-
-    // Get or allocate virtual root ids. The registry on TracingWriter
-    // ensures that on a miss, when the recording evaluator sees the
-    // same Object, it gets the same id — no counter drift.
     if (!fnId)
         fnId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(fn).value());
     if (!argId)
         argId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(arg).value());
 
-    // Set up ambient replay state for validating ambient interactions.
-    // Objects without trie identity (virtual roots) are registered as
-    // unresolved roots — lazily mapped to recorded ambient ids during
-    // the walk.
     AmbientReplayState state;
     if (!getId(*arg))
         state.unresolvedRoots.push_back(arg.get_ptr());
@@ -495,23 +249,14 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         state.unresolvedRoots.push_back(fn.get_ptr());
     ambientState = std::move(state);
 
-    tracingCacheLog("replay: apply fnId=%s argId=%s", *fnId, *argId);
     auto result = lookup(trace::QueryApply{*fnId, *argId});
-    // Don't clear ambientState — child queries on the result
-    // TracingReplayObject may encounter ambient events that need
-    // the same id→Object mapping. The state persists until the
-    // next apply() call sets up a new one.
 
     if (result) {
         tracingCacheLog("replay hit: apply");
-        // Don't sync writer afterHash — let re-recordings after a
-        // miss start from a fresh position, keeping their temporal
-        // chains separate from previous recordings.
         return make_ref<TracingReplayObject>(
             *this, result->second, [this, fn, arg]() { return inner->apply(fn, arg); });
     }
     tracingCacheLog("replay miss: apply");
-
     return inner->apply(fn, arg);
 }
 

@@ -1,12 +1,12 @@
 #pragma once
 /**
  * @file
- * Combined trace writer that logs to both JSON (TraceFile) and trie (TracingIndex).
+ * Trace writer that logs evaluation events to a JSON sink and the
+ * v13 decision-graph index.
  */
 
 #include "nix/expr/trace-sink.hh"
 #include "nix/expr/tracing-decision-graph.hh"
-#include "nix/expr/tracing-index.hh"
 #include "nix/util/ref.hh"
 
 #include <map>
@@ -18,7 +18,7 @@ namespace nix {
 class Object;
 
 /**
- * Serialize a JSON value to CBOR as a std::string (for trie storage).
+ * Serialize a JSON value to CBOR as a std::string (for v13 payload storage).
  */
 inline std::string jsonToCborString(const nlohmann::json & j)
 {
@@ -35,106 +35,41 @@ inline nlohmann::json cborStringToJson(const std::string & s)
     return nlohmann::json::from_cbor(bytes, bytes + s.size());
 }
 
-} // namespace nix
-
-namespace nix {
-
 /**
- * Tracks trie position for a single value being traced.
- * Each TracingObject holds one of these to record its operations.
- *
- * Note: the temporal cursor (afterHash) is NOT stored here.
- * During recording, TracingWriter owns it. During replay,
- * TracingReplayEvaluator owns it. TriePosition only holds the
- * structural identity of a value in the trie.
+ * A handle identifying a recorded d=0 Result, kept for back-compat with
+ * a hex string of the queryHash that produced it (used by child queries
+ * to compute their own queryHash with Merkle provenance).
  */
 struct TriePosition
 {
-    NodeHash resultNodeHash;  // The Result node for this value (structural parent)
-    std::string queryHashStr; // The queryHash of the query that produced this result,
-                              // as a hex string. Used by child queries to compute
-                              // their queryHash (Merkle identity: child includes parent hash).
+    Hash resultNodeHash;          // v13 ResultHash for this result
+    std::string queryHashStr; // hex of the queryHash that produced it
 };
 
 /**
- * Combined writer that logs to JSON and trie simultaneously.
- * Tracks temporal position (afterHash) across operations.
+ * Trace writer: logs evaluation events to a JSON sink and records
+ * them in the v13 decision graph.
  */
 class TracingWriter
 {
     TraceSink & sink;
-    TracingIndex * index; // nullptr if trie recording disabled
-    /* v13 decision-graph index for the parallel migration path.
-       nullptr until the eval-cache wiring opts in. */
+    /* v13 decision-graph index. nullptr disables decision-graph
+       recording (sink-only mode). */
     TracingDecisionGraph * decisionGraph;
     /* v13 global factSet, accumulating monotonically across the
        session per the design doc. Sampled at each logResult and
-       fed into decisionGraph->record(). */
+       fed into decisionGraph->record(). Only d>0 (Request, Response)
+       Facts are added; d=0 Q→R pairs are not (the walk dispatch
+       can't fetch them). */
     std::vector<TracingDecisionGraph::Fact> v13FactSet;
-    std::optional<NodeHash> afterHash;
+
     uint64_t nextVirtualRoot = 0;
     std::map<Object *, VirtualRootId> virtualRootRegistry;
     std::vector<ref<Object>> virtualRootObjects; // extends Object lifetime
 
-    /* Sets-based recording state. `observedMembers` is append-only
-       during a recording; each in-flight Query captures the index at
-       which it started, and on finalize its precondition is the
-       sort+dedup of the slice from that index to the current end.
-       This lets us produce per-Query preconditions without paying for
-       sorted insertion on every observed event.
-
-       Exception safety: a Nix evaluation that throws between
-       logQuery and its matching logResult leaves stale frames on
-       inFlightStack and stale members in observedMembers. In
-       single-shot CLI mode the process exits and the leak is
-       inconsequential. Long-lived hosts (a hypothetical daemon
-       embedding TracingWriter) should destroy the writer between
-       user requests for the same reason TracingReplayEvaluator
-       documents. */
-    std::vector<TracingIndex::SetMember> observedMembers;
-
-    struct InFlightQuery
-    {
-        QueryHash queryHash;
-        size_t startingIndex; // observedMembers.size() at push time
-    };
-    std::vector<InFlightQuery> inFlightStack;
-
-    /* Finalise the top-of-stack Query: pop it, compute its precondition
-       from the slice of observedMembers added since its start, and
-       write a Binding mapping (queryHash, precondition) → responseHash.
-       The slice is sorted and deduplicated; the source slice in
-       observedMembers is left intact so outer in-flight Queries still
-       see it. */
-    void finaliseSetsBinding(const Hash & responseHash)
-    {
-        if (!index || inFlightStack.empty())
-            return;
-        auto top = inFlightStack.back();
-        inFlightStack.pop_back();
-
-        TracingIndex::SetMembers precondition(
-            observedMembers.begin() + top.startingIndex, observedMembers.end());
-        std::sort(precondition.begin(), precondition.end());
-        precondition.erase(std::unique(precondition.begin(), precondition.end()), precondition.end());
-
-        auto preconditionHash = index->insertPreconditionSet(precondition);
-        index->insertBinding(top.queryHash, preconditionHash, responseHash);
-
-        /* When the stack drains, this recording session is done.
-           Drop the accumulated observations so a long-running writer
-           (daemon mode, repeated top-level evals) doesn't leak. */
-        if (inFlightStack.empty())
-            observedMembers.clear();
-    }
-
 public:
-    TracingWriter(
-        TraceSink & sink,
-        TracingIndex * index = nullptr,
-        TracingDecisionGraph * decisionGraph = nullptr)
+    TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
         : sink(sink)
-        , index(index)
         , decisionGraph(decisionGraph)
     {
     }
@@ -157,12 +92,11 @@ public:
     }
 
     /**
-     * Opaque handle linking a query to its result in the trie.
+     * Opaque handle linking a query to its result.
      */
     struct QueryHandle
     {
-        std::optional<QueryHash> queryHash;
-        std::optional<NodeHash> queryNodeHash;
+        std::optional<Hash> queryHash;
     };
 
     /**
@@ -173,146 +107,89 @@ public:
     std::pair<ValueHandle, QueryHandle> logRootQuery(const Q & query)
     {
         auto valueNum = sink.logQuery(query);
-
-        if (!index)
+        if (!decisionGraph)
             return {valueNum, {}};
-
-        auto queryHash = TracingIndex::computeQueryHash(query);
-        nlohmann::json j = query;
-        auto queryNodeHash = index->insertQuery(afterHash, queryHash, jsonToCborString(j));
-        afterHash = queryNodeHash;
-
-        inFlightStack.push_back({queryHash, observedMembers.size()});
-
-        return {valueNum, {queryHash, queryNodeHash}};
+        auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+        return {valueNum, {queryHash}};
     }
 
     /**
      * Log a query on an existing value (getAttr, getString, etc.).
-     * structuralParent is the Result nodeHash of the parent object.
-     * The query's `from` field must contain the parent's queryHash.
-     * Returns (valueNum, queryHash).
+     * The query's `from` field must contain the parent's queryHash
+     * (Merkle identity).
      */
     template<typename Q>
-    std::pair<ValueHandle, QueryHandle> logQuery(const Q & query, const std::optional<TriePosition> & parent)
+    std::pair<ValueHandle, QueryHandle> logQuery(const Q & query, const std::optional<TriePosition> & /*parent*/)
     {
         auto valueNum = sink.logQuery(query);
-
-        if (!index)
+        if (!decisionGraph)
             return {valueNum, {}};
-
-        auto queryHash = TracingIndex::computeQueryHash(query);
-        nlohmann::json j = query;
-        auto structuralParent = parent ? std::optional{parent->resultNodeHash} : std::nullopt;
-        auto queryNodeHash = index->insertQuery(afterHash, queryHash, jsonToCborString(j), structuralParent);
-        afterHash = queryNodeHash;
-
-        inFlightStack.push_back({queryHash, observedMembers.size()});
-
-        return {valueNum, {queryHash, queryNodeHash}};
+        auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+        return {valueNum, {queryHash}};
     }
 
     /**
-     * Log a response (file read, env lookup) as a depth=1 Query/Result pair.
+     * Log a response (file read, env lookup, etc.) — a d>0
+     * Request/Response pair. Appended to v13 factSet for the next
+     * Result's recording, and the Request/Response payloads land
+     * in v13's atomic pools.
      */
     template<typename Req>
     void logResponse(const trace::Response<Req> & resp)
     {
         sink.log(nlohmann::json(resp));
-
-        if (!index || !afterHash)
+        if (!decisionGraph)
             return;
-
         nlohmann::json reqJson = resp.request;
         nlohmann::json respJson = resp.response;
-        auto queryHash = TracingIndex::computeQueryHash(resp.request);
-        auto queryNodeHash =
-            index->insertQuery(afterHash, queryHash, jsonToCborString(reqJson), std::nullopt, /*depth=*/1);
+        auto queryHash = TracingDecisionGraph::computeQueryHash(resp.request);
         auto respPayload = jsonToCborString(respJson);
-        auto resultNodeHash = index->insertResult(queryNodeHash, respPayload, queryNodeHash);
-        afterHash = resultNodeHash;
-
-        /* Record this d>0 observation for the sets-based index too.
-           Every active in-flight Query will pick this up via its
-           startingIndex when it finalises. */
-        auto responseHash = index->insertSetResponse(respPayload);
-        observedMembers.push_back({queryHash, responseHash});
-
-        /* v13 global factSet — the Request hash is what v12 calls
-           queryHash here (this method handles d>0 query/response
-           pairs). responseHash dittos as the v13 ResponseHash.
-           Also insert the Request and Response payloads into v13's
-           pools so walk's dispatch can fetch the Request later. */
-        if (decisionGraph) {
-            decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
-            decisionGraph->insertResponse(responseHash, respPayload);
-            v13FactSet.push_back({queryHash, responseHash});
-        }
+        auto responseHash = TracingDecisionGraph::computeResponseHash(respPayload);
+        decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
+        decisionGraph->insertResponse(responseHash, respPayload);
+        v13FactSet.push_back({queryHash, responseHash});
     }
 
     /**
-     * Log an ambient interaction as a depth=1 Query/Result pair.
+     * Log an ambient interaction as a d>0 Request/Response pair.
      */
     void logAmbientInteraction(const trace::QueryVariant & query, const trace::ResultVariant & result)
     {
-        if (!index || !afterHash)
+        if (!decisionGraph)
             return;
-
         nlohmann::json queryJson;
         std::visit([&](const auto & q) { queryJson = q; }, query);
         nlohmann::json resultJson;
         std::visit([&](const auto & r) { resultJson = r; }, result);
-
-        auto queryHash = std::visit([](const auto & q) { return TracingIndex::computeQueryHash(q); }, query);
-        auto queryNodeHash =
-            index->insertQuery(afterHash, queryHash, jsonToCborString(queryJson), std::nullopt, /*depth=*/1);
+        auto queryHash = std::visit(
+            [](const auto & q) { return TracingDecisionGraph::computeQueryHash(q); }, query);
         auto resultPayload = jsonToCborString(resultJson);
-        auto resultNodeHash = index->insertResult(queryNodeHash, resultPayload, queryNodeHash);
-        afterHash = resultNodeHash;
-
-        auto responseHash = index->insertSetResponse(resultPayload);
-        observedMembers.push_back({queryHash, responseHash});
-
-        if (decisionGraph) {
-            decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-            decisionGraph->insertResponse(responseHash, resultPayload);
-            v13FactSet.push_back({queryHash, responseHash});
-        }
+        auto responseHash = TracingDecisionGraph::computeResponseHash(resultPayload);
+        decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
+        decisionGraph->insertResponse(responseHash, resultPayload);
+        v13FactSet.push_back({queryHash, responseHash});
     }
 
     /**
-     * Log a result and return the TriePosition for use in child queries.
-     * @param queryHash The queryHash from logRootQuery or logQuery.
+     * Log a d=0 Result. Records (Q, current factSet) -> Result in
+     * the v13 decision graph and returns a TriePosition for use by
+     * child queries.
      */
     template<typename R>
     std::optional<TriePosition> logResult(ValueHandle valueNum, const R & result, const QueryHandle & qh)
     {
         sink.logResult(valueNum, result);
 
-        if (!index || !afterHash || !qh.queryHash)
+        if (!decisionGraph || !qh.queryHash)
             return std::nullopt;
 
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);
-        auto resultNodeHash = index->insertResult(*afterHash, resultPayload, qh.queryNodeHash);
-        afterHash = resultNodeHash;
+        auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
+        decisionGraph->insertResult(resultNodeHash, resultPayload);
 
-        auto responseHash = index->insertSetResponse(resultPayload);
-        finaliseSetsBinding(responseHash);
-        observedMembers.push_back({*qh.queryHash, responseHash});
-
-        /* v13: record this Q's recording. factSetHash is the
-           canonical hash of everything observed up to now; record()
-           writes the Asks chain + Terminal mapping (Q, factSet) -> R.
-           v13FactSet grows monotonically with d>0 Facts only — the
-           v13 model's Facts are (Request, Response) pairs of d>0
-           events. We do NOT add the d=0 (Q, R) here because that
-           pair isn't a Request walk's dispatch can satisfy. */
-        if (decisionGraph && qh.queryHash) {
-            decisionGraph->insertResult(responseHash, resultPayload);
-            auto factSetHash = decisionGraph->insertFactSet(v13FactSet);
-            decisionGraph->record(*qh.queryHash, factSetHash, responseHash);
-        }
+        auto factSetHash = decisionGraph->insertFactSet(v13FactSet);
+        decisionGraph->record(*qh.queryHash, factSetHash, resultNodeHash);
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,
@@ -329,22 +206,20 @@ public:
     }
 
     /**
-     * Advance the temporal cursor to a replayed position.
-     * Called when the replay evaluator hits — ensures that
-     * subsequent misses (which fall through to recording) start
-     * from the correct temporal position in the trie.
+     * used to advance the temporal cursor after a hit. v13 has no
+     * temporal cursor; this is a no-op.
      */
-    void syncAfterHash(const NodeHash & nodeHash)
+    void syncAfterHash(const Hash & /*resultNodeHash*/)
     {
-        afterHash = nodeHash;
+        // No-op under v13.
     }
 
     /**
-     * Check if trie recording is enabled.
+     * Whether v13 decision-graph recording is enabled.
      */
     bool hasIndex() const
     {
-        return index != nullptr;
+        return decisionGraph != nullptr;
     }
 };
 

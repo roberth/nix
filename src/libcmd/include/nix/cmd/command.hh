@@ -23,7 +23,6 @@ class Store;
 struct LocalFSStore;
 class TraceFile;
 class TracingDatabase;
-class TracingIndex;
 class TracingDecisionGraph;
 class TracingWriter;
 
@@ -132,9 +131,7 @@ private:
     // C++ destroys members in reverse declaration order.
     std::unique_ptr<TracingDatabase> tracingDb;
     std::unique_ptr<TraceFile> traceFile;
-    std::unique_ptr<TracingIndex> tracingIndex;
-    /* v13 decision-graph index, instantiated alongside v12 for the
-       gradual migration. Not yet wired into recording or replay. */
+    /* v13 decision-graph index. */
     std::unique_ptr<TracingDecisionGraph> tracingDecisionGraph;
     std::unique_ptr<TracingWriter> tracingWriter;
     std::shared_ptr<Evaluator> evaluatorCompat;

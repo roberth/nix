@@ -13,7 +13,6 @@
 #include "nix/expr/trace-file.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-environment.hh"
-#include "nix/expr/tracing-index.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-replay-evaluator.hh"
@@ -180,10 +179,9 @@ ref<EvalState> EvalCommand::getEvalState()
             auto tracePath = tracingDb->newTraceFile();
             traceFile = std::make_unique<TraceFile>(
                 tracePath, [this, tracePath]() { tracingDb->updateLatestSymlink(tracePath); });
-            tracingIndex = std::make_unique<TracingIndex>();
             tracingDecisionGraph = std::make_unique<TracingDecisionGraph>();
             tracingWriter = std::make_unique<TracingWriter>(
-                *traceFile, tracingIndex.get(), tracingDecisionGraph.get());
+                *traceFile, tracingDecisionGraph.get());
             auto sysEnv = make_ref<SystemEnvironment>(evalSettings, getEvalStore(), getStore());
             auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *tracingWriter);
             evalState = std::allocate_shared<EvalState>(
@@ -195,9 +193,8 @@ ref<EvalState> EvalCommand::getEvalState()
             ref<Evaluator> eval = make_ref<Interpreter>(ref<EvalState>(evalState));
             eval = make_ref<TracingEvaluator>(*tracingWriter, eval);
             eval = make_ref<TracingReplayEvaluator>(
-                eval, *tracingIndex, *sysEnv, *tracingWriter, tracingDecisionGraph.get());
+                eval, *sysEnv, *tracingWriter, *tracingDecisionGraph);
             evalState->evaluatorCompat = eval.get_ptr();
-            evalState->rootTracingIndex = tracingIndex.get();
             evaluatorCompat = eval;
         } else {
             evalState = std::allocate_shared<EvalState>(

@@ -28,7 +28,7 @@
 #include "nix/expr/environment/system.hh"
 #include "nix/expr/tracing-environment.hh"
 #include "nix/expr/tracing-evaluator.hh"
-#include "nix/expr/tracing-index.hh"
+#include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/expr/get-drvs.hh"
@@ -338,7 +338,7 @@ static void main_nix_build(int argc, char ** argv)
     // Tracing eval cache infrastructure (kept alive for the duration of evaluation).
     std::unique_ptr<TracingDatabase> tracingDb;
     std::unique_ptr<TraceFile> traceFile;
-    std::unique_ptr<TracingIndex> tracingIndex;
+    std::unique_ptr<TracingDecisionGraph> tracingDecisionGraph;
     std::unique_ptr<TracingWriter> tracingWriter;
     std::shared_ptr<Evaluator> evaluator;
     std::shared_ptr<AmbientResolver> resolver;
@@ -349,17 +349,16 @@ static void main_nix_build(int argc, char ** argv)
         auto tracePath = tracingDb->newTraceFile();
         traceFile =
             std::make_unique<TraceFile>(tracePath, [&, tracePath]() { tracingDb->updateLatestSymlink(tracePath); });
-        tracingIndex = std::make_unique<TracingIndex>();
-        tracingWriter = std::make_unique<TracingWriter>(*traceFile, tracingIndex.get());
+        tracingDecisionGraph = std::make_unique<TracingDecisionGraph>();
+        tracingWriter = std::make_unique<TracingWriter>(*traceFile, tracingDecisionGraph.get());
         auto sysEnv = make_ref<SystemEnvironment>(evalSettings, evalStore, store);
         auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *tracingWriter);
         state = std::make_shared<EvalState>(myArgs.lookupPath, fetchSettings, evalSettings, tracingEnv, sysEnv);
 
         auto interpreter = make_ref<Interpreter>(ref<EvalState>(state));
         ref<Evaluator> eval = make_ref<TracingEvaluator>(*tracingWriter, interpreter);
-        eval = make_ref<TracingReplayEvaluator>(eval, *tracingIndex, *sysEnv, *tracingWriter);
+        eval = make_ref<TracingReplayEvaluator>(eval, *sysEnv, *tracingWriter, *tracingDecisionGraph);
         state->evaluatorCompat = eval.get_ptr();
-        state->rootTracingIndex = tracingIndex.get();
         evaluator = eval.get_ptr();
         resolver = makeAmbientResolver(state.get(), evaluator);
         interpreter->ambientResolver = resolver;
@@ -760,7 +759,6 @@ static void main_nix_build(int argc, char ** argv)
 
         restoreProcessContext();
 
-        TracingIndex::flushAllWriteQueues();
 
         logger->stop();
 

@@ -37,14 +37,10 @@ echo
 echo "Files in cache dir:"
 ls -la "$dir"
 
-# Assert both DBs are present and distinct.
-if [[ ! -f "$dir/index.sqlite" ]]; then
-    echo "FAIL: v12 index.sqlite is missing"
-    exit 1
-fi
+# Assert v13 DB is present (v12 was stripped).
 if [[ ! -f "$dir/decision-graph.sqlite" ]]; then
     echo "FAIL: v13 decision-graph.sqlite is missing"
     exit 1
 fi
 echo
-echo "OK: v12 and v13 SQLite databases coexist in the cache dir"
+echo "OK: v13 decision-graph SQLite database created"
