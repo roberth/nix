@@ -224,6 +224,12 @@ public:
 private:
     struct State;
     std::unique_ptr<Sync<State>> _state;
+
+    /* RequestSet trie internals — see schema comment and definitions
+       in tracing-decision-graph.cc. */
+    Hash insertTrieRecursive(std::vector<Hash> sortedMembers, int depth);
+    std::optional<std::string> getRequestSetNodePayload(const Hash & nodeHash);
+    bool collectTrieMembers(const Hash & nodeHash, std::vector<RequestHash> & out);
 };
 
 template<typename Q>

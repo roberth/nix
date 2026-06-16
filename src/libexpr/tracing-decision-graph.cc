@@ -38,22 +38,33 @@ CREATE TABLE IF NOT EXISTS Results (
 );
 
 -- Storage layer: set pools.
--- members is the raw concatenation of sorted-deduplicated element
--- hashes (RequestSet, 32 bytes per member). setHash = SHA-256(members).
+--
+-- RequestSets are stored as a hash-prefix trie of content-addressed
+-- nodes — one row per node. Each node is either a leaf (when its
+-- members fit under the split threshold) carrying up to
+-- TRIE_SPLIT_THRESHOLD Request hashes, or an internal node carrying
+-- a sparse list of (bucket-index, child-node-hash) pairs. The bucket
+-- index is the top TRIE_RADIX_BITS bits of each Request hash at the
+-- current depth. SHA-256 outputs are uniform, so buckets balance in
+-- expectation without content-defined chunking.
+--
+-- Structural sharing: two RequestSets that share elements share the
+-- subtrees those elements live in. setHash is the root node's hash;
+-- emptySetHash() is the canonical empty (no node stored).
 --
 -- FactSets are *not* persisted. Recording walks emit an intermediate
 -- FactSet per step, growing 1..N. Storing every intermediate cost
--- O(N²) bytes per query (94% of the DB on a 10-attr sample). The
--- decision-graph layer doesn't need FactSet members on disk: the Asks
--- and Terminals tables are keyed by (queryHash, factSetHash), so a
--- recording reaching some intermediate position is detectable via
--- "any Asks/Terminal row at (Q, factSetHash)?". walk() maintains the
--- current FactSet members in-process.
+-- O(N²) bytes per query. The decision-graph layer doesn't need
+-- FactSet members on disk: the Asks and Terminals tables are keyed
+-- by (queryHash, factSetHash), so a recording reaching some
+-- intermediate position is detectable via "any Asks/Terminal row at
+-- (Q, factSetHash)?". walk() maintains the current FactSet members
+-- in-process.
 
-CREATE TABLE IF NOT EXISTS RequestSets (
-    setHash BLOB PRIMARY KEY,
-    members BLOB NOT NULL
-);
+CREATE TABLE IF NOT EXISTS RequestSetNodes (
+    nodeHash BLOB PRIMARY KEY,
+    payload  BLOB NOT NULL
+) WITHOUT ROWID;
 
 -- Decision graph layer: two edge tables, both keyed by (queryHash, factSetHash).
 
@@ -88,8 +99,8 @@ struct TracingDecisionGraph::State
     /* Storage layer */
     SQLiteStmt insertRequest, insertQuery, insertResult;
     SQLiteStmt selectRequest, selectQuery, selectResult;
-    SQLiteStmt insertRequestSet;
-    SQLiteStmt selectRequestSet;
+    SQLiteStmt insertRequestSetNode;
+    SQLiteStmt selectRequestSetNode;
     SQLiteStmt countAsks, countTerminals;
 
     /* Decision graph layer */
@@ -162,6 +173,94 @@ static Hash dg_xorHash(const Hash & a, const Hash & b)
     Hash out = a;
     for (size_t i = 0; i < out.hashSize; ++i)
         out.hash[i] ^= b.hash[i];
+    return out;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   RequestSet trie: a hash-prefix trie over Request hashes.
+
+   Leaf payload:     [0x00] || hash_1 || hash_2 || ... || hash_n
+                     (n ≤ TRIE_SPLIT_THRESHOLD; n hashes sorted lex.)
+   Internal payload: [0x01] || (bucket_index_byte || child_node_hash)+
+                     (bucket indices sorted ascending; ≤ TRIE_RADIX entries.)
+
+   Bucket index at trie depth d for a hash h = (TRIE_RADIX_BITS bits of h
+   starting at bit d * TRIE_RADIX_BITS, MSB first).
+
+   The split threshold is *probabilistic* per the user's design intent:
+   no hard upper bound on internal nodes, just "split when leaf would
+   exceed threshold." Uniform-random SHA-256 keys keep buckets balanced
+   in expectation, so depth ≈ log_TRIE_RADIX(N).
+   ────────────────────────────────────────────────────────────────────── */
+
+constexpr int TRIE_RADIX_BITS = 4;
+constexpr int TRIE_RADIX = 1 << TRIE_RADIX_BITS; // 16
+constexpr size_t TRIE_SPLIT_THRESHOLD = 16;
+
+static uint8_t dg_bucketAt(const Hash & h, int depth)
+{
+    const int bitOffset = depth * TRIE_RADIX_BITS;
+    const int byteIdx = bitOffset / 8;
+    const int bitInByte = bitOffset % 8;
+    // Read TRIE_RADIX_BITS bits MSB-first starting at byteIdx:bitInByte
+    uint16_t word = (uint16_t)h.hash[byteIdx] << 8;
+    if (byteIdx + 1 < (int)h.hashSize)
+        word |= (uint16_t)h.hash[byteIdx + 1];
+    return (uint8_t)((word >> (16 - TRIE_RADIX_BITS - bitInByte)) & ((1 << TRIE_RADIX_BITS) - 1));
+}
+
+static std::string dg_trieLeafPayload(const std::vector<Hash> & members)
+{
+    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
+    std::string out;
+    out.reserve(1 + members.size() * hs);
+    out.push_back(0x00);
+    for (const auto & h : members)
+        out.append(reinterpret_cast<const char *>(h.hash), h.hashSize);
+    return out;
+}
+
+static std::string dg_trieInternalPayload(const std::vector<std::pair<uint8_t, Hash>> & children)
+{
+    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
+    std::string out;
+    out.reserve(1 + children.size() * (1 + hs));
+    out.push_back(0x01);
+    for (const auto & [bucket, child] : children) {
+        out.push_back(static_cast<char>(bucket));
+        out.append(reinterpret_cast<const char *>(child.hash), child.hashSize);
+    }
+    return out;
+}
+
+struct DgTrieNode
+{
+    bool isLeaf;
+    std::vector<Hash> members;                          // populated when isLeaf
+    std::vector<std::pair<uint8_t, Hash>> children;     // populated otherwise
+};
+
+static DgTrieNode dg_parseTrieNode(std::string_view payload)
+{
+    if (payload.empty())
+        throw Error("decision-graph: malformed RequestSet node (empty)");
+    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
+    DgTrieNode out;
+    out.isLeaf = (payload[0] == 0x00);
+    if (out.isLeaf) {
+        if ((payload.size() - 1) % hs != 0)
+            throw Error("decision-graph: malformed RequestSet leaf (size=%d)", payload.size());
+        for (size_t i = 1; i + hs <= payload.size(); i += hs)
+            out.members.push_back(dg_blobToHash(payload.substr(i, hs)));
+    } else {
+        const size_t entrySize = 1 + hs;
+        if ((payload.size() - 1) % entrySize != 0)
+            throw Error("decision-graph: malformed RequestSet internal node (size=%d)", payload.size());
+        for (size_t i = 1; i + entrySize <= payload.size(); i += entrySize) {
+            uint8_t bucket = static_cast<uint8_t>(payload[i]);
+            out.children.emplace_back(bucket, dg_blobToHash(payload.substr(i + 1, hs)));
+        }
+    }
     return out;
 }
 
@@ -267,10 +366,14 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     state->db.exec("DROP TABLE IF EXISTS Responses;");
     state->db.exec("DROP TABLE IF EXISTS FactSets;");
 
-    state->insertRequestSet.create(state->db,
-        "INSERT OR IGNORE INTO RequestSets(setHash, members) VALUES (?, ?)");
-    state->selectRequestSet.create(state->db,
-        "SELECT members FROM RequestSets WHERE setHash = ?");
+    state->insertRequestSetNode.create(state->db,
+        "INSERT OR IGNORE INTO RequestSetNodes(nodeHash, payload) VALUES (?, ?)");
+    state->selectRequestSetNode.create(state->db,
+        "SELECT payload FROM RequestSetNodes WHERE nodeHash = ?");
+
+    /* Drop the previous flat-blob RequestSets table from earlier
+       schema versions if present (incompatible payload format). */
+    state->db.exec("DROP TABLE IF EXISTS RequestSets;");
 
     state->insertAsks.create(state->db,
         "INSERT OR IGNORE INTO Asks(queryHash, factSetHash, requestSetHash) VALUES (?, ?, ?)");
@@ -373,14 +476,39 @@ static std::vector<T> dg_sortAndDedup(std::vector<T> members)
     return members;
 }
 
+/* Pure recursive trie root hash — no DB access. Used by
+   computeRequestSetHash (caller has just the members in hand) and by
+   insertRequestSet's writer (which also persists each node). */
+static Hash dg_trieRootHash(std::vector<Hash> sortedMembers, int depth)
+{
+    if (sortedMembers.size() <= TRIE_SPLIT_THRESHOLD) {
+        auto payload = dg_trieLeafPayload(sortedMembers);
+        return hashString(HashAlgorithm::SHA256, payload);
+    }
+    /* Bucket by the depth'th 4-bit slice. Members come in sorted; a
+       stable bucket-sort preserves intra-bucket sortedness. */
+    std::vector<std::vector<Hash>> buckets(TRIE_RADIX);
+    for (auto & h : sortedMembers)
+        buckets[dg_bucketAt(h, depth)].push_back(std::move(h));
+    std::vector<std::pair<uint8_t, Hash>> children;
+    for (uint8_t i = 0; i < TRIE_RADIX; ++i) {
+        if (buckets[i].empty())
+            continue;
+        children.emplace_back(i, dg_trieRootHash(std::move(buckets[i]), depth + 1));
+    }
+    auto payload = dg_trieInternalPayload(children);
+    return hashString(HashAlgorithm::SHA256, payload);
+}
+
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::computeRequestSetHash(const std::vector<RequestHash> & members)
 {
-    auto canonical = dg_sortAndDedup(members); // dedup so XOR doesn't cancel
-    SetHash out = emptySetHash();
-    for (const auto & h : canonical)
-        out = dg_xorHash(out, dg_requestElementHash(h));
-    return out;
+    if (members.empty())
+        return emptySetHash();
+    auto canonical = dg_sortAndDedup(members);
+    if (canonical.empty())
+        return emptySetHash();
+    return dg_trieRootHash(std::move(canonical), 0);
 }
 
 TracingDecisionGraph::SetHash
@@ -418,23 +546,62 @@ TracingDecisionGraph::usefulDispatch(
     return out;
 }
 
+/* Recursively build the trie and INSERT each visited node, returning
+   the root node's hash. Same shape as dg_trieRootHash but with the
+   side effect of persisting nodes (idempotent via INSERT OR IGNORE
+   on (nodeHash); identical subtrees dedupe automatically). */
+Hash TracingDecisionGraph::insertTrieRecursive(std::vector<Hash> sortedMembers, int depth)
+{
+    if (sortedMembers.size() <= TRIE_SPLIT_THRESHOLD) {
+        auto payload = dg_trieLeafPayload(sortedMembers);
+        auto nodeHash = hashString(HashAlgorithm::SHA256, payload);
+        {
+            auto state(_state->lock());
+            auto use = state->insertRequestSetNode.use();
+            dg_bindBlob(use, dg_hashToBlob(nodeHash));
+            dg_bindBlob(use, payload);
+            use.exec();
+        }
+        return nodeHash;
+    }
+    std::vector<std::vector<Hash>> buckets(TRIE_RADIX);
+    for (auto & h : sortedMembers)
+        buckets[dg_bucketAt(h, depth)].push_back(std::move(h));
+    std::vector<std::pair<uint8_t, Hash>> children;
+    for (uint8_t i = 0; i < TRIE_RADIX; ++i) {
+        if (buckets[i].empty())
+            continue;
+        children.emplace_back(i, insertTrieRecursive(std::move(buckets[i]), depth + 1));
+    }
+    auto payload = dg_trieInternalPayload(children);
+    auto nodeHash = hashString(HashAlgorithm::SHA256, payload);
+    {
+        auto state(_state->lock());
+        auto use = state->insertRequestSetNode.use();
+        dg_bindBlob(use, dg_hashToBlob(nodeHash));
+        dg_bindBlob(use, payload);
+        use.exec();
+    }
+    return nodeHash;
+}
+
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::insertRequestSet(std::vector<RequestHash> members)
 {
+    if (members.empty())
+        return emptySetHash();
     auto canonical = dg_sortAndDedup(std::move(members));
-    /* setHash = XOR-fold per computeRequestSetHash; storage payload is
-       the raw concat of canonical members for parseability. */
-    SetHash setHash = emptySetHash();
-    for (const auto & h : canonical)
-        setHash = dg_xorHash(setHash, dg_requestElementHash(h));
-    auto bytes = dg_serialiseMembers(canonical);
-    auto state(_state->lock());
-    auto use = state->insertRequestSet.use();
-    dg_bindBlob(use, dg_hashToBlob(setHash));
-    dg_bindBlob(use, bytes);
-    use.exec();
-    state->requestSetCache.try_emplace(setHash, std::optional{std::move(canonical)});
-    return setHash;
+    if (canonical.empty())
+        return emptySetHash();
+    /* Snapshot for the in-process member cache so getRequestSet can
+       short-circuit the trie traversal within the same process. */
+    auto cachedMembers = canonical;
+    auto rootHash = insertTrieRecursive(std::move(canonical), 0);
+    {
+        auto state(_state->lock());
+        state->requestSetCache.try_emplace(rootHash, std::optional{std::move(cachedMembers)});
+    }
+    return rootHash;
 }
 
 TracingDecisionGraph::SetHash
@@ -471,21 +638,57 @@ TracingDecisionGraph::extendFactSet(const SetHash & parent, const std::vector<Fa
     return insertFactSet(std::move(combined));
 }
 
+/* Read one trie node payload by its hash; cache-aware via a side
+   map for fast in-process traversal. Returns nullopt if the node
+   isn't in storage. */
+std::optional<std::string> TracingDecisionGraph::getRequestSetNodePayload(const Hash & nodeHash)
+{
+    auto state(_state->lock());
+    auto query = state->selectRequestSetNode.use();
+    dg_bindBlob(query, dg_hashToBlob(nodeHash));
+    if (!query.next())
+        return std::nullopt;
+    return query.getBlob(0);
+}
+
+bool TracingDecisionGraph::collectTrieMembers(const Hash & nodeHash, std::vector<RequestHash> & out)
+{
+    auto payload = getRequestSetNodePayload(nodeHash);
+    if (!payload)
+        return false;
+    auto node = dg_parseTrieNode(*payload);
+    if (node.isLeaf) {
+        for (auto & h : node.members)
+            out.push_back(h);
+        return true;
+    }
+    for (const auto & [bucket, child] : node.children)
+        if (!collectTrieMembers(child, out))
+            return false;
+    return true;
+}
+
 std::optional<std::vector<TracingDecisionGraph::RequestHash>>
 TracingDecisionGraph::getRequestSet(const SetHash & h)
 {
     if (h == emptySetHash())
         return std::vector<RequestHash>{};
-    auto state(_state->lock());
-    if (auto it = state->requestSetCache.find(h); it != state->requestSetCache.end())
-        return it->second;
-    auto query = state->selectRequestSet.use();
-    dg_bindBlob(query, dg_hashToBlob(h));
-    std::optional<std::vector<RequestHash>> parsed;
-    if (query.next())
-        parsed = dg_deserialiseRequestMembers(query.getBlob(0));
-    state->requestSetCache.emplace(h, parsed);
-    return parsed;
+    {
+        auto state(_state->lock());
+        if (auto it = state->requestSetCache.find(h); it != state->requestSetCache.end())
+            return it->second;
+    }
+    std::vector<RequestHash> members;
+    if (!collectTrieMembers(h, members)) {
+        auto state(_state->lock());
+        state->requestSetCache.emplace(h, std::nullopt);
+        return std::nullopt;
+    }
+    {
+        auto state(_state->lock());
+        state->requestSetCache.emplace(h, std::optional{members});
+    }
+    return std::optional{std::move(members)};
 }
 
 std::optional<std::vector<TracingDecisionGraph::Fact>>
