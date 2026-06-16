@@ -26,6 +26,10 @@ class TracingReplayEvaluator : public Evaluator
 {
     ref<Evaluator> inner;
     TracingIndex & tracingIndex;
+    /* v13 decision-graph index, opt-in for the migration. nullptr if
+       v13 isn't wired up. When non-null, lookup attempts walk() as
+       the first pass before falling back to v12's trie cascade. */
+    TracingDecisionGraph * decisionGraph = nullptr;
     TracingWriter & writer; // shared with TracingEvaluator for virtual root counter
 
     /**
@@ -121,7 +125,11 @@ public:
      *        so outer tracing layers observe inner reads.
      */
     TracingReplayEvaluator(
-        ref<Evaluator> inner, TracingIndex & tracingIndex, Environment & validationEnv, TracingWriter & writer);
+        ref<Evaluator> inner,
+        TracingIndex & tracingIndex,
+        Environment & validationEnv,
+        TracingWriter & writer,
+        TracingDecisionGraph * decisionGraph = nullptr);
 
     /**
      * Validate a vector of (query, result) pairs against current environment.

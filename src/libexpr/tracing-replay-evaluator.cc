@@ -1,6 +1,7 @@
 #include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-object.hh"
+#include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-index.hh"
 #include "nix/expr/environment.hh"
 #include "nix/expr/tracing-cache-log.hh"
@@ -13,9 +14,14 @@
 namespace nix {
 
 TracingReplayEvaluator::TracingReplayEvaluator(
-    ref<Evaluator> inner, TracingIndex & tracingIndex, Environment & validationEnv, TracingWriter & writer)
+    ref<Evaluator> inner,
+    TracingIndex & tracingIndex,
+    Environment & validationEnv,
+    TracingWriter & writer,
+    TracingDecisionGraph * decisionGraph)
     : inner(inner)
     , tracingIndex(tracingIndex)
+    , decisionGraph(decisionGraph)
     , writer(writer)
     , validationEnv(validationEnv)
 {
@@ -249,6 +255,35 @@ template<typename Q>
 std::optional<std::pair<std::string, TriePosition>> TracingReplayEvaluator::lookup(const Q & query)
 {
     auto queryHash = TracingIndex::computeQueryHash(query);
+
+    /* v13 walk: navigate the decision graph from (Q, empty),
+       dispatching Requests via getCurrentResponse against the
+       current environment. A hit returns the recorded Result hash;
+       fetch its payload from v13's Results pool and return. */
+    if (decisionGraph) {
+        auto walkHit = decisionGraph->walk(queryHash, [&](const Hash & requestHash) -> Hash {
+            auto requestPayload = decisionGraph->getRequestPayload(requestHash);
+            if (!requestPayload)
+                return Hash(HashAlgorithm::SHA256);
+            auto currentResp = getCurrentResponse(*requestPayload);
+            if (!currentResp)
+                return Hash(HashAlgorithm::SHA256);
+            return TracingIndex::computeResponseHash(*currentResp);
+        });
+        if (walkHit) {
+            auto payload = decisionGraph->getResultPayload(*walkHit);
+            if (payload) {
+                addToCurrentSetMembers(queryHash, *walkHit);
+                tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
+                return std::make_pair(
+                    *payload,
+                    TriePosition{
+                        .resultNodeHash = *walkHit,
+                        .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
+                    });
+            }
+        }
+    }
 
     /* Sets-based index lookup: try it first because it's O(k · |P|)
        and indexed by queryHash. A hit means we've found a Binding

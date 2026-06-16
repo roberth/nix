@@ -240,9 +240,14 @@ public:
 
         /* v13 global factSet — the Request hash is what v12 calls
            queryHash here (this method handles d>0 query/response
-           pairs). responseHash dittos as the v13 ResponseHash. */
-        if (decisionGraph)
+           pairs). responseHash dittos as the v13 ResponseHash.
+           Also insert the Request and Response payloads into v13's
+           pools so walk's dispatch can fetch the Request later. */
+        if (decisionGraph) {
+            decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
+            decisionGraph->insertResponse(responseHash, respPayload);
             v13FactSet.push_back({queryHash, responseHash});
+        }
     }
 
     /**
@@ -268,8 +273,11 @@ public:
         auto responseHash = index->insertSetResponse(resultPayload);
         observedMembers.push_back({queryHash, responseHash});
 
-        if (decisionGraph)
+        if (decisionGraph) {
+            decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
+            decisionGraph->insertResponse(responseHash, resultPayload);
             v13FactSet.push_back({queryHash, responseHash});
+        }
     }
 
     /**
@@ -298,8 +306,10 @@ public:
            writes the Asks chain + Terminal mapping (Q, factSet) -> R.
            We don't clear v13FactSet — it grows monotonically per the
            model (any later Q's recording will sample this plus
-           whatever it adds). */
+           whatever it adds). Also insert the Result payload so
+           walk()'s caller can fetch the payload from a ResultHash. */
         if (decisionGraph && qh.queryHash) {
+            decisionGraph->insertResult(responseHash, resultPayload);
             auto factSetHash = decisionGraph->insertFactSet(v13FactSet);
             decisionGraph->record(*qh.queryHash, factSetHash, responseHash);
         }
