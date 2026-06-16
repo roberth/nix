@@ -116,6 +116,11 @@ struct TracingDecisionGraph::State
     std::unordered_map<Hash, std::optional<std::vector<TracingDecisionGraph::Fact>>> factSetCache;
     std::unordered_map<Hash, std::optional<std::string>> requestPayloadCache;
     std::unordered_map<Hash, std::optional<std::string>> resultPayloadCache;
+    /* RequestSet trie *node* cache. Different RequestSets that share
+       subtrees (via content addressing) hit the same node hashes;
+       caching per-node lets second-and-later getRequestSet calls reuse
+       the SQLite reads from the first. */
+    std::unordered_map<Hash, std::optional<std::string>> requestSetNodePayloadCache;
 };
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -552,16 +557,24 @@ TracingDecisionGraph::usefulDispatch(
    on (nodeHash); identical subtrees dedupe automatically). */
 Hash TracingDecisionGraph::insertTrieRecursive(std::vector<Hash> sortedMembers, int depth)
 {
+    auto persist = [&](const Hash & nodeHash, const std::string & payload) {
+        auto state(_state->lock());
+        /* If we've already cached or persisted this node, skip the
+           SQLite write. INSERT OR IGNORE makes the write itself
+           idempotent, but the cache check saves the trip. */
+        auto [it, inserted] = state->requestSetNodePayloadCache.try_emplace(
+            nodeHash, std::optional{payload});
+        if (!inserted)
+            return;
+        auto use = state->insertRequestSetNode.use();
+        dg_bindBlob(use, dg_hashToBlob(nodeHash));
+        dg_bindBlob(use, payload);
+        use.exec();
+    };
     if (sortedMembers.size() <= TRIE_SPLIT_THRESHOLD) {
         auto payload = dg_trieLeafPayload(sortedMembers);
         auto nodeHash = hashString(HashAlgorithm::SHA256, payload);
-        {
-            auto state(_state->lock());
-            auto use = state->insertRequestSetNode.use();
-            dg_bindBlob(use, dg_hashToBlob(nodeHash));
-            dg_bindBlob(use, payload);
-            use.exec();
-        }
+        persist(nodeHash, payload);
         return nodeHash;
     }
     std::vector<std::vector<Hash>> buckets(TRIE_RADIX);
@@ -575,13 +588,7 @@ Hash TracingDecisionGraph::insertTrieRecursive(std::vector<Hash> sortedMembers, 
     }
     auto payload = dg_trieInternalPayload(children);
     auto nodeHash = hashString(HashAlgorithm::SHA256, payload);
-    {
-        auto state(_state->lock());
-        auto use = state->insertRequestSetNode.use();
-        dg_bindBlob(use, dg_hashToBlob(nodeHash));
-        dg_bindBlob(use, payload);
-        use.exec();
-    }
+    persist(nodeHash, payload);
     return nodeHash;
 }
 
@@ -638,17 +645,31 @@ TracingDecisionGraph::extendFactSet(const SetHash & parent, const std::vector<Fa
     return insertFactSet(std::move(combined));
 }
 
-/* Read one trie node payload by its hash; cache-aware via a side
-   map for fast in-process traversal. Returns nullopt if the node
-   isn't in storage. */
+/* Read one trie node payload by its hash. The per-node cache below
+   makes shared subtrees (the dominant case) free after the first
+   visit, regardless of which RequestSet root they were reached
+   through. */
 std::optional<std::string> TracingDecisionGraph::getRequestSetNodePayload(const Hash & nodeHash)
 {
-    auto state(_state->lock());
-    auto query = state->selectRequestSetNode.use();
-    dg_bindBlob(query, dg_hashToBlob(nodeHash));
-    if (!query.next())
-        return std::nullopt;
-    return query.getBlob(0);
+    {
+        auto state(_state->lock());
+        if (auto it = state->requestSetNodePayloadCache.find(nodeHash);
+            it != state->requestSetNodePayloadCache.end())
+            return it->second;
+    }
+    std::optional<std::string> payload;
+    {
+        auto state(_state->lock());
+        auto query = state->selectRequestSetNode.use();
+        dg_bindBlob(query, dg_hashToBlob(nodeHash));
+        if (query.next())
+            payload = query.getBlob(0);
+    }
+    {
+        auto state(_state->lock());
+        state->requestSetNodePayloadCache.emplace(nodeHash, payload);
+    }
+    return payload;
 }
 
 bool TracingDecisionGraph::collectTrieMembers(const Hash & nodeHash, std::vector<RequestHash> & out)
