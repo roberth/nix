@@ -15,15 +15,16 @@ namespace nix {
 
 static const char * decisionGraphSchema = R"sql(
 -- Storage layer: atomic content-addressed pools.
+--
+-- Response payloads are *not* persisted. Walk dispatch recomputes the
+-- live response from the current environment and compares hashes
+-- only; the recorded payload bytes are never read back. Keeping just
+-- the hash (which appears in FactSet members and is therefore
+-- implicit in Asks/Terminals reachability) suffices for correctness.
 
 CREATE TABLE IF NOT EXISTS Requests (
     requestHash BLOB PRIMARY KEY,
     payload     BLOB NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS Responses (
-    responseHash BLOB PRIMARY KEY,
-    payload      BLOB NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS Queries (
@@ -37,37 +38,47 @@ CREATE TABLE IF NOT EXISTS Results (
 );
 
 -- Storage layer: set pools.
--- members is CBOR-encoded sorted-deduplicated list of element hashes
--- (RequestSet) or of (requestHash, responseHash) pairs (FactSet).
--- setHash = SHA-256(members).
+-- members is the raw concatenation of sorted-deduplicated element
+-- hashes (RequestSet, 32 bytes per member). setHash = SHA-256(members).
+--
+-- FactSets are *not* persisted. Recording walks emit an intermediate
+-- FactSet per step, growing 1..N. Storing every intermediate cost
+-- O(N²) bytes per query (94% of the DB on a 10-attr sample). The
+-- decision-graph layer doesn't need FactSet members on disk: the Asks
+-- and Terminals tables are keyed by (queryHash, factSetHash), so a
+-- recording reaching some intermediate position is detectable via
+-- "any Asks/Terminal row at (Q, factSetHash)?". walk() maintains the
+-- current FactSet members in-process.
 
 CREATE TABLE IF NOT EXISTS RequestSets (
     setHash BLOB PRIMARY KEY,
     members BLOB NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS FactSets (
-    setHash BLOB PRIMARY KEY,
-    members BLOB NOT NULL
-);
-
 -- Decision graph layer: two edge tables, both keyed by (queryHash, factSetHash).
 
+-- No separate (queryHash, factSetHash) index is needed: the primary
+-- key prefix already covers WHERE-by-(queryHash, factSetHash) lookups.
+-- WITHOUT ROWID stores rows directly in the PK B-tree instead of in a
+-- separate heap with a duplicate PK index — a ~50% reduction in
+-- on-disk size for these all-blob, no-other-payload tables.
 CREATE TABLE IF NOT EXISTS Asks (
     queryHash      BLOB NOT NULL,
     factSetHash    BLOB NOT NULL,
     requestSetHash BLOB NOT NULL,
     PRIMARY KEY (queryHash, factSetHash, requestSetHash)
-);
-CREATE INDEX IF NOT EXISTS AsksByQF ON Asks(queryHash, factSetHash);
+) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS Terminals (
     queryHash   BLOB NOT NULL,
     factSetHash BLOB NOT NULL,
     resultHash  BLOB NOT NULL,
     PRIMARY KEY (queryHash, factSetHash, resultHash)
-);
-CREATE INDEX IF NOT EXISTS TerminalsByQF ON Terminals(queryHash, factSetHash);
+) WITHOUT ROWID;
+
+-- Clean up indexes from earlier schema versions, if present.
+DROP INDEX IF EXISTS AsksByQF;
+DROP INDEX IF EXISTS TerminalsByQF;
 )sql";
 
 struct TracingDecisionGraph::State
@@ -75,10 +86,11 @@ struct TracingDecisionGraph::State
     SQLite db;
 
     /* Storage layer */
-    SQLiteStmt insertRequest, insertResponse, insertQuery, insertResult;
-    SQLiteStmt selectRequest, selectResponse, selectQuery, selectResult;
-    SQLiteStmt insertRequestSet, insertFactSet;
-    SQLiteStmt selectRequestSet, selectFactSet;
+    SQLiteStmt insertRequest, insertQuery, insertResult;
+    SQLiteStmt selectRequest, selectQuery, selectResult;
+    SQLiteStmt insertRequestSet;
+    SQLiteStmt selectRequestSet;
+    SQLiteStmt countAsks, countTerminals;
 
     /* Decision graph layer */
     SQLiteStmt insertAsks, selectAsks, deleteAsks;
@@ -92,7 +104,6 @@ struct TracingDecisionGraph::State
     std::unordered_map<Hash, std::optional<std::vector<Hash>>> requestSetCache;
     std::unordered_map<Hash, std::optional<std::vector<TracingDecisionGraph::Fact>>> factSetCache;
     std::unordered_map<Hash, std::optional<std::string>> requestPayloadCache;
-    std::unordered_map<Hash, std::optional<std::string>> responsePayloadCache;
     std::unordered_map<Hash, std::optional<std::string>> resultPayloadCache;
 
     /* walk() extends the cur FactSet by one Fact per step and re-hashes
@@ -193,21 +204,6 @@ static std::vector<Hash> dg_deserialiseRequestMembers(std::string_view bytes)
     return out;
 }
 
-static std::vector<TracingDecisionGraph::Fact> dg_deserialiseFactMembers(std::string_view bytes)
-{
-    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
-    if (bytes.size() % (2 * hs) != 0)
-        throw Error("decision-graph: malformed FactSet blob (size=%d)", bytes.size());
-    std::vector<TracingDecisionGraph::Fact> out;
-    out.reserve(bytes.size() / (2 * hs));
-    for (size_t i = 0; i < bytes.size(); i += 2 * hs)
-        out.push_back({
-            dg_blobToHash(bytes.substr(i, hs)),
-            dg_blobToHash(bytes.substr(i + hs, hs)),
-        });
-    return out;
-}
-
 /* ─────────────────────────────────────────────────────────────────────
    Construction / database path
    ───────────────────────────────────────────────────────────────────── */
@@ -247,8 +243,6 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
 
     state->insertRequest.create(state->db,
         "INSERT OR IGNORE INTO Requests(requestHash, payload) VALUES (?, ?)");
-    state->insertResponse.create(state->db,
-        "INSERT OR IGNORE INTO Responses(responseHash, payload) VALUES (?, ?)");
     state->insertQuery.create(state->db,
         "INSERT OR IGNORE INTO Queries(queryHash, payload) VALUES (?, ?)");
     state->insertResult.create(state->db,
@@ -256,21 +250,19 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
 
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
-    state->selectResponse.create(state->db,
-        "SELECT payload FROM Responses WHERE responseHash = ?");
     state->selectQuery.create(state->db,
         "SELECT payload FROM Queries WHERE queryHash = ?");
     state->selectResult.create(state->db,
         "SELECT payload FROM Results WHERE resultHash = ?");
 
+    /* Drop obsolete tables from earlier schema versions. */
+    state->db.exec("DROP TABLE IF EXISTS Responses;");
+    state->db.exec("DROP TABLE IF EXISTS FactSets;");
+
     state->insertRequestSet.create(state->db,
         "INSERT OR IGNORE INTO RequestSets(setHash, members) VALUES (?, ?)");
-    state->insertFactSet.create(state->db,
-        "INSERT OR IGNORE INTO FactSets(setHash, members) VALUES (?, ?)");
     state->selectRequestSet.create(state->db,
         "SELECT members FROM RequestSets WHERE setHash = ?");
-    state->selectFactSet.create(state->db,
-        "SELECT members FROM FactSets WHERE setHash = ?");
 
     state->insertAsks.create(state->db,
         "INSERT OR IGNORE INTO Asks(queryHash, factSetHash, requestSetHash) VALUES (?, ?, ?)");
@@ -282,6 +274,10 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO Terminals(queryHash, factSetHash, resultHash) VALUES (?, ?, ?)");
     state->selectTerminal.create(state->db,
         "SELECT resultHash FROM Terminals WHERE queryHash = ? AND factSetHash = ?");
+    state->countAsks.create(state->db,
+        "SELECT 1 FROM Asks WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
+    state->countTerminals.create(state->db,
+        "SELECT 1 FROM Terminals WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
 }
 
 TracingDecisionGraph::~TracingDecisionGraph() = default;
@@ -318,7 +314,6 @@ void TracingDecisionGraph::waitForWrites()
     }
 
 ATOM_INSERT_CACHED(Request, requestPayloadCache)
-ATOM_INSERT_CACHED(Response, responsePayloadCache)
 ATOM_INSERT_PLAIN(Query)
 ATOM_INSERT_CACHED(Result, resultPayloadCache)
 #undef ATOM_INSERT_CACHED
@@ -353,7 +348,6 @@ ATOM_INSERT_CACHED(Result, resultPayloadCache)
     }
 
 ATOM_GET_CACHED(Request, requestPayloadCache)
-ATOM_GET_CACHED(Response, responsePayloadCache)
 ATOM_GET_PLAIN(Query)
 ATOM_GET_CACHED(Result, resultPayloadCache)
 #undef ATOM_GET_CACHED
@@ -417,14 +411,14 @@ TracingDecisionGraph::insertRequestSet(std::vector<RequestHash> members)
 TracingDecisionGraph::SetHash
 TracingDecisionGraph::insertFactSet(std::vector<Fact> members)
 {
+    /* FactSets are not persisted; only the hash is meaningful as a key
+       into Asks/Terminals. The members are kept in-process so the
+       caller (record / walk) can still inspect them within one
+       invocation. */
     auto canonical = dg_sortAndDedup(std::move(members));
     auto bytes = dg_serialiseMembers(canonical);
     auto setHash = hashString(HashAlgorithm::SHA256, bytes);
     auto state(_state->lock());
-    auto use = state->insertFactSet.use();
-    dg_bindBlob(use, dg_hashToBlob(setHash));
-    dg_bindBlob(use, bytes);
-    use.exec();
     state->factSetCache.try_emplace(setHash, std::optional{std::move(canonical)});
     return setHash;
 }
@@ -472,13 +466,10 @@ TracingDecisionGraph::getFactSet(const SetHash & h)
     auto state(_state->lock());
     if (auto it = state->factSetCache.find(h); it != state->factSetCache.end())
         return it->second;
-    auto query = state->selectFactSet.use();
-    dg_bindBlob(query, dg_hashToBlob(h));
-    std::optional<std::vector<Fact>> parsed;
-    if (query.next())
-        parsed = dg_deserialiseFactMembers(query.getBlob(0));
-    state->factSetCache.emplace(h, parsed);
-    return parsed;
+    /* FactSets aren't persisted; if not in the in-process cache it's
+       unknown to us. Walks reconstruct curFacts incrementally and
+       don't need this path. */
+    return std::nullopt;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -554,17 +545,38 @@ void TracingDecisionGraph::record(
 {
     auto facts = getFactSet(factSetHash);
     if (!facts)
-        throw Error("decision-graph: record(Q, factSet, result) called with FactSet hash not in storage");
+        throw Error("decision-graph: record(Q, factSet, result) called with FactSet hash not in the in-process cache");
 
     /* Walk the Facts in canonical order (already sorted by getFactSet),
-       writing one singleton Asks edge per Fact and extending cur. */
+       writing one singleton Asks edge per Fact and extending cur.
+       The intermediate FactSets are kept only in the in-process cache,
+       not persisted. */
     auto cur = emptySetHash();
+    std::vector<Fact> curFacts;
+    curFacts.reserve(facts->size());
     for (const auto & f : *facts) {
         auto requestSetHash = insertRequestSet({f.request});
         insertAsks(q, cur, requestSetHash);
-        cur = extendFactSet(cur, {f});
+        curFacts.push_back(f);
+        cur = insertFactSet(curFacts); // in-memory only
     }
     insertTerminal(q, factSetHash, result);
+}
+
+bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factSet)
+{
+    auto state(_state->lock());
+    {
+        auto check = state->countAsks.use();
+        dg_bindBlob(check, dg_hashToBlob(q));
+        dg_bindBlob(check, dg_hashToBlob(factSet));
+        if (check.next())
+            return true;
+    }
+    auto check = state->countTerminals.use();
+    dg_bindBlob(check, dg_hashToBlob(q));
+    dg_bindBlob(check, dg_hashToBlob(factSet));
+    return check.next();
 }
 
 std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
@@ -572,10 +584,11 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
     const std::function<ResponseHash(const RequestHash &)> & dispatch)
 {
     auto cur = emptySetHash();
-    /* curRequests mirrors the cur FactSet's requests for fast
-       membership tests when filtering edge requests below. Build it
-       once for the empty start and extend it incrementally as the
-       walk advances; rebuilding every iteration was O(N²). */
+    /* Maintain curFacts and curRequests in this walk's locals.
+       FactSets aren't persisted, so we can't fetch them mid-walk;
+       reconstruct as we go. curRequests speeds up the "is this
+       request already in cur?" filter on each edge. */
+    std::vector<Fact> curFacts;
     std::unordered_set<RequestHash> curRequests;
     for (;;) {
         if (auto term = getTerminal(q, cur))
@@ -584,17 +597,6 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
         auto outgoing = getAsks(q, cur);
         if (outgoing.empty())
             return std::nullopt; // no path forward, no terminal
-
-        /* Try each outgoing edge until one leads to a FactSet that
-           exists in storage. With singleton-step canonical recording
-           the common case has exactly one outgoing edge; the loop
-           still covers the path-divergence case where multiple
-           singletons coexist at a position (each leading to a
-           different next FactSet depending on Response). */
-        auto curFactsOpt = getFactSet(cur);
-        if (!curFactsOpt)
-            return std::nullopt; // shouldn't happen — cur was reachable
-        const auto & curFacts = *curFactsOpt;
 
         bool advanced = false;
         for (const auto & requestSetHash : outgoing) {
@@ -616,13 +618,9 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
             if (newFacts.empty())
                 continue; // edge would add nothing; degenerate
 
-            /* Compute the candidate next FactSet hash WITHOUT
-               inserting it into the pool — we only want to follow
-               edges that some recording actually placed there.
-
-               For the common singleton-step case, consult the
-               (parent, request, response) → child cache before
-               re-canonicalising and re-hashing the full FactSet. */
+            /* Compute the candidate next FactSet hash. For the common
+               singleton-step case, consult the (parent, request,
+               response) → child cache before recomputing. */
             Hash nextCur(HashAlgorithm::SHA256);
             bool cached = false;
             std::optional<State::FactExtKey> cacheKey;
@@ -645,12 +643,17 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
                 }
             }
 
-            if (!getFactSet(nextCur))
-                continue; // next FactSet not in storage — wrong branch
+            /* Validate that some recording for THIS query reaches
+               (Q, nextCur). With FactSets gone, this is the
+               on-the-Q-graph membership check. */
+            if (!hasAnyEdge(q, nextCur))
+                continue; // wrong branch
 
             cur = nextCur;
-            for (const auto & f : newFacts)
+            for (const auto & f : newFacts) {
+                curFacts.push_back(f);
                 curRequests.insert(f.request);
+            }
             advanced = true;
             break;
         }

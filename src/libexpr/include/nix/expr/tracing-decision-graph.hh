@@ -100,13 +100,11 @@ public:
        computed by the caller (SHA-256 of the payload). Idempotent:
        INSERT OR IGNORE on the hash. */
     void insertRequest(const RequestHash & h, std::string_view payload);
-    void insertResponse(const ResponseHash & h, std::string_view payload);
     void insertQuery(const QueryHash & h, std::string_view payload);
     void insertResult(const ResultHash & h, std::string_view payload);
 
     /* Atom payload lookup by hash. Returns nullopt if not present. */
     std::optional<std::string> getRequestPayload(const RequestHash & h);
-    std::optional<std::string> getResponsePayload(const ResponseHash & h);
     std::optional<std::string> getQueryPayload(const QueryHash & h);
     std::optional<std::string> getResultPayload(const ResultHash & h);
 
@@ -171,6 +169,12 @@ public:
        if a Terminal exists. (Phase 1: only one Terminal per
        position is expected; nondeterminism handling is deferred.) */
     std::optional<ResultHash> getTerminal(const QueryHash & q, const SetHash & factSet);
+
+    /* Cheap existence check: does any Asks or Terminal row exist at
+       (Q, factSet)? Used by walk() to validate that a candidate
+       FactSet hash lies on some recording for this query, without
+       persisting FactSet members. */
+    bool hasAnyEdge(const QueryHash & q, const SetHash & factSet);
 
     /* ─────────────────────────────────────────────────────────────────
        Recording and replay

@@ -143,10 +143,8 @@ public:
         nlohmann::json reqJson = resp.request;
         nlohmann::json respJson = resp.response;
         auto queryHash = TracingDecisionGraph::computeQueryHash(resp.request);
-        auto respPayload = jsonToCborString(respJson);
-        auto responseHash = TracingDecisionGraph::computeResponseHash(respPayload);
+        auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(respJson));
         decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
-        decisionGraph->insertResponse(responseHash, respPayload);
         v13FactSet.push_back({queryHash, responseHash});
     }
 
@@ -163,10 +161,8 @@ public:
         std::visit([&](const auto & r) { resultJson = r; }, result);
         auto queryHash = std::visit(
             [](const auto & q) { return TracingDecisionGraph::computeQueryHash(q); }, query);
-        auto resultPayload = jsonToCborString(resultJson);
-        auto responseHash = TracingDecisionGraph::computeResponseHash(resultPayload);
+        auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(resultJson));
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-        decisionGraph->insertResponse(responseHash, resultPayload);
         v13FactSet.push_back({queryHash, responseHash});
     }
 
