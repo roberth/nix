@@ -9,6 +9,7 @@
 #include "nix/expr/evaluation-helpers.hh"
 #include "nix/expr/interpreter.hh"
 #include "nix/expr/interpreter-object.hh"
+#include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-source-accessor.hh"
 #include "nix/expr/primops.hh"
 #include "nix/expr/print-options.hh"

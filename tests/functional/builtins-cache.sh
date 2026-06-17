@@ -4,7 +4,7 @@ source common.sh
 
 enableFeatures "tracing-eval-cache"
 
-cacheDir="$TEST_HOME/.cache/nix/eval-tracing-index-v2"
+cacheDir="$TEST_HOME/.cache/nix/eval-tracing-decision-graph"
 
 clearCache() {
     rm -rf "$cacheDir"

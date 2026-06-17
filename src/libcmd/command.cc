@@ -195,6 +195,7 @@ ref<EvalState> EvalCommand::getEvalState()
             eval = make_ref<TracingReplayEvaluator>(
                 eval, *sysEnv, *tracingWriter, *tracingDecisionGraph);
             evalState->evaluatorCompat = eval.get_ptr();
+            evalState->rootDecisionGraph = tracingDecisionGraph.get();
             evaluatorCompat = eval;
         } else {
             evalState = std::allocate_shared<EvalState>(

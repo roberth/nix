@@ -48,6 +48,7 @@ class SystemEnvironment;
 class Evaluator;
 class Object;
 class TraceSink;
+class TracingDecisionGraph;
 class TracingWriter;
 
 namespace fetchers {
@@ -551,8 +552,12 @@ public:
      */
     std::weak_ptr<Evaluator> evaluatorCompat;
 
-    /* TracingDecisionGraph is constructed by EvalCommand and threaded
-       through TracingWriter/TracingReplayEvaluator directly. */
+    /* Shared decision-graph index for builtins.cache. Set by
+       EvalCommand when CLI-level tracing-eval-cache is enabled, so
+       builtins.cache and the CLI cache write to the same SQLite
+       file via the same in-process handle. Null otherwise; the
+       primop falls back to cacheState.ownedDecisionGraph. */
+    TracingDecisionGraph * rootDecisionGraph = nullptr;
 
     /**
      * State for builtins.cache calls (stubbed under v13; see
@@ -577,6 +582,11 @@ public:
         };
 
         std::vector<CallState> calls;
+
+        /** Owned decision graph when no outer EvalCommand
+            constructed one. Lazily created on first
+            builtins.cache call. */
+        std::unique_ptr<TracingDecisionGraph> ownedDecisionGraph;
     };
 
     CacheState cacheState;
