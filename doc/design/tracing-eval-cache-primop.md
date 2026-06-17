@@ -784,6 +784,30 @@ defensible choice but a future revision may want to revisit.
    `shared_ptr<AmbientResolver>` directly, so it stays alive on its
    own.
 
+11. **Counter id collisions between inner and outer traces.**
+    With one shared `decisionGraph` and one shared `Requests` pool,
+    nothing currently distinguishes "`virtual:0` minted by
+    `TracingWriter_inner.getOrAllocVirtualRoot`" from
+    "`virtual:0` minted by `TracingWriter_outer.getOrAllocVirtualRoot`"
+    — both produce the same string, so a Request payload
+    referencing `from="virtual:0"` hashes to the same `RequestHash`
+    in both stacks. Same story for `hashString("seed:N")` under
+    Step C if both the outer's own resolver (when it has one) and
+    the inner's resolver mint the same counter. The Qs themselves
+    don't collide (their `fn` fields differ between inner and
+    outer), so `Asks`/`Terminals` rows stay disjoint, but their
+    factSets may share Request hashes across writers and the
+    *meaning* differs — a `from="virtual:0"` Request resolves to
+    different live Objects depending on which resolver dispatches
+    it. Correctness in the worst case falls out of "wrong response
+    hash → walk falls through," but this is an obvious source of
+    spurious replay misses and possibly worse if the responses
+    happen to match. Needs investigation: scope the id strings by
+    the writer that minted them (e.g. include a writer-id prefix
+    or hash the writer's address into the seed string), or
+    document the cross-trace contract explicitly. Flagged for
+    later — keep reading first.
+
 ## Implementation step list
 
 The work decomposes into roughly five steps, each independently
