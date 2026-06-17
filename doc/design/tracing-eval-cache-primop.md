@@ -2006,10 +2006,14 @@ new (no outer Terminal hit), so the outer falls into
 `prim_cache`, but the inner sees the same import / apply / args as
 before. The inner walks each of `Q_import`, `Q_apply`,
 `QueryGetType` against the live filesystem and ambient resolver
-and hits without re-evaluating the lambda body. The ambient Fact
-resolution from §The fix: producer query as id is what makes the
-apply-chain Facts dispatchable when the recorded `from` refers to
-derived ids.
+and hits without re-running double-call.nix's `2 *` body. (Under
+Step D's stretch-goal dispatcher, the outer `x: x + 1` lambda
+*does* still run during the walk — that's how the apply-result
+Object gets produced so the downstream `QueryGetType`/`QueryGetInt`
+Facts can dispatch — but the inner's multiplication step is what
+the cache skips.) The ambient Fact resolution from §The fix:
+producer query as id is what makes the apply-chain Facts
+dispatchable when the recorded `from` refers to derived ids.
 
 On the replay side, `ReplayLocalObject` reverses this: each
 `maybeGetAttr` call queries the FactSet (or the in-walk producer
