@@ -808,6 +808,17 @@ defensible choice but a future revision may want to revisit.
     document the cross-trace contract explicitly. Flagged for
     later — keep reading first.
 
+12. **Do the AmbientObject closures obviate
+    `resolver.outerValues`?** The `queryFn` / `applyFn` captured
+    in each `AmbientObject` already close over the resolver and
+    the outer Object, so in principle an `AmbientObject` could
+    answer its own queries directly without round-tripping through
+    `resolver.outerValues[id]`. If that's true throughout, the
+    `outerValues` map is dead state. There may be reasons it
+    isn't (replay-side dispatch resolving an id it didn't construct
+    the AmbientObject for; sharing between sibling callbacks;
+    something subtler), but worth checking — flagged for later.
+
 ## Implementation step list
 
 The work decomposes into roughly five steps, each independently
@@ -1586,6 +1597,15 @@ resolver.outerValues[L0] = outerArgObj
 contraArg   = AmbientObject(L0, queryFn, applyFn)
 appResult   = replayEval_inner.apply(lambdaTracingObj, contraArg)
 ```
+
+`queryFn` and `applyFn` are closures the PrimOp impl builds
+inline. `queryFn(id, q)` dispatches `q` through
+`resolver.query(id, q)` to get the response from the live outer
+Object, then calls `innerEnv.ambientQuery(q, …)` to log the Fact
+in `innerWriter`. `applyFn(fnId, argObj)` does the same shape for
+apply: routes through `resolver.apply` and logs a `QueryApply`
+Fact. They're how each `AmbientObject` method call ends up both
+answered (via the resolver) and recorded (in the inner trace).
 
 Resolver state after this step:
 
