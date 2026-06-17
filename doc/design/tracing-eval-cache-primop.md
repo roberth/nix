@@ -258,23 +258,30 @@ expensive. See *Future work*.
 
 ### The actual gap
 
-Concretely, take the `call-fn.nix` case from `builtins-cache.sh`:
+`builtins.cache` is disabled today, so the traces below don't
+exist in any real recording. The point of this subsection is to
+show what they *would* look like if the primop were restored
+against the existing counter-based resolver — and where the
+dispatcher would fail.
+
+Take the `call-fn.nix` case from `builtins-cache.sh`:
 
 ```nix
 (builtins.cache { import = ./call-fn.nix; }) { f = x: x + 1; x = 10; }
 ```
 
-where `call-fn.nix` is `{ f, x }: f x`. When `nix eval` forces the
-result, the inner evaluates the body `f x`, which forces `arg.f`
-to know what to apply. The outer lambda's body `x + 1` then forces
-`arg.x` (bound to the lambda's `x`), and the addition forces
-*that* as an int. Each forcing fires an ambient query on the
-`AmbientObject` wrapping the outer arg. The resolver's counter walks:
-L0 = seed (the outer attrset, registered at the apply boundary),
-L1 = child returned from `getAttr "f"` (first `registerOuter`
-call), L2 = child returned from `getAttr "x"` (second
-`registerOuter` call). The recorded `(QueryApply, factSet)`
-contains:
+where `call-fn.nix` is `{ f, x }: f x`. If the primop were
+restored as-is, `nix eval` forcing the result would drive the
+inner to evaluate the body `f x`, which would force `arg.f` to
+know what to apply. The outer lambda's body `x + 1` would then
+force `arg.x` (bound to the lambda's `x`), and the addition would
+force *that* as an int. Each forcing would fire an ambient query
+on the `AmbientObject` wrapping the outer arg, and the resolver's
+counter would walk: L0 = seed (the outer attrset, registered at
+the apply boundary), L1 = child returned from `getAttr "f"`
+(first `registerOuter` call), L2 = child returned from
+`getAttr "x"` (second `registerOuter` call). The recorded
+`(QueryApply, factSet)` would contain:
 
 ```
 Q  = QueryApply{fnId=…, argId=L0}
@@ -285,29 +292,28 @@ Facts:
   Request(QueryApply{fn=L1, arg=L2})         ─ Response(apply)
 ```
 
-The third Fact's `from="L2"` references the value the recorder
-labelled L2 — which the resolver allocated as the child of
-`getAttr "x"`. The dispatcher needs to map "L2" back to that live
-child Object to issue `getInt` against it. But the recorded `from`
-string carries only the label, not the derivation: there is no
-way to tell from "L2" alone that it came from `getAttr "x"` on
-`L0`.
+The third Fact's `from="L2"` would reference the value the
+recorder labelled L2 — the child of `getAttr "x"`. The dispatcher
+would need to map "L2" back to that live child Object to issue
+`getInt` against it. But the recorded `from` string would carry
+only the label, not the derivation: there is no way to tell from
+"L2" alone that it came from `getAttr "x"` on `L0`.
 
-The current in-tree dispatcher tries to recover the mapping with
-two FIFO queues (`unresolvedRoots` for seeds, `pendingChildren`
-for children produced by earlier dispatches). It is broken even
-when the walk dispatches in eval order:
+The in-tree recovery mechanism — two FIFO queues
+(`unresolvedRoots` for seeds, `pendingChildren` for children
+produced by earlier dispatches) — would be broken even if the
+walk dispatched in eval order:
 
 ```
-F1 GetAttr from="L0" name="f"  → produces child_f, queue = [child_f]
-F2 GetAttr from="L0" name="x"  → produces child_x, queue = [child_f, child_x]
-F3 GetInt  from="L2"           → pop front = child_f         ← should be child_x
+F1 GetAttr from="L0" name="f"  → would produce child_f, queue = [child_f]
+F2 GetAttr from="L0" name="x"  → would produce child_x, queue = [child_f, child_x]
+F3 GetInt  from="L2"           → would pop front = child_f       ← should be child_x
 ```
 
-The FIFO pop pairs unknown ids to children by insertion order
-rather than by counter id. For any branching access pattern the
-queues lose the mapping. The walk's actual canonical-hash
-dispatch order makes it worse, but even eval order doesn't fix
+The FIFO pop would pair unknown ids to children by insertion
+order rather than by counter id. For any branching access pattern
+the queues would lose the mapping. The walk's canonical-hash
+dispatch order makes it worse, but even eval order wouldn't fix
 it. The queue handling is effectively dead code for any non-chain
 case, which is why the only consumer (`builtins.cache`) is
 disabled.
