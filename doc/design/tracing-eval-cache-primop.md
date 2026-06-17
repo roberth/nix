@@ -1484,20 +1484,52 @@ innerWriter / outerWriter:
 The result returned to `prim_cache` is a `TracingObject_inner`
 wrapping the lambda Value, carrying `triePos.queryHashStr = Q_import_hash`.
 
-Note what the *outer* trace did and did not capture in this step.
-`Fact_file` made it into `outerWriter.v13FactSet` because file
-reads flow through the environment chain. `Q_import`,
-`ResultType{"function"}`, and the very existence of the
-`TracingObject_inner` handoff at `prim_cache`'s return are
-recorded *only* in the inner trace and in the shared
-`decisionGraph`'s edge tables. That asymmetry is the input-traced
-nesting model in operation: the boundary between traces sits at
-the environment (file / env), not at the Object interface. The
-outer's view of the inner is "what files and env vars the inner
-read"; it gets no Object-level visibility, no `Q_import`, no
-inner-result type. The same will hold in Step 4 — `getType` on
-the TracingObject logs queries into `innerWriter`, never into
-`outerWriter`.
+What each trace did and did not capture at this point reflects a
+deliberate duality:
+
+- The **outer trace is input-traced**: it sees the inner's file
+  read as its own Fact via the `TracingEnvironment` chain, so any
+  change to that file invalidates outer cache hits. It does *not*
+  record `Q_import`, `ResultType{"function"}`, or the
+  `TracingObject_inner` handoff at `prim_cache`'s return. The
+  boundary sits at the environment, not at the Object interface.
+- The **inner trace is content-traced**: it records what it itself
+  observed (the file Fact, the `Q_import` query, the function
+  result) and *nothing about which outer context invoked it*. This
+  is load-bearing for `builtins.cache`'s reuse story: if the
+  inner trace mentioned the outer's `Q_expr` hash, the outer
+  arg's identity, or any other outer-context detail, the inner
+  Q-hashes would vary per outer caller and the cache wouldn't hit
+  across different outer projects importing the same inner
+  expression. The whole point of the primop is that a Nixpkgs-
+  shaped inner caches once and serves many outers; that demands
+  inner Q-hashes that depend only on inner inputs (the file
+  contents and, for `Q_apply` later, the inner-visible
+  representation of the argument).
+
+The same asymmetry will hold in Step 4 — `getType` and
+`getAttrNames` on the TracingObject log queries into
+`innerWriter`, never into `outerWriter`.
+
+Concretely, splitting the snapshot above by writer makes this
+explicit:
+
+```
+Inner trace state after Step 3:
+  innerWriter.v13FactSet = { Fact_file }
+  Asks rows written:       { (Q_import_hash, ∅)  → RS{R_file} }
+  Terminals rows written:  { (Q_import_hash, fH) → R_func }
+
+Outer trace state after Step 3:
+  outerWriter.v13FactSet = { Fact_file }
+  Asks / Terminals rows written by the outer: ∅
+  (Q_expr is still in flight; no edge tables for it yet.)
+```
+
+Both writers share the same physical SQLite tables, but rows in
+the snapshot above were all written by the inner. The outer's
+contribution to `decisionGraph` happens at Step 10, when `Q_expr`
+closes.
 
 ### Step 4 — bridging the inner result back to the outer
 
