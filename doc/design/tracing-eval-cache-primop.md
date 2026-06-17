@@ -236,8 +236,8 @@ The mapping is about three other things:
    sessions for the cache to hit: `fnId` is the recorded inner
    `queryHashStr` for the function value, `argId` is the
    `getOrAllocVirtualRoot` id for the outer Object (process-local on
-   recording, repopulated on replay from the live `apply()` arguments
-   via lazy unification).
+   recording, repopulated on replay from the live `apply()`
+   arguments via on-demand resolution).
 
 The original v12-era plan's term "interaction tracing" survives intact
 under v13. The only thing v13 changes is the underlying storage —
@@ -669,153 +669,15 @@ PrimOp captures `shared_ptr<AmbientResolver>` directly (via
 
 ## Open questions and known risks
 
-These are not blockers — they are places where the design has a
-defensible choice but a future revision may want to revisit.
+These are places where the design hasn't fully settled and a
+future revision may want to revisit. Items that *were* in this
+list as known design points (cross-process concurrent recording,
+intentional independence of outer vs inner `QueryApply` Qs,
+covariant-callback apply replay, `QueryApply.arg` field
+semantics, etc.) have been folded into the relevant Steps in the
+plan above, or into §Status of the in-tree pieces.
 
-1. **Multiple recordings of the same Q in one factSet "session".**
-   The session-level `lastQFactsHash`/`dispatchedTrie` fast path in
-   `TracingReplayEvaluator` assumes a single growing factSet across
-   the session. When the primop creates a fresh
-   `TracingReplayEvaluator` per call, each has its own session
-   state — no cross-call contamination. But within one cache call,
-   if the same fn is applied twice with different args, both Qs
-   share the writer's `v13FactSet`. The fast path's delta
-   computation will work but per-Q hit rates depend on FactSet
-   stability between Qs. This is identical to the CLI-root case;
-   noting it for transparency.
-
-2. **Cross-process concurrent recording of the same Q.** SQLite WAL
-   gives correctness on insert (every row is INSERT OR IGNORE on a
-   content-addressed key). Two concurrent processes can record the
-   same `Q` with the same `factSet` and one of them will lose its
-   `Asks` rows to the OR IGNORE. The recorded result is the same
-   because the computation is (assumed) deterministic. This is the
-   pre-existing v13 contract; no change.
-
-3. **Non-deterministic ambient evaluators.** If the outer evaluator
-   returns different `getAttr` responses for the same id across two
-   recordings (impossible in practice for pure Nix, possible if
-   plugins are involved), the inner `record()` will land at
-   different `factSet` hashes; the two recordings coexist as
-   independent paths through the decision graph, and which one a
-   replay hits depends on what the live outer answers. This is the
-   model-level "nondeterminism" the v13 doc punts to Phase 2 and
-   we inherit the same punt.
-
-4. **Outer `<cached-fn>` cache key vs inner `QueryApply` Q.** The
-   outer evaluator sees a `<cached-fn>` PrimOp and records its own
-   `QueryApply{outerFnId, outerArgId}` for the call. The inner
-   evaluator separately records `QueryApply{innerFnId,
-   innerArgId}`. These are two independent Qs at two independent
-   layers, and the cache hits or misses on each layer independently.
-   That's intentional — the outer cache short-circuits at the
-   architectural boundary (no inner work needed), while the inner
-   cache is the persistent unit that survives outer cache misses.
-
-5. **`getOrAllocVirtualRoot` is process-local.** The counter id
-   assigned to a virtual root is a `uint64_t` that resets per
-   process. Across two recording sessions, the same outer Object
-   gets the same id only if the recording happens in the same
-   relative order. In single-shot CLI invocations that's fine
-   because the recording starts fresh each time. In a long-lived
-   process (daemon mode, repeated evals), if the outer has two
-   different Objects show up as the `fn` of two cached calls, their
-   ids will not collide *but* the canonical `(QueryApply{fnId, argId})`
-   hash will differ from what a fresh process would record for the
-   same Object. The fast path replays still hit because the lookup
-   resolves the seed root by *Object pointer* identity at runtime
-   and uses whatever id the recording wrote. This is fine. The
-   open question is whether two concurrent calls within the same
-   process need to coordinate counter allocation; the answer is
-   that they already do because the counter is on `TracingWriter`,
-   and per-call `TracingWriter`s have independent counters — which
-   is also fine because each call's recordings live in a separate
-   factSet (different Qs) and the ids only need to be self-consistent
-   within one recording.
-
-6. **Test for ambient-id collision after re-evaluation.** When a
-   recording falls through to the inner Interpreter (cache miss) and
-   the Interpreter re-issues the apply, fresh seed roots get fresh
-   counter ids. If the falling-through call previously did *some*
-   ambient queries off a `replayEval`'s assigned ids and then
-   transitioned to inner recording, the id-namespaces could appear
-   to mix. The v12-era plan flagged this; the cleanest fix is the
-   one already documented: on first replay failure inside a single
-   `apply()`, drop the seed-root id assignments and let the inner
-   re-run start with fresh counters. The test suite
-   (`builtins-cache.sh`'s "function changed" and "different
-   argument value" cases) exercises the cache-miss-on-apply path
-   and is the regression net for this.
-
-7. **TrieBuilder rebuild on per-call `TracingWriter`.** Each
-   `builtins.cache` call constructs a fresh `TrieBuilder`. The trie
-   is in-memory and built up by `insert(requestHash)` calls during
-   recording. Inserting the same Request twice in one call is
-   already cheap (the trie deduplicates on insert). Across calls in
-   one process, two `TracingWriter`s building two `TrieBuilder`s for
-   the same set of Requests will end up persisting the same nodes
-   into `RequestSetNodes` — fine, `INSERT OR IGNORE` absorbs the
-   duplication. Memory cost is per-call, gone at `CacheState`
-   teardown.
-
-9. **Covariant-callback apply Requests are unresolvable on replay
-   today.** When `makeCachedFnPrimOp`'s `applyFn` records the
-   outer→outer apply via `innerEnv.ambientQuery`, the Request
-   payload is `QueryApply{fn=fnId, arg=resultId}` with no `from`
-   field — `QueryApply` doesn't have one (its operands are `fn`
-   and `arg` instead). `TracingReplayEvaluator::dispatchAmbientQuery`
-   explicitly returns `nullopt` for `tag == "apply"` (the in-tree
-   comment reads "Apply replay not yet implemented"). When the walk
-   dispatches that Request the response hash is zero, the XOR-fold
-   diverges from the recorded `cur`, and the walk falls through to
-   inner re-evaluation. The covariant-callback test cases in
-   `builtins-cache.sh` (`call-fn.nix`, `path-fn.nix`,
-   `callpkg-fn.nix`) therefore re-evaluate every time even on
-   what would otherwise be a hit. The id-resolution work in Step C
-   is necessary but not sufficient — Step D needs an additional
-   `QueryApply` dispatcher on the replay side that re-issues the
-   outer apply (using the resolved `fn` and the recorded `arg`'s
-   resolved Object) and serialises `ResultType{"apply"}` so the
-   Fact's response hash matches. Because the apply's recorded
-   response payload is the constant `ResultType{"apply"}`, the
-   re-issued dispatch trivially matches as long as the apply
-   *succeeds* — the actual identity of the result is validated by
-   subsequent child queries on the apply-result Object, not by this
-   Fact. So the replay implementation can be minimal: resolve `fn`
-   via the resolver, route through `resolver->apply(fnId, argObj)`
-   to register the result Object under the recorded `arg` id, and
-   return the constant response hash.
-
-10. **`QueryApply.arg` field semantics in covariant callbacks.**
-    `trace::QueryApply` documents `arg` as the "argument's queryHash
-    identity," but the covariant-callback recorder writes the
-    *result*'s outer-resolver id there
-    (`std::to_string(resultId.value())`), not the argument's local id
-    (`argId` from `registerLocal`). That choice means downstream
-    Requests can reference the apply's result by that id without an
-    extra naming step. It's safe — recording and replay both
-    interpret the field as "the entity produced by this apply" — but
-    the docstring on the struct should be amended to "argument or
-    result identity, depending on the recorder" once the primop
-    work lands. The replay-side dispatcher in Step D needs to know
-    this convention to register the result Object under the right
-    id.
-
-8. **`builtins.cache` inside `apply()` inside `builtins.cache`.**
-   The CLI sets up a `TracingReplayEvaluator` for the outer Q, the
-   primop sets up a *separate* one for the inner Q, and a
-   covariant callback from the inner evaluator back to an outer
-   function could re-enter the outer evaluator and trigger another
-   `builtins.cache`. Each level has its own factSet, its own
-   AmbientResolver, and its own writer. The lifetime model already
-   handles this (each `CacheState::CallState` is independent). The
-   only place a leak could happen is if the inner covariant
-   callback retains the outer's `<ambient-fn>` PrimOp past the
-   outer's `CacheState` lifetime — but the PrimOp captures a
-   `shared_ptr<AmbientResolver>` directly, so it stays alive on its
-   own.
-
-11. **Counter id collisions between inner and outer traces.**
+1. **Counter id collisions between inner and outer traces.**
     With one shared `decisionGraph` and one shared `Requests` pool,
     nothing currently distinguishes "`virtual:0` minted by
     `TracingWriter_inner.getOrAllocVirtualRoot`" from
@@ -833,13 +695,26 @@ defensible choice but a future revision may want to revisit.
     it. Correctness in the worst case falls out of "wrong response
     hash → walk falls through," but this is an obvious source of
     spurious replay misses and possibly worse if the responses
-    happen to match. Needs investigation: scope the id strings by
-    the writer that minted them (e.g. include a writer-id prefix
-    or hash the writer's address into the seed string), or
-    document the cross-trace contract explicitly. Flagged for
-    later — keep reading first.
+    happen to match. Mitigations to investigate, in roughly
+    increasing scope: tighten the validity checks at dispatch so
+    any wrong-Object resolution reliably fails (no false hits);
+    renumber so the trace-side counters and interpreter-side
+    counters can't share a string namespace; or, the general
+    answer, replay-side **observation-driven unification** — treat
+    ids minted by different sources as implicitly namespaced, then
+    build an equality table from the recorded Facts: each Fact
+    referencing a seed id is an *observation* that constrains the
+    table; the replayer accepts a cache hit when every recorded
+    observation matches a live one. (Note this is roughly the
+    opposite direction of Hindley-Milner: ids start equal-to-
+    anything and observations narrow them, rather than starting
+    as distinct variables that type rules force together.)
+    Tying ids to an evaluator's identity would be the wrong fix —
+    evaluators don't have identity across runs (each invocation
+    constructs new ones), so any cache lookup keyed on evaluator
+    identity would miss every time.
 
-12. **Do the AmbientObject closures obviate
+2. **Do the AmbientObject closures obviate
     `resolver.outerValues`?** The `queryFn` / `applyFn` captured
     in each `AmbientObject` already close over the resolver and
     the outer Object, so in principle an `AmbientObject` could
@@ -850,7 +725,7 @@ defensible choice but a future revision may want to revisit.
     the AmbientObject for; sharing between sibling callbacks;
     something subtler), but worth checking — flagged for later.
 
-13. **Should Object grow a "give me a `Value`" method to absorb
+3. **Should Object grow a "give me a `Value`" method to absorb
     the `defeatCache` / `ExprFromObject` fallback?** `Interpreter::
     apply`'s arg handling today is a try/catch:
     `arg->defeatCache()` for concrete Objects; on throw (the
@@ -866,7 +741,7 @@ defensible choice but a future revision may want to revisit.
     with its own contract? Worth a short audit when restoring the
     primop.
 
-14. **Recording `Q_apply` looks redundant.** `tracingEval_inner.apply`
+4. **Recording `Q_apply` looks redundant.** `tracingEval_inner.apply`
     always logs `ResultType{"apply"}` as the result, because the
     app thunk's type at `logResult` time is by definition `"apply"`
     (the application hasn't been forced yet). The
@@ -886,6 +761,36 @@ defensible choice but a future revision may want to revisit.
     verify the replay path doesn't depend on these rows for
     anything beyond the `TriePosition` it could synthesise from
     the args.
+
+5. **Trace coverage: do both evaluators observe all relevant
+   changes?** The structural concern is that any outer-provided
+   value the inner uses must flow through `AmbientObject` (so each
+   inspection logs a Fact), and any input the user can change must
+   flow through the outer `TracingEnvironment` or appear in
+   `Q_expr`. Both hold by construction today, but verify via
+   `builtins-cache.sh`'s "function changed" and "different
+   argument value" cases that the cache misses correctly under
+   every change shape we care about. Plugin primops and any
+   native path that bypasses `TracingEnvironment` would be the
+   gap to watch.
+
+6. **Storage-layer leverage: does the implementation avoid
+   quadratic operations?** The v13 perf work was specifically
+   about killing O(n²) behaviours from earlier prototypes —
+   reconstructing FactSets from scratch, reading full sets from
+   the DB for comparison, re-tying the writer's incremental state
+   per Q. The incremental `TrieBuilder`, the XOR-based factSet
+   hash, the `dispatchedTrie.diff` fast path, and the in-process
+   parsed-set cache all exist so writer / walker work scales
+   linearly with the delta rather than with set size. The primop
+   work needs the same discipline at each new touchpoint: the
+   recursive `resolveAmbientId` walk should memoise (don't repeat
+   per Request); the apply-Request dispatcher should invoke the
+   outer apply once and reuse the result Object across all
+   child-query dispatches; the producer-by-childId index for the
+   replay walk should be built once per walk, not per dispatch.
+   Worth auditing each Step C and Step D path against this
+   criterion before landing.
 
 ## Implementation step list
 
@@ -967,7 +872,8 @@ dispatcher.** Two related changes:
 
 2. **Replay: dispatch the apply Request.**
    `dispatchAmbientQuery` returns `nullopt` for `tag == "apply"`
-   today (open question 9). The minimum dispatcher resolves
+   today (with an in-tree "Apply replay not yet implemented"
+   comment). The minimum dispatcher resolves
    `params.fn` and `params.arg` via the resolver, ensures the
    live outer fn is callable, and returns the canonical response
    hash for `ResultType{"apply"}` without re-invoking the outer
@@ -1173,19 +1079,35 @@ These were in the v12-era follow-up list and remain valid:
   as an oracle and benefits from per-method early cutoff). This is a
   change in cost model rather than correctness; defer until we have
   numbers.
-- **Structural-replay unification — the general fallback for
+- **Observation-driven unification — the general fallback for
   cross-invocation seed drift.** When two evaluations produce
   semantically identical ambient values via different
   apply-boundary sequences, the seed counters disagree and
   cross-invocation Q hashes drift even though the values match. A
-  unification algorithm at replay time — match recorded nodes by
-  their structural children rather than by their recorded id
-  (Hindley-Milner sense; distinct from `AmbientId` collapsing to
-  `Hash` in Step C) — would let the cache hit. Applicable to any
-  caller, not just the CLI, and compatible with the
-  producer-query-as-id model since derived ids are already
-  structural; only seed identification is positional. Cost may be
-  substantial; defer until a workload justifies it.
+  unification algorithm at replay time would let the cache hit
+  anyway. The shape: treat each seed id in a recorded trace as a
+  placeholder that's initially equal-to-anything; each recorded
+  Fact referencing that seed is an *observation* constraining the
+  placeholder; the replayer accepts a hit when every recorded
+  observation matches a live one. Two practical consequences fall
+  out: (1) seed identifiers can disagree across invocations without
+  blocking hits, so long as the observations on them match; and
+  (2) a seed that was never observed (e.g. an argument the cached
+  function never inspected under the current closure) is
+  unconstrained — any live value for it produces a hit. The
+  caught case is *unconditionally lazy* functions: `\arg: e` where
+  `e`'s evaluation under the closure never reaches into `arg`.
+  Under referential transparency such a function is constant in
+  `arg` within its current lexical environment, and a subsequent
+  call with any argument gets the recorded result for free. Note this is roughly the inverse of Hindley-Milner:
+  HM unifies type variables that rules *force* equal, growing
+  equality monotonically from constraints; here ids start equal
+  and observations *narrow* them. Distinct from `AmbientId`
+  collapsing to `Hash` in Step C. Applicable to any caller, not
+  just the CLI, and compatible with the producer-query-as-id
+  model since derived ids are content-addressed; only seed
+  identification stays positional. Cost may be substantial;
+  defer until a workload justifies it.
 
   *Narrow CLI complement: named hints.* The CLI specifically could
   stabilise seed identity by supplying a semantic hint string at
@@ -1211,8 +1133,7 @@ For the implementation phase, the files we expect to touch:
 - `src/libexpr/tracing-replay-evaluator.cc` — rewrite
   `dispatchAmbientQuery` and `apply()` to use recursive
   producer-Request lookup instead of positional queues; add
-  apply-Request dispatcher for covariant callbacks (open
-  question 9).
+  apply-Request dispatcher for covariant callbacks (Step D).
 - `src/libexpr/ambient-object.cc` + the resolver in
   `expr-from-object.cc` — emit hash-encoded derived ids.
 - `tests/functional/builtins-cache.sh` — verify in place (no code
