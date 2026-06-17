@@ -1484,6 +1484,21 @@ innerWriter / outerWriter:
 The result returned to `prim_cache` is a `TracingObject_inner`
 wrapping the lambda Value, carrying `triePos.queryHashStr = Q_import_hash`.
 
+Note what the *outer* trace did and did not capture in this step.
+`Fact_file` made it into `outerWriter.v13FactSet` because file
+reads flow through the environment chain. `Q_import`,
+`ResultType{"function"}`, and the very existence of the
+`TracingObject_inner` handoff at `prim_cache`'s return are
+recorded *only* in the inner trace and in the shared
+`decisionGraph`'s edge tables. That asymmetry is the input-traced
+nesting model in operation: the boundary between traces sits at
+the environment (file / env), not at the Object interface. The
+outer's view of the inner is "what files and env vars the inner
+read"; it gets no Object-level visibility, no `Q_import`, no
+inner-result type. The same will hold in Step 4 — `getType` on
+the TracingObject logs queries into `innerWriter`, never into
+`outerWriter`.
+
 ### Step 4 — bridging the inner result back to the outer
 
 Still inside `prim_cache`, after Step 3 returned the lambda's
