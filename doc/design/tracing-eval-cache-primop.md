@@ -264,13 +264,12 @@ Concretely, take the `call-fn.nix` case from `builtins-cache.sh`:
 (builtins.cache { import = ./call-fn.nix; }) { f = x: x + 1; x = 10; }
 ```
 
-where `call-fn.nix` is `{ f, x }: f x`. To evaluate the body
-`f x`, the inner forces `arg.f` to know which function to apply;
-applying produces a thunk for the lambda body. `nix eval`
-eventually forces that thunk to print the result; evaluating the
-body `x + 1` then forces `arg.x` (bound to the lambda's `x`), and
-the addition forces *that* as an int. Each forcing fires an
-ambient query on the `AmbientObject` wrapping the outer arg. The resolver's counter walks:
+where `call-fn.nix` is `{ f, x }: f x`. When `nix eval` forces the
+result, the inner evaluates the body `f x`, which forces `arg.f`
+to know what to apply. The outer lambda's body `x + 1` then forces
+`arg.x` (bound to the lambda's `x`), and the addition forces
+*that* as an int. Each forcing fires an ambient query on the
+`AmbientObject` wrapping the outer arg. The resolver's counter walks:
 L0 = seed (the outer attrset, registered at the apply boundary),
 L1 = child returned from `getAttr "f"` (first `registerOuter`
 call), L2 = child returned from `getAttr "x"` (second
