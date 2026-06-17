@@ -560,13 +560,23 @@ public:
     TracingDecisionGraph * rootDecisionGraph = nullptr;
 
     /**
-     * State for builtins.cache calls (stubbed under v13; see
-     * src/libexpr/primops/cache.cc).
+     * State for builtins.cache calls (see src/libexpr/primops/cache.cc).
      */
     struct CacheState
     {
         ~CacheState();
 
+        /** Owned decision graph when no outer EvalCommand
+            constructed one. Lazily created on first builtins.cache
+            call.
+
+            Declared *before* `calls` so it outlives them on
+            destruction (C++ destroys members in reverse
+            declaration order). Each CallState's writer holds a
+            raw `TracingDecisionGraph *` into this; reversing the
+            order would give writers a dangling pointer during
+            their own destruction. */
+        std::unique_ptr<TracingDecisionGraph> ownedDecisionGraph;
 
         /** Per-call state that must remain alive while thunks can be forced. */
         struct CallState
@@ -582,11 +592,6 @@ public:
         };
 
         std::vector<CallState> calls;
-
-        /** Owned decision graph when no outer EvalCommand
-            constructed one. Lazily created on first
-            builtins.cache call. */
-        std::unique_ptr<TracingDecisionGraph> ownedDecisionGraph;
     };
 
     CacheState cacheState;
