@@ -1308,6 +1308,368 @@ Local-vs-outer is just a seed-string convention: locals use
 both are `Hash` ids resolved against the same `idToObject` (for
 pre-bound seeds) or `Requests` pool (for derived).
 
+## Appendix D: walkthrough of the call-fn.nix case
+
+This walks through what would happen, end to end, for
+
+```nix
+(builtins.cache { import = ./call-fn.nix; }) { f = x: x + 1; x = 10; }
+```
+
+(`call-fn.nix` is `{ f, x }: f x`), assuming Steps A–C are in
+place, `--option tracing-eval-cache true` enabled so the outer is
+also tracing, and a cold cache. The point is to show both
+evaluators' state side by side: who fires what, what each writer
+records, and where the resolver ids come from.
+
+This deliberately glosses some lower-level mechanics (the precise
+`Interpreter::apply` thunk wiring, the order in which `getType` /
+`getAttrNames` fire during attrset destructuring) — see *§The
+actual gap* for the smaller chained-id example. Here the goal is
+the broader two-evaluator picture.
+
+### Setup
+
+`EvalCommand::getEvalState` constructs the outer stack:
+
+```
+Interpreter_outer       (innermost)
+  ↑ TracingEvaluator_outer    (writes to outerWriter)
+  ↑ TracingReplayEvaluator_outer  (reads outerDecisionGraph; falls back to inner stack on miss)
+```
+
+`outerWriter` writes to a shared `TracingDecisionGraph`
+(`decisionGraph`) and a JSON `TraceFile`. The outer environment is
+a `TracingEnvironment` wrapping `SystemEnvironment`.
+
+`prim_cache` first call constructs the inner stack and shares the
+same graph (via `state->rootDecisionGraph`):
+
+```
+Interpreter_inner
+  ↑ TracingEvaluator_inner    (writes to innerWriter, NullTraceSink)
+  ↑ TracingReplayEvaluator_inner  (reads decisionGraph)
+```
+
+`innerWriter` shares `decisionGraph` with the outer. The inner
+environment wraps the *outer* `TracingEnvironment` (Step 2a's
+ambient-capability fix), so inner file reads bubble through both
+`TracingSourceAccessor`s.
+
+A `resolver = makeAmbientResolver(&outerState, replayEval_inner)`
+threads through every `<cached-fn>` PrimOp produced inside this
+`builtins.cache` call, and `Interpreter_inner->ambientResolver`
+is set to it.
+
+State before any expression evaluates:
+
+```
+decisionGraph: empty pools, empty Asks, empty Terminals
+outerWriter:   v13FactSet = ∅, allRequestsTrie = ∅
+innerWriter:   v13FactSet = ∅, allRequestsTrie = ∅
+resolver:      outerValues = ∅, localValues = ∅
+```
+
+### Step 1 — outer logs `Q_expr`
+
+`replayEval_outer.evalExpr(exprText, baseDir)` looks up
+`QueryExpr{exprText, baseDir}` — cold miss — falls through to
+`tracingEval_outer.evalExpr`, which `logRootQuery(Q_expr)` and
+delegates to `Interpreter_outer.evalExpr`. Parsing fires a file
+read on the user's stdin / -E `expr` source, but for `--expr` the
+parse is in-memory so no file Fact is recorded yet.
+
+`outerWriter.inFlight = { Q_expr }`. No Facts yet.
+
+### Step 2 — outer evaluates the function side
+
+The outer Interpreter evaluates `builtins.cache { import = ./call-fn.nix; }`
+to WHNF — a PrimOp value, no application yet. To produce it,
+`prim_builtinsCache` runs:
+
+1. Parses the arg attrset, gets `importPath = ./call-fn.nix`.
+2. Locates the shared graph; since `state.rootDecisionGraph` is
+   set, `decisionGraph` is reused.
+3. Builds the inner stack and resolver (above).
+4. Calls `replayEval_inner.evalFile(./call-fn.nix)`.
+
+### Step 3 — inner records `Q_import` (with file-read Fact)
+
+`replayEval_inner.evalFile` cold-misses, falls through to
+`tracingEval_inner.evalFile`:
+
+- `logRootQuery(QueryImport{".../call-fn.nix"})` →
+  `innerWriter.inFlight = { Q_import }`.
+- `Interpreter_inner.evalFile` parses `call-fn.nix`. Reading the
+  file fires `TracingSourceAccessor_inner.getFileHash`, which
+  calls `innerEnv.getFileHash` → wraps to outer's
+  `TracingEnvironment` → reaches the real filesystem; both writers
+  log the response.
+
+  Both writers' `v13FactSet` gets:
+
+  ```
+  Fact_file = ( queryHash(FileReadRequest{".../call-fn.nix"}),
+                responseHash(FileReadResponse{H_file_content}) )
+  ```
+
+- `Interpreter_inner` returns `InterpreterObject(lambda {f,x}: f x)`.
+- `tracingEval_inner.logResult(ResultType{"function"}, Q_import)`:
+  - factSet at this moment = `{ Fact_file }`
+  - `decisionGraph.record(Q_import, factSetHash, resultHash, …)` writes
+    - `Asks(Q_import_hash, ∅) → RequestSet{ R_file }`
+    - `Terminals(Q_import_hash, factSetHash) → R_func`
+
+State after Step 3:
+
+```
+decisionGraph:
+  Requests:        { R_file }
+  Queries:         { Q_import_hash }
+  Results:         { R_func }
+  RequestSetNodes: { node({R_file}) }
+  Asks:            { (Q_import_hash, ∅)  → RS{R_file} }
+  Terminals:       { (Q_import_hash, fH) → R_func }
+
+innerWriter / outerWriter:
+  v13FactSet = { Fact_file }
+```
+
+The result returned to `prim_cache` is a `TracingObject_inner`
+wrapping the lambda Value, carrying `triePos.queryHashStr = Q_import_hash`.
+
+### Step 4 — bridging the inner result back to the outer
+
+```
+ExprFromObject(lambdaTracingObj, replayEval_inner, resolver)
+    .eval(outerState, outerBaseEnv, v_outer);
+```
+
+`getType()` on the TracingObject returns `nFunction`. The `nFunction`
+arm of `ExprFromObject::eval` calls
+`makeCachedFnPrimOp(lambdaTracingObj, replayEval_inner, resolver)`
+and stores the PrimOp in the outer Value `v_outer`. The outer's
+Step 1 `Q_expr` is still in flight; `outerWriter.v13FactSet`
+already contains `Fact_file` (propagated from the inner
+`TracingSourceAccessor` through the outer chain).
+
+### Step 5 — outer applies `<cached-fn>` to the outer arg
+
+The outer Nix interpreter evaluates the application
+`<cached-fn> { f = x: x+1; x = 10; }`. PrimOp application bypasses
+`Evaluator::apply`, so no outer `Q_apply` is logged. The cached-fn
+PrimOp's impl runs:
+
+```
+outerArgObj = InterpreterObject(outerState, args[0])      (lazy outer attrset)
+L0          = resolver.registerOuter(outerArgObj)
+            = hashString("seed:0")
+resolver.outerValues[L0] = outerArgObj
+contraArg   = AmbientObject(L0, queryFn, applyFn)
+appResult   = replayEval_inner.apply(lambdaTracingObj, contraArg)
+```
+
+Resolver state after this step:
+
+```
+outerValues: { L0 → outerArgObj }
+localValues: ∅
+```
+
+### Step 6 — inner records `Q_apply` (still only `Fact_file` in flight)
+
+`replayEval_inner.apply(lambdaTracingObj, contraArg)`:
+
+- `getId(lambdaTracingObj)` = its `queryHashStr` = `Q_import_hash`.
+- `getId(contraArg)` = nullptr → `argId = "virtual:0"` (inner
+  writer's first `getOrAllocVirtualRoot`).
+- Pre-bind `idToObject["virtual:0"] = contraArg`.
+- `lookup(QueryApply{fn=Q_import_hash, arg="virtual:0"})` →
+  cold miss → fall through.
+
+`tracingEval_inner.apply`:
+
+- `logRootQuery(Q_apply)`. `innerWriter.inFlight = { Q_apply }`.
+  Note: `Q_apply.fn = Q_import_hash` ties the apply's identity to
+  the file-read terminal recorded above. A future hit on the same
+  source contents reuses the same `Q_apply` hash.
+- `Interpreter_inner.apply(lambda, contraArg)`:
+  - `lambda.defeatCache()` succeeds (it's an `InterpreterObject`).
+  - `contraArg.defeatCache()` throws (it's an `AmbientObject`);
+    fallback wraps as `mkThunk(ExprFromObject(contraArg, nullptr, resolver))`.
+  - `mkApp(lambdaValue, argThunk)` → app thunk Value.
+  - Returns `InterpreterObject` for the app thunk.
+- `logResult(ResultType{"apply"}, Q_apply)`:
+  - factSet at this moment = `{ Fact_file }` — *still no ambient
+    Facts*. The app thunk hasn't been forced yet, so ambient
+    queries haven't fired.
+  - `decisionGraph.record(Q_apply, factSetHash, R_apply_type, …)` writes
+    - `Asks(Q_apply, ∅) → RS{ R_file }`
+    - `Terminals(Q_apply, factSetHash) → R_apply_type`
+
+State after Step 6:
+
+```
+decisionGraph (added):
+  Queries:   { …, Q_apply_hash }
+  Results:   { …, R_apply_type }
+  Asks:      { …, (Q_apply_hash, ∅)  → RS{R_file} }
+  Terminals: { …, (Q_apply_hash, fH) → R_apply_type }
+
+innerWriter:
+  v13FactSet = { Fact_file }   (unchanged)
+```
+
+The recorded result for `Q_apply` is just `ResultType{"apply"}` —
+a placeholder. The *actual* return values of the application are
+captured by subsequent Queries against this result's
+`TracingObject` (via its `queryHashStr`).
+
+`tracingEval_inner.apply` returns
+`TracingObject_inner(appResult, …, triePos{R_apply_type, Q_apply_hash})`.
+
+### Step 7 — outer forces the apply result, driving inner body evaluation
+
+Back in `prim_cache`:
+
+```
+ExprFromObject(appResultTracingObj, replayEval_inner, resolver)
+    .eval(outerState, outerBaseEnv, v_outer);
+```
+
+`appResultTracingObj.getType()` is what triggers the inner body
+to actually run. This call goes through the `TracingObject_inner`
+wrapper: it logs a child Query against `Q_apply_hash`
+(`QueryGetType{from=Q_apply_hash}`) into `innerWriter.inFlight`,
+then forces the underlying app thunk.
+
+Forcing the app thunk runs the inner application:
+
+1. **Force `argValue` (the `ExprFromObject` thunk for `contraArg`)
+   to destructure the formal `{f, x}` pattern.** `ExprFromObject::eval`
+   on `AmbientObject(L0)` switches on type:
+   - `contraArg.getType()` → `AmbientObject` issues
+     `queryFn(L0, QueryGetType{from=L0})`. The resolver answers
+     `ResultType{"set"}` from `outerArgObj.getType()`; the queryFn
+     closure routes through `innerEnv.ambientQuery` which calls
+     `innerWriter.logAmbientInteraction(QueryGetType, ResultType{"set"})`,
+     adding a Fact to `v13FactSet`.
+   - `contraArg.getAttrNames()` → same shape, returns `["f", "x"]`,
+     adds a `(QueryGetAttrNames{from=L0}, ResultListOfStrings{["f","x"]})`
+     Fact.
+   - Builds a Value attrset with `ExprFromObjectAttr` thunks for
+     each name.
+
+2. **Matcher binds the inner formals.** `f` → thunk for
+   `ExprFromObjectAttr("f", contraArg, …)`. `x` likewise.
+
+3. **Evaluate body `f x`.** Forcing inner `f`:
+   - `ExprFromObjectAttr::eval` for `"f"` calls
+     `contraArg.maybeGetAttr("f")` → `queryFn(L0, QueryGetAttr{name="f", from=L0})`.
+   - Resolver computes `outerArgObj.maybeGetAttr("f")` = the outer
+     lambda `x: x+1`, and under Step C registers it as
+     `L1 = queryHash(QueryGetAttr{name="f", from=L0})`.
+     `resolver.outerValues[L1] = outerLambda`.
+   - `innerWriter.logAmbientInteraction(QueryGetAttr{…}, ResultMaybeType{"lambda"})`
+     adds a Fact whose Request payload encodes `from=L0, name="f"`.
+   - `AmbientObject::maybeGetAttr` returns `AmbientObject(L1, …)`.
+   - `ExprFromObject::eval` on `AmbientObject(L1)` sees `nFunction`
+     and constructs a `<cached-fn>` PrimOp wrapping `AmbientObject(L1)`.
+     Inner `f` is now this PrimOp.
+
+4. **Apply inner `f` to inner `x`.** Inner Nix interpreter
+   evaluates `f x` as a PrimOp call. The PrimOp's impl is
+   `makeCachedFnPrimOp`'s closure; when invoked with `args[0] =
+   x_thunk` (the ExprFromObjectAttr for "x" on contraArg) the impl
+   sets up a fresh ambient sub-apply: it registers `x_thunk` as a
+   local, calls `replayEval_inner.apply(AmbientObject_L1, AmbientObject_for_x_thunk)`,
+   which fires `getAttr "x"` on `L0` (registering `L2 =
+   queryHash(QueryGetAttr{name="x", from=L0})` as the child),
+   then dispatches the apply through `AmbientObject::queryApply`,
+   which fires `QueryApply{fn=L1, arg=L2}` as an ambient Fact.
+
+5. **Outer lambda body `x + 1` runs in the outer Interpreter
+   (because L1 is the outer lambda).** Forcing `x + 1` forces `x`
+   (bound to the `ExprFromObjectAttr` thunk for `arg.x`); that
+   thunk resolves to `getInt` on `L2`, which fires
+   `QueryGetInt{from=L2}` as an ambient Fact and returns 10. The
+   addition produces 11.
+
+By the end of forcing the app thunk, `innerWriter.v13FactSet` has
+accumulated, in addition to `Fact_file`:
+
+```
+Fact_getType_L0     = ( H(QueryGetType{from=L0}),       H(ResultType{"set"}) )
+Fact_getAttrNames_L0 = ( H(QueryGetAttrNames{from=L0}), H(ResultListOfStrings{["f","x"]}) )
+Fact_getAttr_f      = ( H(QueryGetAttr{name="f", from=L0}), H(ResultMaybeType{"lambda"}) )
+Fact_getAttr_x      = ( H(QueryGetAttr{name="x", from=L0}), H(ResultMaybeType{"int"}) )
+Fact_apply_L1_L2    = ( H(QueryApply{fn=L1, arg=L2}),   H(ResultType{"apply"}) )
+Fact_getInt_L2      = ( H(QueryGetInt{from=L2}),        H(ResultInt{10}) )
+```
+
+The outer's `v13FactSet` got `Fact_file` only (the inner ambient
+chatter doesn't propagate to outer env reads; those Facts stay in
+`innerWriter`).
+
+### Step 8 — close out `QueryGetType` on the apply result
+
+The in-flight `QueryGetType{from=Q_apply_hash}` on
+`innerWriter.inFlight` is closed by `logResult(R_int_type, …)`.
+factSet at this moment = `Fact_file + the six ambient Facts above`.
+This records:
+
+```
+Asks(QueryGetType_hash, ∅) → RS{ R_file, all six ambient Request hashes }
+Terminals(QueryGetType_hash, factSetHash) → R_int_type
+```
+
+So the Q-getType-of-apply terminal pins down the ambient
+interactions that were observed while computing it. *This* is the
+recorded edge whose RequestSet a replay walks against the live
+ambient context.
+
+### Step 9 — `ExprFromObject::eval` extracts the int
+
+`type = nInt` → `obj.getInt()`. This is another query against the
+inner TracingObject; same shape as Step 8 but the in-flight
+`QueryGetInt` terminates with `ResultInt{11}`. The outer Value
+`v_outer` ends up as `mkInt(11)`.
+
+### Step 10 — outer closes `Q_expr`
+
+The whole expression evaluated to `11`. `tracingEval_outer.logResult(R_int_11, Q_expr)`:
+
+- factSet at this moment for the outer = `{ Fact_file }` (the inner
+  ambient stayed inner; the outer never saw it).
+- Outer's `decisionGraph.record(Q_expr_hash, factSetHash, R_int_11_hash)`:
+  - `Asks(Q_expr_hash, ∅) → RS{R_file}`
+  - `Terminals(Q_expr_hash, fH) → R_int_11`
+
+`nix eval` prints `11`. Done.
+
+### What replay does on a warm cache
+
+Second invocation, same expression text and same file contents.
+The outer's `v13Walk(Q_expr_hash)`:
+
+1. Fast path: `dispatchedTrie.diff(decisionGraph, RS{R_file}, …)`.
+   `onlyInEdge = {R_file}`, `onlyInDispatched = {}`. Dispatches
+   `R_file` (the file read), `xorFactIntoHash`, lands at
+   `factSetHash` matching the recorded `Terminals(Q_expr_hash, …)`.
+2. Returns `R_int_11` directly. `prim_cache` does *not* run.
+
+The inner stack is never even constructed. The shared
+`decisionGraph` carries enough state for the outer terminal to hit.
+
+If, instead, the outer cache is cold but the inner is warm (e.g.
+after `clearCache` on the outer JSON traces but the SQLite DB
+persists), the outer falls into `prim_cache`, the inner walks each
+of `Q_import`, `Q_apply`, `QueryGetType` against the live
+filesystem and ambient resolver, and hits without re-evaluating
+the lambda body. The ambient Fact resolution from §The fix:
+producer query as id is what makes the apply-chain Facts
+dispatchable when the recorded `from` refers to derived ids.
+
 On the replay side, `ReplayLocalObject` reverses this: each
 `maybeGetAttr` call queries the FactSet (or the in-walk producer
 index) for a matching incoming Request and serves the recorded
