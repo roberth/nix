@@ -1354,7 +1354,13 @@ Interpreter_inner
 `innerWriter` shares `decisionGraph` with the outer. The inner
 environment wraps the *outer* `TracingEnvironment` (Step 2a's
 ambient-capability fix), so inner file reads bubble through both
-`TracingSourceAccessor`s.
+`TracingSourceAccessor`s — this is **input-traced nesting** in
+action: file / env Facts observed by the inner are forwarded
+upward as Facts of every wrapping outer cache, without any
+separate cross-evaluator protocol. The ambient query layer the
+rest of this doc is about uses a different model
+(interaction-traced); the two compose, and Appendix D shows both
+at work.
 
 A `resolver = makeAmbientResolver(&outerState, replayEval_inner)`
 threads through every `<cached-fn>` PrimOp produced inside this
@@ -1404,7 +1410,10 @@ to WHNF — a PrimOp value, no application yet. To produce it,
   file fires `TracingSourceAccessor_inner.getFileHash`, which
   calls `innerEnv.getFileHash` → wraps to outer's
   `TracingEnvironment` → reaches the real filesystem; both writers
-  log the response.
+  log the response. This dual-recording is the input-traced
+  nesting model: the inner Fact propagates upward through the
+  environment chain so the outer trace counts it as one of its
+  own dependencies.
 
   Both writers' `v13FactSet` gets:
 
