@@ -398,8 +398,14 @@ resolveAmbientId(id):
     # id is a queryHash; the Request whose payload hashes to id is the producer
     auto req = decisionGraph.getRequestPayload(id);
     auto parsed = parse(req);
-    auto parent = resolveAmbientId(parsed.from);
-    auto child = dispatchQueryOnObject(parent, parsed.query, parsed.params);
+    Object child;
+    if (parsed.query == "apply"):       # QueryApply has fn/arg, not from
+        auto fn  = resolveAmbientId(parsed.fn);
+        auto arg = resolveAmbientId(parsed.arg);
+        child    = invokeOuterApply(fn, arg);    # Step D
+    else:                               # QueryGetAttr / GetListElem / etc.
+        auto parent = resolveAmbientId(parsed.from);
+        child       = dispatchQueryOnObject(parent, parsed.query, parsed.params);
     idToObject[id] = child;
     return child;
 ```
@@ -821,12 +827,14 @@ nFunction dispatch.** Two related changes:
 1. **Ambient ids.** Collapse `AmbientId` to `Hash`. In
    `AmbientResolver::query`, the child-producing arms return the
    current query's `queryHash` as the child id instead of bumping
-   a counter. Seed allocation uses `hashString("seed:" + counter)`.
-   Strip the queue-based fallback from
-   `TracingReplayEvaluator::dispatchAmbientQuery`; replace with
-   the on-demand recursive resolution against the `Requests` pool
-   (described in §Ambient identity). Pre-bind seed Hashes into
-   `idToObject` in `apply()`.
+   a counter. Seed allocation uses `hashString("seed:" + counter)`;
+   `registerLocal` (used by `resolver.apply` for argObjs passed
+   into covariant callbacks) uses
+   `hashString("local:" + counter)`. Strip the queue-based
+   fallback from `TracingReplayEvaluator::dispatchAmbientQuery`;
+   replace with the on-demand recursive resolution against the
+   `Requests` pool (described in §Ambient identity). Pre-bind seed
+   Hashes into `idToObject` in `apply()`.
 
 2. **`ExprFromObject::eval`'s `nFunction` dispatch.** Switch the
    branch from "if `innerEvaluator` set" to "if `obj` is an
@@ -984,7 +992,9 @@ prerequisite of all the rest.
       (`QueryGetAttr`, `QueryGetListElem`, `QueryApply`) to return
       the current query's `queryHash` and register the child under
       that. `registerOuter(seedObj)` callers in the PrimOp impl
-      pass `hashString("seed:" + std::to_string(counter))`.
+      pass `hashString("seed:" + std::to_string(counter))`;
+      `registerLocal(argObj)` calls inside `resolver.apply` pass
+      `hashString("local:" + std::to_string(counter))`.
 - [ ] `src/libexpr/expr-from-object.cc:289`: change the
       `nFunction` arm to dispatch on `obj`'s dynamic type —
       `AmbientObject` → `makeAmbientFnPrimOp`, anything else →
