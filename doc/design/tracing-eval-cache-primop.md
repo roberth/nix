@@ -1616,6 +1616,15 @@ localValues: ∅
 
 ### Step 6 — inner records `Q_apply`, factSet snapshot = `{Fact_file}`
 
+`Q_apply` here is the inner's record of the **outermost
+application** in the original expression — `(builtins.cache {…})
+{ f = x:x+1; x = 10; }`, i.e. the call-fn.nix lambda
+(`{f, x}: f x`) being called with the outer arg attrset. That
+application happens at the outer language level but is routed
+into the inner by the `<cached-fn>` PrimOp impl's
+`innerEval->apply(lambdaTracingObj, contraArg)` call, which is
+what produces `Q_apply` here.
+
 `replayEval_inner.apply(lambdaTracingObj, contraArg)`:
 
 - `getId(lambdaTracingObj)` = its `queryHashStr` = `Q_import_hash`.
