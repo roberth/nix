@@ -416,11 +416,25 @@ replay still feeds the writer (so its v13FactSet, allRequestsTrie,
 etc. stay in sync) — that's important if a later miss falls through
 to inner and produces a fresh `record()`.
 
-`builtins.cache` is stubbed in `src/libexpr/primops/cache.cc` —
-it throws at evaluation time. The previous v12 implementation used
-the (now-removed) trie cache as its persistence backend; v13 hasn't
-yet modelled the d=2 ambient-query layer that `builtins.cache`'s
-explicit-scope semantics require.
+`builtins.cache` lives in `src/libexpr/primops/cache.cc`. It
+creates a nested evaluator stack
+(`TracingReplayEvaluator → TracingEvaluator → Interpreter`) that
+shares the outer `TracingDecisionGraph` and persists its
+recordings to the same SQLite file. Ambient interactions with the
+outer-provided arg are recorded via an `AmbientResolver` that
+identifies derived values by their producer query's `queryHash`
+(so the replay walker can resolve them by recursive lookup
+against the `Requests` pool), while seed roots use
+`hashString("seed:"|"local:" + counter)` strings. The full primop
+design — including the `<cached-fn>`/`<ambient-fn>` PrimOp split,
+the input-traced env-chain nesting that lets the outer's
+`TracingEnvironment` see inner file reads as its own Facts, and
+the content-tracing relationship that keeps the inner cacheable
+across outer contexts — is documented in
+[`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md).
+Covariant-callback replay (the inner calling back into the outer
+via the ambient channel) currently falls through to inner
+re-evaluation; cache hits for that case are a planned follow-up.
 
 ## Concurrency and durability
 
@@ -531,8 +545,18 @@ Performance harness under `tests/perf/tracing-cache/`:
   Phase 1 — but the cross-session amortisation and post-Patricia-split
   divergence handling Phase 2 was designed for remain valid future
   work.
-- **`builtins.cache`**: stubbed to throw. Reintroducing it needs the
-  d=2 ambient-query layer.
+- **Covariant-callback cache hits in `builtins.cache`.** The
+  primop itself is implemented (see
+  [`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md));
+  the inner cache hits cleanly for data-only results and
+  non-covariant function calls. When the inner calls back into an
+  outer-provided function (the `(builtins.cache { import = ./f; }) {
+  f = ...; x = ...; }` shape where the inner does `f x`), replay
+  currently falls through to inner re-evaluation. Closing this gap
+  needs either relay-case detection in `applyFn` (peeking inside
+  `args[0]`'s thunk for an ambient ancestor's id) or the
+  `TracingLocalObject`/`ReplayLocalObject` pair that records
+  incoming queries on the local arg.
 - **Eviction / compaction**: none. The DB grows with the workload.
   At 41 MB per 10k recorded attrs, that's tolerable for a while.
 - **Wiring `nix-env -qa`** through the cache. Currently bypasses.
@@ -552,5 +576,10 @@ Performance harness under `tests/perf/tracing-cache/`:
 - `src/libexpr/tracing-replay-object.cc` — per-method lookup &
   fall-through to inner
 - `src/libcmd/command.cc` — wiring into `EvalCommand`
-- `src/libexpr/primops/cache.cc` — the `builtins.cache` stub
+- `src/libexpr/primops/cache.cc` — the `builtins.cache` primop
+- `src/libexpr/expr-from-object.cc` — `ExprFromObject`,
+  `AmbientResolver`, `makeCachedFnPrimOp` / `makeAmbientFnPrimOp`
+- `src/libexpr/ambient-object.cc` — `AmbientObject` (outer value
+  reached via ambient query)
 - `tests/perf/tracing-cache/` — perf scripts and validation sweeps
+- `tests/functional/builtins-cache.sh` — `builtins.cache` functional tests
