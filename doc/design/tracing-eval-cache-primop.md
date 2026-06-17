@@ -266,11 +266,11 @@ Concretely, take the `call-fn.nix` case from `builtins-cache.sh`:
 
 where `call-fn.nix` is `{ f, x }: f x`. To evaluate the body
 `f x`, the inner forces `arg.f` to know which function to apply;
-applying produces a thunk for the lambda body. The outer asking
-for the int result eventually forces that thunk, which forces
-`arg.x` (bound to the lambda's `x`), then forces *that* as an int.
-Each forcing fires an ambient query on the `AmbientObject`
-wrapping the outer arg. The resolver's counter walks:
+applying produces a thunk for the lambda body. `nix eval`
+eventually forces that thunk to print the result; evaluating the
+body `x + 1` then forces `arg.x` (bound to the lambda's `x`), and
+the addition forces *that* as an int. Each forcing fires an
+ambient query on the `AmbientObject` wrapping the outer arg. The resolver's counter walks:
 L0 = seed (the outer attrset, registered at the apply boundary),
 L1 = child returned from `getAttr "f"` (first `registerOuter`
 call), L2 = child returned from `getAttr "x"` (second
