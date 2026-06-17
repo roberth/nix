@@ -1,0 +1,1358 @@
+# `builtins.cache` on top of the v13 tracing eval cache
+
+This document is a design plan for restoring the `builtins.cache`
+primop on the `eval-cache-v13` branch (under the working name
+`eval-cache-v13-primop`). It is a companion to
+[`tracing-eval-cache.md`](./tracing-eval-cache.md), which describes the
+v13 data model the primop will sit on top of.
+
+Read those first. The terminology — Query/Result vs Request/Response,
+FactSet, RequestSet trie, the `Asks` / `Terminals` edge tables, and
+the `walk(Q, dispatch)` replay primitive — is assumed below.
+
+## Goal and non-goals
+
+`builtins.cache` evaluates a Nix expression in a separate inner
+`EvalState` whose tracing trie persists across CLI invocations. Its
+practical purpose: a project that imports Nixpkgs can wrap the
+`import` in `builtins.cache { import = ./nixpkgs; }`, so that
+re-evaluations of the project do not re-evaluate Nixpkgs when its
+source files are unchanged. The cache is enabled by the
+`tracing-eval-cache` experimental feature flag (which gates the primop
+itself) and is independent of `--option tracing-eval-cache true`
+(which gates the CLI-level cache stack on the outer evaluator).
+
+The two compose. With both enabled, the outer expression sits behind a
+`TracingReplayEvaluator` and so does each `builtins.cache` call.
+
+This document covers:
+
+- restoring the primop with at least the v12 feature coverage
+  (`import`, `expr`+`baseDir`, function values, covariant callbacks,
+  multiple cache calls in one expression, nested `builtins.cache`,
+  laziness through attrset returns, cache invalidation on file edits);
+- making the inner evaluator's "d=2 ambient" interactions (the
+  function-argument Query/Result conversation between the inner
+  evaluator and the outer-provided Object) fit the v13 Fact / FactSet
+  algebra rather than v12's temporal afterHash chain;
+- sharing a single `TracingDecisionGraph` instance between
+  `EvalCommand` and `builtins.cache` when both are wired up in the
+  same process.
+
+Out of scope here (deferred follow-ups):
+
+- The future-extensions interface (`lookupPath`, `env`,
+  cached-function-call roots as their own cache key).
+- Replacing the per-call `NullTraceSink` workaround with a proper
+  `TeeTracingWriter`.
+- Wiring `nix-env -qa` through the cache (separate piece of work
+  called out in the v13 doc).
+- Cache eviction / compaction.
+- Plugin interaction.
+
+## Status of the in-tree pieces
+
+The v12→v13 migration commit `3db54dcff` stripped the v12 SQLite trie
+(`tracing-index.{cc,hh}`, ~1.9k LOC), gutted v12's
+`TracingReplayEvaluator::lookup` cascade, and replaced the
+`builtins.cache` primop with a stub that throws
+`"builtins.cache: not implemented in v13 (d=2 ambient layer pending)"`.
+
+What it kept is most of what the primop actually needs. Reading the
+v13 tree:
+
+- `src/libexpr/include/nix/expr/ambient-object.hh` —
+  `AmbientObject` wraps an outer Object behind ambient-query callbacks.
+  Each Object method (`maybeGetAttr`, `getString`, `getInt`, …) issues
+  a `trace::QueryVariant` via the `AmbientQueryFn` and interprets the
+  `trace::ResultVariant` it gets back. `queryApply` covers the
+  function-application case via `AmbientApplyFn`.
+- `src/libexpr/include/nix/expr/expr-from-object.hh` —
+  `ExprFromObject` bridges an inner `ref<Object>` into an outer
+  `Value` and creates `<cached-fn>` PrimOps (when `innerEvaluator` is
+  set) or `<ambient-fn>` PrimOps (when only `ambientResolver` is set)
+  for `nFunction` values. `ExprFromObjectAttr` is the lazy thunk used
+  for attrset children. `makeAmbientResolver(outerState,
+  innerEvaluator)` constructs the shared resolver.
+- `src/libexpr/include/nix/expr/interpreter.hh` — `Interpreter` already
+  carries `std::shared_ptr<struct AmbientResolver> ambientResolver`,
+  the slot the primop sets before delegating evaluation.
+- `src/libexpr/include/nix/expr/tracing-environment.hh` —
+  `TracingEnvironment::ambientQuery(query, resolve)` calls the supplied
+  `resolve` to compute a result and then calls
+  `writer.logAmbientInteraction(query, result)`. That's the recording
+  side wired up: ambient queries become d>0 Facts in the inner
+  `v13FactSet`.
+- `src/libexpr/include/nix/expr/tracing-writer.hh` —
+  `TracingWriter::logAmbientInteraction(QueryVariant, ResultVariant)`
+  XOR-folds the `(queryHash, responseHash)` Fact into
+  `v13FactSetHash`, inserts the hashed Request payload into
+  `Requests`, and tracks the Request in `allRequestsTrie`. The
+  recording machinery does not distinguish ambient interactions from
+  file reads at the storage layer — they are just Facts whose
+  Request payload happens to deserialise as a `QueryGetAttr` /
+  `QueryGetString` / `QueryApply` JSON rather than a
+  `FileReadRequest` / `GetEnvRequest`.
+- `src/libexpr/tracing-replay-evaluator.cc` — `apply(fn, arg)` still
+  sets up an `AmbientReplayState` whose `unresolvedRoots` holds the
+  raw Objects for `fn` and `arg` before calling
+  `lookup(trace::QueryApply{...})`. `getCurrentResponse` already
+  routes Requests whose payload contains `"query"` through
+  `dispatchAmbientQuery`, which resolves the recorded `from` id to a
+  live Object and re-issues the query against it.
+- The functional test `tests/functional/builtins-cache.sh` (603
+  lines) still exists in the v13 tree. It covers the full v12 surface
+  including covariant callbacks, ambient paths, the
+  `callPackageWith` self-referential pattern, function-result
+  laziness, and `_NIX_DISALLOW_PARSE` replay-completeness checks. We
+  inherit it.
+
+What is missing or wrong, and so must change:
+
+1. `src/libexpr/primops/cache.cc` is a stub. We need to restore its
+   body atop the v13 types (`TracingDecisionGraph` instead of
+   `TracingIndex`).
+
+2. There is no path from `EvalState` to the EvalCommand-owned
+   `TracingDecisionGraph`. `EvalState::cacheState` exists but the
+   pointer-to-root that v12 used (`state.rootTracingIndex`) is gone.
+   The v13 doc explicitly calls out the EvalCommand-owned graph: we
+   need to expose it on `EvalState` so the primop can attach.
+
+3. `TracingReplayEvaluator::dispatchAmbientQuery` uses
+   "pendingChildren + unresolvedRoots" positional matching, which
+   assumed v12's temporal afterHash ordering of recorded Query/Result
+   pairs. v13's FactSet has no temporal order. See
+   [§Ambient identity in an unordered model](#ambient-identity-in-an-unordered-model)
+   below — the existing v13 code happens to work for the *single*
+   `apply()` recording at the CLI root because `dispatch` only fires
+   on Facts the walk needs and only ever processes one `apply` per
+   `TracingReplayEvaluator` instance at a time, but as soon as
+   `builtins.cache`'s cached-function PrimOps push apply boundaries
+   inside the inner evaluator, the positional approach starts pairing
+   ids by FactSet iteration order rather than by structural identity.
+
+4. The recording-side `TracingWriter` requires a `TraceSink &`
+   reference. As in v12, the primop will satisfy it with a
+   `NullTraceSink`. Removing this is the deferred `TeeTracingWriter`
+   work.
+
+## Mapping the v12 "d=2 ambient layer" onto v13
+
+The v12 doc and the stub commit message both say v13 "does not yet
+model the d=2 ambient-query layer that `builtins.cache`'s
+explicit-scope semantics require." The phrase is v12 vocabulary, and
+understanding the mapping is the entry point to most decisions below.
+
+**v12** had `depth` as a column on every recorded node:
+
+- `depth = 0` — the user query (`Q`) whose result is being recorded.
+  In a `builtins.cache` context, the top-level `Q` was either
+  `QueryImport(path)`, `QueryExpr(text, baseDir)`, or — for cached
+  function calls — `QueryApply{fn, arg}`.
+- `depth = 1` — environment events flowing out of the inner evaluator
+  while it computed Q's result: file reads, env lookups, *and*
+  ambient queries on outer-provided Objects.
+- `depth = 2` — the user-doc layer when a recorded "depth=1" event was
+  itself the user-query of a downstream recording: i.e. when the
+  *outer* evaluator records its own Q, the inner evaluator's
+  d=1 ambient queries show up to the outer cache as Q→R events at
+  one more level of indirection.
+
+In v12 the inner `TracingReplayEvaluator` could walk the recorded
+depth=1 chain by `afterHash` order. The ambient queries appeared in
+the chain interleaved with file reads, and `dispatchAmbientQuery`
+resolved their `from` ids by stepping a positional registry whose
+pop order matched the temporal record order.
+
+**v13 has no temporal order at all.** The recording side keeps a
+single per-`Q` `FactSet` — an unordered set of `(RequestHash,
+ResponseHash)` pairs. The replay side walks the decision graph from
+`(Q, ∅)`, taking edges whose `RequestSet`'s "useful dispatch" is
+satisfied by the current environment; at each step it XOR-extends a
+running `cur` hash by the per-Fact element hashes; on terminal match
+it returns the recorded result.
+
+The mapping is therefore *not* about the trie storage layer — the
+v13 schema can already hold ambient Facts unchanged. `logResponse`
+and `logAmbientInteraction` in v13's `TracingWriter` are deliberately
+symmetric, both XOR-folding the same Fact shape into `v13FactSet`.
+The mapping is about three other things:
+
+1. **Dispatch routing during replay**: the walk's `dispatch(reqHash) →
+   respHash` callback has to recognise ambient Requests and route
+   them through the AmbientResolver instead of the
+   filesystem/env-var Environment. v13's
+   `TracingReplayEvaluator::getCurrentResponse` already keys off
+   `reqJson.contains("query")`, so the route is already there; what
+   isn't yet correct is the identity model `dispatchAmbientQuery`
+   uses to resolve `from` ids.
+
+2. **Ambient identity in an unordered model.** With a temporal chain
+   gone, identifiers attached to ambient Requests cannot mean "the
+   `from` id that flowed into position k of the recorded chain." They
+   must be structurally derivable from queries the replayer has
+   already resolved, plus the seed roots (`fn` and `arg`) provided
+   by the apply call that triggered the walk. See
+   [§Ambient identity in an unordered model](#ambient-identity-in-an-unordered-model).
+
+3. **The `Q` for cached function calls.** When the outer evaluator
+   forces a `<cached-fn>` PrimOp, the call shows up at the inner
+   evaluator as `apply(fnObj, argObj)` where `fnObj` is the recorded
+   inner function (or its replay-Object) and `argObj` is an
+   `AmbientObject` for the outer argument. The Q hash on the inner
+   side is `QueryApply{fnId, argId}`. Both ids must be stable across
+   sessions for the cache to hit: `fnId` is the recorded inner
+   `queryHashStr` for the function value, `argId` is the
+   `getOrAllocVirtualRoot` id for the outer Object (process-local on
+   recording, repopulated on replay from the live `apply()` arguments
+   via lazy unification).
+
+The original v12-era plan's term "interaction tracing" survives intact
+under v13. The only thing v13 changes is the underlying storage —
+from a temporal afterHash chain to a set algebra. The conversation
+records (Outgoing/Incoming) and the validity conditions on them
+(replay re-issues outgoing queries, replay serves recorded incoming
+answers if/when the outer evaluator asks) are unchanged.
+
+## Ambient identity in an unordered model
+
+This is the design-level question that the v12 stub commit was
+flagging when it said "d=2 ambient layer pending." It is the one
+substantive thing the primop work has to think through, and the part
+where the existing v13 code (designed for the CLI root) doesn't yet
+generalise.
+
+### The problem
+
+A recorded `(QueryApply, factSet)` may contain multiple ambient Facts:
+
+```
+Q  = QueryApply{fnId=f0, argId=L1}
+Facts:
+  Request(QueryGetAttr{name="f", from=L1})  ─ Response(maybe-lambda)
+  Request(QueryGetAttr{name="x", from=L1})  ─ Response(maybe-int)
+  Request(QueryGetInt{from=L1.x})            ─ Response(10)
+  Request(QueryApply{fn=L1.f, arg=L1.x})     ─ Response(int)
+```
+
+For the walk to dispatch the third Request (`getInt on L1.x`), it
+must resolve `L1.x` to a live Object. `L1.x` is structurally derived
+from `L1` via `QueryGetAttr{name="x"}`, so once the second Request's
+response has been validated, the live Object obtained from
+`liveL1->maybeGetAttr("x")` is the canonical thing to bind to id
+`L1.x`.
+
+But the walk's `dispatch` is a `RequestHash → ResponseHash` callback.
+It doesn't know about derivation chains; it gets called once per
+Request and has to produce a response hash on the spot. And the
+walk's iteration order over Facts is essentially unspecified —
+record's canonical FactSet form is sorted by `(requestHash,
+responseHash)`, which has no relation to the conceptual derivation
+chain.
+
+The current v13 implementation handwaves this with `pendingChildren`
++ `unresolvedRoots`: when an id is unknown, it grabs whichever Object
+is "next" in the queue. That works for the CLI root case because
+`dispatchAmbientQuery` is only entered from one in-flight `apply`
+recording at a time, and at the CLI root the only ambient identity
+the apply needs is the two seed roots. It breaks the moment a single
+recorded `(Q, factSet)` contains a chain of derived ambient ids whose
+canonical FactSet order does not match the order in which child
+Objects were observed at recording time.
+
+### Two id namespaces in the recorded trace
+
+Reading the in-tree code clarifies what the recorded ids actually
+look like. There are two distinct id namespaces in play, sharing the
+same `from` / `argId` string slots in the JSON payloads:
+
+- **Writer-virtual ids** — `"virtual:N"` strings, allocated by
+  `TracingWriter::getOrAllocVirtualRoot(Object*)` and counted by
+  `nextVirtualRoot` (a `uint64_t`). These appear in the `fnId` and
+  `argId` fields of `QueryApply` at the d=0 level when the
+  `TracingEvaluator` records a fresh `apply` whose operands have no
+  trie identity. They name "this Object in this process" with no
+  cross-process meaning.
+
+- **Resolver-ambient ids** — plain `"N"` strings, allocated by
+  `AmbientResolver::registerOuter` / `registerLocal` (counted by
+  `nextId`, an `int`). These appear in the `from` field of every
+  d>0 ambient Request (`QueryGetAttr`, `QueryGetInt`, etc.) and in
+  the `arg` field of `QueryApply` Requests issued through
+  `applyFn`.
+
+The two counters are independent: the writer's `virtual:0` is *not*
+the resolver's `0`. Both start at zero, both bump per-allocation, and
+each lives on a different object. In practice they line up by
+position-coincidence for the common case of a single virtual seed
+root (the cached function's argument; the fn itself gets a
+`TracingObject` identity from the inner recording and so has no
+virtual id).
+
+This dual-namespace design is fine for recording. What it asks of
+replay is that *both* namespaces resolve to the same live Object that
+played the same role at recording time. For seed roots the
+`TracingReplayEvaluator::apply` path does this with its
+`unresolvedRoots` queue (described below); for derived ambient ids it
+does *not* and that is what the primop work must fix.
+
+### The bug in the current v13 lazy-positional resolver
+
+The current `dispatchAmbientQuery`/`AmbientReplayState` model relies on
+two queues populated in eval order: `unresolvedRoots` for seeds and
+`pendingChildren` for derived values. The implicit invariant is "the
+order in which `dispatch` is invoked matches the order in which the
+recorder produced the values."
+
+That invariant held under v12, where dispatch followed the temporal
+`afterHash` chain. It does not hold under v13. The walk dispatches
+Facts in `Asks` edge order, and the canonical RequestSet members
+inside an edge are iterated by sha256 hash prefix (via the Patricia
+trie). For a recording with chained derived ambient ids — `L1` → its
+attr `x` → `getInt` on `x` — the FactSet contains three Facts whose
+Request hashes have no relation to derivation order. A walk that
+dispatches `getInt{from=childId}` *before* `getAttr{from=L1,
+name="x"}` pops the wrong Object off `pendingChildren` (it's empty)
+and falls back to `unresolvedRoots`, which points at the *seed*
+attrset, not its child. `seed->getInt()` throws — replay fails — and
+the fall-through to inner re-evaluation hides the bug.
+
+This works in the CLI-root case today because that path only
+exercises a single virtual seed root (the apply argument) and rarely
+chains derived ambient ids off it. The moment `builtins.cache`
+restores recording of `QueryApply` inside its inner stack, every
+non-trivial cached function call exercises the chained case.
+
+### The fix: structural ids plus an in-walk producer index
+
+Two changes, both local:
+
+**Recording side**: emit derived ids as content hashes, not counters.
+
+In `expr-from-object.cc`'s `AmbientResolver::query`, the
+`registerOuter(child)` call inside each child-producing query (the
+`QueryGetAttr`, `QueryGetListElem`, `QueryApply` arms) is the
+allocation point. Replace the counter with
+
+```
+childId = sha256(parentIdBytes || queryHashOf(<this Q's payload>))
+```
+
+stored as a hex string. Seed roots continue to use the integer
+counter (their identity is genuinely outside-the-system input). The
+`AmbientId` strong type needs widening to hold a string-backed value
+or a discriminated union of `int` (seed) / `Hash` (derived); the
+latter is the cleanest given the rest of the v13 codebase already
+holds hashes as `Hash` and serialises with `.to_string(HashFormat::
+Base16, false)`.
+
+The Request payload already records the `from` (the *parent* id) and
+the query (the derivation) explicitly. So the recorded trace, given
+structurally-encoded child ids, becomes
+**self-describing**: every derived id appears either as the `from`
+of some later Request *and* as the implicit `childId` of the
+producer Request that names it.
+
+**Replay side**: build an id-resolution index once at walk entry.
+
+Before invoking `decisionGraph.walk`, the replayer walks the
+recorded RequestSet for the current `(Q, ∅)` edge and builds a flat
+map:
+
+```
+struct AmbientResolver {
+    unordered_map<string, ref<Object>> idToObject; // populated on resolve
+    unordered_map<string, ProducerRecord> producerByChildId;
+    // ProducerRecord: {parentId, derivationQuery} parsed from a Request
+};
+```
+
+Population: for each Request `R` in the RequestSet whose query type
+is child-producing (`QueryGetAttr`, `QueryGetListElem`,
+`QueryApply`), compute the deterministic child id from
+`(R.from, queryHashOf(R.query))` and register
+`childId → {R.from, R.query}` in `producerByChildId`. This is the
+*only* time the walker iterates the RequestSet for indexing; the
+cost is O(|RS|) once per cache lookup.
+
+`dispatchAmbientQuery` becomes:
+
+```
+shared_ptr<Object> resolveAmbientId(string id):
+    if (idToObject.contains(id)) return idToObject[id];
+    if (id starts with "virtual:") { /* seed; look up by writer-id */ }
+    auto producer = producerByChildId.at(id);
+    auto parent   = resolveAmbientId(producer.parentId);
+    auto child    = dispatchQueryOnObject(parent, producer.derivationQuery);
+    idToObject[id] = child;
+    return child;
+```
+
+On `dispatch(reqHash)`:
+
+```
+reqJson = decisionGraph.getRequestPayload(reqHash);
+fromId  = reqJson["params"]["from"];
+liveObj = resolveAmbientId(fromId);
+result  = dispatchQueryOnObject(liveObj, reqJson["query"], reqJson["params"]);
+return computeResponseHash(serialise(result));
+```
+
+Properties:
+
+- **Order-independent.** Any visit order over the FactSet produces
+  the same `idToObject` because `resolveAmbientId` does the
+  derivation walk on demand.
+- **Self-pre-warming.** Resolving id `X` populates `X` and every
+  ancestor along the derivation path. Subsequent dispatches whose
+  `from` matches any ancestor are O(1).
+- **No schema change.** All the information needed is already in
+  the Request payload (`from`, `query`, `params`). The
+  `producerByChildId` index is built from data that's already on
+  disk; it lives entirely in process.
+- **Plays with the fast path.** `TracingReplayEvaluator`'s
+  `dispatchedTrie` and `lastQFactsHash` fast path still works
+  because it operates on Request hashes, not on the ambient
+  resolution layer. The producer index only needs rebuilding when
+  the recorded edge changes (i.e. per top-level Q lookup).
+
+Cost ceiling: `O(|FactSet|)` per Q, dominated by the index build.
+For the typical `builtins.cache` workload (a handful of ambient
+queries per cached function call) this is well under a millisecond.
+
+### Seed-root rebinding across processes
+
+The writer-virtual `"virtual:N"` strings are recorded in the
+`QueryApply{fnId, argId}` Q payload. On replay these must map back
+to the live `apply(fn, arg)` operands. The current code achieves
+this by:
+
+```cpp
+ambientState->unresolvedRoots.push_back(arg.get_ptr());
+if (!getId(*fn)) ambientState->unresolvedRoots.push_back(fn.get_ptr());
+auto result = lookup(QueryApply{fnId, argId});
+```
+
+The lookup recomputes the Q hash from the recorded `fnId`/`argId`
+strings (which were the recording's `virtual:N`); on hit, the walk
+runs and any ambient `from="virtual:N"` Request gets dispatched.
+`dispatchAmbientQuery` then has to associate the recording's
+`virtual:0` with the live `arg` (or `virtual:1` with `fn`).
+
+Under the new structural-id model, the seed roots remain
+positional — we only have two of them, and the apply call gives
+them in order. The recording must therefore emit *deterministic*
+seed identifiers from the apply ordinal, not from the
+`getOrAllocVirtualRoot` counter (which is per-process). The
+straightforward fix: keep the writer's `virtual:N` strings but
+*reset* the counter at each `apply()` so the first virtual root in
+this apply is always `virtual:0` and the second is `virtual:1`. The
+`TracingReplayEvaluator::apply` change is then to bind
+`virtual:0` → first non-identity operand and `virtual:1` → second.
+
+Alternative: drop `"virtual:N"` entirely from the apply Q and use
+positional tokens `"$arg"` / `"$fn"` directly. This makes the Q hash
+stable across processes by construction and removes the
+counter-coincidence dependency. The cost is changing the existing
+`QueryApply` Q hash — a one-time on-disk cache invalidation, which
+is acceptable during a feature-development branch.
+
+## Architecture: bringing back `cache.cc`
+
+The shape from v12 holds. Inside `prim_cache`:
+
+1. **Parse args.** `{import|expr,baseDir}` exactly as v12. Reject
+   unknown attrs, mutual exclusion, missing required.
+
+2. **Resolve the `TracingDecisionGraph`.** Two cases:
+
+   - The outer EvalCommand has one: `state.rootDecisionGraph` is set.
+     Share it; both inner recordings and the outer cache write to the
+     same SQLite file via the same in-process connection. This is the
+     v13-only correctness fix to the v12 follow-up "Should share a
+     single instance".
+   - No outer: lazily create `state.cacheState.ownedDecisionGraph`
+     on first call, reuse across subsequent calls in the same
+     process.
+
+   This requires adding a `TracingDecisionGraph * rootDecisionGraph =
+   nullptr;` field to `EvalState`, set by
+   `EvalCommand::getEvalState()` when it constructs
+   `tracingDecisionGraph` (right next to its existing wiring of
+   `tracingWriter` and `tracingDecisionGraph`).
+
+   For **nested `builtins.cache`** correctness, the same pointer
+   must propagate through to the inner `EvalState` so a nested call
+   inside the inner evaluator finds and shares the same graph. The
+   inner state's constructor does not take this as a parameter, so
+   the primop sets it after construction:
+
+   ```cpp
+   innerState->rootDecisionGraph = decisionGraph;
+   ```
+
+   Without this line, a nested `builtins.cache` call sees
+   `innerState->rootDecisionGraph == nullptr` and constructs its own
+   `cacheState.ownedDecisionGraph` — a brand-new SQLite trie in
+   memory, divorced from the persistent one. Nested calls' cache
+   hits would be lost across CLI invocations.
+
+3. **Build the per-call tracing stack.** Reusing v13's existing
+   types:
+
+   - `auto sink = make_shared<NullTraceSink>()` — still needed
+     until `TeeTracingWriter` lands.
+   - `auto writer = make_shared<TracingWriter>(*sink, decisionGraph)`.
+   - `auto tracingEnv = make_ref<TracingEnvironment>(state.environment,
+     *writer)` — wrap the *outer* environment (not a fresh
+     `SystemEnvironment`); this was the Step 2a ambient-capability
+     fix and is mandatory for nested `builtins.cache` correctness.
+   - `auto innerState = make_ref<EvalState>(LookupPath{},
+     state.fetchSettings, state.settings, tracingEnv,
+     state.systemEnvironment, state.getSymbolTable())`. The shared
+     `SymbolTable` is required so symbols interned during inner
+     parse / `AttrPath::parse` compare equal to outer state's
+     symbols. This is the existing v13 constructor
+     (`eval.hh:778`).
+   - `auto interpreter = make_ref<Interpreter>(innerState);`
+   - `auto recordingEval = make_ref<TracingEvaluator>(*writer,
+     interpreter);`
+   - `auto replayEval = make_ref<TracingReplayEvaluator>(
+       recordingEval, *state.environment, *writer, *decisionGraph);`
+
+   The TracingEvaluator wraps Interpreter; TracingReplayEvaluator
+   wraps that, so misses fall back through recording.
+
+4. **Set up the shared `AmbientResolver`.** `makeAmbientResolver(&state,
+   replayEval)` exists in v13; assign it to
+   `interpreter->ambientResolver`. The same resolver instance threads
+   through every `<cached-fn>` PrimOp created by `ExprFromObject`
+   inside this call.
+
+5. **Convert paths to the inner accessor.** `RootedPath{innerState->
+   rootFSRoot, p.path}` for both `importPath` and `baseDir`. (This
+   is straight from v12.)
+
+6. **Evaluate.** `importPath ? replayEval->evalFile(...) :
+   replayEval->evalExpr(...)`. The replay evaluator tries the cache
+   first and falls back to recording.
+
+7. **Bridge back.** `ExprFromObject(result, replayEval, resolver)
+   .eval(state, state.baseEnv, v)`. Children become lazy
+   `ExprFromObjectAttr` thunks. For `nFunction` values the
+   `ExprFromObject` machinery creates a `<cached-fn>` PrimOp that
+   routes future applications back through the AmbientResolver.
+
+8. **Retain state.** Push a `CacheState::CallState` onto
+   `state.cacheState.calls` (the struct already exists in v13's
+   `EvalState`) holding the sink, writer, evaluators, and innerState.
+   This keeps them alive past the primop frame so the lazy
+   `ExprFromObjectAttr` thunks can fire later.
+
+The above is essentially the v12 `cache.cc` body re-targeted at v13's
+types. The non-obvious step is #2 (sharing the
+`TracingDecisionGraph`) — and that is also the only step that
+requires touching `EvalState` and `EvalCommand`.
+
+## Recording semantics for `builtins.cache`
+
+The inner evaluator's `TracingEvaluator` records the cached
+expression's Q exactly once per fresh evaluation. Whether that Q is
+`QueryImport`, `QueryExpr`, or `QueryApply` depends on which path
+forced the value:
+
+- `replayEval->evalFile(...)` / `evalExpr(...)` records `QueryImport`
+  or `QueryExpr` at the inner root.
+- The first time an outer caller forces a `<cached-fn>` PrimOp with
+  a new argument, the PrimOp's impl routes to
+  `innerEvaluator->apply(fnObj, ambientArgObj)`, which records
+  `QueryApply{fnId, argId}` at the inner level.
+
+Each of these recordings produces its own `(Q, factSet, result)` row
+via `decisionGraph.record(...)`. The `factSet` contains:
+
+- file reads from the inner evaluator (already plumbed through
+  `TracingEnvironment::getFileHash`);
+- env var lookups (`getEnv`);
+- ambient queries against the outer-provided value(s), recorded by
+  `TracingEnvironment::ambientQuery` via `logAmbientInteraction`.
+
+Because the outer environment is wrapped by the inner
+`TracingEnvironment`, *file reads from the inner evaluator also flow
+upward through the outer cache's `TracingEnvironment`*. The outer
+trace therefore sees those reads as its own Facts — Step 2a's
+"ambient capability fix" — which means an outer recording that
+calls `builtins.cache` automatically has the nested call's file
+dependencies in its FactSet. We don't need to do anything special at
+this level for outer correctness.
+
+For inner correctness, the ambient Facts are crucial:
+
+- A different outer value with the same `fnId`/`argId` would otherwise
+  pass the cache check despite producing different observed
+  Responses. Recording the `(QueryGetAttr{from=L1}, …)` Fact ties the
+  recorded result to the *observed* shape/values of the argument,
+  not just to the seed ids.
+- A different argument with the same structural answers would still
+  legitimately hit the cache — that's the point of validating
+  *responses* rather than identities.
+
+This recording behaviour falls out of the v13 infrastructure already
+in place. No new TracingWriter methods are needed.
+
+## Replay semantics for `builtins.cache`
+
+When `replayEval->evalFile(...)` (or `evalExpr`, or `apply`) runs:
+
+1. `lookup(Q)` calls `v13Walk(queryHash)`.
+2. `v13Walk` first tries the fast path: `dispatchedTrie.diff` against
+   the `RequestSet` reachable from `(Q, ∅)`. If the delta resolves
+   and `Terminals(Q, candidateCur)` matches, hit.
+3. Otherwise, falls back to `decisionGraph.walk(queryHash,
+   dispatch)`.
+4. The `dispatch` callback in `TracingReplayEvaluator::v13Walk`
+   reads each Request payload, calls `getCurrentResponse`, and
+   returns the response hash. For Requests whose payload contains
+   `"query"`, dispatch routes to `dispatchAmbientQuery`, which:
+   - resolves the `from` id via `AmbientReplayState::idToObject`
+     (and the structural-derivation path described above),
+   - issues the query against the resolved outer Object,
+   - serialises the result.
+5. On a hit, the result payload comes back; `lookup` wraps it in a
+   `TracingReplayObject`. The outer caller forces attrs/strings/…
+   via this TracingReplayObject, which itself defers to its own
+   `lookupResult<Q, R>` per-method (using the recorded `queryHashStr`
+   as the parent in child Queries' Merkle chain).
+
+The `apply()` path additionally seeds the seed roots into
+`AmbientReplayState`:
+
+```cpp
+ambientState = AmbientReplayState{};
+ambientState->idToObject[fnIdStr]  = fn.get_ptr();   // seed root
+ambientState->idToObject[argIdStr] = arg.get_ptr();  // seed root
+auto result = lookup(trace::QueryApply{fnIdStr, argIdStr});
+```
+
+This is the change to v13's existing `apply()`: pre-bind the seed
+roots into `idToObject` so structural derivation works for their
+descendants, rather than relying on the queue's pop order to assign
+identities at first reference. (The queues go away.)
+
+A successful replay still feeds the recording-side writer state
+(`v13FactSet`, `allRequestsTrie`, `lastQFactsHash`) so a *later*
+miss on a different Q in the same session falls into a coherent
+recording chain. v13 doesn't currently sync these on a hit — there
+is no equivalent of v12's `syncAfterHash`. The session-level
+fast-path state (`lastQFactsHash`, `dispatchedTrie`) is maintained,
+but writer-side state for any subsequent fresh recording is not.
+That is fine for the CLI root because the CLI does one outer Q. The
+primop's case is the same shape — recording state is per-inner-call,
+each call has its own writer — so we don't need to revisit this
+either.
+
+## Lifetime and ownership
+
+Two cases.
+
+**Process-shared `TracingDecisionGraph`.** When the outer
+`EvalCommand` has one, the same pointer is shared. SQLite WAL mode
+gives correct concurrent behaviour even though both stacks are
+writing through the same handle. The handle outlives the primop call
+because `EvalCommand` owns it for the lifetime of the evaluation.
+
+**Owned `TracingDecisionGraph`.** When no outer is present (e.g. a
+bare `nix eval` without `--option tracing-eval-cache true`), the
+first `builtins.cache` call creates one. `CacheState`'s destructor
+runs at `EvalState` teardown, which is after the last cached thunk
+could possibly be forced.
+
+Per-call state goes on
+`EvalState::cacheState.calls` as a `CallState`. The v13 tree already
+has this struct (`sink`, `writer`, `recordingEval`, `replayEval`,
+`innerState`) and notes the destruction order: `innerState` first
+(because `TracingEnvironment` references the writer), then writer,
+then sink. We push one entry per `builtins.cache` call and never
+remove until process teardown — the alternative is reference-counting
+per-thunk, which is unnecessary overhead.
+
+Each `CallState` carries one `AmbientResolver` instance via the
+`<cached-fn>` PrimOps that may have leaked into outer Values. That
+resolver in turn carries:
+
+- the per-call seed-root id counter,
+- the `idToObject` registry of outer values it's been handed,
+- a pointer to `outerState` and `replayEval`.
+
+It must outlive any `<cached-fn>` PrimOp it produced. Because the
+PrimOp captures `shared_ptr<AmbientResolver>` directly (via
+`ExprFromObject`), the resolver is reference-counted independently of
+`CallState`; `CallState` keeps everything else alive.
+
+## Open questions and known risks
+
+These are not blockers — they are places where the design has a
+defensible choice but a future revision may want to revisit.
+
+1. **Multiple recordings of the same Q in one factSet "session".**
+   The session-level `lastQFactsHash`/`dispatchedTrie` fast path in
+   `TracingReplayEvaluator` assumes a single growing factSet across
+   the session. When the primop creates a fresh
+   `TracingReplayEvaluator` per call, each has its own session
+   state — no cross-call contamination. But within one cache call,
+   if the same fn is applied twice with different args, both Qs
+   share the writer's `v13FactSet`. The fast path's delta
+   computation will work but per-Q hit rates depend on FactSet
+   stability between Qs. This is identical to the CLI-root case;
+   noting it for transparency.
+
+2. **Cross-process concurrent recording of the same Q.** SQLite WAL
+   gives correctness on insert (every row is INSERT OR IGNORE on a
+   content-addressed key). Two concurrent processes can record the
+   same `Q` with the same `factSet` and one of them will lose its
+   `Asks` rows to the OR IGNORE. The recorded result is the same
+   because the computation is (assumed) deterministic. This is the
+   pre-existing v13 contract; no change.
+
+3. **Non-deterministic ambient evaluators.** If the outer evaluator
+   returns different `getAttr` responses for the same id across two
+   recordings (impossible in practice for pure Nix, possible if
+   plugins are involved), the inner `record()` will land at
+   different `factSet` hashes; the two recordings coexist as
+   independent paths through the decision graph, and which one a
+   replay hits depends on what the live outer answers. This is the
+   model-level "nondeterminism" the v13 doc punts to Phase 2 and
+   we inherit the same punt.
+
+4. **Outer `<cached-fn>` cache key vs inner `QueryApply` Q.** The
+   outer evaluator sees a `<cached-fn>` PrimOp and records its own
+   `QueryApply{outerFnId, outerArgId}` for the call. The inner
+   evaluator separately records `QueryApply{innerFnId,
+   innerArgId}`. These are two independent Qs at two independent
+   layers, and the cache hits or misses on each layer independently.
+   That's intentional — the outer cache short-circuits at the
+   architectural boundary (no inner work needed), while the inner
+   cache is the persistent unit that survives outer cache misses.
+
+5. **`getOrAllocVirtualRoot` is process-local.** The counter id
+   assigned to a virtual root is a `uint64_t` that resets per
+   process. Across two recording sessions, the same outer Object
+   gets the same id only if the recording happens in the same
+   relative order. In single-shot CLI invocations that's fine
+   because the recording starts fresh each time. In a long-lived
+   process (daemon mode, repeated evals), if the outer has two
+   different Objects show up as the `fn` of two cached calls, their
+   ids will not collide *but* the canonical `(QueryApply{fnId, argId})`
+   hash will differ from what a fresh process would record for the
+   same Object. The fast path replays still hit because the lookup
+   resolves the seed root by *Object pointer* identity at runtime
+   and uses whatever id the recording wrote. This is fine. The
+   open question is whether two concurrent calls within the same
+   process need to coordinate counter allocation; the answer is
+   that they already do because the counter is on `TracingWriter`,
+   and per-call `TracingWriter`s have independent counters — which
+   is also fine because each call's recordings live in a separate
+   factSet (different Qs) and the ids only need to be self-consistent
+   within one recording.
+
+6. **Test for ambient-id collision after re-evaluation.** When a
+   recording falls through to the inner Interpreter (cache miss) and
+   the Interpreter re-issues the apply, fresh seed roots get fresh
+   counter ids. If the falling-through call previously did *some*
+   ambient queries off a `replayEval`'s assigned ids and then
+   transitioned to inner recording, the id-namespaces could appear
+   to mix. The v12-era plan flagged this; the cleanest fix is the
+   one already documented: on first replay failure inside a single
+   `apply()`, drop the seed-root id assignments and let the inner
+   re-run start with fresh counters. The test suite
+   (`builtins-cache.sh`'s "function changed" and "different
+   argument value" cases) exercises the cache-miss-on-apply path
+   and is the regression net for this.
+
+7. **TrieBuilder rebuild on per-call `TracingWriter`.** Each
+   `builtins.cache` call constructs a fresh `TrieBuilder`. The trie
+   is in-memory and built up by `insert(requestHash)` calls during
+   recording. Inserting the same Request twice in one call is
+   already cheap (the trie deduplicates on insert). Across calls in
+   one process, two `TracingWriter`s building two `TrieBuilder`s for
+   the same set of Requests will end up persisting the same nodes
+   into `RequestSetNodes` — fine, `INSERT OR IGNORE` absorbs the
+   duplication. Memory cost is per-call, gone at `CacheState`
+   teardown.
+
+9. **Covariant-callback apply Requests are unresolvable on replay
+   today.** When `makeCachedFnPrimOp`'s `applyFn` records the
+   outer→outer apply via `innerEnv.ambientQuery`, the Request
+   payload is `QueryApply{fn=fnId, arg=resultId}` with no `from`
+   field — `QueryApply` doesn't have one (its operands are `fn`
+   and `arg` instead). `TracingReplayEvaluator::dispatchAmbientQuery`
+   explicitly returns `nullopt` for `tag == "apply"` (the in-tree
+   comment reads "Apply replay not yet implemented"). When the walk
+   dispatches that Request the response hash is zero, the XOR-fold
+   diverges from the recorded `cur`, and the walk falls through to
+   inner re-evaluation. The covariant-callback test cases in
+   `builtins-cache.sh` (`call-fn.nix`, `path-fn.nix`,
+   `callpkg-fn.nix`) therefore re-evaluate every time even on
+   what would otherwise be a hit. The structural-id work in Step C
+   is necessary but not sufficient — Step D needs an additional
+   `QueryApply` dispatcher on the replay side that re-issues the
+   outer apply (using the resolved `fn` and the recorded `arg`'s
+   resolved Object) and serialises `ResultType{"apply"}` so the
+   Fact's response hash matches. Because the apply's recorded
+   response payload is the constant `ResultType{"apply"}`, the
+   re-issued dispatch trivially matches as long as the apply
+   *succeeds* — the actual identity of the result is validated by
+   subsequent child queries on the apply-result Object, not by this
+   Fact. So the replay implementation can be minimal: resolve `fn`
+   via the resolver, route through `resolver->apply(fnId, argObj)`
+   to register the result Object under the recorded `arg` id, and
+   return the constant response hash.
+
+10. **`QueryApply.arg` field semantics in covariant callbacks.**
+    `trace::QueryApply` documents `arg` as the "argument's queryHash
+    identity," but the covariant-callback recorder writes the
+    *result*'s outer-resolver id there
+    (`std::to_string(resultId.value())`), not the argument's local id
+    (`argId` from `registerLocal`). That choice means downstream
+    Requests can reference the apply's result by that id without an
+    extra naming step. It's safe — recording and replay both
+    interpret the field as "the entity produced by this apply" — but
+    the docstring on the struct should be amended to "argument or
+    result identity, depending on the recorder" once the primop
+    work lands. The replay-side dispatcher in Step D needs to know
+    this convention to register the result Object under the right
+    id.
+
+8. **`builtins.cache` inside `apply()` inside `builtins.cache`.**
+   The CLI sets up a `TracingReplayEvaluator` for the outer Q, the
+   primop sets up a *separate* one for the inner Q, and a
+   covariant callback from the inner evaluator back to an outer
+   function could re-enter the outer evaluator and trigger another
+   `builtins.cache`. Each level has its own factSet, its own
+   AmbientResolver, and its own writer. The lifetime model already
+   handles this (each `CacheState::CallState` is independent). The
+   only place a leak could happen is if the inner covariant
+   callback retains the outer's `<ambient-fn>` PrimOp past the
+   outer's `CacheState` lifetime — but the PrimOp captures a
+   `shared_ptr<AmbientResolver>` directly, so it stays alive on its
+   own.
+
+## Implementation step list
+
+The work decomposes into roughly five steps, each independently
+testable:
+
+**Step A — share the root `TracingDecisionGraph`.**
+Add `TracingDecisionGraph * rootDecisionGraph = nullptr;` to
+`EvalState`. Have `EvalCommand::getEvalState()` set it (alongside
+`evaluatorCompat`) right after constructing `tracingDecisionGraph`.
+No primop changes yet; existing CLI-level tests should still pass.
+
+**Step B — restore `cache.cc`'s body atop v13 types.**
+Reimplement `prim_cache` per [§Architecture](#architecture-bringing-back-cachecc).
+Reuse the v12 logic for arg parsing, paths, and `CacheState` push.
+Use `TracingDecisionGraph` everywhere `TracingIndex` was.
+At this point `builtins-cache.sh`'s data-only tests
+(`import = scalar / string / attrset / list`, transitive invalidation,
+multiple cache calls) should pass — those don't exercise the d=2
+ambient layer at all.
+
+**Step C — make derived ambient ids structurally addressable.**
+Change `AmbientObject` child-id allocation to compute
+`sha256(parentId || queryHashOf(derivation))` and corresponding
+resolver registration. Strip the lazy-positional unification from
+`TracingReplayEvaluator::dispatchAmbientQuery`; replace with the
+on-demand structural-resolution path. Seed `idToObject` with the
+apply roots up front in `apply()`. Verify the CLI-level
+`tracing-eval-cache.sh` tests still pass — this change is
+backward-compatible at the CLI root because there's only ever one
+seed root pair per recording and queue-popping happens to coincide
+with structural resolution when there's nothing to disambiguate.
+
+**Step D — apply-Request dispatcher on the replay side.**
+`dispatchAmbientQuery` returns `nullopt` for `tag == "apply"` today;
+this is what causes recorded `QueryApply` Facts to permanently miss
+on replay (open question 9). The minimum dispatcher resolves
+`params.fn` via the resolver, ensures the live outer fn is callable,
+and returns the canonical response hash for `ResultType{"apply"}`
+without re-invoking the outer apply itself (the result value's
+identity is validated by subsequent child Queries on the apply
+result, not by this Fact). Stretch goal: also register the
+resolved outer fn's apply-result Object under the recorded `arg`
+id so downstream `getAttr`/`getString` Requests against it can
+dispatch. This is enough for the `functionArgs`, simple-lambda, and
+curried test cases.
+
+**Step E — incoming-query recording for covariant callbacks.**
+This is what `builtins-cache.sh`'s `call-fn`, `path-fn`, and
+`callpkg-fn` test cases need. The v12 plan called this out as
+unfinished work too; reading the in-tree code confirms it has
+neither a recording-side TracingLocalObject decorator nor a
+replay-side ReplayLocalObject. Scope:
+
+- A wrapping Object inserted by `resolver->apply` around the
+  passed-in local `argObj`. Its methods record an
+  `AmbientIncomingRequest`-shaped Fact (`{query: T, params: {from:
+  localId, ...}}`) into the inner FactSet via
+  `innerEnv.ambientQuery` before delegating to the wrapped Object.
+- A corresponding ReplayLocalObject that, during a recorded apply's
+  replay, serves recorded incoming answers from the FactSet
+  indexed by `(localId, queryType)`. The replay's apply path swaps
+  in this proxy for the recorded `argObj`.
+- The dispatch routing change: an incoming Request's `from` field
+  is a local id, not an outer id. The resolver-or-FactSet lookup
+  has to discriminate. Adding a tag bit to the `from` string
+  (`"L1"` vs `"E1"`) is the cheap way; widening `AmbientId` to a
+  variant is the cleaner way.
+
+If schedule is pressing, Step E can be deferred. Without it, the
+covariant-callback test cases fall through to inner re-evaluation
+every time. The cache returns the correct value (the fall-through
+path runs the inner Interpreter for real), only the speedup is
+missing. The trace types (`AmbientIncomingRequest`/`AmbientIncoming
+Response` at `trace-types.hh:540–551`) are already declared; only
+the recorder and replayer are missing.
+
+**Step F — clean up and document.**
+Move the bulk of the design content here into the source-level
+comments where appropriate, add a paragraph to `tracing-eval-cache.md`
+that drops the "deferred" qualifier from the `builtins.cache` row,
+and remove the v12-era TODO comments in `cache.cc` that refer to
+removed types.
+
+### Minimum-viable cut
+
+Steps A + B + C give a correct (data-only and simple-function)
+`builtins.cache`. Step D removes a permanent miss for any cached
+function call. Step E is required for covariant-callback caching to
+actually hit — but the result is correct either way because every
+unresolved walk falls through to inner re-evaluation. The
+implementation can ship A+B+C+D as the v1 cut and leave E for a
+follow-up, or do A+B+C+D+E together; the correctness story is
+unchanged.
+
+## At-a-glance implementation checklist
+
+A one-page reference for picking up the work. Each line is one
+edit; rough order is top-to-bottom, but A is the only hard
+prerequisite of all the rest.
+
+**Step A — share the root TracingDecisionGraph** (~5 lines)
+
+- [ ] `src/libexpr/include/nix/expr/eval.hh`: add
+      `TracingDecisionGraph * rootDecisionGraph = nullptr;` next to
+      the existing `evaluatorCompat` field.
+- [ ] `src/libexpr/include/nix/expr/eval.hh`: add
+      `std::unique_ptr<TracingDecisionGraph> ownedDecisionGraph;`
+      inside `CacheState`.
+- [ ] `src/libcmd/command.cc`: in `EvalCommand::getEvalState()`
+      after `tracingDecisionGraph = std::make_unique<TracingDecisionGraph>();`
+      add `evalState->rootDecisionGraph = tracingDecisionGraph.get();`.
+
+**Step B — restore prim_cache** (~150 lines, lifts cleanly from v12 form)
+
+- [ ] `src/libexpr/primops/cache.cc`: replace the throwing stub with
+      the body in Appendix A. Use `TracingDecisionGraph` everywhere
+      the v12 form used `TracingIndex`.
+- [ ] `src/libexpr/primops/cache.cc`: include the `NullTraceSink`
+      class definition.
+- [ ] Critical line in the new body:
+      `innerState->rootDecisionGraph = decisionGraph;` (nested
+      builtins.cache propagation).
+- [ ] Run `tests/functional/builtins-cache.sh`; expect the data-only
+      assertions (scalar/string/attrset/list/nested/expression
+      form/error cases/transitive invalidation/multiple calls)
+      to pass.
+
+**Step C — structural ambient ids** (~100 lines across 3 files)
+
+- [ ] `src/libexpr/include/nix/expr/trace-ids.hh`: widen `AmbientId`
+      to hold either a seed-counter `int` or a derived-hash string
+      (variant or a small struct). Update `std::hash` and the
+      `to_string` representation.
+- [ ] `src/libexpr/expr-from-object.cc`: in `AmbientResolver::query`,
+      change `registerOuter(child)` calls inside the
+      child-producing arms (`QueryGetAttr`, `QueryGetListElem`,
+      `QueryApply`) to compute and register the structural id
+      `sha256(parentIdBytes || queryHashOf(thisQuery))` instead of
+      bumping `nextId`.
+- [ ] `src/libexpr/ambient-object.cc`: each `AmbientObject` method
+      that emits a query uses the new id encoding in the `from`
+      string.
+- [ ] `src/libexpr/tracing-replay-evaluator.cc`: rewrite
+      `dispatchAmbientQuery` to use on-demand structural resolution
+      via `resolveAmbientId` (described in §Ambient identity). Add
+      the one-time `producerByChildId` index build at walk entry.
+- [ ] `src/libexpr/tracing-replay-evaluator.cc`: in `apply()`,
+      drop the queue-based seed registration; pre-bind seed roots
+      into `idToObject` keyed by `"virtual:N"` or a positional
+      `"$arg"`/`"$fn"` token (decide which during impl).
+- [ ] Run `builtins-cache.sh`; the `functionArgs`, simple-lambda,
+      and curried cases should now exercise the new code path —
+      cache misses are still expected for covariant callbacks
+      until Step D.
+
+**Step D — apply-Request replay dispatcher** (~30 lines)
+
+- [ ] `src/libexpr/tracing-replay-evaluator.cc`:
+      `dispatchAmbientQuery` adds an `if (tag == "apply")` arm that
+      resolves `params.fn` via the resolver, attempts a *dummy*
+      apply on the resolved outer fn (without actually invoking
+      it — see open question 9), and returns the canonical
+      `ResultType{"apply"}` response hash. Register the
+      apply-result Object under the recorded `arg` id so
+      downstream Requests against it dispatch.
+- [ ] Cached function-call replay-completeness assertions
+      (`_NIX_DISALLOW_PARSE=1`) in `builtins-cache.sh` should now
+      pass for simple-function cases.
+
+**Step E — incoming-query recording for covariant callbacks** (~200 lines)
+
+- [ ] `src/libexpr/include/nix/expr/tracing-local-object.hh`,
+      `src/libexpr/tracing-local-object.cc`: new `TracingLocalObject`
+      per Appendix C, recording every outer access as an incoming
+      Fact in the inner FactSet.
+- [ ] `src/libexpr/expr-from-object.cc`: `AmbientResolver::apply`
+      wraps `argObj` in `TracingLocalObject` before bridging via
+      `ExprFromObject`.
+- [ ] `src/libexpr/tracing-replay-evaluator.cc`: an analogous
+      `ReplayLocalObject` that serves recorded incoming answers
+      from the FactSet, indexed by `(localId, queryType)`.
+      `dispatchAmbientQuery`'s apply arm swaps in this proxy for
+      the recorded `argObj`.
+- [ ] `builtins-cache.sh`'s `call-fn.nix`, `path-fn.nix`,
+      `callpkg-fn.nix` cases should now produce cache hits
+      (verifiable via `_NIX_DISALLOW_PARSE=1`).
+
+**Step F — wrap-up** (~20 lines)
+
+- [ ] `doc/design/tracing-eval-cache.md`: in the "What's deferred"
+      section, drop the `builtins.cache` line.
+- [ ] `src/libexpr/primops/cache.cc`: remove the "d=2 ambient layer
+      pending" comment block.
+- [ ] Update or remove obsolete project-doc references to
+      `TracingIndex`.
+- [ ] Inline-comment the structural-id encoding in
+      `tracing-replay-evaluator.cc` and `expr-from-object.cc`.
+
+### Stop conditions
+
+- A is mandatory.
+- B without C ships only the data-only test surface.
+- C without D leaves a permanent miss on every apply Fact.
+- D without E leaves covariant-callback hits unimplemented but
+  every replay correctly falls through to inner re-evaluation.
+- v1 ship = A+B+C+D. E is a follow-up.
+
+## Future work (out of scope here)
+
+These were in the v12-era follow-up list and remain valid:
+
+- `TeeTracingWriter` to replace the `NullTraceSink` placeholder
+  inside the primop.
+- Shared in-memory AST cache across inner evaluators so each
+  `builtins.cache` call doesn't re-parse from scratch (was previously
+  blocked by SourcePath/accessor binding into the AST).
+- A deduplicating Environment layer for overlapping file reads
+  across cache calls.
+- Restoring the `nix eval-cache` introspection subcommand — it was
+  removed by `3db54dcff` and would help debug the structural-id
+  path in Step C.
+- Interaction-traced *outer→inner* nesting as an alternative to the
+  current input-traced nesting (so the outer cache treats the inner
+  as an oracle and benefits from per-method early cutoff). This is a
+  change in cost model rather than correctness; defer until we have
+  numbers.
+
+## Source map
+
+For the implementation phase, the files we expect to touch:
+
+- `src/libexpr/primops/cache.cc` — restore `prim_cache` body.
+- `src/libexpr/include/nix/expr/eval.hh` — add
+  `rootDecisionGraph` pointer and (if needed) the `CacheState`
+  fields for the owned-graph case.
+- `src/libcmd/command.cc` — set `evalState->rootDecisionGraph`
+  during `getEvalState()`.
+- `src/libexpr/tracing-replay-evaluator.cc` — rewrite
+  `dispatchAmbientQuery` and `apply()` to use structural ids
+  instead of positional queues; add apply-Request dispatcher
+  for covariant callbacks (open question 9).
+- `src/libexpr/ambient-object.cc` + the resolver in
+  `expr-from-object.cc` — emit hash-encoded derived ids.
+- `tests/functional/builtins-cache.sh` — verify in place (no code
+  change required if the implementation matches the test
+  expectations). Wired into `tests/functional/meson.build:173`.
+  Currently broken on `eval-cache-v13` — first assertion
+  (`builtins.cache { import = scalar.nix }`) throws on the
+  primop stub.
+
+## Appendix A: sketch of restored `cache.cc`
+
+This is the shape `prim_cache` will take, lifted from the v12 form
+and ported to v13's types. It is not committed code; it is a
+reading guide to the design decisions above.
+
+```cpp
+#include "nix/expr/eval.hh"
+#include "nix/expr/eval-error.hh"
+#include "nix/expr/expr-from-object.hh"
+#include "nix/expr/interpreter.hh"
+#include "nix/expr/primops.hh"
+#include "nix/expr/trace-sink.hh"
+#include "nix/expr/tracing-decision-graph.hh"
+#include "nix/expr/tracing-environment.hh"
+#include "nix/expr/tracing-evaluator.hh"
+#include "nix/expr/tracing-replay-evaluator.hh"
+#include "nix/expr/tracing-writer.hh"
+
+namespace nix {
+
+class NullTraceSink final : public TraceSink {
+public:
+    void log(const nlohmann::json &) override {}
+};
+
+static void prim_cache(EvalState & state, PosIdx pos, Value ** args, Value & v)
+{
+    state.forceAttrs(*args[0], pos,
+        "while evaluating the argument passed to builtins.cache");
+
+    std::optional<SourcePath> importPath;
+    std::optional<std::string> expr;
+    std::optional<SourcePath> baseDir;
+
+    for (auto & attr : *args[0]->attrs()) {
+        auto n = state.symbols[attr.name];
+        if (n == "import") {
+            NixStringContext ctx;
+            importPath.emplace(state.coerceToPath(attr.pos, *attr.value, ctx,
+                "while evaluating the 'import' attribute passed to builtins.cache"));
+        } else if (n == "expr") {
+            expr.emplace(state.forceStringNoCtx(*attr.value, attr.pos,
+                "while evaluating the 'expr' attribute passed to builtins.cache"));
+        } else if (n == "baseDir") {
+            NixStringContext ctx;
+            baseDir.emplace(state.coerceToPath(attr.pos, *attr.value, ctx,
+                "while evaluating the 'baseDir' attribute passed to builtins.cache"));
+        } else {
+            state.error<EvalError>("unsupported argument '%1%' to builtins.cache", n)
+                .atPos(attr.pos).debugThrow();
+        }
+    }
+
+    if (importPath && expr)
+        state.error<EvalError>("builtins.cache: 'import' and 'expr' are mutually exclusive")
+            .atPos(pos).debugThrow();
+    if (!importPath && !expr)
+        state.error<EvalError>("builtins.cache: either 'import' or 'expr' is required")
+            .atPos(pos).debugThrow();
+    if (expr && !baseDir)
+        state.error<EvalError>("builtins.cache: 'baseDir' is required when using 'expr'")
+            .atPos(pos).debugThrow();
+
+    auto & cache = state.cacheState;
+
+    // Step A: share the EvalCommand-owned graph if present;
+    // otherwise lazily construct an owned one.
+    TracingDecisionGraph * decisionGraph;
+    if (state.rootDecisionGraph) {
+        decisionGraph = state.rootDecisionGraph;
+    } else {
+        if (!cache.ownedDecisionGraph)
+            cache.ownedDecisionGraph = std::make_unique<TracingDecisionGraph>();
+        decisionGraph = cache.ownedDecisionGraph.get();
+    }
+
+    // Per-call tracing stack.
+    auto sink   = std::make_shared<NullTraceSink>();
+    auto writer = std::make_shared<TracingWriter>(*sink, decisionGraph);
+
+    // Wrap the OUTER environment (Step 2a ambient-capability fix —
+    // inner file reads must flow up to outer accessors so the outer
+    // cache observes them).
+    auto tracingEnv = make_ref<TracingEnvironment>(state.environment, *writer);
+
+    // Inner EvalState shares the outer's SymbolTable so symbols
+    // interned during inner parse compare equal to outer symbols.
+    auto innerState = make_ref<EvalState>(
+        LookupPath{},
+        state.fetchSettings,
+        state.settings,
+        tracingEnv,
+        state.systemEnvironment,
+        state.getSymbolTable());
+
+    auto interpreter = make_ref<Interpreter>(innerState);
+
+    // Evaluator stack: TracingReplay → TracingEval → Interpreter.
+    // On miss, TracingReplay falls back into TracingEval, which
+    // records into the shared decision graph via the writer.
+    ref<Evaluator> recordingEval = make_ref<TracingEvaluator>(*writer, interpreter);
+    ref<Evaluator> replayEval = make_ref<TracingReplayEvaluator>(
+        recordingEval, *state.environment, *writer, *decisionGraph);
+
+    // Propagate the shared graph into the inner EvalState so nested
+    // builtins.cache calls find it through state.rootDecisionGraph.
+    innerState->rootDecisionGraph = decisionGraph;
+
+    // Persist per-call state on the outer EvalState so it outlives
+    // any ExprFromObjectAttr thunks the result attrs are wrapped in.
+    cache.calls.push_back({
+        .sink           = sink,
+        .writer         = writer,
+        .recordingEval  = recordingEval.get_ptr(),
+        .replayEval     = replayEval.get_ptr(),
+        .innerState     = innerState,
+    });
+
+    // Shared ambient resolver — one per builtins.cache invocation,
+    // threaded through every <cached-fn> PrimOp this call produces.
+    auto resolver = makeAmbientResolver(&state, replayEval.get_ptr());
+    interpreter->ambientResolver = resolver;
+
+    // Re-anchor paths on the inner accessor (TracingSourceAccessor).
+    auto toInnerPath = [&](const SourcePath & p) {
+        return RootedPath{innerState->rootFSRoot, p.path};
+    };
+
+    // Evaluate via the replay evaluator (cache-first, recording-fallback).
+    ref<Object> result = importPath
+        ? replayEval->evalFile(toInnerPath(*importPath), importPath->path.abs())
+        : replayEval->evalExpr(*expr, toInnerPath(*baseDir));
+
+    // Bridge the inner Object back to the outer Value via
+    // ExprFromObject. Eager top-level eval (primops must produce a
+    // concrete Value), lazy children (ExprFromObjectAttr thunks).
+    ExprFromObject(result.get_ptr(), replayEval.get_ptr(), resolver)
+        .eval(state, state.baseEnv, v);
+}
+
+static RegisterPrimOp primop_cache({
+    .name = "__cache",
+    .args = {"args"},
+    .doc = R"(
+      Evaluate an expression in a separate evaluator with persistent caching.
+      ...
+    )",
+    .impl = prim_cache,
+    .experimentalFeature = Xp::TracingEvalCache,
+});
+
+} // namespace nix
+```
+
+The skeleton matches the v12 form. The only meaningful change is
+Step A (sharing the graph via `state.rootDecisionGraph`) and the
+type swap from `TracingIndex` to `TracingDecisionGraph`.
+
+## Appendix B: sketch of `EvalState::rootDecisionGraph` plumbing
+
+```cpp
+// src/libexpr/include/nix/expr/eval.hh, near evaluatorCompat
+// (~line 562, just before CacheState):
+
+/* Shared decision-graph index for builtins.cache. Set by
+   EvalCommand when CLI-level tracing-eval-cache is enabled, so
+   builtins.cache and the CLI cache write to the same SQLite
+   file via the same in-process handle. Null otherwise; the
+   primop falls back to cacheState.ownedDecisionGraph. */
+TracingDecisionGraph * rootDecisionGraph = nullptr;
+```
+
+```cpp
+// src/libexpr/include/nix/expr/eval.hh, inside CacheState
+// (~line 567, alongside the existing CallState vector):
+
+std::unique_ptr<TracingDecisionGraph> ownedDecisionGraph;
+```
+
+```cpp
+// src/libcmd/command.cc, in EvalCommand::getEvalState()
+// after `tracingDecisionGraph = std::make_unique<TracingDecisionGraph>();`
+// and after `evalState->evaluatorCompat = eval.get_ptr();`:
+
+evalState->rootDecisionGraph = tracingDecisionGraph.get();
+```
+
+That is the entire Step A patch. Three lines of header diff and one
+line of command.cc.
+
+## Appendix C: sketch of `TracingLocalObject` for Step E
+
+When `resolver->apply(fnId, argObj)` is invoked during a covariant
+callback, the outer evaluator may access `argObj`'s fields directly
+— attribute lookups, getString, getInt — and those accesses must be
+recorded as incoming Facts in the inner FactSet for replay
+validation. The piece missing today is the decorator that does the
+recording.
+
+The shape:
+
+```cpp
+/* Object decorator that wraps a local (inner) value passed to the
+   outer evaluator during a covariant callback. Records every outer
+   access as an AmbientIncoming Fact in the inner FactSet, then
+   delegates to the wrapped Object. */
+class TracingLocalObject : public Object
+{
+    std::shared_ptr<Object> inner;
+    AmbientId localId;
+    Environment & innerEnv;
+
+public:
+    TracingLocalObject(std::shared_ptr<Object> inner, AmbientId localId,
+                       Environment & innerEnv)
+        : inner(std::move(inner)), localId(localId), innerEnv(innerEnv) {}
+
+    std::shared_ptr<Object> maybeGetAttr(const std::string & name) override {
+        auto child = inner->maybeGetAttr(name);
+        // Record the access; from = "L<localId>" so a future replay
+        // recognises it as an incoming query against the local arg.
+        auto q = trace::QueryGetAttr{name, localFrom(localId)};
+        auto r = child ? trace::ResultMaybeType{
+                            std::optional{objectTypeToString(child->getType())}}
+                       : trace::ResultMaybeType{std::nullopt};
+        innerEnv.ambientQuery(q, [&](const auto &) { return r; });
+        // Wrap the child too so its accesses are recorded.
+        if (!child) return nullptr;
+        return std::make_shared<TracingLocalObject>(
+            std::move(child),
+            derivedLocalId(localId, q),  // structural id, mirrors Step C
+            innerEnv);
+    }
+
+    // ...similar wrapping for getString, getInt, getListElem, etc.
+    // Atomic getters: record the answer Fact, return the value
+    // unchanged. Composite getters (getAttr, getListElem): record
+    // and re-wrap the child for transitive recording.
+};
+```
+
+The `localFrom(id)` encoding distinguishes local from outer ids in
+the same `from` string slot: e.g. `"L0"`, `"L1"` vs `"E0"`, `"E1"`
+(outer/external) or the structural hash strings of derived values.
+Step C's structural encoding extends cleanly: derived local ids are
+`sha256("L0" || queryHashOf(derivation))`.
+
+On the replay side, `ReplayLocalObject` reverses this: each
+`maybeGetAttr` call queries the FactSet (or the in-walk producer
+index) for a matching incoming Request and serves the recorded
+response.
+
+The integration point in `AmbientResolver::apply` becomes:
+
+```cpp
+auto argId = registerLocal(argObj);
+auto wrappedArg = std::make_shared<TracingLocalObject>(
+    argObj, argId, innerEvaluator->getEvalState().environment);
+// argThunk wraps `wrappedArg`, not raw argObj, so outer accesses
+// flow through the recording decorator.
+auto * argExpr = new ExprFromObject(wrappedArg, innerEvaluator, shared_from_this());
+```
+
+Step E ships when `TracingLocalObject` and `ReplayLocalObject` are
+both in place. Until then, the trace types are declared but no
+producer/consumer exists, and covariant callbacks fall through to
+inner each time — correct results, no cache speedup.
