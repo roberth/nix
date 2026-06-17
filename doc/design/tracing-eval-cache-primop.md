@@ -1379,12 +1379,24 @@ Interpreter_inner
 environment wraps the *outer* `TracingEnvironment` (Step 2a's
 ambient-capability fix), so inner file reads bubble through both
 `TracingSourceAccessor`s — this is **input-traced nesting** in
-action: file / env Facts observed by the inner are forwarded
-upward as Facts of every wrapping outer cache, without any
-separate cross-evaluator protocol. The ambient query layer the
-rest of this doc is about uses a different model
-(interaction-traced); the two compose, and Appendix D shows both
-at work.
+action.
+
+A note before going further: "input-traced," "content-traced," and
+"interaction-traced" name *interaction models between two
+evaluators*, not properties of an evaluator on its own. The
+outer↔inner relationship at this boundary uses two of them
+together: file / env reads use input-traced nesting (Facts
+propagate upward through the wrapped `TracingEnvironment`), and
+ambient queries on the outer-provided arg use interaction-traced
+nesting (recorded as d>0 Facts in the inner trace only). A given
+evaluator can sit on different sides of different interactions:
+the inner here is content-traced *with respect to its outer*
+(its Q-hashes don't reference outer context, so it's reusable
+across outers), but if this inner were itself to invoke another
+nested `builtins.cache`, *that* deeper boundary would apply the
+same input-traced + interaction-traced split again — the inner
+would be the "outer" of the deeper interaction. The classification
+is per-interaction, not per-evaluator.
 
 A `resolver = makeAmbientResolver(&outerState, replayEval_inner)`
 threads through every `<cached-fn>` PrimOp produced inside this
@@ -1484,28 +1496,35 @@ innerWriter / outerWriter:
 The result returned to `prim_cache` is a `TracingObject_inner`
 wrapping the lambda Value, carrying `triePos.queryHashStr = Q_import_hash`.
 
-What each trace did and did not capture at this point reflects a
-deliberate duality:
+What each trace did and did not capture at this point reflects
+the dual nature of the outer↔inner interaction (recall: these are
+per-interaction classifications, not properties of either
+evaluator):
 
-- The **outer trace is input-traced**: it sees the inner's file
-  read as its own Fact via the `TracingEnvironment` chain, so any
-  change to that file invalidates outer cache hits. It does *not*
-  record `Q_import`, `ResultType{"function"}`, or the
-  `TracingObject_inner` handoff at `prim_cache`'s return. The
-  boundary sits at the environment, not at the Object interface.
-- The **inner trace is content-traced**: it records what it itself
-  observed (the file Fact, the `Q_import` query, the function
-  result) and *nothing about which outer context invoked it*. This
-  is load-bearing for `builtins.cache`'s reuse story: if the
-  inner trace mentioned the outer's `Q_expr` hash, the outer
-  arg's identity, or any other outer-context detail, the inner
-  Q-hashes would vary per outer caller and the cache wouldn't hit
-  across different outer projects importing the same inner
-  expression. The whole point of the primop is that a Nixpkgs-
-  shaped inner caches once and serves many outers; that demands
-  inner Q-hashes that depend only on inner inputs (the file
-  contents and, for `Q_apply` later, the inner-visible
-  representation of the argument).
+- The **outer side of the interaction is input-traced**: the
+  outer sees the inner's file read as its own Fact via the
+  `TracingEnvironment` chain, so any change to that file
+  invalidates outer cache hits. It does *not* see `Q_import`,
+  `ResultType{"function"}`, or the `TracingObject_inner` handoff
+  at `prim_cache`'s return. The boundary sits at the environment,
+  not at the Object interface.
+- The **inner side of the interaction is content-traced**: the
+  inner records what it itself observed (the file Fact, the
+  `Q_import` query, the function result) and *nothing about which
+  outer context invoked it*. This is load-bearing for
+  `builtins.cache`'s reuse story — if the inner Q-hashes mentioned
+  the outer's `Q_expr` hash, the outer arg's identity, or any
+  other outer-context detail, they would vary per outer caller
+  and the cache wouldn't hit across different outer projects
+  importing the same inner expression. The whole point of the
+  primop is that a Nixpkgs-shaped inner caches once and serves
+  many outers; that demands inner Q-hashes that depend only on
+  inner inputs.
+- The inner is content-traced *here*, but for its own internals
+  (the file it read, and any further nested `builtins.cache` it
+  might invoke) it is input-traced — the same pattern applies one
+  level deeper. The model classification rides on the boundary,
+  not on the evaluator.
 
 The same asymmetry will hold in Step 4 — `getType` and
 `getAttrNames` on the TracingObject log queries into
