@@ -1520,11 +1520,10 @@ evaluator):
   primop is that a Nixpkgs-shaped inner caches once and serves
   many outers; that demands inner Q-hashes that depend only on
   inner inputs.
-- The inner is content-traced *here*, but for its own internals
-  (the file it read, and any further nested `builtins.cache` it
-  might invoke) it is input-traced — the same pattern applies one
-  level deeper. The model classification rides on the boundary,
-  not on the evaluator.
+- The inner is content-tracing *in relation to the outer*, but if
+  it were to invoke a further nested `builtins.cache` the inner
+  would sit on the input-tracing side of *that* deeper boundary.
+  The classification rides on the boundary, not on the evaluator.
 
 The same asymmetry will hold in Step 4 — `getType` and
 `getAttrNames` on the TracingObject log queries into
