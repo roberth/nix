@@ -264,19 +264,20 @@ show what they *would* look like if the primop were restored
 against the existing counter-based resolver — and where the
 dispatcher would fail.
 
-Take the `call-fn.nix` case from `builtins-cache.sh`:
+Take a worked example modelled on `builtins-cache.sh`:
 
 ```nix
-(builtins.cache { import = ./call-fn.nix; }) { f = x: x + 1; x = 10; }
+(builtins.cache { import = ./double-call.nix; }) { f = x: x + 1; x = 10; }
 ```
 
-where `call-fn.nix` is `{ f, x }: f x`. If the primop were
-restored as-is, `nix eval` forcing the result would drive the
-inner to evaluate the body `f x`, which would force `arg.f` to
-know what to apply. The outer lambda's body `x + 1` would then
-force `arg.x` (bound to the lambda's `x`), and the addition would
-force *that* as an int. Each forcing would fire an ambient query
-on the `AmbientObject` wrapping the outer arg, and the resolver's
+where `double-call.nix` is `{ f, x }: 2 * f x`. If the primop
+were restored as-is, `nix eval` forcing the result would drive the
+inner to evaluate the body `2 * f x`, which would force `arg.f`
+to know what to apply. The
+outer lambda's body `x + 1` would then force `arg.x` (bound to
+the lambda's `x`), and the addition would force *that* as an
+int. Each forcing would fire an ambient query on the
+`AmbientObject` wrapping the outer arg, and the resolver's
 counter would walk: L0 = seed (the outer attrset, registered at
 the apply boundary), L1 = child returned from `getAttr "f"`
 (first `registerOuter` call), L2 = child returned from
@@ -1380,19 +1381,19 @@ Local-vs-outer is just a seed-string convention: locals use
 both are `Hash` ids resolved against the same `idToObject` (for
 pre-bound seeds) or `Requests` pool (for derived).
 
-## Appendix D: walkthrough of the call-fn.nix case
+## Appendix D: walkthrough of the double-call.nix case
 
 This walks through what would happen, end to end, for
 
 ```nix
-(builtins.cache { import = ./call-fn.nix; }) { f = x: x + 1; x = 10; }
+(builtins.cache { import = ./double-call.nix; }) { f = x: x + 1; x = 10; }
 ```
 
-(`call-fn.nix` is `{ f, x }: f x`), assuming Steps A–C are in
-place, `--option tracing-eval-cache true` enabled so the outer is
-also tracing, and a cold cache. The point is to show both
-evaluators' state side by side: who fires what, what each writer
-records, and where the resolver ids come from.
+(`double-call.nix` is `{ f, x }: 2 * f x`), assuming Steps A–C
+are in place, `--option tracing-eval-cache true` enabled so the
+outer is also tracing, and a cold cache. The point is to show both evaluators'
+state side by side: who fires what, what each writer records, and
+where the resolver ids come from.
 
 This deliberately glosses some lower-level mechanics (the precise
 `Interpreter::apply` thunk wiring, the order in which `getType` /
@@ -1471,7 +1472,7 @@ no file Fact is recorded yet.
 `outerWriter.inFlight = { Q_expr }`. No Facts yet.
 
 The outermost expression is an application:
-`(builtins.cache { import = ./call-fn.nix; }) { f = x: x+1; x = 10; }`.
+`(builtins.cache { import = ./double-call.nix; }) { f = x: x+1; x = 10; }`.
 Evaluating it to WHNF means forcing the function side first, then
 applying. Every step below happens inside the forcing of `Q_expr`'s
 body — `Q_expr` stays in flight until Step 10. That context
@@ -1481,17 +1482,17 @@ matters: any Fact added to `outerWriter.v13FactSet` during Steps
 ### Step 2 — outer forces the function side; the primop fires
 
 To force the application, the outer Interpreter first evaluates the
-function side `builtins.cache { import = ./call-fn.nix; }`. That
-expression is itself a complete primop application —
+function side `builtins.cache { import = ./double-call.nix; }`.
+That expression is itself a complete primop application —
 `builtins.cache` is a 1-arity PrimOp and the argument attrset is
 supplied — so the WHNF is not "a PrimOp waiting for its arg" but
 whatever `prim_cache.impl` returns after running. The impl:
 
-1. Parses the arg attrset, gets `importPath = ./call-fn.nix`.
+1. Parses the arg attrset, gets `importPath = ./double-call.nix`.
 2. Locates the shared graph; since `state.rootDecisionGraph` is
    set, `decisionGraph` is reused.
 3. Builds the inner stack and resolver (above).
-4. Calls `replayEval_inner.evalFile(./call-fn.nix)`.
+4. Calls `replayEval_inner.evalFile(./double-call.nix)`.
 
 What `prim_cache.impl` ultimately returns (via the `ExprFromObject`
 bridge) is covered in Step 4.
@@ -1501,10 +1502,10 @@ bridge) is covered in Step 4.
 `replayEval_inner.evalFile` cold-misses, falls through to
 `tracingEval_inner.evalFile`:
 
-- `logRootQuery(QueryImport{".../call-fn.nix"})` →
+- `logRootQuery(QueryImport{".../double-call.nix"})` →
   `innerWriter.inFlight = { Q_import }`.
-- `Interpreter_inner.evalFile` parses `call-fn.nix`. Reading the
-  file fires `TracingSourceAccessor_inner.getFileHash`, which
+- `Interpreter_inner.evalFile` parses `double-call.nix`. Reading
+  the file fires `TracingSourceAccessor_inner.getFileHash`, which
   calls `innerEnv.getFileHash` → wraps to outer's
   `TracingEnvironment` → reaches the real filesystem; both writers
   log the response. This dual-recording is the input-traced
@@ -1515,11 +1516,11 @@ bridge) is covered in Step 4.
   Both writers' `v13FactSet` gets:
 
   ```
-  Fact_file = ( queryHash(FileReadRequest{".../call-fn.nix"}),
+  Fact_file = ( queryHash(FileReadRequest{".../double-call.nix"}),
                 responseHash(FileReadResponse{H_file_content}) )
   ```
 
-- `Interpreter_inner` returns `InterpreterObject(lambda {f,x}: f x)`.
+- `Interpreter_inner` returns `InterpreterObject(lambda {f,x}: 2 * f x)`.
 - `tracingEval_inner.logResult(ResultType{"function"}, Q_import)`:
   - factSet at this moment = `{ Fact_file }`
   - `decisionGraph.record(Q_import, factSetHash, resultHash, …)` writes
@@ -1611,7 +1612,7 @@ ExprFromObject(lambdaTracingObj, replayEval_inner, resolver)
 `nFunction` arm of `ExprFromObject::eval` calls
 `makeCachedFnPrimOp(lambdaTracingObj, replayEval_inner, resolver)`
 and stores the resulting `<cached-fn>` PrimOp in `v_outer`. That
-`v_outer` is the WHNF of `builtins.cache { import = ./call-fn.nix; }`
+`v_outer` is the WHNF of `builtins.cache { import = ./double-call.nix; }`
 — the function side of the outermost application — and
 `prim_cache` returns it to its caller (the outer Interpreter).
 
@@ -1654,8 +1655,8 @@ localValues: ∅
 
 `Q_apply` here is the inner's record of the **outermost
 application** in the original expression — `(builtins.cache {…})
-{ f = x:x+1; x = 10; }`, i.e. the call-fn.nix lambda
-(`{f, x}: f x`) being called with the outer arg attrset. That
+{ f = x:x+1; x = 10; }`, i.e. the double-call.nix lambda
+(`{f, x}: 2 * f x`) being called with the outer arg attrset. That
 application happens at the outer language level but is routed
 into the inner by the `<cached-fn>` PrimOp impl's
 `innerEval->apply(lambdaTracingObj, contraArg)` call, which is
@@ -1792,6 +1793,10 @@ Forcing the app thunk runs the inner application:
    `QueryGetInt{from=queryHash(QueryGetAttr{name="x", from=hashString("seed:0")})}`
    as an ambient Fact and returns 10. The addition produces 11.
 
+6. **Inner lambda body finishes: `2 * (f x)` = `22`.** The
+   multiplication happens inside the inner Interpreter; no ambient
+   query fires.
+
 By the end of forcing the app thunk, `innerWriter.v13FactSet` has
 accumulated, in addition to `Fact_file`:
 
@@ -1841,20 +1846,20 @@ ambient context.
 
 `type = nInt` → `obj.getInt()`. This is another query against the
 inner TracingObject; same shape as Step 8 but the in-flight
-`QueryGetInt` terminates with `ResultInt{11}`. The outer Value
-`v_outer` ends up as `mkInt(11)`.
+`QueryGetInt` terminates with `ResultInt{22}`. The outer Value
+`v_outer` ends up as `mkInt(22)`.
 
 ### Step 10 — outer closes `Q_expr`
 
-The whole expression evaluated to `11`. `tracingEval_outer.logResult(R_int_11, Q_expr)`:
+The whole expression evaluated to `22`. `tracingEval_outer.logResult(R_int_22, Q_expr)`:
 
 - factSet at this moment for the outer = `{ Fact_file }` (the inner
   ambient stayed inner; the outer never saw it).
-- Outer's `decisionGraph.record(Q_expr_hash, factSetHash, R_int_11_hash)`:
+- Outer's `decisionGraph.record(Q_expr_hash, factSetHash, R_int_22_hash)`:
   - `Asks(Q_expr_hash, ∅) → RS{R_file}`
-  - `Terminals(Q_expr_hash, fH) → R_int_11`
+  - `Terminals(Q_expr_hash, fH) → R_int_22`
 
-`nix eval` prints `11`. Done.
+`nix eval` prints `22`. Done.
 
 ### What replay does on a warm cache
 
@@ -1865,19 +1870,23 @@ The outer's `v13Walk(Q_expr_hash)`:
    `onlyInEdge = {R_file}`, `onlyInDispatched = {}`. Dispatches
    `R_file` (the file read), `xorFactIntoHash`, lands at
    `factSetHash` matching the recorded `Terminals(Q_expr_hash, …)`.
-2. Returns `R_int_11` directly. `prim_cache` does *not* run.
+2. Returns `R_int_22` directly. `prim_cache` does *not* run.
 
 The inner stack is never even constructed. The shared
 `decisionGraph` carries enough state for the outer terminal to hit.
 
-If, instead, the outer cache is cold but the inner is warm (e.g.
-after `clearCache` on the outer JSON traces but the SQLite DB
-persists), the outer falls into `prim_cache`, the inner walks each
-of `Q_import`, `Q_apply`, `QueryGetType` against the live
-filesystem and ambient resolver, and hits without re-evaluating
-the lambda body. The ambient Fact resolution from §The fix:
-producer query as id is what makes the apply-chain Facts
-dispatchable when the recorded `from` refers to derived ids.
+If, instead, the outer's expression changed but its behaviour
+towards the inner didn't — say the user now evaluates
+`{ result = (builtins.cache { import = ./double-call.nix; }) { f = x:x+1; x = 10; }; }`
+instead of the bare application — then the outer `Q_expr` hash is
+new (no outer Terminal hit), so the outer falls into
+`prim_cache`, but the inner sees the same import / apply / args as
+before. The inner walks each of `Q_import`, `Q_apply`,
+`QueryGetType` against the live filesystem and ambient resolver
+and hits without re-evaluating the lambda body. The ambient Fact
+resolution from §The fix: producer query as id is what makes the
+apply-chain Facts dispatchable when the recorded `from` refers to
+derived ids.
 
 On the replay side, `ReplayLocalObject` reverses this: each
 `maybeGetAttr` call queries the FactSet (or the in-walk producer
