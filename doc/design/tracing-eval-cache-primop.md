@@ -130,7 +130,8 @@ What is missing or wrong, and so must change:
    `TracingReplayEvaluator` instance at a time, but as soon as
    `builtins.cache`'s cached-function PrimOps push apply boundaries
    inside the inner evaluator, the positional approach starts pairing
-   ids by FactSet iteration order rather than by structural identity.
+   ids by FactSet iteration order rather than by what the recorded
+   counter labelled them — wrong in any branching access pattern.
 
 4. The recording-side `TracingWriter` requires a `TraceSink &`
    reference. As in v12, the primop will satisfy it with a
@@ -215,181 +216,137 @@ records (Outgoing/Incoming) and the validity conditions on them
 (replay re-issues outgoing queries, replay serves recorded incoming
 answers if/when the outer evaluator asks) are unchanged.
 
-## Ambient identity in an unordered model
+## Ambient identity
 
 This is the design-level question that the v12 stub commit was
 flagging when it said "d=2 ambient layer pending." It is the one
-substantive thing the primop work has to think through, and the part
-where the existing v13 code (designed for the CLI root) doesn't yet
-generalise.
+substantive thing the primop work has to think through.
 
-### The problem
+### Background: where ids come from
 
-A recorded `(QueryApply, factSet)` may contain multiple ambient Facts:
+Ambient ids are produced interpreter-side. The resolver's `nextId`
+counter advances each time the recorder forces an ambient value:
+the seed seed root in the `<cached-fn>` PrimOp impl
+(`registerOuter(outerArgObj)`), and every child returned from
+`AmbientResolver::query`'s `QueryGetAttr` / `QueryGetListElem` /
+`QueryApply` arms (`registerOuter(child)`). The IDs are not
+derived from the storage layer — v13's set-based storage just
+records the queries that reference them.
+
+There are two id namespaces sharing the same `from` / `argId`
+string slots in the JSON payloads:
+
+- **Writer-virtual ids** — `"virtual:N"`, allocated by
+  `TracingWriter::getOrAllocVirtualRoot(Object*)`. These appear in
+  the `fnId` / `argId` of `QueryApply` at the d=0 level when the
+  `TracingEvaluator` records an `apply` whose operands have no
+  trie identity.
+- **Resolver-ambient ids** — plain `"N"`, allocated by
+  `AmbientResolver::registerOuter` / `registerLocal`. These appear
+  in the `from` field of every d>0 ambient Request.
+
+Both counters are interpreter-driven and deterministic for the
+CLI's straightforward patterns: the same Object gets the same id
+on re-invocation as long as the interpreter forces things in the
+same order. That assumption is fine for the recordings we care
+about; it would not be fine if a hint mechanism existed and was
+ignored, but no general hint surface exists yet (see *Future work*).
+
+### The actual gap
+
+A recorded `(QueryApply, factSet)` may contain multiple ambient
+Facts referencing derived ids:
 
 ```
-Q  = QueryApply{fnId=f0, argId=L1}
+Q  = QueryApply{fnId=…, argId=L0}
 Facts:
-  Request(QueryGetAttr{name="f", from=L1})  ─ Response(maybe-lambda)
-  Request(QueryGetAttr{name="x", from=L1})  ─ Response(maybe-int)
-  Request(QueryGetInt{from=L1.x})            ─ Response(10)
-  Request(QueryApply{fn=L1.f, arg=L1.x})     ─ Response(int)
+  Request(QueryGetAttr{name="f", from=L0})  ─ Response(maybe-lambda)   — recorder labels this L1
+  Request(QueryGetAttr{name="x", from=L0})  ─ Response(maybe-int)      — recorder labels this L2
+  Request(QueryGetInt{from=L2})              ─ Response(10)
+  Request(QueryApply{fn=L1, arg=L2})         ─ Response(apply)
 ```
 
-For the walk to dispatch the third Request (`getInt on L1.x`), it
-must resolve `L1.x` to a live Object. `L1.x` is structurally derived
-from `L1` via `QueryGetAttr{name="x"}`, so once the second Request's
-response has been validated, the live Object obtained from
-`liveL1->maybeGetAttr("x")` is the canonical thing to bind to id
-`L1.x`.
+The `from="L2"` references a value the recorder labelled with
+counter id 2 (the child of `getAttr "x"`). The dispatcher needs to
+map "L2" back to the live child Object to issue `getInt` against it.
+The recorded `from` string carries the *label* but not the
+*derivation* — there is no way to tell from "L2" alone that it came
+from `getAttr "x"` on `L0`.
 
-But the walk's `dispatch` is a `RequestHash → ResponseHash` callback.
-It doesn't know about derivation chains; it gets called once per
-Request and has to produce a response hash on the spot. And the
-walk's iteration order over Facts is essentially unspecified —
-record's canonical FactSet form is sorted by `(requestHash,
-responseHash)`, which has no relation to the conceptual derivation
-chain.
-
-The current v13 implementation handwaves this with `pendingChildren`
-+ `unresolvedRoots`: when an id is unknown, it grabs whichever Object
-is "next" in the queue. That works for the CLI root case because
-`dispatchAmbientQuery` is only entered from one in-flight `apply`
-recording at a time, and at the CLI root the only ambient identity
-the apply needs is the two seed roots. It breaks the moment a single
-recorded `(Q, factSet)` contains a chain of derived ambient ids whose
-canonical FactSet order does not match the order in which child
-Objects were observed at recording time.
-
-### Two id namespaces in the recorded trace
-
-Reading the in-tree code clarifies what the recorded ids actually
-look like. There are two distinct id namespaces in play, sharing the
-same `from` / `argId` string slots in the JSON payloads:
-
-- **Writer-virtual ids** — `"virtual:N"` strings, allocated by
-  `TracingWriter::getOrAllocVirtualRoot(Object*)` and counted by
-  `nextVirtualRoot` (a `uint64_t`). These appear in the `fnId` and
-  `argId` fields of `QueryApply` at the d=0 level when the
-  `TracingEvaluator` records a fresh `apply` whose operands have no
-  trie identity. They name "this Object in this process" with no
-  cross-process meaning.
-
-- **Resolver-ambient ids** — plain `"N"` strings, allocated by
-  `AmbientResolver::registerOuter` / `registerLocal` (counted by
-  `nextId`, an `int`). These appear in the `from` field of every
-  d>0 ambient Request (`QueryGetAttr`, `QueryGetInt`, etc.) and in
-  the `arg` field of `QueryApply` Requests issued through
-  `applyFn`.
-
-The two counters are independent: the writer's `virtual:0` is *not*
-the resolver's `0`. Both start at zero, both bump per-allocation, and
-each lives on a different object. In practice they line up by
-position-coincidence for the common case of a single virtual seed
-root (the cached function's argument; the fn itself gets a
-`TracingObject` identity from the inner recording and so has no
-virtual id).
-
-This dual-namespace design is fine for recording. What it asks of
-replay is that *both* namespaces resolve to the same live Object that
-played the same role at recording time. For seed roots the
-`TracingReplayEvaluator::apply` path does this with its
-`unresolvedRoots` queue (described below); for derived ambient ids it
-does *not* and that is what the primop work must fix.
-
-### The bug in the current v13 lazy-positional resolver
-
-The current `dispatchAmbientQuery`/`AmbientReplayState` model relies on
-two queues populated in eval order: `unresolvedRoots` for seeds and
-`pendingChildren` for derived values. The implicit invariant is "the
-order in which `dispatch` is invoked matches the order in which the
-recorder produced the values."
-
-That invariant held under v12, where dispatch followed the temporal
-`afterHash` chain. It does not hold under v13. The walk dispatches
-Facts in `Asks` edge order, and the canonical RequestSet members
-inside an edge are iterated by sha256 hash prefix (via the Patricia
-trie). For a recording with chained derived ambient ids — `L1` → its
-attr `x` → `getInt` on `x` — the FactSet contains three Facts whose
-Request hashes have no relation to derivation order. A walk that
-dispatches `getInt{from=childId}` *before* `getAttr{from=L1,
-name="x"}` pops the wrong Object off `pendingChildren` (it's empty)
-and falls back to `unresolvedRoots`, which points at the *seed*
-attrset, not its child. `seed->getInt()` throws — replay fails — and
-the fall-through to inner re-evaluation hides the bug.
-
-This works in the CLI-root case today because that path only
-exercises a single virtual seed root (the apply argument) and rarely
-chains derived ambient ids off it. The moment `builtins.cache`
-restores recording of `QueryApply` inside its inner stack, every
-non-trivial cached function call exercises the chained case.
-
-### The fix: structural ids plus an in-walk producer index
-
-Two changes, both local:
-
-**Recording side**: emit derived ids as content hashes, not counters.
-
-In `expr-from-object.cc`'s `AmbientResolver::query`, the
-`registerOuter(child)` call inside each child-producing query (the
-`QueryGetAttr`, `QueryGetListElem`, `QueryApply` arms) is the
-allocation point. Replace the counter with
+The current in-tree dispatcher tries to recover the mapping with
+two FIFO queues (`unresolvedRoots` for seeds, `pendingChildren`
+for children produced by earlier dispatches). It is broken even
+when the walk dispatches in eval order:
 
 ```
-childId = sha256(parentIdBytes || queryHashOf(<this Q's payload>))
+F1 GetAttr from="L0" name="f"  → produces child_f, queue = [child_f]
+F2 GetAttr from="L0" name="x"  → produces child_x, queue = [child_f, child_x]
+F3 GetInt  from="L2"           → pop front = child_f         ← should be child_x
 ```
 
-stored as a hex string. Seed roots continue to use the integer
-counter (their identity is genuinely outside-the-system input). The
-`AmbientId` strong type needs widening to hold a string-backed value
-or a discriminated union of `int` (seed) / `Hash` (derived); the
-latter is the cleanest given the rest of the v13 codebase already
-holds hashes as `Hash` and serialises with `.to_string(HashFormat::
-Base16, false)`.
+The FIFO pop pairs unknown ids to children by insertion order
+rather than by counter id. For any branching access pattern the
+queues lose the mapping. The walk's actual canonical-hash
+dispatch order makes it worse, but even eval order doesn't fix
+it. The queue handling is effectively dead code for any non-chain
+case, which is why the only consumer (`builtins.cache`) is
+disabled.
 
-The Request payload already records the `from` (the *parent* id) and
-the query (the derivation) explicitly. So the recorded trace, given
-structurally-encoded child ids, becomes
-**self-describing**: every derived id appears either as the `from`
-of some later Request *and* as the implicit `childId` of the
-producer Request that names it.
+### The fix: producer query as id
 
-**Replay side**: build an id-resolution index once at walk entry.
+Counter ids are deterministic during recording but drop the
+producer relationship when written down. The recorder knows that
+`L2` is "child of `getAttr "x"` on `L0`" but the recorded
+`from="L2"` string doesn't carry that. So we change *what id we
+write down*.
 
-Before invoking `decisionGraph.walk`, the replayer walks the
-recorded RequestSet for the current `(Q, ∅)` edge and builds a flat
-map:
+A derived ambient value is fully described by its producer query:
+`child_x` *is* "the result of `getAttr "x"` on `L0`." That producer
+query is already recorded as a Fact, and v13 already
+content-addresses it by its `queryHash` in the `Requests` pool. So
+use the producer's `queryHash` as the derived value's id. No
+counter, no allocation, no separate registry — the `Requests` pool
+already keys what we want.
+
+Seed roots still need an identifier (they don't have a producer
+query — they're inputs from outside the trace). For now: hash a
+short string formed from the seed role and an interpreter-side
+counter, e.g. `hashString("seed:0")`, `hashString("seed:1")`. The
+counter is interpreter-driven and deterministic for the CLI's
+patterns. It is not robust to evaluation reordering; named hints
+would be the upgrade, but the metadata to conjure them isn't there
+for general Values (see *Future work*).
+
+With both halves, **`AmbientId` collapses to `Hash`** everywhere.
+The `from` field in query payloads is the hex form,
+indistinguishable to the dispatcher between a seed and a derived
+value — it only needs to know whether the id is pre-bound (seed)
+or has a producer Request in the `Requests` pool (derived).
+
+**Recording side**: in `AmbientResolver::query`, the child-producing
+arms compute and register the current query's `queryHash` as the
+child id instead of bumping `nextId`. `registerOuter`/`registerLocal`
+become inserts into `map<Hash, ref<Object>>`. Seed allocation in the
+PrimOp impl calls `registerOuter(seedObj,
+hashString("seed:" + std::to_string(counter)))`.
+
+**Replay side**: at `apply()` setup, pre-bind seed Hashes into
+`idToObject`. `dispatchAmbientQuery` resolves unknown ids by
+recursive lookup against the `Requests` pool:
 
 ```
-struct AmbientResolver {
-    unordered_map<string, ref<Object>> idToObject; // populated on resolve
-    unordered_map<string, ProducerRecord> producerByChildId;
-    // ProducerRecord: {parentId, derivationQuery} parsed from a Request
-};
-```
-
-Population: for each Request `R` in the RequestSet whose query type
-is child-producing (`QueryGetAttr`, `QueryGetListElem`,
-`QueryApply`), compute the deterministic child id from
-`(R.from, queryHashOf(R.query))` and register
-`childId → {R.from, R.query}` in `producerByChildId`. This is the
-*only* time the walker iterates the RequestSet for indexing; the
-cost is O(|RS|) once per cache lookup.
-
-`dispatchAmbientQuery` becomes:
-
-```
-shared_ptr<Object> resolveAmbientId(string id):
+resolveAmbientId(id):
     if (idToObject.contains(id)) return idToObject[id];
-    if (id starts with "virtual:") { /* seed; look up by writer-id */ }
-    auto producer = producerByChildId.at(id);
-    auto parent   = resolveAmbientId(producer.parentId);
-    auto child    = dispatchQueryOnObject(parent, producer.derivationQuery);
+    # id is a queryHash; the Request whose payload hashes to id is the producer
+    auto req = decisionGraph.getRequestPayload(id);
+    auto parsed = parse(req);
+    auto parent = resolveAmbientId(parsed.from);
+    auto child = dispatchQueryOnObject(parent, parsed.query, parsed.params);
     idToObject[id] = child;
     return child;
 ```
 
-On `dispatch(reqHash)`:
+Dispatch on `dispatch(reqHash)`:
 
 ```
 reqJson = decisionGraph.getRequestPayload(reqHash);
@@ -405,58 +362,20 @@ Properties:
   the same `idToObject` because `resolveAmbientId` does the
   derivation walk on demand.
 - **Self-pre-warming.** Resolving id `X` populates `X` and every
-  ancestor along the derivation path. Subsequent dispatches whose
+  ancestor along its derivation path. Subsequent dispatches whose
   `from` matches any ancestor are O(1).
-- **No schema change.** All the information needed is already in
-  the Request payload (`from`, `query`, `params`). The
-  `producerByChildId` index is built from data that's already on
-  disk; it lives entirely in process.
+- **No new index, no schema change.** The `Requests` pool already
+  keys Requests by their `queryHash`; the dispatcher just reuses
+  the existing `getRequestPayload(h)`. The `producerByChildId`
+  sidecar earlier drafts proposed turns out to be redundant.
 - **Plays with the fast path.** `TracingReplayEvaluator`'s
   `dispatchedTrie` and `lastQFactsHash` fast path still works
   because it operates on Request hashes, not on the ambient
-  resolution layer. The producer index only needs rebuilding when
-  the recorded edge changes (i.e. per top-level Q lookup).
+  resolution layer.
 
-Cost ceiling: `O(|FactSet|)` per Q, dominated by the index build.
-For the typical `builtins.cache` workload (a handful of ambient
-queries per cached function call) this is well under a millisecond.
-
-### Seed-root rebinding across processes
-
-The writer-virtual `"virtual:N"` strings are recorded in the
-`QueryApply{fnId, argId}` Q payload. On replay these must map back
-to the live `apply(fn, arg)` operands. The current code achieves
-this by:
-
-```cpp
-ambientState->unresolvedRoots.push_back(arg.get_ptr());
-if (!getId(*fn)) ambientState->unresolvedRoots.push_back(fn.get_ptr());
-auto result = lookup(QueryApply{fnId, argId});
-```
-
-The lookup recomputes the Q hash from the recorded `fnId`/`argId`
-strings (which were the recording's `virtual:N`); on hit, the walk
-runs and any ambient `from="virtual:N"` Request gets dispatched.
-`dispatchAmbientQuery` then has to associate the recording's
-`virtual:0` with the live `arg` (or `virtual:1` with `fn`).
-
-Under the new structural-id model, the seed roots remain
-positional — we only have two of them, and the apply call gives
-them in order. The recording must therefore emit *deterministic*
-seed identifiers from the apply ordinal, not from the
-`getOrAllocVirtualRoot` counter (which is per-process). The
-straightforward fix: keep the writer's `virtual:N` strings but
-*reset* the counter at each `apply()` so the first virtual root in
-this apply is always `virtual:0` and the second is `virtual:1`. The
-`TracingReplayEvaluator::apply` change is then to bind
-`virtual:0` → first non-identity operand and `virtual:1` → second.
-
-Alternative: drop `"virtual:N"` entirely from the apply Q and use
-positional tokens `"$arg"` / `"$fn"` directly. This makes the Q hash
-stable across processes by construction and removes the
-counter-coincidence dependency. The cost is changing the existing
-`QueryApply` Q hash — a one-time on-disk cache invalidation, which
-is acceptable during a feature-development branch.
+Cost ceiling: O(depth of derivation chain) per resolved id, with
+memoisation across resolves in a single walk. For typical
+`builtins.cache` workloads this is negligible.
 
 ## Architecture: bringing back `cache.cc`
 
@@ -794,7 +713,7 @@ defensible choice but a future revision may want to revisit.
    inner re-evaluation. The covariant-callback test cases in
    `builtins-cache.sh` (`call-fn.nix`, `path-fn.nix`,
    `callpkg-fn.nix`) therefore re-evaluate every time even on
-   what would otherwise be a hit. The structural-id work in Step C
+   what would otherwise be a hit. The id-resolution work in Step C
    is necessary but not sufficient — Step D needs an additional
    `QueryApply` dispatcher on the replay side that re-issues the
    outer apply (using the resolved `fn` and the recorded `arg`'s
@@ -858,17 +777,17 @@ At this point `builtins-cache.sh`'s data-only tests
 multiple cache calls) should pass — those don't exercise the d=2
 ambient layer at all.
 
-**Step C — make derived ambient ids structurally addressable.**
-Change `AmbientObject` child-id allocation to compute
-`sha256(parentId || queryHashOf(derivation))` and corresponding
-resolver registration. Strip the lazy-positional unification from
-`TracingReplayEvaluator::dispatchAmbientQuery`; replace with the
-on-demand structural-resolution path. Seed `idToObject` with the
-apply roots up front in `apply()`. Verify the CLI-level
-`tracing-eval-cache.sh` tests still pass — this change is
-backward-compatible at the CLI root because there's only ever one
-seed root pair per recording and queue-popping happens to coincide
-with structural resolution when there's nothing to disambiguate.
+**Step C — switch ambient ids to producer queryHashes.**
+Collapse `AmbientId` to `Hash`. In `AmbientResolver::query`, the
+child-producing arms return the current query's `queryHash` as the
+child id instead of bumping a counter. Seed allocation uses
+`hashString("seed:" + counter)`. Strip the queue-based fallback
+from `TracingReplayEvaluator::dispatchAmbientQuery`; replace with
+the on-demand recursive resolution against the `Requests` pool
+(described in §Ambient identity). Pre-bind seed Hashes into
+`idToObject` in `apply()`. The CLI-level `tracing-eval-cache.sh`
+tests should still pass — at the CLI root there is only the seed
+pair, which the pre-binding handles directly.
 
 **Step D — apply-Request dispatcher on the replay side.**
 `dispatchAmbientQuery` returns `nullopt` for `tag == "apply"` today;
@@ -900,11 +819,13 @@ replay-side ReplayLocalObject. Scope:
   replay, serves recorded incoming answers from the FactSet
   indexed by `(localId, queryType)`. The replay's apply path swaps
   in this proxy for the recorded `argObj`.
-- The dispatch routing change: an incoming Request's `from` field
-  is a local id, not an outer id. The resolver-or-FactSet lookup
-  has to discriminate. Adding a tag bit to the `from` string
-  (`"L1"` vs `"E1"`) is the cheap way; widening `AmbientId` to a
-  variant is the cleaner way.
+- Local-vs-outer discrimination falls out of the same Hash
+  scheme: locals get seed hashes of the form
+  `hashString("local:" + counter)`; derived locals use the
+  producer Request's `queryHash` like derived outers do. The
+  dispatcher doesn't need to discriminate by namespace tag — it
+  just looks the id up in `idToObject` (pre-bound at apply setup)
+  or in the `Requests` pool.
 
 If schedule is pressing, Step E can be deferred. Without it, the
 covariant-callback test cases fall through to inner re-evaluation
@@ -965,29 +886,28 @@ prerequisite of all the rest.
       form/error cases/transitive invalidation/multiple calls)
       to pass.
 
-**Step C — structural ambient ids** (~100 lines across 3 files)
+**Step C — producer queryHash as ambient id** (~80 lines across 3 files)
 
-- [ ] `src/libexpr/include/nix/expr/trace-ids.hh`: widen `AmbientId`
-      to hold either a seed-counter `int` or a derived-hash string
-      (variant or a small struct). Update `std::hash` and the
-      `to_string` representation.
+- [ ] `src/libexpr/include/nix/expr/trace-ids.hh`: change
+      `AmbientId` to `Hash` (or an alias `using AmbientId = Hash;`
+      if the strong tag is still useful). Drop the
+      seed-counter-vs-derived distinction.
 - [ ] `src/libexpr/expr-from-object.cc`: in `AmbientResolver::query`,
-      change `registerOuter(child)` calls inside the
-      child-producing arms (`QueryGetAttr`, `QueryGetListElem`,
-      `QueryApply`) to compute and register the structural id
-      `sha256(parentIdBytes || queryHashOf(thisQuery))` instead of
-      bumping `nextId`.
-- [ ] `src/libexpr/ambient-object.cc`: each `AmbientObject` method
-      that emits a query uses the new id encoding in the `from`
-      string.
+      change `registerOuter(child)` in the child-producing arms
+      (`QueryGetAttr`, `QueryGetListElem`, `QueryApply`) to return
+      the current query's `queryHash` and register the child under
+      that. `registerOuter(seedObj)` callers in the PrimOp impl
+      pass `hashString("seed:" + std::to_string(counter))`.
+- [ ] `src/libexpr/ambient-object.cc`: `AmbientObject::id` stores a
+      `Hash`; methods emit it in the `from` string slot using
+      `.to_string(HashFormat::Base16, false)`.
 - [ ] `src/libexpr/tracing-replay-evaluator.cc`: rewrite
-      `dispatchAmbientQuery` to use on-demand structural resolution
-      via `resolveAmbientId` (described in §Ambient identity). Add
-      the one-time `producerByChildId` index build at walk entry.
+      `dispatchAmbientQuery` to use on-demand recursive resolution
+      via `resolveAmbientId` against the existing `Requests` pool
+      (described in §Ambient identity). Remove
+      `pendingChildren` / `unresolvedRoots`.
 - [ ] `src/libexpr/tracing-replay-evaluator.cc`: in `apply()`,
-      drop the queue-based seed registration; pre-bind seed roots
-      into `idToObject` keyed by `"virtual:N"` or a positional
-      `"$arg"`/`"$fn"` token (decide which during impl).
+      pre-bind seed Hashes into `idToObject`. No queue setup.
 - [ ] Run `builtins-cache.sh`; the `functionArgs`, simple-lambda,
       and curried cases should now exercise the new code path —
       cache misses are still expected for covariant callbacks
@@ -1057,13 +977,36 @@ These were in the v12-era follow-up list and remain valid:
 - A deduplicating Environment layer for overlapping file reads
   across cache calls.
 - Restoring the `nix eval-cache` introspection subcommand — it was
-  removed by `3db54dcff` and would help debug the structural-id
-  path in Step C.
+  removed by `3db54dcff` and would help debug the
+  producer-query-as-id path in Step C.
 - Interaction-traced *outer→inner* nesting as an alternative to the
   current input-traced nesting (so the outer cache treats the inner
   as an oracle and benefits from per-method early cutoff). This is a
   change in cost model rather than correctness; defer until we have
   numbers.
+- **Named hints for seed ambient ids.** Today seed identity is
+  `hashString("seed:" + counter)`, deterministic only as long as
+  the interpreter forces operands in the same relative order across
+  invocations. If a caller could supply a semantic hint string —
+  the way lazy paths use the unpinned fetch URL as a stable hint
+  for source-root identity — seed Hashes would survive reorderings
+  and avoid the counter's coincidence-dependence. The hook is
+  small: a `std::optional<std::string> hint` parameter on
+  `registerOuter` / `registerLocal` that, when present, replaces
+  the counter in the seed string. Useful when method-argument
+  metadata becomes available for non-CLI consumers; the CLI's own
+  patterns are simple enough that the counter suffices.
+- **Structural-replay unification** (separate, named after the
+  Hindley-Milner sense, not the type collapse in Step C). When two
+  evaluations produce the same ambient values in different forcing
+  orders, the recorded seed counters disagree, so cross-invocation
+  Q hashes drift apart even though the values are semantically
+  identical. A unification algorithm at replay time — matching
+  recorded nodes by their structural children rather than by their
+  recorded id — would let the cache hit anyway. Out of scope here
+  but compatible with the producer-query-as-id model: derived ids
+  are already structural; only seed identification is positional,
+  and that's where unification would help.
 
 ## Source map
 
@@ -1076,9 +1019,10 @@ For the implementation phase, the files we expect to touch:
 - `src/libcmd/command.cc` — set `evalState->rootDecisionGraph`
   during `getEvalState()`.
 - `src/libexpr/tracing-replay-evaluator.cc` — rewrite
-  `dispatchAmbientQuery` and `apply()` to use structural ids
-  instead of positional queues; add apply-Request dispatcher
-  for covariant callbacks (open question 9).
+  `dispatchAmbientQuery` and `apply()` to use recursive
+  producer-Request lookup instead of positional queues; add
+  apply-Request dispatcher for covariant callbacks (open
+  question 9).
 - `src/libexpr/ambient-object.cc` + the resolver in
   `expr-from-object.cc` — emit hash-encoded derived ids.
 - `tests/functional/builtins-cache.sh` — verify in place (no code
@@ -1308,18 +1252,18 @@ public:
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override {
         auto child = inner->maybeGetAttr(name);
-        // Record the access; from = "L<localId>" so a future replay
-        // recognises it as an incoming query against the local arg.
-        auto q = trace::QueryGetAttr{name, localFrom(localId)};
+        // The recorded `from` is this local value's Hash id.
+        auto q = trace::QueryGetAttr{name, localId.to_string(HashFormat::Base16, false)};
         auto r = child ? trace::ResultMaybeType{
                             std::optional{objectTypeToString(child->getType())}}
                        : trace::ResultMaybeType{std::nullopt};
         innerEnv.ambientQuery(q, [&](const auto &) { return r; });
-        // Wrap the child too so its accesses are recorded.
         if (!child) return nullptr;
+        // Derived local id is the queryHash of the producer Q,
+        // mirroring the outer ambient id rule from Step C.
         return std::make_shared<TracingLocalObject>(
             std::move(child),
-            derivedLocalId(localId, q),  // structural id, mirrors Step C
+            TracingDecisionGraph::computeQueryHash(q),
             innerEnv);
     }
 
@@ -1330,11 +1274,11 @@ public:
 };
 ```
 
-The `localFrom(id)` encoding distinguishes local from outer ids in
-the same `from` string slot: e.g. `"L0"`, `"L1"` vs `"E0"`, `"E1"`
-(outer/external) or the structural hash strings of derived values.
-Step C's structural encoding extends cleanly: derived local ids are
-`sha256("L0" || queryHashOf(derivation))`.
+Local-vs-outer is just a seed-string convention: locals use
+`hashString("local:" + counter)`, outers use
+`hashString("seed:" + counter)`. From the dispatcher's perspective
+both are `Hash` ids resolved against the same `idToObject` (for
+pre-bound seeds) or `Requests` pool (for derived).
 
 On the replay side, `ReplayLocalObject` reverses this: each
 `maybeGetAttr` call queries the FactSet (or the in-walk producer
