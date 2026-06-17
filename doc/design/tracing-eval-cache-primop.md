@@ -264,15 +264,18 @@ Concretely, take the `call-fn.nix` case from `builtins-cache.sh`:
 (builtins.cache { import = ./call-fn.nix; }) { f = x: x + 1; x = 10; }
 ```
 
-where `call-fn.nix` is `{ f, x }: f x`. The inner forces `arg.f`
-first (to know what to apply), then `arg.x` (the argument), then
-`arg.x` as an int. Each forcing fires an ambient query on the
-`AmbientObject` wrapping the outer arg. The resolver's counter
-walks: L0 = seed (the outer attrset, registered at the apply
-boundary), L1 = child returned from `getAttr "f"` (first
-`registerOuter` call), L2 = child returned from `getAttr "x"`
-(second `registerOuter` call). The recorded
-`(QueryApply, factSet)` contains:
+where `call-fn.nix` is `{ f, x }: f x`. To evaluate the body
+`f x`, the inner forces `arg.f` to know which function to apply;
+applying produces a thunk for the lambda body. The outer asking
+for the int result eventually forces that thunk, which forces
+`arg.x` (bound to the lambda's `x`), then forces *that* as an int.
+Each forcing fires an ambient query on the `AmbientObject`
+wrapping the outer arg. The resolver's counter walks:
+L0 = seed (the outer attrset, registered at the apply boundary),
+L1 = child returned from `getAttr "f"` (first `registerOuter`
+call), L2 = child returned from `getAttr "x"` (second
+`registerOuter` call). The recorded `(QueryApply, factSet)`
+contains:
 
 ```
 Q  = QueryApply{fnId=…, argId=L0}
