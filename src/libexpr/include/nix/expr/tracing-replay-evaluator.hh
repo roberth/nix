@@ -26,14 +26,15 @@ class TracingReplayEvaluator : public Evaluator
 
     /**
      * Ambient replay state for resolving ambient interaction events
-     * during apply() replay. Maps recorded ambient ids (the "from"
-     * field in query payloads) to current Objects.
+     * during apply() replay. Under Step C, recorded ambient ids
+     * (the "from" / "fn" / "arg" fields in query payloads) are
+     * hex-encoded Hashes. Seed ids are pre-bound at apply() setup;
+     * derived ids are resolved on demand by walking the producer
+     * Request chain (`resolveAmbientId`).
      */
     struct AmbientReplayState
     {
         std::map<std::string, std::shared_ptr<Object>> idToObject;
-        std::vector<std::shared_ptr<Object>> unresolvedRoots;
-        std::vector<std::shared_ptr<Object>> pendingChildren;
     };
 
     std::optional<AmbientReplayState> ambientState;
@@ -55,6 +56,15 @@ class TracingReplayEvaluator : public Evaluator
     TracingDecisionGraph::TrieBuilder dispatchedTrie;
 
     std::optional<std::string> dispatchAmbientQuery(const nlohmann::json & reqJson);
+
+    /** Resolve a recorded ambient id (hex of a Hash) to a live
+        Object. Seed ids are pre-bound; derived ids are looked up
+        by their producer Request in the Requests pool and resolved
+        recursively. Returns nullptr if the id can't be resolved
+        (e.g. its producer Request is a QueryApply that Step D's
+        dispatcher would handle, or the producer chain references
+        an unknown seed). */
+    std::shared_ptr<Object> resolveAmbientId(const std::string & idStr);
 
     template<typename Q>
     std::optional<std::pair<std::string, TriePosition>> lookup(const Q & query);

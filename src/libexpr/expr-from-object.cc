@@ -4,35 +4,54 @@
 #include "nix/expr/eval.hh"
 #include "nix/expr/interpreter-object.hh"
 #include "nix/expr/object-type.hh"
+#include "nix/expr/tracing-decision-graph.hh"
 
 namespace nix {
 
 /**
- * Stateful resolver that maps virtual value ids to outer Objects.
- * Resolves contra-queries by dispatching to the appropriate Object method,
- * registering child Objects under structurally derived ids.
+ * Stateful resolver mapping ambient ids (Hashes under Step C) to
+ * outer/local Objects. Derived ids are the producer query's
+ * `queryHash`; seed ids are `hashString("seed:N")` / `hashString
+ * ("local:N")` for an interpreter-side counter.
  */
 struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
 {
-    std::map<AmbientId, std::shared_ptr<Object>> outerValues; // outer values (from ambient evaluator)
-    std::map<AmbientId, std::shared_ptr<Object>> localValues; // inner values (passed to callbacks)
-    std::map<AmbientId, Value *> bridgedLocals;               // local id → outer Value (cached for reuse)
+    std::map<AmbientId, std::shared_ptr<Object>> outerValues;
+    std::map<AmbientId, std::shared_ptr<Object>> localValues;
+    std::map<AmbientId, Value *> bridgedLocals;
     EvalState * outerState = nullptr;
     std::shared_ptr<Evaluator> innerEvaluator;
-    int nextId = 0;
 
-    AmbientId registerOuter(std::shared_ptr<Object> obj)
+    /* Separate counters for seed vs local roots — the strings
+       `hashString("seed:N")` and `hashString("local:N")` already
+       namespace them in the wire format, but using one counter
+       per namespace keeps assignments stable when one side
+       advances without the other. */
+    unsigned int nextSeedCounter = 0;
+    unsigned int nextLocalCounter = 0;
+
+    /** Allocate a fresh outer seed-id hash and register the Object under it. */
+    AmbientId registerOuterSeed(std::shared_ptr<Object> obj)
     {
-        auto id = AmbientId(nextId++);
+        auto id = hashString(HashAlgorithm::SHA256, "seed:" + std::to_string(nextSeedCounter++));
         outerValues[id] = std::move(obj);
         return id;
     }
 
-    AmbientId registerLocal(std::shared_ptr<Object> obj)
+    /** Allocate a fresh local seed-id hash and register the Object under it. */
+    AmbientId registerLocalSeed(std::shared_ptr<Object> obj)
     {
-        auto id = AmbientId(nextId++);
+        auto id = hashString(HashAlgorithm::SHA256, "local:" + std::to_string(nextLocalCounter++));
         localValues[id] = std::move(obj);
         return id;
+    }
+
+    /** Register an outer value under an explicit id (used for
+        derived values, where the id is the producer query's
+        queryHash). Idempotent: if id is already mapped, overwrites. */
+    void registerOuterAt(AmbientId id, std::shared_ptr<Object> obj)
+    {
+        outerValues[id] = std::move(obj);
     }
 
     std::shared_ptr<Object> resolve(AmbientId id)
@@ -43,7 +62,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
         auto lit = localValues.find(id);
         if (lit != localValues.end())
             return lit->second;
-        throw Error("ambient query: unknown value id %d", id.value());
+        throw Error("ambient query: unknown value id %s", id.to_string(HashFormat::Base16, false));
     }
 
     AmbientQueryResult query(AmbientId objectId, const trace::QueryVariant & q)
@@ -64,7 +83,9 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
                         auto child = obj->maybeGetAttr(query.name);
                         if (!child)
                             return {trace::ResultMaybeType{std::nullopt}, std::nullopt};
-                        auto childId = registerOuter(child);
+                        /* Step C: derived child id is the producer query's queryHash. */
+                        auto childId = TracingDecisionGraph::computeQueryHash(query);
+                        registerOuterAt(childId, child);
                         return {
                             trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}},
                             childId};
@@ -88,7 +109,8 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
                         return {trace::ResultListSize{obj->getListSize()}, std::nullopt};
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
                         auto child = obj->getListElem(query.index);
-                        auto childId = registerOuter(child);
+                        auto childId = TracingDecisionGraph::computeQueryHash(query);
+                        registerOuterAt(childId, child);
                         return {trace::ResultType{objectTypeToString(child->getType())}, childId};
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetPath>) {
                         return {trace::ResultPath{obj->getPath().path.abs()}, std::nullopt};
@@ -105,16 +127,24 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
             q);
     }
 
-    AmbientId apply(AmbientId fnId, std::shared_ptr<Object> argObj)
+    /** Apply an outer fn (resolved from fnId) to a local argObj.
+     *  Returns a pair: (argId, resultId). argId is the local seed
+     *  Hash assigned to argObj; resultId is the producer queryHash
+     *  of QueryApply{fn=fnId, arg=argId}, under which the
+     *  resulting Object is registered as an outer value. The
+     *  caller (applyFn closure) records the QueryApply Fact with
+     *  the same arg id. */
+    std::pair<AmbientId, AmbientId> apply(AmbientId fnId, std::shared_ptr<Object> argObj)
     {
         if (!outerState)
             throw Error("ambient apply requires outerState");
         auto fnObj = resolve(fnId);
 
-        // Register the arg as a local value
-        auto argId = registerLocal(argObj);
+        /* Register the arg as a local. Step C: local id is a
+           seed-style Hash. */
+        auto argId = registerLocalSeed(argObj);
 
-        // Bridge local arg via ExprFromObject with the inner evaluator
+        /* Bridge local arg via ExprFromObject with the inner evaluator */
         auto & argThunk = bridgedLocals[argId];
         if (!argThunk) {
             argThunk = outerState->allocValue();
@@ -122,12 +152,19 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
             outerState->mkThunk_(*argThunk, argExpr);
         }
 
-        // Create lazy application
+        /* Build the outer mkApp thunk. */
         auto fnVal = fnObj->defeatCache();
         auto * resultVal = outerState->allocValue();
         resultVal->mkApp(*fnVal, argThunk);
         auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
-        return registerOuter(resultObj);
+
+        /* Step C+D: result id is queryHash(QueryApply{fn=fnId, arg=argId}). */
+        auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
+        auto argIdStr = argId.to_string(HashFormat::Base16, false);
+        auto resultId = TracingDecisionGraph::computeQueryHash(trace::QueryApply{fnIdStr, argIdStr});
+        registerOuterAt(resultId, std::move(resultObj));
+
+        return {argId, resultId};
     }
 };
 
@@ -164,7 +201,7 @@ static PrimOp * makeCachedFnPrimOp(
                     [fnObj, innerEval, resolver](EvalState & state, const PosIdx pos, Value ** args, Value & v) {
                         // Do NOT force args[0] — it may be self-referential.
                         auto outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
-                        auto rootId = resolver->registerOuter(outerArgObj);
+                        auto rootId = resolver->registerOuterSeed(outerArgObj);
                         auto & innerEnv = *innerEval->getEvalState().environment;
                         AmbientQueryFn queryFn = [resolver,
                                                   &innerEnv](AmbientId objectId, const trace::QueryVariant & q) {
@@ -172,10 +209,15 @@ static PrimOp * makeCachedFnPrimOp(
                             innerEnv.ambientQuery(q, [&](const trace::QueryVariant &) { return qr.result; });
                             return qr;
                         };
+                        /* Step D: applyFn records QueryApply with the
+                           argument's id (not the result id). The
+                           resolver assigns argId = a local seed Hash
+                           and returns it alongside the resultId. */
                         AmbientApplyFn applyFn = [resolver, &innerEnv](AmbientId fnId, std::shared_ptr<Object> argObj) {
-                            auto resultId = resolver->apply(fnId, std::move(argObj));
+                            auto [argId, resultId] = resolver->apply(fnId, std::move(argObj));
                             trace::QueryApply applyQuery{
-                                std::to_string(fnId.value()), std::to_string(resultId.value())};
+                                fnId.to_string(HashFormat::Base16, false),
+                                argId.to_string(HashFormat::Base16, false)};
                             innerEnv.ambientQuery(applyQuery, [&](const trace::QueryVariant &) -> trace::ResultVariant {
                                 return trace::ResultType{"apply"};
                             });
@@ -287,9 +329,20 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
     }
 
     case nFunction: {
+        /* Step C: dispatch on obj's dynamic type, not on whether
+           innerEvaluator is set. An AmbientObject wraps an outer
+           value reached via ambient query; its apply must route
+           through queryApply (makeAmbientFnPrimOp). A concrete fn
+           with an inner evaluator goes through innerEval->apply
+           (makeCachedFnPrimOp). A concrete fn without an inner
+           evaluator falls back to makeAmbientFnPrimOp — the impl
+           will throw at apply time (matching the prior behaviour
+           for that combination, which the unit tests rely on for
+           construction-only checks). */
         PrimOp * primOp;
-        if (innerEvaluator) {
-            assert(ambientResolver && "inner evaluator requires ambient resolver");
+        if (dynamic_cast<AmbientObject *>(obj.get())) {
+            primOp = makeAmbientFnPrimOp(obj, ambientResolver);
+        } else if (innerEvaluator) {
             primOp = makeCachedFnPrimOp(obj, innerEvaluator, ambientResolver);
         } else {
             primOp = makeAmbientFnPrimOp(obj, ambientResolver);

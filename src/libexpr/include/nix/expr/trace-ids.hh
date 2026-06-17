@@ -6,8 +6,14 @@
  *
  * - ValueHandle:   JSON trace correlation handle (TraceSink)
  * - VirtualRootId: identity for untraced values in QueryApply
- * - AmbientId:     AmbientResolver registry handle
+ * - AmbientId:     AmbientResolver registry handle (a content
+ *                  Hash under the producer-query-as-id model;
+ *                  seed roots are hashes of "seed:N" / "local:N"
+ *                  strings, derived values are the producer
+ *                  query's queryHash)
  */
+
+#include "nix/util/hash.hh"
 
 #include <compare>
 #include <cstdint>
@@ -45,17 +51,19 @@ struct ValueHandleTag
 struct VirtualRootIdTag
 {};
 
-struct AmbientIdTag
-{};
-
 /** JSON trace correlation handle (links Query and Result entries). */
 using ValueHandle = StrongId<ValueHandleTag, uint64_t>;
 
 /** Identity for values without trie provenance (e.g. {} literals). */
 using VirtualRootId = StrongId<VirtualRootIdTag, uint64_t>;
 
-/** AmbientResolver registry handle for outer/local values. */
-using AmbientId = StrongId<AmbientIdTag, int>;
+/** AmbientResolver registry handle for outer/local values.
+ *
+ *  A content Hash. Seed roots are `hashString("seed:N")` /
+ *  `hashString("local:N")` for an interpreter-side counter N;
+ *  derived values are the producer query's `queryHash`. Both go
+ *  through the same map. */
+using AmbientId = Hash;
 
 } // namespace nix
 

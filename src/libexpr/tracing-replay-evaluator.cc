@@ -1,4 +1,5 @@
 #include "nix/expr/tracing-replay-evaluator.hh"
+#include "nix/expr/ambient-object.hh"
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-decision-graph.hh"
@@ -135,81 +136,140 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
     return std::nullopt;
 }
 
+/* Step C: resolve a recorded ambient id (hex of a Hash) to a live
+   Object by recursive lookup against the Requests pool. Seed ids
+   are pre-bound at apply() setup; derived ids find their producer
+   Request in the pool, resolve the parent recursively, then
+   dispatch the producer's query on the parent. */
+std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::string & idStr)
+{
+    if (!ambientState)
+        return nullptr;
+
+    auto it = ambientState->idToObject.find(idStr);
+    if (it != ambientState->idToObject.end())
+        return it->second;
+
+    Hash idHash{HashAlgorithm::SHA256};
+    try {
+        idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
+    } catch (const std::exception &) {
+        return nullptr;
+    }
+
+    auto reqPayload = decisionGraph.getRequestPayload(idHash);
+    if (!reqPayload) {
+        tracingCacheLog("replay: ambient id %s has no producer Request in pool", idStr);
+        return nullptr;
+    }
+
+    nlohmann::json reqJson;
+    try {
+        reqJson = cborStringToJson(*reqPayload);
+    } catch (const std::exception &) {
+        return nullptr;
+    }
+    auto tag = reqJson["query"].get<std::string>();
+    auto & params = reqJson["params"];
+
+    /* QueryApply needs Step D's dispatcher (invoke the outer apply,
+       register the result Object). Under Step C alone any
+       apply-produced child id is unresolvable; downstream Facts
+       that reference it will miss and the walk falls through. */
+    if (tag == "apply")
+        return nullptr;
+
+    if (!params.contains("from"))
+        return nullptr;
+
+    auto parent = resolveAmbientId(params["from"].get<std::string>());
+    if (!parent)
+        return nullptr;
+
+    std::shared_ptr<Object> child;
+    try {
+        if (tag == "getAttr") {
+            child = parent->maybeGetAttr(params["name"].get<std::string>());
+        } else if (tag == "getListElem") {
+            child = parent->getListElem(params["index"].get<size_t>());
+        } else {
+            /* Non-child-producing Requests don't produce ids that
+               downstream Facts could reference. */
+            return nullptr;
+        }
+    } catch (const std::exception & e) {
+        tracingCacheLog("replay: failed to resolve %s producer for %s: %s", tag, idStr, e.what());
+        return nullptr;
+    }
+
+    if (child)
+        ambientState->idToObject[idStr] = child;
+    return child;
+}
+
 std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nlohmann::json & reqJson)
 {
     auto tag = reqJson["query"].get<std::string>();
     auto & params = reqJson["params"];
 
-    std::string fromId;
-    if (params.contains("from"))
-        fromId = params["from"].get<std::string>();
-    else if (tag == "apply")
-        return std::nullopt;
-    else
+    /* QueryApply is Step D's responsibility; defer. */
+    if (tag == "apply")
         return std::nullopt;
 
-    auto it = ambientState->idToObject.find(fromId);
-    if (it == ambientState->idToObject.end()) {
-        std::shared_ptr<Object> obj;
-        if (!ambientState->pendingChildren.empty()) {
-            obj = ambientState->pendingChildren.front();
-            ambientState->pendingChildren.erase(ambientState->pendingChildren.begin());
-        } else if (!ambientState->unresolvedRoots.empty()) {
-            obj = ambientState->unresolvedRoots.front();
-            ambientState->unresolvedRoots.erase(ambientState->unresolvedRoots.begin());
+    if (!params.contains("from"))
+        return std::nullopt;
+
+    auto obj = resolveAmbientId(params["from"].get<std::string>());
+    if (!obj)
+        return std::nullopt;
+
+    nlohmann::json resultJson;
+    try {
+        if (tag == "getType") {
+            resultJson = trace::ResultType{objectTypeToString(obj->getType())};
+        } else if (tag == "getAttr") {
+            auto name = params["name"].get<std::string>();
+            auto child = obj->maybeGetAttr(name);
+            if (!child) {
+                resultJson = trace::ResultMaybeType{std::nullopt};
+            } else {
+                resultJson = trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}};
+            }
+        } else if (tag == "getString") {
+            resultJson = trace::ResultString{obj->getStringIgnoreContext()};
+        } else if (tag == "getStringWithContext") {
+            auto [str, ctx] = obj->getStringWithContext();
+            std::vector<std::string> ctxStrings;
+            for (auto & c : ctx)
+                ctxStrings.push_back(c.to_string());
+            resultJson = trace::ResultStringWithContext{str, std::move(ctxStrings)};
+        } else if (tag == "getAttrNames") {
+            resultJson = trace::ResultListOfStrings{obj->getAttrNames()};
+        } else if (tag == "getBool") {
+            resultJson = trace::ResultBool{obj->getBool()};
+        } else if (tag == "getInt") {
+            resultJson = trace::ResultInt{obj->getInt().value};
+        } else if (tag == "getFloat") {
+            resultJson = trace::ResultFloat{obj->getFloat()};
+        } else if (tag == "getListSize") {
+            resultJson = trace::ResultListSize{obj->getListSize()};
+        } else if (tag == "getListElem") {
+            auto index = params["index"].get<size_t>();
+            auto child = obj->getListElem(index);
+            resultJson = trace::ResultType{objectTypeToString(child->getType())};
+        } else if (tag == "getPath") {
+            resultJson = trace::ResultPath{obj->getPath().path.abs()};
+        } else if (tag == "getFunctionInfo") {
+            auto info = obj->getFunctionInfo();
+            if (!info)
+                resultJson = trace::ResultFunctionInfo{false, {}, false};
+            else
+                resultJson = trace::ResultFunctionInfo{true, info->formals, info->ellipsis};
         } else {
-            tracingCacheLog("replay: unknown ambient id %s", fromId);
             return std::nullopt;
         }
-        ambientState->idToObject[fromId] = obj;
-        it = ambientState->idToObject.find(fromId);
-    }
-
-    auto & obj = it->second;
-    nlohmann::json resultJson;
-    if (tag == "getType") {
-        resultJson = trace::ResultType{objectTypeToString(obj->getType())};
-    } else if (tag == "getAttr") {
-        auto name = params["name"].get<std::string>();
-        auto child = obj->maybeGetAttr(name);
-        if (!child) {
-            resultJson = trace::ResultMaybeType{std::nullopt};
-        } else {
-            ambientState->pendingChildren.push_back(child);
-            resultJson = trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}};
-        }
-    } else if (tag == "getString") {
-        resultJson = trace::ResultString{obj->getStringIgnoreContext()};
-    } else if (tag == "getStringWithContext") {
-        auto [str, ctx] = obj->getStringWithContext();
-        std::vector<std::string> ctxStrings;
-        for (auto & c : ctx)
-            ctxStrings.push_back(c.to_string());
-        resultJson = trace::ResultStringWithContext{str, std::move(ctxStrings)};
-    } else if (tag == "getAttrNames") {
-        resultJson = trace::ResultListOfStrings{obj->getAttrNames()};
-    } else if (tag == "getBool") {
-        resultJson = trace::ResultBool{obj->getBool()};
-    } else if (tag == "getInt") {
-        resultJson = trace::ResultInt{obj->getInt().value};
-    } else if (tag == "getFloat") {
-        resultJson = trace::ResultFloat{obj->getFloat()};
-    } else if (tag == "getListSize") {
-        resultJson = trace::ResultListSize{obj->getListSize()};
-    } else if (tag == "getListElem") {
-        auto index = params["index"].get<size_t>();
-        auto child = obj->getListElem(index);
-        ambientState->pendingChildren.push_back(child);
-        resultJson = trace::ResultType{objectTypeToString(child->getType())};
-    } else if (tag == "getPath") {
-        resultJson = trace::ResultPath{obj->getPath().path.abs()};
-    } else if (tag == "getFunctionInfo") {
-        auto info = obj->getFunctionInfo();
-        if (!info)
-            resultJson = trace::ResultFunctionInfo{false, {}, false};
-        else
-            resultJson = trace::ResultFunctionInfo{true, info->formals, info->ellipsis};
-    } else {
+    } catch (const std::exception & e) {
+        tracingCacheLog("replay: dispatch failed for %s: %s", tag, e.what());
         return std::nullopt;
     }
     return jsonToCborString(resultJson);
@@ -310,11 +370,19 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     if (!argId)
         argId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(arg).value());
 
+    /* Step C: pre-bind ambient seed ids into idToObject. When this
+       apply originates from the cached-fn PrimOp impl, fn/arg are
+       AmbientObjects whose Hash id is the seed allocated by the
+       resolver (registerOuterSeed). The recorded factSet's ambient
+       Facts have `from=hex(seed_hash)`. Pre-binding lets
+       resolveAmbientId find live Objects for those seeds without
+       walking the producer chain. Derived ids fall through to the
+       recursive resolution against the Requests pool. */
     AmbientReplayState state;
-    if (!getId(*arg))
-        state.unresolvedRoots.push_back(arg.get_ptr());
-    if (!getId(*fn))
-        state.unresolvedRoots.push_back(fn.get_ptr());
+    if (auto * ambient = dynamic_cast<AmbientObject *>(arg.get_ptr().get()))
+        state.idToObject[ambient->getId().to_string(HashFormat::Base16, false)] = arg.get_ptr();
+    if (auto * ambient = dynamic_cast<AmbientObject *>(fn.get_ptr().get()))
+        state.idToObject[ambient->getId().to_string(HashFormat::Base16, false)] = fn.get_ptr();
     ambientState = std::move(state);
 
     auto result = lookup(trace::QueryApply{*fnId, *argId});

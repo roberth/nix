@@ -12,32 +12,47 @@ static ref<SourceRoot> stubAmbientRoot()
     return SourceRoot::make(getFSSourceAccessor(), SourceRootKind::Internal);
 }
 
+/* Under Step C, AmbientId is a content Hash. The tests still want
+   stable per-test identifiers, so derive distinct Hashes from
+   small integer tags. */
+static AmbientId testId(int n)
+{
+    return hashString(HashAlgorithm::SHA256, "test:" + std::to_string(n));
+}
+
+static std::string hex(AmbientId id)
+{
+    return id.to_string(HashFormat::Base16, false);
+}
+
 /**
- * Mock resolver: maps (objectId, tag) to predetermined results.
- * Returns childId = objectId * 100 + 1 for getAttr/getListElem queries.
+ * Mock resolver: maps `"tag:hex(objectId)"` strings to predetermined
+ * results. For child-producing queries, returns
+ * `hashString("child:" + hex(objectId))` as the child id.
  */
 static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> responses)
 {
     return [responses = std::move(responses)](AmbientId objectId, const trace::QueryVariant & q) -> AmbientQueryResult {
+        std::string objHex = hex(objectId);
         std::string key = std::visit(
             [&](const auto & query) -> std::string {
-                return std::string(query.tag) + ":" + std::to_string(objectId.value());
+                return std::string(query.tag) + ":" + objHex;
             },
             q);
         auto it = responses.find(key);
         if (it == responses.end())
             throw Error("mock resolver: no response for %s", key);
 
-        // For queries that produce children, return a child id
+        // For queries that produce children, return a deterministic child id
         std::optional<AmbientId> childId;
         if (std::holds_alternative<trace::ResultMaybeType>(it->second)) {
             auto & rmt = std::get<trace::ResultMaybeType>(it->second);
             if (rmt.type)
-                childId = AmbientId(objectId.value() * 100 + 1);
+                childId = hashString(HashAlgorithm::SHA256, "child:" + objHex);
         }
         if (std::holds_alternative<trace::ResultType>(it->second)) {
             // Could be a getListElem
-            childId = AmbientId(objectId.value() * 100 + 1);
+            childId = hashString(HashAlgorithm::SHA256, "child:" + objHex);
         }
         return {it->second, childId};
     };
@@ -45,39 +60,45 @@ static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> r
 
 TEST(AmbientObjectTest, GetType)
 {
+    auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        AmbientId(0), mockResolver({{"getType:0", trace::ResultType{"int"}}}), stubAmbientRoot());
+        seed, mockResolver({{"getType:" + hex(seed), trace::ResultType{"int"}}}), stubAmbientRoot());
     EXPECT_EQ(obj->getType(), nInt);
 }
 
 TEST(AmbientObjectTest, GetInt)
 {
+    auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        AmbientId(0), mockResolver({{"getInt:0", trace::ResultInt{42}}}), stubAmbientRoot());
+        seed, mockResolver({{"getInt:" + hex(seed), trace::ResultInt{42}}}), stubAmbientRoot());
     EXPECT_EQ(obj->getInt().value, 42);
 }
 
 TEST(AmbientObjectTest, GetString)
 {
+    auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        AmbientId(0), mockResolver({{"getString:0", trace::ResultString{"hello"}}}), stubAmbientRoot());
+        seed, mockResolver({{"getString:" + hex(seed), trace::ResultString{"hello"}}}), stubAmbientRoot());
     EXPECT_EQ(obj->getStringIgnoreContext(), "hello");
 }
 
 TEST(AmbientObjectTest, GetBool)
 {
+    auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        AmbientId(0), mockResolver({{"getBool:0", trace::ResultBool{true}}}), stubAmbientRoot());
+        seed, mockResolver({{"getBool:" + hex(seed), trace::ResultBool{true}}}), stubAmbientRoot());
     EXPECT_TRUE(obj->getBool());
 }
 
 TEST(AmbientObjectTest, GetAttrReturnsChild)
 {
+    auto seed = testId(0);
+    auto childHex = hex(hashString(HashAlgorithm::SHA256, "child:" + hex(seed)));
     auto obj = std::make_shared<AmbientObject>(
-        AmbientId(0),
+        seed,
         mockResolver({
-            {"getAttr:0", trace::ResultMaybeType{std::optional<std::string>{"int"}}},
-            {"getInt:1", trace::ResultInt{99}},
+            {"getAttr:" + hex(seed), trace::ResultMaybeType{std::optional<std::string>{"int"}}},
+            {"getInt:" + childHex, trace::ResultInt{99}},
         }),
         stubAmbientRoot());
     auto child = obj->maybeGetAttr("x");
@@ -87,18 +108,21 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
 
 TEST(AmbientObjectTest, GetAttrMissing)
 {
+    auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        AmbientId(0), mockResolver({{"getAttr:0", trace::ResultMaybeType{std::nullopt}}}), stubAmbientRoot());
+        seed, mockResolver({{"getAttr:" + hex(seed), trace::ResultMaybeType{std::nullopt}}}), stubAmbientRoot());
     EXPECT_EQ(obj->maybeGetAttr("missing"), nullptr);
 }
 
 TEST(AmbientObjectTest, GetListElem)
 {
+    auto seed = testId(0);
+    auto childHex = hex(hashString(HashAlgorithm::SHA256, "child:" + hex(seed)));
     auto obj = std::make_shared<AmbientObject>(
-        AmbientId(0),
+        seed,
         mockResolver({
-            {"getListElem:0", trace::ResultType{"string"}},
-            {"getString:1", trace::ResultString{"world"}},
+            {"getListElem:" + hex(seed), trace::ResultType{"string"}},
+            {"getString:" + childHex, trace::ResultString{"world"}},
         }),
         stubAmbientRoot());
     auto child = obj->getListElem(1);
@@ -108,9 +132,10 @@ TEST(AmbientObjectTest, GetListElem)
 
 TEST(AmbientObjectTest, GetAttrNames)
 {
+    auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        AmbientId(0),
-        mockResolver({{"getAttrNames:0", trace::ResultListOfStrings{{"a", "b", "c"}}}}),
+        seed,
+        mockResolver({{"getAttrNames:" + hex(seed), trace::ResultListOfStrings{{"a", "b", "c"}}}}),
         stubAmbientRoot());
     auto names = obj->getAttrNames();
     EXPECT_EQ(names.size(), 3u);
