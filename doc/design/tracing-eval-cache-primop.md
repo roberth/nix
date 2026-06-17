@@ -238,21 +238,20 @@ layer. There are two id namespaces sharing the same `from` /
   `AmbientResolver::registerOuter` / `registerLocal`. These appear
   in the `from` field of every d>0 ambient Request.
 
-Seed allocations don't happen during regular forcing. They fire at
-specific setup-shaped events that the CLI happens to perform in a
-stable sequence: auto-calling top-level functions during nix-build's
-traversal of the configuration, passing the few positional arguments
-to the initial `call-flake` call, and registering the cached
-function's argument in the `<cached-fn>` PrimOp impl. Regular forcing
-during evaluation issues structural queries (`getAttr`, `getInt`,
-…) that don't allocate seed ids; child identity under Step C comes
-from the producer query's `queryHash`, not from any counter.
+Seed allocations fire only at apply boundaries — apply forcings
+where an outer-side Object becomes an input to an inner evaluator
+(or vice versa). Structural-query forcings (`getAttr`, `getInt`, …)
+on already-identified Objects don't allocate; under Step C they
+just compute the producer query's `queryHash` as the child's id.
+The CLI's apply boundaries happen to arise in a stable sequence —
+auto-calling top-level functions during nix-build's traversal of
+the configuration, passing the few positional arguments to the
+initial `call-flake` call, and registering the cached function's
+argument in the `<cached-fn>` PrimOp impl — so seed counters are
+stable in practice without anything in the design enforcing it.
 
-So the determinism we rely on isn't "same forcing order on every
-invocation" — that would be an unrealistic invariant. It's "same
-setup-phase events on every invocation," which holds trivially for
-the CLI patterns we care about. A general hint mechanism would
-relax even that (see *Future work*).
+A general hint mechanism would let us drop the
+stable-sequence-of-applies dependency entirely (see *Future work*).
 
 ### The actual gap
 
