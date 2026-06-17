@@ -819,6 +819,22 @@ defensible choice but a future revision may want to revisit.
     the AmbientObject for; sharing between sibling callbacks;
     something subtler), but worth checking — flagged for later.
 
+13. **Should Object grow a "give me a `Value`" method to absorb
+    the `defeatCache` / `ExprFromObject` fallback?** `Interpreter::
+    apply`'s arg handling today is a try/catch:
+    `arg->defeatCache()` for concrete Objects; on throw (the
+    `AmbientObject` case), manually wrap via
+    `mkThunk(ExprFromObject(arg, nullptr, ambientResolver))`. That
+    pattern would read better as a single Object method
+    (`toValue(EvalState&)` or similar) where each subclass picks
+    its representation: `InterpreterObject` returns its underlying
+    `RootValue` directly, `AmbientObject` returns a thunk-wrapped
+    `ExprFromObject`. Question: does some existing method already
+    cover the use case (a generalised `defeatCache` that doesn't
+    throw on virtuals, perhaps), or does this need a new method
+    with its own contract? Worth a short audit when restoring the
+    primop.
+
 ## Implementation step list
 
 The work decomposes into roughly five steps, each independently
