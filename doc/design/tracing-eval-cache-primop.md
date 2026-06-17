@@ -1405,23 +1405,36 @@ resolver:      outerValues = ∅, localValues = ∅
 `replayEval_outer.evalExpr(exprText, baseDir)` looks up
 `QueryExpr{exprText, baseDir}` — cold miss — falls through to
 `tracingEval_outer.evalExpr`, which `logRootQuery(Q_expr)` and
-delegates to `Interpreter_outer.evalExpr`. Parsing fires a file
-read on the user's stdin / -E `expr` source, but for `--expr` the
-parse is in-memory so no file Fact is recorded yet.
+delegates to `Interpreter_outer.evalExpr`. Parsing is in-memory;
+no file Fact is recorded yet.
 
 `outerWriter.inFlight = { Q_expr }`. No Facts yet.
 
-### Step 2 — outer evaluates the function side
+The outermost expression is an application:
+`(builtins.cache { import = ./call-fn.nix; }) { f = x: x+1; x = 10; }`.
+Evaluating it to WHNF means forcing the function side first, then
+applying. Every step below happens inside the forcing of `Q_expr`'s
+body — `Q_expr` stays in flight until Step 10. That context
+matters: any Fact added to `outerWriter.v13FactSet` during Steps
+2–9 ends up in `Q_expr`'s recorded factSet at termination.
 
-The outer Interpreter evaluates `builtins.cache { import = ./call-fn.nix; }`
-to WHNF — a PrimOp value, no application yet. To produce it,
-`prim_builtinsCache` runs:
+### Step 2 — outer forces the function side; the primop fires
+
+To force the application, the outer Interpreter first evaluates the
+function side `builtins.cache { import = ./call-fn.nix; }`. That
+expression is itself a complete primop application —
+`builtins.cache` is a 1-arity PrimOp and the argument attrset is
+supplied — so the WHNF is not "a PrimOp waiting for its arg" but
+whatever `prim_cache.impl` returns after running. The impl:
 
 1. Parses the arg attrset, gets `importPath = ./call-fn.nix`.
 2. Locates the shared graph; since `state.rootDecisionGraph` is
    set, `decisionGraph` is reused.
 3. Builds the inner stack and resolver (above).
 4. Calls `replayEval_inner.evalFile(./call-fn.nix)`.
+
+What `prim_cache.impl` ultimately returns (via the `ExprFromObject`
+bridge) is covered in Step 4.
 
 ### Step 3 — inner records `Q_import` (with file-read Fact)
 
@@ -1473,25 +1486,32 @@ wrapping the lambda Value, carrying `triePos.queryHashStr = Q_import_hash`.
 
 ### Step 4 — bridging the inner result back to the outer
 
+Still inside `prim_cache`, after Step 3 returned the lambda's
+`TracingObject_inner`:
+
 ```
 ExprFromObject(lambdaTracingObj, replayEval_inner, resolver)
     .eval(outerState, outerBaseEnv, v_outer);
 ```
 
-`getType()` on the TracingObject returns `nFunction`. The `nFunction`
-arm of `ExprFromObject::eval` calls
+`getType()` on the TracingObject returns `nFunction`. The
+`nFunction` arm of `ExprFromObject::eval` calls
 `makeCachedFnPrimOp(lambdaTracingObj, replayEval_inner, resolver)`
-and stores the PrimOp in the outer Value `v_outer`. The outer's
-Step 1 `Q_expr` is still in flight; `outerWriter.v13FactSet`
-already contains `Fact_file` (propagated from the inner
-`TracingSourceAccessor` through the outer chain).
+and stores the resulting `<cached-fn>` PrimOp in `v_outer`. That
+`v_outer` is the WHNF of `builtins.cache { import = ./call-fn.nix; }`
+— the function side of the outermost application — and
+`prim_cache` returns it to its caller (the outer Interpreter).
+
+`Q_expr` is still in flight. `outerWriter.v13FactSet` already
+contains `Fact_file` from Step 3's input-traced propagation.
 
 ### Step 5 — outer applies `<cached-fn>` to the outer arg
 
-The outer Nix interpreter evaluates the application
-`<cached-fn> { f = x: x+1; x = 10; }`. PrimOp application bypasses
-`Evaluator::apply`, so no outer `Q_apply` is logged. The cached-fn
-PrimOp's impl runs:
+The outer Interpreter, having forced the function side and gotten
+the `<cached-fn>` PrimOp, now completes the outermost application
+by invoking it with the outer arg `{ f = x: x+1; x = 10; }`. PrimOp
+application bypasses `Evaluator::apply`, so no outer `Q_apply` is
+logged at this step. The cached-fn PrimOp's impl runs:
 
 ```
 outerArgObj = InterpreterObject(outerState, args[0])      (lazy outer attrset)
