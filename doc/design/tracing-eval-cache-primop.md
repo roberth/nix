@@ -224,33 +224,35 @@ substantive thing the primop work has to think through.
 
 ### Background: where ids come from
 
-Ambient ids are produced interpreter-side. The resolver's `nextId`
-counter advances each time the recorder forces an ambient value:
-the seed seed root in the `<cached-fn>` PrimOp impl
-(`registerOuter(outerArgObj)`), and every child returned from
-`AmbientResolver::query`'s `QueryGetAttr` / `QueryGetListElem` /
-`QueryApply` arms (`registerOuter(child)`). The IDs are not
-derived from the storage layer — v13's set-based storage just
-records the queries that reference them.
-
-There are two id namespaces sharing the same `from` / `argId`
-string slots in the JSON payloads:
+Ambient ids are produced interpreter-side, not by the storage
+layer. There are two id namespaces sharing the same `from` /
+`argId` string slots in the JSON payloads:
 
 - **Writer-virtual ids** — `"virtual:N"`, allocated by
   `TracingWriter::getOrAllocVirtualRoot(Object*)`. These appear in
   the `fnId` / `argId` of `QueryApply` at the d=0 level when the
   `TracingEvaluator` records an `apply` whose operands have no
   trie identity.
-- **Resolver-ambient ids** — plain `"N"`, allocated by
+- **Resolver-ambient ids** — plain `"N"` (under the current code)
+  or a content hash (under Step C), allocated by
   `AmbientResolver::registerOuter` / `registerLocal`. These appear
   in the `from` field of every d>0 ambient Request.
 
-Both counters are interpreter-driven and deterministic for the
-CLI's straightforward patterns: the same Object gets the same id
-on re-invocation as long as the interpreter forces things in the
-same order. That assumption is fine for the recordings we care
-about; it would not be fine if a hint mechanism existed and was
-ignored, but no general hint surface exists yet (see *Future work*).
+Seed allocations don't happen during regular forcing. They fire at
+specific setup-shaped events that the CLI happens to perform in a
+stable sequence: auto-calling top-level functions during nix-build's
+traversal of the configuration, passing the few positional arguments
+to the initial `call-flake` call, and registering the cached
+function's argument in the `<cached-fn>` PrimOp impl. Regular forcing
+during evaluation issues structural queries (`getAttr`, `getInt`,
+…) that don't allocate seed ids; child identity under Step C comes
+from the producer query's `queryHash`, not from any counter.
+
+So the determinism we rely on isn't "same forcing order on every
+invocation" — that would be an unrealistic invariant. It's "same
+setup-phase events on every invocation," which holds trivially for
+the CLI patterns we care about. A general hint mechanism would
+relax even that (see *Future work*).
 
 ### The actual gap
 
@@ -312,10 +314,11 @@ Seed roots still need an identifier (they don't have a producer
 query — they're inputs from outside the trace). For now: hash a
 short string formed from the seed role and an interpreter-side
 counter, e.g. `hashString("seed:0")`, `hashString("seed:1")`. The
-counter is interpreter-driven and deterministic for the CLI's
-patterns. It is not robust to evaluation reordering; named hints
-would be the upgrade, but the metadata to conjure them isn't there
-for general Values (see *Future work*).
+counter is stable across invocations to the extent that the CLI's
+setup-phase events (above) fire in the same order — true for the
+patterns we care about. It is not robust to setup reorderings;
+named hints would be the upgrade, but the metadata to conjure them
+isn't there for general Values (see *Future work*).
 
 With both halves, **`AmbientId` collapses to `Hash`** everywhere.
 The `from` field in query payloads is the hex form,
