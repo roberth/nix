@@ -725,21 +725,24 @@ plan above, or into §Status of the in-tree pieces.
     the AmbientObject for; sharing between sibling callbacks;
     something subtler), but worth checking — flagged for later.
 
-3. **Should Object grow a "give me a `Value`" method to absorb
-    the `defeatCache` / `ExprFromObject` fallback?** `Interpreter::
-    apply`'s arg handling today is a try/catch:
-    `arg->defeatCache()` for concrete Objects; on throw (the
-    `AmbientObject` case), manually wrap via
-    `mkThunk(ExprFromObject(arg, nullptr, ambientResolver))`. That
-    pattern would read better as a single Object method
-    (`toValue(EvalState&)` or similar) where each subclass picks
-    its representation: `InterpreterObject` returns its underlying
-    `RootValue` directly, `AmbientObject` returns a thunk-wrapped
-    `ExprFromObject`. Question: does some existing method already
-    cover the use case (a generalised `defeatCache` that doesn't
-    throw on virtuals, perhaps), or does this need a new method
-    with its own contract? Worth a short audit when restoring the
-    primop.
+3. **Add an Object method that absorbs the `defeatCache` /
+    `ExprFromObject` fallback.** `Interpreter::apply`'s arg
+    handling today is a try/catch: `arg->defeatCache()` for
+    concrete Objects; on throw (the `AmbientObject` case),
+    manually wrap via `mkThunk(ExprFromObject(arg, nullptr,
+    ambientResolver))`. Checked the Object interface
+    (`evaluator.hh`); no existing method covers the use case —
+    `defeatCache` is the only one that returns a `Value`-shaped
+    thing, and it throws on virtuals. So this needs a new
+    virtual, something like `toValueOrProxy(EvalState &)` — the
+    name makes the dual nature explicit (`toValue()` already
+    exists on `AttrCursor` and behaves like `defeatCache`, so
+    reusing the name would be confusing). Each subclass picks its
+    representation: `InterpreterObject` / `TracingObject` return
+    their underlying `RootValue` directly, `AmbientObject` returns
+    a thunk-wrapped `ExprFromObject` proxy. The
+    open question is just whether to fold this into the primop
+    work or leave it as a separate refactor.
 
 4. **Recording `Q_apply` looks redundant.** `tracingEval_inner.apply`
     always logs `ResultType{"apply"}` as the result, because the
