@@ -1,4 +1,5 @@
 #include "nix/expr/tracing-evaluator.hh"
+#include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-source-accessor.hh"
@@ -256,11 +257,20 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         argId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(arg).value());
 
     tracingCacheLog("tracing: apply fnId=%s argId=%s", fnId ? *fnId : "none", argId ? *argId : "none");
-    auto [v, qh] = writer.logRootQuery(trace::QueryApply{*fnId, *argId});
+    /* Step D: don't record a Q_apply Terminal. A fresh app thunk
+       has no result type -- "apply" isn't a value type, and the
+       v12-era ResultType{"apply"} placeholder carried no
+       information beyond the existence of the Terminal row.
+       Compute the TriePosition structurally so downstream queries
+       on this apply result still chain off Q_apply via
+       queryHashStr (Merkle parent for v13's queryHash). */
+    auto queryHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{*fnId, *argId});
+    auto v = writer.getSink().logQuery(trace::QueryApply{*fnId, *argId});
     auto result = inner->apply(fn, arg);
-    // Don't record type — apply creates a virtual value (thunk).
-    // The actual type is discovered by the caller via getType queries.
-    auto triePos = writer.logResult(v, trace::ResultType{"apply"}, qh);
+    TriePosition triePos{
+        .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel; v13 doesn't key off this
+        .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
+    };
     return TracingObject::create(result, writer, v, triePos);
 }
 

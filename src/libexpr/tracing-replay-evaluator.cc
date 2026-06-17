@@ -385,15 +385,20 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         state.idToObject[ambient->getId().to_string(HashFormat::Base16, false)] = fn.get_ptr();
     ambientState = std::move(state);
 
-    auto result = lookup(trace::QueryApply{*fnId, *argId});
-
-    if (result) {
-        tracingCacheLog("replay hit: apply");
-        return make_ref<TracingReplayObject>(
-            *this, result->second, [this, fn, arg]() { return inner->apply(fn, arg); });
-    }
-    tracingCacheLog("replay miss: apply");
-    return inner->apply(fn, arg);
+    /* Step D: the recording side no longer writes a Q_apply Terminal
+       (its result would just be ResultType{"apply"} -- a placeholder,
+       not a real type), so there's nothing for lookup() to hit.
+       Synthesize the TriePosition from (fnId, argId) directly and
+       always wrap the result in TracingReplayObject. Child queries
+       on the apply result still walk independently; they fall
+       through to inner only when their own walks miss. */
+    auto queryHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{*fnId, *argId});
+    TriePosition triePos{
+        .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
+        .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
+    };
+    return make_ref<TracingReplayObject>(
+        *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
 }
 
 } // namespace nix

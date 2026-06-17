@@ -209,18 +209,24 @@ static PrimOp * makeCachedFnPrimOp(
                             innerEnv.ambientQuery(q, [&](const trace::QueryVariant &) { return qr.result; });
                             return qr;
                         };
-                        /* Step D: applyFn records QueryApply with the
-                           argument's id (not the result id). The
-                           resolver assigns argId = a local seed Hash
-                           and returns it alongside the resultId. */
-                        AmbientApplyFn applyFn = [resolver, &innerEnv](AmbientId fnId, std::shared_ptr<Object> argObj) {
+                        /* Step D: applyFn does NOT record a QueryApply
+                           Fact. A fresh app thunk has no result type
+                           ("apply" is not a value type); the v12-era
+                           ResultType{"apply"} placeholder carried no
+                           information and just bloated the factSet.
+                           The apply-result Object is still registered
+                           in the resolver under
+                           queryHash(QueryApply{fn=fnId, arg=argId}) so
+                           downstream queries on the apply result use
+                           that hash as their `from`. resolveAmbientId
+                           dispatching such a `from` will fail today
+                           (the QueryApply Request is not in the pool
+                           and we have no way to recover the local arg)
+                           — covariant-callback replay is a follow-up
+                           that needs the relay-case detection or the
+                           Step E TracingLocalObject. */
+                        AmbientApplyFn applyFn = [resolver](AmbientId fnId, std::shared_ptr<Object> argObj) {
                             auto [argId, resultId] = resolver->apply(fnId, std::move(argObj));
-                            trace::QueryApply applyQuery{
-                                fnId.to_string(HashFormat::Base16, false),
-                                argId.to_string(HashFormat::Base16, false)};
-                            innerEnv.ambientQuery(applyQuery, [&](const trace::QueryVariant &) -> trace::ResultVariant {
-                                return trace::ResultType{"apply"};
-                            });
                             return resultId;
                         };
                         /* lazy-paths: pin AmbientObject's path SourceRoot
