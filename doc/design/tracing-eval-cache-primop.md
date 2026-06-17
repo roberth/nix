@@ -258,24 +258,38 @@ expensive. See *Future work*.
 
 ### The actual gap
 
-A recorded `(QueryApply, factSet)` may contain multiple ambient
-Facts referencing derived ids:
+Concretely, take the `call-fn.nix` case from `builtins-cache.sh`:
+
+```nix
+(builtins.cache { import = ./call-fn.nix; }) { f = x: x + 1; x = 10; }
+```
+
+where `call-fn.nix` is `{ f, x }: f x`. The inner forces `arg.f`
+first (to know what to apply), then `arg.x` (the argument), then
+`arg.x` as an int. Each forcing fires an ambient query on the
+`AmbientObject` wrapping the outer arg. The resolver's counter
+walks: L0 = seed (the outer attrset, registered at the apply
+boundary), L1 = child returned from `getAttr "f"` (first
+`registerOuter` call), L2 = child returned from `getAttr "x"`
+(second `registerOuter` call). The recorded
+`(QueryApply, factSet)` contains:
 
 ```
 Q  = QueryApply{fnId=…, argId=L0}
 Facts:
-  Request(QueryGetAttr{name="f", from=L0})  ─ Response(maybe-lambda)   — recorder labels this L1
-  Request(QueryGetAttr{name="x", from=L0})  ─ Response(maybe-int)      — recorder labels this L2
+  Request(QueryGetAttr{name="f", from=L0})  ─ Response(maybe-lambda)
+  Request(QueryGetAttr{name="x", from=L0})  ─ Response(maybe-int)
   Request(QueryGetInt{from=L2})              ─ Response(10)
   Request(QueryApply{fn=L1, arg=L2})         ─ Response(apply)
 ```
 
-The `from="L2"` references a value the recorder labelled with
-counter id 2 (the child of `getAttr "x"`). The dispatcher needs to
-map "L2" back to the live child Object to issue `getInt` against it.
-The recorded `from` string carries the *label* but not the
-*derivation* — there is no way to tell from "L2" alone that it came
-from `getAttr "x"` on `L0`.
+The third Fact's `from="L2"` references the value the recorder
+labelled L2 — which the resolver allocated as the child of
+`getAttr "x"`. The dispatcher needs to map "L2" back to that live
+child Object to issue `getInt` against it. But the recorded `from`
+string carries only the label, not the derivation: there is no
+way to tell from "L2" alone that it came from `getAttr "x"` on
+`L0`.
 
 The current in-tree dispatcher tries to recover the mapping with
 two FIFO queues (`unresolvedRoots` for seeds, `pendingChildren`
