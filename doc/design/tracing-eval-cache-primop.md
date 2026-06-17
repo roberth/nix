@@ -251,10 +251,10 @@ argument in the `<cached-fn>` PrimOp impl — so seed counters are
 stable in practice without anything in the design enforcing it.
 
 If that practice ever stopped holding, the general lever is
-unification at replay time (match nodes by structural children
-rather than by recorded id) — applicable to any caller but
-potentially expensive. Hint plumbing is CLI-specific and the CLI
-doesn't seem to need it. Both are *Future work*.
+unification at replay time — match recorded nodes by their
+structural children rather than by their recorded id
+(Hindley-Milner sense). Applicable to any caller, potentially
+expensive. See *Future work*.
 
 ### The actual gap
 
@@ -989,30 +989,30 @@ These were in the v12-era follow-up list and remain valid:
   as an oracle and benefits from per-method early cutoff). This is a
   change in cost model rather than correctness; defer until we have
   numbers.
-- **Named hints for seed ambient ids — CLI-only, currently not
-  needed.** A caller-supplied semantic hint string (the way lazy
-  paths use the unpinned fetch URL as a stable hint for source-root
-  identity) would let seed Hashes survive apply-boundary
-  reorderings without depending on counter stability. The general
-  case is infeasible — we don't have method-argument metadata to
-  conjure hints for arbitrary Values — so only the CLI could plumb
-  this, and the CLI's own apply-boundary sequence is stable enough
-  that the counter suffices. Hook would be a
-  `std::optional<std::string> hint` parameter on `registerOuter` /
-  `registerLocal`. Listed here as a known surface, not a planned
-  upgrade.
-- **Structural-replay unification** (Hindley-Milner sense — distinct
-  from `AmbientId` collapsing to `Hash` in Step C). When two
-  evaluations produce semantically identical ambient values via
-  different apply-boundary sequences, the seed counters disagree
-  and cross-invocation Q hashes drift even though the values
-  match. A unification algorithm at replay time — match recorded
-  nodes by their structural children rather than by their
-  recorded id — would let the cache hit. This is the *general*
-  fallback (works for any caller, not just the CLI), and
-  compatible with the producer-query-as-id model since derived ids
-  are already structural. The cost may be substantial, so deferred
-  until there's a workload that justifies it.
+- **Structural-replay unification — the general fallback for
+  cross-invocation seed drift.** When two evaluations produce
+  semantically identical ambient values via different
+  apply-boundary sequences, the seed counters disagree and
+  cross-invocation Q hashes drift even though the values match. A
+  unification algorithm at replay time — match recorded nodes by
+  their structural children rather than by their recorded id
+  (Hindley-Milner sense; distinct from `AmbientId` collapsing to
+  `Hash` in Step C) — would let the cache hit. Applicable to any
+  caller, not just the CLI, and compatible with the
+  producer-query-as-id model since derived ids are already
+  structural; only seed identification is positional. Cost may be
+  substantial; defer until a workload justifies it.
+
+  *Narrow CLI complement: named hints.* The CLI specifically could
+  stabilise seed identity by supplying a semantic hint string at
+  `registerOuter` / `registerLocal` time — modelled on the
+  unpinned fetch URL hint used for lazy-paths source-root
+  identity — letting seed Hashes survive apply-boundary
+  reorderings without paying for replay-time unification. General
+  hints are infeasible (no method-argument metadata to conjure
+  hints for arbitrary Values), so this is CLI-only. Mentioned for
+  completeness; the CLI's apply-boundary sequence is stable enough
+  today that this doesn't need building.
 
 ## Source map
 
