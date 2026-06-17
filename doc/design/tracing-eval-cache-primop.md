@@ -138,6 +138,36 @@ What is missing or wrong, and so must change:
    `NullTraceSink`. Removing this is the deferred `TeeTracingWriter`
    work.
 
+5. `ExprFromObject::eval`'s `nFunction` arm
+   (`src/libexpr/expr-from-object.cc:289–298`) picks between
+   `makeCachedFnPrimOp` and `makeAmbientFnPrimOp` based on whether
+   `innerEvaluator` is set, not on `obj`'s dynamic type. The bridge
+   propagates `innerEvaluator` through `ExprFromObjectAttr`, so when
+   an inner evaluation forces `arg.f` and gets back an
+   `AmbientObject` of `nFunction` type (the outer lambda), the code
+   builds a `<cached-fn>` PrimOp wrapping that AmbientObject. Its
+   impl then calls `innerEval->apply(fnObj, …)`, which routes to
+   `Interpreter::apply` and tries `fnObj->defeatCache()` — which
+   throws on `AmbientObject`. Intended design: dispatch on `obj`'s
+   dynamic type. `AmbientObject` → `makeAmbientFnPrimOp` (which
+   uses `queryApply` and survives the missing `defeatCache`);
+   everything else → `makeCachedFnPrimOp`. Folded into Step C.
+
+6. `applyFn`'s recorded `QueryApply.arg` field (line 178 of
+   `expr-from-object.cc`) is `std::to_string(resultId.value())` —
+   the *result* id, not the argument id. The current convention
+   doubles the field as "the entity produced by this apply" so
+   downstream child queries can reference the apply result by that
+   id without an extra naming step. It's internally consistent (the
+   recorder writes resultId and the replayer would resolve resultId
+   the same way), but it bakes a recorder-side naming choice into
+   the wire format and is at odds with `trace::QueryApply`'s
+   docstring (which calls the field "argument's queryHash
+   identity"). Intended design: record the argument id in
+   `QueryApply.arg` (matching the docstring) and let downstream
+   queries identify the apply result structurally via the producer
+   queryHash of the `QueryApply` itself. Folded into Step D.
+
 ## Mapping the v12 "d=2 ambient layer" onto v13
 
 The v12 doc and the stub commit message both say v13 "does not yet
@@ -877,31 +907,79 @@ At this point `builtins-cache.sh`'s data-only tests
 multiple cache calls) should pass — those don't exercise the d=2
 ambient layer at all.
 
-**Step C — switch ambient ids to producer queryHashes.**
-Collapse `AmbientId` to `Hash`. In `AmbientResolver::query`, the
-child-producing arms return the current query's `queryHash` as the
-child id instead of bumping a counter. Seed allocation uses
-`hashString("seed:" + counter)`. Strip the queue-based fallback
-from `TracingReplayEvaluator::dispatchAmbientQuery`; replace with
-the on-demand recursive resolution against the `Requests` pool
-(described in §Ambient identity). Pre-bind seed Hashes into
-`idToObject` in `apply()`. The CLI-level `tracing-eval-cache.sh`
-tests should still pass — at the CLI root there is only the seed
-pair, which the pre-binding handles directly.
+**Step C — switch ambient ids to producer queryHashes, fix
+nFunction dispatch.** Two related changes:
 
-**Step D — apply-Request dispatcher on the replay side.**
-`dispatchAmbientQuery` returns `nullopt` for `tag == "apply"` today;
-this is what causes recorded `QueryApply` Facts to permanently miss
-on replay (open question 9). The minimum dispatcher resolves
-`params.fn` via the resolver, ensures the live outer fn is callable,
-and returns the canonical response hash for `ResultType{"apply"}`
-without re-invoking the outer apply itself (the result value's
-identity is validated by subsequent child Queries on the apply
-result, not by this Fact). Stretch goal: also register the
-resolved outer fn's apply-result Object under the recorded `arg`
-id so downstream `getAttr`/`getString` Requests against it can
-dispatch. This is enough for the `functionArgs`, simple-lambda, and
-curried test cases.
+1. **Ambient ids.** Collapse `AmbientId` to `Hash`. In
+   `AmbientResolver::query`, the child-producing arms return the
+   current query's `queryHash` as the child id instead of bumping
+   a counter. Seed allocation uses `hashString("seed:" + counter)`.
+   Strip the queue-based fallback from
+   `TracingReplayEvaluator::dispatchAmbientQuery`; replace with
+   the on-demand recursive resolution against the `Requests` pool
+   (described in §Ambient identity). Pre-bind seed Hashes into
+   `idToObject` in `apply()`.
+
+2. **`ExprFromObject::eval`'s `nFunction` dispatch.** Switch the
+   branch from "if `innerEvaluator` set" to "if `obj` is an
+   `AmbientObject`":
+
+   ```cpp
+   case nFunction: {
+       PrimOp * primOp;
+       if (dynamic_cast<AmbientObject *>(obj.get())) {
+           assert(ambientResolver);
+           primOp = makeAmbientFnPrimOp(obj, ambientResolver);
+       } else {
+           assert(innerEvaluator && ambientResolver);
+           primOp = makeCachedFnPrimOp(obj, innerEvaluator, ambientResolver);
+       }
+       v.mkPrimOp(primOp);
+       break;
+   }
+   ```
+
+   Without this, an ambient function reached via the inner's
+   `arg.f` access builds a `<cached-fn>` PrimOp whose impl
+   `defeatCache`s an `AmbientObject` and crashes (see §Status
+   item 5).
+
+The CLI-level `tracing-eval-cache.sh` tests should still pass — at
+the CLI root there is only the seed pair, which the pre-binding
+handles directly; no ambient nFunction values are produced there
+either.
+
+**Step D — fix `QueryApply.arg` semantics and add the replay-side
+dispatcher.** Two related changes:
+
+1. **Recording: `QueryApply.arg` becomes the argument id, not the
+   result id.** Today `applyFn` (in `makeCachedFnPrimOp`) writes
+   `std::to_string(resultId.value())` into `QueryApply.arg` —
+   recording the entity *produced* by the apply rather than the
+   entity *consumed*. Under §Status item 6 the intended design
+   records the argument's id (the locally-allocated `argId` from
+   `registerLocal`, or the producer queryHash for derived
+   ambient args). Downstream child queries against the apply
+   result reference it structurally via the producer
+   `queryHash(QueryApply{…})` instead of by an explicit name —
+   consistent with how every other derived ambient id is named
+   under Step C.
+
+2. **Replay: dispatch the apply Request.**
+   `dispatchAmbientQuery` returns `nullopt` for `tag == "apply"`
+   today (open question 9). The minimum dispatcher resolves
+   `params.fn` and `params.arg` via the resolver, ensures the
+   live outer fn is callable, and returns the canonical response
+   hash for `ResultType{"apply"}` without re-invoking the outer
+   apply itself (the result value's identity is validated by
+   subsequent child Queries on the apply result, not by this
+   Fact). Stretch goal: also register the resolved outer fn's
+   apply-result Object under the structural id
+   `queryHash(QueryApply{…})` so downstream `getAttr`/`getString`
+   Requests against it can dispatch.
+
+Combined, this is enough for the `functionArgs`, simple-lambda,
+and curried test cases.
 
 **Step E — incoming-query recording for covariant callbacks.**
 This is what `builtins-cache.sh`'s `call-fn`, `path-fn`, and
@@ -986,7 +1064,7 @@ prerequisite of all the rest.
       form/error cases/transitive invalidation/multiple calls)
       to pass.
 
-**Step C — producer queryHash as ambient id** (~80 lines across 3 files)
+**Step C — producer queryHash as ambient id; fix nFunction dispatch** (~100 lines across 4 files)
 
 - [ ] `src/libexpr/include/nix/expr/trace-ids.hh`: change
       `AmbientId` to `Hash` (or an alias `using AmbientId = Hash;`
@@ -998,6 +1076,11 @@ prerequisite of all the rest.
       the current query's `queryHash` and register the child under
       that. `registerOuter(seedObj)` callers in the PrimOp impl
       pass `hashString("seed:" + std::to_string(counter))`.
+- [ ] `src/libexpr/expr-from-object.cc:289`: change the
+      `nFunction` arm to dispatch on `obj`'s dynamic type —
+      `AmbientObject` → `makeAmbientFnPrimOp`, anything else →
+      `makeCachedFnPrimOp`. Without this, ambient lambdas reached
+      via `arg.f` crash at apply time (§Status item 5).
 - [ ] `src/libexpr/ambient-object.cc`: `AmbientObject::id` stores a
       `Hash`; methods emit it in the `from` string slot using
       `.to_string(HashFormat::Base16, false)`.
@@ -1013,15 +1096,21 @@ prerequisite of all the rest.
       cache misses are still expected for covariant callbacks
       until Step D.
 
-**Step D — apply-Request replay dispatcher** (~30 lines)
+**Step D — fix `QueryApply.arg` and add apply-Request replay dispatcher** (~50 lines)
 
+- [ ] `src/libexpr/expr-from-object.cc:178`: change `applyFn`'s
+      recorded `QueryApply.arg` from `std::to_string(resultId.value())`
+      to `std::to_string(argId.value())` (or the producer queryHash
+      under Step C's id scheme). Downstream queries against the
+      apply result reference it via the producer `queryHash` of
+      `QueryApply`, not by the recorded `arg` field.
 - [ ] `src/libexpr/tracing-replay-evaluator.cc`:
       `dispatchAmbientQuery` adds an `if (tag == "apply")` arm that
-      resolves `params.fn` via the resolver, attempts a *dummy*
-      apply on the resolved outer fn (without actually invoking
-      it — see open question 9), and returns the canonical
+      resolves `params.fn` and `params.arg` via the resolver,
+      attempts a *dummy* apply on the resolved outer fn (without
+      actually invoking it), and returns the canonical
       `ResultType{"apply"}` response hash. Register the
-      apply-result Object under the recorded `arg` id so
+      apply-result Object under `queryHash(QueryApply{…})` so
       downstream Requests against it dispatch.
 - [ ] Cached function-call replay-completeness assertions
       (`_NIX_DISALLOW_PARSE=1`) in `builtins-cache.sh` should now
@@ -1765,35 +1854,63 @@ Forcing the app thunk runs the inner application:
      payload encodes `ResultMaybeType{"lambda"}`.
    - `AmbientObject::maybeGetAttr` returns
      `AmbientObject(queryHash(QueryGetAttr{name="f", from=hashString("seed:0")}), …)`.
-   - `ExprFromObject::eval` on that AmbientObject sees `nFunction`
-     and constructs a `<cached-fn>` PrimOp wrapping it. Inner `f`
-     is now this PrimOp.
+   - `ExprFromObject::eval` on that AmbientObject sees `nFunction`.
+     Under Step C's nFunction-dispatch fix, the AmbientObject case
+     picks `makeAmbientFnPrimOp` (not `makeCachedFnPrimOp`); inner
+     `f` is now an `<ambient-fn>` PrimOp wrapping the AmbientObject.
 
 4. **Apply inner `f` to inner `x`.** Inner Nix interpreter
-   evaluates `f x` as a PrimOp call. The PrimOp's impl is
-   `makeCachedFnPrimOp`'s closure; when invoked with `args[0] =
-   x_thunk` (the ExprFromObjectAttr for "x" on contraArg) the impl
-   sets up a fresh ambient sub-apply: it registers `x_thunk` as a
-   local, calls
-   `replayEval_inner.apply(AmbientObject_for_outerLambda, AmbientObject_for_x_thunk)`,
-   which fires `getAttr "x"` on `hashString("seed:0")` (registering
-   the child under
-   `queryHash(QueryGetAttr{name="x", from=hashString("seed:0")})`),
-   then dispatches the apply through `AmbientObject::queryApply`,
-   which fires
-   `QueryApply{fn=queryHash(QueryGetAttr{name="f", from=hashString("seed:0")}), arg=queryHash(QueryGetAttr{name="x", from=hashString("seed:0")})}`
-   as an ambient Fact.
+   evaluates `f x` as a PrimOp call. The PrimOp's impl
+   (`makeAmbientFnPrimOp`'s closure) wraps `args[0]` (the
+   ExprFromObjectAttr thunk for "x" on contraArg) as an
+   `InterpreterObject` and calls
+   `AmbientObject::queryApply(argObj)`, which routes through
+   `applyFn`:
+   - `applyFn` calls `resolver.apply(L1, argObj)`, where L1 =
+     `queryHash(QueryGetAttr{name="f", from=hashString("seed:0")})`.
+   - `resolver.apply` registers `argObj` as a local — under Step
+     C's id scheme its id is
+     `hashString("local:" + nextLocalCounter)`. Call this `argId`.
+   - `resolver.apply` builds the outer-state thunk
+     `mkApp(outerLambda, ExprFromObject(argObj, …))`, wraps it as
+     an `InterpreterObject`, and registers it as a new outer under
+     `queryHash(QueryApply{fn=L1, arg=argId})`. Call this
+     `applyResultId`.
+   - `applyFn` records the apply via `innerEnv.ambientQuery`:
+     `(QueryApply{fn=L1, arg=argId}, ResultType{"apply"})`. Under
+     Step D, the recorded `arg` is the local arg id, not the
+     result id.
+   - `queryApply` returns `AmbientObject(applyResultId)` to the
+     `<ambient-fn>` PrimOp impl, which calls
+     `ExprFromObject(result, nullptr, resolver).eval(state, baseEnv, v)`
+     to bridge the apply result back into the inner Interpreter.
 
-5. **Outer lambda body `x + 1` runs in the outer Interpreter
-   (because the fn id resolves to the outer lambda).** Forcing
-   `x + 1` forces `x` (bound to the `ExprFromObjectAttr` thunk for
-   `arg.x`); that thunk resolves to `getInt` on
-   `queryHash(QueryGetAttr{name="x", from=hashString("seed:0")})`,
-   which fires
+5. **Bridge the sub-apply result back into the inner.**
+   `ExprFromObject::eval` calls `result.getType()` on
+   `AmbientObject(applyResultId)`, which fires
+   `QueryGetType{from=applyResultId}`. Resolving it routes through
+   `resolver.outerValues[applyResultId]` to the
+   `InterpreterObject` wrapping the outer `mkApp` thunk and forces
+   it.
+
+6. **Forcing the outer `mkApp` runs the outer lambda body
+   `x + 1`.** `x` is bound to the bridged `argThunk`; forcing it
+   pulls through `ExprFromObject(InterpreterObject_xThunk, …)` →
+   `ExprFromObjectAttr("x", contraArg, …)` →
+   `contraArg.maybeGetAttr("x")` → fires
+   `QueryGetAttr{name="x", from=hashString("seed:0")}` →
+   AmbientObject for the int 10. Then `obj.getInt()` fires
    `QueryGetInt{from=queryHash(QueryGetAttr{name="x", from=hashString("seed:0")})}`
-   as an ambient Fact and returns 10. The addition produces 11.
+   → 10. The outer addition `10 + 1` produces 11. The outer
+   `mkApp` evaluates to `mkInt(11)`.
 
-6. **Inner lambda body finishes: `2 * (f x)` = `22`.** The
+7. **Inner extracts the sub-apply result as an int.** Back in the
+   sub-apply's `ExprFromObject::eval` (now that `getType` returned
+   `nInt`), the `nInt` arm calls `obj.getInt()` which fires
+   `QueryGetInt{from=applyResultId}` → 11. The inner `f x`
+   PrimOp's `v` is now `mkInt(11)`.
+
+8. **Inner lambda body finishes: `2 * (f x)` = `22`.** The
    multiplication happens inside the inner Interpreter; no ambient
    query fires.
 
@@ -1810,15 +1927,21 @@ accumulated, in addition to `Fact_file`:
 ( H(QueryGetAttr{name="f", from=hashString("seed:0")}),
   H(ResultMaybeType{"lambda"}) )
 
+( H(QueryApply{fn=queryHash(QueryGetAttr{name="f", from=hashString("seed:0")}),
+               arg=hashString("local:0")}),
+  H(ResultType{"apply"}) )
+
+( H(QueryGetType{from=queryHash(QueryApply{fn=…, arg=hashString("local:0")})}),
+  H(ResultType{"int"}) )
+
 ( H(QueryGetAttr{name="x", from=hashString("seed:0")}),
   H(ResultMaybeType{"int"}) )
 
-( H(QueryApply{fn=queryHash(QueryGetAttr{name="f", from=hashString("seed:0")}),
-               arg=queryHash(QueryGetAttr{name="x", from=hashString("seed:0")})}),
-  H(ResultType{"apply"}) )
-
 ( H(QueryGetInt{from=queryHash(QueryGetAttr{name="x", from=hashString("seed:0")})}),
   H(ResultInt{10}) )
+
+( H(QueryGetInt{from=queryHash(QueryApply{fn=…, arg=hashString("local:0")})}),
+  H(ResultInt{11}) )
 ```
 
 The outer's `v13FactSet` got `Fact_file` only (the inner ambient
@@ -1829,11 +1952,11 @@ chatter doesn't propagate to outer env reads; those Facts stay in
 
 The in-flight `QueryGetType{from=Q_apply_hash}` on
 `innerWriter.inFlight` is closed by `logResult(R_int_type, …)`.
-factSet at this moment = `Fact_file + the six ambient Facts above`.
+factSet at this moment = `Fact_file + the eight ambient Facts above`.
 This records:
 
 ```
-Asks(QueryGetType_hash, ∅) → RS{ R_file, all six ambient Request hashes }
+Asks(QueryGetType_hash, ∅) → RS{ R_file, all eight ambient Request hashes }
 Terminals(QueryGetType_hash, factSetHash) → R_int_type
 ```
 
