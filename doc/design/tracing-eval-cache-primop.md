@@ -835,6 +835,27 @@ defensible choice but a future revision may want to revisit.
     with its own contract? Worth a short audit when restoring the
     primop.
 
+14. **Recording `Q_apply` looks redundant.** `tracingEval_inner.apply`
+    always logs `ResultType{"apply"}` as the result, because the
+    app thunk's type at `logResult` time is by definition `"apply"`
+    (the application hasn't been forced yet). The
+    `Terminals(Q_apply, factSet) → R_apply_type` row therefore
+    stores no information beyond its existence. The only apparent
+    use is anchoring: child queries against the apply result use
+    `from=Q_apply_hash` in their payloads, and
+    `TracingReplayEvaluator::apply` does a `lookup(QueryApply{…})`
+    to get a `TriePosition` whose `queryHashStr` becomes the
+    parent of those child queries. But `Q_apply_hash` is
+    deterministic from `(fnId, argId)`; replay could compute it
+    directly and treat the apply as a free anchor without a
+    Terminal lookup at all. Open: can we skip recording `Q_apply`'s
+    Terminal (and probably the `Asks(Q_apply, ∅) → RS{…}` edge too)
+    entirely? Savings per cached function call: one `Asks` row,
+    one `Terminals` row, one tautological Result payload. Need to
+    verify the replay path doesn't depend on these rows for
+    anything beyond the `TriePosition` it could synthesise from
+    the args.
+
 ## Implementation step list
 
 The work decomposes into roughly five steps, each independently
@@ -1607,10 +1628,9 @@ logged at this step. The cached-fn PrimOp's impl runs:
 
 ```
 outerArgObj = InterpreterObject(outerState, args[0])      (lazy outer attrset)
-L0          = resolver.registerOuter(outerArgObj)
-            = hashString("seed:0")
-resolver.outerValues[L0] = outerArgObj
-contraArg   = AmbientObject(L0, queryFn, applyFn)
+resolver.registerOuter(outerArgObj)                       // returns hashString("seed:0")
+resolver.outerValues[hashString("seed:0")] = outerArgObj
+contraArg   = AmbientObject(hashString("seed:0"), queryFn, applyFn)
 appResult   = replayEval_inner.apply(lambdaTracingObj, contraArg)
 ```
 
@@ -1626,7 +1646,7 @@ answered (via the resolver) and recorded (in the inner trace).
 Resolver state after this step:
 
 ```
-outerValues: { L0 → outerArgObj }
+outerValues: { hashString("seed:0") → outerArgObj }
 localValues: ∅
 ```
 
@@ -1712,15 +1732,17 @@ Forcing the app thunk runs the inner application:
 
 1. **Force `argValue` (the `ExprFromObject` thunk for `contraArg`)
    to destructure the formal `{f, x}` pattern.** `ExprFromObject::eval`
-   on `AmbientObject(L0)` switches on type:
+   on `AmbientObject(hashString("seed:0"))` switches on type:
    - `contraArg.getType()` → `AmbientObject` issues
-     `queryFn(L0, QueryGetType{from=L0})`. The resolver answers
-     `ResultType{"set"}` from `outerArgObj.getType()`; the queryFn
-     closure routes through `innerEnv.ambientQuery` which calls
+     `queryFn(hashString("seed:0"), QueryGetType{from=hashString("seed:0")})`.
+     The resolver answers `ResultType{"set"}` from
+     `outerArgObj.getType()`; the queryFn closure routes through
+     `innerEnv.ambientQuery` which calls
      `innerWriter.logAmbientInteraction(QueryGetType, ResultType{"set"})`,
      adding a Fact to `v13FactSet`.
    - `contraArg.getAttrNames()` → same shape, returns `["f", "x"]`,
-     adds a `(QueryGetAttrNames{from=L0}, ResultListOfStrings{["f","x"]})`
+     adds a
+     `(QueryGetAttrNames{from=hashString("seed:0")}, ResultListOfStrings{["f","x"]})`
      Fact.
    - Builds a Value attrset with `ExprFromObjectAttr` thunks for
      each name.
@@ -1730,46 +1752,68 @@ Forcing the app thunk runs the inner application:
 
 3. **Evaluate body `f x`.** Forcing inner `f`:
    - `ExprFromObjectAttr::eval` for `"f"` calls
-     `contraArg.maybeGetAttr("f")` → `queryFn(L0, QueryGetAttr{name="f", from=L0})`.
+     `contraArg.maybeGetAttr("f")` →
+     `queryFn(hashString("seed:0"), QueryGetAttr{name="f", from=hashString("seed:0")})`.
    - Resolver computes `outerArgObj.maybeGetAttr("f")` = the outer
-     lambda `x: x+1`, and under Step C registers it as
-     `L1 = queryHash(QueryGetAttr{name="f", from=L0})`.
-     `resolver.outerValues[L1] = outerLambda`.
+     lambda `x: x+1`, and under Step C registers it under
+     `queryHash(QueryGetAttr{name="f", from=hashString("seed:0")})`:
+     `resolver.outerValues[queryHash(QueryGetAttr{name="f", from=hashString("seed:0")})] = outerLambda`.
    - `innerWriter.logAmbientInteraction(QueryGetAttr{…}, ResultMaybeType{"lambda"})`
-     adds a Fact whose Request payload encodes `from=L0, name="f"`.
-   - `AmbientObject::maybeGetAttr` returns `AmbientObject(L1, …)`.
-   - `ExprFromObject::eval` on `AmbientObject(L1)` sees `nFunction`
-     and constructs a `<cached-fn>` PrimOp wrapping `AmbientObject(L1)`.
-     Inner `f` is now this PrimOp.
+     adds a Fact whose Request payload encodes
+     `from=hashString("seed:0"), name="f"` and whose Response
+     payload encodes `ResultMaybeType{"lambda"}`.
+   - `AmbientObject::maybeGetAttr` returns
+     `AmbientObject(queryHash(QueryGetAttr{name="f", from=hashString("seed:0")}), …)`.
+   - `ExprFromObject::eval` on that AmbientObject sees `nFunction`
+     and constructs a `<cached-fn>` PrimOp wrapping it. Inner `f`
+     is now this PrimOp.
 
 4. **Apply inner `f` to inner `x`.** Inner Nix interpreter
    evaluates `f x` as a PrimOp call. The PrimOp's impl is
    `makeCachedFnPrimOp`'s closure; when invoked with `args[0] =
    x_thunk` (the ExprFromObjectAttr for "x" on contraArg) the impl
    sets up a fresh ambient sub-apply: it registers `x_thunk` as a
-   local, calls `replayEval_inner.apply(AmbientObject_L1, AmbientObject_for_x_thunk)`,
-   which fires `getAttr "x"` on `L0` (registering `L2 =
-   queryHash(QueryGetAttr{name="x", from=L0})` as the child),
+   local, calls
+   `replayEval_inner.apply(AmbientObject_for_outerLambda, AmbientObject_for_x_thunk)`,
+   which fires `getAttr "x"` on `hashString("seed:0")` (registering
+   the child under
+   `queryHash(QueryGetAttr{name="x", from=hashString("seed:0")})`),
    then dispatches the apply through `AmbientObject::queryApply`,
-   which fires `QueryApply{fn=L1, arg=L2}` as an ambient Fact.
+   which fires
+   `QueryApply{fn=queryHash(QueryGetAttr{name="f", from=hashString("seed:0")}), arg=queryHash(QueryGetAttr{name="x", from=hashString("seed:0")})}`
+   as an ambient Fact.
 
 5. **Outer lambda body `x + 1` runs in the outer Interpreter
-   (because L1 is the outer lambda).** Forcing `x + 1` forces `x`
-   (bound to the `ExprFromObjectAttr` thunk for `arg.x`); that
-   thunk resolves to `getInt` on `L2`, which fires
-   `QueryGetInt{from=L2}` as an ambient Fact and returns 10. The
-   addition produces 11.
+   (because the fn id resolves to the outer lambda).** Forcing
+   `x + 1` forces `x` (bound to the `ExprFromObjectAttr` thunk for
+   `arg.x`); that thunk resolves to `getInt` on
+   `queryHash(QueryGetAttr{name="x", from=hashString("seed:0")})`,
+   which fires
+   `QueryGetInt{from=queryHash(QueryGetAttr{name="x", from=hashString("seed:0")})}`
+   as an ambient Fact and returns 10. The addition produces 11.
 
 By the end of forcing the app thunk, `innerWriter.v13FactSet` has
 accumulated, in addition to `Fact_file`:
 
 ```
-Fact_getType_L0     = ( H(QueryGetType{from=L0}),       H(ResultType{"set"}) )
-Fact_getAttrNames_L0 = ( H(QueryGetAttrNames{from=L0}), H(ResultListOfStrings{["f","x"]}) )
-Fact_getAttr_f      = ( H(QueryGetAttr{name="f", from=L0}), H(ResultMaybeType{"lambda"}) )
-Fact_getAttr_x      = ( H(QueryGetAttr{name="x", from=L0}), H(ResultMaybeType{"int"}) )
-Fact_apply_L1_L2    = ( H(QueryApply{fn=L1, arg=L2}),   H(ResultType{"apply"}) )
-Fact_getInt_L2      = ( H(QueryGetInt{from=L2}),        H(ResultInt{10}) )
+( H(QueryGetType{from=hashString("seed:0")}),
+  H(ResultType{"set"}) )
+
+( H(QueryGetAttrNames{from=hashString("seed:0")}),
+  H(ResultListOfStrings{["f","x"]}) )
+
+( H(QueryGetAttr{name="f", from=hashString("seed:0")}),
+  H(ResultMaybeType{"lambda"}) )
+
+( H(QueryGetAttr{name="x", from=hashString("seed:0")}),
+  H(ResultMaybeType{"int"}) )
+
+( H(QueryApply{fn=queryHash(QueryGetAttr{name="f", from=hashString("seed:0")}),
+               arg=queryHash(QueryGetAttr{name="x", from=hashString("seed:0")})}),
+  H(ResultType{"apply"}) )
+
+( H(QueryGetInt{from=queryHash(QueryGetAttr{name="x", from=hashString("seed:0")})}),
+  H(ResultInt{10}) )
 ```
 
 The outer's `v13FactSet` got `Fact_file` only (the inner ambient
