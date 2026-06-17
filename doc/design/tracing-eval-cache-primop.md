@@ -1614,7 +1614,7 @@ outerValues: { L0 → outerArgObj }
 localValues: ∅
 ```
 
-### Step 6 — inner records `Q_apply` (still only `Fact_file` in flight)
+### Step 6 — inner records `Q_apply`, factSet snapshot = `{Fact_file}`
 
 `replayEval_inner.apply(lambdaTracingObj, contraArg)`:
 
@@ -1638,9 +1638,11 @@ localValues: ∅
   - `mkApp(lambdaValue, argThunk)` → app thunk Value.
   - Returns `InterpreterObject` for the app thunk.
 - `logResult(ResultType{"apply"}, Q_apply)`:
-  - factSet at this moment = `{ Fact_file }` — *still no ambient
-    Facts*. The app thunk hasn't been forced yet, so ambient
-    queries haven't fired.
+  - factSet snapshot for this Query = `{ Fact_file }`. The app
+    thunk hasn't been forced yet, so no ambient queries have
+    fired — they will, later in Step 7, and they'll be in the
+    factSet snapshot of whichever Query is in flight at *that*
+    point (Step 8's `QueryGetType`).
   - `decisionGraph.record(Q_apply, factSetHash, R_apply_type, …)` writes
     - `Asks(Q_apply, ∅) → RS{ R_file }`
     - `Terminals(Q_apply, factSetHash) → R_apply_type`
