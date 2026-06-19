@@ -46,6 +46,12 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash)
             return Hash(HashAlgorithm::SHA256);
         auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
         dispatchCache.emplace(requestHash, h);
+        /* Dispatched facts are real environment observations; feed
+           them into the writer's v13FactSet so any subsequent
+           logResult records at the same factSetHash regardless of
+           which facts came from interpretation vs cache-hit
+           dispatch. */
+        writer.noteEnvObservation(requestHash, h);
         return h;
     };
 

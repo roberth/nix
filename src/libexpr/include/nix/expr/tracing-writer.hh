@@ -291,6 +291,35 @@ public:
     }
 
     /**
+     * Note an environment observation made by the walker during a
+     * cache hit's dispatch. The walker calls dispatch live to verify
+     * that recorded paths still hold against the current environment;
+     * each `(request, response)` it computes is a real observation of
+     * the environment, just like one made via `logResponse` or
+     * `logAmbientInteraction` during interpretation. Feeding it back
+     * into `v13FactSet` keeps the writer's cumulative state invariant
+     * to whether facts came via interpretation or cache-hit dispatch.
+     * Without this, a subsequent `logResult` for some Q that fell
+     * back to inner would record at a factSetHash missing the
+     * walker's prior dispatches — creating a sibling Asks chain and
+     * disqualifying single-edge fast paths on future warms.
+     */
+    void noteEnvObservation(const Hash & request, const Hash & response)
+    {
+        if (!decisionGraph)
+            return;
+        if (seenRequests.insert(request).second) {
+            v13FactSet.push_back({request, response});
+            v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
+                v13FactSetHash, request, response);
+            responseFor.emplace(request, response);
+            allRequestsTrie.insert(request);
+            if (currentFrame_)
+                currentFrame_->factSet.push_back({request, response});
+        }
+    }
+
+    /**
      * Defer a Requests-pool insert until logResult.
      *
      * AmbientResolver::apply uses this to register the QueryApply
