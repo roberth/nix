@@ -578,7 +578,21 @@ public:
             their own destruction. */
         std::unique_ptr<TracingDecisionGraph> ownedDecisionGraph;
 
-        /** Per-call state that must remain alive while thunks can be forced. */
+        /** Process-wide counter for AmbientResolver seed allocations.
+            Conceptually the seed AmbientObject is part of the
+            environment and the multi-Terminal mechanism should
+            distinguish cache calls by dispatched factSet observations
+            on the seed; in practice certain Phase 4 callback-result
+            paths (specifically dotted-attr-path returns like
+            `{ networking.hostName = v; }`) cause the walker to hit a
+            prior call's Terminal without actually observing the
+            differing value live. Sharing a process-wide counter
+            ensures each cache call's seed hex is unique by
+            invocation order, so Q_apply hashes differ and the cache
+            entries stay structurally separate. Replace with proper
+            content-defined seed identity once the
+            multi-Terminal-doesn't-distinguish gap is closed. */
+        uint64_t nextResolverSeedCounter = 0;
         struct CallState
         {
             // Destruction order: innerState must be destroyed before writer,

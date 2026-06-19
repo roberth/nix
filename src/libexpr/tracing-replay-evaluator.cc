@@ -464,11 +464,19 @@ ref<Object> TracingReplayEvaluator::getInternalPrimOp(const std::string & name)
 
 ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
+    /* AmbientObject case: the `<cached-fn>` PrimOp creates one to wrap
+       the outer's args. Without this, argId falls through to
+       virtual:N (per-writer counter starting at 0), which collides
+       across separate cache primop calls and forces every subsequent
+       call's child-Q lookup to land at the first call's recorded
+       Terminal. */
     auto getId = [](Object & obj) -> std::optional<std::string> {
         if (auto * to = dynamic_cast<TracingObject *>(&obj))
             return to->getQueryHashStr();
         if (auto * ro = dynamic_cast<TracingReplayObject *>(&obj))
             return std::optional{ro->getTriePos().queryHashStr};
+        if (auto * ao = dynamic_cast<AmbientObject *>(&obj))
+            return ao->getId().to_string(HashFormat::Base16, false);
         return std::nullopt;
     };
 

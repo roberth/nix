@@ -46,18 +46,16 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
        ref) so AmbientResolver stays default-constructible. */
     std::shared_ptr<SourceRoot> outerRootFSRoot;
 
-    /* Separate counters for seed vs local roots — the strings
-       `hashString("seed:N")` and `hashString("local:N")` already
-       namespace them in the wire format, but using one counter
-       per namespace keeps assignments stable when one side
-       advances without the other. */
-    unsigned int nextSeedCounter = 0;
+    /* Local counter is per-resolver. The seed counter is per-EvalState
+       (shared across resolvers) — see
+       outerState->cacheState.nextResolverSeedCounter. */
     unsigned int nextLocalCounter = 0;
 
     /** Allocate a fresh outer seed-id hash and register the Object under it. */
     AmbientId registerOuterSeed(std::shared_ptr<Object> obj)
     {
-        auto id = hashString(HashAlgorithm::SHA256, "seed:" + std::to_string(nextSeedCounter++));
+        uint64_t n = outerState ? outerState->cacheState.nextResolverSeedCounter++ : 0;
+        auto id = hashString(HashAlgorithm::SHA256, "seed:" + std::to_string(n));
         outerValues[id] = std::move(obj);
         return id;
     }
