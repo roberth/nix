@@ -40,7 +40,11 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
     trace::ResultMaybeType r = rJson;
     if (!r.type)
         return nullptr;
-    return std::make_shared<ReplayLocalObject>(replayDerivedLocalId(query), decisionGraph, rootFSRoot);
+    /* Propagate the child's type via in-band knownType so the
+       dispatcher's getAttr branch can answer child->getType()
+       without a separate pool lookup that the recorder never wrote. */
+    return std::make_shared<ReplayLocalObject>(
+        replayDerivedLocalId(query), decisionGraph, rootFSRoot, stringToObjectType(*r.type));
 }
 
 std::vector<std::string> ReplayLocalObject::getAttrNames()
@@ -116,13 +120,19 @@ std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
     trace::QueryGetListElem query{replayFromOf(localId), index};
     /* The recorded response only carries the child's type, not
        value. We still derive an id for the child so the outer can
-       chain further accesses on it. */
-    readResponse(decisionGraph, query);
-    return std::make_shared<ReplayLocalObject>(replayDerivedLocalId(query), decisionGraph, rootFSRoot);
+       chain further accesses on it. Propagate the type in-band so
+       the dispatcher's child->getType() resolves without needing
+       a separate getType fact the recorder never emits. */
+    auto rJson = readResponse(decisionGraph, query);
+    trace::ResultType r = rJson;
+    return std::make_shared<ReplayLocalObject>(
+        replayDerivedLocalId(query), decisionGraph, rootFSRoot, stringToObjectType(r.type));
 }
 
 ObjectType ReplayLocalObject::getType()
 {
+    if (knownType)
+        return *knownType;
     auto rJson = readResponse(decisionGraph, trace::QueryGetType{replayFromOf(localId)});
     trace::ResultType r = rJson;
     return stringToObjectType(r.type);

@@ -36,10 +36,21 @@ class ReplayLocalObject : public Object
     AmbientId localId;
     TracingDecisionGraph & decisionGraph;
     ref<SourceRoot> rootFSRoot;
+    /* When a parent's maybeGetAttr / getListElem produces this child,
+       it has the child's type from its own response. Recorder-side
+       TracingLocalObject::maybeGetAttr never invokes getType on a
+       wrapped child — it gets the type from the inner Object directly
+       — so no QueryGetType fact for this child lands in the cache.
+       Replay carries the type forward in-band instead of trying to
+       look up a fact that doesn't exist. */
+    std::optional<ObjectType> knownType;
 
 public:
     ReplayLocalObject(AmbientId localId, TracingDecisionGraph & dg, ref<SourceRoot> rootFSRoot)
         : localId(localId), decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)) {}
+
+    ReplayLocalObject(AmbientId localId, TracingDecisionGraph & dg, ref<SourceRoot> rootFSRoot, ObjectType type)
+        : localId(localId), decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), knownType(type) {}
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

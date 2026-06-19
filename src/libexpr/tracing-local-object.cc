@@ -47,7 +47,21 @@ std::shared_ptr<Object> TracingLocalObject::maybeGetAttr(const std::string & nam
     recordObservation(query, resultJson);
     if (!child)
         return nullptr;
-    return std::make_shared<TracingLocalObject>(std::move(child), derivedLocalId(query), writer, rootFSRoot);
+    /* The child is structurally derived from the parent via this
+       query. Register the derivation with the writer so flush can
+       compute the child's final localId from parent's final
+       intrinsic — the same hash replay computes from the parent
+       standin's localId. The query template carries the parent's
+       placeholder hex; substitution at flush rewrites it to the
+       parent's final intrinsic, then the child's final localId is
+       the hash of that substituted query. */
+    auto childLocalId = derivedLocalId(query);
+    nlohmann::json derivJson = query;
+    writer.registerDerivedLocal(
+        childLocalId.to_string(HashFormat::Base16, false),
+        tracingLocalFromOf(localId),
+        std::move(derivJson));
+    return std::make_shared<TracingLocalObject>(std::move(child), childLocalId, writer, rootFSRoot);
 }
 
 std::vector<std::string> TracingLocalObject::getAttrNames()
@@ -124,7 +138,13 @@ std::shared_ptr<Object> TracingLocalObject::getListElem(size_t index)
     auto child = inner->getListElem(index);
     trace::QueryGetListElem query{tracingLocalFromOf(localId), index};
     recordObservation(query, trace::ResultType{objectTypeToString(child->getType())});
-    return std::make_shared<TracingLocalObject>(std::move(child), derivedLocalId(query), writer, rootFSRoot);
+    auto childLocalId = derivedLocalId(query);
+    nlohmann::json derivJson = query;
+    writer.registerDerivedLocal(
+        childLocalId.to_string(HashFormat::Base16, false),
+        tracingLocalFromOf(localId),
+        std::move(derivJson));
+    return std::make_shared<TracingLocalObject>(std::move(child), childLocalId, writer, rootFSRoot);
 }
 
 ObjectType TracingLocalObject::getTypeLazy()

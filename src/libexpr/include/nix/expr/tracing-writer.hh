@@ -106,6 +106,24 @@ class TracingWriter
        Populated by TracingLocalObject as observations land. */
     std::map<std::string, Hash> placeholderToIntrinsic;
 
+    /* Derived local children — TracingLocalObjects produced by
+       maybeGetAttr / getListElem on a parent local. Their identity is
+       structural: qH(derivation_query with parent's final intrinsic
+       as `from`). The query template here carries the parent's
+       placeholder hex; flush rewrites it via the substitution map
+       (which has parent's placeholder → parent's final intrinsic by
+       the time it processes this), then hashes the substituted query
+       to get the child's final id. The map entry from the child's
+       creation-time hex to that final id then participates in the
+       same substitution pass that fixes up pending facts. */
+    struct DerivedLocal
+    {
+        std::string placeholderHex;
+        std::string parentPlaceholderHex;
+        nlohmann::json derivationTemplate;
+    };
+    std::vector<DerivedLocal> derivedLocals;
+
 public:
     /**
      * Frame in the content-defined-identity stack of mutable factsets.
@@ -349,6 +367,17 @@ public:
     void updatePlaceholderIntrinsic(const std::string & placeholderHex, const Hash & intrinsic)
     {
         placeholderToIntrinsic.insert_or_assign(placeholderHex, intrinsic);
+    }
+
+    /**
+     * Register a derived local child. Flush computes the child's
+     * final localId from the substituted derivation template — same
+     * hash replay would compute by hashing a query with parent's
+     * final intrinsic in the `from` slot.
+     */
+    void registerDerivedLocal(std::string placeholderHex, std::string parentHex, nlohmann::json derivationTemplate)
+    {
+        derivedLocals.push_back({std::move(placeholderHex), std::move(parentHex), std::move(derivationTemplate)});
     }
 
     /**

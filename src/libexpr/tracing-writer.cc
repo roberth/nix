@@ -37,6 +37,19 @@ void TracingWriter::flushPendingAmbient()
         sub.emplace(placeholderHex, intrinsic.to_string(HashFormat::Base16, false));
     }
 
+    /* Cascade derived local children: each child's identity is
+       qH(derivation_query) with parent's placeholder hex in `from`
+       substituted to parent's final intrinsic. Process in
+       registration order — parents register before their children
+       so each derivedLocal's parent is already in `sub` by the time
+       we get here, including chains of derived-from-derived. */
+    for (auto & dl : derivedLocals) {
+        auto tmpl = dl.derivationTemplate;
+        substituteHexes(tmpl, sub);
+        auto finalHash = hashString(HashAlgorithm::SHA256, tmpl.dump());
+        sub.emplace(dl.placeholderHex, finalHash.to_string(HashFormat::Base16, false));
+    }
+
     /* Pass 1: process pending QueryApply Requests. Substituting the
        `arg` (and possibly `fn`) field shifts the payload's queryHash;
        record old→new so facts that reference the apply via the old
@@ -109,6 +122,7 @@ void TracingWriter::flushPendingAmbient()
     pendingFacts.clear();
     pendingRequests.clear();
     placeholderToIntrinsic.clear();
+    derivedLocals.clear();
 }
 
 } // namespace nix
