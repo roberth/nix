@@ -169,8 +169,19 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
 
     auto reqPayload = decisionGraph.getRequestPayload(idHash);
     if (!reqPayload) {
-        tracingCacheLog("replay: ambient id %s has no producer Request in pool", idStr);
-        return nullptr;
+        /* Under Phase 4 of content-defined identity, an unknown id
+           in the Requests pool is most commonly an inner-side
+           TracingLocalObject's intrinsic content-hash — the local's
+           own observations were emitted as facts with from=hex(id)
+           after placeholder substitution, but the id itself is just
+           an identifier, not a producer Request. Materialise a
+           ReplayLocalObject keyed by it; its methods read recorded
+           responses out of the Responses pool by qH(query{from=hex(id)}),
+           matching what TracingLocalObject wrote during recording. */
+        auto standin = std::make_shared<ReplayLocalObject>(
+            idHash, decisionGraph, inner->getEvalState().rootFSRoot);
+        ambientState->idToObject[idStr] = standin;
+        return standin;
     }
 
     nlohmann::json reqJson;
