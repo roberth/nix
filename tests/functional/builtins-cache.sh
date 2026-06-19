@@ -188,6 +188,24 @@ expectStderr 1 nix eval --impure --expr '((builtins.cache { import = '"$TEST_ROO
 
 echo '{ f, x }: f x' > "$TEST_ROOT/call-fn.nix"
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 10; }') == 11 ]]
+# Replay: covariant callback into outer lambda must hit the cache.
+# Ambient responses get live-validated against the outer (live
+# `queryApply` for the apply-result Facts), so a hit means every
+# observation still matches.
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 10; }') == 11 ]]
+
+# Outer-lambda-body staleness check: change `f`'s body to `x: x + 100`
+# while keeping its arity and seed counter stable. The data-arg side
+# (`x = 10`) is unchanged, so a purely seed/file-based cache would
+# happily hit and return the stale 11. Live apply replay invokes the
+# NEW `f` against the recorded `x = 10` and observes 110, whose
+# response hash differs from the recorded 11 — walk falls through and
+# we record + return the correct value.
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 100; x = 10; }') == 110 ]]
+# Restore the original outer fn and check it still hits.
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 10; }') == 11 ]]
+# Data-arg change must invalidate too (sanity).
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 50; }') == 51 ]]
 
 # Path values forwarded through the cache boundary
 echo '{ p }: p' > "$TEST_ROOT/path-fn.nix"

@@ -545,18 +545,16 @@ Performance harness under `tests/perf/tracing-cache/`:
   Phase 1 — but the cross-session amortisation and post-Patricia-split
   divergence handling Phase 2 was designed for remain valid future
   work.
-- **Covariant-callback cache hits in `builtins.cache`.** The
-  primop itself is implemented (see
-  [`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md));
-  the inner cache hits cleanly for data-only results and
-  non-covariant function calls. When the inner calls back into an
-  outer-provided function (the `(builtins.cache { import = ./f; }) {
-  f = ...; x = ...; }` shape where the inner does `f x`), replay
-  currently falls through to inner re-evaluation. Closing this gap
-  needs either relay-case detection in `applyFn` (peeking inside
-  `args[0]`'s thunk for an ambient ancestor's id) or the
-  `TracingLocalObject`/`ReplayLocalObject` pair that records
-  incoming queries on the local arg.
+- **`builtins.cache` covariant callbacks ship validated.** See
+  [`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md).
+  The inner records outer accesses on the callback arg via
+  `TracingLocalObject`; on replay the dispatcher invokes the apply
+  live (`resolveAmbientId` `tag == "apply"` branch) using a
+  `ReplayLocalObject` frozen image of the recorded arg. Outer
+  lambda body changes are caught — no Responses-pool fallback in
+  the dispatcher. Storage cost: one Responses-pool entry per
+  ambient interaction (bounded by the apply-result fanout) plus
+  one localArg sidecar Request per apply.
 - **Eviction / compaction**: none. The DB grows with the workload.
   At 41 MB per 10k recorded attrs, that's tolerable for a while.
 - **Wiring `nix-env -qa`** through the cache. Currently bypasses.

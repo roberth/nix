@@ -5,14 +5,27 @@
 #include "nix/expr/interpreter-object.hh"
 #include "nix/expr/object-type.hh"
 #include "nix/expr/tracing-decision-graph.hh"
+#include "nix/expr/tracing-local-object.hh"
+#include "nix/expr/tracing-writer.hh"
 
 namespace nix {
 
 /**
- * Stateful resolver mapping ambient ids (Hashes under Step C) to
- * outer/local Objects. Derived ids are the producer query's
- * `queryHash`; seed ids are `hashString("seed:N")` / `hashString
- * ("local:N")` for an interpreter-side counter.
+ * Stateful resolver mapping ambient ids to outer/local Objects.
+ *
+ * Ambient ids are SHA-256 hashes:
+ * - Seed roots: hashString("seed:N") for outer values entering the
+ *   inner; hashString("local:N") for local values reaching back to
+ *   the outer through a covariant callback.
+ * - Derived ids: the producer query's queryHash. A child Object
+ *   reached via getAttr("f") on parent P is identified by
+ *   queryHash(QueryGetAttr{name="f", from=hex(P)}). On replay the
+ *   walker recovers P from the Requests pool and re-dispatches the
+ *   producer query, yielding the same child by Merkle identity.
+ * - Apply results: queryHash(QueryApply{fn=hex(fnId), arg=hex(argId)})
+ *   under which the resolver registers the outer's mkApp Object.
+ *   The apply Request is also inserted into the pool so downstream
+ *   `from=<apply_qH>` Facts can chase identity back.
  */
 struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
 {
@@ -21,6 +34,17 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
     std::map<AmbientId, Value *> bridgedLocals;
     EvalState * outerState = nullptr;
     std::shared_ptr<Evaluator> innerEvaluator;
+    /* Writer for the inner trace. When set, the resolver wraps
+       covariant-callback args in TracingLocalObject so the outer's
+       accesses on them land in the inner's factSet as Facts whose
+       response payloads can be replayed back from the Responses
+       pool. Null when no inner writer is plumbed in — the wrap is
+       skipped and replay can't hit on the apply. */
+    TracingWriter * innerWriter = nullptr;
+    /* SourceRoot for TracingLocalObject's getPath. Reused from the
+       outer EvalState's rootFSRoot. Held as shared_ptr (rather than
+       ref) so AmbientResolver stays default-constructible. */
+    std::shared_ptr<SourceRoot> outerRootFSRoot;
 
     /* Separate counters for seed vs local roots — the strings
        `hashString("seed:N")` and `hashString("local:N")` already
@@ -83,7 +107,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
                         auto child = obj->maybeGetAttr(query.name);
                         if (!child)
                             return {trace::ResultMaybeType{std::nullopt}, std::nullopt};
-                        /* Step C: derived child id is the producer query's queryHash. */
+                        /* Derived child id is the producer query's queryHash. */
                         auto childId = TracingDecisionGraph::computeQueryHash(query);
                         registerOuterAt(childId, child);
                         return {
@@ -140,15 +164,24 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
             throw Error("ambient apply requires outerState");
         auto fnObj = resolve(fnId);
 
-        /* Register the arg as a local. Step C: local id is a
-           seed-style Hash. */
+        /* Register the arg as a local seed (id = hashString("local:N")). */
         auto argId = registerLocalSeed(argObj);
+
+        /* Wrap the argObj in TracingLocalObject so the outer's
+           accesses on it during the apply land in the inner trace
+           with `from=hex(argId)`. The recorder always stores those
+           response payloads; the replay dispatcher reads them back
+           since there's no live inner to recompute against. */
+        auto wrappedArg = (innerWriter && outerRootFSRoot)
+            ? std::shared_ptr<Object>(std::make_shared<TracingLocalObject>(
+                  argObj, argId, *innerWriter, ref<SourceRoot>(outerRootFSRoot)))
+            : argObj;
 
         /* Bridge local arg via ExprFromObject with the inner evaluator */
         auto & argThunk = bridgedLocals[argId];
         if (!argThunk) {
             argThunk = outerState->allocValue();
-            auto * argExpr = new ExprFromObject(argObj, innerEvaluator, shared_from_this());
+            auto * argExpr = new ExprFromObject(wrappedArg, innerEvaluator, shared_from_this());
             outerState->mkThunk_(*argThunk, argExpr);
         }
 
@@ -158,11 +191,37 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
         resultVal->mkApp(*fnVal, argThunk);
         auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
 
-        /* Step C+D: result id is queryHash(QueryApply{fn=fnId, arg=argId}). */
+        /* Result id is queryHash(QueryApply{fn=fnId, arg=argId}). */
         auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
         auto argIdStr = argId.to_string(HashFormat::Base16, false);
-        auto resultId = TracingDecisionGraph::computeQueryHash(trace::QueryApply{fnIdStr, argIdStr});
+        trace::QueryApply applyQuery{fnIdStr, argIdStr};
+        auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
         registerOuterAt(resultId, std::move(resultObj));
+
+        /* Insert the QueryApply Request into the decision graph's
+           Requests pool, so resolveAmbientId on replay can find the
+           apply by its result id and re-invoke it. We don't add it
+           to the FactSet -- QueryApply has no result type (it's a
+           fresh app thunk), so there's no Fact body to record.
+
+           Also insert a sidecar Request at the local arg id that
+           points back to this apply. Without it, replay can't
+           resolve a local id whose first dispatched Fact is a
+           local-incoming observation (the walk picks Facts in
+           hash-set order; the corresponding apply-result Fact may
+           be dispatched later). The sidecar lets resolveAmbientId
+           chase localId -> applyResultId -> invoke apply, which
+           registers the live argObj under localId in idToObject. */
+        if (innerWriter)
+            if (auto * dg = innerWriter->getDecisionGraph()) {
+                nlohmann::json applyJson = applyQuery;
+                dg->insertRequest(resultId, jsonToCborString(applyJson));
+                nlohmann::json localSidecar = {
+                    {"kind", "localArg"},
+                    {"applyResultId", resultId.to_string(HashFormat::Base16, false)},
+                };
+                dg->insertRequest(argId, jsonToCborString(localSidecar));
+            }
 
         return {argId, resultId};
     }
@@ -209,22 +268,18 @@ static PrimOp * makeCachedFnPrimOp(
                             innerEnv.ambientQuery(q, [&](const trace::QueryVariant &) { return qr.result; });
                             return qr;
                         };
-                        /* Step D: applyFn does NOT record a QueryApply
-                           Fact. A fresh app thunk has no result type
-                           ("apply" is not a value type); the v12-era
-                           ResultType{"apply"} placeholder carried no
-                           information and just bloated the factSet.
-                           The apply-result Object is still registered
-                           in the resolver under
-                           queryHash(QueryApply{fn=fnId, arg=argId}) so
-                           downstream queries on the apply result use
-                           that hash as their `from`. resolveAmbientId
-                           dispatching such a `from` will fail today
-                           (the QueryApply Request is not in the pool
-                           and we have no way to recover the local arg)
-                           — covariant-callback replay is a follow-up
-                           that needs the relay-case detection or the
-                           Step E TracingLocalObject. */
+                        /* applyFn does NOT record a QueryApply Fact:
+                           a fresh app thunk has no result type
+                           ("apply" is not a value type). The
+                           apply-result Object is still registered in
+                           the resolver under
+                           queryHash(QueryApply{fn=fnId, arg=argId}),
+                           and the QueryApply Request itself is
+                           inserted into the pool (see
+                           AmbientResolver::apply) so downstream
+                           Facts with `from=<apply_qH>` can have
+                           their response payloads located via the
+                           Responses pool on replay. */
                         AmbientApplyFn applyFn = [resolver](AmbientId fnId, std::shared_ptr<Object> argObj) {
                             auto [argId, resultId] = resolver->apply(fnId, std::move(argObj));
                             return resultId;
@@ -335,11 +390,10 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
     }
 
     case nFunction: {
-        /* Step C: dispatch on obj's dynamic type, not on whether
-           innerEvaluator is set. An AmbientObject wraps an outer
-           value reached via ambient query; its apply must route
-           through queryApply (makeAmbientFnPrimOp). A concrete fn
-           with an inner evaluator goes through innerEval->apply
+        /* Dispatch on obj's dynamic type. An AmbientObject wraps an
+           outer value reached via ambient query; its apply must
+           route through queryApply (makeAmbientFnPrimOp). A concrete
+           fn with an inner evaluator goes through innerEval->apply
            (makeCachedFnPrimOp). A concrete fn without an inner
            evaluator falls back to makeAmbientFnPrimOp — the impl
            will throw at apply time (matching the prior behaviour
@@ -373,11 +427,15 @@ void ExprFromObjectAttr::eval(EvalState & state, Env & env, Value & v)
     ExprFromObject(std::move(childObj), innerEvaluator, ambientResolver).eval(state, env, v);
 }
 
-std::shared_ptr<AmbientResolver> makeAmbientResolver(EvalState * outerState, std::shared_ptr<Evaluator> innerEvaluator)
+std::shared_ptr<AmbientResolver> makeAmbientResolver(
+    EvalState * outerState, std::shared_ptr<Evaluator> innerEvaluator, TracingWriter * innerWriter)
 {
     auto resolver = std::make_shared<AmbientResolver>();
     resolver->outerState = outerState;
     resolver->innerEvaluator = std::move(innerEvaluator);
+    resolver->innerWriter = innerWriter;
+    if (outerState)
+        resolver->outerRootFSRoot = outerState->rootFSRoot.get_ptr();
     return resolver;
 }
 

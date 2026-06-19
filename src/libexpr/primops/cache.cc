@@ -120,7 +120,7 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
 
     // Shared resolver for ambient interactions; threads through every
     // <cached-fn>/<ambient-fn> PrimOp this call produces.
-    auto resolver = makeAmbientResolver(&state, replayEval.get_ptr());
+    auto resolver = makeAmbientResolver(&state, replayEval.get_ptr(), writer.get());
     interpreter->ambientResolver = resolver;
 
     // Convert paths to use the inner accessor (TracingSourceAccessor)
@@ -166,6 +166,36 @@ static RegisterPrimOp primop_cache({
       let pkgs = builtins.cache { import = ./nixpkgs; };
       in pkgs.hello
       ```
+
+      **Identity is not preserved across the cache boundary.**
+      Direct comparison of two function values in Nix (`f == g`)
+      always returns `false` regardless of how the functions were
+      constructed; that's a language-level rule, not a cache
+      concern. The wart is that when functions sit inside attrsets
+      or lists being compared, the recursive equality falls back
+      to pointer identity for the function-valued elements — so
+      `{f = h;} == {f = h;}` is `true` because both `h` references
+      resolve to the same closure pointer, but `{f = (x: x);} ==
+      {f = (x: x);}` is `false` because each `x: x` evaluates to a
+      fresh closure. Values bridged in or out of `builtins.cache`
+      are reconstructed on each crossing, so attrset / list
+      equalities that depend on a function reaching both sides of
+      the comparison with the same pointer can flip from `true` to
+      `false` when one side passes through the cache. Cached code
+      that relies on this transitive pointer identity will
+      misbehave.
+
+      Values aren't eagerly deep-copied. Both directions of
+      crossing are on-demand: what the inner observes gets
+      recorded into the index, what the outer accesses gets
+      materialised back through the bridge. A cached expression
+      that returns a large value and is asked for only a few attrs
+      pays only for those attrs. But: passing the same large value
+      *into* a cached call and asking for it back forces both
+      copies — one into the index for the observations the inner
+      makes, one back across the bridge for the outer's accesses.
+      The cache is designed for results consumed by content, not
+      for threading large values through unchanged.
     )",
     .impl = prim_cache,
     .experimentalFeature = Xp::TracingEvalCache,

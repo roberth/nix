@@ -1,5 +1,7 @@
 #include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/expr/ambient-object.hh"
+#include "nix/expr/eval.hh"
+#include "nix/expr/replay-local-object.hh"
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-decision-graph.hh"
@@ -136,11 +138,13 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
     return std::nullopt;
 }
 
-/* Step C: resolve a recorded ambient id (hex of a Hash) to a live
-   Object by recursive lookup against the Requests pool. Seed ids
-   are pre-bound at apply() setup; derived ids find their producer
-   Request in the pool, resolve the parent recursively, then
-   dispatch the producer's query on the parent. */
+/* Resolve a recorded ambient id (hex of a Hash) to a live Object by
+   recursive lookup against the Requests pool. Seed ids are pre-bound
+   at apply() setup; derived ids find their producer Request in the
+   pool, resolve the parent recursively, then dispatch the producer's
+   query on the parent. QueryApply tags (apply-result ids) and local
+   ids without producer Requests both return null — the dispatcher
+   falls back to the Responses pool for those. */
 std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::string & idStr)
 {
     if (!ambientState)
@@ -169,15 +173,96 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
     } catch (const std::exception &) {
         return nullptr;
     }
+
+    /* Local-arg sidecar (inserted by resolver.apply): chase to the
+       apply and re-invoke it. The apply's resolveAmbientId branch
+       registers the live argObj under localId in idToObject, so
+       subsequent dispatches of local-incoming Facts find it. */
+    if (reqJson.contains("kind") && reqJson["kind"] == "localArg") {
+        auto applyResultIdHex = reqJson["applyResultId"].get<std::string>();
+        resolveAmbientId(applyResultIdHex);
+        auto it = ambientState->idToObject.find(idStr);
+        if (it != ambientState->idToObject.end())
+            return it->second;
+        return nullptr;
+    }
+
     auto tag = reqJson["query"].get<std::string>();
     auto & params = reqJson["params"];
 
-    /* QueryApply needs Step D's dispatcher (invoke the outer apply,
-       register the result Object). Under Step C alone any
-       apply-produced child id is unresolvable; downstream Facts
-       that reference it will miss and the walk falls through. */
-    if (tag == "apply")
-        return nullptr;
+    /* Apply-result ids ARE live-resolvable: invoke the apply
+       against the resolved fn and a ReplayLocalObject for the
+       (frozen) recorded local arg. This is the validation chain
+       for covariant callbacks -- if the outer fn changed behaviour
+       between recording and replay, the live invocation produces a
+       different response than what was recorded, the walk's
+       response-hash compare fails, and we correctly miss. */
+    if (tag == "apply") {
+        auto fnObj = resolveAmbientId(params["fn"].get<std::string>());
+        if (!fnObj) {
+            tracingCacheLog("replay: apply %s: cannot resolve fn %s", idStr, params["fn"]);
+            return nullptr;
+        }
+        /* Resolve the arg: a relay case (arg is an outer-derived
+           ambient id) resolves through the producer chain; a local
+           case (arg is registerLocalSeed-minted, sidecar-tagged in
+           the Requests pool) wraps the recorded content in a
+           ReplayLocalObject. Peek at the arg's Request payload to
+           pick the branch -- if we recursed via resolveAmbientId on
+           a local id we'd cycle through the sidecar back into this
+           apply branch. */
+        auto argIdStr = params["arg"].get<std::string>();
+        Hash argHash{HashAlgorithm::SHA256};
+        try {
+            argHash = Hash::parseNonSRIUnprefixed(argIdStr, HashAlgorithm::SHA256);
+        } catch (const std::exception &) {
+            return nullptr;
+        }
+        std::shared_ptr<Object> argObj;
+        auto argReqPayload = decisionGraph.getRequestPayload(argHash);
+        bool isLocalArg = false;
+        if (argReqPayload) {
+            try {
+                auto j = cborStringToJson(*argReqPayload);
+                if (j.contains("kind") && j["kind"] == "localArg")
+                    isLocalArg = true;
+            } catch (const std::exception &) {
+                /* malformed payload; treat as opaque local */
+                isLocalArg = true;
+            }
+        } else {
+            isLocalArg = true;
+        }
+        if (isLocalArg)
+            argObj = std::make_shared<ReplayLocalObject>(argHash, decisionGraph, inner->getEvalState().rootFSRoot);
+        else
+            argObj = resolveAmbientId(argIdStr);
+        if (!argObj)
+            return nullptr;
+        /* Register the (live or replayed) arg under its id so that
+           a later local-incoming Fact dispatch on this localId
+           finds it without having to chase the sidecar again. */
+        ambientState->idToObject[argIdStr] = argObj;
+        /* fnObj must be an AmbientObject -- we resolved its id via
+           the producer chain or pre-bound seed. queryApply routes
+           through applyFn which registers the result Object in the
+           resolver under qH(QueryApply{fnId, argId}). */
+        auto * ambient = dynamic_cast<AmbientObject *>(fnObj.get());
+        if (!ambient) {
+            tracingCacheLog("replay: apply %s: fn resolved to non-AmbientObject", idStr);
+            return nullptr;
+        }
+        std::shared_ptr<Object> resultObj;
+        try {
+            resultObj = ambient->queryApply(argObj);
+        } catch (const std::exception & e) {
+            tracingCacheLog("replay: apply %s: queryApply threw: %s", idStr, e.what());
+            return nullptr;
+        }
+        if (resultObj)
+            ambientState->idToObject[idStr] = resultObj;
+        return resultObj;
+    }
 
     if (!params.contains("from"))
         return nullptr;
@@ -212,13 +297,20 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
     auto tag = reqJson["query"].get<std::string>();
     auto & params = reqJson["params"];
 
-    /* QueryApply is Step D's responsibility; defer. */
+    /* Apply Facts are recorded via Request only (no Terminal); the
+       dispatcher has nothing to compare a current response against. */
     if (tag == "apply")
         return std::nullopt;
 
     if (!params.contains("from"))
         return std::nullopt;
 
+    /* Every ambient response must be live-validated, just like file
+       reads and env vars. resolveAmbientId for any tag (including
+       apply, via live `queryApply` invocation) returns a live
+       Object we can re-query. Serving recorded responses here would
+       hide outer-side changes from the validation chain and let the
+       cache return stale results. */
     auto obj = resolveAmbientId(params["from"].get<std::string>());
     if (!obj)
         return std::nullopt;
@@ -370,8 +462,8 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     if (!argId)
         argId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(arg).value());
 
-    /* Step C: pre-bind ambient seed ids into idToObject. When this
-       apply originates from the cached-fn PrimOp impl, fn/arg are
+    /* Pre-bind ambient seed ids into idToObject. When this apply
+       originates from the cached-fn PrimOp impl, fn/arg are
        AmbientObjects whose Hash id is the seed allocated by the
        resolver (registerOuterSeed). The recorded factSet's ambient
        Facts have `from=hex(seed_hash)`. Pre-binding lets
@@ -385,13 +477,12 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         state.idToObject[ambient->getId().to_string(HashFormat::Base16, false)] = fn.get_ptr();
     ambientState = std::move(state);
 
-    /* Step D: the recording side no longer writes a Q_apply Terminal
-       (its result would just be ResultType{"apply"} -- a placeholder,
-       not a real type), so there's nothing for lookup() to hit.
-       Synthesize the TriePosition from (fnId, argId) directly and
-       always wrap the result in TracingReplayObject. Child queries
-       on the apply result still walk independently; they fall
-       through to inner only when their own walks miss. */
+    /* The recording side doesn't write a Q_apply Terminal -- a
+       fresh app thunk has no result type. Synthesize the
+       TriePosition from (fnId, argId) directly and always wrap the
+       result in TracingReplayObject. Child queries on the apply
+       result still walk independently; they fall through to inner
+       only when their own walks miss. */
     auto queryHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{*fnId, *argId});
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel

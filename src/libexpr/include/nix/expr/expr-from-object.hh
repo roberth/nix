@@ -102,7 +102,17 @@ struct ExprFromObjectAttr : ExprProxy
  * Create a shared AmbientResolver for use with ExprFromObject.
  * The resolver is shared across all function calls within a single
  * builtins.cache invocation.
+ *
+ * @param innerWriter When non-null, enables Step E's incoming-Fact
+ *   recording via TracingLocalObject during covariant callbacks.
+ *   Callers without a writer (or who don't need replay hits on the
+ *   apply) can pass nullptr; resolver.apply then skips the wrap and
+ *   bridges argObj directly.
  */
-std::shared_ptr<AmbientResolver> makeAmbientResolver(EvalState * outerState, std::shared_ptr<Evaluator> innerEvaluator);
+class TracingWriter;
+std::shared_ptr<AmbientResolver> makeAmbientResolver(
+    EvalState * outerState,
+    std::shared_ptr<Evaluator> innerEvaluator,
+    TracingWriter * innerWriter = nullptr);
 
 } // namespace nix

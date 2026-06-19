@@ -160,8 +160,11 @@ public:
         nlohmann::json reqJson = resp.request;
         nlohmann::json respJson = resp.response;
         auto queryHash = TracingDecisionGraph::computeQueryHash(resp.request);
-        auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(respJson));
+        auto responsePayload = jsonToCborString(respJson);
+        auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
         decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
+        if (storeAllResponsePayloads)
+            decisionGraph->insertResponse(queryHash, responsePayload);
         if (seenRequests.insert(queryHash).second) {
             v13FactSet.push_back({queryHash, responseHash});
             v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
@@ -173,6 +176,14 @@ public:
 
     /**
      * Log an ambient interaction as a d>0 Request/Response pair.
+     *
+     * Ambient response payloads are always stored in the decision
+     * graph's Responses pool. Outgoing apply-result Facts (e.g.
+     * getType{from=apply_qH}) can only be resolved on replay by
+     * either invoking the apply or reading the recorded payload;
+     * we picked the latter. To avoid an apply-vs-non-apply special
+     * case we store all ambient responses. Storage is bounded by
+     * the apply-result fanout, which is small in practice.
      */
     void logAmbientInteraction(const trace::QueryVariant & query, const trace::ResultVariant & result)
     {
@@ -184,8 +195,10 @@ public:
         std::visit([&](const auto & r) { resultJson = r; }, result);
         auto queryHash = std::visit(
             [](const auto & q) { return TracingDecisionGraph::computeQueryHash(q); }, query);
-        auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(resultJson));
+        auto responsePayload = jsonToCborString(resultJson);
+        auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
+        decisionGraph->insertResponse(queryHash, responsePayload);
         if (seenRequests.insert(queryHash).second) {
             v13FactSet.push_back({queryHash, responseHash});
             v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
@@ -194,6 +207,14 @@ public:
             allRequestsTrie.insert(queryHash);
         }
     }
+
+    /**
+     * When true, every file-read / env-var response payload gets
+     * persisted into the decisionGraph's Responses pool too. Useful
+     * for offline debugging when JSON traces aren't available.
+     * Default false to keep environment storage as v13 designed it.
+     */
+    bool storeAllResponsePayloads = false;
 
     /**
      * Log a d=0 Result. Records (Q, current factSet) -> Result in
@@ -260,6 +281,11 @@ public:
     bool hasIndex() const
     {
         return decisionGraph != nullptr;
+    }
+
+    TracingDecisionGraph * getDecisionGraph() const
+    {
+        return decisionGraph;
     }
 };
 

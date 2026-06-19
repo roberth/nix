@@ -1,10 +1,16 @@
 # `builtins.cache` on top of the v13 tracing eval cache
 
-This document is a design plan for restoring the `builtins.cache`
-primop on the `eval-cache-v13` branch (under the working name
-`eval-cache-v13-primop`). It is a companion to
+This document started life as a design plan for restoring
+`builtins.cache` on the `eval-cache-v13` branch (working name
+`eval-cache-v13-primop`). The plan is now shipped: Steps A–G in
+[§Implementation step list](#implementation-step-list) are all in
+tree. The "what's missing" framing in §Status of the in-tree pieces
+was the pre-work analysis; each item is addressed by the step it's
+folded into.
+
+It is a companion to
 [`tracing-eval-cache.md`](./tracing-eval-cache.md), which describes the
-v13 data model the primop will sit on top of.
+v13 data model the primop sits on top of.
 
 Read those first. The terminology — Query/Result vs Request/Response,
 FactSet, RequestSet trie, the `Asks` / `Terminals` edge tables, and
@@ -45,6 +51,21 @@ Out of scope here (deferred follow-ups):
   cached-function-call roots as their own cache key).
 - Replacing the per-call `NullTraceSink` workaround with a proper
   `TeeTracingWriter`.
+- **Identity preservation across the boundary.** The cache
+  reconstructs values on each crossing, so attrset / list
+  equalities that rely on function pointer identity reaching both
+  sides of `==` (Nix's pointer-comparison-inside-structures wart —
+  direct `f == g` is always `false`, the wart only kicks in when
+  functions sit inside compared attrsets or lists) can flip when
+  one side has passed through the cache. Both directions of
+  crossing are on-demand — observations get indexed lazily as the
+  inner makes them; bridged values get materialised lazily as the
+  outer accesses them — so threading a large value through and
+  asking for it back pays the cost twice but only for what's
+  actually touched. Users who need pointer identity through
+  caching need a different tool; we won't engineer identity
+  preservation into `builtins.cache`. See the primop docstring
+  for the user-facing wording.
 - Wiring `nix-env -qa` through the cache (separate piece of work
   called out in the v13 doc).
 - Cache eviction / compaction.
@@ -507,11 +528,15 @@ The shape from v12 holds. Inside `prim_cache`:
    The TracingEvaluator wraps Interpreter; TracingReplayEvaluator
    wraps that, so misses fall back through recording.
 
-4. **Set up the shared `AmbientResolver`.** `makeAmbientResolver(&state,
-   replayEval)` exists in v13; assign it to
-   `interpreter->ambientResolver`. The same resolver instance threads
-   through every `<cached-fn>` PrimOp created by `ExprFromObject`
-   inside this call.
+4. **Set up the shared `AmbientResolver`.** Construct it via
+   `makeAmbientResolver(&state, replayEval, writer.get())` and assign
+   it to `interpreter->ambientResolver`. The writer arg is what
+   Step E uses to wrap covariant-callback args in
+   `TracingLocalObject` and insert the localArg sidecar Request;
+   passing `nullptr` keeps the wrap off (useful in callers that
+   don't need replay-side apply validation). The same resolver
+   instance threads through every `<cached-fn>` PrimOp created by
+   `ExprFromObject` inside this call.
 
 5. **Convert paths to the inner accessor.** `RootedPath{innerState->
    rootFSRoot, p.path}` for both `importPath` and `baseDir`. (This
@@ -598,8 +623,10 @@ When `replayEval->evalFile(...)` (or `evalExpr`, or `apply`) runs:
    reads each Request payload, calls `getCurrentResponse`, and
    returns the response hash. For Requests whose payload contains
    `"query"`, dispatch routes to `dispatchAmbientQuery`, which:
-   - resolves the `from` id via `AmbientReplayState::idToObject`
-     (and the structural-derivation path described above),
+   - resolves the `from` id via `resolveAmbientId` (pre-bound
+     seed roots in `AmbientReplayState::idToObject`, the producer
+     chain through the Requests pool, or for apply-result ids a
+     live `fn->queryApply(arg)` invocation — see below),
    - issues the query against the resolved outer Object,
    - serialises the result.
 5. On a hit, the result payload comes back; `lookup` wraps it in a
@@ -608,20 +635,64 @@ When `replayEval->evalFile(...)` (or `evalExpr`, or `apply`) runs:
    `lookupResult<Q, R>` per-method (using the recorded `queryHashStr`
    as the parent in child Queries' Merkle chain).
 
-The `apply()` path additionally seeds the seed roots into
-`AmbientReplayState`:
+The `apply()` path pre-binds seed Hashes into `AmbientReplayState`
+so structural derivation works for their descendants. Under Step D
+the recorded `Q_apply` Terminal is gone; `apply()` synthesises a
+`TriePosition` from `(fnId, argId)` and always wraps the result in
+a `TracingReplayObject`. Child queries on the apply result walk
+independently against the recorded `Q_getType{from=apply_qH}` /
+`Q_getInt{from=apply_qH}` / … Terminals.
 
-```cpp
-ambientState = AmbientReplayState{};
-ambientState->idToObject[fnIdStr]  = fn.get_ptr();   // seed root
-ambientState->idToObject[argIdStr] = arg.get_ptr();  // seed root
-auto result = lookup(trace::QueryApply{fnIdStr, argIdStr});
-```
+### Ambient responses are capability-mediated, not cached
 
-This is the change to v13's existing `apply()`: pre-bind the seed
-roots into `idToObject` so structural derivation works for their
-descendants, rather than relying on the queue's pop order to assign
-identities at first reference. (The queues go away.)
+The decisive design point here, easy to get wrong: every ambient
+response must be **live-validated**, the same way file reads and env
+vars are. Serving a recorded response from the `Responses` pool
+would let the dispatcher always return the recorded hash, which
+matches the recorded hash by construction, and the walk would
+succeed every time regardless of whether the outer's behaviour
+still produces that response. That's how Step E without Step G
+caches a stale `f x = 11` when the outer `f` has been edited to
+`x: x + 100`.
+
+The validation surface decomposes by `from` kind:
+
+- **Seed `from`** (`hashString("seed:N")` for an outer seed):
+  pre-bound by `apply()` to the live AmbientObject. Live dispatch
+  just calls the method on the AmbientObject, which forwards
+  through the resolver to the live outer.
+- **Derived outer `from`** (a producer query's `queryHash`):
+  recursive `resolveAmbientId` walks back through Requests to a
+  pre-bound seed, re-dispatches the producer query against the
+  parent, and gets the same derived AmbientObject. The dispatched
+  method then goes live.
+- **Apply-result `from`** (`queryHash(QueryApply{fn, arg})`):
+  `resolveAmbientId` invokes `fn->queryApply(arg)` live. `fn` is
+  resolved through the chain above; `arg` is either chain-resolved
+  (relay case) or a `ReplayLocalObject` reading frozen content
+  from the `Responses` pool (local case). The live `queryApply`
+  returns an AmbientObject under `apply_qH`; the dispatched
+  method then goes live against it. If the outer fn's behaviour
+  changed, the live response differs from the recorded one, the
+  walk's response-hash compare fails, and the cache correctly
+  misses.
+- **Local incoming `from`** (`hashString("local:N")`):
+  `resolveAmbientId` follows the `{kind: "localArg",
+  applyResultId: ...}` sidecar Request inserted by the recorder
+  back to the apply, re-invokes the apply (registering the live
+  arg under `idToObject[localId]`), and returns that arg.
+  Subsequent dispatches hit `idToObject` directly. Without the
+  sidecar, a local-incoming Fact dispatched before its apply
+  would fail since locals have no producer Request to walk back
+  through.
+
+The `ReplayLocalObject` reads payloads from the `Responses` pool
+because the inner isn't running on replay — there's no live source
+for the local arg's content. That payload is the **content** of
+the frozen image; it's not the dispatcher's response. The
+dispatcher computes the response by calling
+`ReplayLocalObject.getInt()` (etc.) and serialising the answer
+afresh.
 
 A successful replay still feeds the recording-side writer state
 (`v13FactSet`, `allRequestsTrie`, `lastQFactsHash`) so a *later*
@@ -720,6 +791,36 @@ plan above, or into §Status of the in-tree pieces.
     constructs new ones), so any cache lookup keyed on evaluator
     identity would miss every time.
 
+    **Observed in practice (nixpkgs).** A flake that caches the
+    nixpkgs *function* — `cachedNixpkgs = builtins.cache { import
+    = nixpkgs; }` — and then applies the cached function to a
+    config attrset containing a `rewriteURL` callback:
+    `(self.cachedNixpkgs { system = "x86_64-linux"; config = {
+    rewriteURL = url: mirror + url; ... }; }).hello.name`. Cold
+    record produces the right answer, warm replay returns the
+    right answer too, but the walk for the apply-result `getType`
+    falls through to inner re-evaluation. Instrumenting the
+    dispatcher and recorder revealed that *within a single warm
+    run* the same Request hash for `getStringWithContext{from=X}`
+    received different live responses on the replay side (an `xz`
+    download URL) and the record side (the `bash` URL the
+    fall-through then re-recorded). Both dispatches happened
+    inside the same `TracingReplayEvaluator` instance — the
+    collision wasn't between writers but between evaluation
+    orderings: `X` is a derived `queryHash` whose producer chain
+    bottoms out at a counter-minted seed id, and nixpkgs's lazy
+    forcing order shifts enough between record and replay that
+    `seed:N` ends up labelling a different attrset element in
+    each. The cache returned the correct value here only because
+    the dispatched response differed enough to make the walk fall
+    through; with two responses that happen to match (e.g. both
+    `ResultType{"function"}`), the cache would have returned a
+    stale result silently. This shifts the open question from
+    *theoretical* to *load-bearing for any non-trivial cached
+    closure*. Observation-driven unification is the structural
+    fix; partial mitigations (namespacing counters) only narrow
+    the collision domain.
+
 2. **Do the AmbientObject closures obviate
     `resolver.outerValues`?** The `queryFn` / `applyFn` captured
     in each `AmbientObject` already close over the resolver and
@@ -750,26 +851,14 @@ plan above, or into §Status of the in-tree pieces.
     open question is just whether to fold this into the primop
     work or leave it as a separate refactor.
 
-4. **Recording `Q_apply` looks redundant.** `tracingEval_inner.apply`
-    always logs `ResultType{"apply"}` as the result, because the
-    app thunk's type at `logResult` time is by definition `"apply"`
-    (the application hasn't been forced yet). The
-    `Terminals(Q_apply, factSet) → R_apply_type` row therefore
-    stores no information beyond its existence. The only apparent
-    use is anchoring: child queries against the apply result use
-    `from=Q_apply_hash` in their payloads, and
-    `TracingReplayEvaluator::apply` does a `lookup(QueryApply{…})`
-    to get a `TriePosition` whose `queryHashStr` becomes the
-    parent of those child queries. But `Q_apply_hash` is
-    deterministic from `(fnId, argId)`; replay could compute it
-    directly and treat the apply as a free anchor without a
-    Terminal lookup at all. Open: can we skip recording `Q_apply`'s
-    Terminal (and probably the `Asks(Q_apply, ∅) → RS{…}` edge too)
-    entirely? Savings per cached function call: one `Asks` row,
-    one `Terminals` row, one tautological Result payload. Need to
-    verify the replay path doesn't depend on these rows for
-    anything beyond the `TriePosition` it could synthesise from
-    the args.
+4. **Recording `Q_apply` looks redundant.** Resolved. Step D drops
+    the `Q_apply` Terminal entirely (it was always
+    `ResultType{"apply"}`, a placeholder), as well as the
+    `Asks(Q_apply, ∅)` edge. Both recorder and replayer now
+    synthesise the `TriePosition` structurally from `(fnId, argId)`.
+    The apply Request itself is still inserted into the Requests
+    pool — Step G needs it to invoke the apply live during
+    `resolveAmbientId` — but its FactSet/Terminal rows are gone.
 
 5. **Trace coverage: do both evaluators observe all relevant
    changes?** The structural concern is that any outer-provided
@@ -898,37 +987,27 @@ dispatcher.** Two related changes:
 Combined, this is enough for the `functionArgs`, simple-lambda,
 and curried test cases.
 
-**Step E — incoming-query recording for covariant callbacks.**
+**Step E — incoming-query recording for covariant callbacks.** Done.
 This is what `builtins-cache.sh`'s `call-fn`, `path-fn`, and
-`callpkg-fn` test cases need. The v12 plan called this out as
-unfinished work too; reading the in-tree code confirms it has
-neither a recording-side TracingLocalObject decorator nor a
-replay-side ReplayLocalObject. Scope:
+`callpkg-fn` test cases need. The shipped form:
 
-- A wrapping Object inserted by `resolver->apply` around the
-  passed-in local `argObj`. Its methods record an
-  `AmbientIncomingRequest`-shaped Fact (`{query: T, params: {from:
-  localId, ...}}`) into the inner FactSet via
-  `innerEnv.ambientQuery` before delegating to the wrapped Object.
-- A corresponding ReplayLocalObject that, during a recorded apply's
-  replay, serves recorded incoming answers from the FactSet
-  indexed by `(localId, queryType)`. The replay's apply path swaps
-  in this proxy for the recorded `argObj`.
+- `TracingLocalObject` (`tracing-local-object.{hh,cc}`) wraps the
+  passed-in local `argObj` inside `AmbientResolver::apply`. Each
+  Object method records the `{query: T, params: {from: localId,
+  ...}}` Fact via `writer.logAmbientInteraction` before delegating
+  to the wrapped Object. The response payload lands in the
+  `Responses` pool.
 - Local-vs-outer discrimination falls out of the same Hash
   scheme: locals get seed hashes of the form
   `hashString("local:" + counter)`; derived locals use the
   producer Request's `queryHash` like derived outers do. The
-  dispatcher doesn't need to discriminate by namespace tag — it
-  just looks the id up in `idToObject` (pre-bound at apply setup)
-  or in the `Requests` pool.
+  dispatcher doesn't need to discriminate by namespace tag.
 
-If schedule is pressing, Step E can be deferred. Without it, the
-covariant-callback test cases fall through to inner re-evaluation
-every time. The cache returns the correct value (the fall-through
-path runs the inner Interpreter for real), only the speedup is
-missing. The trace types (`AmbientIncomingRequest`/`AmbientIncoming
-Response` at `trace-types.hh:540–551`) are already declared; only
-the recorder and replayer are missing.
+Step E records the inner trace. **Step G adds the matching replay
+path**; the two are interdependent. Step E on its own would let the
+walk dispatch local-incoming Facts by reading recorded payloads, but
+that bypasses live validation (see [§Replay semantics for
+`builtins.cache`](#replay-semantics-for-builtinscache)).
 
 **Step F — clean up and document.**
 Move the bulk of the design content here into the source-level
@@ -937,16 +1016,64 @@ that drops the "deferred" qualifier from the `builtins.cache` row,
 and remove the v12-era TODO comments in `cache.cc` that refer to
 removed types.
 
+**Step G — live apply replay via `ReplayLocalObject`.** Done. Closes a
+correctness gap Step E alone would leave: the inner records ambient
+observations of an apply-result Object whose `from` is `apply_qH =
+queryHash(QueryApply{fn, arg})`. Serving those observations from the
+Responses pool on replay (the v1 sketch) would let the cache return
+stale results when the outer lambda changes behaviour but its arity
++ seed-counter stay stable — the dispatcher would just hand back the
+old recorded response without re-querying the outer. **Ambient
+responses are a capability-mediated channel; like file reads and env
+vars, every dispatch must compute the current response live.**
+
+The shipped form:
+
+- `ReplayLocalObject` (`replay-local-object.{hh,cc}`) is the
+  frozen-image counterpart of `TracingLocalObject`. Its Object
+  methods read the recorded response payload for
+  `(query, from=localId)` out of the `Responses` pool and
+  deserialise it back into the appropriate typed value. This gives
+  the outer's covariant callback a deterministic stand-in for the
+  inner-side arg without re-running the inner.
+- `resolveAmbientId` for `tag == "apply"` resolves `fn` via the
+  producer chain, decides whether `arg` is a local (Responses-pool
+  content) or a relay (chain-resolved), and invokes
+  `fn->queryApply(arg)` live. The result Object is registered in
+  `idToObject[apply_qH]`, so any downstream Fact with
+  `from=apply_qH` dispatches against the live outer. If the outer
+  changed behaviour, the live response differs from the recorded
+  one, the walk's response-hash compare fails, and we correctly
+  miss.
+- The dispatcher (`dispatchAmbientQuery`) no longer has a
+  Responses-pool fallback. Every `from` resolves to a live Object
+  (live outer for seeds/derived/apply-results;
+  `ReplayLocalObject` for locals) and dispatches live.
+- Local arg ids are seed-style hashes
+  (`hashString("local:" + counter)`) — by construction they have no
+  producer Request and can't be resolved structurally. The
+  recorder also inserts a sidecar Request at `argId` carrying
+  `{kind: "localArg", applyResultId: hex(apply_qH)}`. On replay,
+  `resolveAmbientId(localId)` follows the sidecar to the apply,
+  re-invokes it, and reads the registered `argObj` out of
+  `idToObject`. This makes local-incoming dispatches succeed
+  regardless of factSet iteration order — the apply doesn't have
+  to be dispatched first.
+
+The covariant-callback-staleness assertion lives in
+`tests/functional/builtins-cache.sh` next to the basic `call-fn.nix`
+case: with the outer `f` changed from `x: x+1` to `x: x+100` and
+nothing else, the cache must return `110` instead of stale `11`.
+
 ### Minimum-viable cut
 
 Steps A + B + C give a correct (data-only and simple-function)
 `builtins.cache`. Step D removes a permanent miss for any cached
-function call. Step E is required for covariant-callback caching to
-actually hit — but the result is correct either way because every
-unresolved walk falls through to inner re-evaluation. The
-implementation can ship A+B+C+D as the v1 cut and leave E for a
-follow-up, or do A+B+C+D+E together; the correctness story is
-unchanged.
+function call. Steps E + G together are required for
+covariant-callback caching to hit *correctly* — the result is
+correct either way because every unresolved walk falls through to
+inner re-evaluation, but Step G is what makes a *hit* trustworthy.
+v1 ship = A+B+C+D+E+F+G.
 
 ## At-a-glance implementation checklist
 
@@ -956,38 +1083,38 @@ prerequisite of all the rest.
 
 **Step A — share the root TracingDecisionGraph** (~5 lines)
 
-- [ ] `src/libexpr/include/nix/expr/eval.hh`: add
+- [x] `src/libexpr/include/nix/expr/eval.hh`: add
       `TracingDecisionGraph * rootDecisionGraph = nullptr;` next to
       the existing `evaluatorCompat` field.
-- [ ] `src/libexpr/include/nix/expr/eval.hh`: add
+- [x] `src/libexpr/include/nix/expr/eval.hh`: add
       `std::unique_ptr<TracingDecisionGraph> ownedDecisionGraph;`
       inside `CacheState`.
-- [ ] `src/libcmd/command.cc`: in `EvalCommand::getEvalState()`
+- [x] `src/libcmd/command.cc`: in `EvalCommand::getEvalState()`
       after `tracingDecisionGraph = std::make_unique<TracingDecisionGraph>();`
       add `evalState->rootDecisionGraph = tracingDecisionGraph.get();`.
 
 **Step B — restore prim_cache** (~150 lines, lifts cleanly from v12 form)
 
-- [ ] `src/libexpr/primops/cache.cc`: replace the throwing stub with
+- [x] `src/libexpr/primops/cache.cc`: replace the throwing stub with
       the body in Appendix A. Use `TracingDecisionGraph` everywhere
       the v12 form used `TracingIndex`.
-- [ ] `src/libexpr/primops/cache.cc`: include the `NullTraceSink`
+- [x] `src/libexpr/primops/cache.cc`: include the `NullTraceSink`
       class definition.
-- [ ] Critical line in the new body:
+- [x] Critical line in the new body:
       `innerState->rootDecisionGraph = decisionGraph;` (nested
       builtins.cache propagation).
-- [ ] Run `tests/functional/builtins-cache.sh`; expect the data-only
+- [x] Run `tests/functional/builtins-cache.sh`; expect the data-only
       assertions (scalar/string/attrset/list/nested/expression
       form/error cases/transitive invalidation/multiple calls)
       to pass.
 
 **Step C — producer queryHash as ambient id; fix nFunction dispatch** (~100 lines across 4 files)
 
-- [ ] `src/libexpr/include/nix/expr/trace-ids.hh`: change
+- [x] `src/libexpr/include/nix/expr/trace-ids.hh`: change
       `AmbientId` to `Hash` (or an alias `using AmbientId = Hash;`
       if the strong tag is still useful). Drop the
       seed-counter-vs-derived distinction.
-- [ ] `src/libexpr/expr-from-object.cc`: in `AmbientResolver::query`,
+- [x] `src/libexpr/expr-from-object.cc`: in `AmbientResolver::query`,
       change `registerOuter(child)` in the child-producing arms
       (`QueryGetAttr`, `QueryGetListElem`, `QueryApply`) to return
       the current query's `queryHash` and register the child under
@@ -995,35 +1122,35 @@ prerequisite of all the rest.
       pass `hashString("seed:" + std::to_string(counter))`;
       `registerLocal(argObj)` calls inside `resolver.apply` pass
       `hashString("local:" + std::to_string(counter))`.
-- [ ] `src/libexpr/expr-from-object.cc:289`: change the
+- [x] `src/libexpr/expr-from-object.cc:289`: change the
       `nFunction` arm to dispatch on `obj`'s dynamic type —
       `AmbientObject` → `makeAmbientFnPrimOp`, anything else →
       `makeCachedFnPrimOp`. Without this, ambient lambdas reached
       via `arg.f` crash at apply time (§Status item 5).
-- [ ] `src/libexpr/ambient-object.cc`: `AmbientObject::id` stores a
+- [x] `src/libexpr/ambient-object.cc`: `AmbientObject::id` stores a
       `Hash`; methods emit it in the `from` string slot using
       `.to_string(HashFormat::Base16, false)`.
-- [ ] `src/libexpr/tracing-replay-evaluator.cc`: rewrite
+- [x] `src/libexpr/tracing-replay-evaluator.cc`: rewrite
       `dispatchAmbientQuery` to use on-demand recursive resolution
       via `resolveAmbientId` against the existing `Requests` pool
       (described in §Ambient identity). Remove
       `pendingChildren` / `unresolvedRoots`.
-- [ ] `src/libexpr/tracing-replay-evaluator.cc`: in `apply()`,
+- [x] `src/libexpr/tracing-replay-evaluator.cc`: in `apply()`,
       pre-bind seed Hashes into `idToObject`. No queue setup.
-- [ ] Run `builtins-cache.sh`; the `functionArgs`, simple-lambda,
+- [x] Run `builtins-cache.sh`; the `functionArgs`, simple-lambda,
       and curried cases should now exercise the new code path —
       cache misses are still expected for covariant callbacks
       until Step D.
 
 **Step D — fix `QueryApply.arg` and add apply-Request replay dispatcher** (~50 lines)
 
-- [ ] `src/libexpr/expr-from-object.cc:178`: change `applyFn`'s
+- [x] `src/libexpr/expr-from-object.cc:178`: change `applyFn`'s
       recorded `QueryApply.arg` from `std::to_string(resultId.value())`
       to `std::to_string(argId.value())` (or the producer queryHash
       under Step C's id scheme). Downstream queries against the
       apply result reference it via the producer `queryHash` of
       `QueryApply`, not by the recorded `arg` field.
-- [ ] `src/libexpr/tracing-replay-evaluator.cc`:
+- [x] `src/libexpr/tracing-replay-evaluator.cc`:
       `dispatchAmbientQuery` adds an `if (tag == "apply")` arm that
       resolves `params.fn` and `params.arg` via the resolver,
       attempts a *dummy* apply on the resolved outer fn (without
@@ -1031,38 +1158,68 @@ prerequisite of all the rest.
       `ResultType{"apply"}` response hash. Register the
       apply-result Object under `queryHash(QueryApply{…})` so
       downstream Requests against it dispatch.
-- [ ] Cached function-call replay-completeness assertions
+- [x] Cached function-call replay-completeness assertions
       (`_NIX_DISALLOW_PARSE=1`) in `builtins-cache.sh` should now
       pass for simple-function cases.
 
 **Step E — incoming-query recording for covariant callbacks** (~200 lines)
 
-- [ ] `src/libexpr/include/nix/expr/tracing-local-object.hh`,
-      `src/libexpr/tracing-local-object.cc`: new `TracingLocalObject`
-      per Appendix C, recording every outer access as an incoming
-      Fact in the inner FactSet.
-- [ ] `src/libexpr/expr-from-object.cc`: `AmbientResolver::apply`
+- [x] `src/libexpr/include/nix/expr/tracing-local-object.hh`,
+      `src/libexpr/tracing-local-object.cc`: new `TracingLocalObject`,
+      recording every outer access as an incoming Fact in the inner
+      FactSet via `writer.logAmbientInteraction`. The response
+      payload is also persisted to the `Responses` pool so the
+      replay-side `ReplayLocalObject` can reconstruct a frozen
+      image of the arg (Step G).
+- [x] `src/libexpr/expr-from-object.cc`: `AmbientResolver::apply`
       wraps `argObj` in `TracingLocalObject` before bridging via
-      `ExprFromObject`.
-- [ ] `src/libexpr/tracing-replay-evaluator.cc`: an analogous
-      `ReplayLocalObject` that serves recorded incoming answers
-      from the FactSet, indexed by `(localId, queryType)`.
-      `dispatchAmbientQuery`'s apply arm swaps in this proxy for
-      the recorded `argObj`.
-- [ ] `builtins-cache.sh`'s `call-fn.nix`, `path-fn.nix`,
-      `callpkg-fn.nix` cases should now produce cache hits
-      (verifiable via `_NIX_DISALLOW_PARSE=1`).
+      `ExprFromObject`. Insertion of a `{kind: "localArg", ...}`
+      sidecar Request at the local arg id (see Step G).
 
 **Step F — wrap-up** (~20 lines)
 
-- [ ] `doc/design/tracing-eval-cache.md`: in the "What's deferred"
+- [x] `doc/design/tracing-eval-cache.md`: in the "What's deferred"
       section, drop the `builtins.cache` line.
-- [ ] `src/libexpr/primops/cache.cc`: remove the "d=2 ambient layer
+- [x] `src/libexpr/primops/cache.cc`: remove the "d=2 ambient layer
       pending" comment block.
-- [ ] Update or remove obsolete project-doc references to
+- [x] Update or remove obsolete project-doc references to
       `TracingIndex`.
-- [ ] Inline-comment the structural-id encoding in
+- [x] Inline-comment the structural-id encoding in
       `tracing-replay-evaluator.cc` and `expr-from-object.cc`.
+
+**Step G — live apply replay via `ReplayLocalObject`** (~250 lines)
+
+- [x] `src/libexpr/include/nix/expr/replay-local-object.hh`,
+      `src/libexpr/replay-local-object.cc`: new `ReplayLocalObject`,
+      an Object whose methods read the recorded response payload
+      for `(query, from=localId)` from the `Responses` pool and
+      return the deserialised value. Child-producing methods
+      (`maybeGetAttr`, `getListElem`) recurse with a derived id
+      (the producer query's `queryHash`, matching the recorder
+      side).
+- [x] `src/libexpr/tracing-replay-evaluator.cc`: `resolveAmbientId`
+      adds a `tag == "apply"` branch. Resolves `fn` (producer
+      chain); reads `arg`'s Request payload — if it's a `localArg`
+      sidecar (or absent) constructs a `ReplayLocalObject`,
+      otherwise resolves it through the producer chain (relay
+      case). Invokes `fn->queryApply(arg)` live and registers the
+      result in `idToObject[apply_qH]` so downstream Facts with
+      `from=apply_qH` dispatch live.
+- [x] `src/libexpr/tracing-replay-evaluator.cc`: `resolveAmbientId`
+      handles the `localArg` sidecar payload by chasing its
+      `applyResultId` and reading back `idToObject[localId]`, so
+      a local-incoming Fact dispatched *before* its apply works
+      regardless of factSet iteration order.
+- [x] `src/libexpr/tracing-replay-evaluator.cc`:
+      `dispatchAmbientQuery` no longer falls back to the Responses
+      pool. Every ambient response is live-validated — the design
+      treats the outer like the filesystem, where validation is
+      `re-read and compare`, not `serve cached`.
+- [x] `tests/functional/builtins-cache.sh`'s `call-fn.nix` case
+      checks: original args hit (`== 11`); outer-lambda-body
+      change to `x: x + 100` recomputes (`== 110`); restored
+      original hits again (`== 11`); data-arg change recomputes
+      (`== 51`).
 
 ### Stop conditions
 
@@ -1071,7 +1228,9 @@ prerequisite of all the rest.
 - C without D leaves a permanent miss on every apply Fact.
 - D without E leaves covariant-callback hits unimplemented but
   every replay correctly falls through to inner re-evaluation.
-- v1 ship = A+B+C+D. E is a follow-up.
+- E without G is **unsafe**: covariant-callback replay can hit
+  stale when only the outer fn body changes. Do not ship E without G.
+- v1 ship = A+B+C+D+E+F+G. Shipped.
 
 ## Future work (out of scope here)
 
@@ -1347,62 +1506,95 @@ evalState->rootDecisionGraph = tracingDecisionGraph.get();
 That is the entire Step A patch. Three lines of header diff and one
 line of command.cc.
 
-## Appendix C: sketch of `TracingLocalObject` for Step E
+## Appendix C: shape of `TracingLocalObject` and `ReplayLocalObject`
 
 When `resolver->apply(fnId, argObj)` is invoked during a covariant
 callback, the outer evaluator may access `argObj`'s fields directly
 — attribute lookups, getString, getInt — and those accesses must be
 recorded as incoming Facts in the inner FactSet for replay
-validation. The piece missing today is the decorator that does the
-recording.
+validation. Two cooperating decorators handle this: one for the
+recorder (Step E) and one for the replayer (Step G).
 
-The shape:
+### Recorder: `TracingLocalObject`
+
+Wraps the live `argObj` and records each outer access via
+`writer.logAmbientInteraction`. The response payload is also
+persisted in the `Responses` pool so `ReplayLocalObject` can
+read it back.
 
 ```cpp
-/* Object decorator that wraps a local (inner) value passed to the
-   outer evaluator during a covariant callback. Records every outer
-   access as an AmbientIncoming Fact in the inner FactSet, then
-   delegates to the wrapped Object. */
 class TracingLocalObject : public Object
 {
     std::shared_ptr<Object> inner;
     AmbientId localId;
-    Environment & innerEnv;
+    TracingWriter & writer;
+    ref<SourceRoot> rootFSRoot;
 
 public:
     TracingLocalObject(std::shared_ptr<Object> inner, AmbientId localId,
-                       Environment & innerEnv)
-        : inner(std::move(inner)), localId(localId), innerEnv(innerEnv) {}
+                       TracingWriter & writer, ref<SourceRoot> rootFSRoot)
+        : inner(std::move(inner)), localId(localId),
+          writer(writer), rootFSRoot(std::move(rootFSRoot)) {}
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override {
         auto child = inner->maybeGetAttr(name);
-        // The recorded `from` is this local value's Hash id.
-        auto q = trace::QueryGetAttr{name, localId.to_string(HashFormat::Base16, false)};
+        trace::QueryGetAttr q{name, localId.to_string(HashFormat::Base16, false)};
         auto r = child ? trace::ResultMaybeType{
                             std::optional{objectTypeToString(child->getType())}}
                        : trace::ResultMaybeType{std::nullopt};
-        innerEnv.ambientQuery(q, [&](const auto &) { return r; });
+        writer.logAmbientInteraction(q, r);
         if (!child) return nullptr;
-        // Derived local id is the queryHash of the producer Q,
-        // mirroring the outer ambient id rule from Step C.
         return std::make_shared<TracingLocalObject>(
             std::move(child),
             TracingDecisionGraph::computeQueryHash(q),
-            innerEnv);
+            writer, rootFSRoot);
     }
-
     // ...similar wrapping for getString, getInt, getListElem, etc.
-    // Atomic getters: record the answer Fact, return the value
-    // unchanged. Composite getters (getAttr, getListElem): record
-    // and re-wrap the child for transitive recording.
 };
 ```
 
-Local-vs-outer is just a seed-string convention: locals use
-`hashString("local:" + counter)`, outers use
-`hashString("seed:" + counter)`. From the dispatcher's perspective
-both are `Hash` ids resolved against the same `idToObject` (for
-pre-bound seeds) or `Requests` pool (for derived).
+### Replayer: `ReplayLocalObject`
+
+A frozen-image counterpart. Its methods read recorded response
+payloads from the `Responses` pool and deserialise them back into
+typed values. Used by `resolveAmbientId` when invoking the apply
+live during replay — gives the outer fn a deterministic stand-in
+for the inner-side arg without re-running the inner.
+
+```cpp
+class ReplayLocalObject : public Object
+{
+    AmbientId localId;
+    TracingDecisionGraph & decisionGraph;
+    ref<SourceRoot> rootFSRoot;
+
+public:
+    NixInt getInt(std::string_view = "") override {
+        auto q = trace::QueryGetInt{localId.to_string(HashFormat::Base16, false)};
+        auto payload = decisionGraph.getResponsePayload(
+            TracingDecisionGraph::computeQueryHash(q));
+        if (!payload) throw Error(...);
+        trace::ResultInt r = cborStringToJson(*payload);
+        return NixInt{r.value};
+    }
+    // ...similar for each typed getter; maybeGetAttr/getListElem
+    // recurse with the derived id (producer queryHash) so the chain
+    // matches the recorder's derivedLocalId rule.
+};
+```
+
+### Identity scheme
+
+Locals use `hashString("local:" + counter)`; outers use
+`hashString("seed:" + counter)`. Derived ids on either side are the
+producer Request's `queryHash`. From the dispatcher's perspective
+both seeds are `Hash` ids resolved against `idToObject` (for
+pre-bound seeds), the producer chain through the `Requests` pool
+(for derived), or — for locals specifically — the `{kind:
+"localArg", applyResultId: ...}` sidecar Request that
+`AmbientResolver::apply` inserts so dispatches that hit a local
+*before* its apply can chase forward to the apply, re-invoke it,
+and pick up the registered live arg.
 
 ## Appendix D: walkthrough of the double-call.nix case
 

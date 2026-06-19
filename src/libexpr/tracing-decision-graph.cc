@@ -37,6 +37,25 @@ CREATE TABLE IF NOT EXISTS Results (
     payload    BLOB NOT NULL
 );
 
+-- Step E: response payloads keyed by request hash.
+--
+-- Required for incoming ambient queries (external → local during a
+-- covariant callback), where the dispatcher can't recompute the
+-- response from live state at replay time -- the inner doesn't run.
+-- The recording side ALWAYS writes here for incoming ambient Facts;
+-- the dispatcher always reads from here for them.
+--
+-- Optional for everything else (file/env reads, outgoing ambient
+-- queries). Those are reproducible from live state, so the
+-- dispatcher doesn't consult this table for them. But the recorder
+-- can be configured (via a writer-level flag) to store their
+-- response payloads too -- useful for offline debugging when the
+-- JSON trace files aren't available.
+CREATE TABLE IF NOT EXISTS Responses (
+    requestHash BLOB PRIMARY KEY,
+    payload     BLOB NOT NULL
+);
+
 -- Storage layer: set pools.
 --
 -- RequestSets are stored as a hash-prefix trie of content-addressed
@@ -97,8 +116,8 @@ struct TracingDecisionGraph::State
     SQLite db;
 
     /* Storage layer */
-    SQLiteStmt insertRequest, insertQuery, insertResult;
-    SQLiteStmt selectRequest, selectQuery, selectResult;
+    SQLiteStmt insertRequest, insertQuery, insertResult, insertResponse;
+    SQLiteStmt selectRequest, selectQuery, selectResult, selectResponse;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
     SQLiteStmt countAsks, countTerminals;
@@ -116,6 +135,7 @@ struct TracingDecisionGraph::State
     std::unordered_map<Hash, std::optional<std::vector<TracingDecisionGraph::Fact>>> factSetCache;
     std::unordered_map<Hash, std::optional<std::string>> requestPayloadCache;
     std::unordered_map<Hash, std::optional<std::string>> resultPayloadCache;
+    std::unordered_map<Hash, std::optional<std::string>> responsePayloadCache;
     /* RequestSet trie *node* cache. Different RequestSets that share
        subtrees (via content addressing) hit the same node hashes;
        caching per-node lets second-and-later getRequestSet calls reuse
@@ -359,6 +379,8 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO Queries(queryHash, payload) VALUES (?, ?)");
     state->insertResult.create(state->db,
         "INSERT OR IGNORE INTO Results(resultHash, payload) VALUES (?, ?)");
+    state->insertResponse.create(state->db,
+        "INSERT OR IGNORE INTO Responses(requestHash, payload) VALUES (?, ?)");
 
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
@@ -366,9 +388,10 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "SELECT payload FROM Queries WHERE queryHash = ?");
     state->selectResult.create(state->db,
         "SELECT payload FROM Results WHERE resultHash = ?");
+    state->selectResponse.create(state->db,
+        "SELECT payload FROM Responses WHERE requestHash = ?");
 
     /* Drop obsolete tables from earlier schema versions. */
-    state->db.exec("DROP TABLE IF EXISTS Responses;");
     state->db.exec("DROP TABLE IF EXISTS FactSets;");
 
     state->insertRequestSetNode.create(state->db,
@@ -432,6 +455,7 @@ void TracingDecisionGraph::waitForWrites()
 ATOM_INSERT_CACHED(Request, requestPayloadCache)
 ATOM_INSERT_PLAIN(Query)
 ATOM_INSERT_CACHED(Result, resultPayloadCache)
+ATOM_INSERT_CACHED(Response, responsePayloadCache)
 #undef ATOM_INSERT_CACHED
 #undef ATOM_INSERT_PLAIN
 
@@ -466,6 +490,7 @@ ATOM_INSERT_CACHED(Result, resultPayloadCache)
 ATOM_GET_CACHED(Request, requestPayloadCache)
 ATOM_GET_PLAIN(Query)
 ATOM_GET_CACHED(Result, resultPayloadCache)
+ATOM_GET_CACHED(Response, responsePayloadCache)
 #undef ATOM_GET_CACHED
 #undef ATOM_GET_PLAIN
 

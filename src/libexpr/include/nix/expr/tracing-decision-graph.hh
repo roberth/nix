@@ -110,6 +110,14 @@ public:
     std::optional<std::string> getQueryPayload(const QueryHash & h);
     std::optional<std::string> getResultPayload(const ResultHash & h);
 
+    /* Step E: response payload pool, keyed by the *request* hash.
+       Required for incoming ambient queries (the dispatcher reads
+       these back because there's no live source to recompute
+       from); optional for everything else (storage-only, used for
+       debugging when JSON traces aren't around). */
+    void insertResponse(const RequestHash & requestHash, std::string_view payload);
+    std::optional<std::string> getResponsePayload(const RequestHash & requestHash);
+
     /* ─────────────────────────────────────────────────────────────────
        Storage layer: set pools (content-addressed by canonical hash)
        ───────────────────────────────────────────────────────────────── */

@@ -257,13 +257,10 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         argId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(arg).value());
 
     tracingCacheLog("tracing: apply fnId=%s argId=%s", fnId ? *fnId : "none", argId ? *argId : "none");
-    /* Step D: don't record a Q_apply Terminal. A fresh app thunk
-       has no result type -- "apply" isn't a value type, and the
-       v12-era ResultType{"apply"} placeholder carried no
-       information beyond the existence of the Terminal row.
-       Compute the TriePosition structurally so downstream queries
-       on this apply result still chain off Q_apply via
-       queryHashStr (Merkle parent for v13's queryHash). */
+    /* Don't record a Q_apply Terminal: a fresh app thunk has no
+       result type. Compute the TriePosition structurally so
+       downstream queries on this apply result still chain off
+       Q_apply via queryHashStr (Merkle parent for v13's queryHash). */
     auto queryHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{*fnId, *argId});
     auto v = writer.getSink().logQuery(trace::QueryApply{*fnId, *argId});
     auto result = inner->apply(fn, arg);

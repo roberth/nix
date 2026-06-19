@@ -360,7 +360,7 @@ static void main_nix_build(int argc, char ** argv)
         eval = make_ref<TracingReplayEvaluator>(eval, *sysEnv, *tracingWriter, *tracingDecisionGraph);
         state->evaluatorCompat = eval.get_ptr();
         evaluator = eval.get_ptr();
-        resolver = makeAmbientResolver(state.get(), evaluator);
+        resolver = makeAmbientResolver(state.get(), evaluator, tracingWriter.get());
         interpreter->ambientResolver = resolver;
     } else {
         state = std::make_shared<EvalState>(myArgs.lookupPath, evalStore, fetchSettings, evalSettings, store);
