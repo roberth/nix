@@ -308,6 +308,34 @@ void from_json(const nlohmann::json & j, ResultListSize & r)
 }
 
 // ---------------------------------------------------------------------------
+// QueryLeaf serialization
+// ---------------------------------------------------------------------------
+
+/* ContentLeaf encodes as the bare hex string (wire-format compatible with
+   the previous std::string `from` field). AmbientLeaf encodes as an
+   object so a parser can distinguish the two on the rare cases where it
+   matters during transition; AmbientLeafs should not appear in recorded
+   artifacts. */
+void to_json(nlohmann::json & j, const QueryLeaf & leaf)
+{
+    if (leaf.isContent())
+        j = leaf.contentHash();
+    else
+        j = nlohmann::json{{"ambient", leaf.ambientIndex()}};
+}
+
+void from_json(const nlohmann::json & j, QueryLeaf & leaf)
+{
+    if (j.is_string())
+        leaf = QueryLeaf{j.get<std::string>()};
+    else if (j.is_object() && j.contains("ambient"))
+        leaf = QueryLeaf{AmbientLeaf{j.at("ambient").get<int>()}};
+    else
+        throw nlohmann::json::type_error::create(
+            302, "QueryLeaf JSON must be a hex string or {\"ambient\": N}", &j);
+}
+
+// ---------------------------------------------------------------------------
 // Query payload serialization
 // ---------------------------------------------------------------------------
 

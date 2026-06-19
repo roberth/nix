@@ -239,6 +239,79 @@ struct ResultListSize
 };
 
 // ---------------------------------------------------------------------------
+// QueryLeaf: typed `from` / `fn` / `arg` field of Query types
+// ---------------------------------------------------------------------------
+
+/**
+ * Recording-time positional handle: refers to the binding at depth N in
+ * the active frame stack (reverse De Bruijn).
+ *
+ * Does not appear in recorded artifacts — resolved to ContentLeaf at fact
+ * emission. See doc/design/tracing-eval-cache-content-identity.md §4.
+ */
+struct AmbientLeaf
+{
+    int index;
+    auto operator<=>(const AmbientLeaf &) const = default;
+};
+
+/**
+ * Content-defined factset hash: identifies a value by the hash of its
+ * accumulated observation factset.
+ *
+ * Stored as a hex string for wire-format compatibility with the previous
+ * std::string `from` field — recorded ContentLeafs are interchangeable
+ * with the strings today's code already produces.
+ */
+struct ContentLeaf
+{
+    std::string hash;
+    auto operator<=>(const ContentLeaf &) const = default;
+};
+
+/**
+ * QueryLeaf: the typed `from` (and `fn`/`arg`) field of Query types.
+ *
+ * Implicit construction from std::string / const char* produces a
+ * ContentLeaf — most construction sites today pass a hex string for
+ * `from`, and this lets them keep working without source changes during
+ * the typed-leaf rollout. JSON serialisation also preserves the wire
+ * format (ContentLeaf encodes as a plain string).
+ */
+struct QueryLeaf
+{
+    std::variant<AmbientLeaf, ContentLeaf> data;
+
+    QueryLeaf() = default;
+    QueryLeaf(std::string hex) : data(ContentLeaf{std::move(hex)}) {}
+    QueryLeaf(const char * hex) : data(ContentLeaf{hex}) {}
+    QueryLeaf(AmbientLeaf a) : data(a) {}
+    QueryLeaf(ContentLeaf c) : data(std::move(c)) {}
+
+    bool isContent() const
+    {
+        return std::holds_alternative<ContentLeaf>(data);
+    }
+    bool isAmbient() const
+    {
+        return std::holds_alternative<AmbientLeaf>(data);
+    }
+    const std::string & contentHash() const
+    {
+        return std::get<ContentLeaf>(data).hash;
+    }
+    int ambientIndex() const
+    {
+        return std::get<AmbientLeaf>(data).index;
+    }
+
+    auto operator<=>(const QueryLeaf &) const = default;
+};
+
+void to_json(nlohmann::json & j, const QueryLeaf & leaf);
+void from_json(const nlohmann::json & j, QueryLeaf & leaf);
+
+// ---------------------------------------------------------------------------
 // Query payload types and their result mappings
 // ---------------------------------------------------------------------------
 
@@ -266,7 +339,7 @@ struct QueryGetAttr
 {
     static constexpr std::string_view tag = "getAttr";
     std::string name;
-    std::string from; ///< Parent object's queryHash (Merkle identity)
+    QueryLeaf from;   ///< Parent object identity (ContentLeaf hex, or AmbientLeaf during recording)
     auto operator<=>(const QueryGetAttr &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetAttr, ResultMaybeType)
@@ -275,7 +348,7 @@ DECLARE_QUERY_RESULT(QueryGetAttr, ResultMaybeType)
 struct QueryGetString
 {
     static constexpr std::string_view tag = "getString";
-    std::string from; ///< Parent object's queryHash (Merkle identity)
+    QueryLeaf from;   ///< Parent object identity (ContentLeaf hex, or AmbientLeaf during recording)
     auto operator<=>(const QueryGetString &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetString, ResultString)
@@ -284,7 +357,7 @@ DECLARE_QUERY_RESULT(QueryGetString, ResultString)
 struct QueryGetStringWithContext
 {
     static constexpr std::string_view tag = "getStringWithContext";
-    std::string from; ///< Parent object's queryHash (Merkle identity)
+    QueryLeaf from;   ///< Parent object identity (ContentLeaf hex, or AmbientLeaf during recording)
     auto operator<=>(const QueryGetStringWithContext &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetStringWithContext, ResultStringWithContext)
@@ -293,7 +366,7 @@ DECLARE_QUERY_RESULT(QueryGetStringWithContext, ResultStringWithContext)
 struct QueryGetAttrNames
 {
     static constexpr std::string_view tag = "getAttrNames";
-    std::string from; ///< Parent object's queryHash (Merkle identity)
+    QueryLeaf from;   ///< Parent object identity (ContentLeaf hex, or AmbientLeaf during recording)
     auto operator<=>(const QueryGetAttrNames &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetAttrNames, ResultListOfStrings)
@@ -302,7 +375,7 @@ DECLARE_QUERY_RESULT(QueryGetAttrNames, ResultListOfStrings)
 struct QueryGetType
 {
     static constexpr std::string_view tag = "getType";
-    std::string from; ///< Parent object's queryHash (Merkle identity)
+    QueryLeaf from;   ///< Parent object identity (ContentLeaf hex, or AmbientLeaf during recording)
     auto operator<=>(const QueryGetType &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetType, ResultType)
@@ -311,7 +384,7 @@ DECLARE_QUERY_RESULT(QueryGetType, ResultType)
 struct QueryGetBool
 {
     static constexpr std::string_view tag = "getBool";
-    std::string from; ///< Parent object's queryHash (Merkle identity)
+    QueryLeaf from;   ///< Parent object identity (ContentLeaf hex, or AmbientLeaf during recording)
     auto operator<=>(const QueryGetBool &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetBool, ResultBool)
@@ -320,7 +393,7 @@ DECLARE_QUERY_RESULT(QueryGetBool, ResultBool)
 struct QueryGetInt
 {
     static constexpr std::string_view tag = "getInt";
-    std::string from; ///< Parent object's queryHash (Merkle identity)
+    QueryLeaf from;   ///< Parent object identity (ContentLeaf hex, or AmbientLeaf during recording)
     auto operator<=>(const QueryGetInt &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetInt, ResultInt)
@@ -329,7 +402,7 @@ DECLARE_QUERY_RESULT(QueryGetInt, ResultInt)
 struct QueryGetFloat
 {
     static constexpr std::string_view tag = "getFloat";
-    std::string from; ///< Parent object's queryHash (Merkle identity)
+    QueryLeaf from;   ///< Parent object identity (ContentLeaf hex, or AmbientLeaf during recording)
     auto operator<=>(const QueryGetFloat &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetFloat, ResultFloat)
@@ -338,7 +411,7 @@ DECLARE_QUERY_RESULT(QueryGetFloat, ResultFloat)
 struct QueryGetListOfStrings
 {
     static constexpr std::string_view tag = "getListOfStrings";
-    std::string from; ///< Parent object's queryHash (Merkle identity)
+    QueryLeaf from;   ///< Parent object identity (ContentLeaf hex, or AmbientLeaf during recording)
     auto operator<=>(const QueryGetListOfStrings &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetListOfStrings, ResultListOfStrings)
@@ -347,7 +420,7 @@ DECLARE_QUERY_RESULT(QueryGetListOfStrings, ResultListOfStrings)
 struct QueryGetListSize
 {
     static constexpr std::string_view tag = "getListSize";
-    std::string from; ///< Parent object's queryHash (Merkle identity)
+    QueryLeaf from;   ///< Parent object identity (ContentLeaf hex, or AmbientLeaf during recording)
     auto operator<=>(const QueryGetListSize &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetListSize, ResultListSize)
@@ -356,7 +429,7 @@ DECLARE_QUERY_RESULT(QueryGetListSize, ResultListSize)
 struct QueryGetListElem
 {
     static constexpr std::string_view tag = "getListElem";
-    std::string from; ///< Parent object's queryHash (Merkle identity)
+    QueryLeaf from;   ///< Parent object identity (ContentLeaf hex, or AmbientLeaf during recording)
     size_t index;
     auto operator<=>(const QueryGetListElem &) const = default;
 };
@@ -366,7 +439,7 @@ DECLARE_QUERY_RESULT(QueryGetListElem, ResultType)
 struct QueryGetPath
 {
     static constexpr std::string_view tag = "getPath";
-    std::string from; ///< Parent object's queryHash (Merkle identity)
+    QueryLeaf from;   ///< Parent object identity (ContentLeaf hex, or AmbientLeaf during recording)
     auto operator<=>(const QueryGetPath &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetPath, ResultPath)
@@ -375,7 +448,7 @@ DECLARE_QUERY_RESULT(QueryGetPath, ResultPath)
 struct QueryGetFunctionInfo
 {
     static constexpr std::string_view tag = "getFunctionInfo";
-    std::string from; ///< Parent object's queryHash (Merkle identity)
+    QueryLeaf from;   ///< Parent object identity (ContentLeaf hex, or AmbientLeaf during recording)
     auto operator<=>(const QueryGetFunctionInfo &) const = default;
 };
 
@@ -393,8 +466,8 @@ DECLARE_QUERY_RESULT(QueryGetFunctionInfo, ResultFunctionInfo)
 struct QueryApply
 {
     static constexpr std::string_view tag = "apply";
-    std::string fn;  ///< Function's queryHash identity
-    std::string arg; ///< Argument's queryHash identity
+    QueryLeaf fn;  ///< Function identity (ContentLeaf hex, or AmbientLeaf during recording)
+    QueryLeaf arg; ///< Argument identity (ContentLeaf hex, or AmbientLeaf during recording)
     auto operator<=>(const QueryApply &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryApply, ResultType)

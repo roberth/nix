@@ -29,7 +29,7 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query)
     auto payload = dg.getResponsePayload(reqHash);
     if (!payload)
         throw Error("ReplayLocalObject: no recorded response for %s on local %s",
-            Q::tag, query.from);
+            Q::tag, query.from.isContent() ? query.from.contentHash() : "<ambient>");
     return cborStringToJson(*payload);
 }
 
