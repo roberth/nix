@@ -222,9 +222,10 @@ conservatively treat all of them as preconditions.
 The mechanism: when a higher stack frame references a binding from
 a lower one — the curried `y: x + y` case — observations on the
 lower binding are attributed to its owning frame, not to whichever
-frame happens to be syntactically executing. The higher frame's
-recorded factset includes the lower frame's relevant observations
-at log-write time.
+frame happens to be syntactically executing. At log-write time,
+the lower frame's factset feeds into the content-hashes computed
+for any facts emitted in the higher frame's scope; this is state
+creep manifesting in the recorded log, as intended.
 
 For sibling stack frames — e.g. two independent cache invocations,
 each with its own stack=0 — we still cannot drop arbitrary history,
@@ -473,16 +474,20 @@ leaves are `Content { hash = X }` — content-defined factset hashes
 (per §4). The walker:
 
 1. Parses the Query's path expression top-down.
-2. Walks from the live cached root, applying each path constructor
-   in turn:
-   - `QueryAttr name` → call live `maybeGetAttr(name)` on the
-     current Object. The result becomes the next Object on the path.
-   - `QueryListElem index` → call live `getListElem` with the
+2. Walks from the path's root, applying each path constructor
+   in turn. The root is the live outer evaluator's value at the
+   cache call's argument position (for paths rooted at an
+   `ambient-N` binding, after content-hash resolution) or a
+   stand-in materialised from the Responses pool (for paths rooted
+   at an inner-supplied callback local that is no longer live):
+   - `QueryAttr name` → call `maybeGetAttr(name)` on the current
+     Object. The result becomes the next Object on the path.
+   - `QueryListElem index` → call `getListElem` with the
      materialised index.
    - `QueryApply arg` → materialise a stand-in for `arg` from its
-     `Content` hash, apply the current Object to it live.
-3. Fires the atomic query at the final position against the live
-   Object.
+     `Content` hash, apply the current Object to it.
+3. Fires the atomic query at the final position against the
+   current Object.
 4. Hashes the resulting `Result`, yielding the live `ResponseHash`.
 5. Compares against the recorded `ResponseHash`. Match → fold into
    cumulative factset, walk advances. Mismatch → walk falls
@@ -539,10 +544,12 @@ hash → the Asks edge walks to the same Terminal → walk hits.
 
 If the live cached value differs (e.g. different `cached.nix`), the
 navigation fails or produces different observations early. If the
-recorded stand-ins are inconsistent with the live state (e.g.
-because the outer fn behaviour changed in a way that affects the
-observations during the callback), the dispatch falls through —
-this is the Step G invalidation discipline carried over.
+live outer fn's behaviour has changed in a way that produces
+different responses from the recorded callback evaluation (i.e.
+applying the live fn to a stand-in yields an apply-result with
+observations that don't match the recorded ones), the dispatch
+falls through — this is the Step G invalidation discipline carried
+over.
 
 ### Same Asks-edge machinery as v13
 
@@ -568,10 +575,10 @@ Each frame holds:
   corresponding `ambient-N` index.
 - A back-pointer to the parent frame (the next-shallower binding).
 
-The cache call's root frame is at depth 0; its parent is `nil`. If
-the cached value is a curried function, each successive curried
-apply pushes a new frame at depth+1, with a back-pointer to the
-previous root.
+The cache call's root frame is at depth 0 with `parent = nil`.
+Deeper frames push as described in "When frames push" below;
+when a frame at depth N+1 is pushed, its `parent` is the frame at
+depth N.
 
 A frame's "content-defined hash at this moment" is the hash of its
 current factset, XOR-folded with all ancestor frames' factsets up
