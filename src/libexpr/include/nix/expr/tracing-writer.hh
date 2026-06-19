@@ -83,6 +83,29 @@ class TracingWriter
     std::map<Object *, VirtualRootId> virtualRootRegistry;
     std::vector<ref<Object>> virtualRootObjects; // extends Object lifetime
 
+    /* Phase 4 of content-defined identity: ambient facts are buffered
+       here during recording and flushed at logResult time with
+       placeholder→intrinsic substitution applied. See
+       logAmbientInteraction, deferRequest, and flushPendingAmbient. */
+    struct PendingFact
+    {
+        trace::QueryVariant query;
+        trace::ResultVariant result;
+    };
+    std::vector<PendingFact> pendingFacts;
+
+    struct PendingRequest
+    {
+        nlohmann::json payload;
+        std::optional<std::string> keyPlaceholder;
+    };
+    std::vector<PendingRequest> pendingRequests;
+
+    /* Latest published intrinsic content-hash per local placeholder
+       hex (the counter-derived id its facts carry as `from`).
+       Populated by TracingLocalObject as observations land. */
+    std::map<std::string, Hash> placeholderToIntrinsic;
+
 public:
     /**
      * Frame in the content-defined-identity stack of mutable factsets.
@@ -245,52 +268,67 @@ public:
     /**
      * Log an ambient interaction as a d>0 Request/Response pair.
      *
-     * Ambient response payloads are always stored in the decision
-     * graph's Responses pool. Outgoing apply-result Facts (e.g.
-     * getType{from=apply_qH}) can only be resolved on replay by
-     * either invoking the apply or reading the recorded payload;
-     * we picked the latter. To avoid an apply-vs-non-apply special
-     * case we store all ambient responses. Storage is bounded by
-     * the apply-result fanout, which is small in practice.
+     * Under Phase 4 of content-defined identity, ambient facts are
+     * buffered here rather than eagerly inserted into v13FactSet and
+     * the Requests/Responses pools — the `from` field of the query
+     * may be a placeholder (counter-derived local id) whose final
+     * content-defined value isn't known until the local's full
+     * observation buffer is settled. flushPendingAmbient() at
+     * logResult time substitutes placeholders with intrinsic hashes
+     * and does the actual pool inserts + v13FactSet folding.
+     *
+     * The previous signature returned (queryHash, responseHash). Both
+     * depend on `from` substitution, so neither is available at the
+     * call site any more — callers that maintained per-fact state
+     * (e.g. Phase 3's TracingLocalObject buffer) compute their
+     * placeholder-independent contributions themselves now.
      */
-    /**
-     * Returns (queryHash, responseHash) of the interaction so callers
-     * that maintain per-value observation buffers (Phase 3) can append
-     * without recomputing the hashes. Returns std::nullopt when no
-     * decisionGraph is wired up (sink-only mode), since neither hash
-     * was computed.
-     */
-    std::optional<std::pair<Hash, Hash>>
-    logAmbientInteraction(const trace::QueryVariant & query, const trace::ResultVariant & result)
+    void logAmbientInteraction(const trace::QueryVariant & query, const trace::ResultVariant & result)
     {
         if (!decisionGraph)
-            return std::nullopt;
-        nlohmann::json queryJson;
-        std::visit([&](const auto & q) { queryJson = q; }, query);
-        nlohmann::json resultJson;
-        std::visit([&](const auto & r) { resultJson = r; }, result);
-        auto queryHash = std::visit(
-            [](const auto & q) { return TracingDecisionGraph::computeQueryHash(q); }, query);
-        auto responsePayload = jsonToCborString(resultJson);
-        auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
-        decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-        decisionGraph->insertResponse(queryHash, responsePayload);
-        if (seenRequests.insert(queryHash).second) {
-            v13FactSet.push_back({queryHash, responseHash});
-            v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                v13FactSetHash, queryHash, responseHash);
-            responseFor.emplace(queryHash, responseHash);
-            allRequestsTrie.insert(queryHash);
-            /* Phase 2: also populate the current frame's factset. No
-               consumer reads from here yet; this just exercises the
-               recording path so Phase 4 can switch over. The
-               "syntactically current frame" routing is a placeholder;
-               §7's actual rule routes by where the path roots. */
-            if (currentFrame_)
-                currentFrame_->factSet.push_back({queryHash, responseHash});
-        }
-        return std::make_pair(queryHash, responseHash);
+            return;
+        pendingFacts.push_back({query, result});
     }
+
+    /**
+     * Defer a Requests-pool insert until logResult.
+     *
+     * AmbientResolver::apply uses this to register the QueryApply
+     * Request and the localArg sidecar without committing to an
+     * insertion key while the local arg's intrinsic hash is still
+     * being built up. At flush, the writer substitutes placeholder
+     * hexes in the payload; if `keyPlaceholder` is set the insert
+     * key is the substituted form of that placeholder (used for the
+     * sidecar, keyed by the local), otherwise the insert key is the
+     * hash of the substituted payload (used for the QueryApply,
+     * keyed by the apply's own queryHash).
+     */
+    void deferRequest(nlohmann::json payload, std::optional<std::string> keyPlaceholder = std::nullopt)
+    {
+        if (!decisionGraph)
+            return;
+        pendingRequests.push_back({std::move(payload), std::move(keyPlaceholder)});
+    }
+
+    /**
+     * Publish a local's current intrinsic content-hash. Called by
+     * TracingLocalObject each time an observation lands, so the
+     * latest value is available at flush time. Placeholder is the
+     * hex of the local's counter-derived id, which is what its
+     * deferred facts carry in their `from` fields during recording.
+     */
+    void updatePlaceholderIntrinsic(const std::string & placeholderHex, const Hash & intrinsic)
+    {
+        placeholderToIntrinsic.insert_or_assign(placeholderHex, intrinsic);
+    }
+
+    /**
+     * Flush all buffered ambient facts and Requests, substituting
+     * placeholder hexes with intrinsic content-hashes per Phase 4 of
+     * content-defined identity. Called at the top of logResult,
+     * before record().
+     */
+    void flushPendingAmbient();
 
     /**
      * When true, every file-read / env-var response payload gets
@@ -312,6 +350,12 @@ public:
 
         if (!decisionGraph || !qh.queryHash)
             return std::nullopt;
+
+        /* Phase 4: settle ambient facts now that observations on
+           every callback local in this Q are done. Substitution
+           folds placeholders → intrinsic hashes and populates the
+           v13FactSet structures the record() call below reads. */
+        flushPendingAmbient();
 
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);

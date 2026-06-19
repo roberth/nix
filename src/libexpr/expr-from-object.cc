@@ -198,30 +198,23 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
         auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
         registerOuterAt(resultId, std::move(resultObj));
 
-        /* Insert the QueryApply Request into the decision graph's
-           Requests pool, so resolveAmbientId on replay can find the
-           apply by its result id and re-invoke it. We don't add it
-           to the FactSet -- QueryApply has no result type (it's a
-           fresh app thunk), so there's no Fact body to record.
-
-           Also insert a sidecar Request at the local arg id that
-           points back to this apply. Without it, replay can't
-           resolve a local id whose first dispatched Fact is a
-           local-incoming observation (the walk picks Facts in
-           hash-set order; the corresponding apply-result Fact may
-           be dispatched later). The sidecar lets resolveAmbientId
-           chase localId -> applyResultId -> invoke apply, which
-           registers the live argObj under localId in idToObject. */
-        if (innerWriter)
-            if (auto * dg = innerWriter->getDecisionGraph()) {
-                nlohmann::json applyJson = applyQuery;
-                dg->insertRequest(resultId, jsonToCborString(applyJson));
-                nlohmann::json localSidecar = {
-                    {"kind", "localArg"},
-                    {"applyResultId", resultId.to_string(HashFormat::Base16, false)},
-                };
-                dg->insertRequest(argId, jsonToCborString(localSidecar));
-            }
+        /* Defer the QueryApply Request and the localArg sidecar to
+           the writer's flush at logResult. Both payloads carry
+           placeholder hexes (argIdStr is the counter-derived local
+           id, and the sidecar's `applyResultId` is the placeholder
+           apply_qH derived from it). Substitution at flush time
+           rewrites them to the local's intrinsic content-hash and
+           the corresponding intrinsic apply_qH respectively, and
+           the inserts land at the substituted keys. */
+        if (innerWriter) {
+            nlohmann::json applyJson = applyQuery;
+            innerWriter->deferRequest(applyJson);
+            nlohmann::json localSidecar = {
+                {"kind", "localArg"},
+                {"applyResultId", resultId.to_string(HashFormat::Base16, false)},
+            };
+            innerWriter->deferRequest(localSidecar, argIdStr);
+        }
 
         return {argId, resultId};
     }

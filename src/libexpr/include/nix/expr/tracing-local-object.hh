@@ -39,31 +39,26 @@ class TracingLocalObject : public Object
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
-    /* Phase 3 of content-defined identity: per-object buffer of
-       observations made on this local. Each method call appends the
-       (queryHash, responseHash) of the interaction it just emitted, and
-       contentHashSoFar() computes the XOR-fold of the buffer.
+    /* Phase 4 of content-defined identity: the local's intrinsic
+       content-hash, maintained as observations land. Each observation
+       contributes a `(queryHash_with_blanked_from, responseHash)` pair
+       — the from is blanked so the hash depends only on the
+       observation's content, not on which counter-derived placeholder
+       this local happens to be holding (so extensionally-equivalent
+       locals collapse to the same intrinsic identity, per §2). The
+       writer reads the latest value at flush time to substitute the
+       placeholder in this local's deferred facts. */
+    TracingDecisionGraph::SetHash intrinsicHash;
 
-       The buffer drives content-defined identity for this local — at
-       Phase 4 cutover, emitted facts will reference this content-hash
-       in their `from` field instead of the counter-derived localId.
-       For now the counter-derived id remains authoritative; the buffer
-       is populated to exercise the recording path. */
-    std::vector<TracingDecisionGraph::Fact> observationFactSet;
-
-    /* Emit an observation through the writer and append the resulting
-       (queryHash, responseHash) to observationFactSet. */
+    /* Buffer this observation in the writer (deferred until logResult)
+       and extend the intrinsic hash by its placeholder-independent
+       contribution. */
     void recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result);
 
 public:
     TracingLocalObject(
         std::shared_ptr<Object> inner, AmbientId localId, TracingWriter & writer, ref<SourceRoot> rootFSRoot);
 
-    /**
-     * XOR-fold of all observations recorded on this local so far. Used
-     * by Phase 4 to populate the content-defined hash in emitted facts.
-     */
-    TracingDecisionGraph::SetHash contentHashSoFar() const;
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

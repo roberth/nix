@@ -20,6 +20,7 @@ TracingLocalObject::TracingLocalObject(
     , localId(localId)
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
+    , intrinsicHash(TracingDecisionGraph::emptySetHash())
 {
 }
 
@@ -168,16 +169,31 @@ std::optional<std::vector<std::string>> TracingLocalObject::getAttrPath()
 
 void TracingLocalObject::recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
-    if (auto hashes = writer.logAmbientInteraction(query, result))
-        observationFactSet.push_back({hashes->first, hashes->second});
-}
+    /* Per-observation contribution to the intrinsic hash: hash the query
+       with `from` blanked so the contribution depends only on the
+       observation's structural content, not on which counter-derived
+       placeholder this local happens to be holding. This is what makes
+       §2's same-shape collapse work — extensionally-equivalent locals
+       get identical intrinsic hashes regardless of placeholder. */
+    nlohmann::json queryJson;
+    std::visit([&](const auto & q) { queryJson = q; }, query);
+    if (queryJson.is_object() && queryJson.contains("params")) {
+        auto & params = queryJson["params"];
+        if (params.is_object() && params.contains("from"))
+            params["from"] = "";
+    }
+    auto queryHashBlanked = hashString(HashAlgorithm::SHA256, queryJson.dump());
 
-TracingDecisionGraph::SetHash TracingLocalObject::contentHashSoFar() const
-{
-    auto h = TracingDecisionGraph::emptySetHash();
-    for (const auto & fact : observationFactSet)
-        h = TracingDecisionGraph::xorFactIntoHash(h, fact.request, fact.response);
-    return h;
+    nlohmann::json resultJson;
+    std::visit([&](const auto & r) { resultJson = r; }, result);
+    auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(resultJson));
+
+    intrinsicHash = TracingDecisionGraph::xorFactIntoHash(
+        intrinsicHash, queryHashBlanked, responseHash);
+
+    writer.logAmbientInteraction(query, result);
+    writer.updatePlaceholderIntrinsic(
+        localId.to_string(HashFormat::Base16, false), intrinsicHash);
 }
 
 } // namespace nix
