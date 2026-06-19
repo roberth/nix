@@ -253,10 +253,18 @@ public:
      * case we store all ambient responses. Storage is bounded by
      * the apply-result fanout, which is small in practice.
      */
-    void logAmbientInteraction(const trace::QueryVariant & query, const trace::ResultVariant & result)
+    /**
+     * Returns (queryHash, responseHash) of the interaction so callers
+     * that maintain per-value observation buffers (Phase 3) can append
+     * without recomputing the hashes. Returns std::nullopt when no
+     * decisionGraph is wired up (sink-only mode), since neither hash
+     * was computed.
+     */
+    std::optional<std::pair<Hash, Hash>>
+    logAmbientInteraction(const trace::QueryVariant & query, const trace::ResultVariant & result)
     {
         if (!decisionGraph)
-            return;
+            return std::nullopt;
         nlohmann::json queryJson;
         std::visit([&](const auto & q) { queryJson = q; }, query);
         nlohmann::json resultJson;
@@ -281,6 +289,7 @@ public:
             if (currentFrame_)
                 currentFrame_->factSet.push_back({queryHash, responseHash});
         }
+        return std::make_pair(queryHash, responseHash);
     }
 
     /**

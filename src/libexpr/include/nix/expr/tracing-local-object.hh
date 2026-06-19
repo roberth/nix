@@ -15,9 +15,12 @@
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/source-root.hh"
 #include "nix/expr/trace-ids.hh"
+#include "nix/expr/trace-types.hh"
+#include "nix/expr/tracing-decision-graph.hh"
 
 #include <functional>
 #include <memory>
+#include <vector>
 
 namespace nix {
 
@@ -36,9 +39,31 @@ class TracingLocalObject : public Object
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
+    /* Phase 3 of content-defined identity: per-object buffer of
+       observations made on this local. Each method call appends the
+       (queryHash, responseHash) of the interaction it just emitted, and
+       contentHashSoFar() computes the XOR-fold of the buffer.
+
+       The buffer drives content-defined identity for this local — at
+       Phase 4 cutover, emitted facts will reference this content-hash
+       in their `from` field instead of the counter-derived localId.
+       For now the counter-derived id remains authoritative; the buffer
+       is populated to exercise the recording path. */
+    std::vector<TracingDecisionGraph::Fact> observationFactSet;
+
+    /* Emit an observation through the writer and append the resulting
+       (queryHash, responseHash) to observationFactSet. */
+    void recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result);
+
 public:
     TracingLocalObject(
         std::shared_ptr<Object> inner, AmbientId localId, TracingWriter & writer, ref<SourceRoot> rootFSRoot);
+
+    /**
+     * XOR-fold of all observations recorded on this local so far. Used
+     * by Phase 4 to populate the content-defined hash in emitted facts.
+     */
+    TracingDecisionGraph::SetHash contentHashSoFar() const;
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

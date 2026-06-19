@@ -43,7 +43,7 @@ std::shared_ptr<Object> TracingLocalObject::maybeGetAttr(const std::string & nam
     auto resultJson = child
         ? trace::ResultMaybeType{std::optional{objectTypeToString(child->getType())}}
         : trace::ResultMaybeType{std::nullopt};
-    writer.logAmbientInteraction(query, resultJson);
+    recordObservation(query, resultJson);
     if (!child)
         return nullptr;
     return std::make_shared<TracingLocalObject>(std::move(child), derivedLocalId(query), writer, rootFSRoot);
@@ -52,7 +52,7 @@ std::shared_ptr<Object> TracingLocalObject::maybeGetAttr(const std::string & nam
 std::vector<std::string> TracingLocalObject::getAttrNames()
 {
     auto names = inner->getAttrNames();
-    writer.logAmbientInteraction(
+    recordObservation(
         trace::QueryGetAttrNames{tracingLocalFromOf(localId)}, trace::ResultListOfStrings{names});
     return names;
 }
@@ -60,7 +60,7 @@ std::vector<std::string> TracingLocalObject::getAttrNames()
 std::string TracingLocalObject::getStringIgnoreContext()
 {
     auto value = inner->getStringIgnoreContext();
-    writer.logAmbientInteraction(trace::QueryGetString{tracingLocalFromOf(localId)}, trace::ResultString{value});
+    recordObservation(trace::QueryGetString{tracingLocalFromOf(localId)}, trace::ResultString{value});
     return value;
 }
 
@@ -75,7 +75,7 @@ std::pair<std::string, NixStringContext> TracingLocalObject::getStringWithContex
     std::vector<std::string> ctxStrings;
     for (auto & c : ctx)
         ctxStrings.push_back(c.to_string());
-    writer.logAmbientInteraction(
+    recordObservation(
         trace::QueryGetStringWithContext{tracingLocalFromOf(localId)},
         trace::ResultStringWithContext{str, std::move(ctxStrings)});
     return {str, std::move(ctx)};
@@ -84,7 +84,7 @@ std::pair<std::string, NixStringContext> TracingLocalObject::getStringWithContex
 RootedPath TracingLocalObject::getPath()
 {
     auto path = inner->getPath();
-    writer.logAmbientInteraction(trace::QueryGetPath{tracingLocalFromOf(localId)}, trace::ResultPath{path.path.abs()});
+    recordObservation(trace::QueryGetPath{tracingLocalFromOf(localId)}, trace::ResultPath{path.path.abs()});
     /* lazy-paths: reuse the cached SourceRoot so the path outlives the
        returned RootedPath. */
     return RootedPath{rootFSRoot, path.path};
@@ -93,28 +93,28 @@ RootedPath TracingLocalObject::getPath()
 bool TracingLocalObject::getBool(std::string_view)
 {
     auto value = inner->getBool();
-    writer.logAmbientInteraction(trace::QueryGetBool{tracingLocalFromOf(localId)}, trace::ResultBool{value});
+    recordObservation(trace::QueryGetBool{tracingLocalFromOf(localId)}, trace::ResultBool{value});
     return value;
 }
 
 NixInt TracingLocalObject::getInt(std::string_view)
 {
     auto value = inner->getInt();
-    writer.logAmbientInteraction(trace::QueryGetInt{tracingLocalFromOf(localId)}, trace::ResultInt{value.value});
+    recordObservation(trace::QueryGetInt{tracingLocalFromOf(localId)}, trace::ResultInt{value.value});
     return value;
 }
 
 NixFloat TracingLocalObject::getFloat(std::string_view)
 {
     auto value = inner->getFloat();
-    writer.logAmbientInteraction(trace::QueryGetFloat{tracingLocalFromOf(localId)}, trace::ResultFloat{value});
+    recordObservation(trace::QueryGetFloat{tracingLocalFromOf(localId)}, trace::ResultFloat{value});
     return value;
 }
 
 size_t TracingLocalObject::getListSize()
 {
     auto size = inner->getListSize();
-    writer.logAmbientInteraction(trace::QueryGetListSize{tracingLocalFromOf(localId)}, trace::ResultListSize{size});
+    recordObservation(trace::QueryGetListSize{tracingLocalFromOf(localId)}, trace::ResultListSize{size});
     return size;
 }
 
@@ -122,7 +122,7 @@ std::shared_ptr<Object> TracingLocalObject::getListElem(size_t index)
 {
     auto child = inner->getListElem(index);
     trace::QueryGetListElem query{tracingLocalFromOf(localId), index};
-    writer.logAmbientInteraction(query, trace::ResultType{objectTypeToString(child->getType())});
+    recordObservation(query, trace::ResultType{objectTypeToString(child->getType())});
     return std::make_shared<TracingLocalObject>(std::move(child), derivedLocalId(query), writer, rootFSRoot);
 }
 
@@ -134,7 +134,7 @@ ObjectType TracingLocalObject::getTypeLazy()
 ObjectType TracingLocalObject::getType()
 {
     auto type = inner->getType();
-    writer.logAmbientInteraction(
+    recordObservation(
         trace::QueryGetType{tracingLocalFromOf(localId)}, trace::ResultType{objectTypeToString(type)});
     return type;
 }
@@ -152,7 +152,7 @@ std::optional<FunctionInfo> TracingLocalObject::getFunctionInfo()
     auto info = inner->getFunctionInfo();
     trace::ResultFunctionInfo rfi{
         info.has_value(), info ? info->formals : std::map<std::string, bool>{}, info ? info->ellipsis : false};
-    writer.logAmbientInteraction(trace::QueryGetFunctionInfo{tracingLocalFromOf(localId)}, rfi);
+    recordObservation(trace::QueryGetFunctionInfo{tracingLocalFromOf(localId)}, rfi);
     return info;
 }
 
@@ -164,6 +164,20 @@ PosIdx TracingLocalObject::getPos()
 std::optional<std::vector<std::string>> TracingLocalObject::getAttrPath()
 {
     return inner->getAttrPath();
+}
+
+void TracingLocalObject::recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result)
+{
+    if (auto hashes = writer.logAmbientInteraction(query, result))
+        observationFactSet.push_back({hashes->first, hashes->second});
+}
+
+TracingDecisionGraph::SetHash TracingLocalObject::contentHashSoFar() const
+{
+    auto h = TracingDecisionGraph::emptySetHash();
+    for (const auto & fact : observationFactSet)
+        h = TracingDecisionGraph::xorFactIntoHash(h, fact.request, fact.response);
+    return h;
 }
 
 } // namespace nix
