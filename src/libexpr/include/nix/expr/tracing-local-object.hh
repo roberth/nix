@@ -12,6 +12,7 @@
  * at replay time — the inner isn't running).
  */
 
+#include "nix/expr/arg-scope.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/source-root.hh"
 #include "nix/expr/trace-ids.hh"
@@ -39,25 +40,26 @@ class TracingLocalObject : public Object
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
-    /* Phase 4 of content-defined identity: the local's intrinsic
-       content-hash, maintained as observations land. Each observation
-       contributes a `(queryHash_with_blanked_from, responseHash)` pair
-       — the from is blanked so the hash depends only on the
-       observation's content, not on which counter-derived placeholder
-       this local happens to be holding (so extensionally-equivalent
-       locals collapse to the same intrinsic identity, per §2). The
-       writer reads the latest value at flush time to substitute the
-       placeholder in this local's deferred facts. */
-    TracingDecisionGraph::SetHash intrinsicHash;
+    /* The intrinsic cell this local contributes observations to.
+       Top-level Local (cb arg) and its navigation children share
+       the same cell — observations on any of them XOR-fold into
+       this cell's intrinsic (state creep). At flush, the cell's
+       contentId() is the substituted value for `from=localId` in
+       this local's recorded facts. */
+    std::shared_ptr<const ArgScopeCell> cell;
 
     /* Buffer this observation in the writer (deferred until logResult)
-       and extend the intrinsic hash by its placeholder-independent
+       and extend the cell's intrinsic by its placeholder-independent
        contribution. */
     void recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result);
 
 public:
     TracingLocalObject(
-        std::shared_ptr<Object> inner, AmbientId localId, TracingWriter & writer, ref<SourceRoot> rootFSRoot);
+        std::shared_ptr<Object> inner,
+        AmbientId localId,
+        TracingWriter & writer,
+        ref<SourceRoot> rootFSRoot,
+        std::shared_ptr<const ArgScopeCell> cell);
 
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;

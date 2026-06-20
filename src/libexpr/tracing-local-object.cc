@@ -15,12 +15,16 @@ static std::string tracingLocalFromOf(AmbientId id)
 }
 
 TracingLocalObject::TracingLocalObject(
-    std::shared_ptr<Object> inner, AmbientId localId, TracingWriter & writer, ref<SourceRoot> rootFSRoot)
+    std::shared_ptr<Object> inner,
+    AmbientId localId,
+    TracingWriter & writer,
+    ref<SourceRoot> rootFSRoot,
+    std::shared_ptr<const ArgScopeCell> cell)
     : inner(std::move(inner))
     , localId(localId)
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
-    , intrinsicHash(TracingDecisionGraph::emptySetHash())
+    , cell(std::move(cell))
 {
 }
 
@@ -61,7 +65,10 @@ std::shared_ptr<Object> TracingLocalObject::maybeGetAttr(const std::string & nam
         childLocalId.to_string(HashFormat::Base16, false),
         tracingLocalFromOf(localId),
         std::move(derivJson));
-    return std::make_shared<TracingLocalObject>(std::move(child), childLocalId, writer, rootFSRoot);
+    /* Navigation child shares the parent's cell: observations on
+       descendants contribute to the same scope's intrinsic
+       (state creep). */
+    return std::make_shared<TracingLocalObject>(std::move(child), childLocalId, writer, rootFSRoot, cell);
 }
 
 std::vector<std::string> TracingLocalObject::getAttrNames()
@@ -144,7 +151,10 @@ std::shared_ptr<Object> TracingLocalObject::getListElem(size_t index)
         childLocalId.to_string(HashFormat::Base16, false),
         tracingLocalFromOf(localId),
         std::move(derivJson));
-    return std::make_shared<TracingLocalObject>(std::move(child), childLocalId, writer, rootFSRoot);
+    /* Navigation child shares the parent's cell: observations on
+       descendants contribute to the same scope's intrinsic
+       (state creep). */
+    return std::make_shared<TracingLocalObject>(std::move(child), childLocalId, writer, rootFSRoot, cell);
 }
 
 ObjectType TracingLocalObject::getTypeLazy()
@@ -189,18 +199,35 @@ std::optional<std::vector<std::string>> TracingLocalObject::getAttrPath()
 
 void TracingLocalObject::recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
-    /* TODO(Phase 6 continuation): contribution to the cell's
-       intrinsic. Today the cell isn't threaded into
-       TracingLocalObject yet, so the per-observation XOR-fold has
-       no home — it used to feed placeholderToIntrinsic via
-       updatePlaceholderIntrinsic, but that map mangled cell ids
-       (cell.contentId() got substituted to the bare intrinsic at
-       flush, which doesn't match what replay looks up). Skipping
-       the update means cell.intrinsic stays empty and multi-Local
-       collapse via observation content is lost; the chain
-       mechanism still works because cell.contentId()'s depth
-       marker carries enough structural information for the
-       current tests. */
+    /* Hash the query with `from` blanked: the observation's
+       contribution to the cell's intrinsic depends only on the
+       observation's content, not on which placeholder this local
+       holds. This is what makes §2 same-shape collapse work —
+       extensionally-equivalent locals get identical intrinsics. */
+    nlohmann::json queryJson;
+    std::visit([&](const auto & q) { queryJson = q; }, query);
+    if (queryJson.is_object() && queryJson.contains("params")) {
+        auto & params = queryJson["params"];
+        if (params.is_object() && params.contains("from"))
+            params["from"] = "";
+    }
+    auto queryHashBlanked = hashString(HashAlgorithm::SHA256, queryJson.dump());
+
+    nlohmann::json resultJson;
+    std::visit([&](const auto & r) { resultJson = r; }, result);
+    auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(resultJson));
+
+    if (cell) {
+        /* Fold into the cell's intrinsic (the source of truth) and
+           push the current contentId to the writer's
+           placeholderToIntrinsic so flush substitutes
+           `from=localId` → `from=cell.contentId()`. Last call wins:
+           by flush the value reflects the final intrinsic. */
+        cell->absorb(queryHashBlanked, responseHash);
+        writer.updatePlaceholderIntrinsic(
+            localId.to_string(HashFormat::Base16, false), cell->contentId());
+    }
+
     writer.logAmbientInteraction(query, result);
 }
 

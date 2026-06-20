@@ -42,12 +42,15 @@ struct ArgScopeCell : std::enable_shared_from_this<ArgScopeCell>
         empty intrinsics at apply time). */
     int depth = 0;
 
-    /** Observation intrinsic for this scope. Mutable: XOR-folded
-        with each `(queryHashBlanked, responseHash)` contribution
-        from observations attributed to this cell. Starts at the
+    /** Observation intrinsic for this scope. XOR-folded with each
+        `(queryHashBlanked, responseHash)` contribution from
+        observations attributed to this cell. Starts at the
         empty-set hash (the value's content-defined identity at
-        apply time, before any observation has happened). */
-    Hash intrinsic;
+        apply time, before any observation has happened).
+        `mutable` so absorb() can run through a shared_ptr<const
+        ArgScopeCell> — only `intrinsic` evolves; depth, parent,
+        liveObject are fixed at construction. */
+    mutable Hash intrinsic;
 
     /** Next-outer cell. Null at the root (the cache call's
         argument). State creep folds parent cells' intrinsics into
@@ -102,9 +105,10 @@ struct ArgScopeCell : std::enable_shared_from_this<ArgScopeCell>
         return h;
     }
 
-    /** Fold a single `(requestHashBlanked, responseHash)` observation
-        contribution into the cell's intrinsic. */
-    void absorb(const Hash & queryHashBlanked, const Hash & responseHash)
+    /** Fold a single `(queryHashBlanked, responseHash)` observation
+        contribution into the cell's intrinsic. Const because
+        intrinsic is mutable — callable through shared_ptr<const>. */
+    void absorb(const Hash & queryHashBlanked, const Hash & responseHash) const
     {
         intrinsic = TracingDecisionGraph::xorFactIntoHash(
             intrinsic, queryHashBlanked, responseHash);

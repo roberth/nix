@@ -8,6 +8,8 @@
 #include "nix/expr/tracing-local-object.hh"
 #include "nix/expr/tracing-writer.hh"
 
+#include <nlohmann/json.hpp>
+
 namespace nix {
 
 /**
@@ -198,7 +200,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
            since there's no live inner to recompute against. */
         auto wrappedArg = (innerWriter && outerRootFSRoot)
             ? std::shared_ptr<Object>(std::make_shared<TracingLocalObject>(
-                  argObj, argId, *innerWriter, ref<SourceRoot>(outerRootFSRoot)))
+                  argObj, argId, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell))
             : argObj;
 
         /* Bridge local arg via ExprFromObject with the inner evaluator */
@@ -290,7 +292,24 @@ static PrimOp * makeCachedFnPrimOp(
                         resolver->registerOuterSeed(outerArgObj, rootId);
                         auto & innerEnv = *innerEval->getEvalState().environment;
                         AmbientQueryFn queryFn = [resolver,
-                                                  &innerEnv](AmbientId objectId, const trace::QueryVariant & q) {
+                                                  &innerEnv](
+                            AmbientId objectId,
+                            const trace::QueryVariant & q,
+                            std::shared_ptr<const ArgScopeCell> /*cell*/) {
+                            /* AmbientObject (outer-to-inner) deliberately
+                               doesn't absorb here. `from = depth marker`
+                               for seed observations is what lets the
+                               replay walker resolve it via proxy walk to
+                               LIVE outer state — that's how the cache
+                               validates against changes (cur diverges
+                               when live response differs from recorded).
+                               Content-defined `from` would prevent the
+                               proxy-walk match and fall back to frozen
+                               ReplayLocalObject serving recorded data.
+                               Distinguishing content-defined identity
+                               for the seed must happen at a higher level
+                               (top-level apply Q derivation), not by
+                               substituting `from` in inner observations. */
                             auto qr = resolver->query(objectId, q);
                             innerEnv.ambientQuery(q, [&](const trace::QueryVariant &) { return qr.result; });
                             return qr;
