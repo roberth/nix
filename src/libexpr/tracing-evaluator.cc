@@ -237,38 +237,33 @@ ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> &
 
 ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
-    // Get identity from TracingObject, TracingReplayObject, or AmbientObject.
-    // AmbientObject is the case the `<cached-fn>` PrimOp produces for the
-    // outer's args; without it argId falls through to virtual:N (per-writer
-    // counter) and separate cache calls collide on Q_apply.
-    auto getId = [](Object & obj) -> std::optional<std::string> {
+    /* fn and arg must be cache-boundary proxies whose identity is
+       content-defined. No counter fallback — see the parallel
+       comment in TracingReplayEvaluator::apply. */
+    auto getId = [](Object & obj) -> std::string {
         if (auto * to = dynamic_cast<TracingObject *>(&obj))
-            return to->getQueryHashStr();
+            if (auto qh = to->getQueryHashStr())
+                return *qh;
         if (auto * ro = dynamic_cast<TracingReplayObject *>(&obj))
-            return std::optional{ro->getTriePos().queryHashStr};
+            return ro->getTriePos().queryHashStr;
         if (auto * ao = dynamic_cast<AmbientObject *>(&obj))
             return ao->getId().to_string(HashFormat::Base16, false);
-        return std::nullopt;
+        throw Error(
+            "TracingEvaluator::apply: fn/arg lacks a content-defined "
+            "identity (type %s). Wrap it as a cache-boundary proxy at its "
+            "construction site.", typeid(obj).name());
     };
 
     auto fnId = getId(*fn);
     auto argId = getId(*arg);
 
-    // Get or allocate virtual root identities for objects without trie
-    // identity — values created by the Nix evaluator directly (e.g. `{}`
-    // literals) that never passed through the Evaluator interface.
-    if (!fnId)
-        fnId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(fn).value());
-    if (!argId)
-        argId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(arg).value());
-
-    tracingCacheLog("tracing: apply fnId=%s argId=%s", fnId ? *fnId : "none", argId ? *argId : "none");
+    tracingCacheLog("tracing: apply fnId=%s argId=%s", fnId, argId);
     /* Don't record a Q_apply Terminal: a fresh app thunk has no
        result type. Compute the TriePosition structurally so
        downstream queries on this apply result still chain off
        Q_apply via queryHashStr (Merkle parent for v13's queryHash). */
-    auto queryHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{*fnId, *argId});
-    auto v = writer.getSink().logQuery(trace::QueryApply{*fnId, *argId});
+    auto queryHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{fnId, argId});
+    auto v = writer.getSink().logQuery(trace::QueryApply{fnId, argId});
     auto result = inner->apply(fn, arg);
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel; v13 doesn't key off this

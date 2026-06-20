@@ -1,16 +1,15 @@
 #pragma once
 /**
  * @file
- * Strong type wrappers for the various integer identifiers in the
- * tracing/caching system. Prevents accidental mixing of:
+ * Strong type wrappers for the identifiers in the tracing/caching
+ * system. Prevents accidental mixing of:
  *
- * - ValueHandle:   JSON trace correlation handle (TraceSink)
- * - VirtualRootId: identity for untraced values in QueryApply
- * - AmbientId:     AmbientResolver registry handle (a content
- *                  Hash under the producer-query-as-id model;
- *                  seed roots are hashes of "seed:N" / "local:N"
- *                  strings, derived values are the producer
- *                  query's queryHash)
+ * - ValueHandle: JSON trace correlation handle (TraceSink)
+ * - AmbientId:   AmbientResolver registry handle, a content Hash.
+ *                Seed roots use the empty-set hash (their
+ *                content-defined identity at apply time, since no
+ *                observations have happened yet); derived values
+ *                use the producer query's queryHash.
  */
 
 #include "nix/util/hash.hh"
@@ -48,14 +47,8 @@ struct StrongId
 struct ValueHandleTag
 {};
 
-struct VirtualRootIdTag
-{};
-
 /** JSON trace correlation handle (links Query and Result entries). */
 using ValueHandle = StrongId<ValueHandleTag, uint64_t>;
-
-/** Identity for values without trie provenance (e.g. {} literals). */
-using VirtualRootId = StrongId<VirtualRootIdTag, uint64_t>;
 
 /** AmbientResolver registry handle for outer/local values.
  *

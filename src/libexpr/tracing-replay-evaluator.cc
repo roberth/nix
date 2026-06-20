@@ -466,33 +466,30 @@ ref<Object> TracingReplayEvaluator::getInternalPrimOp(const std::string & name)
 
 ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
-    /* AmbientObject case: the `<cached-fn>` PrimOp wraps the outer
-       call's args in an AmbientObject. Without this, argId falls
-       through to virtual:N (per-writer counter starting at 0), so
-       every separate `builtins.cache` call's outer Q_apply collides
-       and the cache returns the first call's result for every
-       subsequent call. With this case, argId is the resolver's seed
-       hex (the AmbientObject's content-addressed id), and the cache
-       distinguishes calls through the v13 multi-Terminal mechanism
-       — provided the recorded factSet actually captures enough
-       host-distinguishing observations on the seed, which is the
-       open question the dotted-attr-path reproducer probes. */
-    auto getId = [](Object & obj) -> std::optional<std::string> {
+    /* fn and arg must be cache-boundary proxies whose identity is
+       content-defined: AmbientObject (outer values reached by the
+       inner), TracingObject / TracingReplayObject (cached values
+       reached by the outer). No counter fallback — per the
+       Principles section, identity outside the CLI is grounded in
+       observation, not allocation order. If a non-proxy Object
+       reaches here it's a wiring bug that has to be addressed at
+       its construction site. */
+    auto getId = [](Object & obj) -> std::string {
         if (auto * to = dynamic_cast<TracingObject *>(&obj))
-            return to->getQueryHashStr();
+            if (auto qh = to->getQueryHashStr())
+                return *qh;
         if (auto * ro = dynamic_cast<TracingReplayObject *>(&obj))
-            return std::optional{ro->getTriePos().queryHashStr};
+            return ro->getTriePos().queryHashStr;
         if (auto * ao = dynamic_cast<AmbientObject *>(&obj))
             return ao->getId().to_string(HashFormat::Base16, false);
-        return std::nullopt;
+        throw Error(
+            "TracingReplayEvaluator::apply: fn/arg lacks a content-defined "
+            "identity (type %s). Wrap it as a cache-boundary proxy at its "
+            "construction site.", typeid(obj).name());
     };
 
     auto fnId = getId(*fn);
     auto argId = getId(*arg);
-    if (!fnId)
-        fnId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(fn).value());
-    if (!argId)
-        argId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(arg).value());
 
     /* The recording side doesn't write a Q_apply Terminal -- a
        fresh app thunk has no result type. Synthesize the
@@ -506,7 +503,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        cell, and resolveAmbientId walks the proxy graph from
        whichever proxy is being forced. Per-call resolution naturally
        isolates concurrent cache invocations. */
-    auto queryHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{*fnId, *argId});
+    auto queryHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{fnId, argId});
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
         .queryHashStr = queryHash.to_string(HashFormat::Base16, false),

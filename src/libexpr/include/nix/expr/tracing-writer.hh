@@ -79,10 +79,6 @@ class TracingWriter
        RequestSet hash for the whole-remaining edge in O(1). */
     TracingDecisionGraph::TrieBuilder allRequestsTrie;
 
-    uint64_t nextVirtualRoot = 0;
-    std::map<Object *, VirtualRootId> virtualRootRegistry;
-    std::vector<ref<Object>> virtualRootObjects; // extends Object lifetime
-
     /* Phase 4 of content-defined identity: ambient facts are buffered
        here during recording and flushed at logResult time with
        placeholder→intrinsic substitution applied. See
@@ -138,23 +134,6 @@ public:
         , decisionGraph(decisionGraph)
         , v13FactSetHash(TracingDecisionGraph::emptySetHash())
     {
-    }
-
-    /**
-     * Get or allocate a virtual root id for an Object.
-     *
-     * Returns the same id for the same Object across calls,
-     * eliminating id drift between replay and recording evaluators.
-     */
-    VirtualRootId getOrAllocVirtualRoot(ref<Object> obj)
-    {
-        auto it = virtualRootRegistry.find(&*obj);
-        if (it != virtualRootRegistry.end())
-            return it->second;
-        auto id = VirtualRootId(nextVirtualRoot++);
-        virtualRootRegistry[&*obj] = id;
-        virtualRootObjects.push_back(obj);
-        return id;
     }
 
     /**
