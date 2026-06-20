@@ -110,6 +110,21 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
                         /* Derived child id is the producer query's queryHash. */
                         auto childId = TracingDecisionGraph::computeQueryHash(query);
                         registerOuterAt(childId, child);
+                        /* Buffer the child's settled identity for the
+                           cascade in flushPendingAmbient: at recording
+                           time `query.from` is the parent's placeholder
+                           (e.g. an apply-result id before its arg
+                           placeholder was substituted). Flush rewrites
+                           `from` to the parent's settled hash and
+                           re-hashes, giving the child id replay
+                           computes from the substituted producer query. */
+                        if (innerWriter && query.from.isContent()) {
+                            nlohmann::json derivJson = query;
+                            innerWriter->delayContentDefinedIdentity(
+                                childId.to_string(HashFormat::Base16, false),
+                                query.from.contentHash(),
+                                std::move(derivJson));
+                        }
                         return {
                             trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}},
                             childId};
@@ -135,6 +150,13 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
                         auto child = obj->getListElem(query.index);
                         auto childId = TracingDecisionGraph::computeQueryHash(query);
                         registerOuterAt(childId, child);
+                        if (innerWriter && query.from.isContent()) {
+                            nlohmann::json derivJson = query;
+                            innerWriter->delayContentDefinedIdentity(
+                                childId.to_string(HashFormat::Base16, false),
+                                query.from.contentHash(),
+                                std::move(derivJson));
+                        }
                         return {trace::ResultType{objectTypeToString(child->getType())}, childId};
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetPath>) {
                         return {trace::ResultPath{obj->getPath().path.abs()}, std::nullopt};

@@ -120,6 +120,42 @@ echo '20' > "$TEST_ROOT/b.nix"
 
 [[ $(nix eval --impure --expr 'builtins.add (builtins.cache { import = '"$TEST_ROOT"'/a.nix; }) (builtins.cache { import = '"$TEST_ROOT"'/b.nix; })') == 30 ]]
 
+# --- Multiple cache calls, callback returns an attrset, cached fn accesses
+# at varying depths. The walker should distinguish between separate cache
+# invocations via dispatched factSet observations on the seed AmbientObject,
+# so each `g` call's argument content gives a different recorded factSet,
+# and warm walks land at the matching Terminal.
+
+echo '{ items }: (builtins.head (map (f: f { ctx = "C"; }) items)).out' \
+    > "$TEST_ROOT/cb-flat.nix"
+
+# (a) callback returns flat attrset `{ out = ...; }`, cached fn gets `.out`.
+[[ $(nix eval --impure --expr '
+  let g = v: (builtins.cache { import = '"$TEST_ROOT"'/cb-flat.nix; }) {
+    items = [ ({ ctx, ... }: { out = v + "-" + ctx; }) ];
+  };
+  in [ (g "x") (g "y") (g "z") ]
+') == '[ "x-C" "y-C" "z-C" ]' ]]
+
+# (b) callback returns nested attrset `{ deep = { value = ...; }; }`,
+# cached fn gets `.deep.value` (two levels of getAttr). This regressed in
+# the Phase 4 rollout because the AmbientObject chain for L_deep /
+# L_value wasn't participating in flushPendingAmbient's content-defined
+# identity cascade: the leaf `from` stayed as a placeholder that
+# resolveAmbientId didn't find in the Requests pool, so the dispatcher
+# served frozen recorded responses (call 1's "x-C") for every later call.
+# Fixed by routing AmbientResolver child registrations through
+# delayContentDefinedIdentity.
+echo '{ items }: (builtins.head (map (f: f { ctx = "C"; }) items)).deep.value' \
+    > "$TEST_ROOT/cb-nested.nix"
+
+[[ $(nix eval --impure --expr '
+  let g = v: (builtins.cache { import = '"$TEST_ROOT"'/cb-nested.nix; }) {
+    items = [ ({ ctx, ... }: { deep = { value = v + "-" + ctx; }; }) ];
+  };
+  in [ (g "x") (g "y") (g "z") ]
+') == '[ "x-C" "y-C" "z-C" ]' ]]
+
 # --- Functions: functionArgs ---
 
 echo '{ x, y ? 13 }: x + y' > "$TEST_ROOT/fn.nix"

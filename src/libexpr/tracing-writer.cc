@@ -37,24 +37,13 @@ void TracingWriter::flushPendingAmbient()
         sub.emplace(placeholderHex, intrinsic.to_string(HashFormat::Base16, false));
     }
 
-    /* Cascade derived local children: each child's identity is
-       qH(derivation_query) with parent's placeholder hex in `from`
-       substituted to parent's final intrinsic. Process in
-       registration order — parents register before their children
-       so each derivedLocal's parent is already in `sub` by the time
-       we get here, including chains of derived-from-derived. */
-    for (auto & dl : derivedLocals) {
-        auto tmpl = dl.derivationTemplate;
-        substituteHexes(tmpl, sub);
-        auto finalHash = hashString(HashAlgorithm::SHA256, tmpl.dump());
-        sub.emplace(dl.placeholderHex, finalHash.to_string(HashFormat::Base16, false));
-    }
-
     /* Pass 1: process pending QueryApply Requests. Substituting the
        `arg` (and possibly `fn`) field shifts the payload's queryHash;
-       record old→new so facts that reference the apply via the old
-       apply_qH get fixed up in pass 3. Sidecars are deferred to pass
-       2 — their `applyResultId` field is one of these new apply_qHs. */
+       record old→new so the apply-result placeholder used in
+       downstream Ambient cascade entries and in facts' `from` fields
+       resolves to the substituted apply_qH. Runs before the cascade
+       walk because Ambient chain children's derivationTemplate has
+       the placeholder apply_qH as `from`. */
     for (auto & req : pendingRequests) {
         if (req.keyPlaceholder)
             continue;
@@ -83,10 +72,27 @@ void TracingWriter::flushPendingAmbient()
         decisionGraph->insertRequest(key, jsonToCborString(req.payload));
     }
 
+    /* Cascade delayed content-defined identities: each child's
+       settled hash is qH(derivation_query) with parent's placeholder
+       hex in `from` substituted to parent's settled hash. Process in
+       registration order — parents register before their children
+       so each entry's parent is already in `sub` by the time we get
+       here, including chains of derived-from-derived. Runs after
+       pass 1 so Ambient children whose parent's settled hash is an
+       apply_qH (provided by pass 1's old→new sub entry) substitute
+       correctly. */
+    for (auto & dl : delayedContentDefinedIdentities) {
+        auto tmpl = dl.derivationTemplate;
+        substituteHexes(tmpl, sub);
+        auto finalHash = hashString(HashAlgorithm::SHA256, tmpl.dump());
+        sub.emplace(dl.placeholderHex, finalHash.to_string(HashFormat::Base16, false));
+    }
+
     /* Pass 3: process pending ambient facts. Substitute placeholders
-       in the query JSON (both local placeholders and old apply_qHs),
-       then do what logAmbientInteraction used to do synchronously:
-       compute reqHash + respHash, fold into v13FactSet, populate the
+       in the query JSON (local placeholders, old apply_qHs, and
+       Ambient chain children's placeholders), then do what
+       logAmbientInteraction used to do synchronously: compute
+       reqHash + respHash, fold into v13FactSet, populate the
        Requests/Responses pools and the incremental writer state. */
     for (auto & fact : pendingFacts) {
         nlohmann::json queryJson;
@@ -122,7 +128,7 @@ void TracingWriter::flushPendingAmbient()
     pendingFacts.clear();
     pendingRequests.clear();
     placeholderToIntrinsic.clear();
-    derivedLocals.clear();
+    delayedContentDefinedIdentities.clear();
 }
 
 } // namespace nix

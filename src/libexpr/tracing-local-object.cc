@@ -57,7 +57,7 @@ std::shared_ptr<Object> TracingLocalObject::maybeGetAttr(const std::string & nam
        the hash of that substituted query. */
     auto childLocalId = derivedLocalId(query);
     nlohmann::json derivJson = query;
-    writer.registerDerivedLocal(
+    writer.delayContentDefinedIdentity(
         childLocalId.to_string(HashFormat::Base16, false),
         tracingLocalFromOf(localId),
         std::move(derivJson));
@@ -140,7 +140,7 @@ std::shared_ptr<Object> TracingLocalObject::getListElem(size_t index)
     recordObservation(query, trace::ResultType{objectTypeToString(child->getType())});
     auto childLocalId = derivedLocalId(query);
     nlohmann::json derivJson = query;
-    writer.registerDerivedLocal(
+    writer.delayContentDefinedIdentity(
         childLocalId.to_string(HashFormat::Base16, false),
         tracingLocalFromOf(localId),
         std::move(derivJson));

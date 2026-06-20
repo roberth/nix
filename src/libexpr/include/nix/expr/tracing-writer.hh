@@ -106,23 +106,31 @@ class TracingWriter
        Populated by TracingLocalObject as observations land. */
     std::map<std::string, Hash> placeholderToIntrinsic;
 
-    /* Derived local children — TracingLocalObjects produced by
-       maybeGetAttr / getListElem on a parent local. Their identity is
-       structural: qH(derivation_query with parent's final intrinsic
-       as `from`). The query template here carries the parent's
-       placeholder hex; flush rewrites it via the substitution map
-       (which has parent's placeholder → parent's final intrinsic by
-       the time it processes this), then hashes the substituted query
-       to get the child's final id. The map entry from the child's
-       creation-time hex to that final id then participates in the
-       same substitution pass that fixes up pending facts. */
-    struct DerivedLocal
+    /* Phase 4 cascade: content-defined identities whose final hash
+       can't be settled at observation time because their parent's
+       identity is itself still a placeholder. The producer query
+       carries the parent's placeholder hex in `from`; flush
+       substitutes that to the parent's settled content-defined hash,
+       then hashes the substituted producer query to get the child's
+       settled hash. Used for two flavours of child:
+       - Local children (TracingLocalObjects from maybeGetAttr /
+         getListElem on a parent local), where the parent's settled
+         hash is its observation intrinsic.
+       - Ambient children (AmbientObjects from queryFn on a parent
+         ambient), where the parent's settled hash is the
+         substituted producer-query hash (e.g. an apply-result id
+         after the apply Request's arg placeholder was substituted).
+       Both cases settle the same way: substitute parent's
+       placeholder in the derivation template, hash, register
+       placeholder → settled in the substitution map so downstream
+       facts and further cascade entries see the settled hash. */
+    struct DelayedContentDefinedIdentity
     {
         std::string placeholderHex;
         std::string parentPlaceholderHex;
         nlohmann::json derivationTemplate;
     };
-    std::vector<DerivedLocal> derivedLocals;
+    std::vector<DelayedContentDefinedIdentity> delayedContentDefinedIdentities;
 
 public:
     /**
@@ -370,14 +378,19 @@ public:
     }
 
     /**
-     * Register a derived local child. Flush computes the child's
-     * final localId from the substituted derivation template — same
-     * hash replay would compute by hashing a query with parent's
-     * final intrinsic in the `from` slot.
+     * Buffer a content-defined identity whose final hash can't be
+     * settled at observation time because its parent's identity is
+     * still a placeholder. At flush, substitute the parent's
+     * placeholder in `derivationTemplate` to its settled content-
+     * defined hash and hash the result; that's the child's settled
+     * identity. Replay computes the same hash from the same
+     * substituted producer query.
      */
-    void registerDerivedLocal(std::string placeholderHex, std::string parentHex, nlohmann::json derivationTemplate)
+    void delayContentDefinedIdentity(
+        std::string placeholderHex, std::string parentHex, nlohmann::json derivationTemplate)
     {
-        derivedLocals.push_back({std::move(placeholderHex), std::move(parentHex), std::move(derivationTemplate)});
+        delayedContentDefinedIdentities.push_back(
+            {std::move(placeholderHex), std::move(parentHex), std::move(derivationTemplate)});
     }
 
     /**
