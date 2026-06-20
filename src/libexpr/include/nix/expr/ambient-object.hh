@@ -38,10 +38,20 @@ using AmbientQueryFn = std::function<AmbientQueryResult(AmbientId objectId, cons
 
 /**
  * Callback type for ambient function application.
- * Takes the function's Object id and the argument Object, returns
+ * Takes the function's Object id, the argument Object, and the
+ * calling AmbientObject's effective argScope cell (the chain
+ * root from which the new local cell's depth descends). Returns
  * the result Object id.
+ *
+ * Why pass `callerScope`: the cb is reached via a navigation
+ * chain (e.g. seed.items[0]), and `resolve(fnId)` may return an
+ * InterpreterObject without a proxy parent chain — so the
+ * callee can't infer depth from the resolved fn. The caller
+ * (AmbientObject::queryApply) knows its own proxy graph
+ * position and threads the effective cell through.
  */
-using AmbientApplyFn = std::function<AmbientId(AmbientId fnId, std::shared_ptr<Object> argObj)>;
+using AmbientApplyFn = std::function<AmbientId(
+    AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope)>;
 
 /**
  * Object implementation backed by ambient queries to the outer evaluator.

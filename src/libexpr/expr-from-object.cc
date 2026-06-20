@@ -174,20 +174,20 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
      *  resulting Object is registered as an outer value. The
      *  caller (applyFn closure) records the QueryApply Fact with
      *  the same arg id. */
-    std::pair<AmbientId, AmbientId> apply(AmbientId fnId, std::shared_ptr<Object> argObj)
+    std::pair<AmbientId, AmbientId> apply(
+        AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope)
     {
         if (!outerState)
             throw Error("ambient apply requires outerState");
         auto fnObj = resolve(fnId);
 
-        /* Open a new intrinsic cell for the cb arg. Parent = the
-           fn proxy's effective cell (walking past navigation
-           children that don't carry a cell of their own — e.g. the
-           cb reached via seed.items[0] is a list-elem navigation
-           child of the items attr, which is a getAttr navigation
-           child of the seed, so effective cell = the seed cell). */
-        auto fnCell = effectiveArgScope(*fnObj);
-        auto localCell = ArgScopeCell::make(fnCell, argObj);
+        /* Open a new intrinsic cell for the cb arg, rooted at the
+           caller's effective scope (passed in by AmbientObject::queryApply,
+           which knows its own proxy graph position). `fnObj` resolved
+           from outerValues may be an InterpreterObject without a
+           proxy parent chain — can't infer depth from it — hence the
+           caller-supplied scope. */
+        auto localCell = ArgScopeCell::make(callerScope, argObj);
         auto argId = localCell->contentId();
         registerLocalSeed(argObj, argId);
 
@@ -307,8 +307,11 @@ static PrimOp * makeCachedFnPrimOp(
                            Facts with `from=<apply_qH>` can have
                            their response payloads located via the
                            Responses pool on replay. */
-                        AmbientApplyFn applyFn = [resolver](AmbientId fnId, std::shared_ptr<Object> argObj) {
-                            auto [argId, resultId] = resolver->apply(fnId, std::move(argObj));
+                        AmbientApplyFn applyFn = [resolver](
+                            AmbientId fnId,
+                            std::shared_ptr<Object> argObj,
+                            std::shared_ptr<const ArgScopeCell> callerScope) {
+                            auto [argId, resultId] = resolver->apply(fnId, std::move(argObj), std::move(callerScope));
                             return resultId;
                         };
                         /* lazy-paths: pin AmbientObject's path SourceRoot

@@ -172,17 +172,18 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
 {
     if (!applyFn)
         throw Error("ambient apply: no apply callback");
-    /* Keep a copy of argObj for the result's argScope cell before
-       moving it into applyFn. The cell holds the live arg so future
-       dispatches resolve to it. */
+    /* Thread the caller's effective scope into applyFn so the cb
+       apply's new local cell can chain off the right depth, even
+       when `resolve(fnId)` returns an InterpreterObject without a
+       proxy parent chain. Keep a copy of argObj for the result's
+       cell before moving it into applyFn. */
+    auto callerScope = effectiveArgScope(*this);
     auto argForScope = argObj;
-    auto resultId = applyFn(id, std::move(argObj));
+    auto resultId = applyFn(id, std::move(argObj), callerScope);
     auto result = std::make_shared<AmbientObject>(resultId, queryFn, ambientRootFSRoot, applyFn);
     /* Apply-result: open a new intrinsic cell for this apply's
-       argument. Parent = this proxy's effective cell (walking past
-       navigation children that don't carry a cell of their own —
-       so a cb reached via seed.items[0] chains back to the seed). */
-    auto cell = ArgScopeCell::make(effectiveArgScope(*this), std::move(argForScope));
+       argument, rooted at the same caller scope the applyFn used. */
+    auto cell = ArgScopeCell::make(callerScope, std::move(argForScope));
     result->withScope(shared_from_this(), std::move(cell));
     return result;
 }
