@@ -694,11 +694,18 @@ each other's history; if stored lower, ancestors couldn't contribute
 to state creep without lateral lookups.
 
 A direct consequence is that two sibling `builtins.cache`
-invocations (e.g. `c args1 + c args2`) are isolated from one another
-naturally. They share no ancestor in the proxy graph — each is a
-fresh root — so there's no shared scope cell to leak through, and
-their recordings stay disjoint. Same property as any other sibling
-pair, applied at the top.
+invocations — e.g. `(builtins.cache x) args1 + (builtins.cache x) args2`,
+or `let c = builtins.cache x; in c args1 + c args2` where `c` is the
+primop itself — are isolated from one another naturally. They share no
+ancestor in the proxy graph; each apply opens its own fresh root, so
+there's no shared scope cell to leak through and their recordings stay
+disjoint. Same property as any other sibling pair, applied at the top.
+
+The shared-`c` example is not `c = (builtins.cache x) y`; that form
+binds `c` to a partial application result, and `c args1` + `c args2`
+are curried applies that *do* share a depth-0 cell holding `y` — that
+sharing is exactly what propagates `y`'s observations into both
+deeper recordings via state creep.
 
 ## Boundary-trace-only discipline
 
