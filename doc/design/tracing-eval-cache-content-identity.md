@@ -76,6 +76,7 @@ cannot pollute one another's factset preconditions.
 - Make sure replay gets all the information to reproduce the facts and intrinsic hashes, so that more-specific facts can be acquired from less-specific states
 - Maintain breadcrumbs relations between more-specific and less-specific hashes, so that less-specific facts can be retrieved at a later time
 - Make sure all queries are specific enough. Ambiguities (>1 row) need to be resolved, ideally by query specificity, otherwise by building a custom index (e.g. Asks, decision trees, ...), only temporarily by iteration.
+- No deep hashing of values. Identity is built from observations made *through* a value, never from inspecting the value itself. This preserves laziness — Nix language semantics, non-negotiable.
 
 ### Why counters are allowed at the CLI
 
