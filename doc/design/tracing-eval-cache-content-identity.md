@@ -21,7 +21,7 @@ the data model and its semantics. Read
 [`tracing-eval-cache.md`](./tracing-eval-cache.md) (the v13 trie
 itself) and the Step G section of the primop doc first.
 
-## 1. Motivation
+## Motivation
 
 The current identity scheme uses counter-derived strings: `seed:N`,
 `local:N`, `virtual:N`, allocated in the order values are
@@ -69,7 +69,16 @@ referential transparency, an apply's recorded facts depend only on
 observations through its own fn and arg — so unrelated callbacks
 cannot pollute one another's factset preconditions.
 
-## 2. Core principle: identity is observation-derived
+## Principles
+
+- Numbered identifiers only at the CLI level, and to identify generalized curry depth: reverse De Bruijn. *Only the CLI gets a counter*; everything else is grounded in the real structure of the expressions.
+- Combine structural identification with intrinsic hashes to identify relevant states
+- Make sure replay gets all the information to reproduce the facts and intrinsic hashes, so that more-specific facts can be acquired from less-specific states
+- Maintain breadcrumbs relations between more-specific and less-specific hashes, so that less-specific facts can be retrieved at a later time
+- Make sure all queries are specific enough. Ambiguities (>1 row) need to be resolved, ideally by query specificity, otherwise by building a custom index (e.g. Asks, decision trees, ...), only temporarily by iteration.
+
+## Core principle: identity is observation-derived
+
 
 We never inspect a value to summarise its content directly. Two
 things rule that out:
@@ -126,7 +135,7 @@ Two consequences fall out:
   callbacks that happen to receive the same arg shape share a
   cache entry; this is a feature, not a collision.
 
-## 3. Two scope notions
+## Two scope notions
 
 Two structural mechanisms shape what the cache records, and they
 must be separated cleanly to avoid confusing path navigation with
@@ -232,7 +241,7 @@ each with its own stack=0 — we still cannot drop arbitrary history,
 but we can exploit referential transparency. Without it we would
 have to generate unique identifiers for each call to disambiguate
 them; with it, we address calls by their argument content, as
-developed in §4 and §5.
+developed in the addressing section and the Request/Response section.
 
 State creep is overapproximation — a broadening of the cache
 precondition. We have to accept this, because the black-box
@@ -240,10 +249,10 @@ interpreter model gives us no way to prove which past observations
 actually matter. It widens the cache key beyond strict minimum but
 never invalidates incorrectly.
 
-## 4. Positional and content-defined addressing
+## Positional and content-defined addressing
 
 Values bound at frame depths in the cached-value curried-apply
-stack (§3) — the cache call's argument at depth 0, the argument
+stack (the Two scope notions section) — the cache call's argument at depth 0, the argument
 of the N-th curried apply at depth N — are addressed in two
 distinct ways at two different stages of the recording/replay
 cycle. The two addressing schemes are connected by a translation
@@ -284,10 +293,10 @@ that moment; they cannot serve as cache keys.
 
 In a recorded fact, frame bindings are identified by the hash of
 their factset at the moment of recording. This identity is
-content-defined (§2) and mostly stable across sessions: same
+content-defined (the Core principle section) and mostly stable across sessions: same
 observations → same hash, regardless of run identity. It is not
 stable when evaluation order differences and state creep combine
-(see §10).
+(see the Open issues section).
 
 The same logical value appearing in different facts at different
 observational states carries different hashes. This is
@@ -319,7 +328,7 @@ local to the fact-emission step.
 ### Callback-local values
 
 Inner-supplied values passed to outer functions via callbacks
-(§3's "callback application") do not occupy positions in the frame
+(the Two scope notions section's "callback application") do not occupy positions in the frame
 stack. They are addressed directly by their content-defined hash
 from the start — there is no positional-handle phase.
 
@@ -335,10 +344,10 @@ preceding subsections therefore doesn't apply to callback locals
 the same way. What does carry over is the non-destructive
 behaviour: as observations accumulate, the content-hash advances,
 and facts emitted at different points reference the local under
-different content-hashes — exactly as §8.1's worked example
+different content-hashes — exactly as the first-order callback example's worked example
 illustrates.
 
-## 5. Request/Response shape
+## Request/Response shape
 
 The cache's existing Request/Response envelope (in v13) has shapes
 like `ReadFile` and `GetEnv` as variants. This design adds an
@@ -402,7 +411,7 @@ QueryGetType {
 This Query says: "get the type of the value at
 `(ambient-0).f applied with content-id H_for_10`." Recording-time
 form, with the `Ambient` leaf. The recorded form has all `Ambient`
-leaves translated to `Content` per §4.
+leaves translated to `Content` per the addressing section.
 
 ### Result: the answer payload
 
@@ -459,7 +468,7 @@ cumulative factset hash. This is unchanged from v13. The new
 payload shapes affect what gets hashed, but the trie structure
 (Asks edges, Terminals, RequestSet pool) is untouched.
 
-## 6. Walker semantics
+## Walker semantics
 
 The walker is the replay-side component that dispatches recorded
 Requests against the live evaluator state and folds the responses
@@ -471,7 +480,7 @@ new dispatch logic.
 
 The recorded form of an `AmbientQuery` has a Query path whose
 leaves are `Content { hash = X }` — content-defined factset hashes
-(per §4). The walker:
+(per the addressing section). The walker:
 
 1. Parses the Query's path expression top-down.
 2. Walks from the path's root, applying each path constructor
@@ -560,10 +569,10 @@ payload shapes (`AmbientQuery`, `AmbientResponse`) just expand what
 the dispatcher can handle. The trie-walk algorithm itself does not
 change.
 
-## 7. Frames and inheritance
+## Frames and inheritance
 
 The recording side maintains the active state required to translate
-positional handles (§4) into content-defined hashes. This state is
+positional handles (the addressing section) into content-defined hashes. This state is
 organized as a stack of mutable factsets, arranged as a linked list
 rooted at the cache call.
 
@@ -582,7 +591,7 @@ depth N.
 
 A frame's "content-defined hash at this moment" is the hash of its
 current factset, XOR-folded with all ancestor frames' factsets up
-the linked list (state creep, §3).
+the linked list (state creep, the Two scope notions section).
 
 Non-ambient observations (file reads, env reads) live in the
 cumulative writer factset directly, not in any frame. The frame
@@ -641,8 +650,8 @@ frames, XOR-folding each ancestor's factset into the final hash,
 and substitutes the content-hash into the path before emission.
 
 The walked-and-folded sum is the content-defined identity for the
-`ambient-N` at this moment, as discussed in §4. It widens the cache
-key beyond strict minimum (§3 state creep) but never invalidates
+`ambient-N` at this moment, as discussed in the addressing section. It widens the cache
+key beyond strict minimum (the Two scope notions section state creep) but never invalidates
 incorrectly.
 
 ### Sibling cache invocations
@@ -658,12 +667,12 @@ from one another: same evaluation session, same persistent trie,
 but the recorded factsets are disjoint because the frame linked
 lists are disjoint.
 
-## 8. Worked examples
+## Worked examples
 
 Four examples that together cover the design surface, plus a fifth
 targeted at the original failure case.
 
-### 8.1 First-order callback
+### First-order callback
 
 ```nix
 # cached.nix
@@ -704,7 +713,7 @@ where `<H_local_empty>` is the content-hash of an empty factset and
 `<H_local_after_getType>` incorporates the first observation. After
 both, the local's content-hash stabilises to `<H_10>`, which is the
 leaf used by the inner-side queries on the apply result. The
-non-destructive substitution behaviour (§4) is visible here: the
+non-destructive substitution behaviour (the addressing section) is visible here: the
 same logical local appears in three different facts under three
 distinct content-hashes representing three points in its
 observation history.
@@ -725,7 +734,7 @@ forces it via `getType` then `getInt`, and after those two
 observations its content-defined identity is fully determined.
 No order-dependency issue can arise.
 
-### 8.2 Sibling callbacks
+### Sibling callbacks
 
 ```nix
 # cached.nix
@@ -736,7 +745,7 @@ Outer: `(builtins.cache { import = ./cached.nix; }) { f = x: x + 1; }`.
 
 **Frames**: One. Cached body returns an attrset.
 
-**Facts**: Same shape as §8.1 for the formals matching, plus three
+**Facts**: Same shape as the first-order callback example for the formals matching, plus three
 sets of inner-side apply observations differing only at the
 rightmost leaf (each set has both `getType` and `getInt`; only
 `getInt` shown for brevity):
@@ -753,7 +762,7 @@ hashes are distinct because the underlying values differ in
 content.
 
 Each of the three locals (`10`, `20`, `30`) has its own outer-side
-observation set, recorded just as §8.1 details for its single
+observation set, recorded just as the first-order callback example details for its single
 local. The three sets of facts are entirely independent — `<H_10>`,
 `<H_20>`, `<H_30>` are computed from disjoint observation
 histories, and none of them is referenced from any other's facts.
@@ -768,7 +777,7 @@ rewriteURL workload reduces to: a stable common-prefix path
 (`QueryAttr("f", ambient-0)`) plus distinct rightmost leaves, one
 per callback invocation.
 
-### 8.3 Curried cached value
+### Curried cached value
 
 ```nix
 # cached.nix
@@ -795,7 +804,7 @@ hash for `ambient-1` by XOR-folding depth-1's factset with
 depth-0's (walking up the linked list). The recorded content-hash
 thus incorporates depth-0's observations even when only depth-1's
 binding was directly involved. This wider key is overapproximation
-(§3) — never gives a false hit, but may prevent a hit if depth-0's
+(the Two scope notions section) — never gives a false hit, but may prevent a hit if depth-0's
 factset differs across record/replay.
 
 **Replay**: The walker handles each apply event in order. The first
@@ -803,7 +812,7 @@ apply's dispatches populate depth-0's observations live; the second
 apply's dispatches populate depth-1's. Same outer args at each
 level → same responses → walk hits.
 
-### 8.4 Higher-order callback
+### Higher-order callback
 
 ```nix
 # cached.nix
@@ -830,7 +839,7 @@ producing content-defined leaves:
   by the inner lambda's `x + 1` body when it forces `x`. Its
   content-hash builds from inner-side observations:
   `(getType, int)` and `(getInt, 5)`. Same form as `<H_10>` in
-  §8.1, except the observing side is now the inner.
+  the first-order callback example, except the observing side is now the inner.
 
 The lambda's content-hash evolves as observations on it accumulate;
 each fact uses whichever snapshot was current at emission. A
@@ -851,10 +860,10 @@ getInt (QueryApply(QueryAttr("f", ambient-0), <H_lambda_1>))   → 6
 (Whether apply-result facts also advance the lambda's hash is a
 design choice we have not yet committed to; both readings keep the
 cache correct, with different distributions of discrimination
-between identity hashes and Response hashes. Section 10's deferred
+between identity hashes and Response hashes. The Open issues section's deferred
 list flags this.)
 
-The non-destructive substitution property of §4 is visible: the
+The non-destructive substitution property of the addressing section is visible: the
 lambda appears under at least two distinct content-hashes
 (empty, post-getType) across the fact log.
 
@@ -863,14 +872,14 @@ value itself isn't curried. There's one outer-driven apply (the
 cache call). All the inner→outer→inner crossings happen as path
 navigation within stack=0's factset.
 
-**Replay**: Same machinery as §8.1. The walker dispatches each
+**Replay**: Same machinery as the first-order callback example. The walker dispatches each
 Request. For the lambda's content-hash leaves, it materialises a
 stand-in from the Responses pool. The outer's `f` body forces the
 stand-in to a function value (served from the pool), then applies
 it. The application produces a result that the walker queries; the
 result's observations also dispatch against recorded facts.
 
-### 8.5 rewriteURL through cached nixpkgs
+### rewriteURL through cached nixpkgs
 
 ```nix
 {
@@ -902,7 +911,7 @@ identity, the order in which nixpkgs forces its lazy structure
 shifts which `local:N` label tags which URL across record/replay.
 Cold records URLs in one order; warm replay encounters them in
 another; counter labels collide on the wrong URLs; walk falls
-through. (See §1 and the primop doc's Open Question 1 for the
+through. (See the Motivation section and the primop doc's Open Question 1 for the
 empirical investigation that surfaced this.)
 
 Under content-defined identity, each URL's content-hash is
@@ -911,17 +920,17 @@ determined entirely by its observed string content — concretely,
 string. Cold records `<H_for_"xz.tar">`; warm produces the same
 `<H_for_"xz.tar">` regardless of the order it encountered that
 URL in. The labels can no longer collide. The sibling-callback
-structure (§8.2 pattern) handles the rest.
+structure (the sibling callbacks example pattern) handles the rest.
 
 **State creep is bounded**: the cached function is non-curried, so
 there are no parent frames to creep up from. Each URL apply's
 recorded facts are minimal: the URL string's content-hash and the
 outer-side `rewriteURL` invocation's observed result. This is why
 this workload is the initial-target case for this iteration — the
-open issue around evaluation-order × state creep (§10) doesn't
+open issue around evaluation-order × state creep (the Open issues section) doesn't
 enter the picture.
 
-## 9. Implementation phasing
+## Implementation phasing
 
 The design touches the `Query` data type, the writer's
 bookkeeping, the Responses pool, and the walker's dispatch logic.
@@ -954,7 +963,7 @@ content-hashes.
 
 ### Phase 2: frame tracking in the writer
 
-Introduce the linked-list-of-factsets structure (§7) alongside the
+Introduce the linked-list-of-factsets structure (the Frames section) alongside the
 existing cumulative writer factset. Frames are pushed at the same
 points where Step G's code currently increments counters. Their
 factsets are populated by the existing observation-recording paths
@@ -968,7 +977,7 @@ using it for content-hash resolution.
 
 `TracingLocalObject` today emits a fact per method call. Modify
 the recorder to buffer observations on each local first, then
-compute the content-defined hash at the right moment (§4).
+compute the content-defined hash at the right moment (the addressing section).
 
 Facts tagged with both their counter-based id (existing) and their
 content-defined hash (new) during transition; the counter-based id
@@ -1008,7 +1017,7 @@ Remove counter-based machinery that's no longer reachable. Drop
 feature flags or compatibility shims introduced during transition.
 Update tests that asserted counter-based behaviour.
 
-## 10. Open issues and deferred work
+## Open issues and deferred work
 
 - **Evaluation order × state creep interaction**: content-defined
   factset hashes are stable when the same observations are made,
@@ -1051,7 +1060,7 @@ Update tests that asserted counter-based behaviour.
   function's factset, giving the function more distinct snapshots
   in the recorded log. Both keep the cache correct; they shift
   where in the (Request hash, Response hash) pair the
-  discrimination lives. §8.4's worked example uses the conservative
+  discrimination lives. the higher-order callback example's worked example uses the conservative
   reading. Implementation should pick one and stay consistent.
 - **Cross-process counter alignment for `seed:N` / `virtual:N`**:
   today's code uses positional counters for outer-side seeds too.
