@@ -276,28 +276,6 @@ static PrimOp * makeCachedFnPrimOp(
                         // Do NOT force args[0] — it may be self-referential.
                         auto outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
                         auto rootId = resolver->registerOuterSeed(outerArgObj);
-                        /* Phase 2 of content-defined identity: push a frame for
-                           this curried apply of the cached value. RAII pop on
-                           scope exit, including exception paths. The frame
-                           structure is populated but no consumer reads it yet
-                           (§7 / §9 Phase 2). */
-                        struct FrameGuard
-                        {
-                            TracingWriter * w;
-                            FrameGuard(TracingWriter * w_)
-                                : w(w_)
-                            {
-                                if (w)
-                                    w->pushFrame();
-                            }
-                            ~FrameGuard()
-                            {
-                                if (w)
-                                    w->popFrame();
-                            }
-                            FrameGuard(const FrameGuard &) = delete;
-                            FrameGuard & operator=(const FrameGuard &) = delete;
-                        } frameGuard(resolver->innerWriter);
                         auto & innerEnv = *innerEval->getEvalState().environment;
                         AmbientQueryFn queryFn = [resolver,
                                                   &innerEnv](AmbientId objectId, const trace::QueryVariant & q) {

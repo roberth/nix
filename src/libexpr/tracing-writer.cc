@@ -120,8 +120,6 @@ void TracingWriter::flushPendingAmbient()
                 v13FactSetHash, queryHash, responseHash);
             responseFor.emplace(queryHash, responseHash);
             allRequestsTrie.insert(queryHash);
-            if (currentFrame_)
-                currentFrame_->factSet.push_back({queryHash, responseHash});
         }
     }
 

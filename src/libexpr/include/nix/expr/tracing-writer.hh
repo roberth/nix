@@ -133,74 +133,6 @@ class TracingWriter
     std::vector<DelayedContentDefinedIdentity> delayedContentDefinedIdentities;
 
 public:
-    /**
-     * Frame in the content-defined-identity stack of mutable factsets.
-     *
-     * Phase 2 of the content-defined identity rollout: the structure is
-     * here and is populated by the recorder, but no consumer uses it
-     * yet. Phase 4 will switch over to consulting it for content-hash
-     * resolution at fact emission.
-     *
-     * See doc/design/tracing-eval-cache-content-identity.md §7.
-     */
-    struct Frame
-    {
-        /* Ambient observations attributed to this frame's binding. */
-        std::vector<TracingDecisionGraph::Fact> factSet;
-        /* Next-shallower frame in the linked list, nullptr at the root. */
-        std::shared_ptr<Frame> parent;
-        /* Reverse De Bruijn depth: 0 at the root, N+1 in a frame whose
-           parent is at depth N. */
-        int depth;
-
-        Frame(std::shared_ptr<Frame> parent_, int depth_)
-            : parent(std::move(parent_))
-            , depth(depth_)
-        {
-        }
-    };
-
-private:
-    /* Top of the frame stack. nullptr before the first push, i.e. before
-       builtins.cache returns and the cached value is first applied. */
-    std::shared_ptr<Frame> currentFrame_;
-
-public:
-    /**
-     * Push a new frame onto the stack. Called when the cached value (or
-     * a function returned from a chain of curried applies of it) is
-     * applied. Phase 2 doesn't yet wire this everywhere §7's propagation
-     * rules require — the minimum is one push per `<cached-fn>` PrimOp
-     * impl invocation.
-     */
-    void pushFrame()
-    {
-        int newDepth = currentFrame_ ? currentFrame_->depth + 1 : 0;
-        currentFrame_ = std::make_shared<Frame>(currentFrame_, newDepth);
-    }
-
-    /**
-     * Pop the top frame. The frame node itself stays alive while it's
-     * still referenced (by its child frame's `parent` pointer, or by
-     * facts that will reference it once Phase 4 lands the resolution
-     * logic).
-     */
-    void popFrame()
-    {
-        if (currentFrame_)
-            currentFrame_ = currentFrame_->parent;
-    }
-
-    /**
-     * Read access to the top of the frame stack. For tests and future
-     * phases.
-     */
-    const std::shared_ptr<Frame> & currentFrame() const
-    {
-        return currentFrame_;
-    }
-
-
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
         : sink(sink)
         , decisionGraph(decisionGraph)
@@ -340,8 +272,6 @@ public:
                 v13FactSetHash, request, response);
             responseFor.emplace(request, response);
             allRequestsTrie.insert(request);
-            if (currentFrame_)
-                currentFrame_->factSet.push_back({request, response});
         }
     }
 
