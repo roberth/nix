@@ -46,26 +46,23 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
        ref) so AmbientResolver stays default-constructible. */
     std::shared_ptr<SourceRoot> outerRootFSRoot;
 
-    /* Separate counters for seed vs local roots — the strings
-       `hashString("seed:N")` and `hashString("local:N")` already
-       namespace them in the wire format, but using one counter
-       per namespace keeps assignments stable when one side
-       advances without the other. */
-    unsigned int nextSeedCounter = 0;
-    unsigned int nextLocalCounter = 0;
-
-    /** Allocate a fresh outer seed-id hash and register the Object under it. */
+    /** Register an outer seed Object under the empty-set hash — its
+        content-defined identity at apply time. No counters: any
+        differentiation that's actually needed has to come from
+        content-defined identity (curry-depth context, observation
+        intrinsics) per the Principles section. */
     AmbientId registerOuterSeed(std::shared_ptr<Object> obj)
     {
-        auto id = hashString(HashAlgorithm::SHA256, "seed:" + std::to_string(nextSeedCounter++));
+        auto id = TracingDecisionGraph::emptySetHash();
         outerValues[id] = std::move(obj);
         return id;
     }
 
-    /** Allocate a fresh local seed-id hash and register the Object under it. */
+    /** Register a local seed Object under the empty-set hash. Same
+        rationale as registerOuterSeed. */
     AmbientId registerLocalSeed(std::shared_ptr<Object> obj)
     {
-        auto id = hashString(HashAlgorithm::SHA256, "local:" + std::to_string(nextLocalCounter++));
+        auto id = TracingDecisionGraph::emptySetHash();
         localValues[id] = std::move(obj);
         return id;
     }
