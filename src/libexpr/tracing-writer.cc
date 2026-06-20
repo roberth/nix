@@ -31,6 +31,29 @@ void TracingWriter::flushPendingAmbient()
     if (!decisionGraph)
         return;
 
+    /* Descendant Locals (TracingLocalObjects produced via
+       maybeGetAttr / getListElem on a parent Local) are
+       content-addressed by their chain hash rooted in their parent's
+       intrinsic, NOT by their own observation intrinsic — that's
+       what replay's ReplayLocalObject.maybeGetAttr computes when
+       navigating from a parent ReplayLocalObject. Recording must
+       match by emitting descendant facts with from=chain_settled,
+       so drop descendant placeholders from the intrinsic map before
+       building `sub`. The cascade below then fills sub with their
+       chain hashes via substituteHexes on derivationTemplate.
+
+       Top-level Locals (callback-arg seeds from AmbientResolver::apply)
+       are NOT in delayedContentDefinedIdentities — they stay in
+       placeholderToIntrinsic and keep using intrinsic substitution
+       for the apply Request's `arg` field, which is what enables
+       same-shape collapse for callback args across unrelated calls
+       (§2 of the design). Descendant collapse via intrinsic is
+       deferred (would require an Asks-shaped index from descendant
+       chain hash to descendant intrinsic; see the Open issues
+       section of the design doc). */
+    for (auto & dl : delayedContentDefinedIdentities)
+        placeholderToIntrinsic.erase(dl.placeholderHex);
+
     /* Substitution map starts with local-placeholder → intrinsic. */
     std::map<std::string, std::string> sub;
     for (auto & [placeholderHex, intrinsic] : placeholderToIntrinsic) {
@@ -93,13 +116,25 @@ void TracingWriter::flushPendingAmbient()
        Ambient chain children's placeholders), then do what
        logAmbientInteraction used to do synchronously: compute
        reqHash + respHash, fold into v13FactSet, populate the
-       Requests/Responses pools and the incremental writer state. */
+       Requests/Responses pools and the incremental writer state.
+
+       Each fact's queryHash may change as a side effect of `from`
+       substitution. Subsequent facts whose `from` is this fact's
+       OLD queryHash (which is how a chain navigation step references
+       its parent's identity) must substitute to the NEW queryHash
+       too — otherwise the chain id replay computes can't reach the
+       producer fact in the pool, and resolveAmbientId falls back to
+       a frozen ReplayLocalObject. Register old→new in sub as we go;
+       since pendingFacts is in observation order (parent observed
+       before child), each child sees its parent's substitution by
+       the time we process it. */
     for (auto & fact : pendingFacts) {
         nlohmann::json queryJson;
         std::visit([&](const auto & q) { queryJson = q; }, fact.query);
         nlohmann::json resultJson;
         std::visit([&](const auto & r) { resultJson = r; }, fact.result);
 
+        auto oldQueryHash = hashString(HashAlgorithm::SHA256, queryJson.dump());
         substituteHexes(queryJson, sub);
 
         /* computeQueryHash on typed Query objects round-trips through
@@ -108,6 +143,11 @@ void TracingWriter::flushPendingAmbient()
            ran computeQueryHash. Going through JSON keeps this code
            agnostic of the QueryVariant alternatives. */
         auto queryHash = hashString(HashAlgorithm::SHA256, queryJson.dump());
+        if (oldQueryHash != queryHash) {
+            sub.emplace(
+                oldQueryHash.to_string(HashFormat::Base16, false),
+                queryHash.to_string(HashFormat::Base16, false));
+        }
         auto responsePayload = jsonToCborString(resultJson);
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
 

@@ -317,6 +317,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
     if (!params.contains("from"))
         return std::nullopt;
 
+
     /* Every ambient response must be live-validated, just like file
        reads and env vars. resolveAmbientId for any tag (including
        apply, via live `queryApply` invocation) returns a live
