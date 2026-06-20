@@ -1,5 +1,6 @@
 #include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/expr/ambient-object.hh"
+#include "nix/expr/arg-scope.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/replay-local-object.hh"
 #include "nix/expr/tracing-replay-object.hh"
@@ -29,8 +30,13 @@ TracingReplayEvaluator::TracingReplayEvaluator(
 }
 
 std::optional<std::pair<std::string, Hash>>
-TracingReplayEvaluator::v13Walk(const Hash & queryHash)
+TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy)
 {
+    /* Per-walk resolution context: holds the proxy whose method
+       triggered this walk (for proxy-graph grounded ambient id
+       resolution) and a memo of ids resolved during this walk. */
+    ResolutionContext ctx{std::move(currentProxy), {}};
+
     /* Dispatcher: turns a Request hash into the current Response
        hash, memoised in dispatchCache so the file read + CBOR
        encode + SHA-256 happens at most once per request per
@@ -41,7 +47,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash)
         auto requestPayload = decisionGraph.getRequestPayload(requestHash);
         if (!requestPayload)
             return Hash(HashAlgorithm::SHA256);
-        auto currentResp = getCurrentResponse(*requestPayload);
+        auto currentResp = getCurrentResponse(*requestPayload, ctx);
         if (!currentResp)
             return Hash(HashAlgorithm::SHA256);
         auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
@@ -121,7 +127,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash)
     return std::make_pair(std::move(*payload), *walkHit);
 }
 
-std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std::string & requestCbor)
+std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std::string & requestCbor, ResolutionContext & ctx)
 {
     try {
         auto reqJson = cborStringToJson(requestCbor);
@@ -135,8 +141,8 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
             auto currentVal = validationEnv.getEnv(name);
             nlohmann::json respJson = trace::GetEnvResponse{currentVal};
             return jsonToCborString(respJson);
-        } else if (reqJson.contains("query") && ambientState) {
-            return dispatchAmbientQuery(reqJson);
+        } else if (reqJson.contains("query")) {
+            return dispatchAmbientQuery(reqJson, ctx);
         }
     } catch (const std::exception & e) {
         tracingCacheLog("replay: failed to get current response: %s", e.what());
@@ -144,21 +150,35 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
     return std::nullopt;
 }
 
-/* Resolve a recorded ambient id (hex of a Hash) to a live Object by
-   recursive lookup against the Requests pool. Seed ids are pre-bound
-   at apply() setup; derived ids find their producer Request in the
-   pool, resolve the parent recursively, then dispatch the producer's
-   query on the parent. QueryApply tags (apply-result ids) and local
-   ids without producer Requests both return null — the dispatcher
-   falls back to the Responses pool for those. */
-std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::string & idStr)
+/* Resolve a recorded ambient id (hex of a Hash) to a live Object.
+   First check the per-walk memo (ctx.memo) for already-resolved ids.
+   Then walk the proxy graph (ctx.currentProxy.parent → …) looking
+   for an argScope cell whose id matches — this is the seed-lookup
+   case, grounded in the proxy whose method triggered this walk
+   rather than in any evaluator-global state.
+   Then fall through to producer-Request resolution: find idStr in
+   the Requests pool, resolve the parent recursively, dispatch the
+   producer's query on the parent. QueryApply payloads invoke the
+   live apply against a (frozen) ReplayLocalObject arg. localArg
+   sidecars chase to the apply. */
+std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::string & idStr, ResolutionContext & ctx)
 {
-    if (!ambientState)
-        return nullptr;
-
-    auto it = ambientState->idToObject.find(idStr);
-    if (it != ambientState->idToObject.end())
+    /* Per-walk memo. */
+    if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
         return it->second;
+
+    /* Proxy-graph lookup: walk the parent chain looking for an
+       argScope cell whose id matches. This replaces the previous
+       evaluator-global `ambientState` pre-bind — the live arg lives
+       on the proxy that introduced it, so per-call resolution
+       follows the per-call proxy graph naturally. */
+    for (Object * p = ctx.currentProxy.get(); p; p = p->getProxyParent().get()) {
+        auto cell = p->getProxyArgScope();
+        if (cell && cell->id.to_string(HashFormat::Base16, false) == idStr) {
+            ctx.memo[idStr] = cell->liveObject;
+            return cell->liveObject;
+        }
+    }
 
     Hash idHash{HashAlgorithm::SHA256};
     try {
@@ -169,18 +189,16 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
 
     auto reqPayload = decisionGraph.getRequestPayload(idHash);
     if (!reqPayload) {
-        /* Under Phase 4 of content-defined identity, an unknown id
-           in the Requests pool is most commonly an inner-side
-           TracingLocalObject's intrinsic content-hash — the local's
-           own observations were emitted as facts with from=hex(id)
-           after placeholder substitution, but the id itself is just
-           an identifier, not a producer Request. Materialise a
-           ReplayLocalObject keyed by it; its methods read recorded
-           responses out of the Responses pool by qH(query{from=hex(id)}),
-           matching what TracingLocalObject wrote during recording. */
+        /* Unknown id in the Requests pool — most commonly an
+           inner-side TracingLocalObject's content-hash whose facts
+           were emitted with from=hex(id) but whose id itself isn't
+           a producer Request. Materialise a ReplayLocalObject keyed
+           by it; its methods read recorded responses out of the
+           Responses pool by qH(query{from=hex(id)}), matching what
+           TracingLocalObject wrote during recording. */
         auto standin = std::make_shared<ReplayLocalObject>(
             idHash, decisionGraph, inner->getEvalState().rootFSRoot);
-        ambientState->idToObject[idStr] = standin;
+        ctx.memo[idStr] = standin;
         return standin;
     }
 
@@ -192,14 +210,13 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
     }
 
     /* Local-arg sidecar (inserted by resolver.apply): chase to the
-       apply and re-invoke it. The apply's resolveAmbientId branch
-       registers the live argObj under localId in idToObject, so
-       subsequent dispatches of local-incoming Facts find it. */
+       apply and re-invoke it. The apply branch registers the live
+       argObj under localId in ctx.memo, so subsequent dispatches of
+       local-incoming Facts find it without re-chasing. */
     if (reqJson.contains("kind") && reqJson["kind"] == "localArg") {
         auto applyResultIdHex = reqJson["applyResultId"].get<std::string>();
-        resolveAmbientId(applyResultIdHex);
-        auto it = ambientState->idToObject.find(idStr);
-        if (it != ambientState->idToObject.end())
+        resolveAmbientId(applyResultIdHex, ctx);
+        if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
             return it->second;
         return nullptr;
     }
@@ -209,25 +226,13 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
 
     /* Apply-result ids ARE live-resolvable: invoke the apply
        against the resolved fn and a ReplayLocalObject for the
-       (frozen) recorded local arg. This is the validation chain
-       for covariant callbacks -- if the outer fn changed behaviour
-       between recording and replay, the live invocation produces a
-       different response than what was recorded, the walk's
-       response-hash compare fails, and we correctly miss. */
+       (frozen) recorded local arg. */
     if (tag == "apply") {
-        auto fnObj = resolveAmbientId(params["fn"].get<std::string>());
+        auto fnObj = resolveAmbientId(params["fn"].get<std::string>(), ctx);
         if (!fnObj) {
             tracingCacheLog("replay: apply %s: cannot resolve fn %s", idStr, params["fn"]);
             return nullptr;
         }
-        /* Resolve the arg: a relay case (arg is an outer-derived
-           ambient id) resolves through the producer chain; a local
-           case (arg is registerLocalSeed-minted, sidecar-tagged in
-           the Requests pool) wraps the recorded content in a
-           ReplayLocalObject. Peek at the arg's Request payload to
-           pick the branch -- if we recursed via resolveAmbientId on
-           a local id we'd cycle through the sidecar back into this
-           apply branch. */
         auto argIdStr = params["arg"].get<std::string>();
         Hash argHash{HashAlgorithm::SHA256};
         try {
@@ -244,7 +249,6 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
                 if (j.contains("kind") && j["kind"] == "localArg")
                     isLocalArg = true;
             } catch (const std::exception &) {
-                /* malformed payload; treat as opaque local */
                 isLocalArg = true;
             }
         } else {
@@ -253,17 +257,10 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
         if (isLocalArg)
             argObj = std::make_shared<ReplayLocalObject>(argHash, decisionGraph, inner->getEvalState().rootFSRoot);
         else
-            argObj = resolveAmbientId(argIdStr);
+            argObj = resolveAmbientId(argIdStr, ctx);
         if (!argObj)
             return nullptr;
-        /* Register the (live or replayed) arg under its id so that
-           a later local-incoming Fact dispatch on this localId
-           finds it without having to chase the sidecar again. */
-        ambientState->idToObject[argIdStr] = argObj;
-        /* fnObj must be an AmbientObject -- we resolved its id via
-           the producer chain or pre-bound seed. queryApply routes
-           through applyFn which registers the result Object in the
-           resolver under qH(QueryApply{fnId, argId}). */
+        ctx.memo[argIdStr] = argObj;
         auto * ambient = dynamic_cast<AmbientObject *>(fnObj.get());
         if (!ambient) {
             tracingCacheLog("replay: apply %s: fn resolved to non-AmbientObject", idStr);
@@ -277,14 +274,14 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
             return nullptr;
         }
         if (resultObj)
-            ambientState->idToObject[idStr] = resultObj;
+            ctx.memo[idStr] = resultObj;
         return resultObj;
     }
 
     if (!params.contains("from"))
         return nullptr;
 
-    auto parent = resolveAmbientId(params["from"].get<std::string>());
+    auto parent = resolveAmbientId(params["from"].get<std::string>(), ctx);
     if (!parent)
         return nullptr;
 
@@ -295,8 +292,6 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
         } else if (tag == "getListElem") {
             child = parent->getListElem(params["index"].get<size_t>());
         } else {
-            /* Non-child-producing Requests don't produce ids that
-               downstream Facts could reference. */
             return nullptr;
         }
     } catch (const std::exception & e) {
@@ -305,11 +300,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
     }
 
     if (child)
-        ambientState->idToObject[idStr] = child;
+        ctx.memo[idStr] = child;
     return child;
 }
 
-std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nlohmann::json & reqJson)
+std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nlohmann::json & reqJson, ResolutionContext & ctx)
 {
     auto tag = reqJson["query"].get<std::string>();
     auto & params = reqJson["params"];
@@ -328,7 +323,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
        Object we can re-query. Serving recorded responses here would
        hide outer-side changes from the validation chain and let the
        cache return stale results. */
-    auto obj = resolveAmbientId(params["from"].get<std::string>());
+    auto obj = resolveAmbientId(params["from"].get<std::string>(), ctx);
     if (!obj)
         return std::nullopt;
 
@@ -386,10 +381,10 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
 
 template<typename Q>
 std::optional<std::pair<std::string, TriePosition>>
-TracingReplayEvaluator::lookup(const Q & query)
+TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentProxy)
 {
     auto queryHash = TracingDecisionGraph::computeQueryHash(query);
-    auto v13 = v13Walk(queryHash);
+    auto v13 = v13Walk(queryHash, std::move(currentProxy));
     if (!v13)
         return std::nullopt;
     const auto & [payload, resultHash] = *v13;
@@ -430,7 +425,7 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
             *this, result->second, [this, path, displayPath]() { return inner->evalFile(path, displayPath); });
         /* Top-level entry point: no parent in the proxy graph, no
            argScope (no apply has happened). */
-        obj->withScope(/*parent=*/nullptr, std::nullopt);
+        obj->withScope(/*parent=*/nullptr, nullptr);
         return obj;
     }
     tracingCacheLog("replay miss: evalFile %s", displayPath);
@@ -443,7 +438,7 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Roo
         tracingCacheLog("replay hit: evalExpr");
         auto obj = make_ref<TracingReplayObject>(
             *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); });
-        obj->withScope(/*parent=*/nullptr, std::nullopt);
+        obj->withScope(/*parent=*/nullptr, nullptr);
         return obj;
     }
     tracingCacheLog("replay miss: evalExpr");
@@ -498,27 +493,18 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     if (!argId)
         argId = "virtual:" + std::to_string(writer.getOrAllocVirtualRoot(arg).value());
 
-    /* Pre-bind ambient seed ids into idToObject. When this apply
-       originates from the cached-fn PrimOp impl, fn/arg are
-       AmbientObjects whose Hash id is the seed allocated by the
-       resolver (registerOuterSeed). The recorded factSet's ambient
-       Facts have `from=hex(seed_hash)`. Pre-binding lets
-       resolveAmbientId find live Objects for those seeds without
-       walking the producer chain. Derived ids fall through to the
-       recursive resolution against the Requests pool. */
-    AmbientReplayState state;
-    if (auto * ambient = dynamic_cast<AmbientObject *>(arg.get_ptr().get()))
-        state.idToObject[ambient->getId().to_string(HashFormat::Base16, false)] = arg.get_ptr();
-    if (auto * ambient = dynamic_cast<AmbientObject *>(fn.get_ptr().get()))
-        state.idToObject[ambient->getId().to_string(HashFormat::Base16, false)] = fn.get_ptr();
-    ambientState = std::move(state);
-
     /* The recording side doesn't write a Q_apply Terminal -- a
        fresh app thunk has no result type. Synthesize the
        TriePosition from (fnId, argId) directly and always wrap the
        result in TracingReplayObject. Child queries on the apply
        result still walk independently; they fall through to inner
-       only when their own walks miss. */
+       only when their own walks miss.
+
+       The previous pre-bind into a per-evaluator ambientState is
+       gone — the live arg / fn live on the result proxy's argScope
+       cell, and resolveAmbientId walks the proxy graph from
+       whichever proxy is being forced. Per-call resolution naturally
+       isolates concurrent cache invocations. */
     auto queryHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{*fnId, *argId});
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
@@ -528,12 +514,14 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
     /* Apply result: parent = the fn proxy (if it's a proxy itself),
        argScope = the arg's identity + live Object. The id is the
-       arg's getId result if available; falls back to a parsed AmbientId
-       from argId hex when the arg is an AmbientObject. */
+       arg's getId when it's an AmbientObject; for non-Ambient args
+       (rare on this path) we leave the cell's id zero — the cell
+       still pins the live arg so proxy-graph walks that reach this
+       depth find the right Object even when id-keyed lookup fails. */
     AmbientId argScopeId{HashAlgorithm::SHA256};
     if (auto * ambient = dynamic_cast<AmbientObject *>(arg.get_ptr().get()))
         argScopeId = ambient->getId();
-    obj->withScope(fn.get_ptr(), ArgScopeCell{argScopeId, arg.get_ptr()});
+    obj->withScope(fn.get_ptr(), std::make_shared<ArgScopeCell>(ArgScopeCell{argScopeId, arg.get_ptr()}));
     return obj;
 }
 

@@ -31,9 +31,9 @@ class TracingReplayObject : public Object
        `parent` points to the proxy that produced this one;
        `argScope` is set on apply-result proxies (the result of a
        cache-boundary apply) and on the cached-value root, null on
-       navigation children. Nothing reads these yet. */
+       navigation children. */
     std::shared_ptr<Object> parent;
-    std::optional<ArgScopeCell> argScope;
+    std::shared_ptr<const ArgScopeCell> argScope;
 
     ref<Object> ensureInner() const;
 
@@ -57,12 +57,15 @@ public:
 
     /** Phase 2: set the proxy-graph back-pointers. Call right after
         construction at boundary sites. Returns *this for chaining. */
-    TracingReplayObject & withScope(std::shared_ptr<Object> parent_, std::optional<ArgScopeCell> argScope_)
+    TracingReplayObject & withScope(std::shared_ptr<Object> parent_, std::shared_ptr<const ArgScopeCell> argScope_)
     {
         parent = std::move(parent_);
         argScope = std::move(argScope_);
         return *this;
     }
+
+    std::shared_ptr<Object> getProxyParent() const override { return parent; }
+    std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
     const TriePosition & getTriePos() const
     {

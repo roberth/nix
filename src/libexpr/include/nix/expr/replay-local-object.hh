@@ -49,9 +49,9 @@ class ReplayLocalObject : public Object
     /* Argument-scope wiring (Phase 2 of the proxy-graph rollout).
        `parent` points to the proxy that produced this one; the
        top-level (cb-arg) Local carries an `argScope` cell, navigation
-       children leave it null. Nothing reads these yet. */
+       children leave it null. */
     std::shared_ptr<Object> parent;
-    std::optional<ArgScopeCell> argScope;
+    std::shared_ptr<const ArgScopeCell> argScope;
 
 public:
     ReplayLocalObject(AmbientId localId, TracingDecisionGraph & dg, ref<SourceRoot> rootFSRoot)
@@ -62,12 +62,15 @@ public:
 
     /** Phase 2: set the proxy-graph back-pointers. Call right after
         construction at boundary sites. Returns *this for chaining. */
-    ReplayLocalObject & withScope(std::shared_ptr<Object> parent_, std::optional<ArgScopeCell> argScope_)
+    ReplayLocalObject & withScope(std::shared_ptr<Object> parent_, std::shared_ptr<const ArgScopeCell> argScope_)
     {
         parent = std::move(parent_);
         argScope = std::move(argScope_);
         return *this;
     }
+
+    std::shared_ptr<Object> getProxyParent() const override { return parent; }
+    std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

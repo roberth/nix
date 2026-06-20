@@ -66,22 +66,24 @@ class AmbientObject : public Object
        maybeGetAttr/getListElem returned this one from, or the fn proxy
        that applyFn produced this result from. `argScope` is set on
        apply-result proxies and on the seed; navigation children leave
-       it null. Nothing reads these yet — wired up here so Phase 3 can
-       drive resolution through them. */
+       it null. */
     std::shared_ptr<Object> parent;
-    std::optional<ArgScopeCell> argScope;
+    std::shared_ptr<const ArgScopeCell> argScope;
 
 public:
     AmbientObject(AmbientId id, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
 
     /** Phase 2: set the proxy-graph back-pointers. Call right after
         construction at boundary sites. Returns *this for chaining. */
-    AmbientObject & withScope(std::shared_ptr<Object> parent_, std::optional<ArgScopeCell> argScope_)
+    AmbientObject & withScope(std::shared_ptr<Object> parent_, std::shared_ptr<const ArgScopeCell> argScope_)
     {
         parent = std::move(parent_);
         argScope = std::move(argScope_);
         return *this;
     }
+
+    std::shared_ptr<Object> getProxyParent() const override { return parent; }
+    std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

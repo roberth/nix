@@ -53,7 +53,10 @@ template<typename Q, typename R>
 std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
 {
     auto queryHash = TracingDecisionGraph::computeQueryHash(query);
-    auto v13 = evaluator.v13Walk(queryHash);
+    /* Thread `this` through as currentProxy so resolveAmbientId can
+       walk the proxy's parent/argScope chain to ground ambient ids
+       in this call's live state. */
+    auto v13 = evaluator.v13Walk(queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this());
     if (!v13)
         return std::nullopt;
     try {
@@ -70,7 +73,7 @@ template<typename Q, typename R>
 std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralChild(const Q & query) const
 {
     auto queryHash = TracingDecisionGraph::computeQueryHash(query);
-    auto v13 = evaluator.v13Walk(queryHash);
+    auto v13 = evaluator.v13Walk(queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this());
     if (!v13)
         return std::nullopt;
     try {
@@ -104,7 +107,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
         auto child = std::make_shared<TracingReplayObject>(
             evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
         /* Navigation child: same argScope as parent, parent back-pointer. */
-        child->withScope(self, std::nullopt);
+        child->withScope(self, nullptr);
         return child;
     }
 
@@ -224,7 +227,7 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
         auto child = std::make_shared<TracingReplayObject>(
             evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); });
         /* Navigation child: same argScope as parent, parent back-pointer. */
-        child->withScope(self, std::nullopt);
+        child->withScope(self, nullptr);
         return child;
     }
 

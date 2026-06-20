@@ -30,7 +30,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
         throw Error("ambient maybeGetAttr: resolver didn't return child id");
     auto child = std::make_shared<AmbientObject>(*qr.childId, queryFn, ambientRootFSRoot, applyFn);
     /* Navigation child: same argScope as the parent, parent back-pointer set. */
-    child->withScope(shared_from_this(), std::nullopt);
+    child->withScope(shared_from_this(), nullptr);
     return child;
 }
 
@@ -126,7 +126,7 @@ std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
         throw Error("ambient getListElem: resolver didn't return child id");
     auto child = std::make_shared<AmbientObject>(*qr.childId, queryFn, ambientRootFSRoot, applyFn);
     /* Navigation child: same argScope as the parent, parent back-pointer set. */
-    child->withScope(shared_from_this(), std::nullopt);
+    child->withScope(shared_from_this(), nullptr);
     return child;
 }
 
@@ -179,9 +179,12 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
     auto resultId = applyFn(id, std::move(argObj));
     auto result = std::make_shared<AmbientObject>(resultId, queryFn, ambientRootFSRoot, applyFn);
     /* Apply-result: new argScope cell binding this apply's argument.
-       The id used here is the argument's own id where determinable
-       (left empty for now; Phase 3 will use it when resolving). */
-    result->withScope(shared_from_this(), ArgScopeCell{AmbientId{HashAlgorithm::SHA256}, std::move(argForScope)});
+       The id is zero here — the applyFn closure knows the assigned
+       id but doesn't surface it through the AmbientApplyFn signature.
+       Subsequent dispatches for this arg's id will find it via the
+       producer-Request resolution path (the localArg sidecar). */
+    result->withScope(shared_from_this(),
+        std::make_shared<ArgScopeCell>(ArgScopeCell{AmbientId{HashAlgorithm::SHA256}, std::move(argForScope)}));
     return result;
 }
 

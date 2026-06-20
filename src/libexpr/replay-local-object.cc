@@ -46,7 +46,7 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
     auto child = std::make_shared<ReplayLocalObject>(
         replayDerivedLocalId(query), decisionGraph, rootFSRoot, stringToObjectType(*r.type));
     /* Navigation child: same argScope as parent, parent back-pointer. */
-    child->withScope(shared_from_this(), std::nullopt);
+    child->withScope(shared_from_this(), nullptr);
     return child;
 }
 
@@ -131,7 +131,7 @@ std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
     auto child = std::make_shared<ReplayLocalObject>(
         replayDerivedLocalId(query), decisionGraph, rootFSRoot, stringToObjectType(r.type));
     /* Navigation child: same argScope as parent, parent back-pointer. */
-    child->withScope(shared_from_this(), std::nullopt);
+    child->withScope(shared_from_this(), nullptr);
     return child;
 }
 

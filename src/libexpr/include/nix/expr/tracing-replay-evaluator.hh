@@ -25,19 +25,27 @@ class TracingReplayEvaluator : public Evaluator
     Environment & validationEnv;
 
     /**
-     * Ambient replay state for resolving ambient interaction events
-     * during apply() replay. Under Step C, recorded ambient ids
-     * (the "from" / "fn" / "arg" fields in query payloads) are
-     * hex-encoded Hashes. Seed ids are pre-bound at apply() setup;
-     * derived ids are resolved on demand by walking the producer
-     * Request chain (`resolveAmbientId`).
+     * Per-walk resolution context.
+     *
+     * Threaded through v13Walk → dispatch → getCurrentResponse →
+     * dispatchAmbientQuery → resolveAmbientId. Holds the proxy
+     * whose method triggered this walk (so resolveAmbientId can
+     * walk the parent / argScope chain on the proxy graph) plus a
+     * per-walk memo of ids already resolved. Lives only for the
+     * duration of one v13Walk call — no cross-call leakage as
+     * happened with the previous evaluator-global ambientState.
      */
-    struct AmbientReplayState
+    struct ResolutionContext
     {
-        std::map<std::string, std::shared_ptr<Object>> idToObject;
+        /** The proxy whose method triggered this walk. Resolution
+            walks this proxy's parent chain looking for matching
+            argScope cells. Null for top-level entry points
+            (evalFile, evalExpr) where no proxy exists yet. */
+        std::shared_ptr<Object> currentProxy;
+        /** Memoise id → resolved Object within this single walk so
+            recursive resolveAmbientId calls don't redo work. */
+        std::map<std::string, std::shared_ptr<Object>> memo;
     };
-
-    std::optional<AmbientReplayState> ambientState;
 
     /* Walks across the same process invocation re-dispatch the same
        Requests many times (each top-level lookup re-walks the shared
@@ -55,19 +63,19 @@ class TracingReplayEvaluator : public Evaluator
     TracingDecisionGraph::SetHash lastQFactsHash;
     TracingDecisionGraph::TrieBuilder dispatchedTrie;
 
-    std::optional<std::string> dispatchAmbientQuery(const nlohmann::json & reqJson);
+    std::optional<std::string> dispatchAmbientQuery(const nlohmann::json & reqJson, ResolutionContext & ctx);
 
     /** Resolve a recorded ambient id (hex of a Hash) to a live
-        Object. Seed ids are pre-bound; derived ids are looked up
-        by their producer Request in the Requests pool and resolved
-        recursively. Returns nullptr if the id can't be resolved
-        (e.g. its producer Request is a QueryApply that Step D's
-        dispatcher would handle, or the producer chain references
-        an unknown seed). */
-    std::shared_ptr<Object> resolveAmbientId(const std::string & idStr);
+        Object. Seed ids are found by walking ctx.currentProxy's
+        parent / argScope chain on the proxy graph; derived ids are
+        looked up by their producer Request in the Requests pool and
+        resolved recursively. Per-walk memoisation in ctx.memo
+        prevents redundant work within the same walk. Returns
+        nullptr if the id can't be resolved. */
+    std::shared_ptr<Object> resolveAmbientId(const std::string & idStr, ResolutionContext & ctx);
 
     template<typename Q>
-    std::optional<std::pair<std::string, TriePosition>> lookup(const Q & query);
+    std::optional<std::pair<std::string, TriePosition>> lookup(const Q & query, std::shared_ptr<Object> currentProxy = nullptr);
 
 public:
     TracingReplayEvaluator(
@@ -79,15 +87,20 @@ public:
     /**
      * Compute the current response for a recorded request (file hash,
      * env var, or ambient interaction) by executing against the
-     * current validation environment.
+     * current validation environment. Ambient queries route through
+     * proxy-graph resolution using `ctx`.
      */
-    std::optional<std::string> getCurrentResponse(const std::string & requestCbor);
+    std::optional<std::string> getCurrentResponse(const std::string & requestCbor, ResolutionContext & ctx);
 
     /**
      * v13 walk lookup. Returns (resultPayload, resultHash) on hit,
-     * nullopt on miss.
+     * nullopt on miss. `currentProxy` is the cache-boundary proxy
+     * whose method triggered this walk — its parent/argScope chain
+     * grounds ambient id resolution during dispatch. Null for
+     * top-level entry points (evalFile/evalExpr) that have no
+     * proxy yet.
      */
-    std::optional<std::pair<std::string, Hash>> v13Walk(const Hash & queryHash);
+    std::optional<std::pair<std::string, Hash>> v13Walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy = nullptr);
 
     bool isReadOnly() const override;
     Store & getStore() override;

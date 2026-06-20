@@ -208,6 +208,26 @@ public:
     {
         return std::nullopt;
     }
+
+    /**
+     * Cache-boundary proxy graph: return this Object's `parent`
+     * pointer (the proxy that produced it) and its `argScope` cell
+     * (set on apply-result and seed proxies, null on navigation
+     * children and non-proxy Objects).
+     *
+     * Default null implementations let non-proxy Objects opt out;
+     * the cache-boundary proxy types (AmbientObject,
+     * TracingReplayObject, ReplayLocalObject and recording-side
+     * counterparts) override these to expose their plumbed state.
+     */
+    virtual std::shared_ptr<Object> getProxyParent() const
+    {
+        return nullptr;
+    }
+    virtual std::shared_ptr<const struct ArgScopeCell> getProxyArgScope() const
+    {
+        return nullptr;
+    }
 };
 
 /**

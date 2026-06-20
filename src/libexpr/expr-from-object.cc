@@ -308,7 +308,7 @@ static PrimOp * makeCachedFnPrimOp(
                         /* Seed argScope cell: the cached-fn's argument is
                            held under `rootId` and the live Object is
                            `outerArgObj`. Phase 3 reads this on resolution. */
-                        contraArg->withScope(/*parent=*/nullptr, ArgScopeCell{rootId, outerArgObj});
+                        contraArg->withScope(/*parent=*/nullptr, std::make_shared<ArgScopeCell>(ArgScopeCell{rootId, outerArgObj}));
                         auto result = innerEval->apply(ref<Object>(fnObj), contraArg);
                         ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
                     },
