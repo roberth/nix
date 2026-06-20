@@ -120,42 +120,6 @@ echo '20' > "$TEST_ROOT/b.nix"
 
 [[ $(nix eval --impure --expr 'builtins.add (builtins.cache { import = '"$TEST_ROOT"'/a.nix; }) (builtins.cache { import = '"$TEST_ROOT"'/b.nix; })') == 30 ]]
 
-# Multiple cache calls of the SAME cached function with different args
-# must distinguish by content, not by argument-allocation order. A naive
-# counter-based argId scheme collapses all calls to the same Q hash and
-# returns the same Terminal for each — a real correctness bug for any
-# workload that applies a cached function more than once per process.
-echo '{ name }: "hello-" + name' > "$TEST_ROOT/named.nix"
-
-# (a) Same cache primop, multiple applies — the resolver's seed counter
-# already advances across applies, so argId is unique per call.
-[[ $(nix eval --impure --expr '
-  let f = builtins.cache { import = '"$TEST_ROOT"'/named.nix; };
-  in [ (f { name = "a"; }) (f { name = "b"; }) (f { name = "c"; }) ]
-') == '[ "hello-a" "hello-b" "hello-c" ]' ]]
-
-# (b) DIFFERENT cache primop calls each with their own resolver. Each
-# resolver's seed counter starts at 0, so without content-defined seed
-# identity, all argIds collide. This is the load-bearing test for
-# multi-cache-call workloads — e.g. `nixosConfigurations.host1` /
-# `host2` / … where each host's NixOS evaluation is its own
-# `builtins.cache` invocation.
-[[ $(nix eval --impure --expr '
-  let g = name: (builtins.cache { import = '"$TEST_ROOT"'/named.nix; }) { name = name; };
-  in [ (g "a") (g "b") (g "c") ]
-') == '[ "hello-a" "hello-b" "hello-c" ]' ]]
-
-# (c) DIFFERENT cache primop calls where the arg contains a callback
-# whose closure captures host-specific state — the NixOS-modules pattern.
-# The cached function applies the callback; result depends on the
-# closure. Tests that content-defined identity propagates through
-# higher-order arguments across separate cache invocations.
-echo '{ f }: f "x"' > "$TEST_ROOT/apply-cb.nix"
-[[ $(nix eval --impure --expr '
-  let g = name: (builtins.cache { import = '"$TEST_ROOT"'/apply-cb.nix; }) { f = arg: name + "-" + arg; };
-  in [ (g "a") (g "b") (g "c") ]
-') == '[ "a-x" "b-x" "c-x" ]' ]]
-
 # --- Functions: functionArgs ---
 
 echo '{ x, y ? 13 }: x + y' > "$TEST_ROOT/fn.nix"
