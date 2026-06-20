@@ -77,6 +77,18 @@ cannot pollute one another's factset preconditions.
 - Maintain breadcrumbs relations between more-specific and less-specific hashes, so that less-specific facts can be retrieved at a later time
 - Make sure all queries are specific enough. Ambiguities (>1 row) need to be resolved, ideally by query specificity, otherwise by building a custom index (e.g. Asks, decision trees, ...), only temporarily by iteration.
 
+### Why counters are allowed at the CLI
+
+The CLI is the only carve-out for numbered identifiers. It's not that
+the counter is fundamentally good there — it's that the CLI creates
+seed-introducing constructs in predictable patterns (a small set of
+top-level entry points enumerated in a fixed order), and an
+enumeration is sufficient. We're not investing in a fancier identity
+scheme at the CLI because there's no real benefit. Everything below
+the CLI — including the `builtins.cache` primop path — bridges into
+content-defined identity at the cache boundary, where the patterns
+aren't predictable and a counter would create cross-call aliasing.
+
 ## Core principle: identity is observation-derived
 
 
@@ -569,103 +581,136 @@ payload shapes (`AmbientQuery`, `AmbientResponse`) just expand what
 the dispatcher can handle. The trie-walk algorithm itself does not
 change.
 
-## Frames and inheritance
+## Argument scope: it rides on the proxy graph
 
-The recording side maintains the active state required to translate
-positional handles (the addressing section) into content-defined hashes. This state is
-organized as a stack of mutable factsets, arranged as a linked list
-rooted at the cache call.
+The structure required to translate positional handles (the
+addressing section) into content-defined hashes is the same
+structure the runtime already has: the graph of function proxies and
+ambient/local Object wrappers at the cache boundary. There is no
+separate frame stack on the writer, no `pushFrame`/`popFrame`, no
+evaluator-global "currently active scope" pointer. The proxies form
+an immutable linked tree by their construction, and that tree *is*
+the scope structure.
 
-### What's in a frame
+### What an argument scope holds
 
-Each frame holds:
+Each proxy at the cache boundary carries a `parent` pointer
+(`shared_ptr` — no cycle exists in the opposite direction, and a
+child without its parent is semantically invalid). Apply-result
+proxies additionally carry an `argScope` cell: the AmbientId and
+live Object for the argument of *this* apply. Navigation children
+(reached via `maybeGetAttr` / `getListElem`) don't add a new cell;
+they hold a reference to the producer query's discriminator (attr
+name, list index) so the chain id can be recomputed by walking back
+via `parent`.
 
-- A factset of observations whose path expression roots at the
-  corresponding `ambient-N` index.
-- A back-pointer to the parent frame (the next-shallower binding).
+We use `argScope` rather than `scope` because "scope" is overloaded
+— the interpreter has its own lexical scope. These scopes are
+limited to cache-boundary arguments.
 
-The cache call's root frame is at depth 0 with `parent = nil`.
-Deeper frames push as described in "When frames push" below;
-when a frame at depth N+1 is pushed, its `parent` is the frame at
-depth N.
+### How argument scope propagates
 
-A frame's "content-defined hash at this moment" is the hash of its
-current factset, XOR-folded with all ancestor frames' factsets up
-the linked list (state creep, the Two scope notions section).
+The propagation rules mirror the existing returned-structure
+walk:
 
-Non-ambient observations (file reads, env reads) live in the
-cumulative writer factset directly, not in any frame. The frame
-structure is specifically for ambient interactions, where
-positional-to-content translation needs an active state to consult.
+- `builtins.cache x` returns the cached value at the root, with
+  no parent.
+- An apply on a proxy produces a new proxy whose `parent` is the
+  fn proxy and whose `argScope` cell binds the new argument's
+  identity (its content-defined hash at apply time, which is the
+  empty-set hash for a freshly-introduced argument).
+- An attribute selection or list-element retrieval on a proxy
+  produces a child proxy with the same `parent`/`argScope` view as
+  its parent. No new cell.
 
-### When frames push
+So new `argScope` cells appear only at function-application sites
+that cross the cache boundary, which is exactly where the design
+calls for a new depth in the reverse-De Bruijn addressing.
 
-The current frame starts out as `nil` in `builtins.cache x`. From
-there it propagates recursively through the returned structure:
-
-- If the returned value is a function, it inherits the current
-  frame as its parent. When the function is called, propagation is
-  applied to its return value (or to the wrapper around its return
-  value).
-- If it is an attrset, the current frame reference is forwarded
-  into its value thunks, so propagation can operate recursively on
-  those too.
-- List items are analogous to attribute values.
-
-Reformulating: a new frame opens whenever `builtins.cache` returns
-a function — directly, or via attribute selection, list item
-retrieval, or the return values of those functions, recursively.
-
-This makes frames roughly 1:1 with function proxy instances
-reachable through the returned structure. Within-frame callbacks —
-`f 10` inside the cached body where `f` is a function reached
-through path navigation through ambient values — are *not* frame
-pushes; they extend the Query tree of the current frame's
+Within-frame callbacks — `f 10` inside the cached body where `f` is
+a function reached through path navigation — are *not* `argScope`
+introductions; they extend the Query tree of the current scope's
 observations, with the callback arg appearing as a content-hash
 leaf in the path expression.
 
 ### Where observations are attributed
 
-A query whose path roots at `ambient-N` contributes to depth-N's
-factset. This is independent of which depth is syntactically
-executing at the moment of the observation.
+A query whose path roots at `ambient-N` contributes its observation
+to the scope cell at depth N, walked-to via `parent` from whichever
+proxy is being observed. This is independent of which depth is
+syntactically executing at the moment of the observation.
 
 Example, in the curried `y: x + y` case: when the depth-1 body
 forces `x` (which is the binding at depth 0), the resulting
 observations on `x` are recorded with paths rooted at `ambient-0`,
-and they accumulate in depth-0's factset. The depth-1 frame's
-factset only collects observations whose path roots at `ambient-1`
+and they accumulate at depth 0's scope cell — reached via
+`parent.parent` from the depth-1 proxy. Depth 1's cell only
+collects observations whose path roots at `ambient-1`
 (i.e. observations on `y`).
 
-This is what handles state creep and referential transparency
-cleanly: an observation's home is determined by where it roots in
-the path, not by who is running when it happens.
+An observation's home is determined by where it roots in the path,
+not by who is running when it happens.
 
 ### State creep at fact emission
 
-When a fact is emitted to the log (at a Q-completion event), the
-recorder computes the content-defined hash for each `ambient-N`
-referenced in the fact's path. This walks the linked list of
-frames, XOR-folding each ancestor's factset into the final hash,
-and substitutes the content-hash into the path before emission.
+When a fact is emitted to the log, the recorder computes the
+content-defined hash for each `ambient-N` referenced in the fact's
+path. It walks `parent` from the current proxy to depth N,
+XOR-folding each ancestor cell's accumulated factset into the
+final hash, and substitutes the content-hash into the path before
+emission.
 
 The walked-and-folded sum is the content-defined identity for the
-`ambient-N` at this moment, as discussed in the addressing section. It widens the cache
-key beyond strict minimum (the Two scope notions section state creep) but never invalidates
-incorrectly.
+`ambient-N` at this moment, as discussed in the addressing section.
+It widens the cache key beyond strict minimum (the Two scope
+notions section state creep) but never invalidates incorrectly.
 
 ### Sibling cache invocations
 
-Each cache call has its own root frame with `parent = nil`. Two
-sibling invocations (e.g. `c args1 + c args2`) produce two
-independent root frames that share no parent and therefore no
-state. Each invocation's recording captures only its own frame
-chain.
+Each cache call constructs its own proxy graph rooted at a fresh
+top-level proxy. Two sibling invocations (e.g. `c args1 + c args2`)
+produce two independent graphs that share no `parent` and therefore
+no scope cells. Each invocation's recording captures only its own
+graph.
 
 This is what isolates referentially-transparent unrelated calls
 from one another: same evaluation session, same persistent trie,
-but the recorded factsets are disjoint because the frame linked
-lists are disjoint.
+but the recorded factsets are disjoint because the proxy graphs are
+disjoint.
+
+## Boundary-trace-only discipline
+
+The wrappers that mediate observations at the cache boundary —
+`AmbientObject` for outer values reached by the inner, and the
+recording-side `TracingLocalObject` for inner values reached by
+the outer through a callback — *trace once*. They are not
+reentrant proxies that you wrap once and reuse: each observation
+made through a wrapper is recorded against that wrapper's identity,
+and the wrapper's identity advances as observations land. Two
+forces of the same value at different observational moments are
+*not* the same observation, and reusing one wrapper across both
+would silently merge them.
+
+The consequence is a strict construction-and-use locality rule.
+Every `AmbientObject` / `TracingLocalObject` must be constructed
+right next to the cache-boundary call that needs it, and used
+within that call. They must *not* be cached in any map that would
+let a later boundary crossing find an earlier wrapper. Specifically:
+
+- No `Value *` → `Object *` map that returns a wrapper for the
+  same `Value` across distinct boundary crossings.
+- An id → Object map keyed by a wrapper's id (e.g. an ambient
+  resolver's `outerValues` / `localValues`) leans toward being the
+  same hazard: it returns the same wrapper instance to later
+  lookups that resolve to the same id. Use with care; prefer
+  constructing the wrapper at each boundary crossing.
+
+`ExprFromObject` and `ExprFromObjectAttr` are *not* this hazard.
+They are part of a Value's thunk machinery — released when the
+thunk transitions from suspended to WHNF — and they're how state
+creep through factsets and parent links is modelled at the
+boundary. They're necessary machinery, not a place where
+observations get obscured.
 
 ## Worked examples
 
@@ -961,61 +1006,81 @@ This is the foundation — subsequent phases need typed leaves to
 distinguish recording-time positional handles from recorded
 content-hashes.
 
-### Phase 2: frame tracking in the writer
+### Phase 2: argument scope on the proxy graph
 
-Introduce the linked-list-of-factsets structure (the Frames section) alongside the
-existing cumulative writer factset. Frames are pushed at the same
-points where Step G's code currently increments counters. Their
-factsets are populated by the existing observation-recording paths
-but are not yet consulted by anything that affects behaviour.
+The argument-scope structure (the Argument scope section) is added
+to the proxy graph itself: each cache-boundary proxy gets a
+`parent` pointer and apply-result proxies get an `argScope` cell.
+No frame stack on the writer. No imperative push/pop. Wiring only
+— nothing reads `argScope` yet.
 
-Step G's externally-visible behaviour is unchanged. The frame
-tracking is a parallel structure under test until Phase 4 starts
-using it for content-hash resolution.
+A previous iteration of this design introduced a `Frame` /
+`pushFrame` / `popFrame` mechanism on `TracingWriter`. That was the
+wrong shape — argument scope rides on existing structures, not on a
+separate imperative stack — and it gets removed as part of this
+phase.
 
-### Phase 3: buffer-then-hash observation recording
+### Phase 3: resolve through the proxy graph
 
-`TracingLocalObject` today emits a fact per method call. Modify
-the recorder to buffer observations on each local first, then
-compute the content-defined hash at the right moment (the addressing section).
+Replace the replay evaluator's global `ambientState` /
+`idToObject` member with proxy-graph resolution. Methods on
+`TracingReplayObject` thread the proxy through the walker; the
+walker's dispatch lambda routes `from` resolutions through the
+proxy's `parent`/`argScope` chain.
 
-Facts tagged with both their counter-based id (existing) and their
-content-defined hash (new) during transition; the counter-based id
-remains authoritative for cache lookup. Tests stay green.
+This is the user-visible correctness phase for multi-call
+scenarios. Two `builtins.cache` invocations in the same process no
+longer share resolution state through an evaluator-global pointer;
+each lazy result Object carries its own argument-scope chain and
+forces against it.
 
-### Phase 4: cutover to content-defined hashes
+### Phase 4: align Local descendants with the chain
 
-The user-visible change. At observation-emission, the typed `from`
-field carries a `Content` leaf whose hash is the content-defined
-identity from Phase 3's machinery. Counter-derived `Content` leaves
-go away.
+Descendant Locals (children of a callback argument's
+TracingLocalObject reached via `maybeGetAttr` / `getListElem`) get
+their `from` field set to the chain hash, matching what replay's
+`ReplayLocalObject.maybeGetAttr` computes. The recording side stops
+substituting descendant placeholders to their per-object intrinsics
+in `flushPendingAmbient` — top-level Locals (callback args
+themselves) still use the intrinsic substitution that backs the
+localArg sidecar.
 
-The localArg sidecar Request inserted today by
-`AmbientResolver::apply` either evolves (carrying the
-content-defined identity) or retires entirely, depending on
-whether the new lookup path needs the back-reference. Implementation
-detail to settle when Phase 4 lands.
+Restoring §2 same-shape collapse for descendants is deferred (see
+the Open issues section). The minimum viable Phase 4 trades
+descendant collapse for correctness alignment; descendants can
+collapse later via an Asks-shaped index from descendant chain to
+descendant intrinsic.
 
-Old cache entries from earlier phases become invalid — the keying
-changed. Expected and acceptable; the persistent cache is purely a
-performance optimisation, not durable state.
+### Phase 5: retire seed-counter usage in the cache path
 
-### Phase 5: walker dispatch with typed leaves
+Top-level Ambient seeds at the cache boundary stop using
+`hash("seed:N")` placeholders. The seed is given its
+content-defined identity at apply time — the empty-set hash, since
+no observations on the seed have happened yet. All
+`builtins.cache` calls collide on the same apply Q hash;
+multi-Terminal disambiguates via the per-call factset produced by
+live dispatch through the per-proxy argument scope (Phase 3).
 
-Walker parses the typed Query paths and dispatches accordingly.
-`Content` leaves materialise `ReplayLocalObject` stand-ins from
-the Responses pool. `Ambient` leaves should not appear in
-recorded facts at this point (they should all have been resolved
-at fact emission); if they do, the walker rejects them as invalid.
+The CLI carve-out (the Principles section) keeps the counter at
+the CLI entry points where the patterns are predictable and an
+enumeration is sufficient. Only the cache path moves to
+content-defined seed identity.
 
-The dispatch logic is the same shape as Step G's; only the leaf
-parsing is new.
+### Phase 6: retire local-arg counter usage
 
-### Phase 6: cleanup
+Same treatment for the inner-supplied callback-arg side
+(`hash("local:N")` placeholders). The local arg's content-defined
+identity at apply time is the empty-set hash; multiple locals in a
+single recording start at the same identity and diverge through
+their first observations.
 
-Remove counter-based machinery that's no longer reachable. Drop
-feature flags or compatibility shims introduced during transition.
-Update tests that asserted counter-based behaviour.
+A correctness invariant is enforced when this phase lands: every
+`AmbientObject` / `TracingLocalObject` construction site must be
+right next to its cache-boundary call (the Boundary-trace-only
+discipline section). Any caching layer that returns the same
+wrapper instance to a later boundary crossing must be reviewed —
+the `outerValues` / `localValues` id-keyed maps in
+`AmbientResolver` are the suspects.
 
 ## Open issues and deferred work
 
