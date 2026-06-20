@@ -665,18 +665,40 @@ The walked-and-folded sum is the content-defined identity for the
 It widens the cache key beyond strict minimum (the Two scope
 notions section state creep) but never invalidates incorrectly.
 
-### Sibling cache invocations
+### Sibling isolation and the argument-scope tracking rule
 
-Each cache call constructs its own proxy graph rooted at a fresh
-top-level proxy. Two sibling invocations (e.g. `c args1 + c args2`)
-produce two independent graphs that share no `parent` and therefore
-no scope cells. Each invocation's recording captures only its own
-graph.
+Observations are tracked *at* the argument scope cell of the
+binding they're observed against — nowhere else in the proxy graph.
+This single location rule is what gives the recorded facts two
+complementary properties:
 
-This is what isolates referentially-transparent unrelated calls
-from one another: same evaluation session, same persistent trie,
-but the recorded factsets are disjoint because the proxy graphs are
-disjoint.
+- **State creep**: when a fact is emitted, the recorder XOR-folds
+  the entire ancestor chain's accumulated observations into the
+  fact's content-defined hash for each `ambient-N` referenced.
+  Everything an ancestor cell has seen contributes; no ancestor
+  observation is ever omitted. This is the same widening described
+  in the Two scope notions section, expressed through the proxy
+  graph's `parent` walk.
+
+- **Referential transparency**: siblings — distinct branches that
+  share an ancestor in the proxy graph — see only their own and
+  their ancestors' observations, never each other's. A sibling's
+  observations are not in the current node's ancestor chain, so
+  they don't fold in. This is structural, not bookkeeping: there's
+  no path from a node's emission walk to a sibling's scope cell.
+
+The tracking rule (observations at the argument, not elsewhere) is
+what allows both properties to hold simultaneously. If observations
+were stored higher up — at a shared root, say — siblings would see
+each other's history; if stored lower, ancestors couldn't contribute
+to state creep without lateral lookups.
+
+A direct consequence is that two sibling `builtins.cache`
+invocations (e.g. `c args1 + c args2`) are isolated from one another
+naturally. They share no ancestor in the proxy graph — each is a
+fresh root — so there's no shared scope cell to leak through, and
+their recordings stay disjoint. Same property as any other sibling
+pair, applied at the top.
 
 ## Boundary-trace-only discipline
 
