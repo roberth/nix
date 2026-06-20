@@ -101,8 +101,11 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
 
         tracingCacheLog("replay hit: getAttr '%s' -> found", name);
         auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
-        return std::make_shared<TracingReplayObject>(
+        auto child = std::make_shared<TracingReplayObject>(
             evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
+        /* Navigation child: same argScope as parent, parent back-pointer. */
+        child->withScope(self, std::nullopt);
+        return child;
     }
 
     tracingCacheLog("replay fallback: maybeGetAttr '%s'", name);
@@ -218,8 +221,11 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
     if (auto result = lookupStructuralChild<trace::QueryGetListElem, trace::ResultType>(query)) {
         tracingCacheLog("replay hit: getListElem %d", idx);
         auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
-        return std::make_shared<TracingReplayObject>(
+        auto child = std::make_shared<TracingReplayObject>(
             evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); });
+        /* Navigation child: same argScope as parent, parent back-pointer. */
+        child->withScope(self, std::nullopt);
+        return child;
     }
 
     tracingCacheLog("replay fallback: getListElem %d", idx);

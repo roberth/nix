@@ -24,6 +24,7 @@
  * outer-side changes from the validation chain.
  */
 
+#include "nix/expr/arg-scope.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/trace-ids.hh"
 
@@ -45,12 +46,28 @@ class ReplayLocalObject : public Object
        look up a fact that doesn't exist. */
     std::optional<ObjectType> knownType;
 
+    /* Argument-scope wiring (Phase 2 of the proxy-graph rollout).
+       `parent` points to the proxy that produced this one; the
+       top-level (cb-arg) Local carries an `argScope` cell, navigation
+       children leave it null. Nothing reads these yet. */
+    std::shared_ptr<Object> parent;
+    std::optional<ArgScopeCell> argScope;
+
 public:
     ReplayLocalObject(AmbientId localId, TracingDecisionGraph & dg, ref<SourceRoot> rootFSRoot)
         : localId(localId), decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)) {}
 
     ReplayLocalObject(AmbientId localId, TracingDecisionGraph & dg, ref<SourceRoot> rootFSRoot, ObjectType type)
         : localId(localId), decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), knownType(type) {}
+
+    /** Phase 2: set the proxy-graph back-pointers. Call right after
+        construction at boundary sites. Returns *this for chaining. */
+    ReplayLocalObject & withScope(std::shared_ptr<Object> parent_, std::optional<ArgScopeCell> argScope_)
+    {
+        parent = std::move(parent_);
+        argScope = std::move(argScope_);
+        return *this;
+    }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

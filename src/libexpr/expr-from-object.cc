@@ -305,6 +305,10 @@ static PrimOp * makeCachedFnPrimOp(
                            evaluator builds from any returned RootedPaths. */
                         auto contraArg =
                             make_ref<AmbientObject>(rootId, std::move(queryFn), state.rootFSRoot, std::move(applyFn));
+                        /* Seed argScope cell: the cached-fn's argument is
+                           held under `rootId` and the live Object is
+                           `outerArgObj`. Phase 3 reads this on resolution. */
+                        contraArg->withScope(/*parent=*/nullptr, ArgScopeCell{rootId, outerArgObj});
                         auto result = innerEval->apply(ref<Object>(fnObj), contraArg);
                         ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
                     },

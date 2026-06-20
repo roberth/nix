@@ -28,7 +28,10 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
         return nullptr;
     if (!qr.childId)
         throw Error("ambient maybeGetAttr: resolver didn't return child id");
-    return std::make_shared<AmbientObject>(*qr.childId, queryFn, ambientRootFSRoot, applyFn);
+    auto child = std::make_shared<AmbientObject>(*qr.childId, queryFn, ambientRootFSRoot, applyFn);
+    /* Navigation child: same argScope as the parent, parent back-pointer set. */
+    child->withScope(shared_from_this(), std::nullopt);
+    return child;
 }
 
 std::vector<std::string> AmbientObject::getAttrNames()
@@ -121,7 +124,10 @@ std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
     auto qr = queryFn(id, trace::QueryGetListElem{fromOf(id), index});
     if (!qr.childId)
         throw Error("ambient getListElem: resolver didn't return child id");
-    return std::make_shared<AmbientObject>(*qr.childId, queryFn, ambientRootFSRoot, applyFn);
+    auto child = std::make_shared<AmbientObject>(*qr.childId, queryFn, ambientRootFSRoot, applyFn);
+    /* Navigation child: same argScope as the parent, parent back-pointer set. */
+    child->withScope(shared_from_this(), std::nullopt);
+    return child;
 }
 
 ObjectType AmbientObject::getTypeLazy()
@@ -166,8 +172,17 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
 {
     if (!applyFn)
         throw Error("ambient apply: no apply callback");
+    /* Keep a copy of argObj for the result's argScope cell before
+       moving it into applyFn. The cell holds the live arg so future
+       dispatches against the arg's id resolve to it. */
+    auto argForScope = argObj;
     auto resultId = applyFn(id, std::move(argObj));
-    return std::make_shared<AmbientObject>(resultId, queryFn, ambientRootFSRoot, applyFn);
+    auto result = std::make_shared<AmbientObject>(resultId, queryFn, ambientRootFSRoot, applyFn);
+    /* Apply-result: new argScope cell binding this apply's argument.
+       The id used here is the argument's own id where determinable
+       (left empty for now; Phase 3 will use it when resolving). */
+    result->withScope(shared_from_this(), ArgScopeCell{AmbientId{HashAlgorithm::SHA256}, std::move(argForScope)});
+    return result;
 }
 
 } // namespace nix

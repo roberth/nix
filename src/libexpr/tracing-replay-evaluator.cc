@@ -426,8 +426,12 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
 {
     if (auto result = lookup(trace::QueryImport{displayPath})) {
         tracingCacheLog("replay hit: evalFile %s", displayPath);
-        return make_ref<TracingReplayObject>(
+        auto obj = make_ref<TracingReplayObject>(
             *this, result->second, [this, path, displayPath]() { return inner->evalFile(path, displayPath); });
+        /* Top-level entry point: no parent in the proxy graph, no
+           argScope (no apply has happened). */
+        obj->withScope(/*parent=*/nullptr, std::nullopt);
+        return obj;
     }
     tracingCacheLog("replay miss: evalFile %s", displayPath);
     return inner->evalFile(path, displayPath);
@@ -437,8 +441,10 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Roo
 {
     if (auto result = lookup(trace::QueryExpr{expr, basePath.path.abs()})) {
         tracingCacheLog("replay hit: evalExpr");
-        return make_ref<TracingReplayObject>(
+        auto obj = make_ref<TracingReplayObject>(
             *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); });
+        obj->withScope(/*parent=*/nullptr, std::nullopt);
+        return obj;
     }
     tracingCacheLog("replay miss: evalExpr");
     return inner->evalExpr(expr, basePath);
@@ -518,8 +524,17 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
         .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
     };
-    return make_ref<TracingReplayObject>(
+    auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
+    /* Apply result: parent = the fn proxy (if it's a proxy itself),
+       argScope = the arg's identity + live Object. The id is the
+       arg's getId result if available; falls back to a parsed AmbientId
+       from argId hex when the arg is an AmbientObject. */
+    AmbientId argScopeId{HashAlgorithm::SHA256};
+    if (auto * ambient = dynamic_cast<AmbientObject *>(arg.get_ptr().get()))
+        argScopeId = ambient->getId();
+    obj->withScope(fn.get_ptr(), ArgScopeCell{argScopeId, arg.get_ptr()});
+    return obj;
 }
 
 } // namespace nix

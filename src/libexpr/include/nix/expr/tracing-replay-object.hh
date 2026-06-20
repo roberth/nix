@@ -1,5 +1,6 @@
 #pragma once
 
+#include "nix/expr/arg-scope.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/tracing-writer.hh"
 
@@ -26,6 +27,14 @@ class TracingReplayObject : public Object
     std::function<ref<Object>()> getInner;
     mutable std::optional<ref<Object>> inner;
 
+    /* Argument-scope wiring (Phase 2 of the proxy-graph rollout).
+       `parent` points to the proxy that produced this one;
+       `argScope` is set on apply-result proxies (the result of a
+       cache-boundary apply) and on the cached-value root, null on
+       navigation children. Nothing reads these yet. */
+    std::shared_ptr<Object> parent;
+    std::optional<ArgScopeCell> argScope;
+
     ref<Object> ensureInner() const;
 
     /**
@@ -45,6 +54,15 @@ class TracingReplayObject : public Object
 public:
     TracingReplayObject(
         TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner);
+
+    /** Phase 2: set the proxy-graph back-pointers. Call right after
+        construction at boundary sites. Returns *this for chaining. */
+    TracingReplayObject & withScope(std::shared_ptr<Object> parent_, std::optional<ArgScopeCell> argScope_)
+    {
+        parent = std::move(parent_);
+        argScope = std::move(argScope_);
+        return *this;
+    }
 
     const TriePosition & getTriePos() const
     {

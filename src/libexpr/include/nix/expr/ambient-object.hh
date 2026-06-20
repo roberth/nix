@@ -8,6 +8,7 @@
  * a query through the provided callback and interprets the response.
  */
 
+#include "nix/expr/arg-scope.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/source-root.hh"
 #include "nix/expr/trace-ids.hh"
@@ -59,8 +60,28 @@ class AmbientObject : public Object
        resolver from the outer EvalState's `rootFSRoot`. */
     ref<SourceRoot> ambientRootFSRoot;
 
+    /* Argument-scope wiring (Phase 2 of the proxy-graph rollout).
+       `parent` points to the proxy that produced this one — the seed's
+       creator (null) for the cache call's seed, the AmbientObject that
+       maybeGetAttr/getListElem returned this one from, or the fn proxy
+       that applyFn produced this result from. `argScope` is set on
+       apply-result proxies and on the seed; navigation children leave
+       it null. Nothing reads these yet — wired up here so Phase 3 can
+       drive resolution through them. */
+    std::shared_ptr<Object> parent;
+    std::optional<ArgScopeCell> argScope;
+
 public:
     AmbientObject(AmbientId id, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
+
+    /** Phase 2: set the proxy-graph back-pointers. Call right after
+        construction at boundary sites. Returns *this for chaining. */
+    AmbientObject & withScope(std::shared_ptr<Object> parent_, std::optional<ArgScopeCell> argScope_)
+    {
+        parent = std::move(parent_);
+        argScope = std::move(argScope_);
+        return *this;
+    }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

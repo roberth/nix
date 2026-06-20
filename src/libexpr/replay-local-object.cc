@@ -43,8 +43,11 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
     /* Propagate the child's type via in-band knownType so the
        dispatcher's getAttr branch can answer child->getType()
        without a separate pool lookup that the recorder never wrote. */
-    return std::make_shared<ReplayLocalObject>(
+    auto child = std::make_shared<ReplayLocalObject>(
         replayDerivedLocalId(query), decisionGraph, rootFSRoot, stringToObjectType(*r.type));
+    /* Navigation child: same argScope as parent, parent back-pointer. */
+    child->withScope(shared_from_this(), std::nullopt);
+    return child;
 }
 
 std::vector<std::string> ReplayLocalObject::getAttrNames()
@@ -125,8 +128,11 @@ std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
        a separate getType fact the recorder never emits. */
     auto rJson = readResponse(decisionGraph, query);
     trace::ResultType r = rJson;
-    return std::make_shared<ReplayLocalObject>(
+    auto child = std::make_shared<ReplayLocalObject>(
         replayDerivedLocalId(query), decisionGraph, rootFSRoot, stringToObjectType(r.type));
+    /* Navigation child: same argScope as parent, parent back-pointer. */
+    child->withScope(shared_from_this(), std::nullopt);
+    return child;
 }
 
 ObjectType ReplayLocalObject::getType()

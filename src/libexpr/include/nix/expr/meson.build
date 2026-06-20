@@ -22,6 +22,7 @@ headers = [ config_pub_h ] + files(
   'eval-inline.hh',
   'eval-profiler-settings.hh',
   'eval-profiler.hh',
+  'arg-scope.hh',
   'eval-settings.hh',
   'eval.hh',
   'evaluation-helpers.hh',
