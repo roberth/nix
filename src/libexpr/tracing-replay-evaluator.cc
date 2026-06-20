@@ -464,11 +464,24 @@ ref<Object> TracingReplayEvaluator::getInternalPrimOp(const std::string & name)
 
 ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
+    /* AmbientObject case: the `<cached-fn>` PrimOp wraps the outer
+       call's args in an AmbientObject. Without this, argId falls
+       through to virtual:N (per-writer counter starting at 0), so
+       every separate `builtins.cache` call's outer Q_apply collides
+       and the cache returns the first call's result for every
+       subsequent call. With this case, argId is the resolver's seed
+       hex (the AmbientObject's content-addressed id), and the cache
+       distinguishes calls through the v13 multi-Terminal mechanism
+       — provided the recorded factSet actually captures enough
+       host-distinguishing observations on the seed, which is the
+       open question the dotted-attr-path reproducer probes. */
     auto getId = [](Object & obj) -> std::optional<std::string> {
         if (auto * to = dynamic_cast<TracingObject *>(&obj))
             return to->getQueryHashStr();
         if (auto * ro = dynamic_cast<TracingReplayObject *>(&obj))
             return std::optional{ro->getTriePos().queryHashStr};
+        if (auto * ao = dynamic_cast<AmbientObject *>(&obj))
+            return ao->getId().to_string(HashFormat::Base16, false);
         return std::nullopt;
     };
 

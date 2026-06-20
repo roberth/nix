@@ -1,4 +1,5 @@
 #include "nix/expr/tracing-evaluator.hh"
+#include "nix/expr/ambient-object.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-replay-object.hh"
@@ -236,12 +237,17 @@ ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> &
 
 ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
-    // Get identity from TracingObject or TracingReplayObject.
+    // Get identity from TracingObject, TracingReplayObject, or AmbientObject.
+    // AmbientObject is the case the `<cached-fn>` PrimOp produces for the
+    // outer's args; without it argId falls through to virtual:N (per-writer
+    // counter) and separate cache calls collide on Q_apply.
     auto getId = [](Object & obj) -> std::optional<std::string> {
         if (auto * to = dynamic_cast<TracingObject *>(&obj))
             return to->getQueryHashStr();
         if (auto * ro = dynamic_cast<TracingReplayObject *>(&obj))
             return std::optional{ro->getTriePos().queryHashStr};
+        if (auto * ao = dynamic_cast<AmbientObject *>(&obj))
+            return ao->getId().to_string(HashFormat::Base16, false);
         return std::nullopt;
     };
 
