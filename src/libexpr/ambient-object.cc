@@ -174,17 +174,16 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
         throw Error("ambient apply: no apply callback");
     /* Keep a copy of argObj for the result's argScope cell before
        moving it into applyFn. The cell holds the live arg so future
-       dispatches against the arg's id resolve to it. */
+       dispatches resolve to it. */
     auto argForScope = argObj;
     auto resultId = applyFn(id, std::move(argObj));
     auto result = std::make_shared<AmbientObject>(resultId, queryFn, ambientRootFSRoot, applyFn);
-    /* Apply-result: new argScope cell binding this apply's argument.
-       The id is zero here — the applyFn closure knows the assigned
-       id but doesn't surface it through the AmbientApplyFn signature.
-       Subsequent dispatches for this arg's id will find it via the
-       producer-Request resolution path (the localArg sidecar). */
-    result->withScope(shared_from_this(),
-        std::make_shared<ArgScopeCell>(ArgScopeCell{AmbientId{HashAlgorithm::SHA256}, std::move(argForScope)}));
+    /* Apply-result: open a new intrinsic cell for this apply's
+       argument. Parent = this proxy's effective cell (walking past
+       navigation children that don't carry a cell of their own —
+       so a cb reached via seed.items[0] chains back to the seed). */
+    auto cell = ArgScopeCell::make(effectiveArgScope(*this), std::move(argForScope));
+    result->withScope(shared_from_this(), std::move(cell));
     return result;
 }
 

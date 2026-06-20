@@ -201,6 +201,11 @@ static Hash dg_xorHash(const Hash & a, const Hash & b)
     return out;
 }
 
+Hash TracingDecisionGraph::xorHashes(const Hash & a, const Hash & b)
+{
+    return dg_xorHash(a, b);
+}
+
 /* ──────────────────────────────────────────────────────────────────────
    RequestSet trie: a hash-prefix trie over Request hashes.
 

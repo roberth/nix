@@ -46,23 +46,20 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
        ref) so AmbientResolver stays default-constructible. */
     std::shared_ptr<SourceRoot> outerRootFSRoot;
 
-    /** Register an outer seed Object under the empty-set hash — its
-        content-defined identity at apply time. No counters: any
-        differentiation that's actually needed has to come from
-        content-defined identity (curry-depth context, observation
-        intrinsics) per the Principles section. */
-    AmbientId registerOuterSeed(std::shared_ptr<Object> obj)
+    /** Register an outer seed Object under a content-defined id
+        (the seed cell's contentId at apply time — depth marker XOR
+        ancestor intrinsics). Per the Principles section, no
+        counter — depth distinguishes curried-apply seeds and
+        per-call resolvers isolate sibling cache invocations. */
+    AmbientId registerOuterSeed(std::shared_ptr<Object> obj, AmbientId id)
     {
-        auto id = TracingDecisionGraph::emptySetHash();
         outerValues[id] = std::move(obj);
         return id;
     }
 
-    /** Register a local seed Object under the empty-set hash. Same
-        rationale as registerOuterSeed. */
-    AmbientId registerLocalSeed(std::shared_ptr<Object> obj)
+    /** Register a local seed Object under a content-defined id. */
+    AmbientId registerLocalSeed(std::shared_ptr<Object> obj, AmbientId id)
     {
-        auto id = TracingDecisionGraph::emptySetHash();
         localValues[id] = std::move(obj);
         return id;
     }
@@ -183,8 +180,16 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
             throw Error("ambient apply requires outerState");
         auto fnObj = resolve(fnId);
 
-        /* Register the arg as a local seed (id = hashString("local:N")). */
-        auto argId = registerLocalSeed(argObj);
+        /* Open a new intrinsic cell for the cb arg. Parent = the
+           fn proxy's effective cell (walking past navigation
+           children that don't carry a cell of their own — e.g. the
+           cb reached via seed.items[0] is a list-elem navigation
+           child of the items attr, which is a getAttr navigation
+           child of the seed, so effective cell = the seed cell). */
+        auto fnCell = effectiveArgScope(*fnObj);
+        auto localCell = ArgScopeCell::make(fnCell, argObj);
+        auto argId = localCell->contentId();
+        registerLocalSeed(argObj, argId);
 
         /* Wrap the argObj in TracingLocalObject so the outer's
            accesses on it during the apply land in the inner trace
@@ -272,7 +277,17 @@ static PrimOp * makeCachedFnPrimOp(
                     [fnObj, innerEval, resolver](EvalState & state, const PosIdx pos, Value ** args, Value & v) {
                         // Do NOT force args[0] — it may be self-referential.
                         auto outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
-                        auto rootId = resolver->registerOuterSeed(outerArgObj);
+                        /* Open a new intrinsic cell for this seed.
+                           Parent = the fn proxy's cell (so curried
+                           applies of the cached value chain through
+                           depth 0, 1, ... naturally). cell.liveObject
+                           is set to the AmbientObject we're about to
+                           construct (below) so chain navigation
+                           returns AmbientObjects, not raw Values. */
+                        auto parentCell = effectiveArgScope(*fnObj);
+                        auto seedCell = ArgScopeCell::make(parentCell, /*liveObject set below*/ nullptr);
+                        auto rootId = seedCell->contentId();
+                        resolver->registerOuterSeed(outerArgObj, rootId);
                         auto & innerEnv = *innerEval->getEvalState().environment;
                         AmbientQueryFn queryFn = [resolver,
                                                   &innerEnv](AmbientId objectId, const trace::QueryVariant & q) {
@@ -302,10 +317,12 @@ static PrimOp * makeCachedFnPrimOp(
                            evaluator builds from any returned RootedPaths. */
                         auto contraArg =
                             make_ref<AmbientObject>(rootId, std::move(queryFn), state.rootFSRoot, std::move(applyFn));
-                        /* Seed argScope cell: the cached-fn's argument is
-                           held under `rootId` and the live Object is
-                           `outerArgObj`. Phase 3 reads this on resolution. */
-                        contraArg->withScope(/*parent=*/nullptr, std::make_shared<ArgScopeCell>(ArgScopeCell{rootId, outerArgObj}));
+                        /* Wire seedCell.liveObject to contraArg now
+                           that it exists. This is the deliberate
+                           shared_ptr cycle documented on
+                           ArgScopeCell::liveObject. */
+                        seedCell->liveObject = contraArg.get_ptr();
+                        contraArg->withScope(/*parent=*/nullptr, seedCell);
                         auto result = innerEval->apply(ref<Object>(fnObj), contraArg);
                         ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
                     },

@@ -168,13 +168,12 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
         return it->second;
 
     /* Proxy-graph lookup: walk the parent chain looking for an
-       argScope cell whose id matches. This replaces the previous
-       evaluator-global `ambientState` pre-bind — the live arg lives
-       on the proxy that introduced it, so per-call resolution
-       follows the per-call proxy graph naturally. */
+       intrinsic cell whose contentId matches. State creep is folded
+       into contentId() automatically (XOR-fold of ancestor cells'
+       intrinsics). */
     for (Object * p = ctx.currentProxy.get(); p; p = p->getProxyParent().get()) {
         auto cell = p->getProxyArgScope();
-        if (cell && cell->id.to_string(HashFormat::Base16, false) == idStr) {
+        if (cell && cell->contentId().to_string(HashFormat::Base16, false) == idStr) {
             ctx.memo[idStr] = cell->liveObject;
             return cell->liveObject;
         }
@@ -510,16 +509,11 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     };
     auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
-    /* Apply result: parent = the fn proxy (if it's a proxy itself),
-       argScope = the arg's identity + live Object. The id is the
-       arg's getId when it's an AmbientObject; for non-Ambient args
-       (rare on this path) we leave the cell's id zero — the cell
-       still pins the live arg so proxy-graph walks that reach this
-       depth find the right Object even when id-keyed lookup fails. */
-    AmbientId argScopeId{HashAlgorithm::SHA256};
-    if (auto * ambient = dynamic_cast<AmbientObject *>(arg.get_ptr().get()))
-        argScopeId = ambient->getId();
-    obj->withScope(fn.get_ptr(), std::make_shared<ArgScopeCell>(ArgScopeCell{argScopeId, arg.get_ptr()}));
+    /* Apply result: open a new intrinsic cell for this apply's
+       argument. Parent = the fn proxy's effective cell (walking
+       past navigation children). */
+    auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
+    obj->withScope(fn.get_ptr(), std::move(cell));
     return obj;
 }
 

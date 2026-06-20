@@ -189,31 +189,19 @@ std::optional<std::vector<std::string>> TracingLocalObject::getAttrPath()
 
 void TracingLocalObject::recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
-    /* Per-observation contribution to the intrinsic hash: hash the query
-       with `from` blanked so the contribution depends only on the
-       observation's structural content, not on which counter-derived
-       placeholder this local happens to be holding. This is what makes
-       §2's same-shape collapse work — extensionally-equivalent locals
-       get identical intrinsic hashes regardless of placeholder. */
-    nlohmann::json queryJson;
-    std::visit([&](const auto & q) { queryJson = q; }, query);
-    if (queryJson.is_object() && queryJson.contains("params")) {
-        auto & params = queryJson["params"];
-        if (params.is_object() && params.contains("from"))
-            params["from"] = "";
-    }
-    auto queryHashBlanked = hashString(HashAlgorithm::SHA256, queryJson.dump());
-
-    nlohmann::json resultJson;
-    std::visit([&](const auto & r) { resultJson = r; }, result);
-    auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(resultJson));
-
-    intrinsicHash = TracingDecisionGraph::xorFactIntoHash(
-        intrinsicHash, queryHashBlanked, responseHash);
-
+    /* TODO(Phase 6 continuation): contribution to the cell's
+       intrinsic. Today the cell isn't threaded into
+       TracingLocalObject yet, so the per-observation XOR-fold has
+       no home — it used to feed placeholderToIntrinsic via
+       updatePlaceholderIntrinsic, but that map mangled cell ids
+       (cell.contentId() got substituted to the bare intrinsic at
+       flush, which doesn't match what replay looks up). Skipping
+       the update means cell.intrinsic stays empty and multi-Local
+       collapse via observation content is lost; the chain
+       mechanism still works because cell.contentId()'s depth
+       marker carries enough structural information for the
+       current tests. */
     writer.logAmbientInteraction(query, result);
-    writer.updatePlaceholderIntrinsic(
-        localId.to_string(HashFormat::Base16, false), intrinsicHash);
 }
 
 } // namespace nix
