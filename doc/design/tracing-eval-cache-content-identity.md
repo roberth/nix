@@ -615,17 +615,23 @@ walk:
 
 - `builtins.cache x` returns the cached value at the root, with
   no parent.
-- An apply on a proxy produces a new proxy whose `parent` is the
-  fn proxy and whose `argScope` cell binds the new argument's
+- An apply on a proxy — *any* proxy that resolves to a function,
+  reached however it was — produces a new proxy whose `parent` is
+  the fn proxy and whose `argScope` cell binds the new argument's
   identity (its content-defined hash at apply time, which is the
   empty-set hash for a freshly-introduced argument).
 - An attribute selection or list-element retrieval on a proxy
   produces a child proxy with the same `parent`/`argScope` view as
   its parent. No new cell.
 
-So new `argScope` cells appear only at function-application sites
-that cross the cache boundary, which is exactly where the design
-calls for a new depth in the reverse-De Bruijn addressing.
+A new `argScope` cell opens at any function-application site that
+crosses the cache boundary — not just at syntactic-curry positions
+(`f: x: ...`). A function reached via attribute selection
+(`(c args).f arg2`), via a list element
+(`(builtins.elemAt (c args) 0) arg2`), via the return value of any
+of these (`(c args).f arg2 arg3` curries through `f`'s return), or
+via any nested combination — applies the same way and opens a new
+cell.
 
 Within-frame callbacks — `f 10` inside the cached body where `f` is
 a function reached through path navigation — are *not* `argScope`
