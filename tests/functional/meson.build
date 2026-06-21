@@ -179,6 +179,7 @@ suites = [
       'cb-local-descendants.sh',
       'cb-higher-order-nested.sh',
       'cb-stats-sanity.sh',
+      'cb-same-shape-collapse.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
