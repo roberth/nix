@@ -210,19 +210,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
     }
 
     auto reqPayload = decisionGraph.getRequestPayload(idHash);
-    if (!reqPayload) {
-        /* Unknown id in the Requests pool — most commonly an
-           inner-side TracingLocalObject's content-hash whose facts
-           were emitted with from=hex(id) but whose id itself isn't
-           a producer Request. Materialise a ReplayLocalObject keyed
-           by it; its methods read recorded responses out of the
-           Responses pool by qH(query{from=hex(id)}), matching what
-           TracingLocalObject wrote during recording. */
-        auto standin = std::make_shared<ReplayLocalObject>(
-            idHash, decisionGraph, inner->getEvalState().rootFSRoot);
-        ctx.memo[idStr] = standin;
-        return standin;
-    }
+    if (!reqPayload)
+        return materialiseLocalStandin(idHash, idStr, ctx);
 
     nlohmann::json reqJson;
     try {
@@ -231,75 +220,112 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
         return nullptr;
     }
 
-    /* Local-arg sidecar (inserted by resolver.apply): chase to the
-       apply and re-invoke it. The apply branch registers the live
-       argObj under localId in ctx.memo, so subsequent dispatches of
-       local-incoming Facts find it without re-chasing. */
-    if (reqJson.contains("kind") && reqJson["kind"] == "localArg") {
-        auto applyResultIdHex = reqJson["applyResultId"].get<std::string>();
-        resolveAmbientId(applyResultIdHex, ctx);
-        if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
-            return it->second;
-        return nullptr;
-    }
+    if (reqJson.contains("kind") && reqJson["kind"] == "localArg")
+        return chaseLocalArgSidecar(idStr, reqJson, ctx);
 
     auto tag = reqJson["query"].get<std::string>();
     auto & params = reqJson["params"];
 
-    /* Apply-result ids ARE live-resolvable: invoke the apply
-       against the resolved fn and a ReplayLocalObject for the
-       (frozen) recorded local arg. */
-    if (tag == "apply") {
-        auto fnObj = resolveAmbientId(params["fn"].get<std::string>(), ctx);
-        if (!fnObj) {
-            tracingCacheLog("replay: apply %s: cannot resolve fn %s", idStr, params["fn"]);
-            return nullptr;
-        }
-        auto argIdStr = params["arg"].get<std::string>();
-        Hash argHash{HashAlgorithm::SHA256};
+    if (tag == "apply")
+        return resolveApplyId(idStr, params, ctx);
+
+    return resolveProducerChild(idStr, tag, params, ctx);
+}
+
+/* Local-direction: unknown id in the Requests pool — most commonly an
+   inner-side TracingLocalObject's content-hash whose facts were emitted
+   with from=hex(id) but whose id itself isn't a producer Request.
+   Materialise a ReplayLocalObject keyed by it; its methods read
+   recorded responses out of the Responses pool by qH(query{from=hex(id)}),
+   matching what TracingLocalObject wrote during recording. */
+std::shared_ptr<Object> TracingReplayEvaluator::materialiseLocalStandin(
+    const Hash & idHash, const std::string & idStr, ResolutionContext & ctx)
+{
+    auto standin = std::make_shared<ReplayLocalObject>(
+        idHash, decisionGraph, inner->getEvalState().rootFSRoot);
+    ctx.memo[idStr] = standin;
+    return standin;
+}
+
+/* Local-direction: sidecar inserted by AmbientResolver::apply to mark
+   that this id is the local arg of a covariant callback. Chase to the
+   apply; the apply branch registers the live argObj under localId in
+   ctx.memo, so subsequent dispatches of local-incoming Facts find it
+   without re-chasing. */
+std::shared_ptr<Object> TracingReplayEvaluator::chaseLocalArgSidecar(
+    const std::string & idStr, const nlohmann::json & reqJson, ResolutionContext & ctx)
+{
+    auto applyResultIdHex = reqJson["applyResultId"].get<std::string>();
+    resolveAmbientId(applyResultIdHex, ctx);
+    if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
+        return it->second;
+    return nullptr;
+}
+
+/* Mixed direction: fn is Outer (resolved through the producer chain to
+   an AmbientObject); arg may be Local (standin) or Outer (resolved
+   through chain). Invokes the apply live against fn and arg to
+   materialise the apply result; AmbientObject::queryApply registers the
+   result in outerValues. */
+std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
+    const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx)
+{
+    auto fnObj = resolveAmbientId(params["fn"].get<std::string>(), ctx);
+    if (!fnObj) {
+        tracingCacheLog("replay: apply %s: cannot resolve fn %s", idStr, params["fn"]);
+        return nullptr;
+    }
+    auto argIdStr = params["arg"].get<std::string>();
+    Hash argHash{HashAlgorithm::SHA256};
+    try {
+        argHash = Hash::parseNonSRIUnprefixed(argIdStr, HashAlgorithm::SHA256);
+    } catch (const std::exception &) {
+        return nullptr;
+    }
+    std::shared_ptr<Object> argObj;
+    auto argReqPayload = decisionGraph.getRequestPayload(argHash);
+    bool isLocalArg = false;
+    if (argReqPayload) {
         try {
-            argHash = Hash::parseNonSRIUnprefixed(argIdStr, HashAlgorithm::SHA256);
-        } catch (const std::exception &) {
-            return nullptr;
-        }
-        std::shared_ptr<Object> argObj;
-        auto argReqPayload = decisionGraph.getRequestPayload(argHash);
-        bool isLocalArg = false;
-        if (argReqPayload) {
-            try {
-                auto j = cborStringToJson(*argReqPayload);
-                if (j.contains("kind") && j["kind"] == "localArg")
-                    isLocalArg = true;
-            } catch (const std::exception &) {
+            auto j = cborStringToJson(*argReqPayload);
+            if (j.contains("kind") && j["kind"] == "localArg")
                 isLocalArg = true;
-            }
-        } else {
+        } catch (const std::exception &) {
             isLocalArg = true;
         }
-        if (isLocalArg)
-            argObj = std::make_shared<ReplayLocalObject>(argHash, decisionGraph, inner->getEvalState().rootFSRoot);
-        else
-            argObj = resolveAmbientId(argIdStr, ctx);
-        if (!argObj)
-            return nullptr;
-        ctx.memo[argIdStr] = argObj;
-        auto * ambient = dynamic_cast<AmbientObject *>(fnObj.get());
-        if (!ambient) {
-            tracingCacheLog("replay: apply %s: fn resolved to non-AmbientObject", idStr);
-            return nullptr;
-        }
-        std::shared_ptr<Object> resultObj;
-        try {
-            resultObj = ambient->queryApply(argObj);
-        } catch (const std::exception & e) {
-            tracingCacheLog("replay: apply %s: queryApply threw: %s", idStr, e.what());
-            return nullptr;
-        }
-        if (resultObj)
-            ctx.memo[idStr] = resultObj;
-        return resultObj;
+    } else {
+        isLocalArg = true;
     }
+    if (isLocalArg)
+        argObj = std::make_shared<ReplayLocalObject>(argHash, decisionGraph, inner->getEvalState().rootFSRoot);
+    else
+        argObj = resolveAmbientId(argIdStr, ctx);
+    if (!argObj)
+        return nullptr;
+    ctx.memo[argIdStr] = argObj;
+    auto * ambient = dynamic_cast<AmbientObject *>(fnObj.get());
+    if (!ambient) {
+        tracingCacheLog("replay: apply %s: fn resolved to non-AmbientObject", idStr);
+        return nullptr;
+    }
+    std::shared_ptr<Object> resultObj;
+    try {
+        resultObj = ambient->queryApply(argObj);
+    } catch (const std::exception & e) {
+        tracingCacheLog("replay: apply %s: queryApply threw: %s", idStr, e.what());
+        return nullptr;
+    }
+    if (resultObj)
+        ctx.memo[idStr] = resultObj;
+    return resultObj;
+}
 
+/* Outer-direction: derived child id whose producer Request is a
+   navigation step (getAttr / getListElem). Resolve parent through the
+   producer chain, then perform the live navigation step on it. */
+std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
+    const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx)
+{
     if (!params.contains("from"))
         return nullptr;
 

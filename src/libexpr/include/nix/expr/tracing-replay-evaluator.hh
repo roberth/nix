@@ -74,6 +74,17 @@ class TracingReplayEvaluator : public Evaluator
         nullptr if the id can't be resolved. */
     std::shared_ptr<Object> resolveAmbientId(const std::string & idStr, ResolutionContext & ctx);
 
+    /* The four direction-/payload-specific branches of resolveAmbientId,
+       extracted so each branch's discipline is named and visible. The
+       first two are Local-direction-specific (frozen, served from pool);
+       resolveApplyId mixes direction (fn is Outer, arg may be either);
+       resolveProducerChild is Outer-direction-specific (live navigation
+       through the proxy graph). */
+    std::shared_ptr<Object> materialiseLocalStandin(const Hash & idHash, const std::string & idStr, ResolutionContext & ctx);
+    std::shared_ptr<Object> chaseLocalArgSidecar(const std::string & idStr, const nlohmann::json & reqJson, ResolutionContext & ctx);
+    std::shared_ptr<Object> resolveApplyId(const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx);
+    std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx);
+
     template<typename Q>
     std::optional<std::pair<std::string, TriePosition>> lookup(const Q & query, std::shared_ptr<Object> currentProxy = nullptr);
 
