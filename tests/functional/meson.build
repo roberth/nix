@@ -171,6 +171,7 @@ suites = [
       'impure-derivations.sh',
       'tracing-eval-cache.sh',
       'builtins-cache.sh',
+      'cb-385.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',

@@ -6,9 +6,12 @@
 #include "nix/expr/trace-sink.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-environment.hh"
+#include "nix/expr/trace-file.hh"
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/expr/tracing-writer.hh"
+
+#include "nix/util/environment-variables.hh"
 
 namespace nix {
 
@@ -72,11 +75,25 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
         decisionGraph = cache.ownedDecisionGraph.get();
     }
 
-    // Per-call tracing infrastructure: NullTraceSink + TracingWriter →
+    // Per-call tracing infrastructure: TraceSink + TracingWriter →
     // decisionGraph. The writer records both queries/results and
     // environment responses (file reads, env lookups, ambient
     // interactions) into the graph for dependency tracking.
-    auto sink = std::make_shared<NullTraceSink>();
+    //
+    // When NIX_TRACE_CACHE_DIR is set, each prim_cache call also
+    // writes a JSON-line trace into that directory (a fresh file per
+    // call). Useful for debugging cache behaviour. Otherwise a
+    // NullTraceSink discards events at the sink level (the decision
+    // graph still records).
+    std::shared_ptr<TraceSink> sink;
+    if (auto traceDir = getEnv("NIX_TRACE_CACHE_DIR")) {
+        static std::atomic<int> seq{0};
+        auto fileName = fmt("cache-%d-%d.jsonl", getpid(), seq.fetch_add(1));
+        std::filesystem::create_directories(*traceDir);
+        sink = std::make_shared<TraceFile>(std::filesystem::path(*traceDir) / fileName);
+    } else {
+        sink = std::make_shared<NullTraceSink>();
+    }
     auto writer = std::make_shared<TracingWriter>(*sink, decisionGraph);
 
     // Wrap the *outer* environment, not a fresh SystemEnvironment, so
