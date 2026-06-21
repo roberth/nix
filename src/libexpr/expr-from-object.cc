@@ -29,10 +29,52 @@ namespace nix {
  *   The apply Request is also inserted into the pool so downstream
  *   `from=<apply_qH>` Facts can chase identity back.
  */
-struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
+/* Pure-storage registry mapping content-defined ambient ids to live
+   Objects. Two parallel maps: `outerValues` for outer-supplied values
+   the inner reads via AmbientObject, `localValues` for inner-supplied
+   values the outer reads via the covariant-callback bridge.
+   Last-write-wins on `registerOuterAt`: same-shape sibling navigation
+   produces the same `childId` and overwrites the prior entry. Benign
+   when shapes match (children produce same observations), but the root
+   of #63 when sibling APPLY ids collide downstream. The split off
+   AmbientResolver makes this collision domain explicit and isolated
+   from the query/apply orchestration. */
+struct AmbientRegistry
 {
     std::map<AmbientId, std::shared_ptr<Object>> outerValues;
     std::map<AmbientId, std::shared_ptr<Object>> localValues;
+
+    /** Register a local seed Object under a content-defined id. */
+    AmbientId registerLocalSeed(std::shared_ptr<Object> obj, AmbientId id)
+    {
+        localValues[id] = std::move(obj);
+        return id;
+    }
+
+    /** Register an outer value under an explicit id (used for
+        derived values, where the id is the producer query's
+        queryHash, and for apply results). Idempotent: if id is
+        already mapped, overwrites. */
+    void registerOuterAt(AmbientId id, std::shared_ptr<Object> obj)
+    {
+        outerValues[id] = std::move(obj);
+    }
+
+    std::shared_ptr<Object> resolve(AmbientId id)
+    {
+        auto it = outerValues.find(id);
+        if (it != outerValues.end())
+            return it->second;
+        auto lit = localValues.find(id);
+        if (lit != localValues.end())
+            return lit->second;
+        throw Error("ambient query: unknown value id %s", id.to_string(HashFormat::Base16, false));
+    }
+};
+
+struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
+{
+    AmbientRegistry registry;
     /* Bridged-thunk cache for cycle detection: when the cb body
        passes the same argObj multiple times, reuse the same thunk
        so the outer evaluator's cycle detection sees one Value.
@@ -57,46 +99,9 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
        ref) so AmbientResolver stays default-constructible. */
     std::shared_ptr<SourceRoot> outerRootFSRoot;
 
-    /** Register an outer seed Object under a content-defined id
-        (the seed cell's contentId at apply time — depth marker XOR
-        ancestor intrinsics). Per the Principles section, no
-        counter — depth distinguishes curried-apply seeds and
-        per-call resolvers isolate sibling cache invocations. */
-    AmbientId registerOuterSeed(std::shared_ptr<Object> obj, AmbientId id)
-    {
-        outerValues[id] = std::move(obj);
-        return id;
-    }
-
-    /** Register a local seed Object under a content-defined id. */
-    AmbientId registerLocalSeed(std::shared_ptr<Object> obj, AmbientId id)
-    {
-        localValues[id] = std::move(obj);
-        return id;
-    }
-
-    /** Register an outer value under an explicit id (used for
-        derived values, where the id is the producer query's
-        queryHash). Idempotent: if id is already mapped, overwrites. */
-    void registerOuterAt(AmbientId id, std::shared_ptr<Object> obj)
-    {
-        outerValues[id] = std::move(obj);
-    }
-
-    std::shared_ptr<Object> resolve(AmbientId id)
-    {
-        auto it = outerValues.find(id);
-        if (it != outerValues.end())
-            return it->second;
-        auto lit = localValues.find(id);
-        if (lit != localValues.end())
-            return lit->second;
-        throw Error("ambient query: unknown value id %s", id.to_string(HashFormat::Base16, false));
-    }
-
     AmbientQueryResult query(AmbientId objectId, const trace::QueryVariant & q)
     {
-        return queryOn(resolve(objectId), q);
+        return queryOn(registry.resolve(objectId), q);
     }
 
     /** Dispatch a query against the given outer Object directly,
@@ -125,7 +130,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
                             return {trace::ResultMaybeType{std::nullopt}, std::nullopt};
                         /* Derived child id is the producer query's queryHash. */
                         auto childId = TracingDecisionGraph::computeQueryHash(query);
-                        registerOuterAt(childId, child);
+                        registry.registerOuterAt(childId, child);
                         /* Buffer the child's settled identity for the
                            cascade in flushPendingAmbient: at recording
                            time `query.from` is the parent's placeholder
@@ -165,7 +170,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
                         auto child = obj->getListElem(query.index);
                         auto childId = TracingDecisionGraph::computeQueryHash(query);
-                        registerOuterAt(childId, child);
+                        registry.registerOuterAt(childId, child);
                         if (innerWriter && query.from.isContent()) {
                             nlohmann::json derivJson = query;
                             innerWriter->delayContentDefinedIdentity(
@@ -201,7 +206,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
     {
         if (!outerState)
             throw Error("ambient apply requires outerState");
-        auto fnObj = resolve(fnId);
+        auto fnObj = registry.resolve(fnId);
 
         /* Open a new intrinsic cell for the cb arg, rooted at the
            caller's effective scope (passed in by AmbientObject::queryApply,
@@ -211,7 +216,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
            caller-supplied scope. */
         auto localCell = ArgScopeCell::make(callerScope, argObj);
         auto argId = localCell->contentId();
-        registerLocalSeed(argObj, argId);
+        registry.registerLocalSeed(argObj, argId);
 
         /* Wrap the argObj in TracingLocalObject so the outer's
            accesses on it during the apply land in the inner trace
@@ -245,7 +250,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
         auto argIdStr = argId.to_string(HashFormat::Base16, false);
         trace::QueryApply applyQuery{fnIdStr, argIdStr};
         auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
-        registerOuterAt(resultId, std::move(resultObj));
+        registry.registerOuterAt(resultId, std::move(resultObj));
 
         /* Defer the QueryApply Request and the localArg sidecar to
            the writer's flush at logResult. Both payloads carry
