@@ -185,6 +185,7 @@ suites = [
       'cb-stats-pre-flush-collision.sh',
       'cb-stats-higher-order-baseline.sh',
       'cb-stats-derived-id-collision.sh',
+      'cb-stats-sidecar-baseline.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
