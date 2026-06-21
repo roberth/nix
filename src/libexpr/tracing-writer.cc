@@ -54,10 +54,16 @@ void TracingWriter::flushPendingAmbient()
     for (auto & dl : delayedContentDefinedIdentities)
         placeholderToIntrinsic.erase(dl.placeholderHex);
 
-    /* Substitution map starts with local-placeholder → intrinsic. */
-    std::map<std::string, std::string> sub;
+    /* Substitution map starts with: (a) local-placeholder → intrinsic
+       from this cycle, and (b) persistent old→new mappings carried
+       over from prior flush cycles (apply Q substitutions and chain
+       child mappings — see #49). Persistence is what lets a fact
+       referencing an apply_qH placeholder land at the substituted
+       hash even when the fact is logged in a later flush cycle than
+       the apply Q request itself. */
+    std::map<std::string, std::string> sub = persistentSubstitutions;
     for (auto & [placeholderHex, intrinsic] : placeholderToIntrinsic) {
-        sub.emplace(placeholderHex, intrinsic.to_string(HashFormat::Base16, false));
+        sub.insert_or_assign(placeholderHex, intrinsic.to_string(HashFormat::Base16, false));
     }
 
     /* Pass 1: process pending QueryApply Requests. Substituting the
@@ -74,9 +80,19 @@ void TracingWriter::flushPendingAmbient()
         substituteHexes(req.payload, sub);
         auto newHash = hashString(HashAlgorithm::SHA256, req.payload.dump());
         if (oldHash != newHash) {
-            sub.emplace(
-                oldHash.to_string(HashFormat::Base16, false),
-                newHash.to_string(HashFormat::Base16, false));
+            auto oldHex = oldHash.to_string(HashFormat::Base16, false);
+            auto newHex = newHash.to_string(HashFormat::Base16, false);
+            sub.emplace(oldHex, newHex);
+            /* Persist across flush cycles: a fact whose `from` is this
+               request's old hash may be deferred to a later cycle (e.g.,
+               an observation on an apply result that's logged after the
+               apply Q is flushed). Without persistence the later cycle's
+               sub starts empty for this mapping, leaves the fact's
+               `from` unsubstituted, and replay's resolveAmbientId can't
+               find the producer in the pool — falling back to a frozen
+               ReplayLocalObject that serves stale recorded responses
+               (#49). */
+            persistentSubstitutions.insert_or_assign(oldHex, newHex);
         }
         decisionGraph->insertRequest(newHash, jsonToCborString(req.payload));
     }
@@ -144,9 +160,12 @@ void TracingWriter::flushPendingAmbient()
            agnostic of the QueryVariant alternatives. */
         auto queryHash = hashString(HashAlgorithm::SHA256, queryJson.dump());
         if (oldQueryHash != queryHash) {
-            sub.emplace(
-                oldQueryHash.to_string(HashFormat::Base16, false),
-                queryHash.to_string(HashFormat::Base16, false));
+            auto oldHex = oldQueryHash.to_string(HashFormat::Base16, false);
+            auto newHex = queryHash.to_string(HashFormat::Base16, false);
+            sub.emplace(oldHex, newHex);
+            /* Same reason as Pass 1: a downstream fact whose `from` is
+               this fact's old query hash may flush later. */
+            persistentSubstitutions.insert_or_assign(oldHex, newHex);
         }
         auto responsePayload = jsonToCborString(resultJson);
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);

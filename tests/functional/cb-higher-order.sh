@@ -37,11 +37,18 @@ result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { impor
 echo "Got: $result"
 [[ "$result" == 6 ]]
 
-# TODO: outer-fn-change invalidation for higher-order callbacks is a
-# separate known issue (see follow-up task). When outer's `f` body
-# changes from `g: g 5` to `g: g 10`, the walker hits the recorded
-# Terminal at empty factSet and returns the stale 6 instead of live
-# 11. Re-enable when fixed.
-#   echo "=== outer change f to apply 10 (expect 11) ==="
-#   result=$(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/higher-order.nix; }) { f = g: g 10; }')
-#   [[ "$result" == 11 ]]
+# Outer-fn change: f now applies the inner lambda to 10 instead of 5.
+# The recorded apply-result observation (= 6 for (x:x+1) 5) differs
+# from the live observation (= 11 for (x:x+1) 10). Live dispatch through
+# the standin must observe this divergence and invalidate.
+echo "=== outer change f to apply 10 (expect 11) ==="
+result=$(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/higher-order.nix; }) { f = g: g 10; }')
+echo "Got: $result"
+[[ "$result" == 11 ]]
+
+# Restore: with the original outer f, replay must hit the recorded
+# trace and return 6.
+echo "=== restore (expect 6) ==="
+result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/higher-order.nix; }) { f = g: g 5; }')
+echo "Got: $result"
+[[ "$result" == 6 ]]

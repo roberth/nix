@@ -102,6 +102,16 @@ class TracingWriter
        Populated by TracingLocalObject as observations land. */
     std::map<std::string, Hash> placeholderToIntrinsic;
 
+    /* old→new hex substitutions discovered in prior flush cycles. A
+       fact whose `from` is the old hash of an apply Q (or an Ambient
+       chain child) may be deferred to a flush cycle after the one that
+       inserted the Q into the pool at its new hash. Without
+       persistence the later flush starts with an empty sub map and
+       leaves the fact's `from` unsubstituted, so replay's
+       resolveAmbientId can't find the producer in the pool and falls
+       back to a frozen ReplayLocalObject standin (#49 root cause). */
+    std::map<std::string, std::string> persistentSubstitutions;
+
     /* Phase 4 cascade: content-defined identities whose final hash
        can't be settled at observation time because their parent's
        identity is itself still a placeholder. The producer query
