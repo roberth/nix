@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Stress test for the persistent-substitution fix (#49): nested
+# Stress test for the pre-flush-substitution fix (#49): nested
 # higher-order callbacks where the cached body constructs a function
 # that itself receives an inner-constructed function.
 #

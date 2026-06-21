@@ -42,18 +42,18 @@ static void substituteHexes(nlohmann::json & j, const std::map<std::string, std:
    _NIX_TRACING_CACHE_LOGGING=1) rather than thrown, because some
    existing test scenarios depend on the silent overwrite. Once #63 is
    fixed this should escalate to an exception. */
-void TracingWriter::recordPersistentSubstitution(
+void TracingWriter::recordPreFlushSubstitution(
     const std::string & oldHex, const std::string & newHex, const char * passLabel)
 {
-    auto it = persistentSubstitutions.find(oldHex);
-    if (it != persistentSubstitutions.end() && it->second != newHex) {
-        tracingCacheStats().persistentSubstitutionCollisions++;
+    auto it = preFlushSubstitutions.find(oldHex);
+    if (it != preFlushSubstitutions.end() && it->second != newHex) {
+        tracingCacheStats().preFlushSubstitutionCollisions++;
         tracingCacheLog(
-            "TracingWriter::%s: persistent-substitution collision: "
+            "TracingWriter::%s: pre-flush-substitution collision: "
             "%s already mapped to %s, overwriting with %s (#63)",
             passLabel, oldHex, it->second, newHex);
     }
-    persistentSubstitutions.insert_or_assign(oldHex, newHex);
+    preFlushSubstitutions.insert_or_assign(oldHex, newHex);
 }
 
 void TracingWriter::flushPendingAmbient()
@@ -91,7 +91,7 @@ void TracingWriter::flushPendingAmbient()
        referencing an apply_qH placeholder land at the substituted
        hash even when the fact is logged in a later flush cycle than
        the apply Q request itself. */
-    std::map<std::string, std::string> sub = persistentSubstitutions;
+    std::map<std::string, std::string> sub = preFlushSubstitutions;
     for (auto & [placeholderHex, intrinsic] : placeholderToIntrinsic) {
         sub.insert_or_assign(placeholderHex, intrinsic.to_string(HashFormat::Base16, false));
     }
@@ -122,7 +122,7 @@ void TracingWriter::flushPendingAmbient()
                find the producer in the pool — falling back to a frozen
                ReplayLocalObject that serves stale recorded responses
                (#49). */
-            recordPersistentSubstitution(oldHex, newHex, "Pass1");
+            recordPreFlushSubstitution(oldHex, newHex, "Pass1");
         }
         decisionGraph->insertRequest(newHash, jsonToCborString(req.payload));
     }
@@ -195,7 +195,7 @@ void TracingWriter::flushPendingAmbient()
             sub.emplace(oldHex, newHex);
             /* Same reason as Pass 1: a downstream fact whose `from` is
                this fact's old query hash may flush later. */
-            recordPersistentSubstitution(oldHex, newHex, "Pass3");
+            recordPreFlushSubstitution(oldHex, newHex, "Pass3");
         }
         auto responsePayload = jsonToCborString(resultJson);
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);

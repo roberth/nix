@@ -28,11 +28,11 @@ struct TracingCacheStats
     std::uint64_t hits = 0;
     std::uint64_t misses = 0;
     std::uint64_t fallbacks = 0;
-    /* persistentSubstitutions[oldHex] was overwritten with a different
+    /* preFlushSubstitutions[oldHex] was overwritten with a different
        newHex. Indicates two distinct logical placeholders collided on
-       the same oldHex — see TracingWriter::recordPersistentSubstitution
+       the same oldHex — see TracingWriter::recordPreFlushSubstitution
        and task #63. */
-    std::uint64_t persistentSubstitutionCollisions = 0;
+    std::uint64_t preFlushSubstitutionCollisions = 0;
 };
 
 /** Singleton accessor. Counters are zero-initialised on first call. */

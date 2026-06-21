@@ -37,7 +37,7 @@ void armTracingCacheStatsExitWriter()
             {"hits", s.hits},
             {"misses", s.misses},
             {"fallbacks", s.fallbacks},
-            {"persistent_substitution_collisions", s.persistentSubstitutionCollisions},
+            {"pre_flush_substitution_collisions", s.preFlushSubstitutionCollisions},
         };
         std::ofstream out(statsPath);
         if (out)

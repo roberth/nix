@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# CDI #8: persistentSubstitutions overwrite invariant.
+# CDI #8: preFlushSubstitutions overwrite invariant.
 #
 # Two sibling cb invocations in one process whose deferred apply Qs
 # share an oldHash (because args' initial CDI is the same empty-cell
@@ -33,19 +33,19 @@ echo '{ f, x }: f x' > "$TEST_ROOT/call-fn.nix"
 # in the same process by an earlier flush cycle (likely a walker
 # dispatch that itself invoked queryApply).
 echo "=== priming: invocation 1 records (no collision) ==="
-collisions=$(cacheStatsField persistent_substitution_collisions -- \
+collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
     nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 10; }')
 [[ "$collisions" == 0 ]]
 
 echo "=== priming: invocation 2 records different f (no collision) ==="
-collisions=$(cacheStatsField persistent_substitution_collisions -- \
+collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
     nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 100; x = 10; }')
 [[ "$collisions" == 0 ]]
 
 echo "=== invocation 3 with new x — collision counter must be > 0 ==="
-collisions=$(cacheStatsField persistent_substitution_collisions -- \
+collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
     nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 50; }')
 echo "Collisions: $collisions"

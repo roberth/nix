@@ -110,7 +110,7 @@ class TracingWriter
        leaves the fact's `from` unsubstituted, so replay's
        resolveAmbientId can't find the producer in the pool and falls
        back to a frozen ReplayLocalObject standin (#49 root cause). */
-    std::map<std::string, std::string> persistentSubstitutions;
+    std::map<std::string, std::string> preFlushSubstitutions;
 
     /* Phase 4 cascade: content-defined identities whose final hash
        can't be settled at observation time because their parent's
@@ -326,7 +326,7 @@ public:
      * `oldHex` is already mapped to a different value. Internal to
      * flushPendingAmbient.
      */
-    void recordPersistentSubstitution(
+    void recordPreFlushSubstitution(
         const std::string & oldHex, const std::string & newHex, const char * passLabel);
 
     /**

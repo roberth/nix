@@ -182,7 +182,7 @@ suites = [
       'cb-same-shape-collapse.sh',
       'cb-same-shape-distinguish.sh',
       'cb-stats-nested-baseline.sh',
-      'cb-stats-persistent-collision.sh',
+      'cb-stats-pre-flush-collision.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',

@@ -279,7 +279,7 @@ assertCacheStats() {
 
 # Read a single field from a freshly-written stats sidecar. Use when
 # you want to assert on something other than the (hits, misses,
-# fallbacks) tuple — e.g. persistent_substitution_collisions for #59.
+# fallbacks) tuple — e.g. pre_flush_substitution_collisions for #59.
 #
 # Usage: cacheStatsField <field> -- <cmd...>
 cacheStatsField() {
