@@ -49,19 +49,8 @@ struct ArgScopeCell : std::enable_shared_from_this<ArgScopeCell>
         apply time, before any observation has happened).
         `mutable` so absorb() can run through a shared_ptr<const
         ArgScopeCell> — only `intrinsic` evolves; depth, parent,
-        liveObject, frozenCdi are fixed at construction. */
+        liveObject are fixed at construction. */
     mutable Hash intrinsic;
-
-    /** Snapshot of `contentId()` at construction time. By design,
-        the seed proxy attached as `liveObject` has its cdi set to
-        this same value: `seedProxy.cdi == cell.frozenCdi`. Held on
-        the cell because the cell is the natural home for the
-        scope's frozen identity — the proxy carries a copy today
-        for convenience, but the authority lives here. Stays fixed
-        even as `intrinsic` absorbs and `contentId()` evolves; the
-        walker uses this for cell-chain matching so the matching
-        doesn't need to go through the proxy's virtual getCdiHex(). */
-    Hash frozenCdi;
 
     /** Next-outer cell. Null at the root (the cache call's
         argument). State creep folds parent cells' intrinsics into
@@ -82,7 +71,6 @@ struct ArgScopeCell : std::enable_shared_from_this<ArgScopeCell>
 
     ArgScopeCell()
         : intrinsic(TracingDecisionGraph::emptySetHash())
-        , frozenCdi(TracingDecisionGraph::emptySetHash())
     {
     }
 
@@ -98,13 +86,6 @@ struct ArgScopeCell : std::enable_shared_from_this<ArgScopeCell>
         auto cell = std::make_shared<ArgScopeCell>();
         cell->parent = parent_;
         cell->depth = parent_ ? parent_->depth + 1 : 0;
-        /* Snapshot contentId() now, before any absorb can run. The
-           snapshot captures depth + ancestor intrinsics XOR-folded
-           with the empty-set hash. By design seed proxies attached as
-           liveObject get this same hash as their cdi — the
-           construction dance in makeCachedFnPrimOp.impl wires it that
-           way explicitly. */
-        cell->frozenCdi = cell->contentId();
         if (liveObject_)
             cell->liveObject = std::move(liveObject_);
         return cell;
