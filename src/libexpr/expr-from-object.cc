@@ -72,37 +72,16 @@ struct AmbientRegistry
     }
 };
 
-struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
+/* Pure-dispatch wrapper around an Object's query interface. Knows how
+   to invoke the right Object method for each QueryVariant alternative,
+   how to derive a child's content-defined id from a producer query's
+   payload, and how to register the derived child / delay its settled
+   identity into the writer. Stateless apart from the references it
+   holds. Constructed on demand from AmbientResolver members. */
+struct AmbientQuery
 {
-    AmbientRegistry registry;
-    /* Bridged-thunk cache for cycle detection: when the cb body
-       passes the same argObj multiple times, reuse the same thunk
-       so the outer evaluator's cycle detection sees one Value.
-       Key by argObj identity (Object pointer) — keying by argId
-       (the local intrinsic) is wrong because two distinct argObjs
-       can share the same argId (e.g. a frozen ReplayLocalObject
-       constructed by the walker's apply branch and a live
-       InterpreterObject constructed by inner's fall-back rerun
-       both use depth-marker as argId). */
-    std::map<Object *, Value *> bridgedLocals;
-    EvalState * outerState = nullptr;
-    std::shared_ptr<Evaluator> innerEvaluator;
-    /* Writer for the inner trace. When set, the resolver wraps
-       covariant-callback args in TracingLocalObject so the outer's
-       accesses on them land in the inner's factSet as Facts whose
-       response payloads can be replayed back from the Responses
-       pool. Null when no inner writer is plumbed in — the wrap is
-       skipped and replay can't hit on the apply. */
-    TracingWriter * innerWriter = nullptr;
-    /* SourceRoot for TracingLocalObject's getPath. Reused from the
-       outer EvalState's rootFSRoot. Held as shared_ptr (rather than
-       ref) so AmbientResolver stays default-constructible. */
-    std::shared_ptr<SourceRoot> outerRootFSRoot;
-
-    AmbientQueryResult query(AmbientId objectId, const trace::QueryVariant & q)
-    {
-        return queryOn(registry.resolve(objectId), q);
-    }
+    AmbientRegistry & registry;
+    TracingWriter * innerWriter;
 
     /** Dispatch a query against the given outer Object directly,
         bypassing the resolver's id → Object lookup. Boundary-trace-
@@ -110,7 +89,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
         captures its own outer arg and calls this directly for seed
         observations, so sibling cb invocations don't collide on the
         shared `outerValues` map. */
-    AmbientQueryResult queryOn(std::shared_ptr<Object> obj, const trace::QueryVariant & q)
+    AmbientQueryResult on(std::shared_ptr<Object> obj, const trace::QueryVariant & q) const
     {
         return std::visit(
             [&](const auto & query) -> AmbientQueryResult {
@@ -192,6 +171,44 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
                 }
             },
             q);
+    }
+};
+
+struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
+{
+    AmbientRegistry registry;
+    /* Bridged-thunk cache for cycle detection: when the cb body
+       passes the same argObj multiple times, reuse the same thunk
+       so the outer evaluator's cycle detection sees one Value.
+       Key by argObj identity (Object pointer) — keying by argId
+       (the local intrinsic) is wrong because two distinct argObjs
+       can share the same argId (e.g. a frozen ReplayLocalObject
+       constructed by the walker's apply branch and a live
+       InterpreterObject constructed by inner's fall-back rerun
+       both use depth-marker as argId). */
+    std::map<Object *, Value *> bridgedLocals;
+    EvalState * outerState = nullptr;
+    std::shared_ptr<Evaluator> innerEvaluator;
+    /* Writer for the inner trace. When set, the resolver wraps
+       covariant-callback args in TracingLocalObject so the outer's
+       accesses on them land in the inner's factSet as Facts whose
+       response payloads can be replayed back from the Responses
+       pool. Null when no inner writer is plumbed in — the wrap is
+       skipped and replay can't hit on the apply. */
+    TracingWriter * innerWriter = nullptr;
+    /* SourceRoot for TracingLocalObject's getPath. Reused from the
+       outer EvalState's rootFSRoot. Held as shared_ptr (rather than
+       ref) so AmbientResolver stays default-constructible. */
+    std::shared_ptr<SourceRoot> outerRootFSRoot;
+
+    AmbientQueryResult query(AmbientId objectId, const trace::QueryVariant & q)
+    {
+        return queryOn(registry.resolve(objectId), q);
+    }
+
+    AmbientQueryResult queryOn(std::shared_ptr<Object> obj, const trace::QueryVariant & q)
+    {
+        return AmbientQuery{registry, innerWriter}.on(std::move(obj), q);
     }
 
     /** Apply an outer fn (resolved from fnId) to a local argObj.
