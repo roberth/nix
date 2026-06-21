@@ -180,6 +180,7 @@ suites = [
       'cb-higher-order-nested.sh',
       'cb-stats-sanity.sh',
       'cb-same-shape-collapse.sh',
+      'cb-same-shape-distinguish.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
