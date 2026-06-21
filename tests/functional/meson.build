@@ -172,6 +172,7 @@ suites = [
       'tracing-eval-cache.sh',
       'builtins-cache.sh',
       'cb-385.sh',
+      'cb-apply-cli.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',

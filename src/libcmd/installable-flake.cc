@@ -193,7 +193,16 @@ std::pair<Value *, PosIdx> InstallableFlake::toValueCached(EvalState & state)
                 showAttrPaths(attrPaths));
         auto [attr, attrPath] = *attrResult;
         auto * v = state.allocValue();
-        auto * expr = new ExprFromObject(attr, evaluator.get_ptr(), nullptr);
+        /* A function-typed `attr` would route ExprFromObject's nFunction
+           branch through makeCachedFnPrimOp because innerEvaluator is
+           set; that PrimOp's queryFn dereferences ambientResolver, so
+           passing null here crashes when --apply (or any caller) applies
+           the function. Construct a no-op resolver here — there's no
+           inner cache writer/state at this flake-installable boundary,
+           but the resolver still needs to exist for the queryFn to
+           route ambient queries against the (non-cached) outer arg. */
+        auto resolver = makeAmbientResolver(&state, evaluator, nullptr);
+        auto * expr = new ExprFromObject(attr, evaluator.get_ptr(), resolver);
         state.mkThunk_(*v, expr);
         return {v, attr->getPos()};
     }

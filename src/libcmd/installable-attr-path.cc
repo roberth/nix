@@ -65,7 +65,12 @@ std::pair<Value *, PosIdx> InstallableAttrPath::toValueCached(EvalState & state)
     // Bridge via ExprFromObject — creates a lazy thunk that evaluates
     // through the Object interface, preserving cache replay.
     auto * v = state.allocValue();
-    auto * expr = new ExprFromObject(obj, evaluator.get_ptr(), nullptr);
+    /* See installable-flake.cc for the matching note: a null resolver
+       crashes makeCachedFnPrimOp's queryFn if the result is a function
+       and gets applied (e.g. via --apply or curried use). Pass a no-op
+       resolver to route ambient queries against the outer arg. */
+    auto resolver = makeAmbientResolver(&state, evaluator, nullptr);
+    auto * expr = new ExprFromObject(obj, evaluator.get_ptr(), resolver);
     state.mkThunk_(*v, expr);
     return {v, obj->getPos()};
 }
