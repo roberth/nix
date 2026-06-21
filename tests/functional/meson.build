@@ -173,6 +173,7 @@ suites = [
       'builtins-cache.sh',
       'cb-385.sh',
       'cb-apply-cli.sh',
+      'cb-higher-order.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
