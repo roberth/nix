@@ -178,6 +178,7 @@ suites = [
       'cb-cli-arg-types.sh',
       'cb-local-descendants.sh',
       'cb-higher-order-nested.sh',
+      'cb-stats-sanity.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',

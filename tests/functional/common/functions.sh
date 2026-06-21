@@ -237,6 +237,46 @@ enableFeatures() {
     sed -i 's/experimental-features .*/& '"$features"'/' "${test_nix_conf?}"
 }
 
+# Run `cmd` with NIX_CACHE_STATS_FILE pointing at a tmp sidecar, then
+# assert exact (hits, misses, fallbacks) tuple. Aborts with a diff-style
+# message if any count diverges. Use for CDI-layer assertions where
+# final-output comparison isn't sensitive enough (silent hit-rate drops,
+# spurious shape collapses, etc.).
+#
+# Usage: assertCacheStats <hits> <misses> <fallbacks> -- <cmd...>
+#
+# The `--` is mandatory and separates the expected counts from the
+# command so quoted args round-trip cleanly.
+assertCacheStats() {
+    local expected_hits=$1
+    local expected_misses=$2
+    local expected_fallbacks=$3
+    shift 3
+    [[ "$1" == "--" ]] || { echo "assertCacheStats: expected '--' separator" >&2; return 1; }
+    shift
+    local statsFile
+    statsFile=$(mktemp)
+    NIX_CACHE_STATS_FILE="$statsFile" "$@"
+    local rc=$?
+    if [[ $rc -ne 0 ]]; then
+        echo "assertCacheStats: command failed (rc=$rc): $*" >&2
+        rm -f "$statsFile"
+        return $rc
+    fi
+    local hits misses fallbacks
+    hits=$(jq -r '.hits' < "$statsFile")
+    misses=$(jq -r '.misses' < "$statsFile")
+    fallbacks=$(jq -r '.fallbacks' < "$statsFile")
+    rm -f "$statsFile"
+    if [[ "$hits" != "$expected_hits" || "$misses" != "$expected_misses" || "$fallbacks" != "$expected_fallbacks" ]]; then
+        echo "assertCacheStats: counts differ for: $*" >&2
+        printf '  expected: hits=%s misses=%s fallbacks=%s\n  actual:   hits=%s misses=%s fallbacks=%s\n' \
+            "$expected_hits" "$expected_misses" "$expected_fallbacks" \
+            "$hits" "$misses" "$fallbacks" >&2
+        return 1
+    fi
+}
+
 onError() {
     set +x
     echo "$0: test failed at:" >&2
