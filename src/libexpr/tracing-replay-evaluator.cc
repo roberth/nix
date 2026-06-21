@@ -3,6 +3,7 @@
 #include "nix/expr/arg-scope.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/replay-local-object.hh"
+#include "nix/expr/tracing-local-object.hh"
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-decision-graph.hh"
@@ -105,9 +106,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             if (auto term = decisionGraph.getTerminal(queryHash, candidateCur)) {
                 auto payload = decisionGraph.getResultPayload(*term);
                 if (payload) {
-                    /* Commit the side effects: the delta-add requests
-                       are now part of our cumulative dispatched set;
-                       cur has moved to candidateCur. */
                     for (const auto & req : onlyInEdge)
                         dispatchedTrie.insert(req);
                     lastQFactsHash = candidateCur;
@@ -481,6 +479,8 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
             return ro->getTriePos().queryHashStr;
         if (auto * ao = dynamic_cast<AmbientObject *>(&obj))
             return ao->getId().to_string(HashFormat::Base16, false);
+        if (auto * tlo = dynamic_cast<TracingLocalObject *>(&obj))
+            return tlo->getId().to_string(HashFormat::Base16, false);
         throw Error(
             "TracingReplayEvaluator::apply: fn/arg lacks a content-defined "
             "identity (type %s). Wrap it as a cache-boundary proxy at its "

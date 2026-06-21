@@ -1,6 +1,7 @@
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/ambient-object.hh"
 #include "nix/expr/tracing-decision-graph.hh"
+#include "nix/expr/tracing-local-object.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-source-accessor.hh"
@@ -248,6 +249,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
             return ro->getTriePos().queryHashStr;
         if (auto * ao = dynamic_cast<AmbientObject *>(&obj))
             return ao->getId().to_string(HashFormat::Base16, false);
+        if (auto * tlo = dynamic_cast<TracingLocalObject *>(&obj))
+            return tlo->getId().to_string(HashFormat::Base16, false);
         throw Error(
             "TracingEvaluator::apply: fn/arg lacks a content-defined "
             "identity (type %s). Wrap it as a cache-boundary proxy at its "

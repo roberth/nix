@@ -33,7 +33,16 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
 {
     std::map<AmbientId, std::shared_ptr<Object>> outerValues;
     std::map<AmbientId, std::shared_ptr<Object>> localValues;
-    std::map<AmbientId, Value *> bridgedLocals;
+    /* Bridged-thunk cache for cycle detection: when the cb body
+       passes the same argObj multiple times, reuse the same thunk
+       so the outer evaluator's cycle detection sees one Value.
+       Key by argObj identity (Object pointer) — keying by argId
+       (the local intrinsic) is wrong because two distinct argObjs
+       can share the same argId (e.g. a frozen ReplayLocalObject
+       constructed by the walker's apply branch and a live
+       InterpreterObject constructed by inner's fall-back rerun
+       both use depth-marker as argId). */
+    std::map<Object *, Value *> bridgedLocals;
     EvalState * outerState = nullptr;
     std::shared_ptr<Evaluator> innerEvaluator;
     /* Writer for the inner trace. When set, the resolver wraps
@@ -203,8 +212,11 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
                   argObj, argId, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell))
             : argObj;
 
-        /* Bridge local arg via ExprFromObject with the inner evaluator */
-        auto & argThunk = bridgedLocals[argId];
+        /* Bridge local arg via ExprFromObject. Memoise by the
+           argObj's identity (not argId) so cycle detection sees
+           one thunk for the same Value but distinct argObjs with
+           coincidentally same argId get distinct thunks. */
+        auto & argThunk = bridgedLocals[argObj.get()];
         if (!argThunk) {
             argThunk = outerState->allocValue();
             auto * argExpr = new ExprFromObject(wrappedArg, innerEvaluator, shared_from_this());
