@@ -208,6 +208,16 @@ tracing records all the facts about ambient interactions so that
 small but load-bearing piece of how those facts are addressed — not
 where the "decide what to invalidate" decisions are made.
 
+That said, the two layers share one failure mode: an unrecorded
+observation is equally catastrophic in either. Input tracing that
+silently skips a file read produces stale hits because the
+invalidation chain has no edge for the missing dependency; a CDI
+that silently skips an observation through the value collapses two
+values that should be distinct, producing the same kind of stale hit
+via misaddressing. Both layers depend on the recording side
+faithfully emitting *every* observation made through them, and a
+hole on one side is no less serious than a hole on the other.
+
 ### Boundary-trace-only discipline as a corollary
 
 Because CDIs are purely observation-derived and walker dispatch
