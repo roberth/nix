@@ -29,27 +29,20 @@ namespace nix {
  *   The apply Request is also inserted into the pool so downstream
  *   `from=<apply_qH>` Facts can chase identity back.
  */
-/* Pure-storage registry mapping content-defined ambient ids to live
-   Objects. Two parallel maps: `outerValues` for outer-supplied values
-   the inner reads via AmbientObject, `localValues` for inner-supplied
-   values the outer reads via the covariant-callback bridge.
+/* Pure-storage registry mapping content-defined ids to live outer
+   Objects (values the inner reads through AmbientObject). The Local
+   direction (inner values the outer reads via callback) doesn't go
+   through this registry at all on replay — those are served by
+   ReplayLocalObject standins from the Responses pool. Local
+   registration on the recording side was previously here as a write-
+   only map; dropped because nothing read it back.
    Last-write-wins on `registerOuterAt`: same-shape sibling navigation
    produces the same `childId` and overwrites the prior entry. Benign
-   when shapes match (children produce same observations), but the root
-   of #63 when sibling APPLY ids collide downstream. The split off
-   AmbientResolver makes this collision domain explicit and isolated
-   from the query/apply orchestration. */
+   when shapes match (children produce same observations), but the
+   root of #63 when sibling APPLY ids collide downstream. */
 struct AmbientRegistry
 {
     std::map<AmbientId, std::shared_ptr<Object>> outerValues;
-    std::map<AmbientId, std::shared_ptr<Object>> localValues;
-
-    /** Register a local seed Object under a content-defined id. */
-    AmbientId registerLocalSeed(std::shared_ptr<Object> obj, AmbientId id)
-    {
-        localValues[id] = std::move(obj);
-        return id;
-    }
 
     /** Register an outer value under an explicit id (used for
         derived values, where the id is the producer query's
@@ -60,14 +53,11 @@ struct AmbientRegistry
         outerValues[id] = std::move(obj);
     }
 
-    std::shared_ptr<Object> resolve(AmbientId id)
+    std::shared_ptr<Object> resolveOuter(AmbientId id)
     {
         auto it = outerValues.find(id);
         if (it != outerValues.end())
             return it->second;
-        auto lit = localValues.find(id);
-        if (lit != localValues.end())
-            return lit->second;
         throw Error("ambient query: unknown value id %s", id.to_string(HashFormat::Base16, false));
     }
 };
@@ -241,7 +231,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
 
     AmbientQueryResult query(AmbientId objectId, const trace::QueryVariant & q)
     {
-        return queryOn(registry.resolve(objectId), q);
+        return queryOn(registry.resolveOuter(objectId), q);
     }
 
     AmbientQueryResult queryOn(std::shared_ptr<Object> obj, const trace::QueryVariant & q)
@@ -271,7 +261,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
 {
     if (!outerState)
         throw Error("ambient apply requires outerState");
-    auto fnObj = registry.resolve(fnId);
+    auto fnObj = registry.resolveOuter(fnId);
 
     /* Open a new intrinsic cell for the cb arg, rooted at the
        caller's effective scope (passed in by AmbientObject::queryApply,
@@ -281,7 +271,6 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
        caller-supplied scope. */
     auto localCell = ArgScopeCell::make(callerScope, argObj);
     auto argId = localCell->contentId();
-    registry.registerLocalSeed(argObj, argId);
 
     /* Wrap the argObj in TracingLocalObject so the outer's
        accesses on it during the apply land in the inner trace
