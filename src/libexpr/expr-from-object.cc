@@ -174,6 +174,29 @@ struct AmbientQuery
     }
 };
 
+/* Memoised Object* → Value* cache for bridged argThunks. Lives long
+   enough to span multiple apply calls within one cb body — when the
+   inner passes the same argObj to the outer multiple times, the
+   outer's cycle detection must see ONE Value, not many. Keyed by
+   Object* identity (NOT argId): two distinct argObjs can share the
+   same argId hash (e.g. a frozen ReplayLocalObject built by the
+   walker's apply branch and a live InterpreterObject from a fall-back
+   inner rerun both seed at depth-marker), and they correctly resolve
+   to distinct thunks here. */
+struct BridgedThunkCache
+{
+    std::map<Object *, Value *> thunks;
+
+    template<typename Factory>
+    Value * getOrCreate(Object * key, Factory && factory)
+    {
+        auto & v = thunks[key];
+        if (!v)
+            v = factory();
+        return v;
+    }
+};
+
 /* Orchestrates a covariant-callback apply: resolves the outer fn from
    the registry, opens a cell for the inner-supplied arg, wraps the arg
    in TracingLocalObject so outer accesses on it land in the inner
@@ -187,7 +210,7 @@ struct AmbientQuery
 struct AmbientApply
 {
     AmbientRegistry & registry;
-    std::map<Object *, Value *> & bridgedLocals;
+    BridgedThunkCache & bridgedLocals;
     EvalState * outerState;
     std::shared_ptr<Evaluator> innerEvaluator;
     TracingWriter * innerWriter;
@@ -201,16 +224,7 @@ struct AmbientApply
 struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
 {
     AmbientRegistry registry;
-    /* Bridged-thunk cache for cycle detection: when the cb body
-       passes the same argObj multiple times, reuse the same thunk
-       so the outer evaluator's cycle detection sees one Value.
-       Key by argObj identity (Object pointer) — keying by argId
-       (the local intrinsic) is wrong because two distinct argObjs
-       can share the same argId (e.g. a frozen ReplayLocalObject
-       constructed by the walker's apply branch and a live
-       InterpreterObject constructed by inner's fall-back rerun
-       both use depth-marker as argId). */
-    std::map<Object *, Value *> bridgedLocals;
+    BridgedThunkCache bridgedLocals;
     EvalState * outerState = nullptr;
     std::shared_ptr<Evaluator> innerEvaluator;
     /* Writer for the inner trace. When set, the resolver wraps
@@ -279,16 +293,15 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
               argObj, argId, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell))
         : argObj;
 
-    /* Bridge local arg via ExprFromObject. Memoise by the
-       argObj's identity (not argId) so cycle detection sees
-       one thunk for the same Value but distinct argObjs with
-       coincidentally same argId get distinct thunks. */
-    auto & argThunk = bridgedLocals[argObj.get()];
-    if (!argThunk) {
-        argThunk = outerState->allocValue();
-        auto * argExpr = new ExprFromObject(wrappedArg, innerEvaluator, resolverHandle);
-        outerState->mkThunk_(*argThunk, argExpr);
-    }
+    /* Bridge local arg via ExprFromObject. The cache memoises by
+       argObj identity so cycle detection sees one Value per logical
+       arg (see BridgedThunkCache for why pointer-identity, not argId). */
+    auto * argThunk = bridgedLocals.getOrCreate(argObj.get(), [&]() {
+        auto * v = outerState->allocValue();
+        auto * expr = new ExprFromObject(wrappedArg, innerEvaluator, resolverHandle);
+        outerState->mkThunk_(*v, expr);
+        return v;
+    });
 
     /* Build the outer mkApp thunk. */
     auto fnVal = fnObj->defeatCache();
