@@ -148,6 +148,86 @@ Two consequences fall out:
   callbacks that happen to receive the same arg shape share a
   cache entry; this is a feature, not a collision.
 
+## Layering: identity rides on input tracing
+
+The cache has two distinct layers and they should not be conflated.
+
+**Input tracing** is the foundation: file reads, env-var reads, and
+any deterministic input the inner evaluator consults during a cache
+call. The existing v13 trie machinery — Requests, Responses, Asks
+edges, Terminals, RequestSet pool — handles these end-to-end. Each
+observation is a `(Request, Response)` fact, the writer accumulates
+them in a `factSet`, the walker dispatches recorded requests against
+the current environment, and discrepancies surface as factSet-hash
+divergence that prevents the walker from reaching a recorded
+Terminal. Invalidation lives entirely at this layer: change a file's
+contents and the file_hash dispatch mismatches, walker bails, the
+recording reruns. The chaining of `TracingEnvironment` through
+nested `builtins.cache` calls means a nested cache's file reads
+propagate as facts to its enclosing cache's `factSet`, so a change
+inside an inner cache invalidates the outer cache transitively
+without any special bookkeeping.
+
+**Interaction tracing** layers on top with two new Request/Response
+variants (`AmbientQuery`, `AmbientResponse`). They are just more
+facts in the same `factSet`, persisted to the same Requests pool,
+walked by the same algorithm. What the walker does for them is
+different (`dispatchAmbientQuery` parses a Query path and walks it
+live, instead of `getFileHash`) but the trie semantics are
+unchanged. There is no parallel state machine for the ambient layer;
+every querying and writing it does is mediated by the input-tracing
+machinery.
+
+**Content-defined identity is a naming scheme**, not a layer of its
+own. CDIs appear as content-hash values in the `from` / `fn` / `arg`
+fields of Query payloads — they label the value an observation is
+about. The "collapse" property (the Core principle section's
+extensionality argument) makes them robust naming: identical
+observation histories produce identical labels, so the cache
+addresses values structurally without counters. But invalidation
+does not flow through CDIs. A CDI changing does not "invalidate"
+anything; what it does is route a recorded fact to a different trie
+position. Whether that position is reachable from the current
+walker's state is decided by ordinary input-tracing semantics —
+walker dispatches facts live, folds responses into `cur`, looks up
+Terminals at `(Q, cur)`, bails if it can't reach one.
+
+Concretely: introducing input-tracing state (file hashes, env reads,
+…) into a CDI's computation would defeat the collapse property —
+the same logical value would get distinct CDIs in two recordings
+that happened to see different ambient state, and unrelated
+callbacks would no longer share a cache entry just because they
+were observed identically. The CDI computation must stay restricted
+to observations made *through* the value it labels.
+
+The asymmetry that follows: the ambient evaluator is effectively
+part of the inner's `Environment`, but the inner's `Environment` is
+independent of the inner evaluator's interpretation state. Input
+tracing records all the facts about ambient interactions so that
+*it* can invalidate or resume correctly at *its* level. CDIs are a
+small but load-bearing piece of how those facts are addressed — not
+where the "decide what to invalidate" decisions are made.
+
+### Boundary-trace-only discipline as a corollary
+
+Because CDIs are purely observation-derived and walker dispatch
+re-runs ambient queries live on each walk, the wrappers that mediate
+the boundary (`AmbientObject` outer-to-inner, `TracingLocalObject`
+inner-to-outer) must be constructed fresh per crossing. Sharing a
+wrapper across cb invocations — e.g. via an `outerValues[rootId]`
+registry keyed by the (necessarily same-for-siblings) initial CDI —
+last-write-wins, so all siblings' bodies resolve to the latest
+registered value and the per-invocation observations that should
+distinguish them get lost before they can land as facts. Each
+`queryFn` closure captures *its own* outer arg directly. (See the
+Boundary-trace-only discipline section below.)
+
+The walker's dispatch cache has a symmetric pitfall: it can memoise
+file reads (same request → same response, stable) but it must NOT
+memoise ambient queries — the same request hash can dispatch to
+different responses depending on which proxy grounds the walk, so
+sibling cb invocations' walks must each dispatch live.
+
 ## Two scope notions
 
 Two structural mechanisms shape what the cache records, and they
