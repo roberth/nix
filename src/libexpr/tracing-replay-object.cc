@@ -23,12 +23,16 @@ TracingReplayObject::TracingReplayObject(
 {
 }
 
-/* Same shape as recording-side absorbFact (in tracing-object.cc):
-   fold a (query, response) into the proxy's argScope cell so cell
-   evolution on replay stays consistent with recording. Cells must
-   evolve symmetrically on both sides or the recording's facts (whose
-   `from` is the cell's contentId at recording time) won't match what
-   the walker computes live. */
+/* Mirror of recording-side absorbFact: fold each observation into the
+   proxy's argScope cell. Facts in this layer carry `from=<fixed proxy
+   id>`, not `from=<cell.contentId at emission>` — so the absorb isn't
+   substituting into facts directly. What it does load-bear is the
+   state-creep XOR walk in descendant cells' contentId(): a cb apply
+   opens a new cell with parent=this apply_cell, and that child's
+   contentId() XOR-folds apply_cell.intrinsic in. Sibling cb invocations
+   whose outer-state diverged between apply points get distinct child
+   CDIs only because this absorb evolves the parent. Disabling the
+   absorb regresses cb-385, builtins-cache, and others. */
 template<typename Q>
 static void absorbFactReplay(
     const std::shared_ptr<const ArgScopeCell> & argScope,
