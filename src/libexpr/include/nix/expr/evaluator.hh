@@ -238,6 +238,18 @@ public:
     {
         return std::nullopt;
     }
+
+    /**
+     * Invoke a covariant-callback apply on this Object with the given
+     * arg. Only meaningful for AmbientObject (which dispatches to its
+     * applyFn closure); default throws for any other Object type.
+     * Callers no longer need to dynamic_cast<AmbientObject*> just to
+     * call queryApply.
+     */
+    virtual std::shared_ptr<Object> queryApply(std::shared_ptr<Object> /*argObj*/)
+    {
+        throw Error("queryApply: this Object type doesn't support callback application");
+    }
 };
 
 /**

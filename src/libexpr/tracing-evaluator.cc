@@ -236,12 +236,8 @@ ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> &
     std::string content = "mkAttrs:";
     for (auto & [name, obj] : attrs) {
         content += name + "=";
-        if (auto * to = dynamic_cast<TracingObject *>(&*obj)) {
-            if (auto qh = to->getQueryHashStr())
-                content += *qh;
-        } else if (auto * ro = dynamic_cast<TracingReplayObject *>(&*obj)) {
-            content += ro->getTriePos().queryHashStr;
-        }
+        if (auto hex = obj->getCdiHex())
+            content += *hex;
         content += ",";
     }
     auto hash = hashString(HashAlgorithm::SHA256, content);

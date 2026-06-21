@@ -121,7 +121,7 @@ public:
      * Issue a QueryApply. The resolver registers the arg and creates
      * the lazy application. Returns an AmbientObject wrapping the result.
      */
-    std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj);
+    std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 
     AmbientId getCdi() const
     {

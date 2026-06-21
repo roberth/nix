@@ -452,11 +452,8 @@ static PrimOp * makeAmbientFnPrimOp(std::shared_ptr<Object> fnObj, std::shared_p
                 .arity = 1,
                 .impl =
                     [fnObj, resolver](EvalState & state, const PosIdx pos, Value ** args, Value & v) {
-                        auto * ambient = dynamic_cast<AmbientObject *>(&*fnObj);
-                        if (!ambient)
-                            state.error<TypeError>("expected an ambient function object").atPos(pos).debugThrow();
                         auto argObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
-                        auto result = ambient->queryApply(std::move(argObj));
+                        auto result = fnObj->queryApply(std::move(argObj));
                         ExprFromObject(result, nullptr, resolver).eval(state, state.baseEnv, v);
                     },
                 .getFunctionInfo = [fnObj]() -> std::optional<FunctionInfo> { return fnObj->getFunctionInfo(); },

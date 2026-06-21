@@ -301,14 +301,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     if (!argObj)
         return nullptr;
     ctx.memo[argIdStr] = argObj;
-    auto * ambient = dynamic_cast<AmbientObject *>(fnObj.get());
-    if (!ambient) {
-        tracingCacheLog("replay: apply %s: fn resolved to non-AmbientObject", idStr);
-        return nullptr;
-    }
     std::shared_ptr<Object> resultObj;
     try {
-        resultObj = ambient->queryApply(argObj);
+        resultObj = fnObj->queryApply(argObj);
     } catch (const std::exception & e) {
         tracingCacheLog("replay: apply %s: queryApply threw: %s", idStr, e.what());
         return nullptr;
