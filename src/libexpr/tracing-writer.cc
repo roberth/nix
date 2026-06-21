@@ -1,4 +1,6 @@
 #include "nix/expr/tracing-writer.hh"
+#include "nix/expr/tracing-cache-log.hh"
+#include "nix/expr/tracing-cache-stats.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 
 namespace nix {
@@ -24,6 +26,34 @@ static void substituteHexes(nlohmann::json & j, const std::map<std::string, std:
         for (auto & item : j)
             substituteHexes(item, sub);
     }
+}
+
+/* Record a Pass-1 or Pass-3 old→new substitution into the persistent
+   map. Mappings are content-defined, so a placeholder colliding on
+   `oldHex` across cycles SHOULD resolve to the same `newHex` (the
+   computation is deterministic in the placeholder + observation
+   history). A collision-with-different-value indicates a real bug:
+   two distinct logical placeholders hash to the same value (likely
+   because an apply Q's `arg` placeholder is the initial empty-cell
+   contentId, which is the same hash for unrelated sibling cb
+   invocations — see #63). Insert_or_assign keeps the latest, but the
+   prior fact's pool entry now points at an orphan key.
+   Logged at error level (via tracingCacheLog with
+   _NIX_TRACING_CACHE_LOGGING=1) rather than thrown, because some
+   existing test scenarios depend on the silent overwrite. Once #63 is
+   fixed this should escalate to an exception. */
+void TracingWriter::recordPersistentSubstitution(
+    const std::string & oldHex, const std::string & newHex, const char * passLabel)
+{
+    auto it = persistentSubstitutions.find(oldHex);
+    if (it != persistentSubstitutions.end() && it->second != newHex) {
+        tracingCacheStats().persistentSubstitutionCollisions++;
+        tracingCacheLog(
+            "TracingWriter::%s: persistent-substitution collision: "
+            "%s already mapped to %s, overwriting with %s (#63)",
+            passLabel, oldHex, it->second, newHex);
+    }
+    persistentSubstitutions.insert_or_assign(oldHex, newHex);
 }
 
 void TracingWriter::flushPendingAmbient()
@@ -92,7 +122,7 @@ void TracingWriter::flushPendingAmbient()
                find the producer in the pool — falling back to a frozen
                ReplayLocalObject that serves stale recorded responses
                (#49). */
-            persistentSubstitutions.insert_or_assign(oldHex, newHex);
+            recordPersistentSubstitution(oldHex, newHex, "Pass1");
         }
         decisionGraph->insertRequest(newHash, jsonToCborString(req.payload));
     }
@@ -165,7 +195,7 @@ void TracingWriter::flushPendingAmbient()
             sub.emplace(oldHex, newHex);
             /* Same reason as Pass 1: a downstream fact whose `from` is
                this fact's old query hash may flush later. */
-            persistentSubstitutions.insert_or_assign(oldHex, newHex);
+            recordPersistentSubstitution(oldHex, newHex, "Pass3");
         }
         auto responsePayload = jsonToCborString(resultJson);
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);

@@ -321,6 +321,15 @@ public:
     void flushPendingAmbient();
 
     /**
+     * Record a Pass-1 or Pass-3 old→new substitution into the
+     * persistent map with a collision-detection invariant. Throws if
+     * `oldHex` is already mapped to a different value. Internal to
+     * flushPendingAmbient.
+     */
+    void recordPersistentSubstitution(
+        const std::string & oldHex, const std::string & newHex, const char * passLabel);
+
+    /**
      * When true, every file-read / env-var response payload gets
      * persisted into the decisionGraph's Responses pool too. Useful
      * for offline debugging when JSON traces aren't available.

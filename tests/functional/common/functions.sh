@@ -277,6 +277,28 @@ assertCacheStats() {
     fi
 }
 
+# Read a single field from a freshly-written stats sidecar. Use when
+# you want to assert on something other than the (hits, misses,
+# fallbacks) tuple — e.g. persistent_substitution_collisions for #59.
+#
+# Usage: cacheStatsField <field> -- <cmd...>
+cacheStatsField() {
+    local field=$1
+    shift
+    [[ "$1" == "--" ]] || { echo "cacheStatsField: expected '--' separator" >&2; return 1; }
+    shift
+    local statsFile
+    statsFile=$(mktemp)
+    NIX_CACHE_STATS_FILE="$statsFile" "$@" >/dev/null 2>&1
+    local rc=$?
+    if [[ $rc -ne 0 ]]; then
+        rm -f "$statsFile"
+        return $rc
+    fi
+    jq -r ".${field}" < "$statsFile"
+    rm -f "$statsFile"
+}
+
 onError() {
     set +x
     echo "$0: test failed at:" >&2
