@@ -40,13 +40,13 @@ class TracingLocalObject : public Object
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
-    /* The intrinsic cell this local contributes observations to.
+    /* The argScope cell this local contributes observations to.
        Top-level Local (cb arg) and its navigation children share
        the same cell — observations on any of them XOR-fold into
        this cell's intrinsic (state creep). At flush, the cell's
        contentId() is the substituted value for `from=localId` in
        this local's recorded facts. */
-    std::shared_ptr<const ArgScopeCell> cell;
+    std::shared_ptr<const ArgScopeCell> argScope;
 
     /* Buffer this observation in the writer (deferred until logResult)
        and extend the cell's intrinsic by its placeholder-independent
@@ -59,8 +59,9 @@ public:
         AmbientId localId,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
-        std::shared_ptr<const ArgScopeCell> cell);
+        std::shared_ptr<const ArgScopeCell> argScope);
 
+    std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

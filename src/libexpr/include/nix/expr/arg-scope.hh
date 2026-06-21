@@ -115,19 +115,13 @@ struct ArgScopeCell : std::enable_shared_from_this<ArgScopeCell>
     }
 };
 
-/** Walk a proxy's parent chain looking for the first non-null
-    argScope cell. Navigation children (from maybeGetAttr /
-    getListElem) don't open a new cell — their getProxyArgScope()
-    returns null — so to find the effective scope for opening a new
-    cell on top, walk past them via getProxyParent until a cell is
-    found, or null at the chain root. */
+/** Return the proxy's argScope cell — the nearest enclosing apply's
+    cell. Navigation children carry the parent's cell directly; apply
+    results carry their own fresh cell. Returns null for non-proxy
+    Objects or for proxies that haven't been scoped. */
 inline std::shared_ptr<const ArgScopeCell> effectiveArgScope(const Object & obj)
 {
-    for (const Object * p = &obj; p; p = p->getProxyParent().get()) {
-        if (auto cell = p->getProxyArgScope())
-            return cell;
-    }
-    return nullptr;
+    return obj.getProxyArgScope();
 }
 
 } // namespace nix

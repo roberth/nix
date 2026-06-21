@@ -19,12 +19,12 @@ TracingLocalObject::TracingLocalObject(
     AmbientId localId,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
-    std::shared_ptr<const ArgScopeCell> cell)
+    std::shared_ptr<const ArgScopeCell> argScope)
     : inner(std::move(inner))
     , localId(localId)
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
-    , cell(std::move(cell))
+    , argScope(std::move(argScope))
 {
 }
 
@@ -68,7 +68,7 @@ std::shared_ptr<Object> TracingLocalObject::maybeGetAttr(const std::string & nam
     /* Navigation child shares the parent's cell: observations on
        descendants contribute to the same scope's intrinsic
        (state creep). */
-    return std::make_shared<TracingLocalObject>(std::move(child), childLocalId, writer, rootFSRoot, cell);
+    return std::make_shared<TracingLocalObject>(std::move(child), childLocalId, writer, rootFSRoot, argScope);
 }
 
 std::vector<std::string> TracingLocalObject::getAttrNames()
@@ -154,7 +154,7 @@ std::shared_ptr<Object> TracingLocalObject::getListElem(size_t index)
     /* Navigation child shares the parent's cell: observations on
        descendants contribute to the same scope's intrinsic
        (state creep). */
-    return std::make_shared<TracingLocalObject>(std::move(child), childLocalId, writer, rootFSRoot, cell);
+    return std::make_shared<TracingLocalObject>(std::move(child), childLocalId, writer, rootFSRoot, argScope);
 }
 
 ObjectType TracingLocalObject::getTypeLazy()
@@ -217,15 +217,15 @@ void TracingLocalObject::recordObservation(const trace::QueryVariant & query, co
     std::visit([&](const auto & r) { resultJson = r; }, result);
     auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(resultJson));
 
-    if (cell) {
+    if (argScope) {
         /* Fold into the cell's intrinsic (the source of truth) and
            push the current contentId to the writer's
            placeholderToIntrinsic so flush substitutes
            `from=localId` → `from=cell.contentId()`. Last call wins:
            by flush the value reflects the final intrinsic. */
-        cell->absorb(queryHashBlanked, responseHash);
+        argScope->absorb(queryHashBlanked, responseHash);
         writer.updatePlaceholderIntrinsic(
-            localId.to_string(HashFormat::Base16, false), cell->contentId());
+            localId.to_string(HashFormat::Base16, false), argScope->contentId());
     }
 
     writer.logAmbientInteraction(query, result);

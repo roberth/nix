@@ -45,8 +45,8 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
        without a separate pool lookup that the recorder never wrote. */
     auto child = std::make_shared<ReplayLocalObject>(
         replayDerivedLocalId(query), decisionGraph, rootFSRoot, stringToObjectType(*r.type));
-    /* Navigation child: same argScope as parent, parent back-pointer. */
-    child->withScope(shared_from_this(), nullptr);
+    /* Navigation child inherits parent's argScope cell directly. */
+    child->withScope(argScope);
     return child;
 }
 
@@ -130,8 +130,8 @@ std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
     trace::ResultType r = rJson;
     auto child = std::make_shared<ReplayLocalObject>(
         replayDerivedLocalId(query), decisionGraph, rootFSRoot, stringToObjectType(r.type));
-    /* Navigation child: same argScope as parent, parent back-pointer. */
-    child->withScope(shared_from_this(), nullptr);
+    /* Navigation child inherits parent's argScope cell directly. */
+    child->withScope(argScope);
     return child;
 }
 

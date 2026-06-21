@@ -29,8 +29,8 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
     if (!qr.childId)
         throw Error("ambient maybeGetAttr: resolver didn't return child id");
     auto child = std::make_shared<AmbientObject>(*qr.childId, queryFn, ambientRootFSRoot, applyFn);
-    /* Navigation child: same argScope as the parent, parent back-pointer set. */
-    child->withScope(shared_from_this(), nullptr);
+    /* Navigation child inherits parent's argScope cell directly. */
+    child->withScope(argScope);
     return child;
 }
 
@@ -125,8 +125,8 @@ std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
     if (!qr.childId)
         throw Error("ambient getListElem: resolver didn't return child id");
     auto child = std::make_shared<AmbientObject>(*qr.childId, queryFn, ambientRootFSRoot, applyFn);
-    /* Navigation child: same argScope as the parent, parent back-pointer set. */
-    child->withScope(shared_from_this(), nullptr);
+    /* Navigation child inherits parent's argScope cell directly. */
+    child->withScope(argScope);
     return child;
 }
 
@@ -184,7 +184,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
     /* Apply-result: open a new intrinsic cell for this apply's
        argument, rooted at the same caller scope the applyFn used. */
     auto cell = ArgScopeCell::make(callerScope, std::move(argForScope));
-    result->withScope(shared_from_this(), std::move(cell));
+    result->withScope(std::move(cell));
     return result;
 }
 

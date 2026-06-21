@@ -78,29 +78,25 @@ class AmbientObject : public Object
        resolver from the outer EvalState's `rootFSRoot`. */
     ref<SourceRoot> ambientRootFSRoot;
 
-    /* Argument-scope wiring (Phase 2 of the proxy-graph rollout).
-       `parent` points to the proxy that produced this one — the seed's
-       creator (null) for the cache call's seed, the AmbientObject that
-       maybeGetAttr/getListElem returned this one from, or the fn proxy
-       that applyFn produced this result from. `argScope` is set on
-       apply-result proxies and on the seed; navigation children leave
-       it null. */
-    std::shared_ptr<Object> parent;
+    /* Argument-scope wiring. `argScope` is the nearest enclosing
+       apply's cell — navigation children carry the same cell as their
+       parent; apply-result proxies open a fresh cell rooted at the
+       fn's cell. The cell carries its own `parent` field, so the
+       ancestor chain is reachable from the cell — no proxy `parent`
+       field needed. */
     std::shared_ptr<const ArgScopeCell> argScope;
 
 public:
     AmbientObject(AmbientId id, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
 
-    /** Phase 2: set the proxy-graph back-pointers. Call right after
-        construction at boundary sites. Returns *this for chaining. */
-    AmbientObject & withScope(std::shared_ptr<Object> parent_, std::shared_ptr<const ArgScopeCell> argScope_)
+    /** Set the proxy's argScope. Call right after construction at
+        boundary sites. Returns *this for chaining. */
+    AmbientObject & withScope(std::shared_ptr<const ArgScopeCell> argScope_)
     {
-        parent = std::move(parent_);
         argScope = std::move(argScope_);
         return *this;
     }
 
-    std::shared_ptr<Object> getProxyParent() const override { return parent; }
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;

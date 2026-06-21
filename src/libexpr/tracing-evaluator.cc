@@ -272,7 +272,16 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel; v13 doesn't key off this
         .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
     };
-    return TracingObject::create(result, writer, v, triePos);
+    auto obj = TracingObject::create(result, writer, v, triePos);
+    /* Apply result: open a new intrinsic cell for this apply's
+       argument. Cell parent = the fn proxy's argScope cell. The
+       cell absorbs subsequent observations made through this apply
+       result, so its contentId() differentiates cb invocations
+       whose body behaviour differs (the alternative reading of the
+       design's apply-result-observations open question). */
+    auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
+    obj->withScope(std::move(cell));
+    return obj;
 }
 
 } // namespace nix

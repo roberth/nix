@@ -32,7 +32,10 @@ static std::string hex(AmbientId id)
  */
 static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> responses)
 {
-    return [responses = std::move(responses)](AmbientId objectId, const trace::QueryVariant & q) -> AmbientQueryResult {
+    return [responses = std::move(responses)](
+               AmbientId objectId,
+               const trace::QueryVariant & q,
+               std::shared_ptr<const ArgScopeCell> /*cell*/) -> AmbientQueryResult {
         std::string objHex = hex(objectId);
         std::string key = std::visit(
             [&](const auto & query) -> std::string {

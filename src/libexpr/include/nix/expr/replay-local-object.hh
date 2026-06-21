@@ -46,11 +46,9 @@ class ReplayLocalObject : public Object
        look up a fact that doesn't exist. */
     std::optional<ObjectType> knownType;
 
-    /* Argument-scope wiring (Phase 2 of the proxy-graph rollout).
-       `parent` points to the proxy that produced this one; the
-       top-level (cb-arg) Local carries an `argScope` cell, navigation
-       children leave it null. */
-    std::shared_ptr<Object> parent;
+    /* Argument-scope cell. Navigation children carry the same cell
+       as their parent; the top-level (cb-arg) Local carries the
+       apply's cell. Cell's own `parent` field gives ancestor chain. */
     std::shared_ptr<const ArgScopeCell> argScope;
 
 public:
@@ -60,16 +58,13 @@ public:
     ReplayLocalObject(AmbientId localId, TracingDecisionGraph & dg, ref<SourceRoot> rootFSRoot, ObjectType type)
         : localId(localId), decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), knownType(type) {}
 
-    /** Phase 2: set the proxy-graph back-pointers. Call right after
-        construction at boundary sites. Returns *this for chaining. */
-    ReplayLocalObject & withScope(std::shared_ptr<Object> parent_, std::shared_ptr<const ArgScopeCell> argScope_)
+    /** Set the proxy's argScope. Returns *this for chaining. */
+    ReplayLocalObject & withScope(std::shared_ptr<const ArgScopeCell> argScope_)
     {
-        parent = std::move(parent_);
         argScope = std::move(argScope_);
         return *this;
     }
 
-    std::shared_ptr<Object> getProxyParent() const override { return parent; }
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;

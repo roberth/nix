@@ -27,12 +27,10 @@ class TracingReplayObject : public Object
     std::function<ref<Object>()> getInner;
     mutable std::optional<ref<Object>> inner;
 
-    /* Argument-scope wiring (Phase 2 of the proxy-graph rollout).
-       `parent` points to the proxy that produced this one;
-       `argScope` is set on apply-result proxies (the result of a
-       cache-boundary apply) and on the cached-value root, null on
-       navigation children. */
-    std::shared_ptr<Object> parent;
+    /* Argument-scope cell. Apply-result proxies open a fresh cell
+       rooted at the fn's cell; navigation children carry the same
+       cell as their parent. Cell's own `parent` field gives the
+       ancestor chain. */
     std::shared_ptr<const ArgScopeCell> argScope;
 
     ref<Object> ensureInner() const;
@@ -55,16 +53,13 @@ public:
     TracingReplayObject(
         TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner);
 
-    /** Phase 2: set the proxy-graph back-pointers. Call right after
-        construction at boundary sites. Returns *this for chaining. */
-    TracingReplayObject & withScope(std::shared_ptr<Object> parent_, std::shared_ptr<const ArgScopeCell> argScope_)
+    /** Set the proxy's argScope. Returns *this for chaining. */
+    TracingReplayObject & withScope(std::shared_ptr<const ArgScopeCell> argScope_)
     {
-        parent = std::move(parent_);
         argScope = std::move(argScope_);
         return *this;
     }
 
-    std::shared_ptr<Object> getProxyParent() const override { return parent; }
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
     const TriePosition & getTriePos() const

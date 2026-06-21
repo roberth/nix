@@ -96,6 +96,17 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
 
     AmbientQueryResult query(AmbientId objectId, const trace::QueryVariant & q)
     {
+        return queryOn(resolve(objectId), q);
+    }
+
+    /** Dispatch a query against the given outer Object directly,
+        bypassing the resolver's id → Object lookup. Boundary-trace-
+        only discipline (per the design doc): each cb apply's queryFn
+        captures its own outer arg and calls this directly for seed
+        observations, so sibling cb invocations don't collide on the
+        shared `outerValues` map. */
+    AmbientQueryResult queryOn(std::shared_ptr<Object> obj, const trace::QueryVariant & q)
+    {
         return std::visit(
             [&](const auto & query) -> AmbientQueryResult {
                 using Q = std::decay_t<decltype(query)>;
@@ -104,7 +115,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
                 } else if constexpr (!requires { query.from; }) {
                     throw Error("ambient query: query type has no 'from' field");
                 } else {
-                    auto obj = resolve(objectId);
+                    (void) 0;  // obj already provided
 
                     if constexpr (std::is_same_v<Q, trace::QueryGetType>) {
                         return {trace::ResultType{objectTypeToString(obj->getType())}, std::nullopt};
@@ -301,28 +312,32 @@ static PrimOp * makeCachedFnPrimOp(
                         auto parentCell = effectiveArgScope(*fnObj);
                         auto seedCell = ArgScopeCell::make(parentCell, /*liveObject set below*/ nullptr);
                         auto rootId = seedCell->contentId();
-                        resolver->registerOuterSeed(outerArgObj, rootId);
+                        /* Boundary-trace-only discipline: do NOT
+                           register outerArgObj under rootId in the
+                           shared resolver. Sibling cb apply invocations
+                           share the same rootId (= cell.contentId() at
+                           apply time = depth marker for empty cell), so
+                           a shared registration would last-write-wins
+                           and queryFn closures would all resolve to the
+                           latest outer arg. Instead each invocation's
+                           queryFn captures its own outerArgObj and uses
+                           it directly for seed (rootId) queries. */
                         auto & innerEnv = *innerEval->getEvalState().environment;
-                        AmbientQueryFn queryFn = [resolver,
+                        AmbientQueryFn queryFn = [resolver, outerArgObj, rootId,
                                                   &innerEnv](
                             AmbientId objectId,
                             const trace::QueryVariant & q,
                             std::shared_ptr<const ArgScopeCell> /*cell*/) {
-                            /* AmbientObject (outer-to-inner) deliberately
-                               doesn't absorb here. `from = depth marker`
-                               for seed observations is what lets the
-                               replay walker resolve it via proxy walk to
-                               LIVE outer state — that's how the cache
-                               validates against changes (cur diverges
-                               when live response differs from recorded).
-                               Content-defined `from` would prevent the
-                               proxy-walk match and fall back to frozen
-                               ReplayLocalObject serving recorded data.
-                               Distinguishing content-defined identity
-                               for the seed must happen at a higher level
-                               (top-level apply Q derivation), not by
-                               substituting `from` in inner observations. */
-                            auto qr = resolver->query(objectId, q);
+                            /* For seed queries (objectId == this cb's
+                               rootId), dispatch on the captured
+                               outerArgObj directly — bypass the shared
+                               resolver lookup. For derived ids (child
+                               objects from earlier getAttr/getListElem),
+                               delegate to the resolver which has them
+                               registered. */
+                            AmbientQueryResult qr = (objectId == rootId)
+                                ? resolver->queryOn(outerArgObj, q)
+                                : resolver->query(objectId, q);
                             innerEnv.ambientQuery(q, [&](const trace::QueryVariant &) { return qr.result; });
                             return qr;
                         };
@@ -356,7 +371,7 @@ static PrimOp * makeCachedFnPrimOp(
                            shared_ptr cycle documented on
                            ArgScopeCell::liveObject. */
                         seedCell->liveObject = contraArg.get_ptr();
-                        contraArg->withScope(/*parent=*/nullptr, seedCell);
+                        contraArg->withScope(seedCell);
                         auto result = innerEval->apply(ref<Object>(fnObj), contraArg);
                         ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
                     },
