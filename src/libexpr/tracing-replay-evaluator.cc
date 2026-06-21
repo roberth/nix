@@ -177,15 +177,21 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
     if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
         return it->second;
 
-    /* Cell-chain lookup: starting at currentProxy's argScope, walk
-       the cell.parent chain looking for one whose contentId matches.
-       State creep is folded into contentId() automatically (XOR-fold
-       of ancestor cells' intrinsics). */
+    /* Walk the proxy's argScope chain looking for a cell whose
+       liveObject is an AmbientObject with id matching idStr. We key
+       on the live proxy's structural identity, not on cell.contentId()
+       which the CDI naming layer evolves as observations land. The two
+       layers are orthogonal: cell.intrinsic evolves for sibling
+       distinction (interaction tracing); ambient-id resolution lives
+       in the input-tracing layer and needs a stable mapping from rootId
+       → live proxy regardless of how many absorbs have landed. */
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     for (; cell; cell = cell->parent) {
-        if (cell->contentId().to_string(HashFormat::Base16, false) == idStr) {
-            ctx.memo[idStr] = cell->liveObject;
-            return cell->liveObject;
+        if (auto * amb = dynamic_cast<AmbientObject *>(cell->liveObject.get())) {
+            if (amb->getId().to_string(HashFormat::Base16, false) == idStr) {
+                ctx.memo[idStr] = cell->liveObject;
+                return cell->liveObject;
+            }
         }
     }
 

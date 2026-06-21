@@ -62,3 +62,36 @@ echo "=== outer-mod simplified (expect 500) ==="
 result=$(nix eval --impure --expr 'builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }')
 echo "Got: $result"
 [[ "$result" == 500 ]]
+
+# --- deep-indep: mirrors builtins-cache.sh lines 586-610 ---
+clearCache
+
+cat > "$TEST_ROOT/deep-indep.nix" << 'NIX'
+{ args }:
+{ a = args.x.val; b = args.y.val; }
+NIX
+
+echo "=== deep-indep test 1: a=1 b=2 (record) ==="
+result=$(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/deep-indep.nix; }) { args = { x = { val = 1; }; y = { val = 2; }; }; }')
+echo "Got: $result"
+[[ "$result" == '{ a = 1; b = 2; }' ]]
+
+echo "=== deep-indep test 2: replay (expect {a=1;b=2}) ==="
+result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/deep-indep.nix; }) { args = { x = { val = 1; }; y = { val = 2; }; }; }')
+echo "Got: $result"
+[[ "$result" == '{ a = 1; b = 2; }' ]]
+
+echo "=== deep-indep test 3: change y to 99 (expect {a=1;b=99}) ==="
+result=$(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/deep-indep.nix; }) { args = { x = { val = 1; }; y = { val = 99; }; }; }')
+echo "Got: $result"
+[[ "$result" == '{ a = 1; b = 99; }' ]]
+
+echo "=== deep-indep test 4: replay (expect {a=1;b=99}) ==="
+result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/deep-indep.nix; }) { args = { x = { val = 1; }; y = { val = 99; }; }; }')
+echo "Got: $result"
+[[ "$result" == '{ a = 1; b = 99; }' ]]
+
+echo "=== deep-indep test 5: change x to 77 (expect {a=77;b=99}) ==="
+result=$(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/deep-indep.nix; }) { args = { x = { val = 77; }; y = { val = 99; }; }; }')
+echo "Got: $result"
+[[ "$result" == '{ a = 77; b = 99; }' ]]
