@@ -181,6 +181,7 @@ suites = [
       'cb-stats-sanity.sh',
       'cb-same-shape-collapse.sh',
       'cb-same-shape-distinguish.sh',
+      'cb-stats-nested-baseline.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
