@@ -297,7 +297,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
         isLocalArg = true;
     }
     if (isLocalArg)
-        argObj = std::make_shared<ReplayLocalObject>(argHash, decisionGraph, inner->getEvalState().rootFSRoot);
+        argObj = materialiseLocalStandin(argHash, argIdStr, ctx);
     else
         argObj = resolveAmbientId(argIdStr, ctx);
     if (!argObj)
