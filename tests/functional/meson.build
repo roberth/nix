@@ -174,6 +174,7 @@ suites = [
       'cb-385.sh',
       'cb-apply-cli.sh',
       'cb-higher-order.sh',
+      'cb-curried-state-creep.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
