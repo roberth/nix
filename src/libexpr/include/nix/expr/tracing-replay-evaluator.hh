@@ -82,6 +82,14 @@ class TracingReplayEvaluator : public Evaluator
        through the proxy graph). */
     std::shared_ptr<Object> materialiseLocalStandin(const Hash & idHash, const std::string & idStr, ResolutionContext & ctx);
     std::shared_ptr<Object> chaseLocalArgSidecar(const std::string & idStr, const nlohmann::json & reqJson, ResolutionContext & ctx);
+
+    /** True iff the id resolves as a Local — either it has no
+        producer Request in the pool (a TracingLocalObject's content
+        hash whose id isn't itself a recorded query), or its pool
+        payload is a localArg sidecar, or the payload fails to parse
+        (defensive fallback). False for any Outer-direction id with a
+        parseable producer query payload. */
+    bool isLocalArgId(const Hash & idHash);
     std::shared_ptr<Object> resolveApplyId(const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx);
     std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx);
 

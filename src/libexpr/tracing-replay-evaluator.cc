@@ -232,6 +232,19 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
     return resolveProducerChild(idStr, tag, params, ctx);
 }
 
+bool TracingReplayEvaluator::isLocalArgId(const Hash & idHash)
+{
+    auto reqPayload = decisionGraph.getRequestPayload(idHash);
+    if (!reqPayload)
+        return true;
+    try {
+        auto j = cborStringToJson(*reqPayload);
+        return j.contains("kind") && j["kind"] == "localArg";
+    } catch (const std::exception &) {
+        return true;
+    }
+}
+
 /* Local-direction: unknown id in the Requests pool — most commonly an
    inner-side TracingLocalObject's content-hash whose facts were emitted
    with from=hex(id) but whose id itself isn't a producer Request.
@@ -282,24 +295,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     } catch (const std::exception &) {
         return nullptr;
     }
-    std::shared_ptr<Object> argObj;
-    auto argReqPayload = decisionGraph.getRequestPayload(argHash);
-    bool isLocalArg = false;
-    if (argReqPayload) {
-        try {
-            auto j = cborStringToJson(*argReqPayload);
-            if (j.contains("kind") && j["kind"] == "localArg")
-                isLocalArg = true;
-        } catch (const std::exception &) {
-            isLocalArg = true;
-        }
-    } else {
-        isLocalArg = true;
-    }
-    if (isLocalArg)
-        argObj = materialiseLocalStandin(argHash, argIdStr, ctx);
-    else
-        argObj = resolveAmbientId(argIdStr, ctx);
+    std::shared_ptr<Object> argObj = isLocalArgId(argHash)
+        ? materialiseLocalStandin(argHash, argIdStr, ctx)
+        : resolveAmbientId(argIdStr, ctx);
     if (!argObj)
         return nullptr;
     ctx.memo[argIdStr] = argObj;
