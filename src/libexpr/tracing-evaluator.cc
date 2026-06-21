@@ -126,7 +126,18 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     auto result = inner->evalFile(path, displayPath);
     auto type = result->getType();
     auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
-    return TracingObject::create(result, writer, v, triePos);
+    auto obj = TracingObject::create(result, writer, v, triePos);
+    /* Root cell for the cached value: observations made on it (and on
+       navigation children that inherit this cell) absorb here, so the
+       cell's intrinsic accumulates outer's interactions with the
+       cache result. When a callback apply opens its own cell with
+       parent = this root, the state-creep XOR fold in
+       ArgScopeCell::contentId() carries the root's intrinsic into the
+       cb arg's CDI — that's what discriminates sibling callback
+       invocations whose outer-evaluation state diverged between
+       apply points. */
+    obj->withScope(ArgScopeCell::make(nullptr, obj.get_ptr()));
+    return obj;
 }
 
 ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPath & basePath)
@@ -137,7 +148,9 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     auto result = inner->evalExpr(expr, basePath);
     auto type = result->getType();
     auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
-    return TracingObject::create(result, writer, v, triePos);
+    auto obj = TracingObject::create(result, writer, v, triePos);
+    obj->withScope(ArgScopeCell::make(nullptr, obj.get_ptr()));
+    return obj;
 }
 
 ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const RootedPath & basePath)
@@ -146,7 +159,9 @@ ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const Roote
     auto [v, qh] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
     auto result = inner->evalExprLazy(expr, basePath);
     // Lazy: don't force type yet, just wrap
-    return TracingObject::create(result, writer, v);
+    auto obj = TracingObject::create(result, writer, v);
+    obj->withScope(ArgScopeCell::make(nullptr, obj.get_ptr()));
+    return obj;
 }
 
 ref<Object> TracingEvaluator::mkString(const std::string & s)

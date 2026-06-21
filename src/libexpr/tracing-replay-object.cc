@@ -23,14 +23,31 @@ TracingReplayObject::TracingReplayObject(
 {
 }
 
-/* No-op stub — replay-side absorb is disabled in concert with the
-   recording-side stub. See note in tracing-object.cc. */
+/* Same shape as recording-side absorbFact (in tracing-object.cc):
+   fold a (query, response) into the proxy's argScope cell so cell
+   evolution on replay stays consistent with recording. Cells must
+   evolve symmetrically on both sides or the recording's facts (whose
+   `from` is the cell's contentId at recording time) won't match what
+   the walker computes live. */
 template<typename Q>
 static void absorbFactReplay(
-    const std::shared_ptr<const ArgScopeCell> & /*argScope*/,
-    const Q & /*query*/,
-    const trace::ResultVariant & /*result*/)
+    const std::shared_ptr<const ArgScopeCell> & argScope,
+    const Q & query,
+    const trace::ResultVariant & result)
 {
+    if (!argScope)
+        return;
+    nlohmann::json qj = query;
+    if (qj.is_object() && qj.contains("params")) {
+        auto & params = qj["params"];
+        if (params.is_object() && params.contains("from"))
+            params["from"] = "";
+    }
+    auto queryHashBlanked = hashString(HashAlgorithm::SHA256, qj.dump());
+    nlohmann::json rj;
+    std::visit([&](const auto & r) { rj = r; }, result);
+    auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(rj));
+    argScope->absorb(queryHashBlanked, responseHash);
 }
 
 ref<Object> TracingReplayObject::ensureInner() const

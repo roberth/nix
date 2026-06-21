@@ -16,19 +16,33 @@ TracingObject::TracingObject(
 {
 }
 
-/* TODO: absorb apply-result observations into the proxy's argScope
-   cell, so the cell's contentId() differentiates cb invocations
-   whose body behaviour differs. Disabled for now — needs a root
-   cell mechanism (cache's evalFile result with a cell incorporating
-   the cache's Q hash and chained-in file_hash facts) to give
-   sibling cb cells distinct CDIs across different cache invocations
-   and propagate inner-mod file changes to the apply Q. */
+/* Fold a recorded observation into the proxy's argScope cell. The
+   fact's query is hashed with `from` blanked so the contribution
+   reflects only the atomic observation's content, not the snapshot
+   the observation was emitted at — extensionally-equivalent chains
+   then evolve identical cells (the §2 same-shape collapse). The
+   cell's intrinsic accumulates these contributions; downstream
+   apply-result cells inherit the running intrinsic via the XOR
+   state-creep walk in ArgScopeCell::contentId(). */
 template<typename Q>
 static void absorbFact(
-    const std::shared_ptr<const ArgScopeCell> & /*argScope*/,
-    const Q & /*query*/,
-    const trace::ResultVariant & /*result*/)
+    const std::shared_ptr<const ArgScopeCell> & argScope,
+    const Q & query,
+    const trace::ResultVariant & result)
 {
+    if (!argScope)
+        return;
+    nlohmann::json qj = query;
+    if (qj.is_object() && qj.contains("params")) {
+        auto & params = qj["params"];
+        if (params.is_object() && params.contains("from"))
+            params["from"] = "";
+    }
+    auto queryHashBlanked = hashString(HashAlgorithm::SHA256, qj.dump());
+    nlohmann::json rj;
+    std::visit([&](const auto & r) { rj = r; }, result);
+    auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(rj));
+    argScope->absorb(queryHashBlanked, responseHash);
 }
 
 ref<TracingObject> TracingObject::create(
