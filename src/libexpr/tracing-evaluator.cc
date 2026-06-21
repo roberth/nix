@@ -257,15 +257,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        content-defined. No counter fallback — see the parallel
        comment in TracingReplayEvaluator::apply. */
     auto getId = [](Object & obj) -> std::string {
-        if (auto * to = dynamic_cast<TracingObject *>(&obj))
-            if (auto qh = to->getQueryHashStr())
-                return *qh;
-        if (auto * ro = dynamic_cast<TracingReplayObject *>(&obj))
-            return ro->getTriePos().queryHashStr;
-        if (auto * ao = dynamic_cast<AmbientObject *>(&obj))
-            return ao->getCdi().to_string(HashFormat::Base16, false);
-        if (auto * tlo = dynamic_cast<TracingLocalObject *>(&obj))
-            return tlo->getCdi().to_string(HashFormat::Base16, false);
+        if (auto hex = obj.getCdiHex())
+            return *hex;
         throw Error(
             "TracingEvaluator::apply: fn/arg lacks a content-defined "
             "identity (type %s). Wrap it as a cache-boundary proxy at its "

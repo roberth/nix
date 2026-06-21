@@ -67,6 +67,8 @@ public:
         return triePos;
     }
 
+    std::optional<std::string> getCdiHex() const override { return triePos.queryHashStr; }
+
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
     std::string getStringIgnoreContext() override;

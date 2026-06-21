@@ -85,6 +85,11 @@ public:
     {
         return localId;
     }
+
+    std::optional<std::string> getCdiHex() const override
+    {
+        return localId.to_string(HashFormat::Base16, false);
+    }
 };
 
 } // namespace nix

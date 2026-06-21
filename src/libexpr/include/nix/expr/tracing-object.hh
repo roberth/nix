@@ -52,6 +52,8 @@ public:
         return triePos ? std::optional{triePos->queryHashStr} : std::nullopt;
     }
 
+    std::optional<std::string> getCdiHex() const override { return getQueryHashStr(); }
+
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
     std::string getStringIgnoreContext() override;

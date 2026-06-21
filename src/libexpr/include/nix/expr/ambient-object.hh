@@ -127,6 +127,11 @@ public:
     {
         return cdi;
     }
+
+    std::optional<std::string> getCdiHex() const override
+    {
+        return cdi.to_string(HashFormat::Base16, false);
+    }
 };
 
 } // namespace nix

@@ -194,10 +194,10 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
        → live proxy regardless of how many absorbs have landed. */
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     for (; cell; cell = cell->parent) {
-        if (auto * amb = dynamic_cast<AmbientObject *>(cell->liveObject.get())) {
-            if (amb->getCdi().to_string(HashFormat::Base16, false) == idStr) {
-                ctx.memo[idStr] = cell->liveObject;
-                return cell->liveObject;
+        if (auto live = cell->liveObject) {
+            if (auto cdiHex = live->getCdiHex(); cdiHex && *cdiHex == idStr) {
+                ctx.memo[idStr] = live;
+                return live;
             }
         }
     }
@@ -525,15 +525,8 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        reaches here it's a wiring bug that has to be addressed at
        its construction site. */
     auto getId = [](Object & obj) -> std::string {
-        if (auto * to = dynamic_cast<TracingObject *>(&obj))
-            if (auto qh = to->getQueryHashStr())
-                return *qh;
-        if (auto * ro = dynamic_cast<TracingReplayObject *>(&obj))
-            return ro->getTriePos().queryHashStr;
-        if (auto * ao = dynamic_cast<AmbientObject *>(&obj))
-            return ao->getCdi().to_string(HashFormat::Base16, false);
-        if (auto * tlo = dynamic_cast<TracingLocalObject *>(&obj))
-            return tlo->getCdi().to_string(HashFormat::Base16, false);
+        if (auto hex = obj.getCdiHex())
+            return *hex;
         throw Error(
             "TracingReplayEvaluator::apply: fn/arg lacks a content-defined "
             "identity (type %s). Wrap it as a cache-boundary proxy at its "
