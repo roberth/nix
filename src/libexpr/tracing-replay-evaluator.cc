@@ -39,20 +39,32 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
     ResolutionContext ctx{std::move(currentProxy), {}};
 
     /* Dispatcher: turns a Request hash into the current Response
-       hash, memoised in dispatchCache so the file read + CBOR
-       encode + SHA-256 happens at most once per request per
-       process. */
+       hash. Memoised in dispatchCache for stable requests (file
+       reads, env vars) where same request always gives same
+       response. Ambient queries are NOT memoised because the same
+       request hash can dispatch to different responses depending on
+       which proxy (cb invocation) the walk is grounded in — sibling
+       cb apply invocations of the same fn share a request hash but
+       must see their own arg's live value, not a memoised sibling's. */
     auto dispatch = [&](const Hash & requestHash) -> Hash {
-        if (auto it = dispatchCache.find(requestHash); it != dispatchCache.end())
-            return it->second;
         auto requestPayload = decisionGraph.getRequestPayload(requestHash);
         if (!requestPayload)
             return Hash(HashAlgorithm::SHA256);
+        bool isAmbient = false;
+        try {
+            auto reqJson = cborStringToJson(*requestPayload);
+            isAmbient = reqJson.contains("query");
+        } catch (...) {}
+        if (!isAmbient) {
+            if (auto it = dispatchCache.find(requestHash); it != dispatchCache.end())
+                return it->second;
+        }
         auto currentResp = getCurrentResponse(*requestPayload, ctx);
         if (!currentResp)
             return Hash(HashAlgorithm::SHA256);
         auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
-        dispatchCache.emplace(requestHash, h);
+        if (!isAmbient)
+            dispatchCache.emplace(requestHash, h);
         /* Dispatched facts are real environment observations; feed
            them into the writer's v13FactSet so any subsequent
            logResult records at the same factSetHash regardless of
@@ -165,13 +177,13 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::stri
     if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
         return it->second;
 
-    /* Proxy-graph lookup: walk the parent chain looking for an
-       intrinsic cell whose contentId matches. State creep is folded
-       into contentId() automatically (XOR-fold of ancestor cells'
-       intrinsics). */
-    for (Object * p = ctx.currentProxy.get(); p; p = p->getProxyParent().get()) {
-        auto cell = p->getProxyArgScope();
-        if (cell && cell->contentId().to_string(HashFormat::Base16, false) == idStr) {
+    /* Cell-chain lookup: starting at currentProxy's argScope, walk
+       the cell.parent chain looking for one whose contentId matches.
+       State creep is folded into contentId() automatically (XOR-fold
+       of ancestor cells' intrinsics). */
+    auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
+    for (; cell; cell = cell->parent) {
+        if (cell->contentId().to_string(HashFormat::Base16, false) == idStr) {
             ctx.memo[idStr] = cell->liveObject;
             return cell->liveObject;
         }
@@ -423,7 +435,7 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
             *this, result->second, [this, path, displayPath]() { return inner->evalFile(path, displayPath); });
         /* Top-level entry point: no parent in the proxy graph, no
            argScope (no apply has happened). */
-        obj->withScope(/*parent=*/nullptr, nullptr);
+        obj->withScope(nullptr);
         return obj;
     }
     tracingCacheLog("replay miss: evalFile %s", displayPath);
@@ -436,7 +448,7 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Roo
         tracingCacheLog("replay hit: evalExpr");
         auto obj = make_ref<TracingReplayObject>(
             *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); });
-        obj->withScope(/*parent=*/nullptr, nullptr);
+        obj->withScope(nullptr);
         return obj;
     }
     tracingCacheLog("replay miss: evalExpr");
@@ -510,10 +522,9 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
     /* Apply result: open a new intrinsic cell for this apply's
-       argument. Parent = the fn proxy's effective cell (walking
-       past navigation children). */
+       argument. Cell parent = the fn proxy's argScope cell. */
     auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
-    obj->withScope(fn.get_ptr(), std::move(cell));
+    obj->withScope(std::move(cell));
     return obj;
 }
 
