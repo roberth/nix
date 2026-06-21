@@ -174,6 +174,30 @@ struct AmbientQuery
     }
 };
 
+/* Orchestrates a covariant-callback apply: resolves the outer fn from
+   the registry, opens a cell for the inner-supplied arg, wraps the arg
+   in TracingLocalObject so outer accesses on it land in the inner
+   trace, bridges the wrapped arg via ExprFromObject into an outer
+   `mkApp` thunk, registers the apply result, and defers the Pass-1
+   apply Request + Pass-2 localArg sidecar to the writer's flush.
+   Constructed transiently per call; holds refs/copies from the owning
+   resolver. The `resolverHandle` shared_ptr is required for
+   ExprFromObject's `ambientResolver` field; everything else is by
+   reference. */
+struct AmbientApply
+{
+    AmbientRegistry & registry;
+    std::map<Object *, Value *> & bridgedLocals;
+    EvalState * outerState;
+    std::shared_ptr<Evaluator> innerEvaluator;
+    TracingWriter * innerWriter;
+    std::shared_ptr<SourceRoot> outerRootFSRoot;
+    std::shared_ptr<AmbientResolver> resolverHandle;
+
+    std::pair<AmbientId, AmbientId> run(
+        AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope);
+};
+
 struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
 {
     AmbientRegistry registry;
@@ -221,75 +245,84 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
     std::pair<AmbientId, AmbientId> apply(
         AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope)
     {
-        if (!outerState)
-            throw Error("ambient apply requires outerState");
-        auto fnObj = registry.resolve(fnId);
-
-        /* Open a new intrinsic cell for the cb arg, rooted at the
-           caller's effective scope (passed in by AmbientObject::queryApply,
-           which knows its own proxy graph position). `fnObj` resolved
-           from outerValues may be an InterpreterObject without a
-           proxy parent chain — can't infer depth from it — hence the
-           caller-supplied scope. */
-        auto localCell = ArgScopeCell::make(callerScope, argObj);
-        auto argId = localCell->contentId();
-        registry.registerLocalSeed(argObj, argId);
-
-        /* Wrap the argObj in TracingLocalObject so the outer's
-           accesses on it during the apply land in the inner trace
-           with `from=hex(argId)`. The recorder always stores those
-           response payloads; the replay dispatcher reads them back
-           since there's no live inner to recompute against. */
-        auto wrappedArg = (innerWriter && outerRootFSRoot)
-            ? std::shared_ptr<Object>(std::make_shared<TracingLocalObject>(
-                  argObj, argId, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell))
-            : argObj;
-
-        /* Bridge local arg via ExprFromObject. Memoise by the
-           argObj's identity (not argId) so cycle detection sees
-           one thunk for the same Value but distinct argObjs with
-           coincidentally same argId get distinct thunks. */
-        auto & argThunk = bridgedLocals[argObj.get()];
-        if (!argThunk) {
-            argThunk = outerState->allocValue();
-            auto * argExpr = new ExprFromObject(wrappedArg, innerEvaluator, shared_from_this());
-            outerState->mkThunk_(*argThunk, argExpr);
-        }
-
-        /* Build the outer mkApp thunk. */
-        auto fnVal = fnObj->defeatCache();
-        auto * resultVal = outerState->allocValue();
-        resultVal->mkApp(*fnVal, argThunk);
-        auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
-
-        /* Result id is queryHash(QueryApply{fn=fnId, arg=argId}). */
-        auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
-        auto argIdStr = argId.to_string(HashFormat::Base16, false);
-        trace::QueryApply applyQuery{fnIdStr, argIdStr};
-        auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
-        registry.registerOuterAt(resultId, std::move(resultObj));
-
-        /* Defer the QueryApply Request and the localArg sidecar to
-           the writer's flush at logResult. Both payloads carry
-           placeholder hexes (argIdStr is the counter-derived local
-           id, and the sidecar's `applyResultId` is the placeholder
-           apply_qH derived from it). Substitution at flush time
-           rewrites them to the local's intrinsic content-hash and
-           the corresponding intrinsic apply_qH respectively, and
-           the inserts land at the substituted keys. */
-        if (innerWriter) {
-            nlohmann::json applyJson = applyQuery;
-            innerWriter->deferRequest(applyJson);
-            nlohmann::json localSidecar = {
-                {"kind", "localArg"},
-                {"applyResultId", resultId.to_string(HashFormat::Base16, false)},
-            };
-            innerWriter->deferRequest(localSidecar, argIdStr);
-        }
-
-        return {argId, resultId};
+        return AmbientApply{
+            registry, bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
+            shared_from_this(),
+        }.run(fnId, std::move(argObj), std::move(callerScope));
     }
 };
+
+std::pair<AmbientId, AmbientId> AmbientApply::run(
+    AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope)
+{
+    if (!outerState)
+        throw Error("ambient apply requires outerState");
+    auto fnObj = registry.resolve(fnId);
+
+    /* Open a new intrinsic cell for the cb arg, rooted at the
+       caller's effective scope (passed in by AmbientObject::queryApply,
+       which knows its own proxy graph position). `fnObj` resolved
+       from outerValues may be an InterpreterObject without a
+       proxy parent chain — can't infer depth from it — hence the
+       caller-supplied scope. */
+    auto localCell = ArgScopeCell::make(callerScope, argObj);
+    auto argId = localCell->contentId();
+    registry.registerLocalSeed(argObj, argId);
+
+    /* Wrap the argObj in TracingLocalObject so the outer's
+       accesses on it during the apply land in the inner trace
+       with `from=hex(argId)`. The recorder always stores those
+       response payloads; the replay dispatcher reads them back
+       since there's no live inner to recompute against. */
+    auto wrappedArg = (innerWriter && outerRootFSRoot)
+        ? std::shared_ptr<Object>(std::make_shared<TracingLocalObject>(
+              argObj, argId, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell))
+        : argObj;
+
+    /* Bridge local arg via ExprFromObject. Memoise by the
+       argObj's identity (not argId) so cycle detection sees
+       one thunk for the same Value but distinct argObjs with
+       coincidentally same argId get distinct thunks. */
+    auto & argThunk = bridgedLocals[argObj.get()];
+    if (!argThunk) {
+        argThunk = outerState->allocValue();
+        auto * argExpr = new ExprFromObject(wrappedArg, innerEvaluator, resolverHandle);
+        outerState->mkThunk_(*argThunk, argExpr);
+    }
+
+    /* Build the outer mkApp thunk. */
+    auto fnVal = fnObj->defeatCache();
+    auto * resultVal = outerState->allocValue();
+    resultVal->mkApp(*fnVal, argThunk);
+    auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
+
+    /* Result id is queryHash(QueryApply{fn=fnId, arg=argId}). */
+    auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
+    auto argIdStr = argId.to_string(HashFormat::Base16, false);
+    trace::QueryApply applyQuery{fnIdStr, argIdStr};
+    auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
+    registry.registerOuterAt(resultId, std::move(resultObj));
+
+    /* Defer the QueryApply Request and the localArg sidecar to
+       the writer's flush at logResult. Both payloads carry
+       placeholder hexes (argIdStr is the counter-derived local
+       id, and the sidecar's `applyResultId` is the placeholder
+       apply_qH derived from it). Substitution at flush time
+       rewrites them to the local's intrinsic content-hash and
+       the corresponding intrinsic apply_qH respectively, and
+       the inserts land at the substituted keys. */
+    if (innerWriter) {
+        nlohmann::json applyJson = applyQuery;
+        innerWriter->deferRequest(applyJson);
+        nlohmann::json localSidecar = {
+            {"kind", "localArg"},
+            {"applyResultId", resultId.to_string(HashFormat::Base16, false)},
+        };
+        innerWriter->deferRequest(localSidecar, argIdStr);
+    }
+
+    return {argId, resultId};
+}
 
 /* Out-of-line virtual definitions so the abstract base gets a key
    function — without these, clang's `-Wweak-vtables` reports the
