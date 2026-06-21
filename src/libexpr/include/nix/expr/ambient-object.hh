@@ -68,7 +68,7 @@ using AmbientApplyFn = std::function<AmbientId(
  */
 class AmbientObject : public Object
 {
-    AmbientId id;           ///< Integer id in the resolver
+    AmbientId cdi;          ///< Content-defined identity (hash of observation factset)
     AmbientQueryFn queryFn; ///< Callback to issue ambient queries
     AmbientApplyFn applyFn; ///< Callback for function application (may be null)
     /* lazy-paths: stable SourceRoot for paths returned by `getPath`.
@@ -87,7 +87,7 @@ class AmbientObject : public Object
     std::shared_ptr<const ArgScopeCell> argScope;
 
 public:
-    AmbientObject(AmbientId id, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
+    AmbientObject(AmbientId cdi, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
 
     /** Set the proxy's argScope. Call right after construction at
         boundary sites. Returns *this for chaining. */
@@ -123,9 +123,9 @@ public:
      */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj);
 
-    AmbientId getId() const
+    AmbientId getCdi() const
     {
-        return id;
+        return cdi;
     }
 };
 

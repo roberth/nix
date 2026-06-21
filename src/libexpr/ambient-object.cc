@@ -6,14 +6,14 @@ namespace nix {
 
 /* Under Step C, AmbientId is a Hash. The wire format puts the
    hex representation in the query's `from` field. */
-static std::string fromOf(AmbientId id)
+static std::string fromOf(AmbientId cdi)
 {
-    return id.to_string(HashFormat::Base16, false);
+    return cdi.to_string(HashFormat::Base16, false);
 }
 
 AmbientObject::AmbientObject(
-    AmbientId id, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn)
-    : id(id)
+    AmbientId cdi, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn)
+    : cdi(cdi)
     , queryFn(std::move(queryFn))
     , applyFn(std::move(applyFn))
     , ambientRootFSRoot(std::move(ambientRootFSRoot))
@@ -22,7 +22,7 @@ AmbientObject::AmbientObject(
 
 std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 {
-    auto qr = queryFn(id, trace::QueryGetAttr{name, fromOf(id)}, effectiveArgScope(*this));
+    auto qr = queryFn(cdi, trace::QueryGetAttr{name, fromOf(cdi)}, effectiveArgScope(*this));
     auto * r = std::get_if<trace::ResultMaybeType>(&qr.result);
     if (!r || !r->type)
         return nullptr;
@@ -36,7 +36,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 
 std::vector<std::string> AmbientObject::getAttrNames()
 {
-    auto qr = queryFn(id, trace::QueryGetAttrNames{fromOf(id)}, effectiveArgScope(*this));
+    auto qr = queryFn(cdi, trace::QueryGetAttrNames{fromOf(cdi)}, effectiveArgScope(*this));
     auto * r = std::get_if<trace::ResultListOfStrings>(&qr.result);
     if (!r)
         throw Error("ambient getAttrNames: unexpected result type");
@@ -45,7 +45,7 @@ std::vector<std::string> AmbientObject::getAttrNames()
 
 std::string AmbientObject::getStringIgnoreContext()
 {
-    auto qr = queryFn(id, trace::QueryGetString{fromOf(id)}, effectiveArgScope(*this));
+    auto qr = queryFn(cdi, trace::QueryGetString{fromOf(cdi)}, effectiveArgScope(*this));
     auto * r = std::get_if<trace::ResultString>(&qr.result);
     if (!r)
         throw Error("ambient getString: unexpected result type");
@@ -59,7 +59,7 @@ std::string AmbientObject::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
 {
-    auto qr = queryFn(id, trace::QueryGetStringWithContext{fromOf(id)}, effectiveArgScope(*this));
+    auto qr = queryFn(cdi, trace::QueryGetStringWithContext{fromOf(cdi)}, effectiveArgScope(*this));
     auto * r = std::get_if<trace::ResultStringWithContext>(&qr.result);
     if (!r)
         throw Error("ambient getStringWithContext: unexpected result type");
@@ -71,7 +71,7 @@ std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
 
 RootedPath AmbientObject::getPath()
 {
-    auto qr = queryFn(id, trace::QueryGetPath{fromOf(id)}, effectiveArgScope(*this));
+    auto qr = queryFn(cdi, trace::QueryGetPath{fromOf(cdi)}, effectiveArgScope(*this));
     auto * r = std::get_if<trace::ResultPath>(&qr.result);
     if (!r)
         throw Error("ambient getPath: unexpected result type");
@@ -85,7 +85,7 @@ RootedPath AmbientObject::getPath()
 
 bool AmbientObject::getBool(std::string_view)
 {
-    auto qr = queryFn(id, trace::QueryGetBool{fromOf(id)}, effectiveArgScope(*this));
+    auto qr = queryFn(cdi, trace::QueryGetBool{fromOf(cdi)}, effectiveArgScope(*this));
     auto * r = std::get_if<trace::ResultBool>(&qr.result);
     if (!r)
         throw Error("ambient getBool: unexpected result type");
@@ -94,7 +94,7 @@ bool AmbientObject::getBool(std::string_view)
 
 NixInt AmbientObject::getInt(std::string_view)
 {
-    auto qr = queryFn(id, trace::QueryGetInt{fromOf(id)}, effectiveArgScope(*this));
+    auto qr = queryFn(cdi, trace::QueryGetInt{fromOf(cdi)}, effectiveArgScope(*this));
     auto * r = std::get_if<trace::ResultInt>(&qr.result);
     if (!r)
         throw Error("ambient getInt: unexpected result type");
@@ -103,7 +103,7 @@ NixInt AmbientObject::getInt(std::string_view)
 
 NixFloat AmbientObject::getFloat(std::string_view)
 {
-    auto qr = queryFn(id, trace::QueryGetFloat{fromOf(id)}, effectiveArgScope(*this));
+    auto qr = queryFn(cdi, trace::QueryGetFloat{fromOf(cdi)}, effectiveArgScope(*this));
     auto * r = std::get_if<trace::ResultFloat>(&qr.result);
     if (!r)
         throw Error("ambient getFloat: unexpected result type");
@@ -112,7 +112,7 @@ NixFloat AmbientObject::getFloat(std::string_view)
 
 size_t AmbientObject::getListSize()
 {
-    auto qr = queryFn(id, trace::QueryGetListSize{fromOf(id)}, effectiveArgScope(*this));
+    auto qr = queryFn(cdi, trace::QueryGetListSize{fromOf(cdi)}, effectiveArgScope(*this));
     auto * r = std::get_if<trace::ResultListSize>(&qr.result);
     if (!r)
         throw Error("ambient getListSize: unexpected result type");
@@ -121,7 +121,7 @@ size_t AmbientObject::getListSize()
 
 std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
 {
-    auto qr = queryFn(id, trace::QueryGetListElem{fromOf(id), index}, effectiveArgScope(*this));
+    auto qr = queryFn(cdi, trace::QueryGetListElem{fromOf(cdi), index}, effectiveArgScope(*this));
     if (!qr.childId)
         throw Error("ambient getListElem: resolver didn't return child id");
     auto child = std::make_shared<AmbientObject>(*qr.childId, queryFn, ambientRootFSRoot, applyFn);
@@ -137,7 +137,7 @@ ObjectType AmbientObject::getTypeLazy()
 
 ObjectType AmbientObject::getType()
 {
-    auto qr = queryFn(id, trace::QueryGetType{fromOf(id)}, effectiveArgScope(*this));
+    auto qr = queryFn(cdi, trace::QueryGetType{fromOf(cdi)}, effectiveArgScope(*this));
     auto * r = std::get_if<trace::ResultType>(&qr.result);
     if (!r)
         throw Error("ambient getType: unexpected result type");
@@ -151,7 +151,7 @@ RootValue AmbientObject::defeatCache()
 
 std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
 {
-    auto qr = queryFn(id, trace::QueryGetFunctionInfo{fromOf(id)}, effectiveArgScope(*this));
+    auto qr = queryFn(cdi, trace::QueryGetFunctionInfo{fromOf(cdi)}, effectiveArgScope(*this));
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
         return std::nullopt;
@@ -179,7 +179,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
        cell before moving it into applyFn. */
     auto callerScope = effectiveArgScope(*this);
     auto argForScope = argObj;
-    auto resultId = applyFn(id, std::move(argObj), callerScope);
+    auto resultId = applyFn(cdi, std::move(argObj), callerScope);
     auto result = std::make_shared<AmbientObject>(resultId, queryFn, ambientRootFSRoot, applyFn);
     /* Apply-result: open a new intrinsic cell for this apply's
        argument, rooted at the same caller scope the applyFn used. */

@@ -81,7 +81,7 @@ public:
     PosIdx getPos() override;
     std::optional<std::vector<std::string>> getAttrPath() override;
 
-    AmbientId getId() const
+    AmbientId getCdi() const
     {
         return localId;
     }

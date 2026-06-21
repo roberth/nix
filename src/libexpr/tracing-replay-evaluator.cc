@@ -195,7 +195,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     for (; cell; cell = cell->parent) {
         if (auto * amb = dynamic_cast<AmbientObject *>(cell->liveObject.get())) {
-            if (amb->getId().to_string(HashFormat::Base16, false) == idStr) {
+            if (amb->getCdi().to_string(HashFormat::Base16, false) == idStr) {
                 ctx.memo[idStr] = cell->liveObject;
                 return cell->liveObject;
             }
@@ -531,9 +531,9 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         if (auto * ro = dynamic_cast<TracingReplayObject *>(&obj))
             return ro->getTriePos().queryHashStr;
         if (auto * ao = dynamic_cast<AmbientObject *>(&obj))
-            return ao->getId().to_string(HashFormat::Base16, false);
+            return ao->getCdi().to_string(HashFormat::Base16, false);
         if (auto * tlo = dynamic_cast<TracingLocalObject *>(&obj))
-            return tlo->getId().to_string(HashFormat::Base16, false);
+            return tlo->getCdi().to_string(HashFormat::Base16, false);
         throw Error(
             "TracingReplayEvaluator::apply: fn/arg lacks a content-defined "
             "identity (type %s). Wrap it as a cache-boundary proxy at its "

@@ -263,9 +263,9 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         if (auto * ro = dynamic_cast<TracingReplayObject *>(&obj))
             return ro->getTriePos().queryHashStr;
         if (auto * ao = dynamic_cast<AmbientObject *>(&obj))
-            return ao->getId().to_string(HashFormat::Base16, false);
+            return ao->getCdi().to_string(HashFormat::Base16, false);
         if (auto * tlo = dynamic_cast<TracingLocalObject *>(&obj))
-            return tlo->getId().to_string(HashFormat::Base16, false);
+            return tlo->getCdi().to_string(HashFormat::Base16, false);
         throw Error(
             "TracingEvaluator::apply: fn/arg lacks a content-defined "
             "identity (type %s). Wrap it as a cache-boundary proxy at its "
