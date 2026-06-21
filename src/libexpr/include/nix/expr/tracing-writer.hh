@@ -108,7 +108,7 @@ class TracingWriter
        inserted the Q into the pool at its new hash. Without
        persistence the later flush starts with an empty sub map and
        leaves the fact's `from` unsubstituted, so replay's
-       resolveAmbientId can't find the producer in the pool and falls
+       resolveCdiId can't find the producer in the pool and falls
        back to a frozen ReplayLocalObject standin (#49 root cause). */
     std::map<std::string, std::string> preFlushSubstitutions;
 

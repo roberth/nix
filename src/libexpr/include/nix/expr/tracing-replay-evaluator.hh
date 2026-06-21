@@ -28,8 +28,8 @@ class TracingReplayEvaluator : public Evaluator
      * Per-walk resolution context.
      *
      * Threaded through v13Walk → dispatch → getCurrentResponse →
-     * dispatchAmbientQuery → resolveAmbientId. Holds the proxy
-     * whose method triggered this walk (so resolveAmbientId can
+     * dispatchAmbientQuery → resolveCdiId. Holds the proxy
+     * whose method triggered this walk (so resolveCdiId can
      * walk the parent / argScope chain on the proxy graph) plus a
      * per-walk memo of ids already resolved. Lives only for the
      * duration of one v13Walk call — no cross-call leakage as
@@ -43,7 +43,7 @@ class TracingReplayEvaluator : public Evaluator
             (evalFile, evalExpr) where no proxy exists yet. */
         std::shared_ptr<Object> currentProxy;
         /** Memoise id → resolved Object within this single walk so
-            recursive resolveAmbientId calls don't redo work. */
+            recursive resolveCdiId calls don't redo work. */
         std::map<std::string, std::shared_ptr<Object>> memo;
     };
 
@@ -72,9 +72,9 @@ class TracingReplayEvaluator : public Evaluator
         resolved recursively. Per-walk memoisation in ctx.memo
         prevents redundant work within the same walk. Returns
         nullptr if the id can't be resolved. */
-    std::shared_ptr<Object> resolveAmbientId(const std::string & idStr, ResolutionContext & ctx);
+    std::shared_ptr<Object> resolveCdiId(const std::string & idStr, ResolutionContext & ctx);
 
-    /* The four direction-/payload-specific branches of resolveAmbientId,
+    /* The four direction-/payload-specific branches of resolveCdiId,
        extracted so each branch's discipline is named and visible. The
        first two are Local-direction-specific (frozen, served from pool);
        resolveApplyId mixes direction (fn is Outer, arg may be either);

@@ -178,7 +178,7 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
    producer's query on the parent. QueryApply payloads invoke the
    live apply against a (frozen) ReplayLocalObject arg. localArg
    sidecars chase to the apply. */
-std::shared_ptr<Object> TracingReplayEvaluator::resolveAmbientId(const std::string & idStr, ResolutionContext & ctx)
+std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string & idStr, ResolutionContext & ctx)
 {
     /* Per-walk memo. */
     if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
@@ -269,7 +269,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::chaseLocalArgSidecar(
     const std::string & idStr, const nlohmann::json & reqJson, ResolutionContext & ctx)
 {
     auto applyResultIdHex = reqJson["applyResultId"].get<std::string>();
-    resolveAmbientId(applyResultIdHex, ctx);
+    resolveCdiId(applyResultIdHex, ctx);
     if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
         return it->second;
     return nullptr;
@@ -283,7 +283,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::chaseLocalArgSidecar(
 std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx)
 {
-    auto fnObj = resolveAmbientId(params["fn"].get<std::string>(), ctx);
+    auto fnObj = resolveCdiId(params["fn"].get<std::string>(), ctx);
     if (!fnObj) {
         tracingCacheLog("replay: apply %s: cannot resolve fn %s", idStr, params["fn"]);
         return nullptr;
@@ -297,7 +297,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     }
     std::shared_ptr<Object> argObj = isLocalArgId(argHash)
         ? materialiseLocalStandin(argHash, argIdStr, ctx)
-        : resolveAmbientId(argIdStr, ctx);
+        : resolveCdiId(argIdStr, ctx);
     if (!argObj)
         return nullptr;
     ctx.memo[argIdStr] = argObj;
@@ -327,7 +327,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
     if (!params.contains("from"))
         return nullptr;
 
-    auto parent = resolveAmbientId(params["from"].get<std::string>(), ctx);
+    auto parent = resolveCdiId(params["from"].get<std::string>(), ctx);
     if (!parent)
         return nullptr;
 
@@ -365,12 +365,12 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
 
 
     /* Every ambient response must be live-validated, just like file
-       reads and env vars. resolveAmbientId for any tag (including
+       reads and env vars. resolveCdiId for any tag (including
        apply, via live `queryApply` invocation) returns a live
        Object we can re-query. Serving recorded responses here would
        hide outer-side changes from the validation chain and let the
        cache return stale results. */
-    auto obj = resolveAmbientId(params["from"].get<std::string>(), ctx);
+    auto obj = resolveCdiId(params["from"].get<std::string>(), ctx);
     if (!obj)
         return std::nullopt;
 
@@ -552,7 +552,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
        The previous pre-bind into a per-evaluator ambientState is
        gone — the live arg / fn live on the result proxy's argScope
-       cell, and resolveAmbientId walks the proxy graph from
+       cell, and resolveCdiId walks the proxy graph from
        whichever proxy is being forced. Per-call resolution naturally
        isolates concurrent cache invocations. */
     auto queryHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{fnId, argId});

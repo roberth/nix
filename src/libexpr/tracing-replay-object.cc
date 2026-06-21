@@ -86,7 +86,7 @@ template<typename Q, typename R>
 std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
 {
     auto queryHash = TracingDecisionGraph::computeQueryHash(query);
-    /* Thread `this` through as currentProxy so resolveAmbientId can
+    /* Thread `this` through as currentProxy so resolveCdiId can
        walk the proxy's parent/argScope chain to ground ambient ids
        in this call's live state. */
     auto v13 = evaluator.v13Walk(queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this());

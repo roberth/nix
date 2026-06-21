@@ -118,7 +118,7 @@ void TracingWriter::flushPendingAmbient()
                an observation on an apply result that's logged after the
                apply Q is flushed). Without persistence the later cycle's
                sub starts empty for this mapping, leaves the fact's
-               `from` unsubstituted, and replay's resolveAmbientId can't
+               `from` unsubstituted, and replay's resolveCdiId can't
                find the producer in the pool — falling back to a frozen
                ReplayLocalObject that serves stale recorded responses
                (#49). */
@@ -169,7 +169,7 @@ void TracingWriter::flushPendingAmbient()
        OLD queryHash (which is how a chain navigation step references
        its parent's identity) must substitute to the NEW queryHash
        too — otherwise the chain id replay computes can't reach the
-       producer fact in the pool, and resolveAmbientId falls back to
+       producer fact in the pool, and resolveCdiId falls back to
        a frozen ReplayLocalObject. Register old→new in sub as we go;
        since pendingFacts is in observation order (parent observed
        before child), each child sees its parent's substitution by
