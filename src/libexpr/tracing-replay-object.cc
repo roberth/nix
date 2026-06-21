@@ -6,6 +6,7 @@
 #include "nix/store/store-api.hh"
 #include "nix/util/error.hh"
 #include "nix/expr/tracing-cache-log.hh"
+#include "nix/expr/tracing-cache-stats.hh"
 #include "nix/util/logging.hh"
 #include "nix/util/util.hh"
 #include "nix/expr/object-type.hh"
@@ -58,6 +59,7 @@ ref<Object> TracingReplayObject::ensureInner() const
 {
     if (!inner) {
         tracingCacheLog("replay fallback: activating inner");
+        tracingCacheStats().fallbacks++;
         inner = getInner();
     }
     return *inner;

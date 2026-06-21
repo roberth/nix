@@ -3,6 +3,7 @@
 #include "nix/expr/arg-scope.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/replay-local-object.hh"
+#include "nix/expr/tracing-cache-stats.hh"
 #include "nix/expr/tracing-local-object.hh"
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-object.hh"
@@ -121,6 +122,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
                     for (const auto & req : onlyInEdge)
                         dispatchedTrie.insert(req);
                     lastQFactsHash = candidateCur;
+                    tracingCacheStats().hits++;
                     return std::make_pair(std::move(*payload), *term);
                 }
             }
@@ -129,11 +131,16 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
 
     /* Fall back to a regular walk from ∅. */
     auto walkHit = decisionGraph.walk(queryHash, dispatch);
-    if (!walkHit)
+    if (!walkHit) {
+        tracingCacheStats().misses++;
         return std::nullopt;
+    }
     auto payload = decisionGraph.getResultPayload(*walkHit);
-    if (!payload)
+    if (!payload) {
+        tracingCacheStats().misses++;
         return std::nullopt;
+    }
+    tracingCacheStats().hits++;
     return std::make_pair(std::move(*payload), *walkHit);
 }
 

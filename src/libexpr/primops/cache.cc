@@ -7,6 +7,7 @@
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-environment.hh"
 #include "nix/expr/trace-file.hh"
+#include "nix/expr/tracing-cache-stats.hh"
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/expr/tracing-writer.hh"
@@ -28,6 +29,11 @@ public:
 
 static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value & v)
 {
+    /* Arm the stats sidecar writer (no-op unless NIX_CACHE_STATS_FILE
+       is set; idempotent across calls). Tests that assert CDI-layer
+       hit/miss counts rely on this. */
+    armTracingCacheStatsExitWriter();
+
     state.forceAttrs(*args[0], pos, "while evaluating the argument passed to builtins.cache");
 
     std::optional<SourcePath> importPath;
