@@ -82,11 +82,18 @@ class TracingWriter
     /* Phase 4 of content-defined identity: ambient facts are buffered
        here during recording and flushed at logResult time with
        placeholder→intrinsic substitution applied. See
-       logAmbientInteraction, deferRequest, and flushPendingAmbient. */
+       logAmbientInteraction, deferRequest, and flushPendingAmbient.
+
+       `cell` carries the owning ArgScopeCell so flush can compute
+       per-fact emission-moment cdis via reverse XOR-subtract over the
+       cell's intrinsic. Null for facts emitted under the older
+       placeholderToIntrinsic substitution scheme (TracingLocalObject
+       under the legacy path); those will migrate in CDI fix B. */
     struct PendingFact
     {
         trace::QueryVariant query;
         trace::ResultVariant result;
+        std::shared_ptr<const struct ArgScopeCell> cell;
     };
     std::vector<PendingFact> pendingFacts;
 
@@ -230,11 +237,14 @@ public:
      * (e.g. Phase 3's TracingLocalObject buffer) compute their
      * placeholder-independent contributions themselves now.
      */
-    void logAmbientInteraction(const trace::QueryVariant & query, const trace::ResultVariant & result)
+    void logAmbientInteraction(
+        const trace::QueryVariant & query,
+        const trace::ResultVariant & result,
+        std::shared_ptr<const struct ArgScopeCell> cell = nullptr)
     {
         if (!decisionGraph)
             return;
-        pendingFacts.push_back({query, result});
+        pendingFacts.push_back({query, result, std::move(cell)});
     }
 
     /**

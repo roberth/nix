@@ -59,13 +59,19 @@ public:
     /**
      * Issue an ambient query and return the result.
      *
-     * The default implementation just calls the provided callback directly.
-     * TracingEnvironment overrides to record the interaction as a
-     * depth-1 Query/Result pair in the trie.
+     * `cell` is the proxy's argScope at the moment of the observation,
+     * if any. TracingEnvironment stores it on the buffered fact so
+     * flush-time substitution can attribute the fact's `from` to the
+     * cell's content-defined identity at this point in the observation
+     * sequence (per-fact snapshot, not the cell's final intrinsic).
+     * The default implementation ignores `cell` since it doesn't record.
      */
     virtual trace::ResultVariant ambientQuery(
-        const trace::QueryVariant & query, std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve)
+        const trace::QueryVariant & query,
+        std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
+        std::shared_ptr<const struct ArgScopeCell> cell = nullptr)
     {
+        (void) cell;
         return resolve(query);
     }
 

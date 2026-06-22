@@ -384,7 +384,7 @@ static PrimOp * makeCachedFnPrimOp(
                                                   &innerEnv](
                             AmbientId objectId,
                             const trace::QueryVariant & q,
-                            std::shared_ptr<const ArgScopeCell> /*cell*/) {
+                            std::shared_ptr<const ArgScopeCell> cell) {
                             /* For seed queries (objectId == this cb's
                                rootId), dispatch on the captured
                                outerArgObj directly — bypass the shared
@@ -395,7 +395,12 @@ static PrimOp * makeCachedFnPrimOp(
                             AmbientQueryResult qr = (objectId == rootId)
                                 ? resolver->queryOn(outerArgObj, q)
                                 : resolver->query(objectId, q);
-                            innerEnv.ambientQuery(q, [&](const trace::QueryVariant &) { return qr.result; });
+                            /* Pass the proxy's cell through to ambientQuery
+                               so the writer can attribute this fact to
+                               the cell for per-fact emission-moment cdi
+                               resolution at flush. */
+                            innerEnv.ambientQuery(
+                                q, [&](const trace::QueryVariant &) { return qr.result; }, cell);
                             return qr;
                         };
                         /* applyFn does NOT record a QueryApply Fact:
