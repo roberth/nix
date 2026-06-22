@@ -62,7 +62,7 @@ public:
 
     /** This proxy's structural identity, per the
         content-identity-via-asks design. */
-    const cidasks::Subject & getSubject() const { return subject; }
+    const cidasks::Subject * getSubject() const override { return &subject; }
 
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 

@@ -36,8 +36,19 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
 {
     /* Per-walk resolution context: holds the proxy whose method
        triggered this walk (for proxy-graph grounded ambient id
-       resolution) and a memo of ids resolved during this walk. */
-    ResolutionContext ctx{std::move(currentProxy), {}};
+       resolution), a memo of ids resolved during this walk, and the
+       running cidasks walk built from dispatched facts. */
+    ResolutionContext ctx{
+        std::move(currentProxy),
+        {},
+        /* runningWalk seeded with one empty edge — every dispatched
+           fact appends to it. For single-edge walks (the trie's
+           fast path), edgeIndex stays at 0 so subject content ids
+           evaluate against the empty precondition (= initial cdi);
+           matches recorder behavior at flush. */
+        std::vector<cidasks::Edge>{cidasks::Edge{}},
+        0,
+    };
 
     /* Dispatcher: turns a Request hash into the current Response
        hash. Memoised in dispatchCache for stable requests (file
@@ -52,9 +63,17 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         if (!requestPayload)
             return Hash(HashAlgorithm::SHA256);
         bool isAmbient = false;
+        std::optional<Hash> ambientFromHash;
         try {
             auto reqJson = cborStringToJson(*requestPayload);
             isAmbient = reqJson.contains("query");
+            if (isAmbient && reqJson.contains("params") && reqJson["params"].is_object()
+                && reqJson["params"].contains("from")) {
+                try {
+                    ambientFromHash = Hash::parseNonSRIUnprefixed(
+                        reqJson["params"]["from"].get<std::string>(), HashAlgorithm::SHA256);
+                } catch (...) {}
+            }
         } catch (...) {}
         if (!isAmbient) {
             if (auto it = dispatchCache.find(requestHash); it != dispatchCache.end())
@@ -72,6 +91,20 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
            which facts came from interpretation vs cache-hit
            dispatch. */
         writer.noteEnvObservation(requestHash, h);
+        /* Append to the running cidasks walk so subsequent
+           in-walk content-id matches (resolveCdiId) account for
+           this observation. For single-edge walks edgeIndex stays
+           at 0 so this is informational only — but the
+           infrastructure is in place for multi-edge walks where
+           per-edge precondition evaluation matters. */
+        if (isAmbient && ambientFromHash && !ctx.runningWalk.empty()) {
+            cidasks::Fact f{
+                .fromHash = *ambientFromHash,
+                .elementHash = TracingDecisionGraph::xorFactIntoHash(
+                    Hash(HashAlgorithm::SHA256), requestHash, h),
+            };
+            ctx.runningWalk.back().facts.push_back(std::move(f));
+        }
         return h;
     };
 
@@ -185,15 +218,19 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
         return it->second;
 
     /* Walk the proxy's argScope chain looking for a cell whose
-       liveObject's content id matches idStr. The liveObject's
-       getCdiHex() computes via cidasks::contentIdAfter against the
-       proxy's Subject — symmetric to recording. */
+       liveObject's content id matches idStr. The id is computed via
+       cidasks::contentIdAt against the walk's running factset
+       (= edgeIndex 0 for single-edge walks; future-proofed for
+       multi-edge). Symmetric to recording. */
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     for (; cell; cell = cell->parent) {
         if (auto live = cell->liveObject) {
-            if (auto cdiHex = live->getCdiHex(); cdiHex && *cdiHex == idStr) {
-                ctx.memo[idStr] = live;
-                return live;
+            if (auto * subj = live->getSubject()) {
+                auto cdi = cidasks::contentIdAt(*subj, ctx.runningWalk, ctx.edgeIndex);
+                if (cdi.to_string(HashFormat::Base16, false) == idStr) {
+                    ctx.memo[idStr] = live;
+                    return live;
+                }
             }
         }
     }

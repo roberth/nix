@@ -88,7 +88,7 @@ public:
 
     /** This proxy's structural identity (positional / derived /
         apply-result), per the content-identity-via-asks design. */
-    const cidasks::Subject & getSubject() const { return subject; }
+    const cidasks::Subject * getSubject() const override { return &subject; }
 
     /** Set the proxy's argScope. Call right after construction at
         boundary sites. Returns *this for chaining. */

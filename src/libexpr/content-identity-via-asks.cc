@@ -19,7 +19,6 @@ Hash extractFrom(const trace::QueryVariant & query)
 {
     return std::visit(
         [](const auto & q) -> Hash {
-            using Q = std::decay_t<decltype(q)>;
             if constexpr (requires { q.from; }) {
                 if (!q.from.isContent())
                     throw Error("cidasks::extractFrom: query.from is not a ContentLeaf");
@@ -31,18 +30,21 @@ Hash extractFrom(const trace::QueryVariant & query)
         query);
 }
 
-Hash hElement(const Fact & fact)
+Fact factFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
     nlohmann::json qj;
-    std::visit([&](const auto & q) { qj = q; }, fact.query);
+    std::visit([&](const auto & q) { qj = q; }, query);
     auto reqHash = hashString(HashAlgorithm::SHA256, qj.dump());
 
     nlohmann::json rj;
-    std::visit([&](const auto & r) { rj = r; }, fact.result);
+    std::visit([&](const auto & r) { rj = r; }, result);
     auto respPayload = jsonToCborString(rj);
     auto respHash = TracingDecisionGraph::computeResponseHash(respPayload);
 
-    return TracingDecisionGraph::xorFactIntoHash(Hash(HashAlgorithm::SHA256), reqHash, respHash);
+    return Fact{
+        .fromHash = extractFrom(query),
+        .elementHash = TracingDecisionGraph::xorFactIntoHash(Hash(HashAlgorithm::SHA256), reqHash, respHash),
+    };
 }
 
 static Hash initialId(const Subject & subject)
@@ -125,9 +127,8 @@ Hash contentIdAt(const Subject & subject, const std::vector<Edge> & walk, size_t
                 Hash myCidAtK = TracingDecisionGraph::xorHashes(structuralAtK, own);
 
                 for (auto & fact : walk[k].facts) {
-                    Hash from = extractFrom(fact.query);
-                    if (from == myCidAtK)
-                        own = TracingDecisionGraph::xorHashes(own, hElement(fact));
+                    if (fact.fromHash == myCidAtK)
+                        own = TracingDecisionGraph::xorHashes(own, fact.elementHash);
                 }
             }
 

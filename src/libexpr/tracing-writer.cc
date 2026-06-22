@@ -40,7 +40,7 @@ void TracingWriter::flushPendingAmbient()
        per-edge precondition is edgeIndex 0 (= the empty factset). */
     cidasks::Edge edge;
     for (auto & pf : pendingFacts)
-        edge.facts.push_back({pf.query, pf.result});
+        edge.facts.push_back(cidasks::factFromQR(pf.query, pf.result));
     std::vector<cidasks::Edge> walk{std::move(edge)};
 
     /* Pass B: rewrite each fact's `from` to its subject's content

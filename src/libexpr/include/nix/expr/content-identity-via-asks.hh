@@ -72,11 +72,13 @@ struct Subject
     std::variant<PositionalSeed, DerivedSubject, ApplyResultSubject, OpaqueContentSubject> data;
 };
 
-/** A single observation: (query, response) pair. */
+/** A single observation reduced to the two hashes contentIdAt needs.
+    `fromHash` is the content id the query was issued against;
+    `elementHash` is SHA-256(reqHash || respHash) — the v13 H_element. */
 struct Fact
 {
-    trace::QueryVariant query;
-    trace::ResultVariant result;
+    Hash fromHash;
+    Hash elementHash;
 };
 
 /** An Asks edge's worth of facts. Facts in one edge are dispatched
@@ -86,6 +88,10 @@ struct Edge
 {
     std::vector<Fact> facts;
 };
+
+/** Build a Fact from a QueryVariant/ResultVariant pair. Used by the
+    writer at flush time where it already holds the variants. */
+Fact factFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result);
 
 /** Compute the content id of `subject` after walking through all
     `edges`. With an empty walk, returns the subject's structural
@@ -102,9 +108,5 @@ Hash contentIdAt(const Subject & subject, const std::vector<Edge> & walk, size_t
 /** Convenience: extract a query's `from` field as a Hash, if it has
     one. Apply queries don't have a `from`; throws. */
 Hash extractFrom(const trace::QueryVariant & query);
-
-/** SHA-256(reqHash || respHash). Same as the XOR-fold input used by
-    the v13 trie's factSetHash. */
-Hash hElement(const Fact & fact);
 
 } // namespace nix::cidasks

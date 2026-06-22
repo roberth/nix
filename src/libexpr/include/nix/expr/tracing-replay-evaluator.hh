@@ -1,5 +1,6 @@
 #pragma once
 
+#include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-writer.hh"
@@ -45,6 +46,17 @@ class TracingReplayEvaluator : public Evaluator
         /** Memoise id → resolved Object within this single walk so
             recursive resolveCdiId calls don't redo work. */
         std::map<std::string, std::shared_ptr<Object>> memo;
+        /** The walk constructed in lockstep with dispatch. Each
+            dispatched fact appends to the trailing edge; matching
+            a live proxy's subject uses
+            `cidasks::contentIdAt(subject, runningWalk, edgeIndex)`.
+            For single-edge walks (the default fast path), all
+            facts share one edge and `edgeIndex == 0` (the
+            precondition is the empty factset). */
+        std::vector<cidasks::Edge> runningWalk;
+        /** Index into runningWalk that subjects' content ids are
+            evaluated at. Stays 0 for single-edge walks. */
+        size_t edgeIndex = 0;
     };
 
     /* Walks across the same process invocation re-dispatch the same

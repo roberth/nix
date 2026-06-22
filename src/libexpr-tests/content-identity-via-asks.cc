@@ -77,14 +77,14 @@ TEST(CidAsks, ObservationOnSeedAdvancesContentId)
     // A getInt fact whose from matches the seed's initial id.
     trace::QueryGetInt q{hex(initial)};
     trace::ResultInt r{42};
-    Edge e{.facts = {Fact{q, r}}};
+    Edge e{.facts = {factFromQR(q, r)}};
 
     auto after = contentIdAfter(s, {e});
     EXPECT_NE(initial, after);
 
-    // The advance is exactly H_element(fact) XORed in.
-    auto fact = Fact{q, r};
-    auto expected = TracingDecisionGraph::xorHashes(initial, hElement(fact));
+    // The advance is exactly elementHash XORed in.
+    auto fact = factFromQR(q, r);
+    auto expected = TracingDecisionGraph::xorHashes(initial, fact.elementHash);
     EXPECT_EQ(after, expected);
 }
 
@@ -97,7 +97,7 @@ TEST(CidAsks, FactOnUnrelatedSubjectDoesNotAdvance)
     // Fact whose from matches s1, not s0.
     trace::QueryGetInt q{hex(s1Initial)};
     trace::ResultInt r{99};
-    Edge e{.facts = {Fact{q, r}}};
+    Edge e{.facts = {factFromQR(q, r)}};
 
     EXPECT_EQ(contentIdAfter(s0, {}), contentIdAfter(s0, {e}));
     EXPECT_NE(contentIdAfter(s1, {}), contentIdAfter(s1, {e}));
@@ -122,8 +122,10 @@ TEST(CidAsks, XorCommutativityWithinEdge)
     trace::QueryGetType q2{hex(initial)};
     trace::ResultType r2{"int"};
 
-    Edge eAB{.facts = {Fact{q1, r1}, Fact{q2, r2}}};
-    Edge eBA{.facts = {Fact{q2, r2}, Fact{q1, r1}}};
+    auto f1 = factFromQR(q1, r1);
+    auto f2 = factFromQR(q2, r2);
+    Edge eAB{.facts = {f1, f2}};
+    Edge eBA{.facts = {f2, f1}};
 
     // Within one edge, dispatch order doesn't matter.
     EXPECT_EQ(contentIdAfter(s, {eAB}), contentIdAfter(s, {eBA}));
@@ -142,7 +144,7 @@ TEST(CidAsks, DerivedAdvancesWhenParentAdvances)
     // A fact on the parent.
     trace::QueryGetType q{hex(parentInitial)};
     trace::ResultType r{"set"};
-    Edge e{.facts = {Fact{q, r}}};
+    Edge e{.facts = {factFromQR(q, r)}};
 
     auto childAfter = contentIdAfter(child, {e});
     EXPECT_NE(childInitial, childAfter);  // child's id changed because parent's did
@@ -158,7 +160,7 @@ TEST(CidAsks, DerivedAlsoAdvancesOnOwnObservations)
     // A fact directly on the child.
     trace::QueryGetInt q{hex(childInitial)};
     trace::ResultInt r{7};
-    Edge e{.facts = {Fact{q, r}}};
+    Edge e{.facts = {factFromQR(q, r)}};
 
     EXPECT_NE(contentIdAfter(child, {e}), childInitial);
 }

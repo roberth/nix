@@ -19,6 +19,10 @@
 
 namespace nix {
 
+namespace cidasks {
+struct Subject;
+}
+
 class Store;
 class EvalState;
 
@@ -237,6 +241,18 @@ public:
     virtual std::optional<std::string> getCdiHex() const
     {
         return std::nullopt;
+    }
+
+    /**
+     * The proxy's static structural identifier — for AmbientObject
+     * and TracingLocalObject, the Subject they carry. Used by the
+     * walker to evolve content ids in lockstep with the recorder
+     * (cidasks::contentIdAt against the running walk). Returns null
+     * for non-proxy Objects.
+     */
+    virtual const cidasks::Subject * getSubject() const
+    {
+        return nullptr;
     }
 
     /**
