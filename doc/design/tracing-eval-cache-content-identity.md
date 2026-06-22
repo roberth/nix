@@ -150,6 +150,15 @@ Two consequences fall out:
 
 ## Layering: identity rides on input tracing
 
+`builtins.cache` instantiates an inner evaluator whose `Environment`
+exposes the outer evaluator as a callable peer of `fsRoot`,
+`getFileHash`, and `getEnv` — see `Environment::ambientQuery` in
+`src/libexpr/include/nix/expr/environment.hh`. From the inner's
+perspective, the outer is just another input source.
+
+The interaction-tracing layer defined below is not used stand-alone
+— only as the inner's view of an outer-extended Environment.
+
 The cache has two distinct layers and they should not be conflated.
 
 **Input tracing** is the foundation: file reads, env-var reads, and
@@ -168,14 +177,24 @@ propagate as facts to its enclosing cache's `factSet`, so a change
 inside an inner cache invalidates the outer cache transitively
 without any special bookkeeping.
 
-**Interaction tracing** layers on top with two new Request/Response
-variants (`AmbientQuery`, `AmbientResponse`). They are just more
-facts in the same `factSet`, persisted to the same Requests pool,
-walked by the same algorithm. What the walker does for them is
-different (`dispatchAmbientQuery` parses a Query path and walks it
-live, instead of `getFileHash`) but the trie semantics are
-unchanged. There is no parallel state machine for the ambient layer;
-every querying and writing it does is mediated by the input-tracing
+**Interaction tracing** layers on top with two direction-tagged
+Request/Response pairs in `trace-types.hh`:
+`AmbientOutgoingRequest`/`AmbientOutgoingResponse` for the inner
+observing the outer — the embedding via `Environment::ambientQuery`
+— and `AmbientIncomingRequest`/`AmbientIncomingResponse` for the
+outer observing inner-supplied locals during a covariant callback.
+The incoming direction does not call into the inner's `Environment`;
+it goes through a `TracingLocalObject` wrapping the cb arg whose
+Object methods are instrumented to report each access into the
+inner's writer. Both directions land as facts in the same `factSet`.
+The trace-sink JSON retains the direction tag; the `Requests` pool
+drops it, storing the inner `QueryVariant` directly. The walker
+dispatches all of them live via `resolveCdiId`: outgoing routes
+through the live outer Object, incoming through a
+`ReplayLocalObject` standin that serves recorded responses from the
+`Responses` pool (the one pool consumer; the walker itself never
+reads it). The trie semantics are unchanged: no parallel state
+machine, every querying and writing mediated by the input-tracing
 machinery.
 
 **Content-defined identity is a naming scheme**, not a layer of its
@@ -200,8 +219,8 @@ callbacks would no longer share a cache entry just because they
 were observed identically. The CDI computation must stay restricted
 to observations made *through* the value it labels.
 
-The asymmetry that follows: the ambient evaluator is effectively
-part of the inner's `Environment`, but the inner's `Environment` is
+The asymmetry that follows: although the ambient evaluator is part
+of the inner's `Environment`, the `Environment` itself remains
 independent of the inner evaluator's interpretation state. Input
 tracing records all the facts about ambient interactions so that
 *it* can invalidate or resume correctly at *its* level. CDIs are a
