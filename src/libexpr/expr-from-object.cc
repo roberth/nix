@@ -1,5 +1,6 @@
 #include "nix/expr/expr-from-object.hh"
 #include "nix/expr/ambient-object.hh"
+#include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/environment.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/interpreter-object.hh"
@@ -270,7 +271,15 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
        proxy parent chain — can't infer depth from it — hence the
        caller-supplied scope. */
     auto localCell = ArgScopeCell::make(callerScope, argObj);
-    auto argId = localCell->contentId();
+    /* CDI fix: argId is the static positional content id of this
+       local arg. Per the new design, the seed has no observations
+       yet at apply time, so the id is purely positional. Cb body
+       observations on the local during this apply evolve the
+       (per-Asks-edge) content id at flush; the placeholder here is
+       what flush rewrites against. */
+    auto argId = cidasks::contentIdAfter(
+        cidasks::Subject{cidasks::PositionalSeed{localCell->depth}},
+        {});
 
     /* Wrap the argObj in TracingLocalObject so the outer's
        accesses on it during the apply land in the inner trace
@@ -368,7 +377,15 @@ static PrimOp * makeCachedFnPrimOp(
                            returns AmbientObjects, not raw Values. */
                         auto parentCell = effectiveArgScope(*fnObj);
                         auto seedCell = ArgScopeCell::make(parentCell, /*liveObject set below*/ nullptr);
-                        auto rootId = seedCell->contentId();
+                        /* CDI fix: rootId is the static positional id
+                           of this seed. Sibling cb apply invocations
+                           share the same rootId (= positional initial
+                           at this depth) and discriminate via the
+                           factsetHash divergence of their observations,
+                           not via state-creep from ancestor cells. */
+                        auto rootId = cidasks::contentIdAfter(
+                            cidasks::Subject{cidasks::PositionalSeed{seedCell->depth}},
+                            {});
                         /* Boundary-trace-only discipline: do NOT
                            register outerArgObj under rootId in the
                            shared resolver. Sibling cb apply invocations
