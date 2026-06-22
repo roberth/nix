@@ -16,18 +16,6 @@ TracingObject::TracingObject(
 {
 }
 
-/* CDI fix: previously folded observations into cell.intrinsic for
-   state-creep into descendant cells' contentId(). Stubbed under the
-   new design — content ids are pure functions of (subject, factset);
-   cells don't hold the running content-id state anymore. */
-template<typename Q>
-static void absorbFact(
-    const std::shared_ptr<const ArgScopeCell> & /*argScope*/,
-    const Q & /*query*/,
-    const trace::ResultVariant & /*result*/)
-{
-}
-
 ref<TracingObject> TracingObject::create(
     ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos)
 {
@@ -45,7 +33,6 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
         // The type is discovered later via a separate getType query on the child.
         trace::ResultMaybeType resJson{std::string("deferred")};
         auto childTriePos = writer.logResult(valueId, resJson, qh);
-        absorbFact(argScope, query, resJson);
         auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
         /* Navigation child inherits parent's argScope cell. */
         child->withScope(argScope);
@@ -53,7 +40,6 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     }
     trace::ResultMaybeType resJson{std::nullopt};
     writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     return nullptr;
 }
 
@@ -65,7 +51,6 @@ std::vector<std::string> TracingObject::getAttrNames()
     auto result = inner->getAttrNames();
     trace::ResultListOfStrings resJson{result};
     writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     return result;
 }
 
@@ -77,7 +62,6 @@ std::string TracingObject::getStringIgnoreContext()
     auto result = inner->getStringIgnoreContext();
     trace::ResultString resJson{result};
     writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     return result;
 }
 
@@ -89,7 +73,6 @@ std::string TracingObject::getStringWithoutContext()
     auto result = inner->getStringWithoutContext();
     trace::ResultString resJson{result};
     writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     return result;
 }
 
@@ -104,7 +87,6 @@ std::pair<std::string, NixStringContext> TracingObject::getStringWithContext()
         ctxStrings.push_back(elem.to_string());
     trace::ResultStringWithContext resJson{result.first, std::move(ctxStrings)};
     writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     return result;
 }
 
@@ -116,7 +98,6 @@ RootedPath TracingObject::getPath()
     auto result = inner->getPath();
     trace::ResultPath resJson{result.path.abs()};
     writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     return result;
 }
 
@@ -128,7 +109,6 @@ bool TracingObject::getBool(std::string_view errorCtx)
     auto result = inner->getBool(errorCtx);
     trace::ResultBool resJson{result};
     writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     return result;
 }
 
@@ -140,7 +120,6 @@ NixInt TracingObject::getInt(std::string_view errorCtx)
     auto result = inner->getInt(errorCtx);
     trace::ResultInt resJson{result.value};
     writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     return result;
 }
 
@@ -152,7 +131,6 @@ NixFloat TracingObject::getFloat(std::string_view errorCtx)
     auto result = inner->getFloat(errorCtx);
     trace::ResultFloat resJson{result};
     writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     return result;
 }
 
@@ -164,7 +142,6 @@ size_t TracingObject::getListSize()
     auto result = inner->getListSize();
     trace::ResultListSize resJson{result};
     writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     return result;
 }
 
@@ -177,7 +154,6 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     auto type = result->getType();
     trace::ResultType resJson{objectTypeToString(type)};
     auto childTriePos = writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
     /* Navigation child inherits parent's argScope cell. */
     child->withScope(argScope);
@@ -192,7 +168,6 @@ std::vector<std::string> TracingObject::getListOfStringsNoCtx()
     auto result = inner->getListOfStringsNoCtx();
     trace::ResultListOfStrings resJson{result};
     writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     return result;
 }
 
@@ -204,7 +179,6 @@ ObjectType TracingObject::getTypeLazy()
     auto result = inner->getTypeLazy();
     trace::ResultType resJson{objectTypeToString(result)};
     writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     return result;
 }
 
@@ -216,7 +190,6 @@ ObjectType TracingObject::getType()
     auto result = inner->getType();
     trace::ResultType resJson{objectTypeToString(result)};
     writer.logResult(valueId, resJson, qh);
-    absorbFact(argScope, query, resJson);
     return result;
 }
 
@@ -238,7 +211,6 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
         traceResult = {.hasInfo = false};
     }
     writer.logResult(valueId, traceResult, qh);
-    absorbFact(argScope, query, traceResult);
     return result;
 }
 

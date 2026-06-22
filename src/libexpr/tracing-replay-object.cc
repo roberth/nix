@@ -24,15 +24,6 @@ TracingReplayObject::TracingReplayObject(
 {
 }
 
-/* CDI fix: stubbed; see TracingObject's matching note. */
-template<typename Q>
-static void absorbFactReplay(
-    const std::shared_ptr<const ArgScopeCell> & /*argScope*/,
-    const Q & /*query*/,
-    const trace::ResultVariant & /*result*/)
-{
-}
-
 ref<Object> TracingReplayObject::ensureInner() const
 {
     if (!inner) {
@@ -110,12 +101,10 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
     if (auto result = lookupStructuralChild<trace::QueryGetAttr, trace::ResultMaybeType>(query)) {
         if (!result->first.type) {
             tracingCacheLog("replay hit: getAttr '%s' -> missing", name);
-            absorbFactReplay(argScope, query, trace::ResultMaybeType{std::nullopt});
             return nullptr;
         }
 
         tracingCacheLog("replay hit: getAttr '%s' -> found", name);
-        absorbFactReplay(argScope, query, result->first);
         auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
         auto child = std::make_shared<TracingReplayObject>(
             evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
@@ -133,7 +122,6 @@ std::vector<std::string> TracingReplayObject::getAttrNames()
     auto parentHash = triePos.queryHashStr;
     trace::QueryGetAttrNames query{parentHash};
     if (auto r = lookupResult<trace::QueryGetAttrNames, trace::ResultListOfStrings>(query)) {
-        absorbFactReplay(argScope, query, *r);
         return r->values;
     }
     tracingCacheLog("replay fallback: getAttrNames");
@@ -145,7 +133,6 @@ std::string TracingReplayObject::getStringIgnoreContext()
     auto parentHash = triePos.queryHashStr;
     trace::QueryGetString query{parentHash};
     if (auto r = lookupResult<trace::QueryGetString, trace::ResultString>(query)) {
-        absorbFactReplay(argScope, query, *r);
         return r->value;
     }
     tracingCacheLog("replay fallback: getStringIgnoreContext");
@@ -203,7 +190,6 @@ bool TracingReplayObject::getBool(std::string_view errorCtx)
     auto parentHash = triePos.queryHashStr;
     trace::QueryGetBool query{parentHash};
     if (auto r = lookupResult<trace::QueryGetBool, trace::ResultBool>(query)) {
-        absorbFactReplay(argScope, query, *r);
         return r->value;
     }
     tracingCacheLog("replay fallback: getBool");
@@ -215,7 +201,6 @@ NixInt TracingReplayObject::getInt(std::string_view errorCtx)
     auto parentHash = triePos.queryHashStr;
     trace::QueryGetInt query{parentHash};
     if (auto r = lookupResult<trace::QueryGetInt, trace::ResultInt>(query)) {
-        absorbFactReplay(argScope, query, *r);
         return NixInt{r->value};
     }
     tracingCacheLog("replay fallback: getInt");
@@ -227,7 +212,6 @@ NixFloat TracingReplayObject::getFloat(std::string_view errorCtx)
     auto parentHash = triePos.queryHashStr;
     trace::QueryGetFloat query{parentHash};
     if (auto r = lookupResult<trace::QueryGetFloat, trace::ResultFloat>(query)) {
-        absorbFactReplay(argScope, query, *r);
         return r->value;
     }
     tracingCacheLog("replay fallback: getFloat");
@@ -239,7 +223,6 @@ size_t TracingReplayObject::getListSize()
     auto parentHash = triePos.queryHashStr;
     trace::QueryGetListSize query{parentHash};
     if (auto r = lookupResult<trace::QueryGetListSize, trace::ResultListSize>(query)) {
-        absorbFactReplay(argScope, query, *r);
         return r->size;
     }
     tracingCacheLog("replay fallback: getListSize");
@@ -253,7 +236,6 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
 
     if (auto result = lookupStructuralChild<trace::QueryGetListElem, trace::ResultType>(query)) {
         tracingCacheLog("replay hit: getListElem %d", idx);
-        absorbFactReplay(argScope, query, result->first);
         auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
         auto child = std::make_shared<TracingReplayObject>(
             evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); });
@@ -271,7 +253,6 @@ std::vector<std::string> TracingReplayObject::getListOfStringsNoCtx()
     auto parentHash = triePos.queryHashStr;
     trace::QueryGetListOfStrings query{parentHash};
     if (auto r = lookupResult<trace::QueryGetListOfStrings, trace::ResultListOfStrings>(query)) {
-        absorbFactReplay(argScope, query, *r);
         return r->values;
     }
     tracingCacheLog("replay fallback: getListOfStringsNoCtx");
@@ -288,7 +269,6 @@ ObjectType TracingReplayObject::getType()
     auto parentHash = triePos.queryHashStr;
     trace::QueryGetType query{parentHash};
     if (auto r = lookupResult<trace::QueryGetType, trace::ResultType>(query)) {
-        absorbFactReplay(argScope, query, *r);
         return stringToObjectType(r->type);
     }
     tracingCacheLog("replay fallback: getType (from=%s)", triePos.queryHashStr);
@@ -306,7 +286,6 @@ std::optional<FunctionInfo> TracingReplayObject::getFunctionInfo()
     auto parentHash = triePos.queryHashStr;
     trace::QueryGetFunctionInfo query{parentHash};
     if (auto r = lookupResult<trace::QueryGetFunctionInfo, trace::ResultFunctionInfo>(query)) {
-        absorbFactReplay(argScope, query, *r);
         if (!r->hasInfo)
             return std::nullopt;
         return FunctionInfo{.formals = r->formals, .ellipsis = r->ellipsis};
