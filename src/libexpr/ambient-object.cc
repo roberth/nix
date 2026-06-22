@@ -212,8 +212,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
     }};
     auto result = std::make_shared<AmbientObject>(std::move(resultSubject), queryFn, ambientRootFSRoot, applyFn);
-    /* Apply-result: open a new intrinsic cell for this apply's
-       argument, rooted at the same caller scope the applyFn used. */
+    /* Apply-result scope cell rooted at the caller's scope. */
     auto cell = ArgScopeCell::make(callerScope, std::move(argForScope));
     result->withScope(std::move(cell));
     return result;

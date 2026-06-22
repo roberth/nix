@@ -127,15 +127,9 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     auto type = result->getType();
     auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
     auto obj = TracingObject::create(result, writer, v, triePos);
-    /* Root cell for the cached value: observations made on it (and on
-       navigation children that inherit this cell) absorb here, so the
-       cell's intrinsic accumulates outer's interactions with the
-       cache result. When a callback apply opens its own cell with
-       parent = this root, the state-creep XOR fold in
-       ArgScopeCell::contentId() carries the root's intrinsic into the
-       cb arg's CDI — that's what discriminates sibling callback
-       invocations whose outer-evaluation state diverged between
-       apply points. */
+    /* Root scope-graph cell for the cached value. Cells now carry
+       only topology (depth/parent/liveObject); content ids are pure
+       functions of the proxy's Subject under the via-Asks design. */
     obj->withScope(ArgScopeCell::make(nullptr, obj.get_ptr()));
     return obj;
 }
@@ -277,12 +271,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
     };
     auto obj = TracingObject::create(result, writer, v, triePos);
-    /* Apply result: open a new intrinsic cell for this apply's
-       argument. Cell parent = the fn proxy's argScope cell. The
-       cell absorbs subsequent observations made through this apply
-       result, so its contentId() differentiates cb invocations
-       whose body behaviour differs (the alternative reading of the
-       design's apply-result-observations open question). */
+    /* Apply-result scope cell. Parent = fn proxy's cell. */
     auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
     obj->withScope(std::move(cell));
     return obj;

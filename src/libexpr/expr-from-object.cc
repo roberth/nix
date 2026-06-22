@@ -242,12 +242,10 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
         throw Error("ambient apply requires outerState");
     auto fnObj = registry.resolveOuter(fnId);
 
-    /* Open a new intrinsic cell for the cb arg, rooted at the
-       caller's effective scope (passed in by AmbientObject::queryApply,
-       which knows its own proxy graph position). `fnObj` resolved
-       from outerValues may be an InterpreterObject without a
-       proxy parent chain — can't infer depth from it — hence the
-       caller-supplied scope. */
+    /* Scope-graph cell for the cb arg, rooted at the caller's
+       effective scope (which AmbientObject::queryApply passes in
+       because a resolved fn may be an InterpreterObject without a
+       proxy parent chain). The cell carries only topology. */
     auto localCell = ArgScopeCell::make(callerScope, argObj);
     /* CDI fix: the local arg's Subject is the static positional handle
        at this apply-stack depth. Its argId = contentIdAfter(subject,
@@ -287,14 +285,10 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
     auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
     registry.registerOuterAt(resultId, std::move(resultObj));
 
-    /* Defer the QueryApply Request and the localArg sidecar to
-       the writer's flush at logResult. Both payloads carry
-       placeholder hexes (argIdStr is the counter-derived local
-       id, and the sidecar's `applyResultId` is the placeholder
-       apply_qH derived from it). Substitution at flush time
-       rewrites them to the local's intrinsic content-hash and
-       the corresponding intrinsic apply_qH respectively, and
-       the inserts land at the substituted keys. */
+    /* Defer the QueryApply Request and the localArg sidecar to the
+       writer's flush at logResult. Pool entries land at the natural
+       reqHashes (no substitution under the via-Asks design's
+       single-edge default). */
     if (innerWriter) {
         nlohmann::json applyJson = applyQuery;
         innerWriter->deferRequest(applyJson);
@@ -341,13 +335,12 @@ static PrimOp * makeCachedFnPrimOp(
                     [fnObj, innerEval, resolver](EvalState & state, const PosIdx pos, Value ** args, Value & v) {
                         // Do NOT force args[0] — it may be self-referential.
                         auto outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
-                        /* Open a new intrinsic cell for this seed.
-                           Parent = the fn proxy's cell (so curried
-                           applies of the cached value chain through
-                           depth 0, 1, ... naturally). cell.liveObject
-                           is set to the AmbientObject we're about to
-                           construct (below) so chain navigation
-                           returns AmbientObjects, not raw Values. */
+                        /* Scope-graph cell for this seed. Parent = the
+                           fn proxy's cell (so curried applies chain
+                           through depth 0, 1, ... naturally).
+                           cell.liveObject is set to the AmbientObject
+                           we're about to construct (below) so chain
+                           navigation returns the proxy. */
                         auto parentCell = effectiveArgScope(*fnObj);
                         auto seedCell = ArgScopeCell::make(parentCell, /*liveObject set below*/ nullptr);
                         /* CDI fix: this seed's Subject is the positional
