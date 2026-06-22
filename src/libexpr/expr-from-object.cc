@@ -411,9 +411,19 @@ static PrimOp * makeCachedFnPrimOp(
                                context so the apply-result's evolved
                                cdi reflects this probe. While the
                                apply is still running (not finalized),
-                               observations accumulate. */
+                               observations accumulate. Guard
+                               factFromQR with try/catch: queries
+                               without a `from` field (e.g. apply,
+                               which goes through applyFn anyway) and
+                               malformed Subject/Result types must
+                               not break the recording. */
                             if (applyContext && !applyContext->finalized) {
-                                applyContext->observations.push_back(cidasks::factFromQR(q, qr.result));
+                                try {
+                                    applyContext->observations.push_back(cidasks::factFromQR(q, qr.result));
+                                } catch (...) {
+                                    /* Skip observation; it can't
+                                       contribute to evolved cdi. */
+                                }
                             }
                             return qr;
                         };
