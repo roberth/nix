@@ -39,7 +39,8 @@ static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> r
 {
     return [responses = std::move(responses)](
                AmbientId objectId,
-               const trace::QueryVariant & q) -> AmbientQueryResult {
+               const trace::QueryVariant & q,
+               cidasks::Subject /*subject*/) -> AmbientQueryResult {
         std::string objHex = hex(objectId);
         std::string key = std::visit(
             [&](const auto & query) -> std::string {

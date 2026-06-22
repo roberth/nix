@@ -5,6 +5,7 @@
  * v13 decision-graph index.
  */
 
+#include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/trace-sink.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/util/ref.hh"
@@ -80,12 +81,15 @@ class TracingWriter
     TracingDecisionGraph::TrieBuilder allRequestsTrie;
 
     /* Ambient facts buffered during recording and flushed at
-       logResult time via flushPendingAmbient. Pool keys are the
-       natural reqHashes of the query payloads. */
+       logResult time via flushPendingAmbient. The Subject identifies
+       which value the observation is about — flush uses it via
+       cidasks::contentIdAt to compute the fact's `from` field
+       against the relevant Asks-edge precondition factset. */
     struct PendingFact
     {
         trace::QueryVariant query;
         trace::ResultVariant result;
+        cidasks::Subject subject;
     };
     std::vector<PendingFact> pendingFacts;
 
@@ -181,11 +185,12 @@ public:
      * inserts into the pool at the query payload's natural reqHash. */
     void logAmbientInteraction(
         const trace::QueryVariant & query,
-        const trace::ResultVariant & result)
+        const trace::ResultVariant & result,
+        cidasks::Subject subject)
     {
         if (!decisionGraph)
             return;
-        pendingFacts.push_back({query, result});
+        pendingFacts.push_back({query, result, std::move(subject)});
     }
 
     /**

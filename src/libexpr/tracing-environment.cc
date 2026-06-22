@@ -58,10 +58,11 @@ std::optional<std::string> TracingEnvironment::getEnv(const std::string & name)
 
 trace::ResultVariant TracingEnvironment::ambientQuery(
     const trace::QueryVariant & query,
-    std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve)
+    std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
+    cidasks::Subject subject)
 {
     auto result = resolve(query);
-    writer.logAmbientInteraction(query, result);
+    writer.logAmbientInteraction(query, result, std::move(subject));
     return result;
 }
 

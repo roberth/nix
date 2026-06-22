@@ -33,11 +33,13 @@ struct AmbientQueryResult
 
 /**
  * Callback type for issuing ambient queries. Takes the caller's
- * Object id and the query.
+ * Object id, the query, and the caller's Subject (for content-id
+ * attribution at the writer).
  */
 using AmbientQueryFn = std::function<AmbientQueryResult(
     AmbientId objectId,
-    const trace::QueryVariant &)>;
+    const trace::QueryVariant &,
+    cidasks::Subject)>;
 
 /**
  * Callback type for ambient function application.

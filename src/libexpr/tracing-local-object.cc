@@ -172,7 +172,7 @@ std::optional<std::vector<std::string>> TracingLocalObject::getAttrPath()
 
 void TracingLocalObject::recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
-    writer.logAmbientInteraction(query, result);
+    writer.logAmbientInteraction(query, result, subject);
 }
 
 } // namespace nix

@@ -35,7 +35,8 @@ public:
     std::optional<std::string> getEnv(const std::string & name) override;
     trace::ResultVariant ambientQuery(
         const trace::QueryVariant & query,
-        std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve) override;
+        std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
+        cidasks::Subject subject) override;
     TraceSink * getTraceSink() override;
 };
 

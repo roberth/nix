@@ -6,6 +6,7 @@
 
 #include <optional>
 #include <string>
+#include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/trace-types.hh"
 #include "nix/util/hash.hh"
 #include "nix/util/ref.hh"
@@ -57,14 +58,18 @@ public:
     virtual Hash getFileHash(const std::string & path);
 
     /**
-     * Issue an ambient query and return the result. The default
+     * Issue an ambient query and return the result. `subject`
+     * identifies the value the query is about (passed through to
+     * the writer for content-id computation at flush). The default
      * implementation delegates to the supplied resolve callback;
      * TracingEnvironment overrides to record the interaction.
      */
     virtual trace::ResultVariant ambientQuery(
         const trace::QueryVariant & query,
-        std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve)
+        std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
+        cidasks::Subject subject)
     {
+        (void) subject;
         return resolve(query);
     }
 

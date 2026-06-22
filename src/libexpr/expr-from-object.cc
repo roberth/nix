@@ -364,8 +364,9 @@ static PrimOp * makeCachedFnPrimOp(
                         AmbientQueryFn queryFn = [resolver, outerArgObj, rootId,
                                                   &innerEnv](
                             AmbientId objectId,
-                            const trace::QueryVariant & q) {
-                            /* For seed queries (objectId == this cb's
+                            const trace::QueryVariant & q,
+                            cidasks::Subject subject) {
+                            /* For cb-arg queries (objectId == this cb's
                                rootId), dispatch on the captured
                                outerArgObj directly — bypass the shared
                                resolver lookup. For derived ids (child
@@ -376,7 +377,9 @@ static PrimOp * makeCachedFnPrimOp(
                                 ? resolver->queryOn(outerArgObj, q)
                                 : resolver->query(objectId, q);
                             innerEnv.ambientQuery(
-                                q, [&](const trace::QueryVariant &) { return qr.result; });
+                                q,
+                                [&](const trace::QueryVariant &) { return qr.result; },
+                                std::move(subject));
                             return qr;
                         };
                         /* applyFn does NOT record a QueryApply Fact:
