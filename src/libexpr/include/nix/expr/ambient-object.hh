@@ -64,7 +64,6 @@ using AmbientApplyFn = std::function<AmbientId(
 class AmbientObject : public Object
 {
     cidasks::Subject subject; ///< Static structural identifier (positional/derived/apply)
-    AmbientId cdi;            ///< = cidasks::contentIdAfter(subject, {}); cached for cheap reads
     AmbientQueryFn queryFn;   ///< Callback to issue ambient queries
     AmbientApplyFn applyFn;   ///< Callback for function application (may be null)
     /* lazy-paths: stable SourceRoot for paths returned by `getPath`.
@@ -125,12 +124,15 @@ public:
 
     AmbientId getCdi() const
     {
-        return cdi;
+        /* Content id at the empty factset = subject's positional/structural
+           initial. For multi-edge use, callers must pass the relevant walk
+           via cidasks::contentIdAt instead. */
+        return cidasks::contentIdAfter(subject, {});
     }
 
     std::optional<std::string> getCdiHex() const override
     {
-        return cdi.to_string(HashFormat::Base16, false);
+        return getCdi().to_string(HashFormat::Base16, false);
     }
 };
 

@@ -38,9 +38,12 @@ class TracingLocalObject : public Object
 {
     std::shared_ptr<Object> inner;
     cidasks::Subject subject;  ///< Static structural identifier
-    AmbientId localId;         ///< = cidasks::contentIdAfter(subject, {}); cached
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
+
+    /** This local's content id at the empty factset = its positional
+        initial. Computed on demand from `subject`. */
+    AmbientId localId() const { return cidasks::contentIdAfter(subject, {}); }
 
     /* The argScope cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;
@@ -81,14 +84,11 @@ public:
     PosIdx getPos() override;
     std::optional<std::vector<std::string>> getAttrPath() override;
 
-    AmbientId getCdi() const
-    {
-        return localId;
-    }
+    AmbientId getCdi() const { return localId(); }
 
     std::optional<std::string> getCdiHex() const override
     {
-        return localId.to_string(HashFormat::Base16, false);
+        return localId().to_string(HashFormat::Base16, false);
     }
 };
 
