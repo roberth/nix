@@ -16,29 +16,17 @@ static std::string tracingLocalFromOf(AmbientId id)
 
 TracingLocalObject::TracingLocalObject(
     std::shared_ptr<Object> inner,
-    AmbientId localId,
+    cidasks::Subject subject_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
     std::shared_ptr<const ArgScopeCell> argScope)
     : inner(std::move(inner))
-    , localId(localId)
+    , subject(std::move(subject_))
+    , localId(cidasks::contentIdAfter(subject, {}))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
     , argScope(std::move(argScope))
 {
-}
-
-/* Derived local id for children produced by child-producing queries.
-   Mirrors the outgoing-side convention: id = producer query's
-   queryHash. On replay the dispatcher reads the recorded response
-   payload directly from the Responses pool (the inner isn't running
-   to recompute against), so the producer chain is only used for the
-   QueryGetAttr/QueryGetListElem case where a child Fact's `from`
-   refers to a derived id. */
-template<typename Q>
-static AmbientId derivedLocalId(const Q & query)
-{
-    return TracingDecisionGraph::computeQueryHash(query);
 }
 
 std::shared_ptr<Object> TracingLocalObject::maybeGetAttr(const std::string & name)
@@ -51,19 +39,13 @@ std::shared_ptr<Object> TracingLocalObject::maybeGetAttr(const std::string & nam
     recordObservation(query, resultJson);
     if (!child)
         return nullptr;
-    /* The child is structurally derived from the parent via this
-       query. Register the derivation with the writer so flush can
-       compute the child's final localId from parent's final
-       intrinsic — the same hash replay computes from the parent
-       standin's localId. The query template carries the parent's
-       placeholder hex; substitution at flush rewrites it to the
-       parent's final intrinsic, then the child's final localId is
-       the hash of that substituted query. */
-    auto childLocalId = derivedLocalId(query);
-    /* Navigation child shares the parent's cell: observations on
-       descendants contribute to the same scope's intrinsic
-       (state creep). */
-    return std::make_shared<TracingLocalObject>(std::move(child), childLocalId, writer, rootFSRoot, argScope);
+    cidasks::Subject childSubject{cidasks::DerivedSubject{
+        .parent = std::make_shared<const cidasks::Subject>(subject),
+        .kind = cidasks::DerivedSubject::Kind::GetAttr,
+        .name = name,
+    }};
+    return std::make_shared<TracingLocalObject>(
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argScope);
 }
 
 std::vector<std::string> TracingLocalObject::getAttrNames()
@@ -140,11 +122,13 @@ std::shared_ptr<Object> TracingLocalObject::getListElem(size_t index)
     auto child = inner->getListElem(index);
     trace::QueryGetListElem query{tracingLocalFromOf(localId), index};
     recordObservation(query, trace::ResultType{objectTypeToString(child->getType())});
-    auto childLocalId = derivedLocalId(query);
-    /* Navigation child shares the parent's cell: observations on
-       descendants contribute to the same scope's intrinsic
-       (state creep). */
-    return std::make_shared<TracingLocalObject>(std::move(child), childLocalId, writer, rootFSRoot, argScope);
+    cidasks::Subject childSubject{cidasks::DerivedSubject{
+        .parent = std::make_shared<const cidasks::Subject>(subject),
+        .kind = cidasks::DerivedSubject::Kind::GetListElem,
+        .index = index,
+    }};
+    return std::make_shared<TracingLocalObject>(
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argScope);
 }
 
 ObjectType TracingLocalObject::getTypeLazy()

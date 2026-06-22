@@ -249,24 +249,19 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
        proxy parent chain — can't infer depth from it — hence the
        caller-supplied scope. */
     auto localCell = ArgScopeCell::make(callerScope, argObj);
-    /* CDI fix: argId is the static positional content id of this
-       local arg. Per the new design, the seed has no observations
-       yet at apply time, so the id is purely positional. Cb body
-       observations on the local during this apply evolve the
-       (per-Asks-edge) content id at flush; the placeholder here is
-       what flush rewrites against. */
-    auto argId = cidasks::contentIdAfter(
-        cidasks::Subject{cidasks::PositionalSeed{localCell->depth}},
-        {});
+    /* CDI fix: the local arg's Subject is the static positional handle
+       at this apply-stack depth. Its argId = contentIdAfter(subject,
+       {}) = positional initial. Cb body observations evolve the
+       per-Asks-edge content id at flush. */
+    cidasks::Subject argSubject{cidasks::PositionalSeed{localCell->depth}};
+    auto argId = cidasks::contentIdAfter(argSubject, {});
 
     /* Wrap the argObj in TracingLocalObject so the outer's
        accesses on it during the apply land in the inner trace
-       with `from=hex(argId)`. The recorder always stores those
-       response payloads; the replay dispatcher reads them back
-       since there's no live inner to recompute against. */
+       with `from=hex(argId)`. */
     auto wrappedArg = (innerWriter && outerRootFSRoot)
         ? std::shared_ptr<Object>(std::make_shared<TracingLocalObject>(
-              argObj, argId, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell))
+              argObj, argSubject, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell))
         : argObj;
 
     /* Bridge local arg via ExprFromObject. The cache memoises by

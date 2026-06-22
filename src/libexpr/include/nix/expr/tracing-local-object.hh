@@ -13,6 +13,7 @@
  */
 
 #include "nix/expr/arg-scope.hh"
+#include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/source-root.hh"
 #include "nix/expr/trace-ids.hh"
@@ -36,30 +37,29 @@ class TracingWriter;
 class TracingLocalObject : public Object
 {
     std::shared_ptr<Object> inner;
-    AmbientId localId; ///< Identifies this local in `from` fields of recorded queries
+    cidasks::Subject subject;  ///< Static structural identifier
+    AmbientId localId;         ///< = cidasks::contentIdAfter(subject, {}); cached
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
-    /* The argScope cell this local contributes observations to.
-       Top-level Local (cb arg) and its navigation children share
-       the same cell — observations on any of them XOR-fold into
-       this cell's intrinsic (state creep). At flush, the cell's
-       contentId() is the substituted value for `from=localId` in
-       this local's recorded facts. */
+    /* The argScope cell this local belongs to. Navigation children
+       share the parent's cell. Used for scope-graph topology only;
+       content ids are derived from `subject`, not the cell. */
     std::shared_ptr<const ArgScopeCell> argScope;
 
-    /* Buffer this observation in the writer (deferred until logResult)
-       and extend the cell's intrinsic by its placeholder-independent
-       contribution. */
     void recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result);
 
 public:
     TracingLocalObject(
         std::shared_ptr<Object> inner,
-        AmbientId localId,
+        cidasks::Subject subject,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
         std::shared_ptr<const ArgScopeCell> argScope);
+
+    /** This proxy's structural identity, per the
+        content-identity-via-asks design. */
+    const cidasks::Subject & getSubject() const { return subject; }
 
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
