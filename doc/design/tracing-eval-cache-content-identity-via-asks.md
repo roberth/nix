@@ -113,39 +113,81 @@ These are the specific commitments of this design.
 
 ## Layering: depth-1 vs depth-2
 
-The cache has two `Request`/`Response` layers. They share atom
-storage (the existing CAS pools) but separate trie structure: depth-1
-keys edges on `(Q, factSet)`, depth-2 keys on `factSet` alone.
+The cache stacks two `(Query, Result)` / `(Request, Response)`
+layers. Depth-0 is the user's `builtins.cache` invocation
+(`Query` → `Result`). Depth-1 is *input tracing*: the
+cache's interaction with files, env vars, and the outer evaluator.
+Depth-2 is *interaction tracing*: the unpacking of one specific
+depth-1 `Request` — the cb apply — into the probe-by-probe
+exchange with the outer evaluator over a LocalObject.
 
-| | Depth-1 (input tracing) | Depth-2 (interaction tracing) |
+Within a depth-2 sub-trace the four atoms are:
+
+| Type | Role | Concretely, in a cb apply |
 |---|---|---|
-| Atom request | `Request` (file read, env var, AmbientQuery for outgoing-ambient) | `AmbientRequest` (a probe applied by the outer to a LocalObject — force, getAttr, getListElem, getInt, …) |
-| Atom response | `Response` (file hash, env value, outgoing-ambient result) | `AmbientResponse` (the value the probe produced — type tag, child handle, scalar) |
-| Fact | `(Request, Response)` | `(AmbientRequest, AmbientResponse)` |
-| FactSet | XOR-fold over Fact hashes | XOR-fold over AmbientFact hashes |
-| Edges | `Asks(Q, factSet) → factSet'` via `RequestSet` | `AmbientAsks(factSet) → factSet'` via `AmbientRequestSet` |
-| Terminal | `Terminals(Q, factSet) → Result` | the final `factSet` itself — no separate Result table; the terminal factSetHash *is* the value the enclosing depth-1 `Response` carries |
-| Live source at replay | recomputed from the live environment; no Response payload retained | served from the CAS pool — there is no live producer for an inner-supplied value once the inner stops running |
+| `AmbientQuery` | the enclosing ask | `QueryApply{fn, arg}` — inner asks outer to compute `f x` |
+| `AmbientResult` | the enclosing answer | the depth-2 terminal factSetHash — i.e. the value the depth-1 walker XOR-folds in as the `Response` to the `AmbientQuery` |
+| `AmbientRequest` | a sub-ask inside the enclosing one | each probe the outer makes against the inner-supplied local — "what's the type at this position", "give me attr `left`", "give me your int value" |
+| `AmbientResponse` | the answer to a sub-ask | the data the LocalObject reveals at that probe |
 
-### Atom storage: shared CAS
+These four relate to each other exactly as `Query`/`Result`/
+`Request`/`Response` do at depth-1 — the `Ambient` prefix is the
+depth-2 lift. The direction inverts going from depth-1 to depth-2:
+depth-1 `Request` flows cache → env (cache asks); the cb apply
+inverts the asker, so depth-2 `AmbientRequest` flows env → cache
+(outer asks). The `Request : Response` *abstract relation* survives
+the inversion intact.
 
-`AmbientRequest`/`AmbientResponse` payloads are `(hash, payload)`
-rows like everything else; they don't need their own tables. Two
-options:
+### Inheritance of Content Ids across the boundary
 
-- Reuse the existing `Requests`/`Responses` pools. Payload shapes
-  differ but content addressing doesn't care; the trie tables
-  discriminate by which set they reference.
-- Or a single unified payload pool keyed by content hash. Cleaner
-  long-term.
+A Subject's CDI is purely about that single argument (positional
+seed, derived child, apply result). A value's full *Content Id* in
+a particular evaluation context is its CDI composed with the
+content ids of its outer scopes — and at the cb-apply boundary, the
+outermost scope is the cached call's `Q`.
 
-What does need to change in the existing schema: `Responses` must be
-keyed by `responseHash`, not `requestHash`. The current
-`requestHash`-keyed table conflates sibling responses (same probe,
-different recorded outcomes) and is the root cause of the
-LocalObject collisions. Once Responses is true CAS, multiple
-recorded responses to the same `AmbientRequest` coexist as distinct
-rows, and the depth-2 trie selects the right one per branch.
+For a LocalObject, then:
+
+```
+ContentId(LocalObject) = CDI(LocalObject)
+                       ⊕ CDI(cb_arg)
+                       ⊕ CDI(Q)         ← inheritance from the cached call
+```
+
+Two cb invocations from different cached calls (different `Q`s)
+have different `ContentId(LocalObject)`s, even though their
+LocalObject Subjects are structurally identical
+(`PositionalSeed{D}`). Their depth-2 probes carry different
+`from` fields and land in disjoint regions of the depth-2 trie.
+
+Two cb invocations from the *same* cached call with otherwise
+identical depth-1 observations up to the apply have *identical*
+`ContentId(LocalObject)` — and that's correct: by depth-1's input
+tracing they share the same factset position, which means the
+inner evaluator's state at the apply is literally the same. The
+arg was passed but not yet forced; there's no information by
+which the two executions can differ at that moment. Divergence
+can only arise once the outer starts forcing — and the depth-2
+trie captures that by content-addressed observation evolution.
+
+Inheriting outer-scope CDIs ripples through every fact, so atom
+sharing across cached calls is reduced. That's a deliberate
+trade-off: storage cost in exchange for collision-free
+disambiguation of LocalObject identity.
+
+### Atom storage
+
+`AmbientRequest`/`AmbientResponse` payloads are content-addressed
+just like everything else. They don't need their own tables —
+reuse the existing `Requests` and `Responses` CAS pools (with
+`Responses` keyed by `responseHash`, fixing the current schema
+which keys it by `requestHash`). The trie tables discriminate by
+which atom set they reference.
+
+The pool also stores the LocalObject's value structure: small
+atoms covering attrset entries, list elements, scalars. These get
+content-addressed exactly the same way. They're what the walker
+uses to reconstruct a live Nix Value tree at depth-2 replay.
 
 ### The trie: `AmbientAsks`
 
@@ -155,54 +197,74 @@ AmbientAsks(fromFactSetHash BLOB, requestSetHash BLOB,
             PRIMARY KEY (fromFactSetHash, requestSetHash)) WITHOUT ROWID
 ```
 
-No `handle`/`queryHash` column. Same-shape sibling LocalObjects have
-identical Subjects → identical initial content ids → identical
-starting state (`∅`). Distinguishability emerges from
-observation-driven branching: the first AmbientFact's `responseHash`
-differs between siblings, so the resulting factSet differs, and
-`AmbientAsks(∅, {firstProbe})` ends up with two outgoing edges
-(to two different `toFactSet`s), one per branch.
+No `Q`/`handle` column — depth-2 keys edges on `factSet` alone.
+Inheritance distinguishes recordings by making *every* fact's
+`from` (and therefore `requestHash`) unique per recording from
+the very first probe.
 
-This is the same-shape-collapse principle from depth-1 (Principle 8)
-pushed down one layer: the depth-2 trie commingles unrelated values
-that happen to share observation prefixes; they diverge as soon as
-their probes do.
+`AmbientAsks` is a *validation skeleton*, not a response source.
+It records which probes appeared, in what order, with what
+resulting factSet transitions. It does *not* hold a
+`requestHash → responseHash` index — that mapping is provided by
+the environment (depth-1: files/outer evaluator; depth-2: the
+outer evaluator running against the reconstructed value tree).
 
-`RequestSetNodes` can be reused for depth-2 request-set storage
-too — same trie machinery, same content-addressing, just members
-that happen to be `AmbientRequest` hashes.
-
-### Cross-layer linkage
-
-Each depth-1 `Response` for an `AmbientQuery`-shaped `Request` is an
-`AmbientFactSetHash` — the depth-2 terminal that the outer's
-probing landed at. The depth-1 walker, when dispatching such a
-`Request`, enters depth-2 replay; depth-2 proceeds reactively (live
-outer probes drive edge selection); the final factSet hash *is* the
-depth-1 `Response` value the depth-1 walker XOR-folds into its own
-`cur`.
+`RequestSetNodes` is reused for depth-2 request-set storage —
+same trie machinery, members are `AmbientRequest` hashes.
 
 ### Recording (depth-2)
 
-When the cold path runs and the outer probes a `TracingLocalObject`,
-each probe emits an `AmbientFact = (probeHash, responseHash)` that
-XOR-folds into the running depth-2 `factSet`. At flush, the recorded
-edges are added to `AmbientAsks` and any new response payloads to
-the CAS pool. The terminal factSetHash becomes the depth-1
-`Response` payload for the enclosing `AmbientQuery` `Request`.
+On the cold path, when the inner emits an `AmbientQuery` (a cb
+apply), the writer enters depth-2 recording. The Env at recording
+is the live inner-constructed local. As the outer's f evaluates
+against it, each probe is an `AmbientRequest` with `from` =
+hex of the local's current cidasks-evolved content id; the live
+LocalObject reveal is the `AmbientResponse`.
+
+Each fact's `elementHash = SHA-256(requestHash || responseHash)`
+XOR-folds into the running depth-2 `factSet`. At flush, the trie
+edges (`AmbientAsks(fromFactSet, {requestHash}) → toFactSet`)
+are inserted; any new atom payloads land in the CAS pool. The
+terminal factSet hash *is* the `AmbientResult`, which the depth-1
+walker XOR-folds into its own `cur` as the `Response` for the
+enclosing `AmbientQuery`.
 
 ### Replay (depth-2)
 
-The depth-1 walker, dispatching an `AmbientQuery` `Request`,
-enters depth-2 replay starting at `∅`. The cb apply runs the outer
-live; each probe the outer makes identifies an `AmbientAsks` edge
-from the current factSet whose `requestSetHash` contains the
-probe; the walker fetches the recorded `AmbientResponse` from the
-CAS pool by its `responseHash`, returns it to the outer, and
-XOR-folds the fact into the running factSet. When the outer stops
-probing, the final factSet hash is the value of the depth-1
-`Response`.
+The depth-1 walker, having dispatched everything else live and
+reaching the `AmbientQuery`, enters depth-2.
 
-A live probe that has no matching edge from the current depth-2
-position is a stale-cache signal: depth-2 walker bails, depth-1
-walker falls through to inner re-evaluation.
+The walker reconstructs the LocalObject as a live Nix Value tree
+from the CAS pool, keyed via `ContentId(LocalObject)` computed
+live from inherited CDIs. It hands the tree to the outer as the
+bridged arg and lets the outer's f run natively. The walker's
+role from here is purely *observational*:
+
+| Per outer probe | Walker does |
+|---|---|
+| compose `AmbientRequest` using `from = hex(currentCdi)` | hash → reqHash |
+| lookup `AmbientAsks(currentFactSet, {reqHash})` | confirms this probe was recorded at this position |
+| observe the value tree's reveal (the outer's evaluation of the probe) | hash → respHash |
+| XOR-fold elementHash into currentFactSet | check the result matches the trie's `toFactSet` |
+
+Both checks together: "the probe matches the recording" *and*
+"the live response matches the recording." If both pass, advance.
+When the outer finishes probing, the final factSet hash is the
+`AmbientResult` handed up to depth-1.
+
+The walker never serves a response from a stored index. The
+reconstructed Value tree drives the outer; the outer's native
+evaluation produces responses just like any Nix value. The Env
+remains the source of the `request → response` mapping, exactly
+as at depth-1.
+
+### Where staleness is caught
+
+Depth-2 has no role in stale-cache detection — that's owned
+entirely by depth-1's input tracing. A changed file or
+environment variable surfaces as a divergent `Response` at
+depth-1 dispatch; the depth-1 walker's `(Q, factSet)` lookup
+finds no Asks edge at the new factSet and falls through. The
+`AmbientQuery` lives at a specific factSet position in the
+depth-1 trie; if depth-1 doesn't reach that position, depth-2
+is never entered.
