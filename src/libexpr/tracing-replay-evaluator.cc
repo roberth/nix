@@ -185,13 +185,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
         return it->second;
 
     /* Walk the proxy's argScope chain looking for a cell whose
-       liveObject is an AmbientObject with id matching idStr. We key
-       on the live proxy's structural identity, not on cell.contentId()
-       which the CDI naming layer evolves as observations land. The two
-       layers are orthogonal: cell.intrinsic evolves for sibling
-       distinction (interaction tracing); ambient-id resolution lives
-       in the input-tracing layer and needs a stable mapping from rootId
-       → live proxy regardless of how many absorbs have landed. */
+       liveObject's content id matches idStr. The liveObject's
+       getCdiHex() computes via cidasks::contentIdAfter against the
+       proxy's Subject — symmetric to recording. */
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     for (; cell; cell = cell->parent) {
         if (auto live = cell->liveObject) {
@@ -550,8 +546,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     };
     auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
-    /* Apply result: open a new intrinsic cell for this apply's
-       argument. Cell parent = the fn proxy's argScope cell. */
+    /* Apply-result scope cell. Parent = fn proxy's cell. */
     auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
     obj->withScope(std::move(cell));
     return obj;

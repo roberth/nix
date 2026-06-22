@@ -148,9 +148,8 @@ public:
        cost of insertFactSet. */
     static Hash xorFactIntoHash(const Hash & h, const Hash & request, const Hash & response);
 
-    /* XOR two set-hashes. Used to combine factSet hashes (e.g. for
-       state-creep folding of an ancestor cell's intrinsic into a
-       child cell's contentId). */
+    /* XOR two set-hashes. Used by cidasks::contentIdAt and similar
+       XOR-fold operations over factSet hashes. */
     static Hash xorHashes(const Hash & a, const Hash & b);
 
     /* Extend an existing set by adding new members. Computes the

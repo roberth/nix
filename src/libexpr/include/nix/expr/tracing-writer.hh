@@ -219,14 +219,10 @@ public:
      * Defer a Requests-pool insert until logResult.
      *
      * AmbientResolver::apply uses this to register the QueryApply
-     * Request and the localArg sidecar without committing to an
-     * insertion key while the local arg's intrinsic hash is still
-     * being built up. At flush, the writer substitutes placeholder
-     * hexes in the payload; if `keyPlaceholder` is set the insert
-     * key is the substituted form of that placeholder (used for the
-     * sidecar, keyed by the local), otherwise the insert key is the
-     * hash of the substituted payload (used for the QueryApply,
-     * keyed by the apply's own queryHash).
+     * Request and the localArg sidecar. At flush: if `keyPlaceholder`
+     * is set the insert key is that key (the local's content id);
+     * otherwise the insert key is the hash of the payload (the apply
+     * Q's own queryHash).
      */
     void deferRequest(nlohmann::json payload, std::optional<std::string> keyPlaceholder = std::nullopt)
     {
@@ -264,10 +260,8 @@ public:
         if (!decisionGraph || !qh.queryHash)
             return std::nullopt;
 
-        /* Phase 4: settle ambient facts now that observations on
-           every callback local in this Q are done. Substitution
-           folds placeholders → intrinsic hashes and populates the
-           v13FactSet structures the record() call below reads. */
+        /* Insert buffered ambient facts/Requests into the pool and
+           populate the v13FactSet structures record() reads below. */
         flushPendingAmbient();
 
         nlohmann::json j = result;
