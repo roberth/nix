@@ -212,6 +212,31 @@ public:
     bool hasAnyEdge(const QueryHash & q, const SetHash & factSet);
 
     /* ─────────────────────────────────────────────────────────────────
+       Decision graph layer: depth-2 (cb-apply boundary)
+
+       The depth-2 trie is keyed on factSet alone (no Q), per
+       doc/design/tracing-eval-cache-content-identity-via-asks.md.
+       It records the observations the outer makes against an
+       inner-supplied LocalObject during a covariant callback.
+       Same-call sibling collapse within is intentional;
+       cross-call disambiguation is via Content Id inheritance.
+
+       Unlike depth-1, edges store toFactSetHash explicitly: at
+       depth-2 there is no live producer for incoming-ambient
+       observations at replay, so the walker can't reproduce the
+       transition by live dispatch.
+       ───────────────────────────────────────────────────────────────── */
+
+    /* Insert a depth-2 Asks edge: at `fromFactSet`, dispatching
+       `requestSet` and observing the recorded responses lands at
+       `toFactSet`. Idempotent on (fromFactSet, requestSet). */
+    void insertAmbientAsks(const SetHash & fromFactSet, const SetHash & requestSet, const SetHash & toFactSet);
+
+    /* Look up depth-2 outgoing edges at `fromFactSet`. Returns a
+       list of (requestSetHash, toFactSetHash) pairs. */
+    std::vector<std::pair<SetHash, SetHash>> getAmbientAsks(const SetHash & fromFactSet);
+
+    /* ─────────────────────────────────────────────────────────────────
        Recording and replay
        ───────────────────────────────────────────────────────────────── */
 

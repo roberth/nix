@@ -106,6 +106,21 @@ CREATE TABLE IF NOT EXISTS Terminals (
     PRIMARY KEY (queryHash, factSetHash, resultHash)
 ) WITHOUT ROWID;
 
+-- Depth-2 (interaction-tracing) layer: the cb-apply boundary's
+-- sub-trie. Per doc/design/tracing-eval-cache-content-identity-via-asks.md,
+-- depth-2 edges key on factSet alone (no Q column) — sibling cached
+-- calls' depth-2 sub-traces are kept apart by Content Id inheritance,
+-- and same-shape collapse within a call is intentional. toFactSetHash
+-- is stored explicitly: at depth-2 there is no live producer for
+-- incoming-ambient observations, so the walker can't reproduce the
+-- transition by live dispatch the way depth-1 does.
+CREATE TABLE IF NOT EXISTS AmbientAsks (
+    fromFactSetHash BLOB NOT NULL,
+    requestSetHash  BLOB NOT NULL,
+    toFactSetHash   BLOB NOT NULL,
+    PRIMARY KEY (fromFactSetHash, requestSetHash)
+) WITHOUT ROWID;
+
 -- Clean up indexes from earlier schema versions, if present.
 DROP INDEX IF EXISTS AsksByQF;
 DROP INDEX IF EXISTS TerminalsByQF;
@@ -125,6 +140,9 @@ struct TracingDecisionGraph::State
     /* Decision graph layer */
     SQLiteStmt insertAsks, selectAsks, deleteAsks;
     SQLiteStmt insertTerminal, selectTerminal;
+
+    /* Depth-2 decision graph layer */
+    SQLiteStmt insertAmbientAsks, selectAmbientAsks;
 
     /* In-memory caches of parsed sets and payloads. Populated lazily on
        first read or write so that subsequent operations within the same
@@ -422,6 +440,10 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "SELECT 1 FROM Asks WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
     state->countTerminals.create(state->db,
         "SELECT 1 FROM Terminals WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
+    state->insertAmbientAsks.create(state->db,
+        "INSERT OR IGNORE INTO AmbientAsks(fromFactSetHash, requestSetHash, toFactSetHash) VALUES (?, ?, ?)");
+    state->selectAmbientAsks.create(state->db,
+        "SELECT requestSetHash, toFactSetHash FROM AmbientAsks WHERE fromFactSetHash = ?");
 }
 
 TracingDecisionGraph::~TracingDecisionGraph() = default;
@@ -1074,6 +1096,29 @@ void TracingDecisionGraph::removeAsks(
     dg_bindBlob(use, dg_hashToBlob(factSet));
     dg_bindBlob(use, dg_hashToBlob(requestSet));
     use.exec();
+}
+
+void TracingDecisionGraph::insertAmbientAsks(
+    const SetHash & fromFactSet, const SetHash & requestSet, const SetHash & toFactSet)
+{
+    auto state(_state->lock());
+    auto use = state->insertAmbientAsks.use();
+    dg_bindBlob(use, dg_hashToBlob(fromFactSet));
+    dg_bindBlob(use, dg_hashToBlob(requestSet));
+    dg_bindBlob(use, dg_hashToBlob(toFactSet));
+    use.exec();
+}
+
+std::vector<std::pair<TracingDecisionGraph::SetHash, TracingDecisionGraph::SetHash>>
+TracingDecisionGraph::getAmbientAsks(const SetHash & fromFactSet)
+{
+    auto state(_state->lock());
+    auto query = state->selectAmbientAsks.use();
+    dg_bindBlob(query, dg_hashToBlob(fromFactSet));
+    std::vector<std::pair<SetHash, SetHash>> out;
+    while (query.next())
+        out.emplace_back(dg_blobToHash(query.getBlob(0)), dg_blobToHash(query.getBlob(1)));
+    return out;
 }
 
 void TracingDecisionGraph::insertTerminal(
