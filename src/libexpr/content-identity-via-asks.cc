@@ -66,6 +66,8 @@ static Hash initialId(const Subject & subject)
                 auto argId = initialId(*alt.arg);
                 nlohmann::json qj = trace::QueryApply{hashHex(fnId), hashHex(argId)};
                 return hashString(HashAlgorithm::SHA256, qj.dump());
+            } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
+                return alt.hash;
             } else {
                 throw Error("cidasks::initialId: unknown subject variant");
             }
@@ -116,6 +118,8 @@ Hash contentIdAt(const Subject & subject, const std::vector<Edge> & walk, size_t
                     auto argAtK = contentIdAt(*alt.arg, walk, k);
                     nlohmann::json qj = trace::QueryApply{hashHex(fnAtK), hashHex(argAtK)};
                     structuralAtK = hashString(HashAlgorithm::SHA256, qj.dump());
+                } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
+                    structuralAtK = alt.hash;
                 }
 
                 Hash myCidAtK = TracingDecisionGraph::xorHashes(structuralAtK, own);
@@ -145,6 +149,8 @@ Hash contentIdAt(const Subject & subject, const std::vector<Edge> & walk, size_t
                 auto argAtK = contentIdAt(*alt.arg, walk, edgeIndex);
                 nlohmann::json qj = trace::QueryApply{hashHex(fnAtK), hashHex(argAtK)};
                 structuralAtEdgeIndex = hashString(HashAlgorithm::SHA256, qj.dump());
+            } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
+                structuralAtEdgeIndex = alt.hash;
             }
 
             return TracingDecisionGraph::xorHashes(structuralAtEdgeIndex, own);

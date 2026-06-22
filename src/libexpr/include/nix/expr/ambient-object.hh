@@ -9,6 +9,7 @@
  */
 
 #include "nix/expr/arg-scope.hh"
+#include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/source-root.hh"
 #include "nix/expr/trace-ids.hh"
@@ -62,9 +63,10 @@ using AmbientApplyFn = std::function<AmbientId(
  */
 class AmbientObject : public Object
 {
-    AmbientId cdi;          ///< Content-defined identity (hash of observation factset)
-    AmbientQueryFn queryFn; ///< Callback to issue ambient queries
-    AmbientApplyFn applyFn; ///< Callback for function application (may be null)
+    cidasks::Subject subject; ///< Static structural identifier (positional/derived/apply)
+    AmbientId cdi;            ///< = cidasks::contentIdAfter(subject, {}); cached for cheap reads
+    AmbientQueryFn queryFn;   ///< Callback to issue ambient queries
+    AmbientApplyFn applyFn;   ///< Callback for function application (may be null)
     /* lazy-paths: stable SourceRoot for paths returned by `getPath`.
        Held as a member so the SourceRoot outlives the Value the
        outer evaluator constructs from the RootedPath (Value stores a
@@ -81,7 +83,11 @@ class AmbientObject : public Object
     std::shared_ptr<const ArgScopeCell> argScope;
 
 public:
-    AmbientObject(AmbientId cdi, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
+    AmbientObject(cidasks::Subject subject, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
+
+    /** This proxy's structural identity (positional / derived /
+        apply-result), per the content-identity-via-asks design. */
+    const cidasks::Subject & getSubject() const { return subject; }
 
     /** Set the proxy's argScope. Call right after construction at
         boundary sites. Returns *this for chaining. */

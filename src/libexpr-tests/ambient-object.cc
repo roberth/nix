@@ -12,12 +12,17 @@ static ref<SourceRoot> stubAmbientRoot()
     return SourceRoot::make(getFSSourceAccessor(), SourceRootKind::Internal);
 }
 
-/* Under Step C, AmbientId is a content Hash. The tests still want
-   stable per-test identifiers, so derive distinct Hashes from
-   small integer tags. */
+/* Tests use OpaqueContentSubject to pin the proxy's content id to a
+   stable per-test value. The Subject variant exists for cases like
+   apply-result args that don't have a positional/derived form. */
 static AmbientId testId(int n)
 {
     return hashString(HashAlgorithm::SHA256, "test:" + std::to_string(n));
+}
+
+static cidasks::Subject testSubject(int n)
+{
+    return cidasks::Subject{cidasks::OpaqueContentSubject{testId(n)}};
 }
 
 static std::string hex(AmbientId id)
@@ -64,7 +69,7 @@ TEST(AmbientObjectTest, GetType)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        seed, mockResolver({{"getType:" + hex(seed), trace::ResultType{"int"}}}), stubAmbientRoot());
+        testSubject(0), mockResolver({{"getType:" + hex(seed), trace::ResultType{"int"}}}), stubAmbientRoot());
     EXPECT_EQ(obj->getType(), nInt);
 }
 
@@ -72,7 +77,7 @@ TEST(AmbientObjectTest, GetInt)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        seed, mockResolver({{"getInt:" + hex(seed), trace::ResultInt{42}}}), stubAmbientRoot());
+        testSubject(0), mockResolver({{"getInt:" + hex(seed), trace::ResultInt{42}}}), stubAmbientRoot());
     EXPECT_EQ(obj->getInt().value, 42);
 }
 
@@ -80,7 +85,7 @@ TEST(AmbientObjectTest, GetString)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        seed, mockResolver({{"getString:" + hex(seed), trace::ResultString{"hello"}}}), stubAmbientRoot());
+        testSubject(0), mockResolver({{"getString:" + hex(seed), trace::ResultString{"hello"}}}), stubAmbientRoot());
     EXPECT_EQ(obj->getStringIgnoreContext(), "hello");
 }
 
@@ -88,16 +93,26 @@ TEST(AmbientObjectTest, GetBool)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        seed, mockResolver({{"getBool:" + hex(seed), trace::ResultBool{true}}}), stubAmbientRoot());
+        testSubject(0), mockResolver({{"getBool:" + hex(seed), trace::ResultBool{true}}}), stubAmbientRoot());
     EXPECT_TRUE(obj->getBool());
 }
 
 TEST(AmbientObjectTest, GetAttrReturnsChild)
 {
     auto seed = testId(0);
-    auto childHex = hex(hashString(HashAlgorithm::SHA256, "child:" + hex(seed)));
+    /* Child cdi is the producer query's queryHash. With Subject-based
+       construction the AmbientObject derives this from DerivedSubject
+       at construction time. */
+    auto childCdi = cidasks::contentIdAfter(
+        cidasks::Subject{cidasks::DerivedSubject{
+            .parent = std::make_shared<const cidasks::Subject>(testSubject(0)),
+            .kind = cidasks::DerivedSubject::Kind::GetAttr,
+            .name = "x",
+        }},
+        {});
+    auto childHex = hex(childCdi);
     auto obj = std::make_shared<AmbientObject>(
-        seed,
+        testSubject(0),
         mockResolver({
             {"getAttr:" + hex(seed), trace::ResultMaybeType{std::optional<std::string>{"int"}}},
             {"getInt:" + childHex, trace::ResultInt{99}},
@@ -112,16 +127,23 @@ TEST(AmbientObjectTest, GetAttrMissing)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        seed, mockResolver({{"getAttr:" + hex(seed), trace::ResultMaybeType{std::nullopt}}}), stubAmbientRoot());
+        testSubject(0), mockResolver({{"getAttr:" + hex(seed), trace::ResultMaybeType{std::nullopt}}}), stubAmbientRoot());
     EXPECT_EQ(obj->maybeGetAttr("missing"), nullptr);
 }
 
 TEST(AmbientObjectTest, GetListElem)
 {
     auto seed = testId(0);
-    auto childHex = hex(hashString(HashAlgorithm::SHA256, "child:" + hex(seed)));
+    auto childCdi = cidasks::contentIdAfter(
+        cidasks::Subject{cidasks::DerivedSubject{
+            .parent = std::make_shared<const cidasks::Subject>(testSubject(0)),
+            .kind = cidasks::DerivedSubject::Kind::GetListElem,
+            .index = 1,
+        }},
+        {});
+    auto childHex = hex(childCdi);
     auto obj = std::make_shared<AmbientObject>(
-        seed,
+        testSubject(0),
         mockResolver({
             {"getListElem:" + hex(seed), trace::ResultType{"string"}},
             {"getString:" + childHex, trace::ResultString{"world"}},
@@ -136,7 +158,7 @@ TEST(AmbientObjectTest, GetAttrNames)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        seed,
+        testSubject(0),
         mockResolver({{"getAttrNames:" + hex(seed), trace::ResultListOfStrings{{"a", "b", "c"}}}}),
         stubAmbientRoot());
     auto names = obj->getAttrNames();

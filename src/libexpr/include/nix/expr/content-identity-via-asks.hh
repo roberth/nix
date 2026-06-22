@@ -57,9 +57,19 @@ struct ApplyResultSubject
     std::shared_ptr<const Subject> arg;
 };
 
+/** Escape hatch for values whose structural Subject isn't reachable
+    from a positional handle — typically apply-result args that come
+    from raw inner Values (not CdiObject-wrapped). Carries the
+    value's content id directly; observations on this value still
+    XOR-fold into its content id at the relevant factset point. */
+struct OpaqueContentSubject
+{
+    Hash hash;
+};
+
 struct Subject
 {
-    std::variant<PositionalSeed, DerivedSubject, ApplyResultSubject> data;
+    std::variant<PositionalSeed, DerivedSubject, ApplyResultSubject, OpaqueContentSubject> data;
 };
 
 /** A single observation: (query, response) pair. */

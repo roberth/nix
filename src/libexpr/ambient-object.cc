@@ -12,8 +12,9 @@ static std::string fromOf(AmbientId cdi)
 }
 
 AmbientObject::AmbientObject(
-    AmbientId cdi, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn)
-    : cdi(cdi)
+    cidasks::Subject subject_, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn)
+    : subject(std::move(subject_))
+    , cdi(cidasks::contentIdAfter(subject, {}))
     , queryFn(std::move(queryFn))
     , applyFn(std::move(applyFn))
     , ambientRootFSRoot(std::move(ambientRootFSRoot))
@@ -28,7 +29,12 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
         return nullptr;
     if (!qr.childId)
         throw Error("ambient maybeGetAttr: resolver didn't return child id");
-    auto child = std::make_shared<AmbientObject>(*qr.childId, queryFn, ambientRootFSRoot, applyFn);
+    cidasks::Subject childSubject{cidasks::DerivedSubject{
+        .parent = std::make_shared<const cidasks::Subject>(subject),
+        .kind = cidasks::DerivedSubject::Kind::GetAttr,
+        .name = name,
+    }};
+    auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Navigation child inherits parent's argScope cell directly. */
     child->withScope(argScope);
     return child;
@@ -124,7 +130,12 @@ std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
     auto qr = queryFn(cdi, trace::QueryGetListElem{fromOf(cdi), index});
     if (!qr.childId)
         throw Error("ambient getListElem: resolver didn't return child id");
-    auto child = std::make_shared<AmbientObject>(*qr.childId, queryFn, ambientRootFSRoot, applyFn);
+    cidasks::Subject childSubject{cidasks::DerivedSubject{
+        .parent = std::make_shared<const cidasks::Subject>(subject),
+        .kind = cidasks::DerivedSubject::Kind::GetListElem,
+        .index = index,
+    }};
+    auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Navigation child inherits parent's argScope cell directly. */
     child->withScope(argScope);
     return child;
@@ -179,8 +190,17 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
        cell before moving it into applyFn. */
     auto callerScope = effectiveArgScope(*this);
     auto argForScope = argObj;
-    auto resultId = applyFn(cdi, std::move(argObj), callerScope);
-    auto result = std::make_shared<AmbientObject>(resultId, queryFn, ambientRootFSRoot, applyFn);
+    /* The local arg gets a fresh PositionalSeed subject at the apply
+       depth (= callerScope.depth + 1). Carry this through to form
+       the result's ApplyResultSubject. */
+    int localDepth = callerScope ? callerScope->depth + 1 : 0;
+    cidasks::Subject argSubject{cidasks::PositionalSeed{localDepth}};
+    applyFn(cdi, std::move(argObj), callerScope);
+    cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
+        .fn = std::make_shared<const cidasks::Subject>(subject),
+        .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
+    }};
+    auto result = std::make_shared<AmbientObject>(std::move(resultSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Apply-result: open a new intrinsic cell for this apply's
        argument, rooted at the same caller scope the applyFn used. */
     auto cell = ArgScopeCell::make(callerScope, std::move(argForScope));

@@ -355,15 +355,13 @@ static PrimOp * makeCachedFnPrimOp(
                            returns AmbientObjects, not raw Values. */
                         auto parentCell = effectiveArgScope(*fnObj);
                         auto seedCell = ArgScopeCell::make(parentCell, /*liveObject set below*/ nullptr);
-                        /* CDI fix: rootId is the static positional id
-                           of this seed. Sibling cb apply invocations
-                           share the same rootId (= positional initial
-                           at this depth) and discriminate via the
-                           factsetHash divergence of their observations,
-                           not via state-creep from ancestor cells. */
-                        auto rootId = cidasks::contentIdAfter(
-                            cidasks::Subject{cidasks::PositionalSeed{seedCell->depth}},
-                            {});
+                        /* CDI fix: this seed's Subject is the positional
+                           handle at this static apply-stack depth.
+                           Sibling cb apply invocations share the same
+                           Subject and discriminate via their observation
+                           factsets, not via state-creep. */
+                        cidasks::Subject seedSubject{cidasks::PositionalSeed{seedCell->depth}};
+                        auto rootId = cidasks::contentIdAfter(seedSubject, {});
                         /* Boundary-trace-only discipline: do NOT
                            register outerArgObj under rootId in the
                            shared resolver. Sibling cb apply invocations
@@ -417,7 +415,7 @@ static PrimOp * makeCachedFnPrimOp(
                            SourceRoot outlives the Values the outer
                            evaluator builds from any returned RootedPaths. */
                         auto contraArg =
-                            make_ref<AmbientObject>(rootId, std::move(queryFn), state.rootFSRoot, std::move(applyFn));
+                            make_ref<AmbientObject>(std::move(seedSubject), std::move(queryFn), state.rootFSRoot, std::move(applyFn));
                         /* Wire seedCell.liveObject to contraArg now
                            that it exists. This is the deliberate
                            shared_ptr cycle documented on
