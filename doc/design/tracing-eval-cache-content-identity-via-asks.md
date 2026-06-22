@@ -110,3 +110,82 @@ These are the specific commitments of this design.
    from the divergence point onward, and their content ids past that
    point compose the shared-prefix contribution with the divergent
    observations.
+
+## Layering: depth-1 vs depth-2
+
+The cache has two `Request`/`Response` layers; conflating them in a
+single set of pools is what causes sibling cb invocations with
+identical Subjects (and therefore identical `valueHandle`s) to
+collide.
+
+| | Depth-1 (input tracing) | Depth-2 (interaction tracing) |
+|---|---|---|
+| Key into trie | top-level `Q` (Query for the cached call) | `valueHandle` (= `contentIdAfter(subject, {})` for an inner-supplied value crossing the boundary) |
+| Atom request | `Request` (file read, env var, AmbientQuery for outgoing-ambient) | `AmbientRequest` (a probe applied by the outer to a LocalObject — force, getAttr, getListElem, getInt, …) |
+| Atom response | `Response` (file hash, env value, outgoing-ambient result) | `AmbientResponse` (the value the probe produced — type tag, child handle, scalar) |
+| Fact | `(Request, Response)` | `(AmbientRequest, AmbientResponse)` |
+| FactSet | XOR-fold over Fact hashes | XOR-fold over AmbientFact hashes |
+| Edges | `Asks(Q, factSet) → factSet'` via `RequestSet` | `AmbientAsks(handle, factSet) → factSet'` via `AmbientRequestSet` |
+| Terminal | `Terminals(Q, factSet) → Result` | the final `factSet` itself — no separate Result; what's downstream lives in depth-1 |
+| Live source at replay | recomputed from the live environment; no Response payload retained | served from a content-addressed `AmbientResponses` pool — there is no live producer for an inner-supplied value once the inner stops running |
+
+The **cross-layer linkage** is that each depth-1 `Response` for an
+`AmbientQuery`-shaped `Request` is an `AmbientFactSetHash` — the
+content hash of the depth-2 trie's terminal that the outer's probing
+landed at. The depth-1 walker, when dispatching such a `Request`,
+hands control to the depth-2 walker, which proceeds reactively: each
+live probe the outer makes on the LocalObject selects the next
+depth-2 Asks edge; the cumulative XOR-fold lands at the terminal
+factSet that *is* the depth-1 `Response` value.
+
+### Storage schema (depth-2)
+
+Mirrors the depth-1 schema with two differences: an explicit
+`AmbientResponses` pool (because there is no live producer at
+replay), and no separate Terminals table (the terminal factSet hash
+is its own identity).
+
+```
+AmbientRequests  (requestHash  BLOB PRIMARY KEY, payload BLOB)
+AmbientResponses (responseHash BLOB PRIMARY KEY, payload BLOB)
+
+AmbientRequestSetNodes(nodeHash BLOB PRIMARY KEY, payload BLOB) WITHOUT ROWID
+
+AmbientAsks(handle BLOB, factSetHash BLOB, requestSetHash BLOB,
+            nextFactSetHash BLOB,
+            PRIMARY KEY (handle, factSetHash, requestSetHash)) WITHOUT ROWID
+```
+
+`AmbientResponses` is CAS by `responseHash` — multiple recorded
+responses to the same `AmbientRequest` coexist as distinct rows.
+This is what makes same-`valueHandle` sibling cb invocations safe:
+their `AmbientFact`s share `requestHash` but have distinct
+`responseHash`es, and the `AmbientAsks` edges from `(handle,
+factSet)` select the right one per branch.
+
+### Recording (depth-2)
+
+When the cold path runs and the outer probes a `TracingLocalObject`,
+each probe emits an `AmbientFact`. The writer XOR-folds it into the
+current depth-2 `factSet` for this `valueHandle`. At flush, the
+recorded edges are added to `AmbientAsks` and the response payloads
+to `AmbientResponses`. The final factSet hash becomes the depth-1
+`Response` payload (a `Hash`) for the enclosing `AmbientQuery`
+`Request`.
+
+### Replay (depth-2)
+
+When the depth-1 walker dispatches an `AmbientQuery` `Request`, it
+enters depth-2 replay for the corresponding `valueHandle`. The depth-2
+walker starts at `(handle, ∅)` and proceeds reactively: the cb apply
+on the standin runs the outer live; each probe the outer makes
+identifies a depth-2 Asks edge whose `AmbientRequestSet` contains
+the probe's hash; the walker fetches the recorded
+`AmbientResponse` from `AmbientResponses[responseHash]`, returns it
+to the outer, and XOR-folds the fact into the running factSet. When
+the outer stops probing, the final factSet hash is the value of the
+depth-1 `Response`.
+
+A live probe that doesn't appear on any recorded branch from the
+current depth-2 position is a stale-cache signal: the walker bails,
+and the depth-1 walker falls through to inner re-evaluation.
