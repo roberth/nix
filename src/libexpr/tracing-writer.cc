@@ -44,9 +44,13 @@ void TracingWriter::flushPendingAmbient()
     std::vector<cidasks::Edge> walk{std::move(edge)};
 
     /* Pass B: rewrite each fact's `from` to its subject's content
-       id at this Asks edge's precondition, then insert. */
+       id at this Asks edge's precondition, then insert. Scope is
+       empty here pending the cb-apply boundary wiring; once that
+       lands, the writer will pass the cached call's CDI(Q) as
+       scope so sibling cb invocations get distinct content ids. */
+    Hash emptyScope(HashAlgorithm::SHA256);
     for (auto & fact : pendingFacts) {
-        auto fromCdi = cidasks::contentIdAt(fact.subject, walk, /*edgeIndex=*/ 0);
+        auto fromCdi = cidasks::contentIdAt(fact.subject, emptyScope, walk, /*edgeIndex=*/ 0);
         auto fromHex = fromCdi.to_string(HashFormat::Base16, false);
 
         std::string queryTag = std::visit(

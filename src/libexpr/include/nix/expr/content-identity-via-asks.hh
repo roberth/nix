@@ -94,16 +94,25 @@ struct Edge
 Fact factFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result);
 
 /** Compute the content id of `subject` after walking through all
-    `edges`. With an empty walk, returns the subject's structural
-    initial id. */
-Hash contentIdAfter(const Subject & subject, const std::vector<Edge> & walk);
+    `edges`, inheriting `scope` (the XOR of outer-scope CDIs — e.g.
+    CDI(Q) at the cb-apply boundary). Passing the zero hash for
+    `scope` gives the pure structural content id, equivalent to
+    no inheritance.
+
+    Inheritance applies at the leaf: `PositionalSeed` and
+    `OpaqueContentSubject` XOR `scope` into their base hash.
+    `DerivedSubject` and `ApplyResultSubject` propagate `scope`
+    via their constituents' (recursively scope-aware) content ids,
+    so the structural derivation incorporates inheritance naturally
+    via the constituents' `from`-field values. */
+Hash contentIdAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk);
 
 /** Compute the content id of `subject` at the precondition of the
-    edge at index `edgeIndex` in `walk`. `edgeIndex == 0` means the
-    initial precondition (= empty factset); `edgeIndex == walk.size()`
-    means the postcondition of the whole walk (equivalent to
-    `contentIdAfter`). */
-Hash contentIdAt(const Subject & subject, const std::vector<Edge> & walk, size_t edgeIndex);
+    edge at index `edgeIndex` in `walk`, inheriting `scope`.
+    `edgeIndex == 0` means the initial precondition (= empty
+    factset); `edgeIndex == walk.size()` means the postcondition of
+    the whole walk (equivalent to `contentIdAfter`). */
+Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex);
 
 /** Convenience: extract a query's `from` field as a Hash, if it has
     one. Apply queries don't have a `from`; throws. */

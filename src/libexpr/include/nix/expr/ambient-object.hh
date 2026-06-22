@@ -129,7 +129,7 @@ public:
         /* Content id at the empty factset = subject's positional/structural
            initial. For multi-edge use, callers must pass the relevant walk
            via cidasks::contentIdAt instead. */
-        return cidasks::contentIdAfter(subject, {});
+        return cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
     }
 
     std::optional<std::string> getCdiHex() const override

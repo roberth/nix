@@ -239,7 +239,10 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
     for (; cell; cell = cell->parent, ++cellDepth) {
         if (auto live = cell->liveObject) {
             if (auto * subj = live->getSubject()) {
-                auto cdi = cidasks::contentIdAt(*subj, ctx.runningWalk, ctx.edgeIndex);
+                /* Scope empty pending cb-apply boundary wiring (see
+                   tracing-writer.cc for the same TODO). */
+                Hash emptyScope(HashAlgorithm::SHA256);
+                auto cdi = cidasks::contentIdAt(*subj, emptyScope, ctx.runningWalk, ctx.edgeIndex);
                 auto cdiHex = cdi.to_string(HashFormat::Base16, false);
                 tracingCacheLog(
                     "resolve %s: cell[%d] subject=%s cdi=%s %s",

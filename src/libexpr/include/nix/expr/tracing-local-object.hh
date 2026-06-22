@@ -43,7 +43,7 @@ class TracingLocalObject : public Object
 
     /** This local's content id at the empty factset = its positional
         initial. Computed on demand from `subject`. */
-    AmbientId localId() const { return cidasks::contentIdAfter(subject, {}); }
+    AmbientId localId() const { return cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {}); }
 
     /* The argScope cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;

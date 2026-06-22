@@ -110,6 +110,7 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
             .kind = cidasks::DerivedSubject::Kind::GetAttr,
             .name = "x",
         }},
+        Hash(HashAlgorithm::SHA256),
         {});
     auto childHex = hex(childCdi);
     auto obj = std::make_shared<AmbientObject>(
@@ -141,6 +142,7 @@ TEST(AmbientObjectTest, GetListElem)
             .kind = cidasks::DerivedSubject::Kind::GetListElem,
             .index = 1,
         }},
+        Hash(HashAlgorithm::SHA256),
         {});
     auto childHex = hex(childCdi);
     auto obj = std::make_shared<AmbientObject>(

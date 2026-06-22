@@ -11,10 +11,6 @@ static std::string hashHex(const Hash & h)
     return h.to_string(HashFormat::Base16, false);
 }
 
-/** Initial id of a subject — what its content id is at the empty
-    factset. Purely structural; no observations involved. */
-static Hash initialId(const Subject & subject);
-
 Hash extractFrom(const trace::QueryVariant & query)
 {
     return std::visit(
@@ -47,121 +43,74 @@ Fact factFromQR(const trace::QueryVariant & query, const trace::ResultVariant & 
     };
 }
 
-static Hash initialId(const Subject & subject)
-{
-    return std::visit(
-        [](const auto & alt) -> Hash {
-            using T = std::decay_t<decltype(alt)>;
-            if constexpr (std::is_same_v<T, PositionalSeed>) {
-                return hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
-            } else if constexpr (std::is_same_v<T, DerivedSubject>) {
-                auto parentId = initialId(*alt.parent);
-                nlohmann::json qj;
-                if (alt.kind == DerivedSubject::Kind::GetAttr) {
-                    qj = trace::QueryGetAttr{alt.name, hashHex(parentId)};
-                } else {
-                    qj = trace::QueryGetListElem{hashHex(parentId), alt.index};
-                }
-                return hashString(HashAlgorithm::SHA256, qj.dump());
-            } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
-                auto fnId = initialId(*alt.fn);
-                auto argId = initialId(*alt.arg);
-                nlohmann::json qj = trace::QueryApply{hashHex(fnId), hashHex(argId)};
-                return hashString(HashAlgorithm::SHA256, qj.dump());
-            } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
-                return alt.hash;
-            } else {
-                throw Error("cidasks::initialId: unknown subject variant");
-            }
-        },
-        subject.data);
-}
-
-Hash contentIdAt(const Subject & subject, const std::vector<Edge> & walk, size_t edgeIndex)
+Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
 {
     /* Compute subject's content id at the precondition of the
        `edgeIndex`-th edge by replaying the first `edgeIndex` edges'
        effects on the subject's running content id.
 
+       Inheritance: `scope` is the XOR of outer-scope CDIs (chiefly
+       the cached call's CDI(Q) at the cb-apply boundary). Passing
+       zero gives the pure structural id. Leaf subjects
+       (PositionalSeed, OpaqueContentSubject) XOR `scope` into their
+       base hash. Composite subjects (DerivedSubject,
+       ApplyResultSubject) propagate `scope` recursively through
+       their constituents' content ids; the structural derivation
+       at this level uses those scoped constituents' values in its
+       query payload, so inheritance ripples through naturally
+       without a second XOR at this level.
+
        For positional seeds, only direct observations matter:
        facts in earlier edges whose `from` equals the seed's
        precondition-content-id at that edge contribute to its
-       evolution.
-
-       For derived and apply-result subjects, the id is recomputed
-       at each step from constituent subjects' content ids at the
-       current step's precondition — AND own-direct observations
-       contribute too (facts whose `from` matched the derived's
-       content id at their edge's precondition). */
+       evolution. */
     return std::visit(
         [&](const auto & alt) -> Hash {
             using T = std::decay_t<decltype(alt)>;
 
-            // Run the walk and accumulate this subject's own-direct contributions.
-            Hash own = Hash(HashAlgorithm::SHA256);
-            for (size_t k = 0; k < edgeIndex && k < walk.size(); ++k) {
-                // Subject's content id at edge K's precondition
-                // = structural-id-at-K XOR (accumulated own contributions through K-1).
-                // We recompute structural separately and combine.
-                Hash structuralAtK(HashAlgorithm::SHA256);
+            auto structuralAt = [&](size_t k) -> Hash {
                 if constexpr (std::is_same_v<T, PositionalSeed>) {
-                    structuralAtK = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
+                    auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
+                    return TracingDecisionGraph::xorHashes(base, scope);
                 } else if constexpr (std::is_same_v<T, DerivedSubject>) {
-                    auto parentAtK = contentIdAt(*alt.parent, walk, k);
+                    auto parentAtK = contentIdAt(*alt.parent, scope, walk, k);
                     nlohmann::json qj;
                     if (alt.kind == DerivedSubject::Kind::GetAttr) {
                         qj = trace::QueryGetAttr{alt.name, hashHex(parentAtK)};
                     } else {
                         qj = trace::QueryGetListElem{hashHex(parentAtK), alt.index};
                     }
-                    structuralAtK = hashString(HashAlgorithm::SHA256, qj.dump());
+                    return hashString(HashAlgorithm::SHA256, qj.dump());
                 } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
-                    auto fnAtK = contentIdAt(*alt.fn, walk, k);
-                    auto argAtK = contentIdAt(*alt.arg, walk, k);
+                    auto fnAtK = contentIdAt(*alt.fn, scope, walk, k);
+                    auto argAtK = contentIdAt(*alt.arg, scope, walk, k);
                     nlohmann::json qj = trace::QueryApply{hashHex(fnAtK), hashHex(argAtK)};
-                    structuralAtK = hashString(HashAlgorithm::SHA256, qj.dump());
+                    return hashString(HashAlgorithm::SHA256, qj.dump());
                 } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
-                    structuralAtK = alt.hash;
+                    return TracingDecisionGraph::xorHashes(alt.hash, scope);
+                } else {
+                    throw Error("cidasks::contentIdAt: unknown subject variant");
                 }
+            };
 
-                Hash myCidAtK = TracingDecisionGraph::xorHashes(structuralAtK, own);
-
+            // Run the walk and accumulate this subject's own-direct contributions.
+            Hash own = Hash(HashAlgorithm::SHA256);
+            for (size_t k = 0; k < edgeIndex && k < walk.size(); ++k) {
+                Hash myCidAtK = TracingDecisionGraph::xorHashes(structuralAt(k), own);
                 for (auto & fact : walk[k].facts) {
                     if (fact.fromHash == myCidAtK)
                         own = TracingDecisionGraph::xorHashes(own, fact.elementHash);
                 }
             }
 
-            // Final structural at edgeIndex.
-            Hash structuralAtEdgeIndex(HashAlgorithm::SHA256);
-            if constexpr (std::is_same_v<T, PositionalSeed>) {
-                structuralAtEdgeIndex = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
-            } else if constexpr (std::is_same_v<T, DerivedSubject>) {
-                auto parentAtK = contentIdAt(*alt.parent, walk, edgeIndex);
-                nlohmann::json qj;
-                if (alt.kind == DerivedSubject::Kind::GetAttr) {
-                    qj = trace::QueryGetAttr{alt.name, hashHex(parentAtK)};
-                } else {
-                    qj = trace::QueryGetListElem{hashHex(parentAtK), alt.index};
-                }
-                structuralAtEdgeIndex = hashString(HashAlgorithm::SHA256, qj.dump());
-            } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
-                auto fnAtK = contentIdAt(*alt.fn, walk, edgeIndex);
-                auto argAtK = contentIdAt(*alt.arg, walk, edgeIndex);
-                nlohmann::json qj = trace::QueryApply{hashHex(fnAtK), hashHex(argAtK)};
-                structuralAtEdgeIndex = hashString(HashAlgorithm::SHA256, qj.dump());
-            } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
-                structuralAtEdgeIndex = alt.hash;
-            }
-
-            return TracingDecisionGraph::xorHashes(structuralAtEdgeIndex, own);
+            return TracingDecisionGraph::xorHashes(structuralAt(edgeIndex), own);
         },
         subject.data);
 }
 
-Hash contentIdAfter(const Subject & subject, const std::vector<Edge> & walk)
+Hash contentIdAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk)
 {
-    return contentIdAt(subject, walk, walk.size());
+    return contentIdAt(subject, scope, walk, walk.size());
 }
 
 std::string describe(const Subject & subject)

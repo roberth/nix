@@ -252,7 +252,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
        {}) = positional initial. Cb body observations evolve the
        per-Asks-edge content id at flush. */
     cidasks::Subject argSubject{cidasks::PositionalSeed{localCell->depth}};
-    auto argId = cidasks::contentIdAfter(argSubject, {});
+    auto argId = cidasks::contentIdAfter(argSubject, Hash(HashAlgorithm::SHA256), {});
 
     /* Wrap the argObj in TracingLocalObject so the outer's
        accesses on it during the apply land in the inner trace
@@ -349,7 +349,7 @@ static PrimOp * makeCachedFnPrimOp(
                            Subject and discriminate via their observation
                            factsets, not via state-creep. */
                         cidasks::Subject seedSubject{cidasks::PositionalSeed{seedCell->depth}};
-                        auto rootId = cidasks::contentIdAfter(seedSubject, {});
+                        auto rootId = cidasks::contentIdAfter(seedSubject, Hash(HashAlgorithm::SHA256), {});
                         /* Boundary-trace-only discipline: do NOT
                            register outerArgObj under rootId in the
                            shared resolver. Sibling cb apply invocations

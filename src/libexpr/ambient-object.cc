@@ -22,7 +22,7 @@ AmbientObject::AmbientObject(
 
 std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 {
-    auto cdi = cidasks::contentIdAfter(subject, {});
+    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
     auto qr = queryFn(cdi, trace::QueryGetAttr{name, fromOf(cdi)}, subject);
     auto * r = std::get_if<trace::ResultMaybeType>(&qr.result);
     if (!r || !r->type)
@@ -42,7 +42,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 
 std::vector<std::string> AmbientObject::getAttrNames()
 {
-    auto cdi = cidasks::contentIdAfter(subject, {});
+    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
     auto qr = queryFn(cdi, trace::QueryGetAttrNames{fromOf(cdi)}, subject);
     auto * r = std::get_if<trace::ResultListOfStrings>(&qr.result);
     if (!r)
@@ -52,7 +52,7 @@ std::vector<std::string> AmbientObject::getAttrNames()
 
 std::string AmbientObject::getStringIgnoreContext()
 {
-    auto cdi = cidasks::contentIdAfter(subject, {});
+    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
     auto qr = queryFn(cdi, trace::QueryGetString{fromOf(cdi)}, subject);
     auto * r = std::get_if<trace::ResultString>(&qr.result);
     if (!r)
@@ -67,7 +67,7 @@ std::string AmbientObject::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
 {
-    auto cdi = cidasks::contentIdAfter(subject, {});
+    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
     auto qr = queryFn(cdi, trace::QueryGetStringWithContext{fromOf(cdi)}, subject);
     auto * r = std::get_if<trace::ResultStringWithContext>(&qr.result);
     if (!r)
@@ -80,7 +80,7 @@ std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
 
 RootedPath AmbientObject::getPath()
 {
-    auto cdi = cidasks::contentIdAfter(subject, {});
+    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
     auto qr = queryFn(cdi, trace::QueryGetPath{fromOf(cdi)}, subject);
     auto * r = std::get_if<trace::ResultPath>(&qr.result);
     if (!r)
@@ -95,7 +95,7 @@ RootedPath AmbientObject::getPath()
 
 bool AmbientObject::getBool(std::string_view)
 {
-    auto cdi = cidasks::contentIdAfter(subject, {});
+    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
     auto qr = queryFn(cdi, trace::QueryGetBool{fromOf(cdi)}, subject);
     auto * r = std::get_if<trace::ResultBool>(&qr.result);
     if (!r)
@@ -105,7 +105,7 @@ bool AmbientObject::getBool(std::string_view)
 
 NixInt AmbientObject::getInt(std::string_view)
 {
-    auto cdi = cidasks::contentIdAfter(subject, {});
+    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
     auto qr = queryFn(cdi, trace::QueryGetInt{fromOf(cdi)}, subject);
     auto * r = std::get_if<trace::ResultInt>(&qr.result);
     if (!r)
@@ -115,7 +115,7 @@ NixInt AmbientObject::getInt(std::string_view)
 
 NixFloat AmbientObject::getFloat(std::string_view)
 {
-    auto cdi = cidasks::contentIdAfter(subject, {});
+    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
     auto qr = queryFn(cdi, trace::QueryGetFloat{fromOf(cdi)}, subject);
     auto * r = std::get_if<trace::ResultFloat>(&qr.result);
     if (!r)
@@ -125,7 +125,7 @@ NixFloat AmbientObject::getFloat(std::string_view)
 
 size_t AmbientObject::getListSize()
 {
-    auto cdi = cidasks::contentIdAfter(subject, {});
+    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
     auto qr = queryFn(cdi, trace::QueryGetListSize{fromOf(cdi)}, subject);
     auto * r = std::get_if<trace::ResultListSize>(&qr.result);
     if (!r)
@@ -135,7 +135,7 @@ size_t AmbientObject::getListSize()
 
 std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
 {
-    auto cdi = cidasks::contentIdAfter(subject, {});
+    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
     auto qr = queryFn(cdi, trace::QueryGetListElem{fromOf(cdi), index}, subject);
     if (!qr.childId)
         throw Error("ambient getListElem: resolver didn't return child id");
@@ -157,7 +157,7 @@ ObjectType AmbientObject::getTypeLazy()
 
 ObjectType AmbientObject::getType()
 {
-    auto cdi = cidasks::contentIdAfter(subject, {});
+    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
     auto qr = queryFn(cdi, trace::QueryGetType{fromOf(cdi)}, subject);
     auto * r = std::get_if<trace::ResultType>(&qr.result);
     if (!r)
@@ -172,7 +172,7 @@ RootValue AmbientObject::defeatCache()
 
 std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
 {
-    auto cdi = cidasks::contentIdAfter(subject, {});
+    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
     auto qr = queryFn(cdi, trace::QueryGetFunctionInfo{fromOf(cdi)}, subject);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
@@ -206,7 +206,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
        the result's ApplyResultSubject. */
     int localDepth = callerScope ? callerScope->depth + 1 : 0;
     cidasks::Subject argSubject{cidasks::PositionalSeed{localDepth}};
-    applyFn(cidasks::contentIdAfter(subject, {}), std::move(argObj), callerScope);
+    applyFn(cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {}), std::move(argObj), callerScope);
     cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
         .fn = std::make_shared<const cidasks::Subject>(subject),
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
