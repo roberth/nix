@@ -166,7 +166,15 @@ public:
         decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
         if (storeAllResponsePayloads)
             decisionGraph->insertResponse(queryHash, responsePayload);
-        if (seenRequests.insert(queryHash).second) {
+        /* Dedupe by (request, response) pair, not request alone.
+           Idempotent observations (same request, same response —
+           e.g. file reads, env reads) collapse to one entry; sibling
+           cb applies (same request, different responses) keep both
+           contributions so v13FactSetHash reflects both elementHashes
+           and the trie's per-(Q, factSet) terminals don't collide. */
+        auto factHash = TracingDecisionGraph::xorFactIntoHash(
+            Hash(HashAlgorithm::SHA256), queryHash, responseHash);
+        if (seenRequests.insert(factHash).second) {
             v13FactSet.push_back({queryHash, responseHash});
             v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 v13FactSetHash, queryHash, responseHash);
@@ -213,7 +221,11 @@ public:
     {
         if (!decisionGraph)
             return;
-        if (seenRequests.insert(request).second) {
+        /* Same dedupe semantics as logResponse — see commentary
+           there. */
+        auto factHash = TracingDecisionGraph::xorFactIntoHash(
+            Hash(HashAlgorithm::SHA256), request, response);
+        if (seenRequests.insert(factHash).second) {
             v13FactSet.push_back({request, response});
             v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 v13FactSetHash, request, response);

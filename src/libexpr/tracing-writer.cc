@@ -74,7 +74,10 @@ void TracingWriter::flushPendingAmbient()
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
         decisionGraph->insertResponse(queryHash, responsePayload);
 
-        if (seenRequests.insert(queryHash).second) {
+        /* Dedupe by (request, response) — see logResponse. */
+        auto factHash = TracingDecisionGraph::xorFactIntoHash(
+            Hash(HashAlgorithm::SHA256), queryHash, responseHash);
+        if (seenRequests.insert(factHash).second) {
             v13FactSet.push_back({queryHash, responseHash});
             v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 v13FactSetHash, queryHash, responseHash);
