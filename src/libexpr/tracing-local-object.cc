@@ -217,17 +217,11 @@ void TracingLocalObject::recordObservation(const trace::QueryVariant & query, co
     std::visit([&](const auto & r) { resultJson = r; }, result);
     auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(resultJson));
 
-    if (argScope) {
-        /* Fold into the cell's intrinsic (the source of truth) and
-           push the current contentId to the writer's
-           placeholderToIntrinsic so flush substitutes
-           `from=localId` → `from=cell.contentId()`. Last call wins:
-           by flush the value reflects the final intrinsic. */
-        argScope->absorb(queryHashBlanked, responseHash);
-        writer.updatePlaceholderIntrinsic(
-            localId.to_string(HashFormat::Base16, false), argScope->contentId());
-    }
-
+    /* CDI fix: stop mutating cell.intrinsic and stop pushing to
+       placeholderToIntrinsic. Under the new design (see
+       doc/design/tracing-eval-cache-content-identity-via-asks.md),
+       content ids are pure functions of (subject, factset); the
+       cell isn't where they live. */
     writer.logAmbientInteraction(query, result);
 }
 

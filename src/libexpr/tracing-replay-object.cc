@@ -24,35 +24,13 @@ TracingReplayObject::TracingReplayObject(
 {
 }
 
-/* Mirror of recording-side absorbFact: fold each observation into the
-   proxy's argScope cell. Facts in this layer carry `from=<fixed proxy
-   id>`, not `from=<cell.contentId at emission>` — so the absorb isn't
-   substituting into facts directly. What it does load-bear is the
-   state-creep XOR walk in descendant cells' contentId(): a cb apply
-   opens a new cell with parent=this apply_cell, and that child's
-   contentId() XOR-folds apply_cell.intrinsic in. Sibling cb invocations
-   whose outer-state diverged between apply points get distinct child
-   CDIs only because this absorb evolves the parent. Disabling the
-   absorb regresses cb-385, builtins-cache, and others. */
+/* CDI fix: stubbed; see TracingObject's matching note. */
 template<typename Q>
 static void absorbFactReplay(
-    const std::shared_ptr<const ArgScopeCell> & argScope,
-    const Q & query,
-    const trace::ResultVariant & result)
+    const std::shared_ptr<const ArgScopeCell> & /*argScope*/,
+    const Q & /*query*/,
+    const trace::ResultVariant & /*result*/)
 {
-    if (!argScope)
-        return;
-    nlohmann::json qj = query;
-    if (qj.is_object() && qj.contains("params")) {
-        auto & params = qj["params"];
-        if (params.is_object() && params.contains("from"))
-            params["from"] = "";
-    }
-    auto queryHashBlanked = hashString(HashAlgorithm::SHA256, qj.dump());
-    nlohmann::json rj;
-    std::visit([&](const auto & r) { rj = r; }, result);
-    auto responseHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(rj));
-    argScope->absorb(queryHashBlanked, responseHash);
 }
 
 ref<Object> TracingReplayObject::ensureInner() const
