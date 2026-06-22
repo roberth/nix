@@ -104,47 +104,6 @@ class TracingWriter
     };
     std::vector<PendingRequest> pendingRequests;
 
-    /* Latest published intrinsic content-hash per local placeholder
-       hex (the counter-derived id its facts carry as `from`).
-       Populated by TracingLocalObject as observations land. */
-    std::map<std::string, Hash> placeholderToIntrinsic;
-
-    /* old→new hex substitutions discovered in prior flush cycles. A
-       fact whose `from` is the old hash of an apply Q (or an Ambient
-       chain child) may be deferred to a flush cycle after the one that
-       inserted the Q into the pool at its new hash. Without
-       persistence the later flush starts with an empty sub map and
-       leaves the fact's `from` unsubstituted, so replay's
-       resolveCdiId can't find the producer in the pool and falls
-       back to a frozen ReplayLocalObject standin (#49 root cause). */
-    std::map<std::string, std::string> preFlushSubstitutions;
-
-    /* Phase 4 cascade: content-defined identities whose final hash
-       can't be settled at observation time because their parent's
-       identity is itself still a placeholder. The producer query
-       carries the parent's placeholder hex in `from`; flush
-       substitutes that to the parent's settled content-defined hash,
-       then hashes the substituted producer query to get the child's
-       settled hash. Used for two flavours of child:
-       - Local children (TracingLocalObjects from maybeGetAttr /
-         getListElem on a parent local), where the parent's settled
-         hash is its observation intrinsic.
-       - Ambient children (AmbientObjects from queryFn on a parent
-         ambient), where the parent's settled hash is the
-         substituted producer-query hash (e.g. an apply-result id
-         after the apply Request's arg placeholder was substituted).
-       Both cases settle the same way: substitute parent's
-       placeholder in the derivation template, hash, register
-       placeholder → settled in the substitution map so downstream
-       facts and further cascade entries see the settled hash. */
-    struct DelayedContentDefinedIdentity
-    {
-        std::string placeholderHex;
-        std::string parentPlaceholderHex;
-        nlohmann::json derivationTemplate;
-    };
-    std::vector<DelayedContentDefinedIdentity> delayedContentDefinedIdentities;
-
 public:
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
         : sink(sink)
@@ -295,49 +254,12 @@ public:
     }
 
     /**
-     * Publish a local's current intrinsic content-hash. Called by
-     * TracingLocalObject each time an observation lands, so the
-     * latest value is available at flush time. Placeholder is the
-     * hex of the local's counter-derived id, which is what its
-     * deferred facts carry in their `from` fields during recording.
-     */
-    void updatePlaceholderIntrinsic(const std::string & placeholderHex, const Hash & intrinsic)
-    {
-        placeholderToIntrinsic.insert_or_assign(placeholderHex, intrinsic);
-    }
-
-    /**
-     * Buffer a content-defined identity whose final hash can't be
-     * settled at observation time because its parent's identity is
-     * still a placeholder. At flush, substitute the parent's
-     * placeholder in `derivationTemplate` to its settled content-
-     * defined hash and hash the result; that's the child's settled
-     * identity. Replay computes the same hash from the same
-     * substituted producer query.
-     */
-    void delayContentDefinedIdentity(
-        std::string placeholderHex, std::string parentHex, nlohmann::json derivationTemplate)
-    {
-        delayedContentDefinedIdentities.push_back(
-            {std::move(placeholderHex), std::move(parentHex), std::move(derivationTemplate)});
-    }
-
-    /**
-     * Flush all buffered ambient facts and Requests, substituting
-     * placeholder hexes with intrinsic content-hashes per Phase 4 of
-     * content-defined identity. Called at the top of logResult,
-     * before record().
+     * Flush buffered ambient facts and Requests into the pool at
+     * their natural reqHashes. Called from logResult, before
+     * record(). Under the via-Asks design, facts carry positional
+     * initial content ids in `from`; no per-fact substitution.
      */
     void flushPendingAmbient();
-
-    /**
-     * Record a Pass-1 or Pass-3 old→new substitution into the
-     * persistent map with a collision-detection invariant. Throws if
-     * `oldHex` is already mapped to a different value. Internal to
-     * flushPendingAmbient.
-     */
-    void recordPreFlushSubstitution(
-        const std::string & oldHex, const std::string & newHex, const char * passLabel);
 
     /**
      * When true, every file-read / env-var response payload gets

@@ -60,11 +60,6 @@ std::shared_ptr<Object> TracingLocalObject::maybeGetAttr(const std::string & nam
        parent's final intrinsic, then the child's final localId is
        the hash of that substituted query. */
     auto childLocalId = derivedLocalId(query);
-    nlohmann::json derivJson = query;
-    writer.delayContentDefinedIdentity(
-        childLocalId.to_string(HashFormat::Base16, false),
-        tracingLocalFromOf(localId),
-        std::move(derivJson));
     /* Navigation child shares the parent's cell: observations on
        descendants contribute to the same scope's intrinsic
        (state creep). */
@@ -146,11 +141,6 @@ std::shared_ptr<Object> TracingLocalObject::getListElem(size_t index)
     trace::QueryGetListElem query{tracingLocalFromOf(localId), index};
     recordObservation(query, trace::ResultType{objectTypeToString(child->getType())});
     auto childLocalId = derivedLocalId(query);
-    nlohmann::json derivJson = query;
-    writer.delayContentDefinedIdentity(
-        childLocalId.to_string(HashFormat::Base16, false),
-        tracingLocalFromOf(localId),
-        std::move(derivJson));
     /* Navigation child shares the parent's cell: observations on
        descendants contribute to the same scope's intrinsic
        (state creep). */
