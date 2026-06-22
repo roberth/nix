@@ -132,6 +132,7 @@ endforeach
 
 sources = files(
   'ambient-object.cc',
+  'content-identity-via-asks.cc',
   'attr-path.cc',
   'attr-set.cc',
   'coarse-eval-cache-cursor-object.cc',

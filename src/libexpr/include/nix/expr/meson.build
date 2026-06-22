@@ -10,6 +10,7 @@ config_pub_h = configure_file(
 headers = [ config_pub_h ] + files(
   'ambient-object.hh',
   'attr-path.hh',
+  'content-identity-via-asks.hh',
   'attr-set.hh',
   'coarse-eval-cache-cursor-object.hh',
   'coarse-eval-cache.hh',
