@@ -123,4 +123,30 @@ Hash extractFrom(const trace::QueryVariant & query);
     `applyResult(seed(0), seed(1))`, `opaque(ab12cd...)`. */
 std::string describe(const Subject & subject);
 
+/** Per-cb-apply observation context.
+
+    A fresh instance is created at each cb-apply boundary
+    (`AmbientApply::run`) and shared by the apply's `TracingLocalObject`
+    (which records the outer's probes on the local arg) and the
+    apply-result Object wrapping (`TracingReplayObject` /
+    `TracingObject`, which uses the accumulated observations to compute
+    the apply-result's evolved Content Id).
+
+    `argSubject`/`scope` identify the cb arg's structural Subject and
+    its inherited scope; `observations` accumulates depth-2 facts in
+    insertion order as the outer's f-body probes the bridged value.
+
+    Once the apply's body has finished executing (= the deferred
+    `ensureInner` returns), `finalized` is set and `observations` is
+    treated as immutable; subsequent reads use it to compute the
+    `ApplyResultSubject`'s evolved cdi for cache lookups on the
+    apply result. */
+struct ApplyContext
+{
+    Subject argSubject;
+    Hash scope;
+    std::vector<Fact> observations;
+    bool finalized = false;
+};
+
 } // namespace nix::cidasks

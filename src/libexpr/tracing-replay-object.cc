@@ -30,8 +30,44 @@ ref<Object> TracingReplayObject::ensureInner() const
         tracingCacheLog("replay fallback: activating inner");
         tracingCacheStats().fallbacks++;
         inner = getInner();
+        /* The deferred body has now executed; observations on the
+           cb arg have been recorded into applyContext. Mark
+           finalized so subsequent reads see a stable walk. */
+        if (applyContext)
+            applyContext->finalized = true;
     }
     return *inner;
+}
+
+std::string TracingReplayObject::evolvedQueryFrom() const
+{
+    /* For apply-result wrappers, the apply's depth-2 observations
+       on the cb arg evolve the result's Content Id via cidasks
+       (ApplyResultSubject's recursive arg cdi). If the body has
+       already executed (= applyContext is finalized) and has
+       observations, we use the evolved cdi — that's the
+       disambiguation depth-2 needs across sibling cb applies.
+
+       But we do NOT force ensureInner here: forcing eagerly
+       defeats warm-replay where the cache hit at the static cdi
+       is the right answer (e.g. cb-local-descendants step 2). The
+       depth-2 walk that populates applyContext without running
+       live is the proper mechanism for warm replay; until that
+       lands, callers that need evolved cdi must trigger
+       ensureInner themselves (e.g., via a leaf method's fallback
+       path) and then re-look up via subsequent get* calls.
+
+       Non-apply-result wrappers, and apply-results whose body
+       hasn't been forced yet, fall back to the static
+       triePos.queryHashStr. */
+    if (applyContext && applyResultSubject && applyContext->finalized
+        && !applyContext->observations.empty()) {
+        cidasks::Edge edge{.facts = applyContext->observations};
+        std::vector<cidasks::Edge> walk{std::move(edge)};
+        auto evolved = cidasks::contentIdAfter(*applyResultSubject, applyContext->scope, walk);
+        return evolved.to_string(HashFormat::Base16, false);
+    }
+    return triePos.queryHashStr;
 }
 
 /**
@@ -95,7 +131,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 
 std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & name)
 {
-    auto parentHash = triePos.queryHashStr;
+    auto parentHash = evolvedQueryFrom();
     trace::QueryGetAttr query{name, parentHash};
 
     if (auto result = lookupStructuralChild<trace::QueryGetAttr, trace::ResultMaybeType>(query)) {
@@ -119,7 +155,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
 
 std::vector<std::string> TracingReplayObject::getAttrNames()
 {
-    auto parentHash = triePos.queryHashStr;
+    auto parentHash = evolvedQueryFrom();
     trace::QueryGetAttrNames query{parentHash};
     if (auto r = lookupResult<trace::QueryGetAttrNames, trace::ResultListOfStrings>(query)) {
         return r->values;
@@ -130,7 +166,7 @@ std::vector<std::string> TracingReplayObject::getAttrNames()
 
 std::string TracingReplayObject::getStringIgnoreContext()
 {
-    auto parentHash = triePos.queryHashStr;
+    auto parentHash = evolvedQueryFrom();
     trace::QueryGetString query{parentHash};
     if (auto r = lookupResult<trace::QueryGetString, trace::ResultString>(query)) {
         return r->value;
@@ -148,7 +184,7 @@ std::string TracingReplayObject::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> TracingReplayObject::getStringWithContext()
 {
-    auto parentHash = triePos.queryHashStr;
+    auto parentHash = evolvedQueryFrom();
     if (auto r = lookupResult<trace::QueryGetStringWithContext, trace::ResultStringWithContext>(
             trace::QueryGetStringWithContext{parentHash})) {
         NixStringContext ctx;
@@ -187,7 +223,7 @@ RootedPath TracingReplayObject::getPath()
 
 bool TracingReplayObject::getBool(std::string_view errorCtx)
 {
-    auto parentHash = triePos.queryHashStr;
+    auto parentHash = evolvedQueryFrom();
     trace::QueryGetBool query{parentHash};
     if (auto r = lookupResult<trace::QueryGetBool, trace::ResultBool>(query)) {
         return r->value;
@@ -198,7 +234,7 @@ bool TracingReplayObject::getBool(std::string_view errorCtx)
 
 NixInt TracingReplayObject::getInt(std::string_view errorCtx)
 {
-    auto parentHash = triePos.queryHashStr;
+    auto parentHash = evolvedQueryFrom();
     trace::QueryGetInt query{parentHash};
     if (auto r = lookupResult<trace::QueryGetInt, trace::ResultInt>(query)) {
         return NixInt{r->value};
@@ -209,7 +245,7 @@ NixInt TracingReplayObject::getInt(std::string_view errorCtx)
 
 NixFloat TracingReplayObject::getFloat(std::string_view errorCtx)
 {
-    auto parentHash = triePos.queryHashStr;
+    auto parentHash = evolvedQueryFrom();
     trace::QueryGetFloat query{parentHash};
     if (auto r = lookupResult<trace::QueryGetFloat, trace::ResultFloat>(query)) {
         return r->value;
@@ -220,7 +256,7 @@ NixFloat TracingReplayObject::getFloat(std::string_view errorCtx)
 
 size_t TracingReplayObject::getListSize()
 {
-    auto parentHash = triePos.queryHashStr;
+    auto parentHash = evolvedQueryFrom();
     trace::QueryGetListSize query{parentHash};
     if (auto r = lookupResult<trace::QueryGetListSize, trace::ResultListSize>(query)) {
         return r->size;
@@ -231,7 +267,7 @@ size_t TracingReplayObject::getListSize()
 
 std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
 {
-    auto parentHash = triePos.queryHashStr;
+    auto parentHash = evolvedQueryFrom();
     trace::QueryGetListElem query{parentHash, idx};
 
     if (auto result = lookupStructuralChild<trace::QueryGetListElem, trace::ResultType>(query)) {
@@ -250,7 +286,7 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
 
 std::vector<std::string> TracingReplayObject::getListOfStringsNoCtx()
 {
-    auto parentHash = triePos.queryHashStr;
+    auto parentHash = evolvedQueryFrom();
     trace::QueryGetListOfStrings query{parentHash};
     if (auto r = lookupResult<trace::QueryGetListOfStrings, trace::ResultListOfStrings>(query)) {
         return r->values;
@@ -266,7 +302,7 @@ ObjectType TracingReplayObject::getTypeLazy()
 
 ObjectType TracingReplayObject::getType()
 {
-    auto parentHash = triePos.queryHashStr;
+    auto parentHash = evolvedQueryFrom();
     trace::QueryGetType query{parentHash};
     if (auto r = lookupResult<trace::QueryGetType, trace::ResultType>(query)) {
         return stringToObjectType(r->type);
@@ -283,7 +319,7 @@ RootValue TracingReplayObject::defeatCache()
 
 std::optional<FunctionInfo> TracingReplayObject::getFunctionInfo()
 {
-    auto parentHash = triePos.queryHashStr;
+    auto parentHash = evolvedQueryFrom();
     trace::QueryGetFunctionInfo query{parentHash};
     if (auto r = lookupResult<trace::QueryGetFunctionInfo, trace::ResultFunctionInfo>(query)) {
         if (!r->hasInfo)

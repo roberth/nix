@@ -72,6 +72,13 @@ class AmbientObject : public Object
        content-identity-via-asks.md. Set at the cb-apply boundary;
        propagated to children. Zero hash if no inheritance. */
     Hash inheritedScope;
+    /* Per-apply observation context. Set on cb-arg seed AmbientObjects
+       by makeCachedFnPrimOp.impl at the apply boundary; the queryFn
+       closure routes observations through this context so the
+       apply-result wrapping can compute its evolved content id via
+       cidasks::contentIdAfter against the accumulated walk. Null on
+       non-cb-arg AmbientObjects. */
+    std::shared_ptr<cidasks::ApplyContext> applyContext;
     AmbientQueryFn queryFn;   ///< Callback to issue ambient queries
     AmbientApplyFn applyFn;   ///< Callback for function application (may be null)
     /* lazy-paths: stable SourceRoot for paths returned by `getPath`.
@@ -116,6 +123,19 @@ public:
         inheritedScope = h;
         return *this;
     }
+
+    /** Attach a per-apply observation context. Used on cb-arg seed
+        AmbientObjects at the cb-apply boundary; the queryFn closure
+        routes observations into this context. */
+    AmbientObject & withApplyContext(std::shared_ptr<cidasks::ApplyContext> ctx)
+    {
+        applyContext = std::move(ctx);
+        return *this;
+    }
+
+    /** Read this proxy's apply context (= null unless this is a
+        cb-arg seed). */
+    std::shared_ptr<cidasks::ApplyContext> getApplyContext() const { return applyContext; }
 
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 

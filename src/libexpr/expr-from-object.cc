@@ -363,6 +363,18 @@ static PrimOp * makeCachedFnPrimOp(
                            ids throughout this cb-apply boundary. */
                         Hash callScope = resolver->callScope;
                         auto rootId = cidasks::contentIdAfter(seedSubject, callScope, {});
+                        /* Per-apply observation context. Captures the
+                           outer's probes on the cb arg as they fire
+                           through queryFn; the apply-result wrapper
+                           uses these observations to compute its
+                           evolved Content Id (via cidasks
+                           ApplyResultSubject recursion through the
+                           arg's evolved cdi). This is what
+                           distinguishes sibling apply calls within
+                           the same cached call (`inner.f 5` vs
+                           `inner.f 2`), per the depth-2 design. */
+                        auto applyContext = std::make_shared<cidasks::ApplyContext>(
+                            cidasks::ApplyContext{seedSubject, callScope, {}, false});
                         /* Boundary-trace-only discipline: do NOT
                            register outerArgObj under rootId in the
                            shared resolver. Sibling cb apply invocations
@@ -375,7 +387,7 @@ static PrimOp * makeCachedFnPrimOp(
                            it directly for seed (rootId) queries. */
                         auto & innerEnv = *innerEval->getEvalState().environment;
                         AmbientQueryFn queryFn = [resolver, outerArgObj, rootId,
-                                                  &innerEnv](
+                                                  &innerEnv, applyContext](
                             AmbientId objectId,
                             const trace::QueryVariant & q,
                             cidasks::Subject subject,
@@ -393,8 +405,16 @@ static PrimOp * makeCachedFnPrimOp(
                             innerEnv.ambientQuery(
                                 q,
                                 [&](const trace::QueryVariant &) { return qr.result; },
-                                std::move(subject),
-                                std::move(inheritedScope));
+                                subject,
+                                inheritedScope);
+                            /* Route the observation into the per-apply
+                               context so the apply-result's evolved
+                               cdi reflects this probe. While the
+                               apply is still running (not finalized),
+                               observations accumulate. */
+                            if (applyContext && !applyContext->finalized) {
+                                applyContext->observations.push_back(cidasks::factFromQR(q, qr.result));
+                            }
                             return qr;
                         };
                         /* applyFn does NOT record a QueryApply Fact:
@@ -429,6 +449,7 @@ static PrimOp * makeCachedFnPrimOp(
                         seedCell->liveObject = contraArg.get_ptr();
                         contraArg->withScope(seedCell);
                         contraArg->withInheritedScope(callScope);
+                        contraArg->withApplyContext(applyContext);
                         auto result = innerEval->apply(ref<Object>(fnObj), contraArg);
                         ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
                     },

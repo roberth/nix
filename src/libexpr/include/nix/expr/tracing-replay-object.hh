@@ -1,6 +1,7 @@
 #pragma once
 
 #include "nix/expr/arg-scope.hh"
+#include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/tracing-writer.hh"
 
@@ -33,7 +34,28 @@ class TracingReplayObject : public Object
        ancestor chain. */
     std::shared_ptr<const ArgScopeCell> argScope;
 
+    /* Per-cb-apply observation context for the apply that produced
+       this object. Set on apply-result wrappers by
+       TracingReplayEvaluator::apply when the arg was a cb-arg
+       AmbientObject carrying one. Used to compute the apply-result's
+       evolved Content Id via cidasks (the ApplyResultSubject's
+       recursive arg cdi reflects the observations). Null on
+       non-apply-result wrappers (= navigation children). */
+    std::shared_ptr<cidasks::ApplyContext> applyContext;
+    /* When apply-result, the ApplyResultSubject identifying it
+       structurally. Used together with applyContext to compute the
+       evolved cdi at lookup time. */
+    std::optional<cidasks::Subject> applyResultSubject;
+
     ref<Object> ensureInner() const;
+
+    /* Compute the apply-result's evolved query-hash prefix (= the
+       hex hash to use as `from` for child queries) by running
+       cidasks::contentIdAfter on applyResultSubject with the
+       accumulated observations in applyContext. Falls back to the
+       static triePos.queryHashStr when this is not an apply-result
+       wrapper or the context has no observations. */
+    std::string evolvedQueryFrom() const;
 
     /**
      * Cascading lookup for leaf results (getString, getBool, etc.).
@@ -57,6 +79,17 @@ public:
     TracingReplayObject & withScope(std::shared_ptr<const ArgScopeCell> argScope_)
     {
         argScope = std::move(argScope_);
+        return *this;
+    }
+
+    /** Attach the per-apply observation context — for apply-result
+        wrappers, so subsequent queries can compute the evolved
+        Content Id via cidasks. */
+    TracingReplayObject & withApplyContext(
+        std::shared_ptr<cidasks::ApplyContext> ctx, cidasks::Subject resultSubject)
+    {
+        applyContext = std::move(ctx);
+        applyResultSubject = std::move(resultSubject);
         return *this;
     }
 

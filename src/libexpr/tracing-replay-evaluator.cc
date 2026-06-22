@@ -629,6 +629,36 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     /* Apply-result scope cell. Parent = fn proxy's cell. */
     auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
     obj->withScope(std::move(cell));
+    /* If the arg is a cb-arg AmbientObject (carrying an ApplyContext),
+       attach it to the apply-result so its subsequent queries compute
+       evolved Content Ids via cidasks and disambiguate sibling cb
+       applies. The ApplyResultSubject identifies this apply-result
+       structurally; cidasks composes it with arg's evolved cdi
+       (driven by observations accumulated into the context). */
+    if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
+        if (auto ctx = argAmb->getApplyContext()) {
+            auto fnSubject = argAmb->getSubject();
+            (void) fnSubject;
+            // Build ApplyResultSubject{fn=fn's-subject, arg=arg's-subject}.
+            // fn's subject: prefer fn's getSubject if available; otherwise opaque on its CDI.
+            cidasks::Subject fnSubj;
+            if (auto * fnAmb = dynamic_cast<AmbientObject *>(fn.get_ptr().get())) {
+                if (auto * s = fnAmb->getSubject())
+                    fnSubj = *s;
+                else
+                    fnSubj = cidasks::Subject{cidasks::OpaqueContentSubject{
+                        Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256)}};
+            } else {
+                fnSubj = cidasks::Subject{cidasks::OpaqueContentSubject{
+                    Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256)}};
+            }
+            cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
+                .fn = std::make_shared<const cidasks::Subject>(std::move(fnSubj)),
+                .arg = std::make_shared<const cidasks::Subject>(ctx->argSubject),
+            }};
+            obj->withApplyContext(std::move(ctx), std::move(resultSubject));
+        }
+    }
     return obj;
 }
 
