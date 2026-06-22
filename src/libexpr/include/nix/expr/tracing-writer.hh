@@ -79,21 +79,13 @@ class TracingWriter
        RequestSet hash for the whole-remaining edge in O(1). */
     TracingDecisionGraph::TrieBuilder allRequestsTrie;
 
-    /* Phase 4 of content-defined identity: ambient facts are buffered
-       here during recording and flushed at logResult time with
-       placeholder→intrinsic substitution applied. See
-       logAmbientInteraction, deferRequest, and flushPendingAmbient.
-
-       `cell` carries the owning ArgScopeCell so flush can compute
-       per-fact emission-moment cdis via reverse XOR-subtract over the
-       cell's intrinsic. Null for facts emitted under the older
-       placeholderToIntrinsic substitution scheme (TracingLocalObject
-       under the legacy path); those will migrate in CDI fix B. */
+    /* Ambient facts buffered during recording and flushed at
+       logResult time via flushPendingAmbient. Pool keys are the
+       natural reqHashes of the query payloads. */
     struct PendingFact
     {
         trace::QueryVariant query;
         trace::ResultVariant result;
-        std::shared_ptr<const struct ArgScopeCell> cell;
     };
     std::vector<PendingFact> pendingFacts;
 
@@ -185,25 +177,15 @@ public:
      * buffered here rather than eagerly inserted into v13FactSet and
      * the Requests/Responses pools — the `from` field of the query
      * may be a placeholder (counter-derived local id) whose final
-     * content-defined value isn't known until the local's full
-     * observation buffer is settled. flushPendingAmbient() at
-     * logResult time substitutes placeholders with intrinsic hashes
-     * and does the actual pool inserts + v13FactSet folding.
-     *
-     * The previous signature returned (queryHash, responseHash). Both
-     * depend on `from` substitution, so neither is available at the
-     * call site any more — callers that maintained per-fact state
-     * (e.g. Phase 3's TracingLocalObject buffer) compute their
-     * placeholder-independent contributions themselves now.
-     */
+     * Buffered until flushPendingAmbient() at logResult time
+     * inserts into the pool at the query payload's natural reqHash. */
     void logAmbientInteraction(
         const trace::QueryVariant & query,
-        const trace::ResultVariant & result,
-        std::shared_ptr<const struct ArgScopeCell> cell = nullptr)
+        const trace::ResultVariant & result)
     {
         if (!decisionGraph)
             return;
-        pendingFacts.push_back({query, result, std::move(cell)});
+        pendingFacts.push_back({query, result});
     }
 
     /**

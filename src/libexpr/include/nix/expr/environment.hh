@@ -57,21 +57,14 @@ public:
     virtual Hash getFileHash(const std::string & path);
 
     /**
-     * Issue an ambient query and return the result.
-     *
-     * `cell` is the proxy's argScope at the moment of the observation,
-     * if any. TracingEnvironment stores it on the buffered fact so
-     * flush-time substitution can attribute the fact's `from` to the
-     * cell's content-defined identity at this point in the observation
-     * sequence (per-fact snapshot, not the cell's final intrinsic).
-     * The default implementation ignores `cell` since it doesn't record.
+     * Issue an ambient query and return the result. The default
+     * implementation delegates to the supplied resolve callback;
+     * TracingEnvironment overrides to record the interaction.
      */
     virtual trace::ResultVariant ambientQuery(
         const trace::QueryVariant & query,
-        std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
-        std::shared_ptr<const struct ArgScopeCell> cell = nullptr)
+        std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve)
     {
-        (void) cell;
         return resolve(query);
     }
 

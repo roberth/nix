@@ -1,5 +1,4 @@
 #include "nix/expr/tracing-environment.hh"
-#include "nix/expr/arg-scope.hh"
 #include "nix/expr/trace-types.hh"
 #include "nix/expr/tracing-writer.hh"
 
@@ -59,11 +58,10 @@ std::optional<std::string> TracingEnvironment::getEnv(const std::string & name)
 
 trace::ResultVariant TracingEnvironment::ambientQuery(
     const trace::QueryVariant & query,
-    std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
-    std::shared_ptr<const ArgScopeCell> cell)
+    std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve)
 {
     auto result = resolve(query);
-    writer.logAmbientInteraction(query, result, std::move(cell));
+    writer.logAmbientInteraction(query, result);
     return result;
 }
 

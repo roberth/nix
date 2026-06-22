@@ -31,18 +31,12 @@ struct AmbientQueryResult
 };
 
 /**
- * Callback type for issuing ambient queries.
- * Takes the caller's Object id, the query, and the caller's
- * effective argScope cell (so the closure can XOR-fold the
- * observation's contribution into the cell's intrinsic and push
- * the latest cell.contentId() to the writer's
- * placeholderToIntrinsic for flush-time substitution).
- * cell may be null when the caller has no effective cell.
+ * Callback type for issuing ambient queries. Takes the caller's
+ * Object id and the query.
  */
 using AmbientQueryFn = std::function<AmbientQueryResult(
     AmbientId objectId,
-    const trace::QueryVariant &,
-    std::shared_ptr<const ArgScopeCell> cell)>;
+    const trace::QueryVariant &)>;
 
 /**
  * Callback type for ambient function application.
