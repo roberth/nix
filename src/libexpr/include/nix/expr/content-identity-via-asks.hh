@@ -109,4 +109,9 @@ Hash contentIdAt(const Subject & subject, const std::vector<Edge> & walk, size_t
     one. Apply queries don't have a `from`; throws. */
 Hash extractFrom(const trace::QueryVariant & query);
 
+/** Short readable representation of a Subject — for tracing logs.
+    Example: `seed(2)`, `getAttr(seed(2), "left")`,
+    `applyResult(seed(0), seed(1))`, `opaque(ab12cd...)`. */
+std::string describe(const Subject & subject);
+
 } // namespace nix::cidasks

@@ -384,8 +384,16 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO Queries(queryHash, payload) VALUES (?, ?)");
     state->insertResult.create(state->db,
         "INSERT OR IGNORE INTO Results(resultHash, payload) VALUES (?, ?)");
+    /* Responses use REPLACE rather than IGNORE: under the via-Asks
+       design's "last-write-wins" black-box model, a later recording's
+       observation at the same query key (e.g. two cb invocations with
+       same-shape locals at the same positional depth) is the
+       authoritative response. The trie's Asks edges still reference
+       the *recorded* responseHash per their own factset, so an
+       older terminal's walk that dispatches this key just won't
+       match (miss → fall back to inner re-eval). */
     state->insertResponse.create(state->db,
-        "INSERT OR IGNORE INTO Responses(requestHash, payload) VALUES (?, ?)");
+        "INSERT OR REPLACE INTO Responses(requestHash, payload) VALUES (?, ?)");
 
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");

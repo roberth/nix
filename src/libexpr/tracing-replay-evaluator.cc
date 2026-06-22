@@ -104,6 +104,16 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
                     Hash(HashAlgorithm::SHA256), requestHash, h),
             };
             ctx.runningWalk.back().facts.push_back(std::move(f));
+            tracingCacheLog(
+                "dispatch ambient: req=%s from=%s resp=%s",
+                requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                ambientFromHash->to_string(HashFormat::Base16, false).substr(0, 12),
+                h.to_string(HashFormat::Base16, false).substr(0, 12));
+        } else if (!isAmbient) {
+            tracingCacheLog(
+                "dispatch env: req=%s resp=%s",
+                requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                h.to_string(HashFormat::Base16, false).substr(0, 12));
         }
         return h;
     };
@@ -214,8 +224,10 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
 std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string & idStr, ResolutionContext & ctx)
 {
     /* Per-walk memo. */
-    if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
+    if (auto it = ctx.memo.find(idStr); it != ctx.memo.end()) {
+        tracingCacheLog("resolve %s -> memo hit", idStr.substr(0, 12));
         return it->second;
+    }
 
     /* Walk the proxy's argScope chain looking for a cell whose
        liveObject's content id matches idStr. The id is computed via
@@ -223,17 +235,29 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
        (= edgeIndex 0 for single-edge walks; future-proofed for
        multi-edge). Symmetric to recording. */
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
-    for (; cell; cell = cell->parent) {
+    int cellDepth = 0;
+    for (; cell; cell = cell->parent, ++cellDepth) {
         if (auto live = cell->liveObject) {
             if (auto * subj = live->getSubject()) {
                 auto cdi = cidasks::contentIdAt(*subj, ctx.runningWalk, ctx.edgeIndex);
-                if (cdi.to_string(HashFormat::Base16, false) == idStr) {
+                auto cdiHex = cdi.to_string(HashFormat::Base16, false);
+                tracingCacheLog(
+                    "resolve %s: cell[%d] subject=%s cdi=%s %s",
+                    idStr.substr(0, 12), cellDepth,
+                    cidasks::describe(*subj), cdiHex.substr(0, 12),
+                    cdiHex == idStr ? "MATCH" : "miss");
+                if (cdiHex == idStr) {
                     ctx.memo[idStr] = live;
                     return live;
                 }
+            } else {
+                tracingCacheLog("resolve %s: cell[%d] live has no subject", idStr.substr(0, 12), cellDepth);
             }
+        } else {
+            tracingCacheLog("resolve %s: cell[%d] no liveObject", idStr.substr(0, 12), cellDepth);
         }
     }
+    tracingCacheLog("resolve %s: cell-chain exhausted, falling through to pool", idStr.substr(0, 12));
 
     Hash idHash{HashAlgorithm::SHA256};
     try {
@@ -243,25 +267,40 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
     }
 
     auto reqPayload = decisionGraph.getRequestPayload(idHash);
-    if (!reqPayload)
+    if (!reqPayload) {
+        tracingCacheLog("resolve %s: not in pool -> materialise local standin", idStr.substr(0, 12));
         return materialiseLocalStandin(idHash, idStr, ctx);
+    }
 
     nlohmann::json reqJson;
     try {
         reqJson = cborStringToJson(*reqPayload);
     } catch (const std::exception &) {
+        tracingCacheLog("resolve %s: pool payload parse failed", idStr.substr(0, 12));
         return nullptr;
     }
 
-    if (reqJson.contains("kind") && reqJson["kind"] == "localArg")
+    if (reqJson.contains("kind") && reqJson["kind"] == "localArg") {
+        tracingCacheLog("resolve %s: localArg sidecar", idStr.substr(0, 12));
         return chaseLocalArgSidecar(idStr, reqJson, ctx);
+    }
 
     auto tag = reqJson["query"].get<std::string>();
     auto & params = reqJson["params"];
 
-    if (tag == "apply")
+    if (tag == "apply") {
+        tracingCacheLog("resolve %s: apply producer", idStr.substr(0, 12));
         return resolveApplyId(idStr, params, ctx);
+    }
 
+    std::string selector;
+    if (params.contains("name")) selector = " name=\"" + params["name"].get<std::string>() + "\"";
+    else if (params.contains("index")) selector = " index=" + std::to_string(params["index"].get<size_t>());
+    tracingCacheLog(
+        "resolve %s: producer-child via %s from %s%s",
+        idStr.substr(0, 12), tag,
+        params.contains("from") ? params["from"].get<std::string>().substr(0, 12) : std::string("?"),
+        selector);
     return resolveProducerChild(idStr, tag, params, ctx);
 }
 

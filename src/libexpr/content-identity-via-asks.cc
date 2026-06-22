@@ -164,4 +164,29 @@ Hash contentIdAfter(const Subject & subject, const std::vector<Edge> & walk)
     return contentIdAt(subject, walk, walk.size());
 }
 
+std::string describe(const Subject & subject)
+{
+    return std::visit(
+        [](const auto & alt) -> std::string {
+            using T = std::decay_t<decltype(alt)>;
+            if constexpr (std::is_same_v<T, PositionalSeed>) {
+                return "seed(" + std::to_string(alt.depth) + ")";
+            } else if constexpr (std::is_same_v<T, DerivedSubject>) {
+                std::string kind =
+                    alt.kind == DerivedSubject::Kind::GetAttr ? "getAttr" : "getListElem";
+                std::string sel = alt.kind == DerivedSubject::Kind::GetAttr
+                    ? "\"" + alt.name + "\""
+                    : std::to_string(alt.index);
+                return kind + "(" + describe(*alt.parent) + ", " + sel + ")";
+            } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
+                return "applyResult(" + describe(*alt.fn) + ", " + describe(*alt.arg) + ")";
+            } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
+                return "opaque(" + alt.hash.to_string(HashFormat::Base16, false).substr(0, 12) + "...)";
+            } else {
+                return "?";
+            }
+        },
+        subject.data);
+}
+
 } // namespace nix::cidasks

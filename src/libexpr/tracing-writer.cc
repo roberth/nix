@@ -49,6 +49,12 @@ void TracingWriter::flushPendingAmbient()
         auto fromCdi = cidasks::contentIdAt(fact.subject, walk, /*edgeIndex=*/ 0);
         auto fromHex = fromCdi.to_string(HashFormat::Base16, false);
 
+        std::string queryTag = std::visit(
+            [](const auto & q) -> std::string { return std::string(q.tag); }, fact.query);
+        tracingCacheLog(
+            "flush fact: subject=%s query=%s from=%s",
+            cidasks::describe(fact.subject), queryTag, fromHex.substr(0, 12));
+
         nlohmann::json queryJson;
         std::visit([&](const auto & q) { queryJson = q; }, fact.query);
         if (queryJson.is_object() && queryJson.contains("params")) {
