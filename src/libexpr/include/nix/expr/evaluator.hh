@@ -13,6 +13,7 @@
 #include "nix/expr/value/context.hh"
 #include "nix/expr/value.hh"
 #include "nix/expr/object-type.hh"
+#include "nix/util/hash.hh"
 #include "nix/util/pos-idx.hh"
 #include "nix/util/ref.hh"
 #include "nix/util/source-path.hh"
@@ -253,6 +254,16 @@ public:
     virtual const cidasks::Subject * getSubject() const
     {
         return nullptr;
+    }
+
+    /**
+     * The proxy's inherited scope — the XOR of outer-scope CDIs used
+     * by cidasks::contentIdAt to make sibling cached-call recordings'
+     * content ids distinct. Zero hash for non-proxy Objects.
+     */
+    virtual Hash getInheritedScope() const
+    {
+        return Hash(HashAlgorithm::SHA256);
     }
 
     /**

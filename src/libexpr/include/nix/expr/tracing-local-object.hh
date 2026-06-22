@@ -38,12 +38,15 @@ class TracingLocalObject : public Object
 {
     std::shared_ptr<Object> inner;
     cidasks::Subject subject;  ///< Static structural identifier
+    /* Inherited scope: XOR of outer-scope CDIs (CDI(Q) at the
+       cb-apply boundary). Propagated to navigation children. */
+    Hash inheritedScope;
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
-    /** This local's content id at the empty factset = its positional
-        initial. Computed on demand from `subject`. */
-    AmbientId localId() const { return cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {}); }
+    /** This local's content id, scoped via inheritedScope. Computed
+        on demand from `subject` + `inheritedScope`. */
+    AmbientId localId() const { return cidasks::contentIdAfter(subject, inheritedScope, {}); }
 
     /* The argScope cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;
@@ -58,11 +61,15 @@ public:
         cidasks::Subject subject,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
-        std::shared_ptr<const ArgScopeCell> argScope);
+        std::shared_ptr<const ArgScopeCell> argScope,
+        Hash inheritedScope = Hash(HashAlgorithm::SHA256));
 
     /** This proxy's structural identity, per the
         content-identity-via-asks design. */
     const cidasks::Subject * getSubject() const override { return &subject; }
+
+    /** This proxy's inherited scope. */
+    Hash getInheritedScope() const override { return inheritedScope; }
 
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 

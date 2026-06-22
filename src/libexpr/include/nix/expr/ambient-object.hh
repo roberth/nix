@@ -33,13 +33,14 @@ struct AmbientQueryResult
 
 /**
  * Callback type for issuing ambient queries. Takes the caller's
- * Object id, the query, and the caller's Subject (for content-id
- * attribution at the writer).
+ * Object id, the query, the caller's Subject, and the caller's
+ * inherited scope (both for content-id attribution at the writer).
  */
 using AmbientQueryFn = std::function<AmbientQueryResult(
     AmbientId objectId,
     const trace::QueryVariant &,
-    cidasks::Subject)>;
+    cidasks::Subject,
+    Hash inheritedScope)>;
 
 /**
  * Callback type for ambient function application.
@@ -66,6 +67,11 @@ using AmbientApplyFn = std::function<AmbientId(
 class AmbientObject : public Object
 {
     cidasks::Subject subject; ///< Static structural identifier (positional/derived/apply)
+    /* Inherited scope: XOR of outer-scope CDIs (chiefly the cached
+       call's CDI(Q)) for content-id inheritance, per
+       content-identity-via-asks.md. Set at the cb-apply boundary;
+       propagated to children. Zero hash if no inheritance. */
+    Hash inheritedScope;
     AmbientQueryFn queryFn;   ///< Callback to issue ambient queries
     AmbientApplyFn applyFn;   ///< Callback for function application (may be null)
     /* lazy-paths: stable SourceRoot for paths returned by `getPath`.
@@ -90,11 +96,24 @@ public:
         apply-result), per the content-identity-via-asks design. */
     const cidasks::Subject * getSubject() const override { return &subject; }
 
+    /** This proxy's inherited scope (outer-scope CDIs composed),
+        used by cidasks to make sibling cached-call recordings'
+        content ids distinct. */
+    Hash getInheritedScope() const override { return inheritedScope; }
+
     /** Set the proxy's argScope. Call right after construction at
         boundary sites. Returns *this for chaining. */
     AmbientObject & withScope(std::shared_ptr<const ArgScopeCell> argScope_)
     {
         argScope = std::move(argScope_);
+        return *this;
+    }
+
+    /** Set the proxy's inherited scope (outer-scope CDIs).
+        Children created by this proxy inherit this scope. */
+    AmbientObject & withInheritedScope(const Hash & h)
+    {
+        inheritedScope = h;
         return *this;
     }
 
@@ -126,10 +145,10 @@ public:
 
     AmbientId getCdi() const
     {
-        /* Content id at the empty factset = subject's positional/structural
-           initial. For multi-edge use, callers must pass the relevant walk
-           via cidasks::contentIdAt instead. */
-        return cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
+        /* Content id at the empty factset, with this proxy's inherited
+           scope applied. For multi-edge use, callers must pass the
+           relevant walk via cidasks::contentIdAt instead. */
+        return cidasks::contentIdAfter(subject, inheritedScope, {});
     }
 
     std::optional<std::string> getCdiHex() const override

@@ -14,6 +14,7 @@ static std::string fromOf(AmbientId cdi)
 AmbientObject::AmbientObject(
     cidasks::Subject subject_, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn)
     : subject(std::move(subject_))
+    , inheritedScope(HashAlgorithm::SHA256)
     , queryFn(std::move(queryFn))
     , applyFn(std::move(applyFn))
     , ambientRootFSRoot(std::move(ambientRootFSRoot))
@@ -22,8 +23,8 @@ AmbientObject::AmbientObject(
 
 std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 {
-    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
-    auto qr = queryFn(cdi, trace::QueryGetAttr{name, fromOf(cdi)}, subject);
+    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto qr = queryFn(cdi, trace::QueryGetAttr{name, fromOf(cdi)}, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultMaybeType>(&qr.result);
     if (!r || !r->type)
         return nullptr;
@@ -37,13 +38,16 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
     auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Navigation child inherits parent's argScope cell directly. */
     child->withScope(argScope);
+    /* Inherit content-id scope so the child's `from` fields include
+       the same CDI(Q) the parent uses. */
+    child->withInheritedScope(inheritedScope);
     return child;
 }
 
 std::vector<std::string> AmbientObject::getAttrNames()
 {
-    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
-    auto qr = queryFn(cdi, trace::QueryGetAttrNames{fromOf(cdi)}, subject);
+    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto qr = queryFn(cdi, trace::QueryGetAttrNames{fromOf(cdi)}, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultListOfStrings>(&qr.result);
     if (!r)
         throw Error("ambient getAttrNames: unexpected result type");
@@ -52,8 +56,8 @@ std::vector<std::string> AmbientObject::getAttrNames()
 
 std::string AmbientObject::getStringIgnoreContext()
 {
-    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
-    auto qr = queryFn(cdi, trace::QueryGetString{fromOf(cdi)}, subject);
+    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto qr = queryFn(cdi, trace::QueryGetString{fromOf(cdi)}, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultString>(&qr.result);
     if (!r)
         throw Error("ambient getString: unexpected result type");
@@ -67,8 +71,8 @@ std::string AmbientObject::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
 {
-    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
-    auto qr = queryFn(cdi, trace::QueryGetStringWithContext{fromOf(cdi)}, subject);
+    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto qr = queryFn(cdi, trace::QueryGetStringWithContext{fromOf(cdi)}, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultStringWithContext>(&qr.result);
     if (!r)
         throw Error("ambient getStringWithContext: unexpected result type");
@@ -80,8 +84,8 @@ std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
 
 RootedPath AmbientObject::getPath()
 {
-    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
-    auto qr = queryFn(cdi, trace::QueryGetPath{fromOf(cdi)}, subject);
+    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto qr = queryFn(cdi, trace::QueryGetPath{fromOf(cdi)}, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultPath>(&qr.result);
     if (!r)
         throw Error("ambient getPath: unexpected result type");
@@ -95,8 +99,8 @@ RootedPath AmbientObject::getPath()
 
 bool AmbientObject::getBool(std::string_view)
 {
-    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
-    auto qr = queryFn(cdi, trace::QueryGetBool{fromOf(cdi)}, subject);
+    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto qr = queryFn(cdi, trace::QueryGetBool{fromOf(cdi)}, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultBool>(&qr.result);
     if (!r)
         throw Error("ambient getBool: unexpected result type");
@@ -105,8 +109,8 @@ bool AmbientObject::getBool(std::string_view)
 
 NixInt AmbientObject::getInt(std::string_view)
 {
-    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
-    auto qr = queryFn(cdi, trace::QueryGetInt{fromOf(cdi)}, subject);
+    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto qr = queryFn(cdi, trace::QueryGetInt{fromOf(cdi)}, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultInt>(&qr.result);
     if (!r)
         throw Error("ambient getInt: unexpected result type");
@@ -115,8 +119,8 @@ NixInt AmbientObject::getInt(std::string_view)
 
 NixFloat AmbientObject::getFloat(std::string_view)
 {
-    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
-    auto qr = queryFn(cdi, trace::QueryGetFloat{fromOf(cdi)}, subject);
+    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto qr = queryFn(cdi, trace::QueryGetFloat{fromOf(cdi)}, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultFloat>(&qr.result);
     if (!r)
         throw Error("ambient getFloat: unexpected result type");
@@ -125,8 +129,8 @@ NixFloat AmbientObject::getFloat(std::string_view)
 
 size_t AmbientObject::getListSize()
 {
-    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
-    auto qr = queryFn(cdi, trace::QueryGetListSize{fromOf(cdi)}, subject);
+    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto qr = queryFn(cdi, trace::QueryGetListSize{fromOf(cdi)}, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultListSize>(&qr.result);
     if (!r)
         throw Error("ambient getListSize: unexpected result type");
@@ -135,8 +139,8 @@ size_t AmbientObject::getListSize()
 
 std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
 {
-    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
-    auto qr = queryFn(cdi, trace::QueryGetListElem{fromOf(cdi), index}, subject);
+    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto qr = queryFn(cdi, trace::QueryGetListElem{fromOf(cdi), index}, subject, inheritedScope);
     if (!qr.childId)
         throw Error("ambient getListElem: resolver didn't return child id");
     cidasks::Subject childSubject{cidasks::DerivedSubject{
@@ -147,6 +151,7 @@ std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
     auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Navigation child inherits parent's argScope cell directly. */
     child->withScope(argScope);
+    child->withInheritedScope(inheritedScope);
     return child;
 }
 
@@ -157,8 +162,8 @@ ObjectType AmbientObject::getTypeLazy()
 
 ObjectType AmbientObject::getType()
 {
-    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
-    auto qr = queryFn(cdi, trace::QueryGetType{fromOf(cdi)}, subject);
+    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto qr = queryFn(cdi, trace::QueryGetType{fromOf(cdi)}, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultType>(&qr.result);
     if (!r)
         throw Error("ambient getType: unexpected result type");
@@ -172,8 +177,8 @@ RootValue AmbientObject::defeatCache()
 
 std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
 {
-    auto cdi = cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {});
-    auto qr = queryFn(cdi, trace::QueryGetFunctionInfo{fromOf(cdi)}, subject);
+    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto qr = queryFn(cdi, trace::QueryGetFunctionInfo{fromOf(cdi)}, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
         return std::nullopt;
@@ -206,7 +211,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
        the result's ApplyResultSubject. */
     int localDepth = callerScope ? callerScope->depth + 1 : 0;
     cidasks::Subject argSubject{cidasks::PositionalSeed{localDepth}};
-    applyFn(cidasks::contentIdAfter(subject, Hash(HashAlgorithm::SHA256), {}), std::move(argObj), callerScope);
+    applyFn(cidasks::contentIdAfter(subject, inheritedScope, {}), std::move(argObj), callerScope);
     cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
         .fn = std::make_shared<const cidasks::Subject>(subject),
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
@@ -215,6 +220,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
     /* Apply-result scope cell rooted at the caller's scope. */
     auto cell = ArgScopeCell::make(callerScope, std::move(argForScope));
     result->withScope(std::move(cell));
+    result->withInheritedScope(inheritedScope);
     return result;
 }
 

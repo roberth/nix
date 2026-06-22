@@ -36,7 +36,8 @@ public:
     trace::ResultVariant ambientQuery(
         const trace::QueryVariant & query,
         std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
-        cidasks::Subject subject) override;
+        cidasks::Subject subject,
+        Hash inheritedScope = Hash(HashAlgorithm::SHA256)) override;
     TraceSink * getTraceSink() override;
 };
 

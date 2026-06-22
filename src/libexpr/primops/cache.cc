@@ -145,6 +145,12 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     // <cached-fn>/<ambient-fn> PrimOp this call produces.
     auto resolver = makeAmbientResolver(&state, replayEval.get_ptr(), writer.get());
     interpreter->ambientResolver = resolver;
+    /* Inherited scope for cidasks: uniquely identifies this cached
+       call so sibling cached calls (different import / expr) get
+       distinct content ids throughout the cb-apply boundary. */
+    setAmbientResolverCallScope(*resolver, importPath
+        ? hashString(HashAlgorithm::SHA256, "cache-import:" + importPath->path.abs())
+        : hashString(HashAlgorithm::SHA256, "cache-expr:" + *expr + ":" + baseDir->path.abs()));
 
     // Convert paths to use the inner accessor (TracingSourceAccessor)
     // so file reads are recorded as dependencies for invalidation.

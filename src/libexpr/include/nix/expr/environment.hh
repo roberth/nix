@@ -67,9 +67,11 @@ public:
     virtual trace::ResultVariant ambientQuery(
         const trace::QueryVariant & query,
         std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
-        cidasks::Subject subject)
+        cidasks::Subject subject,
+        Hash inheritedScope = Hash(HashAlgorithm::SHA256))
     {
         (void) subject;
+        (void) inheritedScope;
         return resolve(query);
     }
 

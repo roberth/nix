@@ -115,4 +115,9 @@ std::shared_ptr<AmbientResolver> makeAmbientResolver(
     std::shared_ptr<Evaluator> innerEvaluator,
     TracingWriter * innerWriter = nullptr);
 
+/** Set the resolver's cached-call scope — used by cidasks to make
+    sibling cached calls' content ids distinct via inheritance.
+    Should be unique per cached call (e.g. hash of import path). */
+void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callScope);
+
 } // namespace nix

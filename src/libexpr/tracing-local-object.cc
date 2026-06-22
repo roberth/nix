@@ -19,9 +19,11 @@ TracingLocalObject::TracingLocalObject(
     cidasks::Subject subject_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
-    std::shared_ptr<const ArgScopeCell> argScope)
+    std::shared_ptr<const ArgScopeCell> argScope,
+    Hash inheritedScope_)
     : inner(std::move(inner))
     , subject(std::move(subject_))
+    , inheritedScope(std::move(inheritedScope_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
     , argScope(std::move(argScope))
@@ -44,7 +46,7 @@ std::shared_ptr<Object> TracingLocalObject::maybeGetAttr(const std::string & nam
         .name = name,
     }};
     return std::make_shared<TracingLocalObject>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argScope);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argScope, inheritedScope);
 }
 
 std::vector<std::string> TracingLocalObject::getAttrNames()
@@ -127,7 +129,7 @@ std::shared_ptr<Object> TracingLocalObject::getListElem(size_t index)
         .index = index,
     }};
     return std::make_shared<TracingLocalObject>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argScope);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argScope, inheritedScope);
 }
 
 ObjectType TracingLocalObject::getTypeLazy()
@@ -172,7 +174,7 @@ std::optional<std::vector<std::string>> TracingLocalObject::getAttrPath()
 
 void TracingLocalObject::recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
-    writer.logAmbientInteraction(query, result, subject);
+    writer.logAmbientInteraction(query, result, subject, inheritedScope);
 }
 
 } // namespace nix

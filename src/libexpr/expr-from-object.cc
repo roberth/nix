@@ -207,6 +207,11 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
        outer EvalState's rootFSRoot. Held as shared_ptr (rather than
        ref) so AmbientResolver stays default-constructible. */
     std::shared_ptr<SourceRoot> outerRootFSRoot;
+    /* Inherited scope (CDI of this cached call's Q) — used by the
+       cb-apply boundary to make sibling cached calls' content ids
+       distinct via cidasks inheritance. Zero hash means no
+       inheritance (= no scope discrimination). */
+    Hash callScope = Hash(HashAlgorithm::SHA256);
 
     AmbientQueryResult query(AmbientId objectId, const trace::QueryVariant & q)
     {
@@ -252,14 +257,16 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
        {}) = positional initial. Cb body observations evolve the
        per-Asks-edge content id at flush. */
     cidasks::Subject argSubject{cidasks::PositionalSeed{localCell->depth}};
-    auto argId = cidasks::contentIdAfter(argSubject, Hash(HashAlgorithm::SHA256), {});
+    auto argId = cidasks::contentIdAfter(argSubject, resolverHandle->callScope, {});
 
     /* Wrap the argObj in TracingLocalObject so the outer's
        accesses on it during the apply land in the inner trace
-       with `from=hex(argId)`. */
+       with `from=hex(argId)`. Inherit callScope so sibling cached
+       calls' local-args have distinct content ids. */
     auto wrappedArg = (innerWriter && outerRootFSRoot)
         ? std::shared_ptr<Object>(std::make_shared<TracingLocalObject>(
-              argObj, argSubject, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell))
+              argObj, argSubject, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell,
+              resolverHandle->callScope))
         : argObj;
 
     /* Bridge local arg via ExprFromObject. The cache memoises by
@@ -349,7 +356,13 @@ static PrimOp * makeCachedFnPrimOp(
                            Subject and discriminate via their observation
                            factsets, not via state-creep. */
                         cidasks::Subject seedSubject{cidasks::PositionalSeed{seedCell->depth}};
-                        auto rootId = cidasks::contentIdAfter(seedSubject, Hash(HashAlgorithm::SHA256), {});
+                        /* Inherit the resolver's callScope (= CDI(Q)
+                           of this cached call). Sibling cached calls
+                           with different Qs get distinct rootIds and
+                           therefore distinct subject-derived content
+                           ids throughout this cb-apply boundary. */
+                        Hash callScope = resolver->callScope;
+                        auto rootId = cidasks::contentIdAfter(seedSubject, callScope, {});
                         /* Boundary-trace-only discipline: do NOT
                            register outerArgObj under rootId in the
                            shared resolver. Sibling cb apply invocations
@@ -365,7 +378,8 @@ static PrimOp * makeCachedFnPrimOp(
                                                   &innerEnv](
                             AmbientId objectId,
                             const trace::QueryVariant & q,
-                            cidasks::Subject subject) {
+                            cidasks::Subject subject,
+                            Hash inheritedScope) {
                             /* For cb-arg queries (objectId == this cb's
                                rootId), dispatch on the captured
                                outerArgObj directly — bypass the shared
@@ -379,7 +393,8 @@ static PrimOp * makeCachedFnPrimOp(
                             innerEnv.ambientQuery(
                                 q,
                                 [&](const trace::QueryVariant &) { return qr.result; },
-                                std::move(subject));
+                                std::move(subject),
+                                std::move(inheritedScope));
                             return qr;
                         };
                         /* applyFn does NOT record a QueryApply Fact:
@@ -413,6 +428,7 @@ static PrimOp * makeCachedFnPrimOp(
                            ArgScopeCell::liveObject. */
                         seedCell->liveObject = contraArg.get_ptr();
                         contraArg->withScope(seedCell);
+                        contraArg->withInheritedScope(callScope);
                         auto result = innerEval->apply(ref<Object>(fnObj), contraArg);
                         ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
                     },
@@ -557,6 +573,11 @@ std::shared_ptr<AmbientResolver> makeAmbientResolver(
     if (outerState)
         resolver->outerRootFSRoot = outerState->rootFSRoot.get_ptr();
     return resolver;
+}
+
+void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callScope)
+{
+    resolver.callScope = std::move(callScope);
 }
 
 } // namespace nix

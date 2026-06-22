@@ -90,6 +90,7 @@ class TracingWriter
         trace::QueryVariant query;
         trace::ResultVariant result;
         cidasks::Subject subject;
+        Hash inheritedScope; ///< outer-scope CDIs for contentIdAt
     };
     std::vector<PendingFact> pendingFacts;
 
@@ -186,11 +187,12 @@ public:
     void logAmbientInteraction(
         const trace::QueryVariant & query,
         const trace::ResultVariant & result,
-        cidasks::Subject subject)
+        cidasks::Subject subject,
+        Hash inheritedScope = Hash(HashAlgorithm::SHA256))
     {
         if (!decisionGraph)
             return;
-        pendingFacts.push_back({query, result, std::move(subject)});
+        pendingFacts.push_back({query, result, std::move(subject), std::move(inheritedScope)});
     }
 
     /**
