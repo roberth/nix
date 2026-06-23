@@ -47,10 +47,8 @@ result=$(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/cur
 echo "Got: $result"
 [[ "$result" == 120 ]]
 
-# TODO: replay coverage for curried cached values is blocked on a
-# separate gap — `_NIX_DISALLOW_PARSE=1 (c 10) 20` falls through to
-# inner re-eval instead of replaying from the trie. State-creep CDI
-# distinctness can't be fully verified until that's fixed.
-#   echo "=== replay same (expect 30) ==="
-#   result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/curried.nix; } 10) 20')
-#   [[ "$result" == 30 ]]
+# Replay coverage: warm path serves recorded value with no parse.
+echo "=== replay same (expect 30) ==="
+result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/curried.nix; } 10) 20')
+echo "Got: $result"
+[[ "$result" == 30 ]]
