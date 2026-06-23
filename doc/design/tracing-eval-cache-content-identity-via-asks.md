@@ -101,6 +101,16 @@ These are the specific commitments of this design.
    (`reqHash`) and Asks edges are content-addressed over the
    post-substitution form.
 
+   This substitution **extends to `QueryApply` requests too**: the
+   apply's `arg` (and, if applicable, `fn`) fields are rewritten
+   from placeholders to the referenced subjects' content ids at the
+   relevant edge's precondition factset. The cb-apply itself thus
+   gets a content-defined `requestHash` reflecting observations
+   accumulated on the constituent subjects up to its edge, so
+   distinct sibling cb invocations land in distinct trie positions
+   without requiring new hashing machinery — the existing cidasks
+   evaluation does the work.
+
 6. **Walker advances content ids in lockstep with `cur`.** As each
    Asks edge dispatches its requests, the walker XOR-folds each
    dispatched response into both the cumulative `factSetHash` and
@@ -196,6 +206,18 @@ The pool also stores the LocalObject's value structure: small
 atoms covering attrset entries, list elements, scalars. These get
 content-addressed exactly the same way. They're what the walker
 uses to reconstruct a live Nix Value tree at depth-2 replay.
+
+**Lambda LocalObjects don't need their body stored.** A lambda's
+atom is just `(localId, kind=lambda)`; the walker reconstructs it
+as a primop Value whose `impl`, when applied, consults the
+`AmbientAsks` trie for a recorded edge matching the live arg's
+evolved content id, and either reproduces the recorded apply
+result from CAS atoms or throws a depth-2 divergence signal that
+the surrounding walker catches as a miss. The lambda's
+"application behavior" is encoded in the recorded
+`AmbientAsks` edges and `AmbientResponse` payloads, not in a
+stored body. This sidesteps the question of how to serialise
+arbitrary Nix expressions — there's no need.
 
 ### The trie: `AmbientAsks`
 
