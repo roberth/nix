@@ -2,6 +2,7 @@
 #include "nix/expr/expr-from-object.hh"
 #include "nix/expr/object-type.hh"
 #include "nix/expr/primops.hh"
+#include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/expr/trace-types.hh"
@@ -35,9 +36,38 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query)
     return cborStringToJson(*payload);
 }
 
+/* Per-probe live validation, per the design doc's depth-2 replay
+   section: each probe the outer makes on the reconstructed local
+   must appear in some recorded `AmbientAsks` edge's requestSet.
+   Mismatch = divergence (= the outer is probing the local in a way
+   the recording didn't capture). Throws to signal divergence; the
+   walker's surrounding try/catch (in dispatchAmbientQuery) turns
+   it into a miss → depth-1 fallback handles re-eval. */
+template<typename Q>
+static void validateProbeAgainstAmbientAsks(TracingDecisionGraph & dg, const Q & query)
+{
+    auto reqHash = TracingDecisionGraph::computeQueryHash(query);
+    auto emptySet = TracingDecisionGraph::emptySetHash();
+    auto edges = dg.getAmbientAsks(emptySet);
+    for (auto & [requestSetHash, _] : edges) {
+        auto requestSet = dg.getRequestSet(requestSetHash);
+        if (!requestSet)
+            continue;
+        if (std::find(requestSet->begin(), requestSet->end(), reqHash) != requestSet->end())
+            return; // probe is recorded
+    }
+    tracingCacheLog(
+        "depth-2 divergence: probe %s reqHash=%s not in any AmbientAsks edge",
+        Q::tag, reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
+    throw Error(
+        "depth-2 divergence: probe %s on local was not recorded in any AmbientAsks edge",
+        Q::tag);
+}
+
 std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name)
 {
     trace::QueryGetAttr query{name, replayFromOf(localId)};
+    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
     auto rJson = readResponse(decisionGraph, query);
     trace::ResultMaybeType r = rJson;
     if (!r.type)
@@ -54,14 +84,18 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
 
 std::vector<std::string> ReplayLocalObject::getAttrNames()
 {
-    auto rJson = readResponse(decisionGraph, trace::QueryGetAttrNames{replayFromOf(localId)});
+    trace::QueryGetAttrNames query{replayFromOf(localId)};
+    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query);
     trace::ResultListOfStrings r = rJson;
     return r.values;
 }
 
 std::string ReplayLocalObject::getStringIgnoreContext()
 {
-    auto rJson = readResponse(decisionGraph, trace::QueryGetString{replayFromOf(localId)});
+    trace::QueryGetString query{replayFromOf(localId)};
+    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query);
     trace::ResultString r = rJson;
     return r.value;
 }
@@ -73,7 +107,9 @@ std::string ReplayLocalObject::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> ReplayLocalObject::getStringWithContext()
 {
-    auto rJson = readResponse(decisionGraph, trace::QueryGetStringWithContext{replayFromOf(localId)});
+    trace::QueryGetStringWithContext query{replayFromOf(localId)};
+    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query);
     trace::ResultStringWithContext r = rJson;
     /* Context strings were serialised as raw strings; rebuild a
        (possibly-empty) NixStringContext placeholder. The replayed
@@ -87,35 +123,45 @@ std::pair<std::string, NixStringContext> ReplayLocalObject::getStringWithContext
 
 RootedPath ReplayLocalObject::getPath()
 {
-    auto rJson = readResponse(decisionGraph, trace::QueryGetPath{replayFromOf(localId)});
+    trace::QueryGetPath query{replayFromOf(localId)};
+    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query);
     trace::ResultPath r = rJson;
     return RootedPath{rootFSRoot, CanonPath{r.path}};
 }
 
 bool ReplayLocalObject::getBool(std::string_view)
 {
-    auto rJson = readResponse(decisionGraph, trace::QueryGetBool{replayFromOf(localId)});
+    trace::QueryGetBool query{replayFromOf(localId)};
+    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query);
     trace::ResultBool r = rJson;
     return r.value;
 }
 
 NixInt ReplayLocalObject::getInt(std::string_view)
 {
-    auto rJson = readResponse(decisionGraph, trace::QueryGetInt{replayFromOf(localId)});
+    trace::QueryGetInt query{replayFromOf(localId)};
+    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query);
     trace::ResultInt r = rJson;
     return NixInt{r.value};
 }
 
 NixFloat ReplayLocalObject::getFloat(std::string_view)
 {
-    auto rJson = readResponse(decisionGraph, trace::QueryGetFloat{replayFromOf(localId)});
+    trace::QueryGetFloat query{replayFromOf(localId)};
+    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query);
     trace::ResultFloat r = rJson;
     return r.value;
 }
 
 size_t ReplayLocalObject::getListSize()
 {
-    auto rJson = readResponse(decisionGraph, trace::QueryGetListSize{replayFromOf(localId)});
+    trace::QueryGetListSize query{replayFromOf(localId)};
+    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query);
     trace::ResultListSize r = rJson;
     return r.size;
 }
@@ -123,6 +169,7 @@ size_t ReplayLocalObject::getListSize()
 std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
 {
     trace::QueryGetListElem query{replayFromOf(localId), index};
+    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
     /* The recorded response only carries the child's type, not
        value. We still derive an id for the child so the outer can
        chain further accesses on it. Propagate the type in-band so
@@ -141,7 +188,9 @@ ObjectType ReplayLocalObject::getType()
 {
     if (knownType)
         return *knownType;
-    auto rJson = readResponse(decisionGraph, trace::QueryGetType{replayFromOf(localId)});
+    trace::QueryGetType query{replayFromOf(localId)};
+    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query);
     trace::ResultType r = rJson;
     return stringToObjectType(r.type);
 }
@@ -246,7 +295,9 @@ RootValue ReplayLocalObject::defeatCache()
 
 std::optional<FunctionInfo> ReplayLocalObject::getFunctionInfo()
 {
-    auto rJson = readResponse(decisionGraph, trace::QueryGetFunctionInfo{replayFromOf(localId)});
+    trace::QueryGetFunctionInfo query{replayFromOf(localId)};
+    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query);
     trace::ResultFunctionInfo r = rJson;
     if (!r.hasInfo)
         return std::nullopt;

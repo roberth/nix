@@ -375,9 +375,22 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     } catch (const std::exception &) {
         return nullptr;
     }
-    std::shared_ptr<Object> argObj = isLocalArgId(argHash)
-        ? materialiseLocalStandin(argHash, argIdStr, ctx)
-        : resolveCdiId(argIdStr, ctx);
+    std::shared_ptr<Object> argObj;
+    if (isLocalArgId(argHash)) {
+        /* The cb apply's local arg: opt this standin into depth-2
+           per-probe validation (= each subsequent probe on it must
+           appear in some recorded AmbientAsks edge's requestSet,
+           or we throw divergence). Standins materialised by
+           resolveCdiId for non-cb-apply ids stay without
+           validation — their facts live at depth-1, not in
+           AmbientAsks. */
+        auto standin = materialiseLocalStandin(argHash, argIdStr, ctx);
+        if (auto * replayLocal = dynamic_cast<ReplayLocalObject *>(standin.get()))
+            replayLocal->withAmbientAsksValidation();
+        argObj = standin;
+    } else {
+        argObj = resolveCdiId(argIdStr, ctx);
+    }
     if (!argObj)
         return nullptr;
     ctx.memo[argIdStr] = argObj;

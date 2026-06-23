@@ -45,6 +45,14 @@ class ReplayLocalObject : public Object
        gc heap and the lambda capture holds onto the construction
        arguments by value. Threaded from `materialiseLocalStandin`. */
     EvalState * state;
+    /* When true, each Object-method call validates the probe against
+       the recorded AmbientAsks edges from ∅ — the depth-2 per-probe
+       check (= "did the outer probe the local in a recorded way?").
+       Set on the cb-apply local that crosses the boundary. The
+       primop's recursive synthetic (= apply result reconstruction)
+       has this false because its facts live in depth-1, not in
+       AmbientAsks. */
+    bool validateAgainstAmbientAsks = false;
     /* When a parent's maybeGetAttr / getListElem produces this child,
        it has the child's type from its own response. Recorder-side
        TracingLocalObject::maybeGetAttr never invokes getType on a
@@ -72,6 +80,18 @@ public:
         argScope = std::move(argScope_);
         return *this;
     }
+
+    /** Opt into depth-2 per-probe validation. Set on the cb-apply
+        local (= the standin materialised at the cb apply boundary,
+        whose surface probes were recorded in AmbientAsks). */
+    ReplayLocalObject & withAmbientAsksValidation()
+    {
+        validateAgainstAmbientAsks = true;
+        return *this;
+    }
+
+    /** Whether per-probe validation is enabled for this proxy. */
+    bool hasAmbientAsksValidation() const { return validateAgainstAmbientAsks; }
 
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
