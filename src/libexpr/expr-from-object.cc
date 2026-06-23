@@ -283,12 +283,45 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        because a resolved fn may be an InterpreterObject without a
        proxy parent chain). The cell carries only topology. */
     auto localCell = ArgScopeCell::make(callerScope, argObj);
-    /* CDI fix: the local arg's Subject is the static positional handle
-       at this apply-stack depth. Its argId = contentIdAfter(subject,
-       {}) = positional initial. Cb body observations evolve the
-       per-Asks-edge content id at flush. */
-    cidasks::Subject argSubject{cidasks::PositionalSeed{localCell->depth}};
-    auto argId = cidasks::contentIdAfter(argSubject, resolverHandle->callScope, {});
+    /* Subject for the apply's arg. Two cases:
+        - Outer-derived (= argObj has a real Subject via getSubject):
+          propagate it. This includes args reached via the inner's
+          getAttr/getListElem on the seed, or apply results from
+          earlier in the cached body. The arg's existing inherited
+          scope (= same callScope as the seed) is preserved.
+        - Genuine inner-supplied local (= argObj has no Subject;
+          typically a fresh value the inner just constructed):
+          mint a PositionalSeed at the reverse-De-Bruijn depth of
+          this cb apply boundary.
+
+       The former is the common case for outer-derived applications
+       like `inner.f x` where both fn and arg flow inward from the
+       seed; the latter is the cb-higher-order case where the inner
+       builds a lambda and hands it back across the boundary. */
+    /* Subject for the apply's arg. Two cases:
+        - Outer-derived (= argObj has a real Subject via getSubject):
+          propagate it. This is the common case for outer-derived
+          applications like `inner.f x` where both fn and arg flow
+          inward from the seed. The arg's existing inheritedScope
+          is preserved (= same callScope as the seed).
+        - Genuine inner-supplied local (= argObj has no Subject):
+          mint a PositionalSeed at the reverse-De-Bruijn depth of
+          this cb apply boundary. Legitimate PositionalSeed use.
+
+       Must match what AmbientObject::queryApply computes for the
+       result's ApplyResultSubject.arg — the registry's resultId
+       and the AmbientObject's CDI for queryFn lookups have to
+       agree. */
+    cidasks::Subject argSubject;
+    Hash argScope(HashAlgorithm::SHA256);
+    if (auto * existing = argObj->getSubject()) {
+        argSubject = *existing;
+        argScope = argObj->getInheritedScope();
+    } else {
+        argSubject = cidasks::Subject{cidasks::PositionalSeed{localCell->depth}};
+        argScope = resolverHandle->callScope;
+    }
+    auto argId = cidasks::contentIdAfter(argSubject, argScope, {});
 
     /* Compute the resultId early so we can pass it to the
        TracingLocalObject as depth2ApplyId — groups all depth-2 facts

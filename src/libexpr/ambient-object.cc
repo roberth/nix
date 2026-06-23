@@ -206,11 +206,25 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
        cell before moving it into applyFn. */
     auto callerScope = effectiveArgScope(*this);
     auto argForScope = argObj;
-    /* The local arg gets a fresh PositionalSeed subject at the apply
-       depth (= callerScope.depth + 1). Carry this through to form
-       the result's ApplyResultSubject. */
-    int localDepth = callerScope ? callerScope->depth + 1 : 0;
-    cidasks::Subject argSubject{cidasks::PositionalSeed{localDepth}};
+    /* Subject for the arg in the result's ApplyResultSubject:
+        - Outer-derived arg (= argObj has a real Subject): propagate it.
+          The apply-result's identity composes the arg's actual
+          structural identity, so subsequent observations on the
+          result reach the same trie position as the recorder's view.
+        - Genuine inner-supplied local (= argObj has no Subject):
+          mint PositionalSeed at the cb apply's reverse-De-Bruijn
+          depth. This is the legitimate use of PositionalSeed.
+
+       Must match what `AmbientApply::run` computes for argId
+       downstream, so the result's CDI and the registered Object's
+       registry key agree. */
+    cidasks::Subject argSubject;
+    if (auto * existing = argObj->getSubject()) {
+        argSubject = *existing;
+    } else {
+        int localDepth = callerScope ? callerScope->depth + 1 : 0;
+        argSubject = cidasks::Subject{cidasks::PositionalSeed{localDepth}};
+    }
     applyFn(cidasks::contentIdAfter(subject, inheritedScope, {}), std::move(argObj), callerScope);
     cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
         .fn = std::make_shared<const cidasks::Subject>(subject),
