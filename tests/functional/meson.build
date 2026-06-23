@@ -189,6 +189,7 @@ suites = [
       'cb-forcedness-independence.sh',
       'cb-irrelevant-fields-lazy.sh',
       'cb-fn-valued-result.sh',
+      'cb-module-shaped-result.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
