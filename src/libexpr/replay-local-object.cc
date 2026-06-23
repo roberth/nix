@@ -166,4 +166,19 @@ std::optional<FunctionInfo> ReplayLocalObject::getFunctionInfo()
     return FunctionInfo{r.formals, r.ellipsis};
 }
 
+std::shared_ptr<Object> ReplayLocalObject::queryApply(std::shared_ptr<Object> /*argObj*/)
+{
+    /* See header comment. Until depth-2 walker integration (task #74)
+       or value-structure-atom reconstruction (task #75) lands, an
+       apply on a recorded LocalObject can't be validated. Throw a
+       recognizable signal — callers that route here will catch this
+       and treat it as a walker miss. No caller routes here yet
+       (the chain still goes through defeatCache); this is groundwork
+       for the uniform-queryApply restructure. */
+    throw Error(
+        "ReplayLocalObject::queryApply: cannot validate apply on a recorded "
+        "frozen local without reconstructing its value structure (depth-2 "
+        "walker not yet integrated)");
+}
+
 } // namespace nix

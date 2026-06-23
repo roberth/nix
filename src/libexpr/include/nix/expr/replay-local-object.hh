@@ -82,6 +82,24 @@ public:
     ObjectType getTypeLazy() override;
     RootValue defeatCache() override;
     std::optional<FunctionInfo> getFunctionInfo() override;
+    /** Recorded LocalObjects (frozen images) can't be applied without
+        either reconstructing the function body from value-structure
+        atoms (task #75) or comparing the live arg's content to the
+        recorded arg's content (task #74's depth-2 walker). Until one
+        of those lands, an apply on a ReplayLocalObject is undecidable
+        — we don't know whether the recorded result still applies for
+        the current live arg. Throw a recognizable signal that
+        callers can interpret as "walker miss, fall through to live
+        re-eval."
+
+        Today no caller routes here: the apply chain still goes
+        through `Object::defeatCache` + value-level `callFunction`,
+        not `Object::queryApply`. The override exists so that when
+        callers are restructured to call `queryApply` uniformly, this
+        is the entry that fires. The provenance tag in
+        `AmbientRegistry` keeps the existing-callers path correct
+        until the restructure lands. */
+    std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 };
 
 } // namespace nix
