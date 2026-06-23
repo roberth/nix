@@ -191,6 +191,7 @@ suites = [
       'cb-fn-valued-result.sh',
       'cb-module-shaped-result.sh',
       'cb-list-args.sh',
+      'cb-with-scope-and-tryeval.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
