@@ -325,7 +325,7 @@ bool TracingReplayEvaluator::isLocalArgId(const Hash & idHash)
    inner-side TracingLocalObject's content-hash whose facts were emitted
    with from=hex(id) but whose id itself isn't a producer Request.
    Materialise a ReplayLocalObject keyed by it; its methods read
-   recorded responses out of the Responses pool by qH(query{from=hex(id)}),
+   recorded responses out of LocalResponseMap by qH(query{from=hex(id)}),
    matching what TracingLocalObject wrote during recording. */
 std::shared_ptr<Object> TracingReplayEvaluator::materialiseLocalStandin(
     const Hash & idHash, const std::string & idStr, ResolutionContext & ctx)
@@ -691,7 +691,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
                 auto argCdiHex = argCdi.to_string(HashFormat::Base16, false);
                 auto facts = decisionGraph.getRequestsWithFrom(argCdiHex);
                 for (auto & [reqHash, _payload] : facts) {
-                    auto respPayload = decisionGraph.getResponsePayload(reqHash);
+                    auto respPayload = decisionGraph.getLocalResponsePayload(reqHash);
                     if (!respPayload)
                         continue;
                     auto respHash = TracingDecisionGraph::computeResponseHash(*respPayload);

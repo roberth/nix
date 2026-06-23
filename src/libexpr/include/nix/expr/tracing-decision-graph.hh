@@ -115,8 +115,8 @@ public:
        these back because there's no live source to recompute
        from); optional for everything else (storage-only, used for
        debugging when JSON traces aren't around). */
-    void insertResponse(const RequestHash & requestHash, std::string_view payload);
-    std::optional<std::string> getResponsePayload(const RequestHash & requestHash);
+    void insertLocalResponse(const RequestHash & requestHash, std::string_view payload);
+    std::optional<std::string> getLocalResponsePayload(const RequestHash & requestHash);
 
     /* Enumerate Requests whose payload's `params.from` field equals
        `fromHex`. Used by the depth-2 walker to pre-populate an

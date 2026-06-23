@@ -174,7 +174,7 @@ public:
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
         decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
         if (storeAllResponsePayloads)
-            decisionGraph->insertResponse(queryHash, responsePayload);
+            decisionGraph->insertLocalResponse(queryHash, responsePayload);
         /* Dedupe by (request, response) pair, not request alone.
            Idempotent observations (same request, same response —
            e.g. file reads, env reads) collapse to one entry; sibling
@@ -197,7 +197,7 @@ public:
      *
      * Under Phase 4 of content-defined identity, ambient facts are
      * buffered here rather than eagerly inserted into v13FactSet and
-     * the Requests/Responses pools — the `from` field of the query
+     * the Requests pool / LocalResponseMap — the `from` field of the query
      * may be a placeholder (counter-derived local id) whose final
      * Buffered until flushPendingAmbient() at logResult time
      * inserts into the pool at the query payload's natural reqHash. */
@@ -289,9 +289,12 @@ public:
 
     /**
      * When true, every file-read / env-var response payload gets
-     * persisted into the decisionGraph's Responses pool too. Useful
-     * for offline debugging when JSON traces aren't available.
-     * Default false to keep environment storage as v13 designed it.
+     * persisted into the decisionGraph's LocalResponseMap too —
+     * useful for offline debugging when JSON traces aren't
+     * available. Default false: walker never reads depth-1 payloads
+     * from there (= live-dispatches against the env instead), so
+     * the storage is pure overhead unless someone's grepping the
+     * DB by hand.
      */
     bool storeAllResponsePayloads = false;
 

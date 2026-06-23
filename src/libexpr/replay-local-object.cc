@@ -31,13 +31,13 @@ static AmbientId replayDerivedLocalId(const Q & query)
     return TracingDecisionGraph::computeQueryHash(query);
 }
 
-/* Look up the recorded payload for `query` in the Responses pool.
-   The pool is keyed by requestHash and that's sound at depth-2
+/* Look up the recorded payload for `query` in LocalResponseMap.
+   The map is keyed by requestHash and that's sound at depth-2
    because reqHash is `SHA-256(query{from = cidasks-evolved cdi})`
    — a pure function of (subject, scope, prior chain facts). Two
    recordings reaching the same reqHash necessarily observed the
    same history; a deterministic env then produces the same
-   response, so first-writer-wins in the pool can't return the
+   response, so first-writer-wins in the map can't return the
    wrong payload. */
 template<typename Q>
 static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query)
@@ -47,7 +47,7 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query)
         "rlo: read %s from=%s reqHash=%s",
         Q::tag, query.from.isContent() ? query.from.contentHash().substr(0, 12) : "<?>",
         reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
-    auto payload = dg.getResponsePayload(reqHash);
+    auto payload = dg.getLocalResponsePayload(reqHash);
     if (!payload)
         throw Error("ReplayLocalObject: no recorded response for %s on local %s",
             Q::tag, query.from.isContent() ? query.from.contentHash() : "<ambient>");

@@ -10,7 +10,7 @@
  * TracingLocalObject so the outer's accesses land in the inner's
  * factSet as Facts. On replay the inner isn't running, so its arg
  * isn't reconstructable as a live Object — but its CONTENT was
- * persisted in the Responses pool. ReplayLocalObject reads that
+ * persisted in LocalResponseMap. ReplayLocalObject reads that
  * content back so the outer can invoke its callback against a
  * deterministic frozen image of the recorded arg.
  *

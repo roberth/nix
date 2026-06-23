@@ -70,32 +70,32 @@ TEST_F(TracingDecisionGraphTest, AtomInsertIsIdempotent)
     EXPECT_EQ(*g.getRequestPayload(h), "payload");
 }
 
-TEST_F(TracingDecisionGraphTest, ResponsesKeyedByRequestHash_FunctionAtDepth2)
+TEST_F(TracingDecisionGraphTest, LocalResponseMap_KeyedByRequestHash_FunctionAtDepth2)
 {
-    /* `Responses` is keyed by requestHash. This is sound at depth-2
-       (the only place the walker reads from this pool) because the
-       depth-2 reqHash is `SHA-256(query{from = cidasks-evolved cdi})`
-       — a pure function of (subject, scope, prior facts in the
-       chain). Two recordings reaching the same reqHash necessarily
-       observed the same history; a deterministic env then produces
-       the same response, so (request → response) is a function and
-       first-writer-wins under PK = requestHash can't surface the
-       wrong payload.
+    /* `LocalResponseMap` is keyed by requestHash. This is sound at
+       depth-2 (the only place the walker reads it) because the
+       depth-2 reqHash is `SHA-256(query{from = cidasks-evolved
+       cdi})` — a pure function of (subject, scope, prior facts in
+       the chain). Two recordings reaching the same reqHash
+       necessarily observed the same history; a deterministic env
+       then produces the same response, so (request → response) is a
+       function and first-writer-wins under PK = requestHash can't
+       surface the wrong payload.
 
        This test pins that contract: if the same requestHash is
        inserted with different payloads, only the first wins — and
        that's CORRECT because the upstream invariant (= reqHash
        functionally encodes inner evaluator state) forbids the
        different-payloads case from ever happening at depth-2 in
-       practice. (Depth-1 doesn't read this pool — it dispatches
+       practice. (Depth-1 doesn't read this map — it dispatches
        against the live environment.) */
     TracingDecisionGraph g(dbPath);
 
     auto reqHash = sha("shared-request");
-    g.insertResponse(reqHash, "first-payload");
-    g.insertResponse(reqHash, "second-payload");
+    g.insertLocalResponse(reqHash, "first-payload");
+    g.insertLocalResponse(reqHash, "second-payload");
 
-    EXPECT_EQ(g.getResponsePayload(reqHash).value_or(""), "first-payload");
+    EXPECT_EQ(g.getLocalResponsePayload(reqHash).value_or(""), "first-payload");
 }
 
 /* ─────────────────────────────────────────────────────────────────────

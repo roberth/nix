@@ -37,30 +37,30 @@ CREATE TABLE IF NOT EXISTS Results (
     payload    BLOB NOT NULL
 );
 
--- Step E: response payloads keyed by request hash.
+-- Depth-2 (request → response payload) map. Used by the walker to
+-- serve the LocalObject's responses on warm replay, where the inner
+-- evaluator isn't running and there's no live source for the
+-- payloads. Depth-1 doesn't consult this table — the walker
+-- dispatches against the live environment and validates structurally
+-- via factSet evolution through Asks/Terminals.
 --
--- Required for incoming ambient queries (external → local during a
--- covariant callback), where the dispatcher can't recompute the
--- response from live state at replay time -- the inner doesn't run.
--- The recording side ALWAYS writes here for incoming ambient Facts;
--- the dispatcher always reads from here for them.
---
--- Optional for everything else (file/env reads, outgoing ambient
--- queries). Those are reproducible from live state, so the
--- dispatcher doesn't consult this table for them. But the recorder
--- can be configured (via a writer-level flag) to store their
--- response payloads too -- useful for offline debugging when the
--- JSON trace files aren't available.
+-- "Local" in the name: a row here is the payload the LocalObject
+-- (= the inner-supplied cb arg) revealed to one of the outer's
+-- probes during a covariant callback. The recorder always writes
+-- these. A writer-level flag also redirects depth-1 ambient
+-- response payloads here for offline debugging when the JSON
+-- traces aren't available; the walker never reads those, so the
+-- flag is debug-only.
 --
 -- Why keyed by requestHash, not by responseHash (= the natural CAS
--- key): depth-2 reqHash is `SHA-256(query{from = cidasks-evolved
--- cdi})` — i.e. a pure function of (subject, scope, prior facts in
--- the chain). Two recordings reaching the same reqHash necessarily
--- observed the same history; a deterministic env then produces the
--- same response, so the (request → response) mapping is a function.
--- First-writer-wins is sound, and the walker can look the payload up
--- by reqHash without an indirection through responseHash.
-CREATE TABLE IF NOT EXISTS Responses (
+-- key): the depth-2 reqHash is `SHA-256(query{from =
+-- cidasks-evolved cdi})` — a pure function of (subject, scope,
+-- prior facts in the chain). Two recordings reaching the same
+-- reqHash necessarily observed the same history; a deterministic
+-- env then produces the same response, so (request → response) is
+-- a function. First-writer-wins is sound, and the walker can look
+-- the payload up by reqHash directly.
+CREATE TABLE IF NOT EXISTS LocalResponseMap (
     requestHash BLOB PRIMARY KEY,
     payload     BLOB NOT NULL
 );
@@ -140,8 +140,8 @@ struct TracingDecisionGraph::State
     SQLite db;
 
     /* Storage layer */
-    SQLiteStmt insertRequest, insertQuery, insertResult, insertResponse;
-    SQLiteStmt selectRequest, selectQuery, selectResult, selectResponse;
+    SQLiteStmt insertRequest, insertQuery, insertResult, insertLocalResponse;
+    SQLiteStmt selectRequest, selectQuery, selectResult, selectLocalResponse;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
     SQLiteStmt countAsks, countTerminals;
@@ -162,7 +162,7 @@ struct TracingDecisionGraph::State
     std::unordered_map<Hash, std::optional<std::vector<TracingDecisionGraph::Fact>>> factSetCache;
     std::unordered_map<Hash, std::optional<std::string>> requestPayloadCache;
     std::unordered_map<Hash, std::optional<std::string>> resultPayloadCache;
-    std::unordered_map<Hash, std::optional<std::string>> responsePayloadCache;
+    std::unordered_map<Hash, std::optional<std::string>> localResponsePayloadCache;
     /* RequestSet trie *node* cache. Different RequestSets that share
        subtrees (via content addressing) hit the same node hashes;
        caching per-node lets second-and-later getRequestSet calls reuse
@@ -411,8 +411,8 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO Queries(queryHash, payload) VALUES (?, ?)");
     state->insertResult.create(state->db,
         "INSERT OR IGNORE INTO Results(resultHash, payload) VALUES (?, ?)");
-    state->insertResponse.create(state->db,
-        "INSERT OR IGNORE INTO Responses(requestHash, payload) VALUES (?, ?)");
+    state->insertLocalResponse.create(state->db,
+        "INSERT OR IGNORE INTO LocalResponseMap(requestHash, payload) VALUES (?, ?)");
 
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
@@ -420,8 +420,8 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "SELECT payload FROM Queries WHERE queryHash = ?");
     state->selectResult.create(state->db,
         "SELECT payload FROM Results WHERE resultHash = ?");
-    state->selectResponse.create(state->db,
-        "SELECT payload FROM Responses WHERE requestHash = ?");
+    state->selectLocalResponse.create(state->db,
+        "SELECT payload FROM LocalResponseMap WHERE requestHash = ?");
 
     /* Drop obsolete tables from earlier schema versions. */
     state->db.exec("DROP TABLE IF EXISTS FactSets;");
@@ -491,7 +491,7 @@ void TracingDecisionGraph::waitForWrites()
 ATOM_INSERT_CACHED(Request, requestPayloadCache)
 ATOM_INSERT_PLAIN(Query)
 ATOM_INSERT_CACHED(Result, resultPayloadCache)
-ATOM_INSERT_CACHED(Response, responsePayloadCache)
+ATOM_INSERT_CACHED(LocalResponse, localResponsePayloadCache)
 #undef ATOM_INSERT_CACHED
 #undef ATOM_INSERT_PLAIN
 
@@ -526,7 +526,7 @@ ATOM_INSERT_CACHED(Response, responsePayloadCache)
 ATOM_GET_CACHED(Request, requestPayloadCache)
 ATOM_GET_PLAIN(Query)
 ATOM_GET_CACHED(Result, resultPayloadCache)
-ATOM_GET_CACHED(Response, responsePayloadCache)
+ATOM_GET_CACHED(LocalResponse, localResponsePayloadCache)
 #undef ATOM_GET_CACHED
 #undef ATOM_GET_PLAIN
 

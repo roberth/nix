@@ -7,9 +7,9 @@
  * writer's `logIncomingAmbientInteraction`, then delegates to the
  * wrapped Object.
  *
- * Responses *are* stored to the decisionGraph's Responses pool here
- * (this is the case the dispatcher can't recompute from live state
- * at replay time — the inner isn't running).
+ * Responses *are* stored to the decisionGraph's LocalResponseMap
+ * here (this is the case the dispatcher can't recompute from live
+ * state at replay time — the inner isn't running).
  */
 
 #include "nix/expr/arg-scope.hh"

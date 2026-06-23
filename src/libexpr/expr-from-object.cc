@@ -36,7 +36,7 @@ namespace nix {
    Objects (values the inner reads through AmbientObject). The Local
    direction (inner values the outer reads via callback) doesn't go
    through this registry at all on replay — those are served by
-   ReplayLocalObject standins from the Responses pool. Local
+   ReplayLocalObject standins from LocalResponseMap. Local
    registration on the recording side was previously here as a write-
    only map; dropped because nothing read it back. */
 struct AmbientRegistry
@@ -343,7 +343,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        The sidecar carries `localType` so the replay-side walker
        can detect non-reconstructible locals (functions) without
        forcing them. ReplayLocalObject can serve scalar/structural
-       responses from the Responses pool, but a function local has
+       responses from LocalResponseMap, but a function local has
        no recorded body to apply against a divergent argument — so
        the walker bails on dispatch in that case and the depth-1
        fallback (= live re-eval) handles it. */
@@ -503,7 +503,7 @@ static PrimOp * makeCachedFnPrimOp(
                            AmbientResolver::apply) so downstream
                            Facts with `from=<apply_qH>` can have
                            their response payloads located via the
-                           Responses pool on replay. */
+                           LocalResponseMap on replay. */
                         AmbientApplyFn applyFn = [resolver, outerArgObj, rootId](
                             AmbientId fnId,
                             std::shared_ptr<Object> argObj,

@@ -85,7 +85,7 @@ void TracingWriter::flushPendingAmbient()
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
 
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-        decisionGraph->insertResponse(queryHash, responsePayload);
+        decisionGraph->insertLocalResponse(queryHash, responsePayload);
 
         /* Dedupe by (request, response). See logResponse. */
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
@@ -138,7 +138,7 @@ void TracingWriter::flushPendingAmbient()
             auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
 
             decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-            decisionGraph->insertResponse(queryHash, responsePayload);
+            decisionGraph->insertLocalResponse(queryHash, responsePayload);
 
             auto requestSet = decisionGraph->insertRequestSet({queryHash});
             auto toFactSet = TracingDecisionGraph::xorFactIntoHash(
