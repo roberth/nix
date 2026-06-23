@@ -141,6 +141,66 @@ These are the specific commitments of this design.
    point compose the shared-prefix contribution with the divergent
    observations.
 
+## Technical requirements
+
+### XOR cancellation and commutativity
+
+We use XOR-fold in two places: the factSet hashes
+(`v13FactSetHash` / `factSetHash` keys in `Asks`/`Terminals` and
+the `fromFactSet`/`toFactSet` cursors in `AmbientAsks`) and the
+cidasks own-fold inside `contentIdAt`. XOR has set semantics
+(commutative, associative, self-inverse with identity 0), which is
+load-bearing where set algebra is intended and a soundness hazard
+everywhere else.
+
+**Requirement.** For every value `v` produced by an XOR operation:
+
+1. *No multiset.* The XOR-fold's inputs must be a true set:
+   membership dedup'd by hash before folding (= a `std::set` or
+   equivalent), or guaranteed unique by upstream construction (=
+   e.g., cidasks-evolved `reqHash`es). Without this, folding the
+   same element in twice silently cancels.
+
+2. *No order assumption.* Any consumer that uses `v` as an
+   identifier must accept that two different *sequences* of inputs
+   producing the same set yield the same `v`. If order matters,
+   serialise the sequence into the input before hashing (= via a
+   SHA-256 seal); don't reach for XOR.
+
+3. *Accidental leakage* — the property the other two often hide
+   behind. Every XOR is an *edge* in the dataflow graph between
+   its two inputs and its output. Take the transitive closure: any
+   value reachable from `v` along XOR edges (= forward or
+   backward) is in the same "XOR-connected component", and shares
+   `v`'s set/cancellation algebra. A consumer that needs Merkle
+   uniqueness must either sit *outside* the component (= read `v`
+   only after it's been absorbed into a SHA-256 atom via concat +
+   hash) or accept set semantics. Watch in particular for the
+   compounding case: an XOR-derived value fed *back into* another
+   XOR composition layers the algebra over multiple unrelated
+   inputs, each adding collision surface.
+
+**Methodology for auditing.** Treat each XOR operation as an edge,
+each value as a node, and ignore Merkle composition (= SHA-256 of a
+concatenated payload, which absorbs its inputs into an opaque atom
+and ends the chain). Identify maximal XOR-connected components.
+For each component:
+
+- Name its generators (= the atomic inputs entering it via XOR;
+  these should all be fresh SHA-256 outputs).
+- Document what set algebra the component represents.
+- Enumerate the consumers at the component's boundary. Verify each
+  either accepts set semantics or sees only the post-SHA-256-sealed
+  form.
+- For each XOR operation inside the component, classify each
+  operand as "atomic input" or "drawn from this component". The
+  latter creates compounding; cap the allowed depth and prefer
+  Merkle composition for any case that would exceed it.
+
+This is mechanical to do once and cheap to re-check during review:
+introducing a new XOR site requires explicitly justifying its
+component membership and any new compounding it introduces.
+
 ## Layering: depth-1 vs depth-2
 
 The cache stacks two `(Query, Result)` / `(Request, Response)`
