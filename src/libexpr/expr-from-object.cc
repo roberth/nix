@@ -45,22 +45,40 @@ namespace nix {
    root of #63 when sibling APPLY ids collide downstream. */
 struct AmbientRegistry
 {
-    std::map<AmbientId, std::shared_ptr<Object>> outerValues;
+    /* Entries are tagged with provenance: a "live" entry was registered
+       from the cold-recording or top-level live-fallback path (= argObj
+       was a real InterpreterObject), while a "dispatch" entry came from
+       the walker resolving an apply id during v13Walk's validation
+       (= argObj was a ReplayLocalObject standin, which propagates as
+       a TracingLocalObject{inner=ReplayLocalObject} baked into the
+       outer-state mkApp Value and bombs at later defeatCache).
+
+       Live registrations always overwrite. Dispatch registrations only
+       fill empty slots — they never clobber a live entry. This way the
+       outer's downstream forcing of the registered mkApp Value uses
+       the live (= safe) chain rather than a dispatch (= bomb-prone)
+       one, even when dispatches run after live re-eval registered. */
+    enum class Provenance { Live, Dispatch };
+    struct Entry { std::shared_ptr<Object> obj; Provenance prov; };
+    std::map<AmbientId, Entry> outerValues;
 
     /** Register an outer value under an explicit id (used for
         derived values, where the id is the producer query's
-        queryHash, and for apply results). Idempotent: if id is
-        already mapped, overwrites. */
-    void registerOuterAt(AmbientId id, std::shared_ptr<Object> obj)
+        queryHash, and for apply results). Live registrations always
+        overwrite. Dispatch registrations skip if a live entry exists. */
+    void registerOuterAt(AmbientId id, std::shared_ptr<Object> obj, Provenance prov = Provenance::Live)
     {
-        outerValues[id] = std::move(obj);
+        auto it = outerValues.find(id);
+        if (prov == Provenance::Dispatch && it != outerValues.end() && it->second.prov == Provenance::Live)
+            return;
+        outerValues[id] = Entry{std::move(obj), prov};
     }
 
     std::shared_ptr<Object> resolveOuter(AmbientId id)
     {
         auto it = outerValues.find(id);
         if (it != outerValues.end())
-            return it->second;
+            return it->second.obj;
         throw Error("ambient query: unknown value id %s", id.to_string(HashFormat::Base16, false));
     }
 };
@@ -153,22 +171,7 @@ struct AmbientQuery
    same argId hash (e.g. a frozen ReplayLocalObject built by the
    walker's apply branch and a live InterpreterObject from a fall-back
    inner rerun both seed at depth-marker), and they correctly resolve
-   to distinct thunks here.
-
-   KNOWN HAZARD: raw-pointer keying is stale-prone if a freed Object's
-   address is reused by a later allocation. The walker's dispatch
-   constructs transient ReplayLocalObjects that get registered here
-   under their pointer; when dispatch unwinds the ReplayLocalObject
-   is freed; live re-eval may allocate a fresh InterpreterObject at
-   the same address and find the stale dispatch argThunk (=
-   TracingLocalObject{inner=freed ReplayLocalObject}) → defeatCache
-   bomb later. This is the cb-higher-order failure surface. Switching
-   to shared_ptr keying fixes the bomb but breaks cycle detection
-   (selfref-fn) because cycle detection relies on pointer-identity
-   dedup of distinct shared_ptr instances pointing at the same
-   underlying Object. Proper fix is depth-2 walker (= materialise no
-   ReplayLocalObject for unreconstructible locals; let depth-1
-   fallback handle them — see task #74/#75). */
+   to distinct thunks here. */
 struct BridgedThunkCache
 {
     std::map<Object *, Value *> thunks;
@@ -307,7 +310,20 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
     auto argIdStr = argId.to_string(HashFormat::Base16, false);
     trace::QueryApply applyQuery{fnIdStr, argIdStr};
     auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
-    registry.registerOuterAt(resultId, std::move(resultObj));
+    /* Tag provenance: when argObj is a ReplayLocalObject standin, this
+       AmbientApply::run was called from the walker's dispatch path
+       (resolveApplyId → materialiseLocalStandin → fnObj.queryApply).
+       Its resultObj's mkApp carries an argThunk wrapping a
+       TracingLocalObject{inner=ReplayLocalObject} that bombs on
+       later defeatCache. Tag Dispatch so a subsequent live
+       registration overwrites it, and a dispatch registration after
+       live skips (= keeps live). Without this, the LAST dispatch's
+       resultObj wins in the registry, and the outer's downstream
+       forcing of resolveOuter(applyResultId) bombs. */
+    auto prov = dynamic_cast<ReplayLocalObject *>(argObj.get())
+        ? AmbientRegistry::Provenance::Dispatch
+        : AmbientRegistry::Provenance::Live;
+    registry.registerOuterAt(resultId, std::move(resultObj), prov);
 
     /* Defer the QueryApply Request and the localArg sidecar to the
        writer's flush at logResult. Pool entries land at the natural
