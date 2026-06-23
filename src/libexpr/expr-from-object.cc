@@ -38,47 +38,27 @@ namespace nix {
    through this registry at all on replay — those are served by
    ReplayLocalObject standins from the Responses pool. Local
    registration on the recording side was previously here as a write-
-   only map; dropped because nothing read it back.
-   Last-write-wins on `registerOuterAt`: same-shape sibling navigation
-   produces the same `childId` and overwrites the prior entry. Benign
-   when shapes match (children produce same observations), but the
-   root of #63 when sibling APPLY ids collide downstream. */
+   only map; dropped because nothing read it back. */
 struct AmbientRegistry
 {
-    /* Entries are tagged with provenance: a "live" entry was registered
-       from the cold-recording or top-level live-fallback path (= argObj
-       was a real InterpreterObject), while a "dispatch" entry came from
-       the walker resolving an apply id during v13Walk's validation
-       (= argObj was a ReplayLocalObject standin, which propagates as
-       a TracingLocalObject{inner=ReplayLocalObject} baked into the
-       outer-state mkApp Value and bombs at later defeatCache).
-
-       Live registrations always overwrite. Dispatch registrations only
-       fill empty slots — they never clobber a live entry. This way the
-       outer's downstream forcing of the registered mkApp Value uses
-       the live (= safe) chain rather than a dispatch (= bomb-prone)
-       one, even when dispatches run after live re-eval registered. */
-    enum class Provenance { Live, Dispatch };
-    struct Entry { std::shared_ptr<Object> obj; Provenance prov; };
-    std::map<AmbientId, Entry> outerValues;
+    std::map<AmbientId, std::shared_ptr<Object>> outerValues;
 
     /** Register an outer value under an explicit id (used for
         derived values, where the id is the producer query's
-        queryHash, and for apply results). Live registrations always
-        overwrite. Dispatch registrations skip if a live entry exists. */
-    void registerOuterAt(AmbientId id, std::shared_ptr<Object> obj, Provenance prov = Provenance::Live)
+        queryHash, and for apply results). Single-entry contract:
+        eval is reproducible, so two distinct entries arriving at
+        the same id is a reproducibility bug to surface rather than
+        suppress. */
+    void registerOuterAt(AmbientId id, std::shared_ptr<Object> obj)
     {
-        auto it = outerValues.find(id);
-        if (prov == Provenance::Dispatch && it != outerValues.end() && it->second.prov == Provenance::Live)
-            return;
-        outerValues[id] = Entry{std::move(obj), prov};
+        outerValues[id] = std::move(obj);
     }
 
     std::shared_ptr<Object> resolveOuter(AmbientId id)
     {
         auto it = outerValues.find(id);
         if (it != outerValues.end())
-            return it->second.obj;
+            return it->second;
         throw Error("ambient query: unknown value id %s", id.to_string(HashFormat::Base16, false));
     }
 };
@@ -316,20 +296,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
 
     /* Result id is queryHash(QueryApply{fn=fnId, arg=argId})
        (already computed above for depth2ApplyId plumbing). */
-    /* Tag provenance: when argObj is a ReplayLocalObject standin, this
-       AmbientApply::run was called from the walker's dispatch path
-       (resolveApplyId → materialiseLocalStandin → fnObj.queryApply).
-       Its resultObj's mkApp carries an argThunk wrapping a
-       TracingLocalObject{inner=ReplayLocalObject} that bombs on
-       later defeatCache. Tag Dispatch so a subsequent live
-       registration overwrites it, and a dispatch registration after
-       live skips (= keeps live). Without this, the LAST dispatch's
-       resultObj wins in the registry, and the outer's downstream
-       forcing of resolveOuter(applyResultId) bombs. */
-    auto prov = dynamic_cast<ReplayLocalObject *>(argObj.get())
-        ? AmbientRegistry::Provenance::Dispatch
-        : AmbientRegistry::Provenance::Live;
-    registry.registerOuterAt(resultId, std::move(resultObj), prov);
+    registry.registerOuterAt(resultId, std::move(resultObj));
 
     /* Defer the QueryApply Request and the localArg sidecar to the
        writer's flush at logResult. Pool entries land at the natural

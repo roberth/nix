@@ -330,8 +330,12 @@ bool TracingReplayEvaluator::isLocalArgId(const Hash & idHash)
 std::shared_ptr<Object> TracingReplayEvaluator::materialiseLocalStandin(
     const Hash & idHash, const std::string & idStr, ResolutionContext & ctx)
 {
+    /* Pass the inner's EvalState so `defeatCache` can construct
+       the depth-2 primop. Any live EvalState works for primop
+       allocation; we pick the inner's since it's the one this
+       evaluator already references. */
     auto standin = std::make_shared<ReplayLocalObject>(
-        idHash, decisionGraph, inner->getEvalState().rootFSRoot);
+        idHash, decisionGraph, inner->getEvalState().rootFSRoot, &inner->getEvalState());
     ctx.memo[idStr] = standin;
     return standin;
 }

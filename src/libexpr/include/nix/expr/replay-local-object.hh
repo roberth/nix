@@ -25,6 +25,7 @@
  */
 
 #include "nix/expr/arg-scope.hh"
+#include "nix/expr/eval.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/trace-ids.hh"
 
@@ -37,6 +38,13 @@ class ReplayLocalObject : public Object
     AmbientId localId;
     TracingDecisionGraph & decisionGraph;
     ref<SourceRoot> rootFSRoot;
+    /* EvalState used for primop construction in `defeatCache`. The
+       outer's EvalState (= where the primop will be applied) is the
+       right one in principle; in practice any live EvalState works
+       because primop construction allocates a Value off the shared
+       gc heap and the lambda capture holds onto the construction
+       arguments by value. Threaded from `materialiseLocalStandin`. */
+    EvalState * state;
     /* When a parent's maybeGetAttr / getListElem produces this child,
        it has the child's type from its own response. Recorder-side
        TracingLocalObject::maybeGetAttr never invokes getType on a
@@ -52,11 +60,11 @@ class ReplayLocalObject : public Object
     std::shared_ptr<const ArgScopeCell> argScope;
 
 public:
-    ReplayLocalObject(AmbientId localId, TracingDecisionGraph & dg, ref<SourceRoot> rootFSRoot)
-        : localId(localId), decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)) {}
+    ReplayLocalObject(AmbientId localId, TracingDecisionGraph & dg, ref<SourceRoot> rootFSRoot, EvalState * state = nullptr)
+        : localId(localId), decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
 
-    ReplayLocalObject(AmbientId localId, TracingDecisionGraph & dg, ref<SourceRoot> rootFSRoot, ObjectType type)
-        : localId(localId), decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), knownType(type) {}
+    ReplayLocalObject(AmbientId localId, TracingDecisionGraph & dg, ref<SourceRoot> rootFSRoot, ObjectType type, EvalState * state = nullptr)
+        : localId(localId), decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state), knownType(type) {}
 
     /** Set the proxy's argScope. Returns *this for chaining. */
     ReplayLocalObject & withScope(std::shared_ptr<const ArgScopeCell> argScope_)

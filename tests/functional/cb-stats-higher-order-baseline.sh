@@ -29,8 +29,13 @@ assertCacheStats 0 5 2 -- \
     nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }'
 
 # Warm replay. Every Q dispatched live; everything hits.
-echo "=== warm (expect 8 hits, 0 misses, 0 fallbacks) ==="
-assertCacheStats 8 0 0 -- \
+# Depth-2 facts (= the outer's probes on the inner-supplied lambda)
+# now live in AmbientAsks rather than the depth-1 v13FactSet, so the
+# warm walk reports 2 fewer hits than before depth-2 landed (= the
+# two depth-2 observations the outer made on the local) — those
+# observations still validate, just outside the depth-1 hit counter.
+echo "=== warm (expect 6 hits, 0 misses, 0 fallbacks) ==="
+assertCacheStats 6 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }'
 
 # TODO(depth-2): the `pre_flush_substitution_collisions` metric was

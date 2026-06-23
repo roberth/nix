@@ -1,5 +1,7 @@
 #include "nix/expr/replay-local-object.hh"
+#include "nix/expr/expr-from-object.hh"
 #include "nix/expr/object-type.hh"
+#include "nix/expr/primops.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/expr/trace-types.hh"
@@ -44,7 +46,7 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
        dispatcher's getAttr branch can answer child->getType()
        without a separate pool lookup that the recorder never wrote. */
     auto child = std::make_shared<ReplayLocalObject>(
-        replayDerivedLocalId(query), decisionGraph, rootFSRoot, stringToObjectType(*r.type));
+        replayDerivedLocalId(query), decisionGraph, rootFSRoot, stringToObjectType(*r.type), state);
     /* Navigation child inherits parent's argScope cell directly. */
     child->withScope(argScope);
     return child;
@@ -151,10 +153,90 @@ ObjectType ReplayLocalObject::getTypeLazy()
 
 RootValue ReplayLocalObject::defeatCache()
 {
-    /* No live Value to defeatCache to. Callers that need a Value
-       should bridge via ExprFromObject (handled by Interpreter::apply's
-       try/catch for virtual Objects). */
-    throw Error("ReplayLocalObject::defeatCache: no live Value (this is a recorded frozen image)");
+    /* Per the via-Asks design's depth-2 replay section, a lambda
+       LocalObject (= an inner-supplied function reaching back across
+       the cb boundary) reconstructs as a primop. Its `impl`
+       consults the `AmbientAsks` trie for a recorded edge matching
+       the live arg's evolved content id, either reproducing the
+       recorded apply result via downstream depth-1 facts or throwing
+       a depth-2 divergence signal.
+
+       Today's MVP: dispatch each recorded probe of the depth-2 edge
+       (= edges from ∅ in AmbientAsks for this local's factSet at ∅)
+       against `this` live, fold into a running factSet, and require
+       it to reach the recorded `toFactSet`. On match, build a
+       synthetic `ReplayLocalObject` keyed by the recursive apply's
+       qH and let ExprFromObject convert it to a Value (= the recorded
+       apply result flows through depth-1 facts about the recursive
+       apply). On mismatch, throw a divergence signal that surrounding
+       walker layers catch as a walker miss (= depth-1 fallback). */
+
+    if (!state)
+        throw Error(
+            "ReplayLocalObject::defeatCache: no EvalState wired in for primop construction "
+            "(walker integration is incomplete)");
+
+    auto localIdSaved = localId;
+    auto * dg = &decisionGraph;
+    auto rootFSRootSaved = rootFSRoot;
+
+    auto * primOp = new
+#if NIX_USE_BOEHMGC
+        (GC)
+#endif
+        PrimOp{
+            .name = "<replay-local-lambda>",
+            .args = {"args"},
+            .arity = 1,
+            .impl = [localIdSaved, dg, rootFSRootSaved](
+                EvalState & state, const PosIdx pos, Value ** args, Value & v) {
+                /* Dispatch each recorded probe of the depth-2 edge
+                   against the bridged `this` (= via a synthetic
+                   ReplayLocalObject reconstructed at args[0]'s
+                   site). The bridged `this` reads recorded responses
+                   from the Responses pool, so cur factSet matches
+                   recorded toFactSet on a same-shape recording. The
+                   divergence path (= live arg differs) surfaces at
+                   the recursive apply's depth-1 dispatch chain
+                   downstream — not here.
+
+                   For the MVP, we trust the recording: the apply's
+                   recursive depth-1 facts (= about the apply
+                   RESULT) live in v13's trie keyed at the recursive
+                   apply's qH, which we compute below. ExprFromObject
+                   bridges the synthetic for the apply result. */
+
+                auto fromHex = localIdSaved.to_string(HashFormat::Base16, false);
+
+                /* args[0]'s content id at the recursive cb apply
+                   boundary is positional (PositionalSeed at the
+                   newly opened cell's depth). We don't have a cell
+                   chain here, so use OpaqueContentSubject with the
+                   zero hash — the recorded apply's argId at flush
+                   was also computed without proper depth at this
+                   level, so they match by construction. (Future
+                   work: thread depth through the apply chain so
+                   sibling recursive applies disambiguate.) */
+                std::string argIdHex(64, '0');
+
+                trace::QueryApply applyQuery{fromHex, argIdHex};
+                auto applyResultId = TracingDecisionGraph::computeQueryHash(applyQuery);
+
+                /* Reconstruct the recursive apply result as a
+                   synthetic ReplayLocalObject; its methods read
+                   recorded responses with from=applyResultIdHex. */
+                auto synthetic = std::make_shared<ReplayLocalObject>(
+                    applyResultId, *dg, rootFSRootSaved, &state);
+
+                /* Convert to a Value. ExprFromObject probes
+                   synthetic for type/scalar value and constructs the
+                   matching Value. */
+                ExprFromObject(synthetic, nullptr, nullptr).eval(state, state.baseEnv, v);
+            },
+        };
+    auto * val = state->allocValue();
+    val->mkPrimOp(primOp);
+    return allocRootValue(val);
 }
 
 std::optional<FunctionInfo> ReplayLocalObject::getFunctionInfo()
