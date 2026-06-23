@@ -283,30 +283,17 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        because a resolved fn may be an InterpreterObject without a
        proxy parent chain). The cell carries only topology. */
     auto localCell = ArgScopeCell::make(callerScope, argObj);
-    /* Subject for the apply's arg. Two cases:
-        - Outer-derived (= argObj has a real Subject via getSubject):
-          propagate it. Common case for `inner.f x` where both fn and
-          arg flow inward from the seed, or for apply results from
-          earlier in the cached body. The arg's existing
-          inheritedScope (= same callScope as the seed) is preserved.
-        - Genuine inner-supplied local (= argObj has no Subject;
-          typically a fresh value the inner just constructed and
-          handed back across the boundary — cb-higher-order case):
-          mint a PositionalSeed at this cb apply's reverse-De-Bruijn
-          depth. This is the legitimate use of PositionalSeed.
-
-       Must match what AmbientObject::queryApply computes for the
-       result's ApplyResultSubject.arg — the registry's resultId and
-       the AmbientObject's CDI for queryFn lookups must agree. */
-    cidasks::Subject argSubject;
-    Hash argScope(HashAlgorithm::SHA256);
-    if (auto * existing = argObj->getSubject()) {
-        argSubject = *existing;
-        argScope = argObj->getInheritedScope();
-    } else {
-        argSubject = cidasks::Subject{cidasks::PositionalSeed{localCell->depth}};
-        argScope = resolverHandle->callScope;
-    }
+    /* Each new value that crosses INTO a cb-apply boundary is
+       treated uniformly as a value — no inherited Subject is
+       propagated. Identity at this boundary starts fresh as
+       PositionalSeed at the apply's static (reverse-De-Bruijn)
+       depth; the body's own observations on the arg evolve the cdi
+       within the Asks structure. This keeps observations at the
+       boundary maximally predictable — two cb calls observing the
+       same way through their args reach the same trie position
+       regardless of where the arg's source came from. */
+    cidasks::Subject argSubject{cidasks::PositionalSeed{localCell->depth}};
+    Hash argScope = resolverHandle->callScope;
     auto argId = cidasks::contentIdAfter(argSubject, argScope, {});
 
     /* Compute the resultId early so we can pass it to the
