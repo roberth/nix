@@ -32,29 +32,28 @@ cat > "$TEST_ROOT/nested-ho.nix" << 'NIX'
 { apply2 }: apply2 (innerLambda: innerLambda 5)
 NIX
 
-# TODO: even the cold path fails today with `ambient query: unknown
-# value id ...`. This is a pre-existing recording-side limitation in
-# the higher-order chain — separate from #49. Re-enable when the
-# nested-higher-order recording is fixed.
-#
-#   echo "=== cold: apply2 = midfn: midfn (n: n+100) (expect 105) ==="
-#   result=$(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/nested-ho.nix; }) { apply2 = midfn: midfn (n: n + 100); }')
-#   [[ "$result" == 105 ]]
-#
+# Cold paths now work — fixed by routing seed-self queryApply through
+# `applyOn` (= using captured outerArgObj directly instead of
+# `resolveOuter(rootId)`, which boundary discipline keeps
+# unregistered).
+echo "=== cold: apply2 = midfn: midfn (n: n+100) (expect 105) ==="
+result=$(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/nested-ho.nix; }) { apply2 = midfn: midfn (n: n + 100); }')
+echo "Got: $result"
+[[ "$result" == 105 ]]
+
+echo "=== outer change to (n + 200) (expect 205) ==="
+result=$(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/nested-ho.nix; }) { apply2 = midfn: midfn (n: n + 200); }')
+echo "Got: $result"
+[[ "$result" == 205 ]]
+
+# TODO: warm-replay paths still need the depth-2 walker to evolve
+# argId via observations. Until that lands, _NIX_DISALLOW_PARSE
+# falls through to inner re-eval. Re-enable when the recursive cb
+# apply's argId carries the right observation history at warm replay.
 #   echo "=== replay (expect 105) ==="
 #   result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/nested-ho.nix; }) { apply2 = midfn: midfn (n: n + 100); }')
 #   [[ "$result" == 105 ]]
 #
-#   echo "=== outer change to (n + 200) (expect 205) ==="
-#   result=$(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/nested-ho.nix; }) { apply2 = midfn: midfn (n: n + 200); }')
-#   [[ "$result" == 205 ]]
-#
 #   echo "=== restore (expect 105) ==="
 #   result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/nested-ho.nix; }) { apply2 = midfn: midfn (n: n + 100); }')
 #   [[ "$result" == 105 ]]
-
-# Probe: confirm cold path currently throws the expected error so we
-# notice if the upstream limitation gets accidentally papered over
-# without proper invalidation support.
-echo "=== nested HO currently errors out (regression marker) ==="
-expectStderr 1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/nested-ho.nix; }) { apply2 = midfn: midfn (n: n + 100); }' | grep -q 'ambient query: unknown value id'

@@ -188,6 +188,17 @@ struct AmbientApply
 
     std::pair<AmbientId, AmbientId> run(
         AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope);
+
+    /** Same as run, but the fnObj is provided directly instead of
+        being resolved via the registry. Used by makeCachedFnPrimOp's
+        applyFn closure when the seed AmbientObject itself is being
+        applied (= fnId is the seed's CDI, which boundary discipline
+        keeps unregistered to avoid sibling collisions; the closure
+        captures outerArgObj instead). */
+    std::pair<AmbientId, AmbientId> runOn(
+        std::shared_ptr<Object> fnObj, AmbientId fnId,
+        std::shared_ptr<Object> argObj,
+        std::shared_ptr<const ArgScopeCell> callerScope);
 };
 
 struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
@@ -238,14 +249,34 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
             shared_from_this(),
         }.run(fnId, std::move(argObj), std::move(callerScope));
     }
+
+    /** Apply variant where fnObj is provided directly (= callers
+        with a captured reference, like makeCachedFnPrimOp's
+        applyFn closure for seed-self applies). */
+    std::pair<AmbientId, AmbientId> applyOn(
+        std::shared_ptr<Object> fnObj, AmbientId fnId,
+        std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope)
+    {
+        return AmbientApply{
+            registry, bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
+            shared_from_this(),
+        }.runOn(std::move(fnObj), fnId, std::move(argObj), std::move(callerScope));
+    }
 };
 
 std::pair<AmbientId, AmbientId> AmbientApply::run(
     AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope)
 {
+    auto fnObj = registry.resolveOuter(fnId);
+    return runOn(std::move(fnObj), fnId, std::move(argObj), std::move(callerScope));
+}
+
+std::pair<AmbientId, AmbientId> AmbientApply::runOn(
+    std::shared_ptr<Object> fnObj, AmbientId fnId,
+    std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope)
+{
     if (!outerState)
         throw Error("ambient apply requires outerState");
-    auto fnObj = registry.resolveOuter(fnId);
 
     /* Scope-graph cell for the cb arg, rooted at the caller's
        effective scope (which AmbientObject::queryApply passes in
@@ -467,10 +498,27 @@ static PrimOp * makeCachedFnPrimOp(
                            Facts with `from=<apply_qH>` can have
                            their response payloads located via the
                            Responses pool on replay. */
-                        AmbientApplyFn applyFn = [resolver](
+                        AmbientApplyFn applyFn = [resolver, outerArgObj, rootId](
                             AmbientId fnId,
                             std::shared_ptr<Object> argObj,
                             std::shared_ptr<const ArgScopeCell> callerScope) {
+                            /* Boundary-trace-only discipline keeps the
+                               cb-arg seed unregistered in
+                               AmbientRegistry. When the SEED ITSELF is
+                               applied (= inner does `args 5` on the
+                               seed AmbientObject), fnId == rootId.
+                               `resolver->apply` would try
+                               `resolveOuter(rootId)` and throw
+                               "unknown value id". Route through
+                               `applyOn` with the captured outerArgObj
+                               instead — same path as queryFn's
+                               `queryOn` shortcut for direct seed
+                               queries. */
+                            if (fnId == rootId) {
+                                auto [argId, resultId] = resolver->applyOn(
+                                    outerArgObj, fnId, std::move(argObj), std::move(callerScope));
+                                return resultId;
+                            }
                             auto [argId, resultId] = resolver->apply(fnId, std::move(argObj), std::move(callerScope));
                             return resultId;
                         };
