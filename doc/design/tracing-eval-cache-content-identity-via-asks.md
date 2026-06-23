@@ -207,12 +207,22 @@ disambiguation of LocalObject identity.
 
 ### Atom storage
 
-`AmbientRequest`/`AmbientResponse` payloads are content-addressed
-just like everything else. They don't need their own tables —
-reuse the existing `Requests` and `Responses` CAS pools (with
-`Responses` keyed by `responseHash`, fixing the current schema
-which keys it by `requestHash`). The trie tables discriminate by
-which atom set they reference.
+`AmbientRequest` payloads share the existing `Requests` CAS pool.
+`AmbientResponse` payloads live in `LocalResponseMap`, which is
+keyed by `requestHash` rather than `responseHash`. That's not a
+CAS pool — it's a (request → response) map, and the depth-2
+walker is the only consumer.
+
+It's sound to key by `requestHash` here because the depth-2
+`reqHash` is `SHA-256(query{from = cidasks-evolved cdi})` — a
+pure function of (subject, scope, prior facts in the chain). Two
+recordings reaching the same `reqHash` necessarily observed the
+same history; a deterministic env then produces the same
+response, so (request → response) is a function and first-writer-
+wins under PK = `requestHash` can't surface the wrong payload.
+Depth-1 doesn't read this map at all (= walker live-dispatches
+against the environment and validates structurally via factset
+evolution through `Asks`/`Terminals`).
 
 The pool also stores the LocalObject's value structure: small
 atoms covering attrset entries, list elements, scalars. These get
