@@ -188,6 +188,7 @@ suites = [
       'cb-stats-sidecar-baseline.sh',
       'cb-forcedness-independence.sh',
       'cb-irrelevant-fields-lazy.sh',
+      'cb-fn-valued-result.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
