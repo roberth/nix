@@ -226,14 +226,28 @@ std::optional<std::vector<std::string>> TracingObject::getAttrPath()
 
 std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj)
 {
-    /* Delegate to inner. Don't record a Q_apply Terminal —
-       TracingEvaluator::apply's comment explains why (a fresh app
-       thunk has no result type). Wrap the result as another
-       TracingObject so further accesses land in the inner trace
-       parented on the apply's queryHash. */
+    /* Object-method counterpart of TracingEvaluator::apply. Mirrors
+       its logic: compute fnId/argId, hash QueryApply, log the
+       Request, delegate to inner->queryApply, wrap as TracingObject
+       with the apply's triePos so further accesses on the result
+       parent on the apply's queryHash. */
+    auto fnIdOpt = getCdiHex();
+    auto argIdOpt = argObj->getCdiHex();
+    if (!fnIdOpt || !argIdOpt)
+        throw Error("TracingObject::queryApply: fn/arg lacks a content-defined identity");
+    auto queryHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{*fnIdOpt, *argIdOpt});
+    auto v = writer.getSink().logQuery(trace::QueryApply{*fnIdOpt, *argIdOpt});
     auto result = inner->queryApply(argObj);
-    return std::shared_ptr<TracingObject>(
-        new TracingObject(ref<Object>(result), writer, valueNum, triePos));
+    TriePosition applyTriePos{
+        .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
+        .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
+    };
+    auto child = std::shared_ptr<TracingObject>(
+        new TracingObject(ref<Object>(result), writer, v, applyTriePos));
+    /* Apply-result scope cell rooted at fn's scope. */
+    auto cell = ArgScopeCell::make(argScope, argObj);
+    child->withScope(std::move(cell));
+    return child;
 }
 
 } // namespace nix
