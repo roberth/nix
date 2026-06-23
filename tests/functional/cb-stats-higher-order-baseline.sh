@@ -38,12 +38,7 @@ echo "=== warm (expect 6 hits, 0 misses, 0 fallbacks) ==="
 assertCacheStats 6 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }'
 
-# TODO(depth-2): the `pre_flush_substitution_collisions` metric was
-# removed when the substitution machinery was stripped (the via-Asks
-# design replaces it). The check below asserts the metric reads 0,
-# but `cacheStatsField` now returns the JSON string "null" for the
-# missing field and `[[ null == 0 ]]` fails. Restore a meaningful
-# equivalent invariant when the depth-2 walker lands.
-# collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
-#     nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }')
-# [[ "$collisions" == 0 ]]
+# Result correctness: warm replay returns the same value as cold.
+echo "=== warm result correctness (expect 6) ==="
+result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }')
+[[ "$result" == 6 ]]

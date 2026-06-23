@@ -1,26 +1,55 @@
 #!/usr/bin/env bash
 
-# CDI #8: preFlushSubstitutions overwrite invariant.
+# Cross-process distinct-(f, x) invocations sharing the same cache.
 #
-# Two sibling cb invocations in one process whose deferred apply Qs
-# share an oldHash (because args' initial CDI is the same empty-cell
-# hash) trigger the invariant. The warning fires loudly via
-# tracingCacheLog when _NIX_TRACING_CACHE_LOGGING=1; this test asserts
-# it's visible.
+# The fixture: `{ f, x }: f x`. Three nix-eval invocations against the
+# same shared on-disk trie, with distinct (f, x) combinations. Each
+# must produce the correct value at cold record.
 #
-# When #63 is fixed (so the collision stops happening at all), this
-# test should be re-evaluated: either the warning should escalate to a
-# throw and this test become a negative-assertion ("no collision
-# warning"), or the warning text changes.
+# Originally this test asserted on a `pre_flush_substitution_collisions`
+# metric from the substitution-machinery era; that metric was removed
+# under the via-Asks design (= per design principles, identity is
+# observation-derived, not substitution-tracked). The fixture remains
+# useful as a cross-process behavioral integration check: distinct
+# (f, x) combinations write distinct recordings into a shared trie.
+#
+# Warm replay across the three recordings is gated on task #82 (=
+# sibling cb-applies share seed cdi at flush; per-apply Asks edges
+# would isolate their factSet positions). For now, single-recording
+# warm replay is covered by other tests (cb-curried-state-creep,
+# cb-higher-order, cb-stats-sidecar-baseline).
 
 source common.sh
 
-# TODO(depth-2): this whole test probes the removed
-# `pre_flush_substitution_collisions` metric from the
-# substitution-machinery era. The via-Asks design replaces that
-# machinery entirely — there's no collision counter to assert against
-# anymore. Skip until we have a corresponding invariant in the new
-# design (likely something like "AmbientAsks edges' (fromFactSet,
-# requestSet) keys remain unique under sibling cb invocations").
-echo "skipped: probes removed pre_flush_substitution_collisions metric"
-exit 77
+enableFeatures "tracing-eval-cache"
+
+clearCache() {
+    rm -rf "$TEST_HOME/.cache/nix/eval-tracing-decision-graph"
+}
+
+clearCache
+
+echo '{ f, x }: f x' > "$TEST_ROOT/call-fn.nix"
+
+# Three invocations, distinct (f, x), against the same trie:
+#   1: f = (n: n + 1),   x = 10  →  11
+#   2: f = (n: n + 100), x = 10  → 110
+#   3: f = (n: n + 1),   x = 50  →  51
+
+echo "=== cold #1 (expect 11) ==="
+result=$(nix eval --impure --expr \
+    '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = n: n + 1; x = 10; }')
+echo "Got: $result"
+[[ "$result" == 11 ]]
+
+echo "=== cold #2 (expect 110) ==="
+result=$(nix eval --impure --expr \
+    '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = n: n + 100; x = 10; }')
+echo "Got: $result"
+[[ "$result" == 110 ]]
+
+echo "=== cold #3 (expect 51) ==="
+result=$(nix eval --impure --expr \
+    '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = n: n + 1; x = 50; }')
+echo "Got: $result"
+[[ "$result" == 51 ]]

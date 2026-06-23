@@ -57,13 +57,3 @@ result=$(nix eval --impure --expr \
       + c { args = { outer = { middle = { inner = 42; }; }; }; }')
 echo "Got: $result"
 [[ "$result" == 84 ]]
-
-# TODO(depth-2): `pre_flush_substitution_collisions` was removed with
-# the substitution machinery; the assertion below now reads "null"
-# and trips. The behavioral checks above are still meaningful.
-# collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
-#     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
-#         'let c = builtins.cache { import = '"$TEST_ROOT"'/deep.nix; };
-#          in c { args = { outer = { middle = { inner = 42; }; }; }; }
-#           + c { args = { outer = { middle = { inner = 42; }; }; }; }')
-# [[ "$collisions" == 0 ]]
