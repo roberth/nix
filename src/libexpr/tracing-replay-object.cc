@@ -43,15 +43,21 @@ std::string TracingReplayObject::evolvedQueryFrom() const
 {
     /* For apply-result wrappers, the apply's observations on the cb
        arg evolve the result's Content Id via cidasks
-       (ApplyResultSubject's recursive arg cdi). We only evolve once
-       the body has completed (= applyContext->finalized) because
-       observations accumulate asynchronously during the walker's
-       dispatch chain — using a partial walk before finalization
-       lands at intermediate trie positions the recorder didn't
-       write to. The recorder, in contrast, evolves as observations
-       come in: each TracingObject method forces inner first (= one
-       atomic step of body execution), so the cdi at each method's
-       log point reflects exactly the observations made so far. */
+       (ApplyResultSubject's recursive arg cdi). We require
+       `finalized` before evolving on the walker side. The
+       pre-populate hook in TracingReplayEvaluator::apply scans
+       Requests by `params.from`, which over-collects across
+       sibling cb-applies that share a seed cdi — the trie's
+       current schema doesn't isolate observations by apply. Using
+       evolved cdi from a mixed set lands at a phantom trie
+       position the recorder didn't write to. Until each cb-apply
+       gets its own Asks edge (= multi-edge walk + per-edge
+       precondition substitution at flush), we keep the
+       observations-from-pool path off by default; the finalized
+       gate retains the prior behavior. The recorder side, in
+       contrast, sees observations populated by the LIVE inner
+       running — exactly one apply's worth — so its evolution is
+       unambiguous. */
     if (applyContext && applyResultSubject && applyContext->finalized
         && !applyContext->observations.empty()) {
         cidasks::Edge edge{.facts = applyContext->observations};

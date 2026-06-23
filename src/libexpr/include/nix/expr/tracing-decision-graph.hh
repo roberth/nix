@@ -118,6 +118,18 @@ public:
     void insertResponse(const RequestHash & requestHash, std::string_view payload);
     std::optional<std::string> getResponsePayload(const RequestHash & requestHash);
 
+    /* Enumerate Requests whose payload's `params.from` field equals
+       `fromHex`. Used by the depth-2 walker to pre-populate an
+       `ApplyContext` with observations the recorder made on a
+       cb-arg seed, so warm-replay child queries can compute the
+       same evolved cdi the recorder wrote at.
+
+       Implementation is a linear scan over Requests with a
+       substring filter on the CBOR-encoded payload. Acceptable at
+       current scales; a follow-up could add an index on
+       `params.from`. */
+    std::vector<std::pair<RequestHash, std::string>> getRequestsWithFrom(const std::string & fromHex);
+
     /* ─────────────────────────────────────────────────────────────────
        Storage layer: set pools (content-addressed by canonical hash)
        ───────────────────────────────────────────────────────────────── */

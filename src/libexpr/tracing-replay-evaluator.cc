@@ -673,6 +673,40 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
                 .fn = std::make_shared<const cidasks::Subject>(std::move(fnSubj)),
                 .arg = std::make_shared<const cidasks::Subject>(ctx->argSubject),
             }};
+
+            /* Pre-populate `ctx->observations` from the trie's
+               recorded facts about the arg subject so warm-replay
+               child queries compute the same evolved cdi the
+               recorder wrote at. Without this, observations stay
+               empty until ensureInner forces live (= breaks
+               DISALLOW_PARSE) and TracingReplayObject's
+               evolvedQueryFrom falls back to the static cdi the
+               recorder no longer writes at. The recorder's
+               observations come from `queryFn` pushing into the
+               same ApplyContext as the inner runs; the walker can
+               pull the same set of (req, resp) pairs straight from
+               the pool by filtering Requests on `params.from`. */
+            if (ctx->observations.empty()) {
+                auto argCdi = argAmb->getCdi();
+                auto argCdiHex = argCdi.to_string(HashFormat::Base16, false);
+                auto facts = decisionGraph.getRequestsWithFrom(argCdiHex);
+                for (auto & [reqHash, _payload] : facts) {
+                    auto respPayload = decisionGraph.getResponsePayload(reqHash);
+                    if (!respPayload)
+                        continue;
+                    auto respHash = TracingDecisionGraph::computeResponseHash(*respPayload);
+                    cidasks::Fact f{
+                        .fromHash = argCdi,
+                        .elementHash = TracingDecisionGraph::xorFactIntoHash(
+                            Hash(HashAlgorithm::SHA256), reqHash, respHash),
+                    };
+                    ctx->observations.push_back(std::move(f));
+                }
+                tracingCacheLog(
+                    "pre-populate applyContext: arg=%s observations=%zu",
+                    argCdiHex.substr(0, 12), ctx->observations.size());
+            }
+
             obj->withApplyContext(std::move(ctx), std::move(resultSubject));
         }
     }
