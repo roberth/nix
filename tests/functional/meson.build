@@ -192,6 +192,7 @@ suites = [
       'cb-module-shaped-result.sh',
       'cb-list-args.sh',
       'cb-with-scope-and-tryeval.sh',
+      'cb-deep-nav-and-indexing.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
