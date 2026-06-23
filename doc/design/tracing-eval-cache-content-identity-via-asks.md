@@ -36,7 +36,15 @@ to the present design.
 
 6. **No deep hashing of values.** Identity is built from observations
    made *through* a value, never from inspecting the value itself.
-   Preserves laziness; non-negotiable for Nix semantics.
+   A corollary of laziness (#7); also non-negotiable on its own as
+   a content-identity rule.
+
+7. **Laziness end-to-end.** Forcing is initiated by the value's
+   consumer, never by the cache itself. Recording observes only the
+   queries the inner already issued — never probe a value to
+   manufacture facts. Replay serves a response only when the
+   consumer probes for it — never traverse recorded structure ahead
+   of the consumer.
 
 ## Design principles
 
