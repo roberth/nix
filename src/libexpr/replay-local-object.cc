@@ -31,6 +31,14 @@ static AmbientId replayDerivedLocalId(const Q & query)
     return TracingDecisionGraph::computeQueryHash(query);
 }
 
+/* Look up the recorded payload for `query` in the Responses pool.
+   The pool is keyed by requestHash and that's sound at depth-2
+   because reqHash is `SHA-256(query{from = cidasks-evolved cdi})`
+   — a pure function of (subject, scope, prior chain facts). Two
+   recordings reaching the same reqHash necessarily observed the
+   same history; a deterministic env then produces the same
+   response, so first-writer-wins in the pool can't return the
+   wrong payload. */
 template<typename Q>
 static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query)
 {
@@ -54,10 +62,9 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query)
    singleton-requestSet edge from `*chainCursor → toFactSet`, and
    (c) on a match advances the shared chain cursor and appends the
    fact to the shared walk so subsequent probes compose against the
-   correctly evolved cdis (including for sibling proxies derived
-   from the same cb-apply local). On mismatch we throw a divergence
-   signal which the surrounding walker layer turns into a miss →
-   depth-1 fallback handles re-eval. */
+   correctly evolved cdis. On mismatch we throw a divergence signal
+   which the surrounding walker layer turns into a miss → depth-1
+   fallback handles re-eval. */
 template<typename Q>
 static void advanceChainAndAppendFact(
     TracingDecisionGraph & dg, const Q & query, const Hash & fromCdi,
@@ -78,11 +85,6 @@ static void advanceChainAndAppendFact(
             continue;
         if (std::find(requestSet->begin(), requestSet->end(), reqHash) == requestSet->end())
             continue;
-        /* Probe matches a recorded edge at this position. Build the
-           Fact with the query's `from` field as fromHash so the
-           cidasks evolution filter (= "facts about V at this
-           precondition have fromHash == V.cdiAt(precondition)")
-           recognises this fact as one of V's own observations. */
         auto responsePayload = jsonToCborString(responseJson);
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
         auto elementHash = TracingDecisionGraph::xorFactIntoHash(
@@ -100,28 +102,6 @@ static void advanceChainAndAppendFact(
     throw Error(
         "depth-2 divergence: probe %s on local has no AmbientAsks edge from current factSet",
         Q::tag);
-}
-
-/* End-to-end probe handler. Builds the query from this proxy's
-   identity (`subject`, `scope`, shared `walkFacts`), reads the
-   recorded response, validates + advances the chain (when
-   validation is enabled), and returns the parsed response. */
-template<typename Q, typename... Extra>
-static nlohmann::json probeOnSubject(
-    TracingDecisionGraph & dg,
-    const cidasks::Subject & subject,
-    const Hash & scope,
-    std::vector<cidasks::Edge> & walkFacts,
-    Hash & chainCursor,
-    bool validate,
-    Extra &&... extraArgs)
-{
-    auto fromCdi = cidasks::contentIdAt(subject, scope, walkFacts, walkFacts.size());
-    Q query{replayFromHex(fromCdi), std::forward<Extra>(extraArgs)...};
-    auto rJson = readResponse(dg, query);
-    if (validate)
-        advanceChainAndAppendFact(dg, query, rJson, walkFacts, chainCursor);
-    return rJson;
 }
 
 std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name)

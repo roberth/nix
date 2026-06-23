@@ -51,6 +51,15 @@ CREATE TABLE IF NOT EXISTS Results (
 -- can be configured (via a writer-level flag) to store their
 -- response payloads too -- useful for offline debugging when the
 -- JSON trace files aren't available.
+--
+-- Why keyed by requestHash, not by responseHash (= the natural CAS
+-- key): depth-2 reqHash is `SHA-256(query{from = cidasks-evolved
+-- cdi})` — i.e. a pure function of (subject, scope, prior facts in
+-- the chain). Two recordings reaching the same reqHash necessarily
+-- observed the same history; a deterministic env then produces the
+-- same response, so the (request → response) mapping is a function.
+-- First-writer-wins is sound, and the walker can look the payload up
+-- by reqHash without an indirection through responseHash.
 CREATE TABLE IF NOT EXISTS Responses (
     requestHash BLOB PRIMARY KEY,
     payload     BLOB NOT NULL
