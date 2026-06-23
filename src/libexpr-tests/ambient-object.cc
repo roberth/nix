@@ -25,15 +25,15 @@ static cidasks::Subject testSubject(int n)
     return cidasks::Subject{cidasks::OpaqueContentSubject{testId(n)}};
 }
 
-static std::string hex(AmbientId id)
+static std::string ambientHex(AmbientId id)
 {
     return id.to_string(HashFormat::Base16, false);
 }
 
 /**
- * Mock resolver: maps `"tag:hex(objectId)"` strings to predetermined
+ * Mock resolver: maps `"tag:ambientHex(objectId)"` strings to predetermined
  * results. For child-producing queries, returns
- * `hashString("child:" + hex(objectId))` as the child id.
+ * `hashString("child:" + ambientHex(objectId))` as the child id.
  */
 static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> responses)
 {
@@ -42,7 +42,7 @@ static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> r
                const trace::QueryVariant & q,
                cidasks::Subject /*subject*/,
                Hash /*inheritedScope*/) -> AmbientQueryResult {
-        std::string objHex = hex(objectId);
+        std::string objHex = ambientHex(objectId);
         std::string key = std::visit(
             [&](const auto & query) -> std::string {
                 return std::string(query.tag) + ":" + objHex;
@@ -71,7 +71,7 @@ TEST(AmbientObjectTest, GetType)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        testSubject(0), mockResolver({{"getType:" + hex(seed), trace::ResultType{"int"}}}), stubAmbientRoot());
+        testSubject(0), mockResolver({{"getType:" + ambientHex(seed), trace::ResultType{"int"}}}), stubAmbientRoot());
     EXPECT_EQ(obj->getType(), nInt);
 }
 
@@ -79,7 +79,7 @@ TEST(AmbientObjectTest, GetInt)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        testSubject(0), mockResolver({{"getInt:" + hex(seed), trace::ResultInt{42}}}), stubAmbientRoot());
+        testSubject(0), mockResolver({{"getInt:" + ambientHex(seed), trace::ResultInt{42}}}), stubAmbientRoot());
     EXPECT_EQ(obj->getInt().value, 42);
 }
 
@@ -87,7 +87,7 @@ TEST(AmbientObjectTest, GetString)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        testSubject(0), mockResolver({{"getString:" + hex(seed), trace::ResultString{"hello"}}}), stubAmbientRoot());
+        testSubject(0), mockResolver({{"getString:" + ambientHex(seed), trace::ResultString{"hello"}}}), stubAmbientRoot());
     EXPECT_EQ(obj->getStringIgnoreContext(), "hello");
 }
 
@@ -95,7 +95,7 @@ TEST(AmbientObjectTest, GetBool)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        testSubject(0), mockResolver({{"getBool:" + hex(seed), trace::ResultBool{true}}}), stubAmbientRoot());
+        testSubject(0), mockResolver({{"getBool:" + ambientHex(seed), trace::ResultBool{true}}}), stubAmbientRoot());
     EXPECT_TRUE(obj->getBool());
 }
 
@@ -113,11 +113,11 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
         }},
         Hash(HashAlgorithm::SHA256),
         {});
-    auto childHex = hex(childCdi);
+    auto childHex = ambientHex(childCdi);
     auto obj = std::make_shared<AmbientObject>(
         testSubject(0),
         mockResolver({
-            {"getAttr:" + hex(seed), trace::ResultMaybeType{std::optional<std::string>{"int"}}},
+            {"getAttr:" + ambientHex(seed), trace::ResultMaybeType{std::optional<std::string>{"int"}}},
             {"getInt:" + childHex, trace::ResultInt{99}},
         }),
         stubAmbientRoot());
@@ -130,7 +130,7 @@ TEST(AmbientObjectTest, GetAttrMissing)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        testSubject(0), mockResolver({{"getAttr:" + hex(seed), trace::ResultMaybeType{std::nullopt}}}), stubAmbientRoot());
+        testSubject(0), mockResolver({{"getAttr:" + ambientHex(seed), trace::ResultMaybeType{std::nullopt}}}), stubAmbientRoot());
     EXPECT_EQ(obj->maybeGetAttr("missing"), nullptr);
 }
 
@@ -145,11 +145,11 @@ TEST(AmbientObjectTest, GetListElem)
         }},
         Hash(HashAlgorithm::SHA256),
         {});
-    auto childHex = hex(childCdi);
+    auto childHex = ambientHex(childCdi);
     auto obj = std::make_shared<AmbientObject>(
         testSubject(0),
         mockResolver({
-            {"getListElem:" + hex(seed), trace::ResultType{"string"}},
+            {"getListElem:" + ambientHex(seed), trace::ResultType{"string"}},
             {"getString:" + childHex, trace::ResultString{"world"}},
         }),
         stubAmbientRoot());
@@ -163,7 +163,7 @@ TEST(AmbientObjectTest, GetAttrNames)
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
         testSubject(0),
-        mockResolver({{"getAttrNames:" + hex(seed), trace::ResultListOfStrings{{"a", "b", "c"}}}}),
+        mockResolver({{"getAttrNames:" + ambientHex(seed), trace::ResultListOfStrings{{"a", "b", "c"}}}}),
         stubAmbientRoot());
     auto names = obj->getAttrNames();
     EXPECT_EQ(names.size(), 3u);
