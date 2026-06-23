@@ -41,23 +41,25 @@ ref<Object> TracingReplayObject::ensureInner() const
 
 std::string TracingReplayObject::evolvedQueryFrom() const
 {
-    /* For apply-result wrappers, the apply's observations on the cb
-       arg evolve the result's Content Id via cidasks
-       (ApplyResultSubject's recursive arg cdi). We require
-       `finalized` before evolving on the walker side. The
-       pre-populate hook in TracingReplayEvaluator::apply scans
-       Requests by `params.from`, which over-collects across
-       sibling cb-applies that share a seed cdi — the trie's
-       current schema doesn't isolate observations by apply. Using
-       evolved cdi from a mixed set lands at a phantom trie
-       position the recorder didn't write to. Until each cb-apply
-       gets its own Asks edge (= multi-edge walk + per-edge
-       precondition substitution at flush), we keep the
-       observations-from-pool path off by default; the finalized
-       gate retains the prior behavior. The recorder side, in
-       contrast, sees observations populated by the LIVE inner
-       running — exactly one apply's worth — so its evolution is
-       unambiguous. */
+    /* For apply-result wrappers, the apply's depth-2 observations
+       on the cb arg evolve the result's Content Id via cidasks
+       (ApplyResultSubject's recursive arg cdi). If the body has
+       already executed (= applyContext is finalized) and has
+       observations, we use the evolved cdi — that's the
+       disambiguation depth-2 needs across sibling cb applies.
+
+       But we do NOT force ensureInner here: forcing eagerly
+       defeats warm-replay where the cache hit at the static cdi
+       is the right answer (e.g. cb-local-descendants step 2). The
+       depth-2 walk that populates applyContext without running
+       live is the proper mechanism for warm replay; until that
+       lands, callers that need evolved cdi must trigger
+       ensureInner themselves (e.g., via a leaf method's fallback
+       path) and then re-look up via subsequent get* calls.
+
+       Non-apply-result wrappers, and apply-results whose body
+       hasn't been forced yet, fall back to the static
+       triePos.queryHashStr. */
     if (applyContext && applyResultSubject && applyContext->finalized
         && !applyContext->observations.empty()) {
         cidasks::Edge edge{.facts = applyContext->observations};
