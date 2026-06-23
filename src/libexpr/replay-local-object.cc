@@ -190,33 +190,38 @@ RootValue ReplayLocalObject::defeatCache()
             .arity = 1,
             .impl = [localIdSaved, dg, rootFSRootSaved](
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
-                /* Dispatch each recorded probe of the depth-2 edge
-                   against the bridged `this` (= via a synthetic
-                   ReplayLocalObject reconstructed at args[0]'s
-                   site). The bridged `this` reads recorded responses
-                   from the Responses pool, so cur factSet matches
-                   recorded toFactSet on a same-shape recording. The
-                   divergence path (= live arg differs) surfaces at
-                   the recursive apply's depth-1 dispatch chain
-                   downstream — not here.
-
-                   For the MVP, we trust the recording: the apply's
-                   recursive depth-1 facts (= about the apply
-                   RESULT) live in v13's trie keyed at the recursive
-                   apply's qH, which we compute below. ExprFromObject
-                   bridges the synthetic for the apply result. */
+                /* AmbientAsks structural check: this local must have
+                   at least one recorded depth-2 edge from ∅. If not,
+                   the local wasn't recorded by the cb apply we're
+                   replaying — that's a divergence we must surface.
+                   (Walker's surrounding try/catch turns this into a
+                   miss; depth-1 fallback handles re-eval.) */
+                auto emptySet = TracingDecisionGraph::emptySetHash();
+                auto edges = dg->getAmbientAsks(emptySet);
+                if (edges.empty())
+                    throw Error(
+                        "ReplayLocalObject primop: no depth-2 AmbientAsks edges from ∅ "
+                        "for this local — recording is missing or doesn't apply (divergence)");
+                /* Each recorded edge's requestSet names probes the
+                   outer made on the local during the recorded cb
+                   apply. For now we only check that an edge exists;
+                   per-probe validation against a live arg requires
+                   the outer to drive the probes through the
+                   reconstructed value tree (see design doc's "Replay
+                   (depth-2)" section). MVP cut: trust the edge and
+                   reconstruct the apply result from depth-1 facts. */
 
                 auto fromHex = localIdSaved.to_string(HashFormat::Base16, false);
 
                 /* args[0]'s content id at the recursive cb apply
                    boundary is positional (PositionalSeed at the
                    newly opened cell's depth). We don't have a cell
-                   chain here, so use OpaqueContentSubject with the
-                   zero hash — the recorded apply's argId at flush
-                   was also computed without proper depth at this
-                   level, so they match by construction. (Future
-                   work: thread depth through the apply chain so
-                   sibling recursive applies disambiguate.) */
+                   chain here, so use the zero hex — the recorded
+                   apply's argId at flush was also computed without
+                   proper depth at this level, so they match by
+                   construction. (Future work: thread depth through
+                   the apply chain so sibling recursive applies
+                   disambiguate.) */
                 std::string argIdHex(64, '0');
 
                 trace::QueryApply applyQuery{fromHex, argIdHex};
