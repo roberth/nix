@@ -201,6 +201,75 @@ This is mechanical to do once and cheap to re-check during review:
 introducing a new XOR site requires explicitly justifying its
 component membership and any new compounding it introduces.
 
+**Audit catalogue (as of this writing).**
+
+*Component F — factSet algebra.*
+- Generators: `factElementHash(req, resp) = SHA-256(req || resp)` —
+  fresh Merkle atoms.
+- Members: `v13FactSetHash`; every `factSetHash` used as an
+  `Asks`/`Terminals` key; every `fromFactSet`/`toFactSet`/
+  `cumulativeFactSet` in an `AmbientAsks` chain.
+- Operations: XOR-fold; identity = 0 (= `emptySetHash`).
+- Boundary consumers: SQL PK / equality lookups in `Asks`,
+  `Terminals`, `AmbientAsks`.
+- Set algebra is *intended* at every boundary — two recordings
+  with the same set of (req, resp) pairs are meant to collide.
+- Compounding: none — every fold operand is a fresh SHA-256 atom.
+  Dedupe is the caller's responsibility (= via `std::set` /
+  `sort+dedup` / cidasks-evolved `reqHash` uniqueness).
+- Verdict: sound.
+
+*Component G — cidasks subject identity.*
+- Generators:
+  - `SHA-256("positional-D")` (atomic per depth).
+  - `callScope = SHA-256("cache-import:..." | "cache-expr:...")`
+    (atomic per cached call).
+  - `qH(QueryGetAttr{name, from=hex(parent.cdi)})` /
+    `qH(QueryApply{fn=hex(fn.cdi), arg=hex(arg.cdi)})` — Merkle
+    seals over XOR-derived parent/constituent cdis, but the seal
+    makes the output atomic from G's perspective.
+  - `factElementHash(req, resp)` for own-fold contributions.
+- Members: every `cdi` returned by `contentIdAt`; every `own_k`
+  partial sum; every `structural(k)` for `PositionalSeed` /
+  `OpaqueContentSubject`.
+- Operations:
+  - Leaf: `structural = base XOR scope`.
+  - Own-fold: `own_k = XOR-fold of {f.elementHash : f at edges
+    <k with f.fromHash == myCidAtK}`.
+  - Final: `cdi(k) = structural(k) XOR own_k`.
+- Boundary consumers:
+  - Hex-encoded into `query.from`, then `qH(query)` — **SHA-256
+    seal exits G**.
+  - Equality check inside the cidasks filter
+    (`f.fromHash == myCidAtK`) — **stays in G**.
+- Compounding sites observed:
+  - `OpaqueContentSubject{X}.structural = X XOR scope` where `X`
+    is itself drawn from G: today this happens at
+    `replay-local-object.hh` (walker, with `scope=0` — the new
+    scope is the identity, so no algebraic compounding) and at
+    `tracing-local-object.cc` (recorder, wrapping the apply's
+    `argObj.cdi` when the arg has no proper Subject — one nesting
+    layer, distinct scope from the wrapped cdi's origin).
+  - All current sites are one layer deep. A second nesting layer
+    (= wrapping an `OpaqueContent`-derived value into another
+    `OpaqueContent`) is the moment to worry — it stacks two
+    independent scopes via XOR and the cancellation surface area
+    grows multiplicatively.
+- Verdict: sound today, under SHA-256 entropy. Fragility lives in
+  the `OpaqueContent` wrapping path; cap allowed nesting depth at
+  1 and prefer Merkle composition (= `qH(QueryWrap{inner=hex(X)})`)
+  for any deeper case.
+
+*Cross-component bridges.*
+- G → F: `cdi → hex → qH(query) → SHA-256 seal → reqHash →
+  factElementHash(reqHash, respHash)`. Every step is a Merkle seal;
+  F sees uncorrelated SHA-256 atoms regardless of G's internal
+  algebra.
+- F → G: not observed in the codebase. No `factSetHash` is fed
+  into a cidasks construction. If introduced, the `factSetHash`
+  would arrive XOR-derived and would compound with G's algebra
+  — keep it banned.
+
 ## Layering: depth-1 vs depth-2
 
 The cache stacks two `(Query, Result)` / `(Request, Response)`
