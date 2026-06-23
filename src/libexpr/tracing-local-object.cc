@@ -20,10 +20,12 @@ TracingLocalObject::TracingLocalObject(
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
     std::shared_ptr<const ArgScopeCell> argScope,
-    Hash inheritedScope_)
+    Hash inheritedScope_,
+    Hash depth2ApplyId_)
     : inner(std::move(inner))
     , subject(std::move(subject_))
     , inheritedScope(std::move(inheritedScope_))
+    , depth2ApplyId(std::move(depth2ApplyId_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
     , argScope(std::move(argScope))
@@ -46,7 +48,7 @@ std::shared_ptr<Object> TracingLocalObject::maybeGetAttr(const std::string & nam
         .name = name,
     }};
     return std::make_shared<TracingLocalObject>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argScope, inheritedScope);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argScope, inheritedScope, depth2ApplyId);
 }
 
 std::vector<std::string> TracingLocalObject::getAttrNames()
@@ -129,7 +131,7 @@ std::shared_ptr<Object> TracingLocalObject::getListElem(size_t index)
         .index = index,
     }};
     return std::make_shared<TracingLocalObject>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argScope, inheritedScope);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argScope, inheritedScope, depth2ApplyId);
 }
 
 ObjectType TracingLocalObject::getTypeLazy()
@@ -174,7 +176,10 @@ std::optional<std::vector<std::string>> TracingLocalObject::getAttrPath()
 
 void TracingLocalObject::recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
-    writer.logAmbientInteraction(query, result, subject, inheritedScope);
+    /* Route through the depth-2 entry point: the outer is probing
+       an inner-supplied local. The `depth2ApplyId` groups this fact
+       into the cb apply's AmbientAsks edge at flush. */
+    writer.logDepth2Observation(query, result, subject, inheritedScope, depth2ApplyId);
 }
 
 std::shared_ptr<Object> TracingLocalObject::queryApply(std::shared_ptr<Object> argObj)
@@ -201,7 +206,7 @@ std::shared_ptr<Object> TracingLocalObject::queryApply(std::shared_ptr<Object> a
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
     }};
     return std::make_shared<TracingLocalObject>(
-        std::move(result), std::move(resultSubject), writer, rootFSRoot, argScope, inheritedScope);
+        std::move(result), std::move(resultSubject), writer, rootFSRoot, argScope, inheritedScope, depth2ApplyId);
 }
 
 } // namespace nix

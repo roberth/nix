@@ -84,13 +84,22 @@ class TracingWriter
        logResult time via flushPendingAmbient. The Subject identifies
        which value the observation is about — flush uses it via
        cidasks::contentIdAt to compute the fact's `from` field
-       against the relevant Asks-edge precondition factset. */
+       against the relevant Asks-edge precondition factset.
+
+       Layer marker: depth-1 facts (inner asks outer about an outer
+       value) feed into the depth-1 v13FactSet. Depth-2 facts (outer
+       probes an inner-supplied LocalObject during a cb apply) group
+       by their `applyId` (= the cb apply's resultId) into a depth-2
+       Asks-edge in `AmbientAsks`, per the via-Asks design. */
     struct PendingFact
     {
         trace::QueryVariant query;
         trace::ResultVariant result;
         cidasks::Subject subject;
         Hash inheritedScope; ///< outer-scope CDIs for contentIdAt
+        /* Empty hash = depth-1; otherwise = the cb apply's resultId,
+           grouping this fact into the depth-2 sub-trace for that apply. */
+        Hash depth2ApplyId{HashAlgorithm::SHA256};
     };
     std::vector<PendingFact> pendingFacts;
 
@@ -200,7 +209,27 @@ public:
     {
         if (!decisionGraph)
             return;
-        pendingFacts.push_back({query, result, std::move(subject), std::move(inheritedScope)});
+        pendingFacts.push_back({query, result, std::move(subject), std::move(inheritedScope),
+            /*depth2ApplyId=*/ Hash(HashAlgorithm::SHA256)});
+    }
+
+    /**
+     * Log a depth-2 observation (= the outer probes an inner-supplied
+     * LocalObject during a cb apply). Same payload shape as the
+     * depth-1 path; the additional `applyId` (= the cb apply's
+     * resultId) groups this fact into a depth-2 sub-trace at flush.
+     */
+    void logDepth2Observation(
+        const trace::QueryVariant & query,
+        const trace::ResultVariant & result,
+        cidasks::Subject subject,
+        Hash inheritedScope,
+        Hash applyId)
+    {
+        if (!decisionGraph)
+            return;
+        pendingFacts.push_back({query, result, std::move(subject),
+            std::move(inheritedScope), std::move(applyId)});
     }
 
     /**

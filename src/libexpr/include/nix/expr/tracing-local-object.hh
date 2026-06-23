@@ -41,6 +41,10 @@ class TracingLocalObject : public Object
     /* Inherited scope: XOR of outer-scope CDIs (CDI(Q) at the
        cb-apply boundary). Propagated to navigation children. */
     Hash inheritedScope;
+    /* The cb apply this local belongs to (= apply's resultId). Used
+       at flush to group depth-2 facts into an AmbientAsks edge per
+       apply. Navigation children inherit. */
+    Hash depth2ApplyId;
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
@@ -62,7 +66,8 @@ public:
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
         std::shared_ptr<const ArgScopeCell> argScope,
-        Hash inheritedScope = Hash(HashAlgorithm::SHA256));
+        Hash inheritedScope = Hash(HashAlgorithm::SHA256),
+        Hash depth2ApplyId = Hash(HashAlgorithm::SHA256));
 
     /** This proxy's structural identity, per the
         content-identity-via-asks design. */

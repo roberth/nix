@@ -16,12 +16,6 @@ void TracingWriter::flushPendingAmbient()
        For the default single-edge case, precondition is the empty
        factset, so `from = cidasks::contentIdAfter(subject, {})`.
 
-       The walk is built from pendingFacts as a single edge; each
-       fact's `from` is computed against the empty precondition
-       (edgeIndex = 0). Multi-edge handling (Patricia split, per-edge
-       precondition factsets) is the natural follow-up: build a walk
-       with multiple edges and pass the correct edgeIndex per fact.
-
        Pass A: insert deferred Requests at their natural keys. */
     for (auto & req : pendingRequests) {
         if (req.keyPlaceholder) {
@@ -43,6 +37,16 @@ void TracingWriter::flushPendingAmbient()
         edge.facts.push_back(cidasks::factFromQR(pf.query, pf.result));
     std::vector<cidasks::Edge> walk{std::move(edge)};
 
+    /* Group depth-2 facts by their applyId so we can build an
+       AmbientAsks edge per cb apply. Depth-1 facts (applyId == zero)
+       feed into the depth-1 v13FactSet as before. */
+    struct Depth2Group
+    {
+        std::vector<TracingDecisionGraph::RequestHash> requests;
+        Hash toFactSet{HashAlgorithm::SHA256};
+    };
+    std::map<Hash, Depth2Group> depth2Groups;
+
     /* Pass B: rewrite each fact's `from` to its subject's content
        id at this Asks edge's precondition (using the fact's own
        inheritedScope so sibling cached calls get distinct ids),
@@ -53,9 +57,10 @@ void TracingWriter::flushPendingAmbient()
 
         std::string queryTag = std::visit(
             [](const auto & q) -> std::string { return std::string(q.tag); }, fact.query);
+        bool isDepth2 = fact.depth2ApplyId != Hash(HashAlgorithm::SHA256);
         tracingCacheLog(
-            "flush fact: subject=%s query=%s from=%s",
-            cidasks::describe(fact.subject), queryTag, fromHex.substr(0, 12));
+            "flush fact: subject=%s query=%s from=%s depth=%d",
+            cidasks::describe(fact.subject), queryTag, fromHex.substr(0, 12), isDepth2 ? 2 : 1);
 
         nlohmann::json queryJson;
         std::visit([&](const auto & q) { queryJson = q; }, fact.query);
@@ -74,7 +79,19 @@ void TracingWriter::flushPendingAmbient()
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
         decisionGraph->insertResponse(queryHash, responsePayload);
 
-        /* Dedupe by (request, response) — see logResponse. */
+        if (isDepth2) {
+            /* Depth-2 sub-trace: collect this fact's contributions
+               into its apply's group. The depth-1 v13FactSet does
+               NOT receive depth-2 facts — they live in the
+               AmbientAsks trie keyed by the cb apply's
+               (fromFactSet, requestSet). */
+            auto & g = depth2Groups[fact.depth2ApplyId];
+            g.requests.push_back(queryHash);
+            g.toFactSet = TracingDecisionGraph::xorFactIntoHash(g.toFactSet, queryHash, responseHash);
+            continue;
+        }
+
+        /* Depth-1: dedupe by (request, response). See logResponse. */
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), queryHash, responseHash);
         if (seenRequests.insert(factHash).second) {
@@ -84,6 +101,21 @@ void TracingWriter::flushPendingAmbient()
             responseFor.emplace(queryHash, responseHash);
             allRequestsTrie.insert(queryHash);
         }
+    }
+
+    /* Insert one AmbientAsks edge per cb apply. fromFactSet = ∅
+       (single-edge depth-2 sub-trace; multi-edge / Patricia split
+       is a follow-up). */
+    auto emptySet = TracingDecisionGraph::emptySetHash();
+    for (auto & [applyId, group] : depth2Groups) {
+        auto requestSet = decisionGraph->insertRequestSet(group.requests);
+        decisionGraph->insertAmbientAsks(emptySet, requestSet, group.toFactSet);
+        tracingCacheLog(
+            "flush depth-2 edge: applyId=%s |reqs|=%zu requestSet=%s toFactSet=%s",
+            applyId.to_string(HashFormat::Base16, false).substr(0, 12),
+            group.requests.size(),
+            requestSet.to_string(HashFormat::Base16, false).substr(0, 12),
+            group.toFactSet.to_string(HashFormat::Base16, false).substr(0, 12));
     }
 
     pendingFacts.clear();

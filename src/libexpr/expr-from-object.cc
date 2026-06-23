@@ -279,6 +279,15 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
     cidasks::Subject argSubject{cidasks::PositionalSeed{localCell->depth}};
     auto argId = cidasks::contentIdAfter(argSubject, resolverHandle->callScope, {});
 
+    /* Compute the resultId early so we can pass it to the
+       TracingLocalObject as depth2ApplyId — groups all depth-2 facts
+       made on this local (and its descendants) into a single
+       AmbientAsks edge at flush. */
+    auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
+    auto argIdStr = argId.to_string(HashFormat::Base16, false);
+    trace::QueryApply applyQuery{fnIdStr, argIdStr};
+    auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
+
     /* Wrap the argObj in TracingLocalObject so the outer's
        accesses on it during the apply land in the inner trace
        with `from=hex(argId)`. Inherit callScope so sibling cached
@@ -286,7 +295,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
     auto wrappedArg = (innerWriter && outerRootFSRoot)
         ? std::shared_ptr<Object>(std::make_shared<TracingLocalObject>(
               argObj, argSubject, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell,
-              resolverHandle->callScope))
+              resolverHandle->callScope, resultId))
         : argObj;
 
     /* Bridge local arg via ExprFromObject. The cache memoises by
@@ -305,11 +314,8 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
     resultVal->mkApp(*fnVal, argThunk);
     auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
 
-    /* Result id is queryHash(QueryApply{fn=fnId, arg=argId}). */
-    auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
-    auto argIdStr = argId.to_string(HashFormat::Base16, false);
-    trace::QueryApply applyQuery{fnIdStr, argIdStr};
-    auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
+    /* Result id is queryHash(QueryApply{fn=fnId, arg=argId})
+       (already computed above for depth2ApplyId plumbing). */
     /* Tag provenance: when argObj is a ReplayLocalObject standin, this
        AmbientApply::run was called from the walker's dispatch path
        (resolveApplyId → materialiseLocalStandin → fnObj.queryApply).
