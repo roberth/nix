@@ -42,7 +42,9 @@ result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
     '(builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) { f = x: x + 100; x = 7; }')
 [[ "$result" == 107 ]]
 
-collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
-    env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
-        '(builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) { f = x: x + 100; x = 7; }')
-[[ "$collisions" == 0 ]]
+# TODO(depth-2): `pre_flush_substitution_collisions` was removed with
+# the substitution machinery; the assertion below now reads "null".
+# collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
+#     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
+#         '(builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) { f = x: x + 100; x = 7; }')
+# [[ "$collisions" == 0 ]]

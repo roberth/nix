@@ -33,8 +33,12 @@ echo "=== warm (expect 8 hits, 0 misses, 0 fallbacks) ==="
 assertCacheStats 8 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }'
 
-# No collisions expected on this scenario (single cb invocation, no
-# sibling overwrite path).
-collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
-    nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }')
-[[ "$collisions" == 0 ]]
+# TODO(depth-2): the `pre_flush_substitution_collisions` metric was
+# removed when the substitution machinery was stripped (the via-Asks
+# design replaces it). The check below asserts the metric reads 0,
+# but `cacheStatsField` now returns the JSON string "null" for the
+# missing field and `[[ null == 0 ]]` fails. Restore a meaningful
+# equivalent invariant when the depth-2 walker lands.
+# collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
+#     nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }')
+# [[ "$collisions" == 0 ]]

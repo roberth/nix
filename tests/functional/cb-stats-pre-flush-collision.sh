@@ -15,38 +15,12 @@
 
 source common.sh
 
-enableFeatures "tracing-eval-cache"
-
-clearCache() {
-    rm -rf "$TEST_HOME/.cache/nix/eval-tracing-decision-graph"
-}
-
-clearCache
-
-echo '{ f, x }: f x' > "$TEST_ROOT/call-fn.nix"
-
-# Trigger the collision scenario from builtins-cache.sh's call-fn
-# pattern. Multiple `nix eval` calls each record a distinct trace into
-# the shared on-disk decisionGraph. The third invocation's warm walker
-# falls through to inner re-evaluation, which defers an apply Q whose
-# substitution collides with an apply-Q substitution already established
-# in the same process by an earlier flush cycle (likely a walker
-# dispatch that itself invoked queryApply).
-echo "=== priming: invocation 1 records (no collision) ==="
-collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
-    nix eval --impure --expr \
-        '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 10; }')
-[[ "$collisions" == 0 ]]
-
-echo "=== priming: invocation 2 records different f (no collision) ==="
-collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
-    nix eval --impure --expr \
-        '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 100; x = 10; }')
-[[ "$collisions" == 0 ]]
-
-echo "=== invocation 3 with new x — collision counter must be > 0 ==="
-collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
-    nix eval --impure --expr \
-        '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 50; }')
-echo "Collisions: $collisions"
-[[ "$collisions" -gt 0 ]]
+# TODO(depth-2): this whole test probes the removed
+# `pre_flush_substitution_collisions` metric from the
+# substitution-machinery era. The via-Asks design replaces that
+# machinery entirely — there's no collision counter to assert against
+# anymore. Skip until we have a corresponding invariant in the new
+# design (likely something like "AmbientAsks edges' (fromFactSet,
+# requestSet) keys remain unique under sibling cb invocations").
+echo "skipped: probes removed pre_flush_substitution_collisions metric"
+exit 77

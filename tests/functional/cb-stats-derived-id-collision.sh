@@ -58,13 +58,12 @@ result=$(nix eval --impure --expr \
 echo "Got: $result"
 [[ "$result" == 84 ]]
 
-# Locked-in stats: same-shape collapse should give some hits even on
-# cold (the second invocation hits the first's recorded trace).
-echo "=== warm with independent constructions (expect hits, 0 collisions) ==="
-collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
-    env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
-        'let c = builtins.cache { import = '"$TEST_ROOT"'/deep.nix; };
-         in c { args = { outer = { middle = { inner = 42; }; }; }; }
-          + c { args = { outer = { middle = { inner = 42; }; }; }; }')
-echo "Collisions: $collisions"
-[[ "$collisions" == 0 ]]
+# TODO(depth-2): `pre_flush_substitution_collisions` was removed with
+# the substitution machinery; the assertion below now reads "null"
+# and trips. The behavioral checks above are still meaningful.
+# collisions=$(cacheStatsField pre_flush_substitution_collisions -- \
+#     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
+#         'let c = builtins.cache { import = '"$TEST_ROOT"'/deep.nix; };
+#          in c { args = { outer = { middle = { inner = 42; }; }; }; }
+#           + c { args = { outer = { middle = { inner = 42; }; }; }; }')
+# [[ "$collisions" == 0 ]]
