@@ -187,6 +187,7 @@ suites = [
       'cb-stats-derived-id-collision.sh',
       'cb-stats-sidecar-baseline.sh',
       'cb-forcedness-independence.sh',
+      'cb-irrelevant-fields-lazy.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
