@@ -1,6 +1,7 @@
 #pragma once
 
 #include "nix/expr/arg-scope.hh"
+#include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/util/ref.hh"
@@ -28,6 +29,28 @@ class TracingObject : public Object
        ancestor chain. */
     std::shared_ptr<const ArgScopeCell> argScope;
 
+    /* Per-cb-apply observation context for the apply that produced
+       this object. Set on apply-result wrappers by
+       TracingEvaluator::apply when the arg was an AmbientObject
+       carrying one. Used to compute the apply-result's evolved
+       Content Id via cidasks (= ApplyResultSubject's recursive arg
+       cdi reflects the observations the apply body made on its arg).
+       Null on non-apply-result wrappers. */
+    std::shared_ptr<cidasks::ApplyContext> applyContext;
+    /* When apply-result, the ApplyResultSubject identifying it
+       structurally. Used together with applyContext to compute the
+       evolved cdi when recording child queries. */
+    std::optional<cidasks::Subject> applyResultSubject;
+
+    /* Compute the apply-result's evolved query-hash prefix (= the
+       hex hash to use as `from` for child queries) by running
+       cidasks::contentIdAfter on applyResultSubject with the
+       accumulated observations in applyContext. Falls back to the
+       static triePos.queryHashStr when not an apply-result wrapper
+       or the context has no observations yet. Mirror of the same
+       helper on TracingReplayObject. */
+    std::string evolvedQueryFrom() const;
+
     TracingObject(ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos);
 
 public:
@@ -41,6 +64,17 @@ public:
     TracingObject & withScope(std::shared_ptr<const ArgScopeCell> argScope_)
     {
         argScope = std::move(argScope_);
+        return *this;
+    }
+
+    /** Attach the per-apply observation context — for apply-result
+        wrappers, so child queries log with evolved (= observation-
+        evolved) parent ids. Mirror of TracingReplayObject's. */
+    TracingObject & withApplyContext(
+        std::shared_ptr<cidasks::ApplyContext> ctx, cidasks::Subject resultSubject)
+    {
+        applyContext = std::move(ctx);
+        applyResultSubject = std::move(resultSubject);
         return *this;
     }
 

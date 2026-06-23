@@ -41,25 +41,17 @@ ref<Object> TracingReplayObject::ensureInner() const
 
 std::string TracingReplayObject::evolvedQueryFrom() const
 {
-    /* For apply-result wrappers, the apply's depth-2 observations
-       on the cb arg evolve the result's Content Id via cidasks
-       (ApplyResultSubject's recursive arg cdi). If the body has
-       already executed (= applyContext is finalized) and has
-       observations, we use the evolved cdi — that's the
-       disambiguation depth-2 needs across sibling cb applies.
-
-       But we do NOT force ensureInner here: forcing eagerly
-       defeats warm-replay where the cache hit at the static cdi
-       is the right answer (e.g. cb-local-descendants step 2). The
-       depth-2 walk that populates applyContext without running
-       live is the proper mechanism for warm replay; until that
-       lands, callers that need evolved cdi must trigger
-       ensureInner themselves (e.g., via a leaf method's fallback
-       path) and then re-look up via subsequent get* calls.
-
-       Non-apply-result wrappers, and apply-results whose body
-       hasn't been forced yet, fall back to the static
-       triePos.queryHashStr. */
+    /* For apply-result wrappers, the apply's observations on the cb
+       arg evolve the result's Content Id via cidasks
+       (ApplyResultSubject's recursive arg cdi). We only evolve once
+       the body has completed (= applyContext->finalized) because
+       observations accumulate asynchronously during the walker's
+       dispatch chain — using a partial walk before finalization
+       lands at intermediate trie positions the recorder didn't
+       write to. The recorder, in contrast, evolves as observations
+       come in: each TracingObject method forces inner first (= one
+       atomic step of body execution), so the cdi at each method's
+       log point reflects exactly the observations made so far. */
     if (applyContext && applyResultSubject && applyContext->finalized
         && !applyContext->observations.empty()) {
         cidasks::Edge edge{.facts = applyContext->observations};
