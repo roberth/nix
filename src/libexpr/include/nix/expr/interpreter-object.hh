@@ -55,6 +55,12 @@ public:
     std::optional<FunctionInfo> getFunctionInfo() override;
 
     PosIdx getPos() override;
+
+    /** Value-level apply: this Value is a function (or thunk
+        reducing to one); apply it to argObj's Value. Mirrors
+        `Interpreter::apply` but as the Object-method entry point so
+        callers can route apply through queryApply uniformly. */
+    std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 };
 
 } // namespace nix
