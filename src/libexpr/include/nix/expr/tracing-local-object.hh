@@ -90,6 +90,13 @@ public:
     std::optional<FunctionInfo> getFunctionInfo() override;
     PosIdx getPos() override;
     std::optional<std::vector<std::string>> getAttrPath() override;
+    /** Object-method apply entry. Records the apply as a depth-2
+        observation (= outer is applying this local to argObj), then
+        delegates to `inner->queryApply(argObj)` and wraps the result
+        as another TracingLocalObject with an `ApplyResultSubject`
+        so further accesses on the result continue to land in the
+        depth-2 trace. */
+    std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 
     AmbientId getCdi() const { return localId(); }
 

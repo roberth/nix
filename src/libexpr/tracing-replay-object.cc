@@ -330,4 +330,16 @@ std::optional<FunctionInfo> TracingReplayObject::getFunctionInfo()
     return ensureInner()->getFunctionInfo();
 }
 
+std::shared_ptr<Object> TracingReplayObject::queryApply(std::shared_ptr<Object> argObj)
+{
+    /* Object-method counterpart of TracingReplayEvaluator::apply.
+       Delegates to the evaluator so walker lookup + the lazy
+       getInner callback are preserved — callers can route apply
+       through queryApply uniformly without losing the caching
+       layer. */
+    auto self = std::const_pointer_cast<TracingReplayObject>(
+        std::static_pointer_cast<const TracingReplayObject>(shared_from_this()));
+    return evaluator.apply(ref<Object>(self), ref<Object>(argObj)).get_ptr();
+}
+
 } // namespace nix

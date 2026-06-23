@@ -224,4 +224,16 @@ std::optional<std::vector<std::string>> TracingObject::getAttrPath()
     return inner->getAttrPath();
 }
 
+std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj)
+{
+    /* Delegate to inner. Don't record a Q_apply Terminal —
+       TracingEvaluator::apply's comment explains why (a fresh app
+       thunk has no result type). Wrap the result as another
+       TracingObject so further accesses land in the inner trace
+       parented on the apply's queryHash. */
+    auto result = inner->queryApply(argObj);
+    return std::shared_ptr<TracingObject>(
+        new TracingObject(ref<Object>(result), writer, valueNum, triePos));
+}
+
 } // namespace nix

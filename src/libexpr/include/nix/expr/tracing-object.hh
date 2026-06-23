@@ -72,6 +72,11 @@ public:
     std::optional<FunctionInfo> getFunctionInfo() override;
     PosIdx getPos() override;
     std::optional<std::vector<std::string>> getAttrPath() override;
+    /** Object-method apply entry. Delegates to inner->queryApply and
+        wraps the result as another TracingObject so subsequent
+        accesses on the apply result are recorded as queries against
+        the apply-result trie position. */
+    std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 };
 
 } // namespace nix

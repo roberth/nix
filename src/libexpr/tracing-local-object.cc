@@ -177,4 +177,31 @@ void TracingLocalObject::recordObservation(const trace::QueryVariant & query, co
     writer.logAmbientInteraction(query, result, subject, inheritedScope);
 }
 
+std::shared_ptr<Object> TracingLocalObject::queryApply(std::shared_ptr<Object> argObj)
+{
+    /* Delegate the apply itself to the wrapped inner Object. For an
+       inner-supplied lambda (the cb-higher-order case) `inner` is an
+       InterpreterObject whose queryApply does mkApp + bridging. For
+       a replay-time ReplayLocalObject standin, inner->queryApply
+       throws "can't validate" (= the depth-2 divergence signal).
+
+       The result wrapper carries an ApplyResultSubject so accesses
+       on the apply result continue to be recorded in the depth-2
+       trace with an evolved cdi (per the cidasks design). */
+    auto argCdiHex = argObj->getCdiHex();
+    cidasks::Subject argSubject = argObj->getSubject()
+        ? *argObj->getSubject()
+        : cidasks::Subject{cidasks::OpaqueContentSubject{
+              argCdiHex
+                  ? Hash::parseNonSRIUnprefixed(*argCdiHex, HashAlgorithm::SHA256)
+                  : Hash{HashAlgorithm::SHA256}}};
+    auto result = inner->queryApply(argObj);
+    cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
+        .fn = std::make_shared<const cidasks::Subject>(subject),
+        .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
+    }};
+    return std::make_shared<TracingLocalObject>(
+        std::move(result), std::move(resultSubject), writer, rootFSRoot, argScope, inheritedScope);
+}
+
 } // namespace nix
