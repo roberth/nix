@@ -46,6 +46,18 @@ to the present design.
    consumer probes for it — never traverse recorded structure ahead
    of the consumer.
 
+8. **Cache behavior is independent of the argument's forcedness
+   state.** Whether an argument arrives at a boundary already forced
+   (= e.g. the interpreter happened to evaluate it eagerly for an
+   adjacent primop) or as an unforced thunk must NOT change what
+   the cache records or how it looks up. Identity is derived only
+   from observations the *function body* (= expression-defined
+   behavior) makes through the value — never from observations the
+   interpreter made incidentally. This is what makes cache
+   performance predictable: a refactor that changes evaluation
+   order cannot perturb cache layout. A corollary of (#7); also
+   non-negotiable on its own.
+
 ## Design principles
 
 These are the specific commitments of this design.
