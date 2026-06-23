@@ -576,6 +576,7 @@ static PrimOp * makeAmbientFnPrimOp(std::shared_ptr<Object> fnObj, std::shared_p
 void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
 {
     auto type = obj->getType();
+    tracingCacheLog("ExprFromObject::eval type=%s obj=%p", objectTypeToString(type), (void*)obj.get());
 
     switch (type) {
     case nAttrs: {

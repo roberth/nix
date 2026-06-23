@@ -1,5 +1,6 @@
 #include "nix/expr/tracing-local-object.hh"
 #include "nix/expr/object-type.hh"
+#include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/util/source-accessor.hh"
@@ -142,8 +143,13 @@ ObjectType TracingLocalObject::getTypeLazy()
 ObjectType TracingLocalObject::getType()
 {
     auto type = inner->getType();
-    recordObservation(
-        trace::QueryGetType{tracingLocalFromOf(localId())}, trace::ResultType{objectTypeToString(type)});
+    trace::QueryGetType q{tracingLocalFromOf(localId())};
+    recordObservation(q, trace::ResultType{objectTypeToString(type)});
+    auto reqHash = TracingDecisionGraph::computeQueryHash(q);
+    tracingCacheLog("tlo: getType from=%s reqHash=%s type=%s",
+        tracingLocalFromOf(localId()).substr(0, 12),
+        reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        objectTypeToString(type));
     return type;
 }
 

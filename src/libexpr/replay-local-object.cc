@@ -1,4 +1,5 @@
 #include "nix/expr/replay-local-object.hh"
+#include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/expr-from-object.hh"
 #include "nix/expr/object-type.hh"
 #include "nix/expr/primops.hh"
@@ -19,6 +20,11 @@ static std::string replayFromOf(AmbientId id)
     return id.to_string(HashFormat::Base16, false);
 }
 
+static std::string replayFromHex(const Hash & h)
+{
+    return h.to_string(HashFormat::Base16, false);
+}
+
 template<typename Q>
 static AmbientId replayDerivedLocalId(const Q & query)
 {
@@ -29,6 +35,10 @@ template<typename Q>
 static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query)
 {
     auto reqHash = TracingDecisionGraph::computeQueryHash(query);
+    tracingCacheLog(
+        "rlo: read %s from=%s reqHash=%s",
+        Q::tag, query.from.isContent() ? query.from.contentHash().substr(0, 12) : "<?>",
+        reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
     auto payload = dg.getResponsePayload(reqHash);
     if (!payload)
         throw Error("ReplayLocalObject: no recorded response for %s on local %s",
@@ -36,47 +46,110 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query)
     return cborStringToJson(*payload);
 }
 
-/* Per-probe live validation, per the design doc's depth-2 replay
-   section: each probe the outer makes on the reconstructed local
-   must appear in some recorded `AmbientAsks` edge's requestSet.
-   Mismatch = divergence (= the outer is probing the local in a way
-   the recording didn't capture). Throws to signal divergence; the
-   walker's surrounding try/catch (in dispatchAmbientQuery) turns
-   it into a miss → depth-1 fallback handles re-eval. */
+/* Multi-edge AmbientAsks walker: dispatch and validate one probe at
+   a time. Per the design's "Replay (depth-2)" section, each probe
+   (a) composes with `from = hex(contentIdAt(subject, scope,
+   walkFacts, walkFacts.size()))` so its reqHash matches what the
+   recorder wrote at this point in the chain, (b) is looked up as a
+   singleton-requestSet edge from `*chainCursor → toFactSet`, and
+   (c) on a match advances the shared chain cursor and appends the
+   fact to the shared walk so subsequent probes compose against the
+   correctly evolved cdis (including for sibling proxies derived
+   from the same cb-apply local). On mismatch we throw a divergence
+   signal which the surrounding walker layer turns into a miss →
+   depth-1 fallback handles re-eval. */
 template<typename Q>
-static void validateProbeAgainstAmbientAsks(TracingDecisionGraph & dg, const Q & query)
+static void advanceChainAndAppendFact(
+    TracingDecisionGraph & dg, const Q & query, const Hash & fromCdi,
+    const nlohmann::json & responseJson,
+    std::vector<cidasks::Edge> & walkFacts, Hash & chainCursor)
 {
     auto reqHash = TracingDecisionGraph::computeQueryHash(query);
-    auto emptySet = TracingDecisionGraph::emptySetHash();
-    auto edges = dg.getAmbientAsks(emptySet);
-    for (auto & [requestSetHash, _] : edges) {
+    tracingCacheLog(
+        "walk: probe %s from=%s reqHash=%s cursor=%s walkSize=%zu",
+        Q::tag, fromCdi.to_string(HashFormat::Base16, false).substr(0, 12),
+        reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        chainCursor.to_string(HashFormat::Base16, false).substr(0, 12),
+        walkFacts.size());
+    auto edges = dg.getAmbientAsks(chainCursor);
+    for (auto & [requestSetHash, toFactSet] : edges) {
         auto requestSet = dg.getRequestSet(requestSetHash);
         if (!requestSet)
             continue;
-        if (std::find(requestSet->begin(), requestSet->end(), reqHash) != requestSet->end())
-            return; // probe is recorded
+        if (std::find(requestSet->begin(), requestSet->end(), reqHash) == requestSet->end())
+            continue;
+        /* Probe matches a recorded edge at this position. Build the
+           Fact with the query's `from` field as fromHash so the
+           cidasks evolution filter (= "facts about V at this
+           precondition have fromHash == V.cdiAt(precondition)")
+           recognises this fact as one of V's own observations. */
+        auto responsePayload = jsonToCborString(responseJson);
+        auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
+        auto elementHash = TracingDecisionGraph::xorFactIntoHash(
+            Hash(HashAlgorithm::SHA256), reqHash, responseHash);
+        cidasks::Edge edge;
+        edge.facts.push_back({fromCdi, elementHash});
+        walkFacts.push_back(std::move(edge));
+        chainCursor = toFactSet;
+        return;
     }
     tracingCacheLog(
-        "depth-2 divergence: probe %s reqHash=%s not in any AmbientAsks edge",
-        Q::tag, reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
+        "depth-2 divergence: probe %s reqHash=%s no AmbientAsks edge from %s",
+        Q::tag, reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        chainCursor.to_string(HashFormat::Base16, false).substr(0, 12));
     throw Error(
-        "depth-2 divergence: probe %s on local was not recorded in any AmbientAsks edge",
+        "depth-2 divergence: probe %s on local has no AmbientAsks edge from current factSet",
         Q::tag);
+}
+
+/* End-to-end probe handler. Builds the query from this proxy's
+   identity (`subject`, `scope`, shared `walkFacts`), reads the
+   recorded response, validates + advances the chain (when
+   validation is enabled), and returns the parsed response. */
+template<typename Q, typename... Extra>
+static nlohmann::json probeOnSubject(
+    TracingDecisionGraph & dg,
+    const cidasks::Subject & subject,
+    const Hash & scope,
+    std::vector<cidasks::Edge> & walkFacts,
+    Hash & chainCursor,
+    bool validate,
+    Extra &&... extraArgs)
+{
+    auto fromCdi = cidasks::contentIdAt(subject, scope, walkFacts, walkFacts.size());
+    Q query{replayFromHex(fromCdi), std::forward<Extra>(extraArgs)...};
+    auto rJson = readResponse(dg, query);
+    if (validate)
+        advanceChainAndAppendFact(dg, query, rJson, walkFacts, chainCursor);
+    return rJson;
 }
 
 std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name)
 {
-    trace::QueryGetAttr query{name, replayFromOf(localId)};
-    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    trace::QueryGetAttr query{name, replayFromHex(fromCdi)};
     auto rJson = readResponse(decisionGraph, query);
+    if (validateAgainstAmbientAsks)
+        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultMaybeType r = rJson;
     if (!r.type)
         return nullptr;
-    /* Propagate the child's type via in-band knownType so the
-       dispatcher's getAttr branch can answer child->getType()
-       without a separate pool lookup that the recorder never wrote. */
+    /* Child Subject is DerivedSubject of THIS subject — `contentIdAt`
+       on the child will recompute parent's cdi at the child's
+       current edge index, so any further parent observations are
+       reflected automatically. Pass shared walk/cursor. */
+    cidasks::Subject childSubject{cidasks::DerivedSubject{
+        .parent = std::make_shared<const cidasks::Subject>(subject),
+        .kind = cidasks::DerivedSubject::Kind::GetAttr,
+        .name = name,
+    }};
     auto child = std::make_shared<ReplayLocalObject>(
-        replayDerivedLocalId(query), decisionGraph, rootFSRoot, stringToObjectType(*r.type), state);
+        std::move(childSubject), scope, walkFacts, chainCursor,
+        decisionGraph, rootFSRoot, stringToObjectType(*r.type), state);
+    /* Children inherit per-probe validation if the parent has it —
+       they're observed within the same cb apply's recorded chain. */
+    if (validateAgainstAmbientAsks)
+        child->withAmbientAsksValidation();
     /* Navigation child inherits parent's argScope cell directly. */
     child->withScope(argScope);
     return child;
@@ -84,18 +157,22 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
 
 std::vector<std::string> ReplayLocalObject::getAttrNames()
 {
-    trace::QueryGetAttrNames query{replayFromOf(localId)};
-    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    trace::QueryGetAttrNames query{replayFromHex(fromCdi)};
     auto rJson = readResponse(decisionGraph, query);
+    if (validateAgainstAmbientAsks)
+        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultListOfStrings r = rJson;
     return r.values;
 }
 
 std::string ReplayLocalObject::getStringIgnoreContext()
 {
-    trace::QueryGetString query{replayFromOf(localId)};
-    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    trace::QueryGetString query{replayFromHex(fromCdi)};
     auto rJson = readResponse(decisionGraph, query);
+    if (validateAgainstAmbientAsks)
+        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultString r = rJson;
     return r.value;
 }
@@ -107,14 +184,12 @@ std::string ReplayLocalObject::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> ReplayLocalObject::getStringWithContext()
 {
-    trace::QueryGetStringWithContext query{replayFromOf(localId)};
-    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    trace::QueryGetStringWithContext query{replayFromHex(fromCdi)};
     auto rJson = readResponse(decisionGraph, query);
+    if (validateAgainstAmbientAsks)
+        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultStringWithContext r = rJson;
-    /* Context strings were serialised as raw strings; rebuild a
-       (possibly-empty) NixStringContext placeholder. The replayed
-       outer doesn't need to interpret context elements beyond their
-       string form. */
     NixStringContext ctx;
     for (auto & s : r.context)
         ctx.insert(NixStringContextElem::parse(s));
@@ -123,76 +198,96 @@ std::pair<std::string, NixStringContext> ReplayLocalObject::getStringWithContext
 
 RootedPath ReplayLocalObject::getPath()
 {
-    trace::QueryGetPath query{replayFromOf(localId)};
-    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    trace::QueryGetPath query{replayFromHex(fromCdi)};
     auto rJson = readResponse(decisionGraph, query);
+    if (validateAgainstAmbientAsks)
+        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultPath r = rJson;
     return RootedPath{rootFSRoot, CanonPath{r.path}};
 }
 
 bool ReplayLocalObject::getBool(std::string_view)
 {
-    trace::QueryGetBool query{replayFromOf(localId)};
-    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    trace::QueryGetBool query{replayFromHex(fromCdi)};
     auto rJson = readResponse(decisionGraph, query);
+    if (validateAgainstAmbientAsks)
+        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultBool r = rJson;
     return r.value;
 }
 
 NixInt ReplayLocalObject::getInt(std::string_view)
 {
-    trace::QueryGetInt query{replayFromOf(localId)};
-    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    trace::QueryGetInt query{replayFromHex(fromCdi)};
     auto rJson = readResponse(decisionGraph, query);
+    if (validateAgainstAmbientAsks)
+        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultInt r = rJson;
     return NixInt{r.value};
 }
 
 NixFloat ReplayLocalObject::getFloat(std::string_view)
 {
-    trace::QueryGetFloat query{replayFromOf(localId)};
-    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    trace::QueryGetFloat query{replayFromHex(fromCdi)};
     auto rJson = readResponse(decisionGraph, query);
+    if (validateAgainstAmbientAsks)
+        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultFloat r = rJson;
     return r.value;
 }
 
 size_t ReplayLocalObject::getListSize()
 {
-    trace::QueryGetListSize query{replayFromOf(localId)};
-    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    trace::QueryGetListSize query{replayFromHex(fromCdi)};
     auto rJson = readResponse(decisionGraph, query);
+    if (validateAgainstAmbientAsks)
+        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultListSize r = rJson;
     return r.size;
 }
 
 std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
 {
-    trace::QueryGetListElem query{replayFromOf(localId), index};
-    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
-    /* The recorded response only carries the child's type, not
-       value. We still derive an id for the child so the outer can
-       chain further accesses on it. Propagate the type in-band so
-       the dispatcher's child->getType() resolves without needing
-       a separate getType fact the recorder never emits. */
+    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    trace::QueryGetListElem query{replayFromHex(fromCdi), index};
     auto rJson = readResponse(decisionGraph, query);
+    if (validateAgainstAmbientAsks)
+        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultType r = rJson;
+    cidasks::Subject childSubject{cidasks::DerivedSubject{
+        .parent = std::make_shared<const cidasks::Subject>(subject),
+        .kind = cidasks::DerivedSubject::Kind::GetListElem,
+        .index = index,
+    }};
     auto child = std::make_shared<ReplayLocalObject>(
-        replayDerivedLocalId(query), decisionGraph, rootFSRoot, stringToObjectType(r.type));
-    /* Navigation child inherits parent's argScope cell directly. */
+        std::move(childSubject), scope, walkFacts, chainCursor,
+        decisionGraph, rootFSRoot, stringToObjectType(r.type), state);
+    if (validateAgainstAmbientAsks)
+        child->withAmbientAsksValidation();
     child->withScope(argScope);
     return child;
 }
 
 ObjectType ReplayLocalObject::getType()
 {
-    if (knownType)
+    /* Subsequent calls return cached. */
+    if (getTypeProbed && knownType)
         return *knownType;
-    trace::QueryGetType query{replayFromOf(localId)};
-    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    trace::QueryGetType query{replayFromHex(fromCdi)};
     auto rJson = readResponse(decisionGraph, query);
+    if (validateAgainstAmbientAsks)
+        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultType r = rJson;
-    return stringToObjectType(r.type);
+    auto type = stringToObjectType(r.type);
+    knownType = type;
+    getTypeProbed = true;
+    return type;
 }
 
 ObjectType ReplayLocalObject::getTypeLazy()
@@ -295,9 +390,11 @@ RootValue ReplayLocalObject::defeatCache()
 
 std::optional<FunctionInfo> ReplayLocalObject::getFunctionInfo()
 {
-    trace::QueryGetFunctionInfo query{replayFromOf(localId)};
-    if (validateAgainstAmbientAsks) validateProbeAgainstAmbientAsks(decisionGraph, query);
+    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    trace::QueryGetFunctionInfo query{replayFromHex(fromCdi)};
     auto rJson = readResponse(decisionGraph, query);
+    if (validateAgainstAmbientAsks)
+        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultFunctionInfo r = rJson;
     if (!r.hasInfo)
         return std::nullopt;

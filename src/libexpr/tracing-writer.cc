@@ -30,47 +30,55 @@ void TracingWriter::flushPendingAmbient()
         }
     }
 
-    /* Build a single-edge walk from pendingFacts. Each fact's
-       per-edge precondition is edgeIndex 0 (= the empty factset). */
-    cidasks::Edge edge;
-    for (auto & pf : pendingFacts)
-        edge.facts.push_back(cidasks::factFromQR(pf.query, pf.result));
-    std::vector<cidasks::Edge> walk{std::move(edge)};
+    /* Partition facts by layer:
+        - Depth-1 facts (depth2ApplyId == zero) fold into v13FactSet
+          as before; we build a single-edge walk for them since v13
+          uses XOR-fold semantics over the whole set.
+        - Depth-2 facts group by cb-apply id. Each group becomes a
+          multi-edge walk (= one Asks edge per fact, in observation
+          order) with each fact's `from` substituted at its own
+          edgeIndex via cidasks. The resulting chained AmbientAsks
+          rows let the walker advance probe-by-probe and let sibling
+          cb-applies fork at their first divergent response. */
+    std::vector<PendingFact *> depth1Facts;
+    std::map<Hash, std::vector<PendingFact *>> depth2FactsByApply;
+    for (auto & pf : pendingFacts) {
+        if (pf.depth2ApplyId == Hash(HashAlgorithm::SHA256))
+            depth1Facts.push_back(&pf);
+        else
+            depth2FactsByApply[pf.depth2ApplyId].push_back(&pf);
+    }
 
-    /* Group depth-2 facts by their applyId so we can build an
-       AmbientAsks edge per cb apply. Depth-1 facts (applyId == zero)
-       feed into the depth-1 v13FactSet as before. */
-    struct Depth2Group
-    {
-        std::vector<TracingDecisionGraph::RequestHash> requests;
-        Hash toFactSet{HashAlgorithm::SHA256};
-    };
-    std::map<Hash, Depth2Group> depth2Groups;
+    /* Depth-1: single-edge walk (preserve v13 XOR-fold semantics for
+       input tracing). */
+    cidasks::Edge d1Edge;
+    for (auto * pf : depth1Facts)
+        d1Edge.facts.push_back(cidasks::factFromQR(pf->query, pf->result));
+    std::vector<cidasks::Edge> d1Walk{std::move(d1Edge)};
 
-    /* Pass B: rewrite each fact's `from` to its subject's content
-       id at this Asks edge's precondition (using the fact's own
-       inheritedScope so sibling cached calls get distinct ids),
-       then insert. */
-    for (auto & fact : pendingFacts) {
-        auto fromCdi = cidasks::contentIdAt(fact.subject, fact.inheritedScope, walk, /*edgeIndex=*/ 0);
-        auto fromHex = fromCdi.to_string(HashFormat::Base16, false);
-
-        std::string queryTag = std::visit(
-            [](const auto & q) -> std::string { return std::string(q.tag); }, fact.query);
-        bool isDepth2 = fact.depth2ApplyId != Hash(HashAlgorithm::SHA256);
-        tracingCacheLog(
-            "flush fact: subject=%s query=%s from=%s depth=%d",
-            cidasks::describe(fact.subject), queryTag, fromHex.substr(0, 12), isDepth2 ? 2 : 1);
-
-        nlohmann::json queryJson;
-        std::visit([&](const auto & q) { queryJson = q; }, fact.query);
+    auto rewriteFromInQuery = [](nlohmann::json & queryJson, const std::string & fromHex) {
         if (queryJson.is_object() && queryJson.contains("params")) {
             auto & params = queryJson["params"];
             if (params.is_object() && params.contains("from"))
                 params["from"] = fromHex;
         }
+    };
+
+    for (auto * pf : depth1Facts) {
+        auto fromCdi = cidasks::contentIdAt(pf->subject, pf->inheritedScope, d1Walk, /*edgeIndex=*/ 0);
+        auto fromHex = fromCdi.to_string(HashFormat::Base16, false);
+
+        std::string queryTag = std::visit(
+            [](const auto & q) -> std::string { return std::string(q.tag); }, pf->query);
+        tracingCacheLog(
+            "flush d1 fact: subject=%s query=%s from=%s",
+            cidasks::describe(pf->subject), queryTag, fromHex.substr(0, 12));
+
+        nlohmann::json queryJson;
+        std::visit([&](const auto & q) { queryJson = q; }, pf->query);
+        rewriteFromInQuery(queryJson, fromHex);
         nlohmann::json resultJson;
-        std::visit([&](const auto & r) { resultJson = r; }, fact.result);
+        std::visit([&](const auto & r) { resultJson = r; }, pf->result);
 
         auto queryHash = hashString(HashAlgorithm::SHA256, queryJson.dump());
         auto responsePayload = jsonToCborString(resultJson);
@@ -79,19 +87,7 @@ void TracingWriter::flushPendingAmbient()
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
         decisionGraph->insertResponse(queryHash, responsePayload);
 
-        if (isDepth2) {
-            /* Depth-2 sub-trace: collect this fact's contributions
-               into its apply's group. The depth-1 v13FactSet does
-               NOT receive depth-2 facts — they live in the
-               AmbientAsks trie keyed by the cb apply's
-               (fromFactSet, requestSet). */
-            auto & g = depth2Groups[fact.depth2ApplyId];
-            g.requests.push_back(queryHash);
-            g.toFactSet = TracingDecisionGraph::xorFactIntoHash(g.toFactSet, queryHash, responseHash);
-            continue;
-        }
-
-        /* Depth-1: dedupe by (request, response). See logResponse. */
+        /* Dedupe by (request, response). See logResponse. */
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), queryHash, responseHash);
         if (seenRequests.insert(factHash).second) {
@@ -103,19 +99,62 @@ void TracingWriter::flushPendingAmbient()
         }
     }
 
-    /* Insert one AmbientAsks edge per cb apply. fromFactSet = ∅
-       (single-edge depth-2 sub-trace; multi-edge / Patricia split
-       is a follow-up). */
+    /* Depth-2: per cb-apply, build a multi-edge walk incrementally
+       so each fact's substituted `from` is computed against prior
+       SUBSTITUTED facts (= the walker sees the same chain it
+       constructs probe-by-probe). Without this, the writer's
+       contentIdAt evaluation uses each fact's ORIGINAL `from`
+       (the constant `localId()` recorded by TracingLocalObject),
+       which mismatches the walker's evolved cdi and breaks the
+       cidasks filter for derived children. */
     auto emptySet = TracingDecisionGraph::emptySetHash();
-    for (auto & [applyId, group] : depth2Groups) {
-        auto requestSet = decisionGraph->insertRequestSet(group.requests);
-        decisionGraph->insertAmbientAsks(emptySet, requestSet, group.toFactSet);
-        tracingCacheLog(
-            "flush depth-2 edge: applyId=%s |reqs|=%zu requestSet=%s toFactSet=%s",
-            applyId.to_string(HashFormat::Base16, false).substr(0, 12),
-            group.requests.size(),
-            requestSet.to_string(HashFormat::Base16, false).substr(0, 12),
-            group.toFactSet.to_string(HashFormat::Base16, false).substr(0, 12));
+    for (auto & [applyId, group] : depth2FactsByApply) {
+        std::vector<cidasks::Edge> walk;
+        walk.reserve(group.size());
+
+        Hash cumulativeFactSet = emptySet;
+        for (size_t i = 0; i < group.size(); ++i) {
+            auto * pf = group[i];
+            /* `from` at this fact's edge precondition, against the
+               substituted-so-far walk. */
+            auto fromCdi = cidasks::contentIdAt(pf->subject, pf->inheritedScope, walk, /*edgeIndex=*/ i);
+            auto fromHex = fromCdi.to_string(HashFormat::Base16, false);
+
+            std::string queryTag = std::visit(
+                [](const auto & q) -> std::string { return std::string(q.tag); }, pf->query);
+            tracingCacheLog(
+                "flush d2 fact: applyId=%s i=%zu subject=%s query=%s from=%s",
+                applyId.to_string(HashFormat::Base16, false).substr(0, 12),
+                i, cidasks::describe(pf->subject), queryTag, fromHex.substr(0, 12));
+
+            nlohmann::json queryJson;
+            std::visit([&](const auto & q) { queryJson = q; }, pf->query);
+            rewriteFromInQuery(queryJson, fromHex);
+            nlohmann::json resultJson;
+            std::visit([&](const auto & r) { resultJson = r; }, pf->result);
+
+            auto queryHash = hashString(HashAlgorithm::SHA256, queryJson.dump());
+            auto responsePayload = jsonToCborString(resultJson);
+            auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
+
+            decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
+            decisionGraph->insertResponse(queryHash, responsePayload);
+
+            auto requestSet = decisionGraph->insertRequestSet({queryHash});
+            auto toFactSet = TracingDecisionGraph::xorFactIntoHash(
+                cumulativeFactSet, queryHash, responseHash);
+            decisionGraph->insertAmbientAsks(cumulativeFactSet, requestSet, toFactSet);
+            cumulativeFactSet = toFactSet;
+
+            /* Append the SUBSTITUTED fact (= with fromHash = fromCdi)
+               so the next iteration's contentIdAt sees the chain the
+               walker reconstructs. */
+            cidasks::Edge edge;
+            auto elementHash = TracingDecisionGraph::xorFactIntoHash(
+                Hash(HashAlgorithm::SHA256), queryHash, responseHash);
+            edge.facts.push_back({fromCdi, elementHash});
+            walk.push_back(std::move(edge));
+        }
     }
 
     pendingFacts.clear();
