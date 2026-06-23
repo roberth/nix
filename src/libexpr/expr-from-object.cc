@@ -5,6 +5,8 @@
 #include "nix/expr/eval.hh"
 #include "nix/expr/interpreter-object.hh"
 #include "nix/expr/object-type.hh"
+#include "nix/expr/replay-local-object.hh"
+#include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-local-object.hh"
 #include "nix/expr/tracing-writer.hh"
@@ -151,7 +153,22 @@ struct AmbientQuery
    same argId hash (e.g. a frozen ReplayLocalObject built by the
    walker's apply branch and a live InterpreterObject from a fall-back
    inner rerun both seed at depth-marker), and they correctly resolve
-   to distinct thunks here. */
+   to distinct thunks here.
+
+   KNOWN HAZARD: raw-pointer keying is stale-prone if a freed Object's
+   address is reused by a later allocation. The walker's dispatch
+   constructs transient ReplayLocalObjects that get registered here
+   under their pointer; when dispatch unwinds the ReplayLocalObject
+   is freed; live re-eval may allocate a fresh InterpreterObject at
+   the same address and find the stale dispatch argThunk (=
+   TracingLocalObject{inner=freed ReplayLocalObject}) → defeatCache
+   bomb later. This is the cb-higher-order failure surface. Switching
+   to shared_ptr keying fixes the bomb but breaks cycle detection
+   (selfref-fn) because cycle detection relies on pointer-identity
+   dedup of distinct shared_ptr instances pointing at the same
+   underlying Object. Proper fix is depth-2 walker (= materialise no
+   ReplayLocalObject for unreconstructible locals; let depth-1
+   fallback handle them — see task #74/#75). */
 struct BridgedThunkCache
 {
     std::map<Object *, Value *> thunks;
@@ -295,7 +312,15 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
     /* Defer the QueryApply Request and the localArg sidecar to the
        writer's flush at logResult. Pool entries land at the natural
        reqHashes (no substitution under the via-Asks design's
-       single-edge default). */
+       single-edge default).
+
+       The sidecar carries `localType` so the replay-side walker
+       can detect non-reconstructible locals (functions) without
+       forcing them. ReplayLocalObject can serve scalar/structural
+       responses from the Responses pool, but a function local has
+       no recorded body to apply against a divergent argument — so
+       the walker bails on dispatch in that case and the depth-1
+       fallback (= live re-eval) handles it. */
     if (innerWriter) {
         nlohmann::json applyJson = applyQuery;
         innerWriter->deferRequest(applyJson);
@@ -303,6 +328,20 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
             {"kind", "localArg"},
             {"applyResultId", resultId.to_string(HashFormat::Base16, false)},
         };
+        /* getTypeLazy (not getType) avoids forcing self-referential
+           thunks like `args // { extra = true; }` where args is
+           defined in terms of the apply itself (= selfref-fn,
+           mkOverridable patterns in builtins-cache.sh). It returns
+           nThunk for unforced values, which we just don't record.
+           Also wrapped in try/catch because dispatch-time ReplayLocalObject
+           may have no recorded type fact. */
+        try {
+            auto t = argObj->getTypeLazy();
+            if (t != nThunk)
+                localSidecar["localType"] = objectTypeToString(t);
+        } catch (...) {
+            /* Replay-side path or unrecorded — skip. */
+        }
         innerWriter->deferRequest(localSidecar, argIdStr);
     }
 
