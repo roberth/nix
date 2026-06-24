@@ -28,17 +28,25 @@ Hash extractFrom(const trace::QueryVariant & query)
 
 trace::PathExpr pathFromSubject(const Subject & subject)
 {
+    /* When the chain contains an ApplyResultSubject, path-routing
+       can't be expressed today (= the PathStep variant doesn't yet
+       carry an apply form; that's task #87). Return empty path so
+       the caller falls back to the legacy single-`from` identity
+       for apply-result observations. */
     trace::PathExpr out;
-    auto walk = [&out](auto & self, const Subject & s) -> void {
+    bool blocked = false;
+    auto walk = [&](auto & self, const Subject & s) -> void {
+        if (blocked) return;
         std::visit(
             [&](const auto & alt) {
                 using T = std::decay_t<decltype(alt)>;
                 if constexpr (std::is_same_v<T, PositionalSeed>) {
-                    // root — no contribution
+                    // root
                 } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
-                    // root — no contribution
+                    // root
                 } else if constexpr (std::is_same_v<T, DerivedSubject>) {
                     self(self, *alt.parent);
+                    if (blocked) return;
                     trace::PathStep step;
                     step.kind = alt.kind == DerivedSubject::Kind::GetAttr
                         ? trace::PathStep::Kind::GetAttr
@@ -47,14 +55,13 @@ trace::PathExpr pathFromSubject(const Subject & subject)
                     step.index = alt.index;
                     out.steps.push_back(std::move(step));
                 } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
-                    throw Error(
-                        "cidasks::pathFromSubject: ApplyResultSubject is not yet "
-                        "representable as a PathExpr (= task #87 function characterization)");
+                    blocked = true;
                 }
             },
             s.data);
     };
     walk(walk, subject);
+    if (blocked) return {};
     return out;
 }
 
