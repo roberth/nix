@@ -94,7 +94,7 @@ void TracingWriter::flushPendingAmbient()
         rewriteFromInQuery(queryJson, fromHex);
         if (!path.steps.empty())
             queryJson["params"]["path"] = path;
-        if (fromCIDs.size() > 1)
+        if (!fromCIDs.empty())
             queryJson["params"]["fromCIDs"] = fromCIDs;
         nlohmann::json resultJson;
         std::visit([&](const auto & r) { resultJson = r; }, pf->result);
@@ -164,7 +164,7 @@ void TracingWriter::flushPendingAmbient()
             rewriteFromInQuery(queryJson, fromHex);
             if (!path.steps.empty())
                 queryJson["params"]["path"] = path;
-            if (fromCIDs.size() > 1)
+            if (!fromCIDs.empty())
                 queryJson["params"]["fromCIDs"] = fromCIDs;
             nlohmann::json resultJson;
             std::visit([&](const auto & r) { resultJson = r; }, pf->result);
