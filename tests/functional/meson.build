@@ -194,6 +194,7 @@ suites = [
       'cb-with-scope-and-tryeval.sh',
       'cb-deep-nav-and-indexing.sh',
       'cb-xor-evolution-repeated-cb-apply.sh',
+      'cb-sibling-discrimination-via-observation.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
