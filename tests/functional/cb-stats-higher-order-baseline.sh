@@ -29,14 +29,14 @@ assertCacheStats 0 5 2 -- \
     nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }'
 
 # Warm replay. Every Q dispatched live; everything hits.
-# Hit count went from 6 to 8 after task #87 landed: observations on
-# apply-result descendants now also produce depth-1 facts (= path
-# carries an Apply step plus the trailing GetAttr) that the warm walk
-# dispatches and counts. The two extra hits are the apply-result's
-# getType and getInt — the cost of routing apply-result observations
-# back through the per-arg root for sibling discrimination.
-echo "=== warm (expect 8 hits, 0 misses, 0 fallbacks) ==="
-assertCacheStats 8 0 0 -- \
+# Hit count progression with task #87:
+#   6 (original) → 8 (multi-root apply-path observations land at
+#   d1) → 12 (per-Q Asks edges land — each Q's recorded chain has
+#   one Asks edge per writer logResult, principles 3/5/7, so the
+#   walker visits multiple Asks edges per Q's lookup instead of one
+#   whole-remaining edge).
+echo "=== warm (expect 12 hits, 0 misses, 0 fallbacks) ==="
+assertCacheStats 12 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }'
 
 # Result correctness: warm replay returns the same value as cold.

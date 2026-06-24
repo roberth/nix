@@ -103,10 +103,37 @@ class TracingWriter
     };
     std::vector<PendingFact> pendingFacts;
 
-    /* Persistent cidasks chain for depth-1 facts. Reserved for
-       future per-flush evolution (= principles 3/5/7); not yet
-       populated. */
+    /* Persistent cidasks chain for depth-1 ambient observations.
+       One edge per logResult — covers the ambient facts substituted
+       at that logResult's flushPendingAmbient. Per-flush evolution
+       (= principles 3/5/7): later flushes substitute fact `from` at
+       `edgeIndex = d1CidasksWalk.size()`, so the root cdi accumulates
+       prior flushes' contributions via the own-loop. The walker
+       advances `ctx.runningWalk` 1:1 via per-Q Asks edges. */
     std::vector<cidasks::Edge> d1CidasksWalk;
+
+    /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
+       new query hash added to v13FactSet since the last logResult,
+       whether from `logResponse` (= env/file), `noteEnvObservation`,
+       or `flushPendingAmbient`. AmbientQueries are depth-1 just like
+       file reads; bundling them with env/file into one Asks edge per
+       logResult keeps the trie's edge structure 1:1 with d1CidasksWalk.
+       `perQAsksEdges` retains each finalized boundary so every Q's
+       logResult can pre-insert all of them in its namespace via
+       INSERT OR IGNORE (= idempotent). */
+    std::vector<Hash> pendingNewRequests;
+    TracingDecisionGraph::SetHash prevQFactSetHash{TracingDecisionGraph::emptySetHash()};
+    struct PerQAsksEdge
+    {
+        TracingDecisionGraph::SetHash fromFactSetHash;
+        TracingDecisionGraph::SetHash requestSetHash;
+    };
+    std::vector<PerQAsksEdge> perQAsksEdges;
+    /* Mirrors `seenRequests` but keyed by query hash, not fact hash.
+       record()'s slow path iterates this to build the trailing
+       remaining-edge — an Asks edge's requestSet is a set of query
+       hashes, not fact hashes. */
+    std::unordered_set<Hash> allRequestHashes;
 
     struct PendingRequest
     {
@@ -194,6 +221,8 @@ public:
                 v13FactSetHash, queryHash, responseHash);
             responseFor.emplace(queryHash, responseHash);
             allRequestsTrie.insert(queryHash);
+            if (allRequestHashes.insert(queryHash).second)
+                pendingNewRequests.push_back(queryHash);
         }
     }
 
@@ -265,6 +294,8 @@ public:
                 v13FactSetHash, request, response);
             responseFor.emplace(request, response);
             allRequestsTrie.insert(request);
+            if (allRequestHashes.insert(request).second)
+                pendingNewRequests.push_back(request);
         }
     }
 
@@ -340,8 +371,33 @@ public:
            skip its insertRequestSet(remainingVec) call. */
         decisionGraph->primeFactSetCache(v13FactSetHash, v13FactSet);
         allRequestsTrie.persist(*decisionGraph);
-        decisionGraph->record(*qh.queryHash, v13FactSetHash, resultNodeHash,
-            responseFor, seenRequests, allRequestsTrie.rootHash());
+
+        /* Finalize this logResult's Asks edge (= ambient + env/file
+           facts since the last logResult) and append it to the
+           per-Q chain. Each Q's logResult then pre-inserts ALL
+           accumulated boundaries in its namespace so the trie's
+           recorded path is structured as one Asks edge per writer
+           logResult, matching d1CidasksWalk 1:1 (= principles 5/7). */
+        if (!pendingNewRequests.empty()) {
+            auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
+            perQAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+            prevQFactSetHash = v13FactSetHash;
+            pendingNewRequests.clear();
+        }
+        for (const auto & edge : perQAsksEdges)
+            decisionGraph->insertAsks(*qh.queryHash, edge.fromFactSetHash, edge.requestSetHash);
+
+        /* If we have per-Q edges, skip the whole-remaining shortcut
+           so the walker walks them one by one (= each commit advances
+           ctx.edgeIndex). Pass `allRequestHashes` (= query hashes),
+           not `seenRequests` (= fact hashes for XOR dedup); record()'s
+           slow path iterates this for its trailing remaining-edge. */
+        if (perQAsksEdges.empty())
+            decisionGraph->record(*qh.queryHash, v13FactSetHash, resultNodeHash,
+                responseFor, seenRequests, allRequestsTrie.rootHash());
+        else
+            decisionGraph->record(*qh.queryHash, v13FactSetHash, resultNodeHash,
+                responseFor, allRequestHashes);
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,

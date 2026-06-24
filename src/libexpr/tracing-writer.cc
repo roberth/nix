@@ -57,17 +57,17 @@ void TracingWriter::flushPendingAmbient()
         }
     };
 
-    /* Depth-1: single-edge walk. Per-flush evolution (= principles
-       3/5/7) is implemented in d1CidasksWalk + per-flush Asks trie
-       edges but disabled until the walker can correctly mirror the
-       writer's per-flush cdi evolution across interleaved env/file
-       facts (= currently the walker's runningWalk only advances per
-       committed Asks edge, and env/file facts get lumped with the
-       next ambient flush by record(), breaking edge alignment). */
-    cidasks::Edge d1Edge;
-    for (auto * pf : depth1Facts)
-        d1Edge.facts.push_back(cidasks::factFromQR(pf->query, pf->result));
-    std::vector<cidasks::Edge> d1Walk{std::move(d1Edge)};
+    /* Depth-1: this flush's ambient facts form ONE edge appended to
+       the persistent `d1CidasksWalk` chain (= principles 3/5/7). Each
+       fact's `from` substitutes against `d1CidasksWalk[walk.size()]`
+       — the precondition for the new edge — so per-arg roots evolve
+       across logResults. Env/file facts (= logged via `logResponse`)
+       are tracked separately in `pendingNewRequests` and end up in
+       the same per-Q Asks edge as this flush's ambient facts at
+       logResult time (= AmbientQueries are depth-1 like file reads;
+       both are observations on outer state). */
+    size_t d1EdgeIndex = d1CidasksWalk.size();
+    cidasks::Edge d1NewEdge;
 
     for (auto * pf : depth1Facts) {
         /* Per-arg with multi-root (= task #87): `from` is the first
@@ -79,7 +79,7 @@ void TracingWriter::flushPendingAmbient()
         std::vector<trace::QueryLeaf> fromCIDs;
         fromCIDs.reserve(roots.size());
         for (auto & root : roots) {
-            auto cid = cidasks::contentIdAt(root, pf->inheritedScope, d1Walk, /*edgeIndex=*/ 0);
+            auto cid = cidasks::contentIdAt(root, pf->inheritedScope, d1CidasksWalk, d1EdgeIndex);
             fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
         }
         std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
@@ -111,17 +111,26 @@ void TracingWriter::flushPendingAmbient()
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
         decisionGraph->insertLocalResponse(queryHash, responsePayload);
 
-        /* Dedupe by (request, response). See logResponse. */
-        auto factHash = TracingDecisionGraph::xorFactIntoHash(
+        /* Append the substituted fact to the new d1 cidasks edge so
+           later logResults' contentIdAt sees it in the own-loop. */
+        auto elementHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), queryHash, responseHash);
+        d1NewEdge.facts.push_back({fromCdi, elementHash});
+
+        /* Dedupe by (request, response). See logResponse. */
+        auto factHash = elementHash;
         if (seenRequests.insert(factHash).second) {
             v13FactSet.push_back({queryHash, responseHash});
             v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 v13FactSetHash, queryHash, responseHash);
             responseFor.emplace(queryHash, responseHash);
             allRequestsTrie.insert(queryHash);
+            if (allRequestHashes.insert(queryHash).second)
+                pendingNewRequests.push_back(queryHash);
         }
     }
+    if (!d1NewEdge.facts.empty())
+        d1CidasksWalk.push_back(std::move(d1NewEdge));
 
     /* Depth-2: per cb-apply, build a multi-edge walk incrementally
        so each fact's substituted `from` is computed against prior
