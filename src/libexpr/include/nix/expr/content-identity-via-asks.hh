@@ -126,6 +126,13 @@ Hash extractFrom(const trace::QueryVariant & query);
     flow reflects observations back into the root cb_arg. */
 trace::PathExpr pathFromSubject(const Subject & subject);
 
+/** Walk a Subject's parent chain through DerivedSubject nodes to
+    the root form (PositionalSeed, OpaqueContentSubject, or
+    ApplyResultSubject). Used by the per-arg flush path to compute
+    the cb_arg root's CDI for `from` substitution while the access
+    path is encoded separately as a PathExpr. */
+const Subject & rootSubjectOf(const Subject & subject);
+
 /** Short readable representation of a Subject — for tracing logs.
     Example: `seed(2)`, `getAttr(seed(2), "left")`,
     `applyResult(seed(0), seed(1))`, `opaque(ab12cd...)`. */

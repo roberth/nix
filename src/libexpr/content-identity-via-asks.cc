@@ -26,6 +26,13 @@ Hash extractFrom(const trace::QueryVariant & query)
         query);
 }
 
+const Subject & rootSubjectOf(const Subject & subject)
+{
+    if (auto * d = std::get_if<DerivedSubject>(&subject.data))
+        return rootSubjectOf(*d->parent);
+    return subject;
+}
+
 trace::PathExpr pathFromSubject(const Subject & subject)
 {
     /* When the chain contains an ApplyResultSubject, path-routing
