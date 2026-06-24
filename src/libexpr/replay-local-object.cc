@@ -106,8 +106,9 @@ static void advanceChainAndAppendFact(
 
 std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name)
 {
-    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = cidasks::contentIdAt(cidasks::rootSubjectOf(subject), scope, *walkFacts, walkFacts->size());
     trace::QueryGetAttr query{name, replayFromHex(fromCdi)};
+    query.path = cidasks::pathFromSubject(subject);
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -137,8 +138,9 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
 
 std::vector<std::string> ReplayLocalObject::getAttrNames()
 {
-    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = cidasks::contentIdAt(cidasks::rootSubjectOf(subject), scope, *walkFacts, walkFacts->size());
     trace::QueryGetAttrNames query{replayFromHex(fromCdi)};
+    query.path = cidasks::pathFromSubject(subject);
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -148,8 +150,9 @@ std::vector<std::string> ReplayLocalObject::getAttrNames()
 
 std::string ReplayLocalObject::getStringIgnoreContext()
 {
-    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = cidasks::contentIdAt(cidasks::rootSubjectOf(subject), scope, *walkFacts, walkFacts->size());
     trace::QueryGetString query{replayFromHex(fromCdi)};
+    query.path = cidasks::pathFromSubject(subject);
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -164,8 +167,9 @@ std::string ReplayLocalObject::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> ReplayLocalObject::getStringWithContext()
 {
-    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = cidasks::contentIdAt(cidasks::rootSubjectOf(subject), scope, *walkFacts, walkFacts->size());
     trace::QueryGetStringWithContext query{replayFromHex(fromCdi)};
+    query.path = cidasks::pathFromSubject(subject);
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -178,8 +182,9 @@ std::pair<std::string, NixStringContext> ReplayLocalObject::getStringWithContext
 
 RootedPath ReplayLocalObject::getPath()
 {
-    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = cidasks::contentIdAt(cidasks::rootSubjectOf(subject), scope, *walkFacts, walkFacts->size());
     trace::QueryGetPath query{replayFromHex(fromCdi)};
+    query.path = cidasks::pathFromSubject(subject);
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -189,8 +194,9 @@ RootedPath ReplayLocalObject::getPath()
 
 bool ReplayLocalObject::getBool(std::string_view)
 {
-    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = cidasks::contentIdAt(cidasks::rootSubjectOf(subject), scope, *walkFacts, walkFacts->size());
     trace::QueryGetBool query{replayFromHex(fromCdi)};
+    query.path = cidasks::pathFromSubject(subject);
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -200,8 +206,9 @@ bool ReplayLocalObject::getBool(std::string_view)
 
 NixInt ReplayLocalObject::getInt(std::string_view)
 {
-    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = cidasks::contentIdAt(cidasks::rootSubjectOf(subject), scope, *walkFacts, walkFacts->size());
     trace::QueryGetInt query{replayFromHex(fromCdi)};
+    query.path = cidasks::pathFromSubject(subject);
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -211,8 +218,9 @@ NixInt ReplayLocalObject::getInt(std::string_view)
 
 NixFloat ReplayLocalObject::getFloat(std::string_view)
 {
-    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = cidasks::contentIdAt(cidasks::rootSubjectOf(subject), scope, *walkFacts, walkFacts->size());
     trace::QueryGetFloat query{replayFromHex(fromCdi)};
+    query.path = cidasks::pathFromSubject(subject);
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -222,8 +230,9 @@ NixFloat ReplayLocalObject::getFloat(std::string_view)
 
 size_t ReplayLocalObject::getListSize()
 {
-    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = cidasks::contentIdAt(cidasks::rootSubjectOf(subject), scope, *walkFacts, walkFacts->size());
     trace::QueryGetListSize query{replayFromHex(fromCdi)};
+    query.path = cidasks::pathFromSubject(subject);
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -233,8 +242,9 @@ size_t ReplayLocalObject::getListSize()
 
 std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
 {
-    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = cidasks::contentIdAt(cidasks::rootSubjectOf(subject), scope, *walkFacts, walkFacts->size());
     trace::QueryGetListElem query{replayFromHex(fromCdi), index};
+    query.path = cidasks::pathFromSubject(subject);
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -258,8 +268,9 @@ ObjectType ReplayLocalObject::getType()
     /* Subsequent calls return cached. */
     if (getTypeProbed && knownType)
         return *knownType;
-    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = cidasks::contentIdAt(cidasks::rootSubjectOf(subject), scope, *walkFacts, walkFacts->size());
     trace::QueryGetType query{replayFromHex(fromCdi)};
+    query.path = cidasks::pathFromSubject(subject);
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -370,8 +381,9 @@ RootValue ReplayLocalObject::defeatCache()
 
 std::optional<FunctionInfo> ReplayLocalObject::getFunctionInfo()
 {
-    auto fromCdi = cidasks::contentIdAt(subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = cidasks::contentIdAt(cidasks::rootSubjectOf(subject), scope, *walkFacts, walkFacts->size());
     trace::QueryGetFunctionInfo query{replayFromHex(fromCdi)};
+    query.path = cidasks::pathFromSubject(subject);
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);

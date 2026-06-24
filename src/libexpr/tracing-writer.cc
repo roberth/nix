@@ -65,18 +65,26 @@ void TracingWriter::flushPendingAmbient()
     };
 
     for (auto * pf : depth1Facts) {
-        auto fromCdi = cidasks::contentIdAt(pf->subject, pf->inheritedScope, d1Walk, /*edgeIndex=*/ 0);
+        /* Per-arg: `from` is the cb_arg root's CDI, path is the
+           subject's access path within that root. Derived subjects
+           don't get their own `from`; their identity is the root's
+           CDI plus the path-in-query. */
+        auto fromCdi = cidasks::contentIdAt(
+            cidasks::rootSubjectOf(pf->subject), pf->inheritedScope, d1Walk, /*edgeIndex=*/ 0);
         auto fromHex = fromCdi.to_string(HashFormat::Base16, false);
+        auto path = cidasks::pathFromSubject(pf->subject);
 
         std::string queryTag = std::visit(
             [](const auto & q) -> std::string { return std::string(q.tag); }, pf->query);
         tracingCacheLog(
-            "flush d1 fact: subject=%s query=%s from=%s",
-            cidasks::describe(pf->subject), queryTag, fromHex.substr(0, 12));
+            "flush d1 fact: subject=%s query=%s from=%s path=%zu",
+            cidasks::describe(pf->subject), queryTag, fromHex.substr(0, 12), path.steps.size());
 
         nlohmann::json queryJson;
         std::visit([&](const auto & q) { queryJson = q; }, pf->query);
         rewriteFromInQuery(queryJson, fromHex);
+        if (!path.steps.empty())
+            queryJson["params"]["path"] = path;
         nlohmann::json resultJson;
         std::visit([&](const auto & r) { resultJson = r; }, pf->result);
 
@@ -115,21 +123,27 @@ void TracingWriter::flushPendingAmbient()
         Hash cumulativeFactSet = emptySet;
         for (size_t i = 0; i < group.size(); ++i) {
             auto * pf = group[i];
-            /* `from` at this fact's edge precondition, against the
-               substituted-so-far walk. */
-            auto fromCdi = cidasks::contentIdAt(pf->subject, pf->inheritedScope, walk, /*edgeIndex=*/ i);
+            /* Per-arg `from`: the cb_arg root's CDI at this fact's
+               edge precondition (= against the substituted-so-far
+               walk). All derived observations inside this cb_arg
+               share the same `from` and discriminate via query.path. */
+            auto fromCdi = cidasks::contentIdAt(
+                cidasks::rootSubjectOf(pf->subject), pf->inheritedScope, walk, /*edgeIndex=*/ i);
             auto fromHex = fromCdi.to_string(HashFormat::Base16, false);
+            auto path = cidasks::pathFromSubject(pf->subject);
 
             std::string queryTag = std::visit(
                 [](const auto & q) -> std::string { return std::string(q.tag); }, pf->query);
             tracingCacheLog(
-                "flush d2 fact: applyId=%s i=%zu subject=%s query=%s from=%s",
+                "flush d2 fact: applyId=%s i=%zu subject=%s query=%s from=%s path=%zu",
                 applyId.to_string(HashFormat::Base16, false).substr(0, 12),
-                i, cidasks::describe(pf->subject), queryTag, fromHex.substr(0, 12));
+                i, cidasks::describe(pf->subject), queryTag, fromHex.substr(0, 12), path.steps.size());
 
             nlohmann::json queryJson;
             std::visit([&](const auto & q) { queryJson = q; }, pf->query);
             rewriteFromInQuery(queryJson, fromHex);
+            if (!path.steps.empty())
+                queryJson["params"]["path"] = path;
             nlohmann::json resultJson;
             std::visit([&](const auto & r) { resultJson = r; }, pf->result);
 

@@ -119,12 +119,26 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
                     auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
                     return TracingDecisionGraph::xorHashes(base, scope);
                 } else if constexpr (std::is_same_v<T, DerivedSubject>) {
-                    auto parentAtK = contentIdAt(*alt.parent, scope, walk, k);
+                    /* Per-arg CDI: the derived's identity hashes
+                       root_cdi + path-to-parent + leaf step, so all
+                       derived values inside one cb_arg share a single
+                       root_cdi that accumulates observations from
+                       every depth. The leaf step (= name or index)
+                       sits in the query body; path-to-parent lives
+                       in the query.path field — symmetric with what
+                       the writer flushes for getAttr/getListElem
+                       probes on this derived value. */
+                    auto rootCdi = contentIdAt(rootSubjectOf(subject), scope, walk, k);
+                    auto pathToParent = pathFromSubject(*alt.parent);
                     nlohmann::json qj;
                     if (alt.kind == DerivedSubject::Kind::GetAttr) {
-                        qj = trace::QueryGetAttr{alt.name, hashHex(parentAtK)};
+                        trace::QueryGetAttr q{alt.name, hashHex(rootCdi)};
+                        q.path = pathToParent;
+                        qj = q;
                     } else {
-                        qj = trace::QueryGetListElem{hashHex(parentAtK), alt.index};
+                        trace::QueryGetListElem q{hashHex(rootCdi), alt.index};
+                        q.path = pathToParent;
+                        qj = q;
                     }
                     return hashString(HashAlgorithm::SHA256, qj.dump());
                 } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
