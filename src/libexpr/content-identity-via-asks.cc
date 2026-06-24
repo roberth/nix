@@ -30,20 +30,25 @@ const Subject & rootSubjectOf(const Subject & subject)
 {
     if (auto * d = std::get_if<DerivedSubject>(&subject.data))
         return rootSubjectOf(*d->parent);
+    if (auto * a = std::get_if<ApplyResultSubject>(&subject.data))
+        /* Single-root assumption (= same cb_arg supplies fn and arg)
+           lets us pick either side. Multi-root applies would need
+           fromCIDs[] entries for both fn-root and arg-root; deferred
+           until the simple case lands. */
+        return rootSubjectOf(*a->fn);
     return subject;
 }
 
 trace::PathExpr pathFromSubject(const Subject & subject)
 {
-    /* When the chain contains an ApplyResultSubject, path-routing
-       can't be expressed today (= the PathStep variant doesn't yet
-       carry an apply form; that's task #87). Return empty path so
-       the caller falls back to the legacy single-`from` identity
-       for apply-result observations. */
+    /* Walk the subject tree to build a path from the cb_arg root
+       to this subject. DerivedSubject pushes its leaf step;
+       ApplyResultSubject emits an Apply step composing
+       pathFromSubject(fn) and pathFromSubject(arg) as sub-paths.
+       PositionalSeed / OpaqueContentSubject are root forms and
+       contribute no step. */
     trace::PathExpr out;
-    bool blocked = false;
     auto walk = [&](auto & self, const Subject & s) -> void {
-        if (blocked) return;
         std::visit(
             [&](const auto & alt) {
                 using T = std::decay_t<decltype(alt)>;
@@ -53,7 +58,6 @@ trace::PathExpr pathFromSubject(const Subject & subject)
                     // root
                 } else if constexpr (std::is_same_v<T, DerivedSubject>) {
                     self(self, *alt.parent);
-                    if (blocked) return;
                     trace::PathStep step;
                     step.kind = alt.kind == DerivedSubject::Kind::GetAttr
                         ? trace::PathStep::Kind::GetAttr
@@ -62,13 +66,21 @@ trace::PathExpr pathFromSubject(const Subject & subject)
                     step.index = alt.index;
                     out.steps.push_back(std::move(step));
                 } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
-                    blocked = true;
+                    /* Apply step: encode the apply node with its
+                       sub-paths. fn/arg path build from the apply's
+                       constituents recursively. fnRootIndex /
+                       argRootIndex both default to 0 — single-root
+                       assumption per task #87's initial scope. */
+                    trace::PathStep step;
+                    step.kind = trace::PathStep::Kind::Apply;
+                    step.fnPath = std::make_shared<trace::PathExpr>(pathFromSubject(*alt.fn));
+                    step.argPath = std::make_shared<trace::PathExpr>(pathFromSubject(*alt.arg));
+                    out.steps.push_back(std::move(step));
                 }
             },
             s.data);
     };
     walk(walk, subject);
-    if (blocked) return {};
     return out;
 }
 

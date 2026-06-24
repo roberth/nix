@@ -411,21 +411,36 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
    producer chain, then perform the live navigation step on it. */
 /* Per-arg path navigation: walk obj down by a recorded PathExpr (=
    the query's path-to-parent under per-arg). Returns nullptr if any
-   step misses. The walker uses this both when resolving derived
-   producer ids (= the producer query's path takes us from the cb_arg
-   root to the derived value's parent) and when re-dispatching
-   recorded probes against the live root. */
+   step misses. Apply steps invoke `queryApply` live against the
+   navigated fn/arg sub-paths so apply-result observations get
+   reproduced symmetrically. Single-root assumption today: fn and arg
+   sub-paths both navigate from the same `obj` (= the cb_arg whose
+   root cdi populated `from`). */
 static std::shared_ptr<Object> navigatePath(std::shared_ptr<Object> obj, const trace::PathExpr & path)
 {
     for (auto & step : path.steps) {
         if (!obj)
             return nullptr;
-        if (step.kind == trace::PathStep::Kind::GetAttr)
+        if (step.kind == trace::PathStep::Kind::GetAttr) {
             obj = obj->maybeGetAttr(step.name);
-        else if (step.kind == trace::PathStep::Kind::GetListElem)
+        } else if (step.kind == trace::PathStep::Kind::GetListElem) {
             obj = obj->getListElem(step.index);
-        else
+        } else if (step.kind == trace::PathStep::Kind::Apply) {
+            if (!step.fnPath || !step.argPath)
+                return nullptr;
+            auto fnObj = navigatePath(obj, *step.fnPath);
+            auto argObj = navigatePath(obj, *step.argPath);
+            if (!fnObj || !argObj)
+                return nullptr;
+            try {
+                obj = fnObj->queryApply(std::move(argObj));
+            } catch (const std::exception & e) {
+                tracingCacheLog("navigatePath: queryApply failed: %s", e.what());
+                return nullptr;
+            }
+        } else {
             return nullptr;
+        }
     }
     return obj;
 }
