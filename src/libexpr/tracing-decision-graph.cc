@@ -1378,7 +1378,8 @@ bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factS
 
 std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
     const QueryHash & q,
-    const std::function<ResponseHash(const RequestHash &)> & dispatch)
+    const std::function<ResponseHash(const RequestHash &)> & dispatch,
+    const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt)
 {
     auto cur = emptySetHash();
     /* curRequests speeds up the "is this request already in cur?"
@@ -1417,12 +1418,17 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
             /* Validate that some recording for THIS query reaches
                (Q, nextCur) — i.e., the dispatched responses lead to
                a position where the recording continues or terminates. */
-            if (!hasAnyEdge(q, nextCur))
+            if (!hasAnyEdge(q, nextCur)) {
+                if (onEdgeAttempt)
+                    onEdgeAttempt(/*committed=*/ false, useful);
                 continue; // wrong branch
+            }
 
             cur = nextCur;
             for (const auto & req : useful)
                 curRequests.insert(req);
+            if (onEdgeAttempt)
+                onEdgeAttempt(/*committed=*/ true, useful);
             advanced = true;
             break;
         }

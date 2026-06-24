@@ -58,10 +58,13 @@ void TracingWriter::flushPendingAmbient()
     };
 
     /* Depth-1: single-edge walk (= preserve v13 XOR-fold semantics
-       for input tracing). Per-edge evolution for sibling discrimination
-       is task #87; the walker side needs to track Asks-edge transitions
-       to mirror the writer's d1CidasksWalk advancement, and the
-       current dispatch callback doesn't expose those boundaries. */
+       for input tracing). Per-edge evolution across flushes (= what
+       principles 3/5/7 prescribe for sibling discrimination) is set
+       up in `d1CidasksWalk` member + walker's onEdgeAttempt callback
+       but the walker can't yet match writer's per-flush evolution
+       across Qs (= each v13Walk starts fresh; persistent runningWalk
+       across Qs has open dedup questions). Until that lands, flush
+       uses edgeIndex=0 (= structural cdi) for all d1 facts. */
     cidasks::Edge d1Edge;
     for (auto * pf : depth1Facts)
         d1Edge.facts.push_back(cidasks::factFromQR(pf->query, pf->result));

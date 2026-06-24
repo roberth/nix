@@ -34,16 +34,36 @@ TracingReplayEvaluator::TracingReplayEvaluator(
 std::optional<std::pair<std::string, Hash>>
 TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy)
 {
-    /* Per-walk resolution context: holds the proxy whose method
-       triggered this walk, a memo of ids resolved during this walk,
-       and the running cidasks walk built from dispatched facts.
-       runningWalk seeded with one empty edge; ambient facts append
-       into it (= principle 7 concurrency within an edge). */
+    /* Per-walk resolution context. `runningWalk` accumulates one
+       cidasks::Edge per committed Asks-edge transition within this
+       Q's walk; ctx.edgeIndex tracks the chain length so cell-chain
+       cdi lookups evaluate proxies at the right precondition. */
     ResolutionContext ctx{
         std::move(currentProxy),
         {},
-        std::vector<cidasks::Edge>{cidasks::Edge{}},
+        std::vector<cidasks::Edge>{},
         0,
+    };
+
+    /* Per-edge buffer: dispatch() appends ambient facts here; the
+       walk-loop promotes the buffer to a runningWalk edge on commit
+       (via onEdgeCommitted) or discards it on reject. Without the
+       buffer, rejected-edge facts would pollute runningWalk and
+       throw off the cell-chain cdi computations. */
+    std::vector<cidasks::Fact> pendingEdgeFacts;
+
+    auto commitEdge = [&]() {
+        if (pendingEdgeFacts.empty()) return;
+        cidasks::Edge edge;
+        edge.facts = std::move(pendingEdgeFacts);
+        pendingEdgeFacts.clear();
+        ctx.runningWalk.push_back(std::move(edge));
+        ctx.edgeIndex = ctx.runningWalk.size();
+        tracingCacheLog("dispatch: committed edge, walk=%zu", ctx.edgeIndex);
+    };
+
+    auto discardEdge = [&]() {
+        pendingEdgeFacts.clear();
     };
 
     /* Dispatcher: turns a Request hash into the current Response
@@ -87,16 +107,14 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
            which facts came from interpretation vs cache-hit
            dispatch. */
         writer.noteEnvObservation(requestHash, h);
-        /* Append to the single running edge so subsequent cell-chain
-           cdi lookups account for it via the own-loop. Order within
-           the edge doesn't matter (= XOR-fold per principle 7). */
-        if (isAmbient && ambientFromHash && !ctx.runningWalk.empty()) {
-            cidasks::Fact f{
-                .fromHash = *ambientFromHash,
-                .elementHash = TracingDecisionGraph::xorFactIntoHash(
+        /* Buffer ambient facts for this in-flight Asks edge; the
+           walk-loop commits them via onEdgeCommitted on success. */
+        if (isAmbient && ambientFromHash) {
+            pendingEdgeFacts.push_back({
+                *ambientFromHash,
+                TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), requestHash, h),
-            };
-            ctx.runningWalk.back().facts.push_back(std::move(f));
+            });
             tracingCacheLog(
                 "dispatch ambient: req=%s from=%s resp=%s",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -159,14 +177,22 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
                         dispatchedTrie.insert(req);
                     lastQFactsHash = candidateCur;
                     tracingCacheStats().hits++;
+                    commitEdge();
                     return std::make_pair(std::move(*payload), *term);
                 }
             }
         }
+        /* Fast-path didn't reach a terminal: drop the buffered facts;
+           the full walk below starts fresh. */
+        discardEdge();
     }
 
     /* Fall back to a regular walk from ∅. */
-    auto walkHit = decisionGraph.walk(queryHash, dispatch);
+    auto walkHit = decisionGraph.walk(queryHash, dispatch,
+        [&](bool committed, const std::vector<Hash> &) {
+            if (committed) commitEdge();
+            else discardEdge();
+        });
     if (!walkHit) {
         tracingCacheStats().misses++;
         return std::nullopt;

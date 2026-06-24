@@ -296,10 +296,17 @@ public:
        nullopt on miss. The dispatch callback is invoked for each
        Request whose Response isn't already in the accumulated
        FactSet (in this Phase 1 cut, that's every Request along
-       the path). */
+       the path). `onEdgeAttempt` (if set) is called once per
+       Asks-edge attempt, AFTER the edge's useful requests have
+       been dispatched, with `committed=true` if the resulting
+       factset reaches a continuation and `false` if walk is
+       rejecting this branch. Used by the cidasks-aware caller to
+       promote per-edge dispatched facts into a `cidasks::Edge`
+       on commit (= principle 5/7) or discard them on reject. */
     std::optional<ResultHash> walk(
         const QueryHash & q,
-        const std::function<ResponseHash(const RequestHash &)> & dispatch);
+        const std::function<ResponseHash(const RequestHash &)> & dispatch,
+        const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt = {});
 
     /* Persist one trie node by hash. Idempotent (INSERT OR IGNORE +
        in-process cache short-circuit). Used by TrieBuilder to push

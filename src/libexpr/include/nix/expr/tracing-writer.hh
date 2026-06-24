@@ -103,6 +103,15 @@ class TracingWriter
     };
     std::vector<PendingFact> pendingFacts;
 
+    /* Persistent cidasks chain for depth-1 facts. Each flush appends
+       one edge containing this flush's substituted facts. Subsequent
+       flushes substitute `from` at `edgeIndex = d1CidasksWalk.size()`
+       so per-arg roots evolve across edges (= principles 3/5/7):
+       later facts' `from` reflects prior edges' contributions to the
+       root's own-loop. The walker mirrors this evolution via the
+       onEdgeAttempt callback into TracingDecisionGraph::walk. */
+    std::vector<cidasks::Edge> d1CidasksWalk;
+
     struct PendingRequest
     {
         nlohmann::json payload;
