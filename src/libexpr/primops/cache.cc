@@ -24,8 +24,10 @@ namespace nix {
 class NullTraceSink final : public TraceSink
 {
 public:
-    void log(const nlohmann::json &) override {}
+    void log(const nlohmann::json &) override;
 };
+
+void NullTraceSink::log(const nlohmann::json &) {}
 
 static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value & v)
 {
