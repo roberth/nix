@@ -65,26 +65,37 @@ void TracingWriter::flushPendingAmbient()
     };
 
     for (auto * pf : depth1Facts) {
-        /* Per-arg: `from` is the cb_arg root's CDI, path is the
-           subject's access path within that root. Derived subjects
-           don't get their own `from`; their identity is the root's
-           CDI plus the path-in-query. */
-        auto fromCdi = cidasks::contentIdAt(
-            cidasks::rootSubjectOf(pf->subject), pf->inheritedScope, d1Walk, /*edgeIndex=*/ 0);
-        auto fromHex = fromCdi.to_string(HashFormat::Base16, false);
-        auto path = cidasks::pathFromSubject(pf->subject);
+        /* Per-arg with multi-root (= task #87): `from` is the first
+           cb_arg's CDI; `fromCIDs[]` carries all cb_arg roots reached
+           via the subject tree (= fn-root and arg-root for applies);
+           `path` encodes the access expression that walks from
+           fromCIDs[0] to the observed subject. */
+        auto [path, roots] = cidasks::pathAndRootsFromSubject(pf->subject);
+        std::vector<trace::QueryLeaf> fromCIDs;
+        fromCIDs.reserve(roots.size());
+        for (auto & root : roots) {
+            auto cid = cidasks::contentIdAt(root, pf->inheritedScope, d1Walk, /*edgeIndex=*/ 0);
+            fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
+        }
+        std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
+        auto fromCdi = fromCIDs.empty()
+            ? Hash(HashAlgorithm::SHA256)
+            : Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
 
         std::string queryTag = std::visit(
             [](const auto & q) -> std::string { return std::string(q.tag); }, pf->query);
         tracingCacheLog(
-            "flush d1 fact: subject=%s query=%s from=%s path=%zu",
-            cidasks::describe(pf->subject), queryTag, fromHex.substr(0, 12), path.steps.size());
+            "flush d1 fact: subject=%s query=%s from=%s path=%zu fromCIDs=%zu",
+            cidasks::describe(pf->subject), queryTag, fromHex.substr(0, 12),
+            path.steps.size(), fromCIDs.size());
 
         nlohmann::json queryJson;
         std::visit([&](const auto & q) { queryJson = q; }, pf->query);
         rewriteFromInQuery(queryJson, fromHex);
         if (!path.steps.empty())
             queryJson["params"]["path"] = path;
+        if (fromCIDs.size() > 1)
+            queryJson["params"]["fromCIDs"] = fromCIDs;
         nlohmann::json resultJson;
         std::visit([&](const auto & r) { resultJson = r; }, pf->result);
 
@@ -123,27 +134,38 @@ void TracingWriter::flushPendingAmbient()
         Hash cumulativeFactSet = emptySet;
         for (size_t i = 0; i < group.size(); ++i) {
             auto * pf = group[i];
-            /* Per-arg `from`: the cb_arg root's CDI at this fact's
-               edge precondition (= against the substituted-so-far
-               walk). All derived observations inside this cb_arg
-               share the same `from` and discriminate via query.path. */
-            auto fromCdi = cidasks::contentIdAt(
-                cidasks::rootSubjectOf(pf->subject), pf->inheritedScope, walk, /*edgeIndex=*/ i);
-            auto fromHex = fromCdi.to_string(HashFormat::Base16, false);
-            auto path = cidasks::pathFromSubject(pf->subject);
+            /* Per-arg with multi-root (task #87): compute fromCIDs +
+               path; substitute `from = fromCIDs[0]` and add
+               fromCIDs+path to the JSON. Multi-root is needed for
+               higher-order applies where fn and arg come from
+               different cb_args. */
+            auto [path, roots] = cidasks::pathAndRootsFromSubject(pf->subject);
+            std::vector<trace::QueryLeaf> fromCIDs;
+            fromCIDs.reserve(roots.size());
+            for (auto & root : roots) {
+                auto cid = cidasks::contentIdAt(root, pf->inheritedScope, walk, /*edgeIndex=*/ i);
+                fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
+            }
+            std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
+            auto fromCdi = fromCIDs.empty()
+                ? Hash(HashAlgorithm::SHA256)
+                : Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
 
             std::string queryTag = std::visit(
                 [](const auto & q) -> std::string { return std::string(q.tag); }, pf->query);
             tracingCacheLog(
-                "flush d2 fact: applyId=%s i=%zu subject=%s query=%s from=%s path=%zu",
+                "flush d2 fact: applyId=%s i=%zu subject=%s query=%s from=%s path=%zu fromCIDs=%zu",
                 applyId.to_string(HashFormat::Base16, false).substr(0, 12),
-                i, cidasks::describe(pf->subject), queryTag, fromHex.substr(0, 12), path.steps.size());
+                i, cidasks::describe(pf->subject), queryTag, fromHex.substr(0, 12),
+                path.steps.size(), fromCIDs.size());
 
             nlohmann::json queryJson;
             std::visit([&](const auto & q) { queryJson = q; }, pf->query);
             rewriteFromInQuery(queryJson, fromHex);
             if (!path.steps.empty())
                 queryJson["params"]["path"] = path;
+            if (fromCIDs.size() > 1)
+                queryJson["params"]["fromCIDs"] = fromCIDs;
             nlohmann::json resultJson;
             std::visit([&](const auto & r) { resultJson = r; }, pf->result);
 

@@ -39,49 +39,101 @@ const Subject & rootSubjectOf(const Subject & subject)
     return subject;
 }
 
+/* Subject leaf equality — used by the path builder to dedupe roots
+   (= two derivation chains rooted at the same PositionalSeed or
+   OpaqueContentSubject share one entry in fromCIDs). Only meaningful
+   for leaf forms; the builder only compares leaves. */
+static bool sameLeaf(const Subject & a, const Subject & b)
+{
+    if (auto * ap = std::get_if<PositionalSeed>(&a.data)) {
+        if (auto * bp = std::get_if<PositionalSeed>(&b.data))
+            return ap->depth == bp->depth;
+        return false;
+    }
+    if (auto * ap = std::get_if<OpaqueContentSubject>(&a.data)) {
+        if (auto * bp = std::get_if<OpaqueContentSubject>(&b.data))
+            return ap->hash == bp->hash;
+        return false;
+    }
+    return false;
+}
+
+PathAndRoots pathAndRootsFromSubject(const Subject & subject)
+{
+    /* Builder collects roots depth-first into a single vector.
+       DerivedSubject pushes a step onto its parent's path.
+       ApplyResultSubject emits a single Apply step whose sub-paths
+       carry their own (absolute-index) root references. Leaf
+       subjects (PositionalSeed, OpaqueContentSubject) deduplicate
+       against previously-collected roots so shared cb_args (= fn
+       and arg derived from the same outer arg) collapse to one
+       fromCIDs entry. */
+    struct Builder
+    {
+        std::vector<Subject> roots;
+
+        size_t findOrInsert(const Subject & leaf)
+        {
+            for (size_t i = 0; i < roots.size(); ++i)
+                if (sameLeaf(roots[i], leaf))
+                    return i;
+            roots.push_back(leaf);
+            return roots.size() - 1;
+        }
+
+        /* Returns (path, rootIndex). rootIndex is the index of the
+           subject's *natural* root in `roots`: the leaf for non-apply
+           subjects, or the fn's root for apply subjects (by
+           convention — chosen so DerivedSubject{Apply, ...} starts
+           navigation from fn's root, which then immediately gets
+           used by the Apply step's fnRootIndex). */
+        std::pair<trace::PathExpr, size_t> build(const Subject & s)
+        {
+            return std::visit(
+                [&](const auto & alt) -> std::pair<trace::PathExpr, size_t> {
+                    using T = std::decay_t<decltype(alt)>;
+                    if constexpr (std::is_same_v<T, PositionalSeed>
+                                  || std::is_same_v<T, OpaqueContentSubject>) {
+                        size_t idx = findOrInsert(s);
+                        return {{}, idx};
+                    } else if constexpr (std::is_same_v<T, DerivedSubject>) {
+                        auto [parentPath, parentIdx] = build(*alt.parent);
+                        trace::PathStep step;
+                        step.kind = alt.kind == DerivedSubject::Kind::GetAttr
+                            ? trace::PathStep::Kind::GetAttr
+                            : trace::PathStep::Kind::GetListElem;
+                        step.name = alt.name;
+                        step.index = alt.index;
+                        parentPath.steps.push_back(std::move(step));
+                        return {std::move(parentPath), parentIdx};
+                    } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
+                        auto [fnPath, fnIdx] = build(*alt.fn);
+                        auto [argPath, argIdx] = build(*alt.arg);
+                        trace::PathStep step;
+                        step.kind = trace::PathStep::Kind::Apply;
+                        step.fnPath = std::make_shared<trace::PathExpr>(std::move(fnPath));
+                        step.argPath = std::make_shared<trace::PathExpr>(std::move(argPath));
+                        step.fnRootIndex = fnIdx;
+                        step.argRootIndex = argIdx;
+                        trace::PathExpr path;
+                        path.steps.push_back(std::move(step));
+                        return {std::move(path), fnIdx};
+                    } else {
+                        return {{}, 0};
+                    }
+                },
+                s.data);
+        }
+    };
+
+    Builder b;
+    auto [path, _] = b.build(subject);
+    return {std::move(path), std::move(b.roots)};
+}
+
 trace::PathExpr pathFromSubject(const Subject & subject)
 {
-    /* Walk the subject tree to build a path from the cb_arg root
-       to this subject. DerivedSubject pushes its leaf step;
-       ApplyResultSubject emits an Apply step composing
-       pathFromSubject(fn) and pathFromSubject(arg) as sub-paths.
-       PositionalSeed / OpaqueContentSubject are root forms and
-       contribute no step. */
-    trace::PathExpr out;
-    auto walk = [&](auto & self, const Subject & s) -> void {
-        std::visit(
-            [&](const auto & alt) {
-                using T = std::decay_t<decltype(alt)>;
-                if constexpr (std::is_same_v<T, PositionalSeed>) {
-                    // root
-                } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
-                    // root
-                } else if constexpr (std::is_same_v<T, DerivedSubject>) {
-                    self(self, *alt.parent);
-                    trace::PathStep step;
-                    step.kind = alt.kind == DerivedSubject::Kind::GetAttr
-                        ? trace::PathStep::Kind::GetAttr
-                        : trace::PathStep::Kind::GetListElem;
-                    step.name = alt.name;
-                    step.index = alt.index;
-                    out.steps.push_back(std::move(step));
-                } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
-                    /* Apply step: encode the apply node with its
-                       sub-paths. fn/arg path build from the apply's
-                       constituents recursively. fnRootIndex /
-                       argRootIndex both default to 0 — single-root
-                       assumption per task #87's initial scope. */
-                    trace::PathStep step;
-                    step.kind = trace::PathStep::Kind::Apply;
-                    step.fnPath = std::make_shared<trace::PathExpr>(pathFromSubject(*alt.fn));
-                    step.argPath = std::make_shared<trace::PathExpr>(pathFromSubject(*alt.arg));
-                    out.steps.push_back(std::move(step));
-                }
-            },
-            s.data);
-    };
-    walk(walk, subject);
-    return out;
+    return pathAndRootsFromSubject(subject).path;
 }
 
 Fact factFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result)
@@ -131,25 +183,29 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
                     auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
                     return TracingDecisionGraph::xorHashes(base, scope);
                 } else if constexpr (std::is_same_v<T, DerivedSubject>) {
-                    /* Per-arg CDI: the derived's identity hashes
-                       root_cdi + path-to-parent + leaf step, so all
-                       derived values inside one cb_arg share a single
-                       root_cdi that accumulates observations from
-                       every depth. The leaf step (= name or index)
-                       sits in the query body; path-to-parent lives
-                       in the query.path field — symmetric with what
-                       the writer flushes for getAttr/getListElem
-                       probes on this derived value. */
-                    auto rootCdi = contentIdAt(rootSubjectOf(subject), scope, walk, k);
-                    auto pathToParent = pathFromSubject(*alt.parent);
+                    /* Per-arg CDI under multi-root: derived's identity
+                       hashes the leaf step (name/index), the parent's
+                       path expression, and the full list of roots
+                       (via fromCIDs[]). The legacy `from` field carries
+                       fromCIDs[0] for backward compatibility. */
+                    auto [pathToParent, parentRoots] = pathAndRootsFromSubject(*alt.parent);
+                    std::vector<trace::QueryLeaf> fromCIDs;
+                    fromCIDs.reserve(parentRoots.size());
+                    for (auto & root : parentRoots) {
+                        auto cid = contentIdAt(root, scope, walk, k);
+                        fromCIDs.emplace_back(hashHex(cid));
+                    }
+                    auto fromLeaf = fromCIDs.empty() ? trace::QueryLeaf("") : fromCIDs[0];
                     nlohmann::json qj;
                     if (alt.kind == DerivedSubject::Kind::GetAttr) {
-                        trace::QueryGetAttr q{alt.name, hashHex(rootCdi)};
+                        trace::QueryGetAttr q{alt.name, fromLeaf};
                         q.path = pathToParent;
+                        q.fromCIDs = fromCIDs;
                         qj = q;
                     } else {
-                        trace::QueryGetListElem q{hashHex(rootCdi), alt.index};
+                        trace::QueryGetListElem q{fromLeaf, alt.index};
                         q.path = pathToParent;
+                        q.fromCIDs = fromCIDs;
                         qj = q;
                     }
                     return hashString(HashAlgorithm::SHA256, qj.dump());

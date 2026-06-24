@@ -118,13 +118,27 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
     one. Apply queries don't have a `from`; throws. */
 Hash extractFrom(const trace::QueryVariant & query);
 
-/** Walk a Subject's parent chain to construct the access path from
-    the root. PositionalSeed and OpaqueContentSubject contribute no
-    steps (= they're root forms). DerivedSubject contributes one
-    step per node. ApplyResultSubject currently throws — handled in
-    task #87 (= function characterization) once the apply-result
-    flow reflects observations back into the root cb_arg. */
+/** Convenience wrapper around `pathAndRootsFromSubject`: returns just
+    the path. Use the full helper when roots are also needed (= writer
+    flush, walker probes). */
 trace::PathExpr pathFromSubject(const Subject & subject);
+
+/** Multi-root path expression for a Subject. The path navigates from
+    the natural root (= `roots[0]`); Apply steps inside the path
+    reference other roots by absolute index via `fnRootIndex` /
+    `argRootIndex`. Roots are leaves of the subject tree: PositionalSeeds
+    or OpaqueContentSubjects. Same-leaf occurrences (= e.g. fn and arg
+    both deriving from the same cb_arg) collapse to one entry by Subject
+    equality. Function characterization (= task #87) needs this so that
+    observations on apply-result descendants reference both fn-root and
+    arg-root in the wire payload. */
+struct PathAndRoots
+{
+    trace::PathExpr path;
+    std::vector<Subject> roots;
+};
+
+PathAndRoots pathAndRootsFromSubject(const Subject & subject);
 
 /** Walk a Subject's parent chain through DerivedSubject nodes to
     the root form (PositionalSeed, OpaqueContentSubject, or

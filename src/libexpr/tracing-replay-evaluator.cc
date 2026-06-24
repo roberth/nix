@@ -409,15 +409,18 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
 /* Outer-direction: derived child id whose producer Request is a
    navigation step (getAttr / getListElem). Resolve parent through the
    producer chain, then perform the live navigation step on it. */
-/* Per-arg path navigation: walk obj down by a recorded PathExpr (=
-   the query's path-to-parent under per-arg). Returns nullptr if any
-   step misses. Apply steps invoke `queryApply` live against the
-   navigated fn/arg sub-paths so apply-result observations get
-   reproduced symmetrically. Single-root assumption today: fn and arg
-   sub-paths both navigate from the same `obj` (= the cb_arg whose
-   root cdi populated `from`). */
-static std::shared_ptr<Object> navigatePath(std::shared_ptr<Object> obj, const trace::PathExpr & path)
+/* Per-arg path navigation with multi-root support. `roots` are the
+   live Objects corresponding to the query's `fromCIDs[]` entries (=
+   each entry is a cb_arg's standin). The top-level path navigates
+   from `roots[0]`; Apply steps reach into `roots` by index via
+   their `fnRootIndex` / `argRootIndex` so higher-order applies (=
+   fn from one cb_arg, arg from another) work. */
+static std::shared_ptr<Object> navigatePath(
+    const std::vector<std::shared_ptr<Object>> & roots, const trace::PathExpr & path)
 {
+    if (roots.empty())
+        return nullptr;
+    std::shared_ptr<Object> obj = roots[0];
     for (auto & step : path.steps) {
         if (!obj)
             return nullptr;
@@ -428,8 +431,15 @@ static std::shared_ptr<Object> navigatePath(std::shared_ptr<Object> obj, const t
         } else if (step.kind == trace::PathStep::Kind::Apply) {
             if (!step.fnPath || !step.argPath)
                 return nullptr;
-            auto fnObj = navigatePath(obj, *step.fnPath);
-            auto argObj = navigatePath(obj, *step.argPath);
+            if (step.fnRootIndex >= roots.size() || step.argRootIndex >= roots.size())
+                return nullptr;
+            /* fn and arg sub-paths each navigate from their own
+               root entry. Walker mirrors the writer's pathAndRoots
+               builder. */
+            std::vector<std::shared_ptr<Object>> fnRoots{roots[step.fnRootIndex]};
+            std::vector<std::shared_ptr<Object>> argRoots{roots[step.argRootIndex]};
+            auto fnObj = navigatePath(fnRoots, *step.fnPath);
+            auto argObj = navigatePath(argRoots, *step.argPath);
             if (!fnObj || !argObj)
                 return nullptr;
             try {
@@ -453,20 +463,53 @@ static trace::PathExpr parsePathFromParams(const nlohmann::json & params)
     return path;
 }
 
+/* Resolve the query's roots: prefer `fromCIDs[]` if present (=
+   per-arg multi-root), fall back to the legacy single `from` field.
+   Returns empty vector on resolution failure for any root. */
+static std::vector<std::shared_ptr<Object>> resolveRoots(
+    const nlohmann::json & params,
+    std::function<std::shared_ptr<Object>(const std::string &)> resolve)
+{
+    std::vector<std::shared_ptr<Object>> roots;
+    if (params.contains("fromCIDs")) {
+        for (auto & cid : params["fromCIDs"]) {
+            std::string cidHex;
+            if (cid.is_string())
+                cidHex = cid.get<std::string>();
+            else if (cid.is_object() && cid.contains("content"))
+                cidHex = cid["content"].get<std::string>();
+            else
+                return {};
+            auto obj = resolve(cidHex);
+            if (!obj)
+                return {};
+            roots.push_back(std::move(obj));
+        }
+        return roots;
+    }
+    if (params.contains("from")) {
+        auto obj = resolve(params["from"].get<std::string>());
+        if (!obj)
+            return {};
+        roots.push_back(std::move(obj));
+    }
+    return roots;
+}
+
 std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
     const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx)
 {
-    if (!params.contains("from"))
+    if (!params.contains("from") && !params.contains("fromCIDs"))
         return nullptr;
 
-    auto parent = resolveCdiId(params["from"].get<std::string>(), ctx);
-    if (!parent)
+    /* Per-arg multi-root: resolve each fromCIDs[] entry to a live
+       cb_arg standin, then navigate. The producer query records the
+       path-to-parent in `path`; navigation uses both. */
+    auto roots = resolveRoots(params,
+        [&](const std::string & cid) { return resolveCdiId(cid, ctx); });
+    if (roots.empty())
         return nullptr;
-
-    /* Per-arg: the producer query records its path-to-parent in
-       `path`. Navigate from the resolved cb_arg root by that path
-       before dispatching the leaf step. */
-    parent = navigatePath(std::move(parent), parsePathFromParams(params));
+    auto parent = navigatePath(roots, parsePathFromParams(params));
     if (!parent)
         return nullptr;
 
@@ -504,19 +547,15 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
 
 
     /* Every ambient response must be live-validated, just like file
-       reads and env vars. resolveCdiId for any tag (including
-       apply, via live `queryApply` invocation) returns a live
-       Object we can re-query. Serving recorded responses here would
-       hide outer-side changes from the validation chain and let the
-       cache return stale results. */
-    auto obj = resolveCdiId(params["from"].get<std::string>(), ctx);
-    if (!obj)
+       reads and env vars. Resolve each fromCIDs[] entry to a live
+       Object (single-root falls back to `from`) and navigate by the
+       recorded path. The query body (= leaf op like getAttr "x")
+       then runs on the navigated child. */
+    auto roots = resolveRoots(params,
+        [&](const std::string & cid) { return resolveCdiId(cid, ctx); });
+    if (roots.empty())
         return std::nullopt;
-
-    /* Per-arg: navigate by the recorded path from the cb_arg root to
-       the value the query was sourced against. The query body (=
-       leaf op like getAttr "x") then runs on the navigated child. */
-    obj = navigatePath(std::move(obj), parsePathFromParams(params));
+    auto obj = navigatePath(roots, parsePathFromParams(params));
     if (!obj)
         return std::nullopt;
 
