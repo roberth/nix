@@ -336,6 +336,43 @@ void from_json(const nlohmann::json & j, QueryLeaf & leaf)
 }
 
 // ---------------------------------------------------------------------------
+// PathExpr serialization
+// ---------------------------------------------------------------------------
+
+void to_json(nlohmann::json & j, const PathStep & s)
+{
+    if (s.kind == PathStep::Kind::GetAttr)
+        j = nlohmann::json{{"kind", "attr"}, {"name", s.name}};
+    else
+        j = nlohmann::json{{"kind", "listElem"}, {"index", s.index}};
+}
+
+void from_json(const nlohmann::json & j, PathStep & s)
+{
+    auto kindStr = j.at("kind").get<std::string>();
+    if (kindStr == "attr") {
+        s.kind = PathStep::Kind::GetAttr;
+        j.at("name").get_to(s.name);
+    } else if (kindStr == "listElem") {
+        s.kind = PathStep::Kind::GetListElem;
+        j.at("index").get_to(s.index);
+    } else {
+        throw nlohmann::json::type_error::create(
+            302, "PathStep JSON: unknown kind \"" + kindStr + "\"", &j);
+    }
+}
+
+void to_json(nlohmann::json & j, const PathExpr & p)
+{
+    j = p.steps;  // serialize as a plain array of steps
+}
+
+void from_json(const nlohmann::json & j, PathExpr & p)
+{
+    j.get_to(p.steps);
+}
+
+// ---------------------------------------------------------------------------
 // Query payload serialization
 // ---------------------------------------------------------------------------
 

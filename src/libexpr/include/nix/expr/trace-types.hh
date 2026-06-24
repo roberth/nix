@@ -313,6 +313,46 @@ void to_json(nlohmann::json & j, const QueryLeaf & leaf);
 void from_json(const nlohmann::json & j, QueryLeaf & leaf);
 
 // ---------------------------------------------------------------------------
+// PathExpr: a structured access path from a cb_arg root
+// ---------------------------------------------------------------------------
+
+/** One step within an access path: an attr name, a list-elem index, or
+    (future, for the function-characterization task) an apply node with
+    sub-paths. For now only attr and list-elem are emitted in real
+    queries — apply is reserved so the schema doesn't need to grow
+    when the per-arg → function characterization work lands. */
+struct PathStep
+{
+    enum class Kind {
+        GetAttr,
+        GetListElem,
+    };
+    Kind kind;
+    std::string name;  ///< meaningful for GetAttr
+    size_t index{};    ///< meaningful for GetListElem
+
+    auto operator<=>(const PathStep &) const = default;
+};
+
+void to_json(nlohmann::json & j, const PathStep & s);
+void from_json(const nlohmann::json & j, PathStep & s);
+
+/** A path from a cb_arg root to the value being probed. Empty path
+    means the observation is on the root itself. Used by the per-arg
+    cidasks model: every probe's path identifies *which* derived
+    value within the root is being probed, while the root's CDI is
+    what `fromCIDs` resolves to at flush. */
+struct PathExpr
+{
+    std::vector<PathStep> steps;
+
+    auto operator<=>(const PathExpr &) const = default;
+};
+
+void to_json(nlohmann::json & j, const PathExpr & p);
+void from_json(const nlohmann::json & j, PathExpr & p);
+
+// ---------------------------------------------------------------------------
 // Query payload types and their result mappings
 // ---------------------------------------------------------------------------
 
