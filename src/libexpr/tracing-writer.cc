@@ -57,18 +57,18 @@ void TracingWriter::flushPendingAmbient()
         }
     };
 
-    /* Depth-1: single-edge walk (= preserve v13 XOR-fold semantics
-       for input tracing). Per-edge evolution across flushes (= what
-       principles 3/5/7 prescribe for sibling discrimination) is set
-       up in `d1CidasksWalk` member + walker's onEdgeAttempt callback
-       but the walker can't yet match writer's per-flush evolution
-       across Qs (= each v13Walk starts fresh; persistent runningWalk
-       across Qs has open dedup questions). Until that lands, flush
-       uses edgeIndex=0 (= structural cdi) for all d1 facts. */
-    cidasks::Edge d1Edge;
-    for (auto * pf : depth1Facts)
-        d1Edge.facts.push_back(cidasks::factFromQR(pf->query, pf->result));
-    std::vector<cidasks::Edge> d1Walk{std::move(d1Edge)};
+    /* Depth-1: this flush's facts form ONE edge appended to the
+       persistent `d1CidasksWalk` chain (= principles 3/5/7). The
+       edge's precondition is the walk's current length; each fact's
+       `from` substitutes the root's cdi at that precondition. Across
+       flushes the chain grows; later flushes substitute against an
+       evolved root cdi, so sibling-distinguishing observations get
+       distinct reqHashes. Tracks new requests added in this flush
+       so we can later insert a per-flush Asks edge in the trie. */
+    size_t d1EdgeIndex = d1CidasksWalk.size();
+    Hash d1FlushFromFactSetHash = v13FactSetHash;
+    cidasks::Edge d1NewEdge;
+    std::vector<Hash> d1FlushNewRequests;
 
     for (auto * pf : depth1Facts) {
         /* Per-arg with multi-root (= task #87): `from` is the first
@@ -80,7 +80,7 @@ void TracingWriter::flushPendingAmbient()
         std::vector<trace::QueryLeaf> fromCIDs;
         fromCIDs.reserve(roots.size());
         for (auto & root : roots) {
-            auto cid = cidasks::contentIdAt(root, pf->inheritedScope, d1Walk, /*edgeIndex=*/ 0);
+            auto cid = cidasks::contentIdAt(root, pf->inheritedScope, d1CidasksWalk, d1EdgeIndex);
             fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
         }
         std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
@@ -91,9 +91,9 @@ void TracingWriter::flushPendingAmbient()
         std::string queryTag = std::visit(
             [](const auto & q) -> std::string { return std::string(q.tag); }, pf->query);
         tracingCacheLog(
-            "flush d1 fact: subject=%s query=%s from=%s path=%zu fromCIDs=%zu",
+            "flush d1 fact: subject=%s query=%s from=%s path=%zu fromCIDs=%zu edge=%zu",
             cidasks::describe(pf->subject), queryTag, fromHex.substr(0, 12),
-            path.steps.size(), fromCIDs.size());
+            path.steps.size(), fromCIDs.size(), d1EdgeIndex);
 
         nlohmann::json queryJson;
         std::visit([&](const auto & q) { queryJson = q; }, pf->query);
@@ -112,16 +112,38 @@ void TracingWriter::flushPendingAmbient()
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
         decisionGraph->insertLocalResponse(queryHash, responsePayload);
 
-        /* Dedupe by (request, response). See logResponse. */
-        auto factHash = TracingDecisionGraph::xorFactIntoHash(
+        /* Append the substituted fact to the new d1 cidasks edge so
+           later flushes' contentIdAt sees it via the own-loop. */
+        auto elementHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), queryHash, responseHash);
+        d1NewEdge.facts.push_back({fromCdi, elementHash});
+
+        /* Dedupe by (request, response). See logResponse. */
+        auto factHash = elementHash;
         if (seenRequests.insert(factHash).second) {
             v13FactSet.push_back({queryHash, responseHash});
             v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 v13FactSetHash, queryHash, responseHash);
             responseFor.emplace(queryHash, responseHash);
             allRequestsTrie.insert(queryHash);
+            d1FlushNewRequests.push_back(queryHash);
         }
+    }
+    if (!d1NewEdge.facts.empty())
+        d1CidasksWalk.push_back(std::move(d1NewEdge));
+
+    /* Record this flush as a per-flush trie edge so the walker sees
+       one Asks edge per writer flush. logResult will turn this into
+       `Asks(Q, fromFactSet, requestSet)` rows for every recorded Q
+       (= idempotent INSERT OR IGNORE, so re-inserting prior flushes
+       in subsequent Qs' namespaces is harmless). */
+    if (!d1FlushNewRequests.empty()) {
+        auto requestSetHash = decisionGraph->insertRequestSet(d1FlushNewRequests);
+        flushAsksEdges.push_back(FlushAsksEdge{
+            d1FlushFromFactSetHash,
+            requestSetHash,
+            v13FactSetHash,
+        });
     }
 
     /* Depth-2: per cb-apply, build a multi-edge walk incrementally
