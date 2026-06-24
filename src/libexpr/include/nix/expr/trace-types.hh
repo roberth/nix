@@ -19,6 +19,7 @@
 #include <nlohmann/json.hpp>
 
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <variant>
@@ -316,22 +317,35 @@ void from_json(const nlohmann::json & j, QueryLeaf & leaf);
 // PathExpr: a structured access path from a cb_arg root
 // ---------------------------------------------------------------------------
 
-/** One step within an access path: an attr name, a list-elem index, or
-    (future, for the function-characterization task) an apply node with
-    sub-paths. For now only attr and list-elem are emitted in real
-    queries — apply is reserved so the schema doesn't need to grow
-    when the per-arg → function characterization work lands. */
+struct PathExpr;  // forward — PathStep::Apply nests sub-PathExprs
+
+/** One step within an access path. `GetAttr` / `GetListElem` extend
+    by an attr name or a list-elem index. `Apply` extends by an apply
+    node whose `fnPath` and `argPath` are themselves sub-PathExprs;
+    each sub-path resolves against an entry in the enclosing query's
+    `fromCIDs[]` (selected by `fnRootIndex` / `argRootIndex`). The
+    apply form is used by function characterization (= task #87) so
+    observations on apply-result descendants compose into a path
+    rooted in the cb_args that fn and arg came from. */
 struct PathStep
 {
     enum class Kind {
         GetAttr,
         GetListElem,
+        Apply,
     };
     Kind kind;
     std::string name;  ///< meaningful for GetAttr
     size_t index{};    ///< meaningful for GetListElem
+    /* Apply sub-paths. Held by shared_ptr so PathExpr can recursively
+       contain PathStep without storage cycles in the type. */
+    std::shared_ptr<PathExpr> fnPath;
+    std::shared_ptr<PathExpr> argPath;
+    size_t fnRootIndex{0};
+    size_t argRootIndex{0};
 
-    auto operator<=>(const PathStep &) const = default;
+    std::strong_ordering operator<=>(const PathStep & other) const;
+    bool operator==(const PathStep & other) const;
 };
 
 void to_json(nlohmann::json & j, const PathStep & s);
@@ -346,7 +360,7 @@ struct PathExpr
 {
     std::vector<PathStep> steps;
 
-    auto operator<=>(const PathExpr &) const = default;
+    auto operator<=>(const PathExpr & other) const = default;
 };
 
 void to_json(nlohmann::json & j, const PathExpr & p);
