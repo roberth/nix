@@ -409,6 +409,35 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
 /* Outer-direction: derived child id whose producer Request is a
    navigation step (getAttr / getListElem). Resolve parent through the
    producer chain, then perform the live navigation step on it. */
+/* Per-arg path navigation: walk obj down by a recorded PathExpr (=
+   the query's path-to-parent under per-arg). Returns nullptr if any
+   step misses. The walker uses this both when resolving derived
+   producer ids (= the producer query's path takes us from the cb_arg
+   root to the derived value's parent) and when re-dispatching
+   recorded probes against the live root. */
+static std::shared_ptr<Object> navigatePath(std::shared_ptr<Object> obj, const trace::PathExpr & path)
+{
+    for (auto & step : path.steps) {
+        if (!obj)
+            return nullptr;
+        if (step.kind == trace::PathStep::Kind::GetAttr)
+            obj = obj->maybeGetAttr(step.name);
+        else if (step.kind == trace::PathStep::Kind::GetListElem)
+            obj = obj->getListElem(step.index);
+        else
+            return nullptr;
+    }
+    return obj;
+}
+
+static trace::PathExpr parsePathFromParams(const nlohmann::json & params)
+{
+    trace::PathExpr path;
+    if (params.contains("path"))
+        from_json(params.at("path"), path);
+    return path;
+}
+
 std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
     const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx)
 {
@@ -416,6 +445,13 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
         return nullptr;
 
     auto parent = resolveCdiId(params["from"].get<std::string>(), ctx);
+    if (!parent)
+        return nullptr;
+
+    /* Per-arg: the producer query records its path-to-parent in
+       `path`. Navigate from the resolved cb_arg root by that path
+       before dispatching the leaf step. */
+    parent = navigatePath(std::move(parent), parsePathFromParams(params));
     if (!parent)
         return nullptr;
 
@@ -459,6 +495,13 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
        hide outer-side changes from the validation chain and let the
        cache return stale results. */
     auto obj = resolveCdiId(params["from"].get<std::string>(), ctx);
+    if (!obj)
+        return std::nullopt;
+
+    /* Per-arg: navigate by the recorded path from the cb_arg root to
+       the value the query was sourced against. The query body (=
+       leaf op like getAttr "x") then runs on the navigated child. */
+    obj = navigatePath(std::move(obj), parsePathFromParams(params));
     if (!obj)
         return std::nullopt;
 
