@@ -91,12 +91,34 @@ These are the specific commitments of this design.
      = initial(N) XOR (XOR-fold over facts in F about seed_N)
    ```
 
-   For a derived or apply-result subject S:
+   For a derived subject S = parent[name] at factset F (= per-arg
+   centralization, task #86):
+
+   ```
+   contentId(S, F) = qH(producer_query{
+                         from = root_cdi(S, F),
+                         name/index,
+                         path = path(parent of S)})
+   ```
+
+   where `root_cdi(S, F) = contentId(rootSubject of S, F)` and
+   `path(P)` walks `P`'s DerivedSubject chain back to its root. All
+   facts about derived values inside one cb_arg dispatch with
+   `from = root_cdi`, so derived observations fold into the root's
+   own-loop and propagate to every derived subject's content id via
+   the `from` field of the structural formula above.
+
+   For an apply-result subject S:
 
    ```
    contentId(S, F) = qH(producer_query of S with constituent
                         subjects' content ids substituted at F)
    ```
+
+   Today apply-result observations fold into the apply-result's own
+   chain, not back into `fn`'s. Function characterization (= the
+   feedback that distinguishes siblings differing only in apply
+   behavior) is task #87.
 
 4. **Membership in "facts about V" is decided per Asks edge.** At an
    Asks edge's precondition factset, each subject has a content id;
@@ -104,6 +126,11 @@ These are the specific commitments of this design.
    observations on V for this edge. New edges re-decide membership
    against their own precondition. No global filter, no recursive
    resolution at fact-emission time.
+
+   Under per-arg, all derived observations on V share the cb_arg
+   root's `from` and discriminate by `path` inside the query —
+   "facts about V" within an edge is the `(from, path)` pair, not
+   `from` alone.
 
 5. **At recording flush, fact `from` fields are rewritten per Asks
    edge.** The recorder buffers facts during a query's evaluation
