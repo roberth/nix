@@ -35,17 +35,13 @@ std::optional<std::pair<std::string, Hash>>
 TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy)
 {
     /* Per-walk resolution context: holds the proxy whose method
-       triggered this walk (for proxy-graph grounded ambient id
-       resolution), a memo of ids resolved during this walk, and the
-       running cidasks walk built from dispatched facts. */
+       triggered this walk, a memo of ids resolved during this walk,
+       and the running cidasks walk built from dispatched facts.
+       runningWalk seeded with one empty edge; ambient facts append
+       into it (= principle 7 concurrency within an edge). */
     ResolutionContext ctx{
         std::move(currentProxy),
         {},
-        /* runningWalk seeded with one empty edge — every dispatched
-           fact appends to it. For single-edge walks (the trie's
-           fast path), edgeIndex stays at 0 so subject content ids
-           evaluate against the empty precondition (= initial cdi);
-           matches recorder behavior at flush. */
         std::vector<cidasks::Edge>{cidasks::Edge{}},
         0,
     };
@@ -91,12 +87,9 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
            which facts came from interpretation vs cache-hit
            dispatch. */
         writer.noteEnvObservation(requestHash, h);
-        /* Append to the running cidasks walk so subsequent
-           in-walk content-id matches (resolveCdiId) account for
-           this observation. For single-edge walks edgeIndex stays
-           at 0 so this is informational only — but the
-           infrastructure is in place for multi-edge walks where
-           per-edge precondition evaluation matters. */
+        /* Append to the single running edge so subsequent cell-chain
+           cdi lookups account for it via the own-loop. Order within
+           the edge doesn't matter (= XOR-fold per principle 7). */
         if (isAmbient && ambientFromHash && !ctx.runningWalk.empty()) {
             cidasks::Fact f{
                 .fromHash = *ambientFromHash,

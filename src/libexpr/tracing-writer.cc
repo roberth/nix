@@ -49,13 +49,6 @@ void TracingWriter::flushPendingAmbient()
             depth2FactsByApply[pf.depth2ApplyId].push_back(&pf);
     }
 
-    /* Depth-1: single-edge walk (preserve v13 XOR-fold semantics for
-       input tracing). */
-    cidasks::Edge d1Edge;
-    for (auto * pf : depth1Facts)
-        d1Edge.facts.push_back(cidasks::factFromQR(pf->query, pf->result));
-    std::vector<cidasks::Edge> d1Walk{std::move(d1Edge)};
-
     auto rewriteFromInQuery = [](nlohmann::json & queryJson, const std::string & fromHex) {
         if (queryJson.is_object() && queryJson.contains("params")) {
             auto & params = queryJson["params"];
@@ -63,6 +56,16 @@ void TracingWriter::flushPendingAmbient()
                 params["from"] = fromHex;
         }
     };
+
+    /* Depth-1: single-edge walk (= preserve v13 XOR-fold semantics
+       for input tracing). Per-edge evolution for sibling discrimination
+       is task #87; the walker side needs to track Asks-edge transitions
+       to mirror the writer's d1CidasksWalk advancement, and the
+       current dispatch callback doesn't expose those boundaries. */
+    cidasks::Edge d1Edge;
+    for (auto * pf : depth1Facts)
+        d1Edge.facts.push_back(cidasks::factFromQR(pf->query, pf->result));
+    std::vector<cidasks::Edge> d1Walk{std::move(d1Edge)};
 
     for (auto * pf : depth1Facts) {
         /* Per-arg with multi-root (= task #87): `from` is the first
