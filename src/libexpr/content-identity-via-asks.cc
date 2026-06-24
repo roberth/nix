@@ -26,6 +26,38 @@ Hash extractFrom(const trace::QueryVariant & query)
         query);
 }
 
+trace::PathExpr pathFromSubject(const Subject & subject)
+{
+    trace::PathExpr out;
+    auto walk = [&out](auto & self, const Subject & s) -> void {
+        std::visit(
+            [&](const auto & alt) {
+                using T = std::decay_t<decltype(alt)>;
+                if constexpr (std::is_same_v<T, PositionalSeed>) {
+                    // root — no contribution
+                } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
+                    // root — no contribution
+                } else if constexpr (std::is_same_v<T, DerivedSubject>) {
+                    self(self, *alt.parent);
+                    trace::PathStep step;
+                    step.kind = alt.kind == DerivedSubject::Kind::GetAttr
+                        ? trace::PathStep::Kind::GetAttr
+                        : trace::PathStep::Kind::GetListElem;
+                    step.name = alt.name;
+                    step.index = alt.index;
+                    out.steps.push_back(std::move(step));
+                } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
+                    throw Error(
+                        "cidasks::pathFromSubject: ApplyResultSubject is not yet "
+                        "representable as a PathExpr (= task #87 function characterization)");
+                }
+            },
+            s.data);
+    };
+    walk(walk, subject);
+    return out;
+}
+
 Fact factFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
     nlohmann::json qj;

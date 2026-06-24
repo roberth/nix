@@ -118,6 +118,14 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
     one. Apply queries don't have a `from`; throws. */
 Hash extractFrom(const trace::QueryVariant & query);
 
+/** Walk a Subject's parent chain to construct the access path from
+    the root. PositionalSeed and OpaqueContentSubject contribute no
+    steps (= they're root forms). DerivedSubject contributes one
+    step per node. ApplyResultSubject currently throws — handled in
+    task #87 (= function characterization) once the apply-result
+    flow reflects observations back into the root cb_arg. */
+trace::PathExpr pathFromSubject(const Subject & subject);
+
 /** Short readable representation of a Subject — for tracing logs.
     Example: `seed(2)`, `getAttr(seed(2), "left")`,
     `applyResult(seed(0), seed(1))`, `opaque(ab12cd...)`. */
