@@ -376,6 +376,31 @@ void from_json(const nlohmann::json & j, PathExpr & p)
 // Query payload serialization
 // ---------------------------------------------------------------------------
 
+/* Conditional emission for the new path-carrying fields. Empty
+   `fromCIDs` / `path` are omitted so existing serialized forms (=
+   pre-#86 fields) hash byte-identically to before. Emitters that
+   wire path through populate one or both; consumers read them back
+   tolerantly. */
+static void emitPathAndFromCIDs(
+    nlohmann::json & params,
+    const std::vector<QueryLeaf> & fromCIDs,
+    const PathExpr & path)
+{
+    if (!fromCIDs.empty()) params["fromCIDs"] = fromCIDs;
+    if (!path.steps.empty()) params["path"] = path;
+}
+
+static void parsePathAndFromCIDs(
+    const nlohmann::json & params,
+    std::vector<QueryLeaf> & fromCIDs,
+    PathExpr & path)
+{
+    fromCIDs.clear();
+    path = {};
+    if (params.contains("fromCIDs")) params.at("fromCIDs").get_to(fromCIDs);
+    if (params.contains("path")) params.at("path").get_to(path);
+}
+
 void to_json(nlohmann::json & j, const QueryExpr & q)
 {
     j = nlohmann::json{{"query", QueryExpr::tag}, {"params", {{"expr", q.expr}, {"baseDir", q.baseDir}}}};
@@ -400,107 +425,128 @@ void from_json(const nlohmann::json & j, QueryImport & q)
 void to_json(nlohmann::json & j, const QueryGetAttr & q)
 {
     j = nlohmann::json{{"query", QueryGetAttr::tag}, {"params", {{"name", q.name}, {"from", q.from}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetAttr & q)
 {
     j.at("params").at("name").get_to(q.name);
     j.at("params").at("from").get_to(q.from);
+    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetString & q)
 {
     j = nlohmann::json{{"query", QueryGetString::tag}, {"params", {{"from", q.from}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetString & q)
 {
     j.at("params").at("from").get_to(q.from);
+    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetStringWithContext & q)
 {
     j = nlohmann::json{{"query", QueryGetStringWithContext::tag}, {"params", {{"from", q.from}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetStringWithContext & q)
 {
     j.at("params").at("from").get_to(q.from);
+    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetAttrNames & q)
 {
     j = nlohmann::json{{"query", QueryGetAttrNames::tag}, {"params", {{"from", q.from}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetAttrNames & q)
 {
     j.at("params").at("from").get_to(q.from);
+    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetType & q)
 {
     j = nlohmann::json{{"query", QueryGetType::tag}, {"params", {{"from", q.from}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetType & q)
 {
     j.at("params").at("from").get_to(q.from);
+    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetBool & q)
 {
     j = nlohmann::json{{"query", QueryGetBool::tag}, {"params", {{"from", q.from}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetBool & q)
 {
     j.at("params").at("from").get_to(q.from);
+    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetInt & q)
 {
     j = nlohmann::json{{"query", QueryGetInt::tag}, {"params", {{"from", q.from}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetInt & q)
 {
     j.at("params").at("from").get_to(q.from);
+    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetFloat & q)
 {
     j = nlohmann::json{{"query", QueryGetFloat::tag}, {"params", {{"from", q.from}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetFloat & q)
 {
     j.at("params").at("from").get_to(q.from);
+    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetListOfStrings & q)
 {
     j = nlohmann::json{{"query", QueryGetListOfStrings::tag}, {"params", {{"from", q.from}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetListOfStrings & q)
 {
     j.at("params").at("from").get_to(q.from);
+    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetListSize & q)
 {
     j = nlohmann::json{{"query", QueryGetListSize::tag}, {"params", {{"from", q.from}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetListSize & q)
 {
     j.at("params").at("from").get_to(q.from);
+    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetListElem & q)
 {
     j = nlohmann::json{{"query", QueryGetListElem::tag}, {"params", {{"from", q.from}, {"index", q.index}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetListElem & q)
@@ -512,21 +558,25 @@ void from_json(const nlohmann::json & j, QueryGetListElem & q)
 void to_json(nlohmann::json & j, const QueryGetPath & q)
 {
     j = nlohmann::json{{"query", QueryGetPath::tag}, {"params", {{"from", q.from}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetPath & q)
 {
     j.at("params").at("from").get_to(q.from);
+    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetFunctionInfo & q)
 {
     j = nlohmann::json{{"query", QueryGetFunctionInfo::tag}, {"params", {{"from", q.from}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetFunctionInfo & q)
 {
     j.at("params").at("from").get_to(q.from);
+    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
 }
 
 void to_json(nlohmann::json & j, const ResultFunctionInfo & r)

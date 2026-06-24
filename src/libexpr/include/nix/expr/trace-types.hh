@@ -380,7 +380,9 @@ struct QueryGetAttr
 {
     static constexpr std::string_view tag = "getAttr";
     std::string name;
-    QueryLeaf from;   ///< Parent object identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetAttr &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetAttr, ResultMaybeType)
@@ -389,7 +391,9 @@ DECLARE_QUERY_RESULT(QueryGetAttr, ResultMaybeType)
 struct QueryGetString
 {
     static constexpr std::string_view tag = "getString";
-    QueryLeaf from;   ///< Parent object identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetString &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetString, ResultString)
@@ -398,7 +402,9 @@ DECLARE_QUERY_RESULT(QueryGetString, ResultString)
 struct QueryGetStringWithContext
 {
     static constexpr std::string_view tag = "getStringWithContext";
-    QueryLeaf from;   ///< Parent object identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetStringWithContext &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetStringWithContext, ResultStringWithContext)
@@ -407,7 +413,9 @@ DECLARE_QUERY_RESULT(QueryGetStringWithContext, ResultStringWithContext)
 struct QueryGetAttrNames
 {
     static constexpr std::string_view tag = "getAttrNames";
-    QueryLeaf from;   ///< Parent object identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetAttrNames &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetAttrNames, ResultListOfStrings)
@@ -416,7 +424,9 @@ DECLARE_QUERY_RESULT(QueryGetAttrNames, ResultListOfStrings)
 struct QueryGetType
 {
     static constexpr std::string_view tag = "getType";
-    QueryLeaf from;   ///< Parent object identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetType &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetType, ResultType)
@@ -425,7 +435,9 @@ DECLARE_QUERY_RESULT(QueryGetType, ResultType)
 struct QueryGetBool
 {
     static constexpr std::string_view tag = "getBool";
-    QueryLeaf from;   ///< Parent object identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetBool &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetBool, ResultBool)
@@ -434,7 +446,9 @@ DECLARE_QUERY_RESULT(QueryGetBool, ResultBool)
 struct QueryGetInt
 {
     static constexpr std::string_view tag = "getInt";
-    QueryLeaf from;   ///< Parent object identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetInt &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetInt, ResultInt)
@@ -443,7 +457,9 @@ DECLARE_QUERY_RESULT(QueryGetInt, ResultInt)
 struct QueryGetFloat
 {
     static constexpr std::string_view tag = "getFloat";
-    QueryLeaf from;   ///< Parent object identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetFloat &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetFloat, ResultFloat)
@@ -452,7 +468,9 @@ DECLARE_QUERY_RESULT(QueryGetFloat, ResultFloat)
 struct QueryGetListOfStrings
 {
     static constexpr std::string_view tag = "getListOfStrings";
-    QueryLeaf from;   ///< Parent object identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetListOfStrings &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetListOfStrings, ResultListOfStrings)
@@ -461,7 +479,9 @@ DECLARE_QUERY_RESULT(QueryGetListOfStrings, ResultListOfStrings)
 struct QueryGetListSize
 {
     static constexpr std::string_view tag = "getListSize";
-    QueryLeaf from;   ///< Parent object identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetListSize &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetListSize, ResultListSize)
@@ -470,8 +490,10 @@ DECLARE_QUERY_RESULT(QueryGetListSize, ResultListSize)
 struct QueryGetListElem
 {
     static constexpr std::string_view tag = "getListElem";
-    QueryLeaf from;   ///< Parent object identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
     size_t index;
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetListElem &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetListElem, ResultType)
@@ -480,7 +502,9 @@ DECLARE_QUERY_RESULT(QueryGetListElem, ResultType)
 struct QueryGetPath
 {
     static constexpr std::string_view tag = "getPath";
-    QueryLeaf from;   ///< Parent object identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetPath &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetPath, ResultPath)
@@ -489,7 +513,9 @@ DECLARE_QUERY_RESULT(QueryGetPath, ResultPath)
 struct QueryGetFunctionInfo
 {
     static constexpr std::string_view tag = "getFunctionInfo";
-    QueryLeaf from;   ///< Parent object identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetFunctionInfo &) const = default;
 };
 
