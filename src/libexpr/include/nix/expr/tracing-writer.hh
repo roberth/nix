@@ -72,14 +72,6 @@ class TracingWriter
     std::vector<TracingDecisionGraph::Fact> v13FactSet;
     TracingDecisionGraph::SetHash v13FactSetHash;
     std::unordered_set<Hash> seenRequests;
-    /* Parallel to seenRequests but keyed by QUERY hash (= request
-       hash) instead of fact hash. record()'s `allRequests` parameter
-       needs query hashes (its slow path iterates them to build a
-       remainingVec for inserting an Asks edge's requestSet, and an
-       Asks edge's requestSet is a set of *request* hashes, not fact
-       hashes). seenRequests dedupes by (request, response) factHash
-       to keep XOR-fold semantics — different concept. */
-    std::unordered_set<Hash> allRequestHashes;
     /* request → response lookup, maintained as facts arrive.
        Handed to record() by reference so it doesn't rebuild
        O(N) per call. */
@@ -111,30 +103,10 @@ class TracingWriter
     };
     std::vector<PendingFact> pendingFacts;
 
-    /* Persistent cidasks chain for depth-1 facts. Each flush appends
-       one edge containing this flush's substituted facts. Subsequent
-       flushes substitute `from` at `edgeIndex = d1CidasksWalk.size()`
-       so per-arg roots evolve across edges (= principles 3/5/7):
-       later facts' `from` reflects prior edges' contributions to the
-       root's own-loop. The walker mirrors this evolution via the
-       onEdgeAttempt callback into TracingDecisionGraph::walk. */
+    /* Persistent cidasks chain for depth-1 facts. Reserved for
+       future per-flush evolution (= principles 3/5/7); not yet
+       populated. */
     std::vector<cidasks::Edge> d1CidasksWalk;
-
-    /* Per-flush trie-edge boundaries. Each entry records the
-       (fromFactSetHash, requestSetHash, toFactSetHash) of one
-       flushPendingAmbient call's depth-1 contribution. At every
-       logResult we insert one `Asks(Q, fromFactSetHash,
-       requestSetHash)` row per entry — so each Q's recorded chain
-       has exactly one Asks edge per writer flush, and the walker
-       advances `ctx.edgeIndex` once per Asks edge, mirroring
-       d1CidasksWalk's evolution. */
-    struct FlushAsksEdge
-    {
-        TracingDecisionGraph::SetHash fromFactSetHash;
-        TracingDecisionGraph::SetHash requestSetHash;
-        TracingDecisionGraph::SetHash toFactSetHash;
-    };
-    std::vector<FlushAsksEdge> flushAsksEdges;
 
     struct PendingRequest
     {
@@ -222,7 +194,6 @@ public:
                 v13FactSetHash, queryHash, responseHash);
             responseFor.emplace(queryHash, responseHash);
             allRequestsTrie.insert(queryHash);
-            allRequestHashes.insert(queryHash);
         }
     }
 
@@ -369,27 +340,8 @@ public:
            skip its insertRequestSet(remainingVec) call. */
         decisionGraph->primeFactSetCache(v13FactSetHash, v13FactSet);
         allRequestsTrie.persist(*decisionGraph);
-        /* Pre-insert one Asks edge per writer flush in this Q's
-           namespace. Each writer flush corresponds to one trie Asks
-           edge; the walker advances ctx.edgeIndex per Asks edge,
-           matching the writer's per-flush cdi evolution
-           (= principle 5/7). INSERT OR IGNORE makes re-inserting
-           prior flushes' edges in this Q's namespace cheap. */
-        for (const auto & fb : flushAsksEdges)
-            decisionGraph->insertAsks(*qh.queryHash, fb.fromFactSetHash, fb.requestSetHash);
-        /* When per-flush edges are present, skip the whole-remaining
-           Asks shortcut so the walker is forced to walk per-flush
-           edges (= per-edge cdi evolution). Pass allRequestHashes
-           (= the set of query hashes) instead of seenRequests
-           (= fact hashes for XOR dedup); record()'s slow path
-           iterates this to build requestSets, which contain query
-           hashes, not fact hashes. */
-        if (flushAsksEdges.empty())
-            decisionGraph->record(*qh.queryHash, v13FactSetHash, resultNodeHash,
-                responseFor, seenRequests, allRequestsTrie.rootHash());
-        else
-            decisionGraph->record(*qh.queryHash, v13FactSetHash, resultNodeHash,
-                responseFor, allRequestHashes);
+        decisionGraph->record(*qh.queryHash, v13FactSetHash, resultNodeHash,
+            responseFor, seenRequests, allRequestsTrie.rootHash());
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,
