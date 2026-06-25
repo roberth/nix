@@ -58,6 +58,40 @@ to the present design.
    order cannot perturb cache layout. A corollary of (#7); also
    non-negotiable on its own.
 
+9. **Cumulative dependency.** The inner evaluator is a black box.
+   Every Request observed prior to a Result is part of that
+   Result's dependency set — the box's state has evolved through
+   each observation, and the cache cannot prove which observations
+   were load-bearing. Pruning the factSet to exclude prior facts is
+   therefore disallowed: a Result's factSet hash is cumulative over
+   the writer's session up to its logResult.
+
+   The point of the cache is to work accurately for any outer
+   caller. The outer evaluator is outside the cache boundary, and
+   the cache makes no assumptions about which outer is calling it
+   or how — correctness must hold across all of them.
+
+   *Consequence for arguments.* Outer-supplied values entering the
+   cache enter as positional seeds (structural identity, no
+   pre-existing CID); observations the inner makes through them
+   refine identity via CID evolution. The cache never pins an
+   argument by the outer's notion of its identity — only by what
+   the inner observed via Requests.
+
+   *Consequence for callbacks.* Outer-supplied functions inner
+   applies cannot have their response served from cache. The
+   walker invokes outer live and validates the structure of the
+   resulting probes via the d2 chain. Cached state covers the
+   structural contract (= what probes happened, in what order,
+   with what response shape) but never the response values
+   themselves — those come live each time.
+
+   Outer's referential transparency *could* be exploited to cache
+   responses (= same inputs reliably give same outputs within a
+   given outer evaluation). Scoped out for now: only worth doing
+   if measurement shows the live re-invocation cost outweighs the
+   added bookkeeping.
+
 ## Design principles
 
 These are the specific commitments of this design.
@@ -167,6 +201,35 @@ These are the specific commitments of this design.
    from the divergence point onward, and their content ids past that
    point compose the shared-prefix contribution with the divergent
    observations.
+
+   *Corollary (= #3 ∧ Foundational #9): discrimination of
+   behaviorally-distinct values is automatic.* Two mechanisms
+   work in tandem:
+
+   - **Structural distinction comes from the query.** Each
+     cb-apply records a `QueryApply{fn, arg}` whose payload places
+     constituent CIDs in distinct slots. The apply-result's CID
+     is the SHA-256 of that filled-in query (= #3's apply-result
+     formula). `f 1 2` and `f 2 1` produce different queries —
+     `1.cid` and `2.cid` end up in different slots — so the
+     resulting CIDs differ. Nested applies propagate: the second
+     cb-apply's `fn` slot holds the first's CID. Works with or
+     without observations.
+
+   - **Observational distinction via XOR-fold (= #3's positional
+     seed formula + #6).** When the walker dispatches an
+     observation whose live response diverges from a prior
+     recording, the response XOR-folds into both `cur` and the
+     relevant subjects' CIDs. The next Asks or Terminal lookup
+     uses the new `cur` — sibling cb-invocations whose
+     observations diverge end up in distinct trie positions
+     automatically.
+
+   The XOR-fold collapses *observation-path multiplicity* into a
+   single CID per subject (= distinct ways to reach the same set
+   of observations contribute to one folded identity), so
+   per-`<foo>` CIDs for each "arg observed through `<foo>`" path
+   would be redundant.
 
 ## Technical requirements
 
@@ -476,3 +539,23 @@ finds no Asks edge at the new factSet and falls through. The
 `AmbientQuery` lives at a specific factSet position in the
 depth-1 trie; if depth-1 doesn't reach that position, depth-2
 is never entered.
+
+## Implementation hints
+
+These are not principles. They are mnemonics and guidance for
+implementers — convenient ways to think about the machinery the
+principles induce.
+
+### d1 → d2 flip on no-cached-CID
+
+At a cb-apply, the requester/responder roles invert: d1 has
+inner asking outer or the system environment; d2 has outer
+asking inner via the inner-supplied local. The flip is
+conceptual — a mnemonic for the symmetry, not a physical
+reconfiguration. When the walker encounters a cb-apply Request
+whose CID has no recorded fact, it runs the outer fn live; the
+d2 chain validates the probes outer makes back on the local.
+Outer is never cached for serving; d2 only validates structure.
+
+Caveat: speculatively performing an unused callback is
+undesirable; mitigations postpone-able.
