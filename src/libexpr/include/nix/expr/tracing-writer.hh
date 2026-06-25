@@ -103,15 +103,24 @@ class TracingWriter
     };
     std::vector<PendingFact> pendingFacts;
 
+    /* Persistent cidasks chain for depth-1 ambient observations.
+       One edge per logResult — covers the ambient facts substituted
+       at that logResult's flushPendingAmbient. Per-flush evolution
+       (= principles 3/5/7): later flushes substitute fact `from` at
+       `edgeIndex = d1CidasksWalk.size()`, so the root cdi accumulates
+       prior flushes' contributions via the own-loop. The walker
+       advances `ctx.runningWalk` 1:1 via per-Q Asks edges. */
+    std::vector<cidasks::Edge> d1CidasksWalk;
+
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
        new query hash added to v13FactSet since the last logResult,
        whether from `logResponse` (= env/file), `noteEnvObservation`,
        or `flushPendingAmbient`. AmbientQueries are depth-1 just like
        file reads; bundling them with env/file into one Asks edge per
-       logResult keeps the trie's edge structure aligned with the
-       writer's observation sequence. `perQAsksEdges` retains each
-       finalized boundary so every Q's logResult can pre-insert all
-       of them in its namespace via INSERT OR IGNORE (= idempotent). */
+       logResult keeps the trie's edge structure 1:1 with d1CidasksWalk.
+       `perQAsksEdges` retains each finalized boundary so every Q's
+       logResult can pre-insert all of them in its namespace via
+       INSERT OR IGNORE (= idempotent). */
     std::vector<Hash> pendingNewRequests;
     TracingDecisionGraph::SetHash prevQFactSetHash{TracingDecisionGraph::emptySetHash()};
     struct PerQAsksEdge

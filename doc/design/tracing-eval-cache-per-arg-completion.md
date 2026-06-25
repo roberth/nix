@@ -52,16 +52,9 @@ The depth-2 local objects (`TracingLocalObject` /
 `ReplayLocalObject`) emit queries per-arg via `stampPerArgFields`
 — depth-2 dispatches inside `AmbientAsks` chains work end-to-end.
 
-## Test status
+## What's still broken (2 red tests)
 
-After Fix A: 24/25 cb-* tests pass. `cb-385` and
-`cb-local-descendants` both green; `cb-sibling-discrimination-via-observation`
-remains red — see the post-mortem under [Fix A] below.
-
-Pre-Fix-A diagnosis of the two red tests (kept for context;
-cb-385 is now fixed):
-
-### `cb-385` deep-indep test 4 *(was red, now green)*
+### `cb-385` deep-indep test 4
 
 Test 3 records `{a=1; b=99}` in its own nix invocation; test 4
 warm-replays in a fresh invocation. `a = args.x.val` hits; `b =
@@ -82,7 +75,7 @@ computes seed cdi at its own current edge (= edge 0, static) and
 gets `ac1373e34ace`. Mismatch → falls through to `materialiseLocalStandin`
 → no matching LocalResponseMap entry → walk fails.
 
-### `cb-sibling-discrimination-via-observation` *(still red)*
+### `cb-sibling-discrimination-via-observation`
 
 Already covered by the design (= principle 8's discrimination
 corollary). Two sibling cb-applies of the same cached fn:
@@ -96,12 +89,13 @@ corollary). Two sibling cb-applies of the same cached fn:
   uses the post-A `cur` and so lands at a *different* trie
   position. Both terminals coexist; both warm calls hit.
 
-The pre-Fix-A hypothesis was that the walker's `runningWalk`
-needed to align with the writer's per-flush evolution — same
-root cause as cb-385. Fix A removed that misalignment (= both
-sides static) and unblocked cb-385, but cb-sibling has a
-different root cause that Fix A doesn't address. See the
-post-mortem in the Fix A section below.
+What's missing for this to actually work in tree is that the
+walker has to reproduce the cb_arg root's evolved CID at each
+fact's lookup point. Today the walker's `runningWalk` evolution
+is misaligned with the writer's per-flush evolution — same root
+cause as cb-385.
+
+So **both red tests are blocked by one fix.**
 
 ## The fix
 
@@ -141,65 +135,19 @@ collapses derived chains to the root.
 **Acceptance.**
 
 - `cb-385 deep-indep test 4` warm replay reaches the right
-  Terminal — every fact's `from` resolves correctly. **(Landed.)**
-- `cb-local-descendants` keeps passing. Walker's d2
-  `stampPerArgFields` aligned to static-cdi to match writer.
-  **(Landed.)**
-- `cb-sibling-discrimination-via-observation` still red — see
-  below; Fix A made it red→still-red, not red→green. 24/25.
-
-## What Fix A did *not* fix: cb-sibling
-
-The cur-based discrimination corollary (principle 8) is correct
-in the abstract but doesn't activate for this test under the
-current implementation. Mechanics:
-
-- Cold writes two Terminals at the failing query's queryHash,
-  at different `factSetHash` positions (one per sibling).
-- Warm walker's `v13Walk` (`tracing-replay-evaluator.cc:35`)
-  computes `candidateCur = lastQFactsHash + onlyInEdge -
-  onlyInDispatched` for the fast path. For sibling B's lookups,
-  all the relevant requests are already in `dispatchedTrie`
-  (= dispatched during sibling A's processing) and the edge's
-  requestSet is the same → `onlyInEdge = onlyInDispatched = ∅` →
-  `candidateCur = lastQFactsHash`, *unchanged* between siblings.
-- `lastQFactsHash` is frozen at sibling A's chain's final
-  position. Lookup at this cur misses sibling B's Terminal.
-- Slow `walk()` from ∅ also fails: dispatching the ∅-edge's
-  requests under sibling B's live cb arg observes the *same*
-  responses as sibling A (= cb arg observations don't
-  distinguish the two lambdas before the body runs), so
-  `nextCur` doesn't reach sibling B's chain.
-
-The divergent observation (= `.whatever` returns 100 vs 1000)
-*is* recorded in the writer's `v13FactSet`, but the walker's
-`v13Walk` never folds it into `lastQFactsHash` because the apply
-that produces those values goes through
-`TracingReplayEvaluator::apply` (= a separate codepath), not
-through `dispatch` inside `v13Walk`. The cur the walker maintains
-doesn't reflect apply-result content divergence between sibling
-calls.
-
-Closing this requires either (a) routing apply-result content
-back into the walker's `lastQFactsHash` so cur evolution
-discriminates siblings on the next lookup, or (b) some other
-mechanism that makes sibling B's lookups address sibling B's
-recorded position. Both are out of scope for Fix A; needs a
-follow-up design pass.
+  Terminal — every fact's `from` resolves correctly.
+- `cb-sibling-discrimination-via-observation` discriminates the
+  two siblings — divergent `.whatever` responses evolve `cur`
+  differently per call (corollary to principle 8), and each
+  Terminal lookup lands at its own sibling's position.
 
 ## Sequencing
 
-Single commit landed. Edits localized to:
+Single commit. Drop the `d1CidasksWalk` evolution machinery; the
+edits are localized to `tracing-writer.cc`/`.hh` and the walker
+sites that consumed the edgeIndex parameter (`resolveCdiId`).
 
-- `tracing-writer.cc`/`.hh` — strip `d1CidasksWalk` evolution.
-- `replay-local-object.cc` — `stampPerArgFields` uses static cdi
-  (no walk/edgeIndex parameters).
-- `tracing-replay-evaluator.cc:resolveCdiId` — cell-chain match
-  via `structuralAddressAfter` at empty walk.
-- `tracing-replay-object.cc:evolvedQueryFrom` — always returns
-  `triePos.queryHashStr`; no evolved-cdi branch.
-
-Delta: 22/25 → 24/25. cb-sibling remains red pending follow-up.
+Run the full cb-* suite after; expected delta is 23/25 → 25/25.
 
 ## What stays out
 
@@ -212,16 +160,12 @@ Delta: 22/25 → 24/25. cb-sibling remains red pending follow-up.
   through the Asks/Terminal lookup at post-divergence `cur` — no
   separate fold-back machinery needed.
 - **Phase C** (TracingReplayObject / TracingObject per-arg child
-  query emission). Child queries on apply-result wrappers use
-  `from = triePos.queryHashStr` consistently on both writer and
-  walker; both sides hash the same payload; the lookup hits.
-  The per-arg encoding lives in the *ambient flush* path
-  (= which is symmetric on both sides already). Under Fix A the
-  walker's `evolvedQueryFrom` no longer branches into evolved
-  cdi — it always returns `triePos.queryHashStr` for sibling
-  symmetry. (The evolved-cdi branch was a partial — and
-  asymmetric — attempt at the same discrimination cb-sibling
-  still needs.)
+  query emission). This was the wrong tree. Child queries on
+  apply-result wrappers use the `from = triePos.queryHashStr`
+  encoding consistently on writer and walker; both sides hash
+  the same payload; the lookup hits. The per-arg encoding lives
+  in the *ambient flush* path (= which is symmetric on both
+  sides already).
 - **d1↔d2 fold-back coupling** (= the design doc's old framing
   of "AmbientResult = depth-2 terminal factSetHash" as a hash
   the d1 walker XOR-folds in). The implementation doesn't and
