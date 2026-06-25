@@ -122,7 +122,7 @@ These are the specific commitments of this design.
 
    ```
    contentId(seed_N, F)
-     = initial(N) XOR (XOR-fold over facts in F about seed_N)
+     = initial(N) XOR (XOR-fold over observations in F about seed_N)
    ```
 
    For a derived subject S = parent[name] at factset F (= per-arg
@@ -137,10 +137,10 @@ These are the specific commitments of this design.
 
    where `root_cdi(S, F) = contentId(rootSubject of S, F)` and
    `path(P)` walks `P`'s DerivedSubject chain back to its root. All
-   facts about derived values inside one cb_arg dispatch with
-   `from = root_cdi`, so derived observations fold into the root's
-   own-loop and propagate to every derived subject's content id via
-   the `from` field of the structural formula above.
+   observations about derived values inside one cb_arg dispatch
+   carry `from = root_cdi`, so derived observations fold into the
+   root's own-loop and propagate to every derived subject's content
+   id via the `from` field of the structural formula above.
 
    For an apply-result subject S:
 
@@ -154,25 +154,25 @@ These are the specific commitments of this design.
    feedback that distinguishes siblings differing only in apply
    behavior) is task #87.
 
-4. **Membership in "facts about V" is decided per Asks edge.** At an
-   Asks edge's precondition factset, each subject has a content id;
-   facts in this edge whose `from` field equals that id are
-   observations on V for this edge. New edges re-decide membership
-   against their own precondition. No global filter, no recursive
-   resolution at fact-emission time.
+4. **Membership in "observations about V" is decided per Asks edge.**
+   At an Asks edge's precondition factset, each subject has a
+   content id; observations in this edge whose `from` field equals
+   that id are observations on V for this edge. New edges re-decide
+   membership against their own precondition. No global filter, no
+   recursive resolution at fact-emission time.
 
    Under per-arg, all derived observations on V share the cb_arg
    root's `from` and discriminate by `path` inside the query —
-   "facts about V" within an edge is the `(from, path)` pair, not
-   `from` alone.
+   "observations about V" within an edge is the `(from, path)` pair,
+   not `from` alone.
 
-5. **At recording flush, fact `from` fields are rewritten per Asks
-   edge.** The recorder buffers facts during a query's evaluation
-   carrying placeholder identifiers. At flush, it builds Asks edges
-   and substitutes each fact's `from` to the content id of the
-   referenced subject at that edge's precondition factset. Pool keys
-   (`reqHash`) and Asks edges are content-addressed over the
-   post-substitution form.
+5. **At recording flush, observation `from` fields are rewritten per
+   Asks edge.** The recorder buffers observations during a query's
+   evaluation carrying placeholder identifiers. At flush, it builds
+   Asks edges and substitutes each observation's `from` to the
+   content id of the referenced subject at that edge's precondition
+   factset. Pool keys (`reqHash`) and Asks edges are content-addressed
+   over the post-substitution form.
 
    This substitution **extends to `QueryApply` requests too**: the
    apply's `arg` (and, if applicable, `fn`) fields are rewritten
@@ -419,8 +419,8 @@ which the two executions can differ at that moment. Divergence
 can only arise once the outer starts forcing — and the depth-2
 trie captures that by content-addressed observation evolution.
 
-Inheriting outer-scope CDIs ripples through every fact, so atom
-sharing across cached calls is reduced. That's a deliberate
+Inheriting outer-scope CDIs ripples through every observation,
+so atom sharing across cached calls is reduced. That's a deliberate
 trade-off: storage cost in exchange for collision-free
 disambiguation of LocalObject identity.
 
@@ -469,9 +469,15 @@ AmbientAsks(fromFactSetHash BLOB, requestSetHash BLOB,
 ```
 
 No `Q`/`handle` column — depth-2 keys edges on `factSet` alone.
-Inheritance distinguishes recordings by making *every* fact's
-`from` (and therefore `requestHash`) unique per recording from
-the very first probe.
+Inheritance discriminates *across cached calls* by folding the
+cached call's identity into the scope every downstream subject's
+CDI inherits at the cb-apply boundary, so every observation's
+`from` (and therefore `requestHash`) is unique per cached-call
+invocation from the very first probe. Discrimination *within*
+one cached call's sibling cb-apply invocations is separate
+(= same inherited scope, same initial seed CDI, so `from`
+values start identical; siblings diverge via observation
+evolution per principle 8's corollary).
 
 `AmbientAsks` is a *validation skeleton*, not a response source.
 It records which probes appeared, in what order, with what
@@ -492,7 +498,7 @@ against it, each probe is an `AmbientRequest` with `from` =
 hex of the local's current cidasks-evolved content id; the live
 LocalObject reveal is the `AmbientResponse`.
 
-Each fact's `elementHash = SHA-256(requestHash || responseHash)`
+Each observation's `elementHash = SHA-256(requestHash || responseHash)`
 XOR-folds into the running depth-2 `factSet`. At flush, the trie
 edges (`AmbientAsks(fromFactSet, {requestHash}) → toFactSet`)
 are inserted; any new atom payloads land in the CAS pool. The

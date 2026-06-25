@@ -30,8 +30,8 @@ The cidasks math is implemented and argument-level only:
 
 The writer's per-arg flush (`tracing-writer.cc:flushPendingAmbient`)
 collapses derived chains to the cb_arg root via
-`pathAndRootsFromSubject` and stamps every fact's `from` at the
-root's cidasks-evolved CDI — `contentIdAt(root, scope,
+`pathAndRootsFromSubject` and stamps every observation's `from`
+at the root's cidasks-evolved CDI — `contentIdAt(root, scope,
 d1CidasksWalk, d1CidasksWalk.size())`. Each flush appends one
 edge to `d1CidasksWalk`, so per-flush evolution accumulates per
 principles 3, 5, 7.
@@ -39,9 +39,9 @@ principles 3, 5, 7.
 The walker mirrors this:
 `tracing-replay-evaluator.cc:TracingReplayEvaluator` maintains a
 cumulative `cidasksWalk` that persists across `v13Walk` calls,
-with `commitEdge` deduping by per-edge fact-set fingerprint so a
-shared Asks-chain prefix re-traversed in a later `v13Walk` doesn't
-double-fold. `resolveCdiId`'s cell-chain match tries every edge
+with `commitEdge` deduping by per-edge observation-set fingerprint
+so a shared Asks-chain prefix re-traversed in a later `v13Walk`
+doesn't double-fold. `resolveCdiId`'s cell-chain match tries every edge
 boundary 0..`cidasksWalk.size()` so a recorded CDI lookups at
 the writer's then-current edgeIndex regardless of the per-`v13Walk`
 position. `TracingDecisionGraph::walk` accepts a `startCur`
@@ -71,9 +71,9 @@ should produce distinct CDIs that lead to distinct trie
 positions. In the current implementation:
 
 - The writer's `flushPendingAmbient` evolves the cb_arg root
-  CDI per-flush, so sibling B's `.whatever` fact's `from` is the
-  cb_arg CDI AFTER sibling A's `.whatever` fact has folded in —
-  a distinct CDI from sibling A's `from`.
+  CDI per-flush, so sibling B's `.whatever` observation's `from`
+  is the cb_arg CDI AFTER sibling A's `.whatever` observation
+  has folded in — a distinct CDI from sibling A's `from`.
 - But the *child queries on the apply-result wrapper* (= what
   `TracingReplayObject`/`TracingObject` emit) carry `from =
   triePos.queryHashStr`, a structural parentHash with no cidasks
