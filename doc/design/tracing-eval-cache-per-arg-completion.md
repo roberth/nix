@@ -1,12 +1,8 @@
 # Per-arg CDI completion
 
-Implementation status and remaining work for argument-level
-content-defined identity, as specified in
+Implementation status for argument-level content-defined identity,
+as specified in
 [`tracing-eval-cache-content-identity-via-asks.md`](./tracing-eval-cache-content-identity-via-asks.md).
-
-This doc tracks the gap between the current implementation and the
-design's end state, with a concrete fix plan for the two failing
-functional tests.
 
 ## What's in tree
 
@@ -20,181 +16,133 @@ The cidasks math is implemented and argument-level only:
   `structuralAddressAfter` exposes a content-addressed identifier
   for *any* subject — for derived subjects it returns the producer
   query's hash, computed without going through `contentIdAt`'s
-  trap. Callers that need a `Hash` handle for any proxy
-  (`AmbientObject::getCdi`, `TracingLocalObject::localId`,
-  `ReplayLocalObject` construction, `resolveCdiId`'s cell-chain
-  matching) route through this.
+  trap. Callers that need a `Hash` handle for any proxy route
+  through this.
 - `ApplyResultSubject`'s `contentIdAt` arm composes via
   `structuralAddress` on its constituents, so a Derived `fn` or
   `arg` participates correctly without re-entering the trap.
 - `QueryApply` carries optional `fromCIDs`/`fnPath`/`argPath`/
   `fnRootIndex`/`argRootIndex` fields alongside the legacy
-  `fn`/`arg` (mode-tagged via `fromCIDs` population). The legacy
-  fields stay populated for `resolveApplyId`'s backward
-  compatibility.
-- `cidasks::makeApplyResultQuery(applyResult, scope, walk, edgeIndex)`
-  builds the per-arg-encoded `QueryApply` payload — available for
-  any future caller wanting Request-pool key alignment with the
-  apply-result's CID.
-- `cidasks::subjectFromObjectIdentity({obj.getSubject(),
-  obj.getCdiHex()})` bridges `Object` identity to `Subject` — used
-  at apply boundaries to compose `ApplyResultSubject` from the
-  fn/arg constituents.
+  `fn`/`arg` (mode-tagged via `fromCIDs` population).
+- `cidasks::makeApplyResultQuery` builds the per-arg-encoded
+  `QueryApply` payload.
+- `cidasks::subjectFromObjectIdentity` bridges `Object` identity
+  to `Subject`.
 
-The writer's per-arg flush
-(`tracing-writer.cc:flushPendingAmbient`) collapses derived chains
-to the cb_arg root via `pathAndRootsFromSubject` and stamps every
-fact with `from = root_cdi` plus `path`/`fromCIDs`. Depth-1 facts
-feed `v13FactSet`; depth-2 facts group per cb-apply into
-`AmbientAsks` chains.
+The writer's per-arg flush (`tracing-writer.cc:flushPendingAmbient`)
+collapses derived chains to the cb_arg root via
+`pathAndRootsFromSubject` and stamps every fact with
+`from = root_cdi` plus `path`/`fromCIDs`. Depth-1 facts feed
+`v13FactSet`; depth-2 facts group per cb-apply into `AmbientAsks`
+chains.
 
 The depth-2 local objects (`TracingLocalObject` /
-`ReplayLocalObject`) emit queries per-arg via `stampPerArgFields`
-— depth-2 dispatches inside `AmbientAsks` chains work end-to-end.
+`ReplayLocalObject`) emit queries per-arg via `stampPerArgFields`.
 
-## What's still broken (2 red tests)
+## Red tests (23/25 cb-\* pass)
+
+Two tests are red because the principled mechanism is not fully
+built. The red is expected; do not chase it by violating
+principles.
 
 ### `cb-385` deep-indep test 4
 
 Test 3 records `{a=1; b=99}` in its own nix invocation; test 4
 warm-replays in a fresh invocation. `a = args.x.val` hits; `b =
-args.y.val` falls through to inner and trips `DISALLOW_PARSE`.
+args.y.val` falls through.
 
-**Root cause.** The writer's per-arg flush stamps `b`'s fact at an
-*evolved* root cdi (= `from = 68810828a5ee`, the seed cdi at the
-walk's edge 1+, not the static `from = ac1373e34ace` at edge 0).
-By the time `b` is observed, several prior facts have advanced
-`d1CidasksWalk` and the seed cdi has evolved through its own-loop
-(per Foundational #9: factSetHash is cumulative).
+**Diagnosis.** The writer's per-arg flush stamps `b`'s fact at
+the cb_arg root's CDI as evolved at writer's edge index N (= the
+seed cdi after N prior facts have been XOR-folded into its
+own-loop). The warm walker's `ResolutionContext::runningWalk`
+advances per Asks-edge commit, on a different schedule than the
+writer's per-`logResult` `d1EdgeIndex`. When the walker tries
+to resolve the writer-stamped CDI, it computes the same subject
+at its own current edge index and gets a different CDI. Mismatch.
 
-The warm walker's `ResolutionContext::runningWalk` advances
-per Asks-edge commit, which doesn't align in lockstep with the
-writer's per-logResult `d1EdgeIndex`. When walker tries to
-resolve `from=d48af43bcc44` (= seed cdi at writer's edge 1+), it
-computes seed cdi at its own current edge (= edge 0, static) and
-gets `ac1373e34ace`. Mismatch → falls through to `materialiseLocalStandin`
-→ no matching LocalResponseMap entry → walk fails.
+**Root cause.** Writer and walker evolve CIDs on different
+granularities. The principled fix is to align them — both sides
+advancing per the same unit (= per dispatched fact, or per
+Asks-edge-commit on both sides). Removing evolution to "fix" the
+mismatch is not an option (it violates the content-defined
+identity principle; see "Cautionary tale" below).
 
 ### `cb-sibling-discrimination-via-observation`
 
-Already covered by the design (= principle 8's discrimination
-corollary). Two sibling cb-applies of the same cached fn:
+Two sibling cb-applies of the same cached fn whose pre-apply
+observations match but whose apply-result observations diverge.
 
-- Cumulative observations evolve the cb_arg root's CID per
-  Foundational #9 + Design #3.
-- Within the same warm invocation (cold's sequence reproduces),
-  sibling A's `.whatever` query lands at one Asks/Terminal
-  position; the divergent response (100) folds into `cur` and the
-  apply-result's CID; sibling B's subsequent `.whatever` query
-  uses the post-A `cur` and so lands at a *different* trie
-  position. Both terminals coexist; both warm calls hit.
+**Mechanism (per via-asks Principles 3, 6, 8).** Cumulative
+observations evolve the cb_arg root's CID per Foundational #9 +
+Principle #3. Within the same warm invocation, sibling A's
+`.whatever = 100` folds into `cur` and into the apply-result's
+CID (via the apply-result's recursive constituent CID); sibling
+B's subsequent `.whatever` lookup uses the post-A `cur` and the
+post-A CID, landing at a different trie position from sibling A.
 
-What's missing for this to actually work in tree is that the
-walker has to reproduce the cb_arg root's evolved CID at each
-fact's lookup point. Today the walker's `runningWalk` evolution
-is misaligned with the writer's per-flush evolution — same root
-cause as cb-385.
+**Root cause of the red.** The walker isn't reproducing the
+evolved CIDs at lookup points (= same root cause as cb-385) and,
+separately, the apply-result observation pathway that feeds
+divergent observations back through to the next sibling's
+constituent CIDs is incomplete. Both depend on principled
+evolution being in place on both sides.
 
-So **both red tests are blocked by one fix.**
+## Cautionary tale: Fix A
 
-## The fix
+A prior attempt ("Fix A") sidestepped the writer/walker evolution
+misalignment by removing evolution from both sides — stamping
+facts at the cb_arg root's `contentIdAfter(root, scope, {})`
+(empty walk) regardless of accumulated observations. This was
+rationalized in an earlier version of this doc as: "Cumulative
+is about *which facts are in the dependency set*, not about how
+the facts' `from` field is encoded."
 
-### Fix A — Stable root cdi (no evolution across logResults)
+That framing splits the CDI principle into "the important part"
+(= which facts) and "the encoding" (= the `from` field) and
+discards the latter — but content-defined identity is precisely
+the link between observed content and identity encoding. Drop
+the encoding link and you've dropped CDI; what remains is
+structural (positional/derived) identity, the very thing CDI was
+designed to refine.
 
-**Decision.** The writer's per-arg flush stamps facts at the
-*static* (edgeIndex=0) root cdi, not the evolved per-logResult
-cdi. This removes the writer/walker reconstruction asymmetry —
-no edgeIndex bookkeeping for either side to keep in lockstep.
+Fix A turned cb-385 green and left cb-sibling red. It was
+reverted. Outcome: no new insights, wasted time. The lesson is
+in [`../../CLAUDE.md`](../../CLAUDE.md).
 
-Does this break Foundational #9 (cumulative)? No. Cumulative is
-about *which facts are in the dependency set*, not about how the
-facts' `from` field is encoded. Stamping `from = static root cdi`
-on every fact still records the cumulative set; only the per-fact
-addressing changes. The principle-8 discrimination corollary
-still applies (= via the next Asks/Terminal lookup at the
-post-divergence `cur`), and per-arg centralization still
-collapses derived chains to the root.
+## What the principled fix looks like
 
-**Changes.**
+Per via-asks Principle 6 ("walker advances content ids in
+lockstep with `cur`"):
 
-- `tracing-writer.cc:flushPendingAmbient` — drop the
-  `d1EdgeIndex` bookkeeping. For each pending fact, compute
-  `root_cdi = cidasks::contentIdAfter(root, scope, {})`
-  regardless of how many flushes preceded.
-- Strip `d1CidasksWalk` member from `TracingWriter`; it's dead
-  state under this decision.
-- `TracingReplayEvaluator::apply`'s pre-populate path
-  (`getRequestsWithFrom(argCdiHex)`) matches by definition:
-  every fact's `from` is the static root cdi, and the lookup
-  returns the full set without edgeIndex acrobatics.
-- Walker's `resolveCdiId` cell-chain matching uses
-  `cidasks::structuralAddress(subject, scope, {}, 0)` — static
-  edge — uniformly. No `ctx.runningWalk` / `ctx.edgeIndex`
-  threading needed for this path.
+> As each Asks edge dispatches its requests, the walker
+> XOR-folds each dispatched response into both the cumulative
+> factSetHash and the content ids of relevant subjects.
+> Symmetric to recording.
 
-**Acceptance.**
+The writer needs to evolve subject CIDs at the same granularity
+(= per dispatched fact within an Asks edge), and stamp facts'
+`from` fields at the corresponding evolved CID. The walker
+reproduces the evolution as it dispatches. Then a fact's `from`
+written by the writer and computed by the walker match at every
+point in the chain.
 
-- `cb-385 deep-indep test 4` warm replay reaches the right
-  Terminal — every fact's `from` resolves correctly.
-- `cb-sibling-discrimination-via-observation` discriminates the
-  two siblings — divergent `.whatever` responses evolve `cur`
-  differently per call (corollary to principle 8), and each
-  Terminal lookup lands at its own sibling's position.
+This requires:
 
-## Sequencing
+- A writer-side mechanism that maintains per-subject evolving
+  CIDs alongside the cumulative factSetHash, advancing each
+  relevant CID when a fact about that subject (= matching
+  `from` field) is added.
+- A walker-side mechanism that mirrors this: per-subject CIDs
+  that advance when dispatching a fact whose recorded `from`
+  identifies that subject at some prior chain point.
+- Either both sides keyed by Subject (= stable identifier) and
+  reading the current CID via a per-walk evaluator, or both
+  sides materializing the CIDs incrementally at the same edge
+  boundaries.
 
-Single commit. Drop the `d1CidasksWalk` evolution machinery; the
-edits are localized to `tracing-writer.cc`/`.hh` and the walker
-sites that consumed the edgeIndex parameter (`resolveCdiId`).
-
-Run the full cb-* suite after; expected delta is 23/25 → 25/25.
-
-## What stays out
-
-- **Function characterization** as a separate observation-folding
-  mechanism (= task #87's "apply-result observations fold back
-  into fn-root's own-loop"). Under stable root cdi (Fix A),
-  apply-result observations are recorded with `from = cb_arg
-  root` per existing per-arg flush, and the principle-8
-  discrimination corollary handles sibling differentiation
-  through the Asks/Terminal lookup at post-divergence `cur` — no
-  separate fold-back machinery needed.
-- **Phase C** (TracingReplayObject / TracingObject per-arg child
-  query emission). This was the wrong tree. Child queries on
-  apply-result wrappers use the `from = triePos.queryHashStr`
-  encoding consistently on writer and walker; both sides hash
-  the same payload; the lookup hits. The per-arg encoding lives
-  in the *ambient flush* path (= which is symmetric on both
-  sides already).
-- **d1↔d2 fold-back coupling** (= the design doc's old framing
-  of "AmbientResult = depth-2 terminal factSetHash" as a hash
-  the d1 walker XOR-folds in). The implementation doesn't and
-  shouldn't do this. Outer is consulted live; d2 validates
-  structure; d1 walks its own chain. The d1→d2 flip is a
-  conceptual mnemonic (= a way to think about role inversion at
-  cb-applies), not machinery.
-- **Cross-invocation isolated replay of sibling B alone** (=
-  invoking only the second sibling in a fresh nix without
-  running the first). Under cumulative dependency (Foundational
-  #9), B's Terminal is at a factSet position that requires A's
-  prior observations to reach; fresh-B-only warm correctly
-  misses. Matches the cb-sibling test's actual scope (= cold
-  records both siblings in one invocation; warm replays in the
-  same order).
-
-## Source map
-
-Files that change for Fix A:
-
-- `src/libexpr/tracing-writer.cc` — strip d1EdgeIndex bookkeeping
-  in `flushPendingAmbient`; use static root cdi for every fact.
-- `src/libexpr/include/nix/expr/tracing-writer.hh` — remove
-  `d1CidasksWalk` member.
-- `src/libexpr/tracing-replay-evaluator.cc` — simplify
-  `resolveCdiId`'s cell-chain match to use static edge 0;
-  pre-populate path no longer needs runningWalk threading.
-
-Tests already in place that should turn green:
-
-- `tests/functional/cb-385.sh` — deep-indep test 4.
-- `tests/functional/cb-sibling-discrimination-via-observation.sh`.
+The "function characterization" follow-up (= task #87 in
+via-asks line 155) folds apply-result observations back into
+fn's own-loop, so two siblings that differ only in apply
+behavior end up with different fn CIDs after their respective
+applies are observed. Whether that's separate work from the
+alignment fix or falls out of it naturally is open.
