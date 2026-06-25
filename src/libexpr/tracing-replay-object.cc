@@ -62,7 +62,7 @@ std::string TracingReplayObject::evolvedQueryFrom() const
        triePos.queryHashStr. */
     if (applyContext && applyResultSubject && applyContext->finalized
         && !applyContext->observations.empty()) {
-        cidasks::Edge edge{.facts = applyContext->observations};
+        cidasks::Edge edge{.observations = applyContext->observations};
         std::vector<cidasks::Edge> walk{std::move(edge)};
         auto evolved = cidasks::contentIdAfter(*applyResultSubject, applyContext->scope, walk);
         return evolved.to_string(HashFormat::Base16, false);

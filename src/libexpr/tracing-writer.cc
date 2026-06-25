@@ -115,7 +115,7 @@ void TracingWriter::flushPendingAmbient()
            later logResults' contentIdAt sees it in the own-loop. */
         auto elementHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), queryHash, responseHash);
-        d1NewEdge.facts.push_back({fromCdi, elementHash});
+        d1NewEdge.observations.push_back({fromCdi, elementHash});
 
         /* Dedupe by (request, response). See logResponse. */
         auto factHash = elementHash;
@@ -129,7 +129,7 @@ void TracingWriter::flushPendingAmbient()
                 pendingNewRequests.push_back(queryHash);
         }
     }
-    if (!d1NewEdge.facts.empty())
+    if (!d1NewEdge.observations.empty())
         d1CidasksWalk.push_back(std::move(d1NewEdge));
 
     /* Depth-2: per cb-apply, build a multi-edge walk incrementally
@@ -202,7 +202,7 @@ void TracingWriter::flushPendingAmbient()
             cidasks::Edge edge;
             auto elementHash = TracingDecisionGraph::xorFactIntoHash(
                 Hash(HashAlgorithm::SHA256), queryHash, responseHash);
-            edge.facts.push_back({fromCdi, elementHash});
+            edge.observations.push_back({fromCdi, elementHash});
             walk.push_back(std::move(edge));
         }
     }

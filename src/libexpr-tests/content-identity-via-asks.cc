@@ -88,13 +88,13 @@ TEST(CidAsks, ObservationOnSeedAdvancesContentId)
     // A getInt fact whose from matches the seed's initial id.
     trace::QueryGetInt q{hex(initial)};
     trace::ResultInt r{42};
-    Edge e{.facts = {factFromQR(q, r)}};
+    Edge e{.observations = {observationFromQR(q, r)}};
 
     auto after = contentIdAfter(s, noScope(), {e});
     EXPECT_NE(initial, after);
 
     // The advance is exactly elementHash XORed in.
-    auto fact = factFromQR(q, r);
+    auto fact = observationFromQR(q, r);
     auto expected = TracingDecisionGraph::xorHashes(initial, fact.elementHash);
     EXPECT_EQ(after, expected);
 }
@@ -108,7 +108,7 @@ TEST(CidAsks, FactOnUnrelatedSubjectDoesNotAdvance)
     // Fact whose from matches s1, not s0.
     trace::QueryGetInt q{hex(s1Initial)};
     trace::ResultInt r{99};
-    Edge e{.facts = {factFromQR(q, r)}};
+    Edge e{.observations = {observationFromQR(q, r)}};
 
     EXPECT_EQ(contentIdAfter(s0, noScope(), {}), contentIdAfter(s0, noScope(), {e}));
     EXPECT_NE(contentIdAfter(s1, noScope(), {}), contentIdAfter(s1, noScope(), {e}));
@@ -133,10 +133,10 @@ TEST(CidAsks, XorCommutativityWithinEdge)
     trace::QueryGetType q2{hex(initial)};
     trace::ResultType r2{"int"};
 
-    auto f1 = factFromQR(q1, r1);
-    auto f2 = factFromQR(q2, r2);
-    Edge eAB{.facts = {f1, f2}};
-    Edge eBA{.facts = {f2, f1}};
+    auto f1 = observationFromQR(q1, r1);
+    auto f2 = observationFromQR(q2, r2);
+    Edge eAB{.observations = {f1, f2}};
+    Edge eBA{.observations = {f2, f1}};
 
     // Within one edge, dispatch order doesn't matter.
     EXPECT_EQ(contentIdAfter(s, noScope(), {eAB}), contentIdAfter(s, noScope(), {eBA}));
@@ -155,7 +155,7 @@ TEST(CidAsks, DerivedAdvancesWhenParentAdvances)
     // A fact on the parent.
     trace::QueryGetType q{hex(parentInitial)};
     trace::ResultType r{"set"};
-    Edge e{.facts = {factFromQR(q, r)}};
+    Edge e{.observations = {observationFromQR(q, r)}};
 
     auto childAfter = structuralAddressAfter(child, noScope(), {e});
     EXPECT_NE(childInitial, childAfter);  // address changes because parent's CDI did
@@ -176,7 +176,7 @@ TEST(CidAsks, DerivedDoesNotAdvanceOnFactsTargetedAtItself)
     // A fact whose `from` matches the child's address (not the root's).
     trace::QueryGetInt q{hex(childInitial)};
     trace::ResultInt r{7};
-    Edge e{.facts = {factFromQR(q, r)}};
+    Edge e{.observations = {observationFromQR(q, r)}};
 
     EXPECT_EQ(structuralAddressAfter(child, noScope(), {e}), childInitial);
 }
@@ -264,8 +264,8 @@ TEST(CidAsks, ObservationOnScopedSeedRequiresMatchingScopedFromHash)
     trace::QueryGetInt qScoped{hex(scopedInitial)};
     trace::QueryGetInt qUnscoped{hex(unscopedInitial)};
     trace::ResultInt r{1};
-    Edge eScoped{.facts = {factFromQR(qScoped, r)}};
-    Edge eUnscoped{.facts = {factFromQR(qUnscoped, r)}};
+    Edge eScoped{.observations = {observationFromQR(qScoped, r)}};
+    Edge eUnscoped{.observations = {observationFromQR(qUnscoped, r)}};
 
     EXPECT_NE(contentIdAfter(s, scope, {eScoped}), scopedInitial);
     EXPECT_EQ(contentIdAfter(s, scope, {eUnscoped}), scopedInitial);

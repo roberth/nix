@@ -152,7 +152,7 @@ trace::PathExpr pathFromSubject(const Subject & subject)
     return pathAndRootsFromSubject(subject).path;
 }
 
-Fact factFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result)
+Observation observationFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
     nlohmann::json qj;
     std::visit([&](const auto & q) { qj = q; }, query);
@@ -163,7 +163,7 @@ Fact factFromQR(const trace::QueryVariant & query, const trace::ResultVariant & 
     auto respPayload = jsonToCborString(rj);
     auto respHash = TracingDecisionGraph::computeResponseHash(respPayload);
 
-    return Fact{
+    return Observation{
         .fromHash = extractFrom(query),
         .elementHash = TracingDecisionGraph::xorFactIntoHash(Hash(HashAlgorithm::SHA256), reqHash, respHash),
     };
@@ -254,9 +254,9 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
             Hash own = Hash(HashAlgorithm::SHA256);
             for (size_t k = 0; k < edgeIndex && k < walk.size(); ++k) {
                 Hash myCidAtK = TracingDecisionGraph::xorHashes(structuralAt(k), own);
-                for (auto & fact : walk[k].facts) {
-                    if (fact.fromHash == myCidAtK)
-                        own = TracingDecisionGraph::xorHashes(own, fact.elementHash);
+                for (auto & obs : walk[k].observations) {
+                    if (obs.fromHash == myCidAtK)
+                        own = TracingDecisionGraph::xorHashes(own, obs.elementHash);
                 }
             }
 

@@ -122,7 +122,7 @@ static void advanceChainAndAppendFact(
         auto elementHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), reqHash, responseHash);
         cidasks::Edge edge;
-        edge.facts.push_back({fromCdi, elementHash});
+        edge.observations.push_back({fromCdi, elementHash});
         walkFacts.push_back(std::move(edge));
         chainCursor = toFactSet;
         return;

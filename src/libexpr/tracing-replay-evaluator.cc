@@ -49,32 +49,32 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        edge on commit (via commitEdge) or discards it on reject.
        Without the buffer, rejected-edge facts would pollute
        cidasksWalk and throw off the cell-chain cdi computations. */
-    std::vector<cidasks::Fact> pendingEdgeFacts;
+    std::vector<cidasks::Observation> pendingEdgeObservations;
 
     auto commitEdge = [&]() {
-        if (pendingEdgeFacts.empty()) return;
+        if (pendingEdgeObservations.empty()) return;
         /* Dedup by the edge's element-hash fingerprint (= XOR-fold
            of its fact element hashes) so re-traversing a shared
            Asks prefix in a later v13Walk doesn't double-append.
            XOR is a true set algebra here (Component F): same set
            of facts → same fingerprint regardless of order. */
         Hash fingerprint(HashAlgorithm::SHA256);
-        for (const auto & f : pendingEdgeFacts)
+        for (const auto & f : pendingEdgeObservations)
             fingerprint = TracingDecisionGraph::xorFactIntoHash(
                 fingerprint, f.fromHash, f.elementHash);
         if (committedEdgeFingerprints.insert(fingerprint).second) {
             cidasks::Edge edge;
-            edge.facts = std::move(pendingEdgeFacts);
+            edge.observations = std::move(pendingEdgeObservations);
             cidasksWalk.push_back(std::move(edge));
             tracingCacheLog("dispatch: committed edge, cidasksWalk=%zu", cidasksWalk.size());
         } else {
             tracingCacheLog("dispatch: edge already in cidasksWalk (shared prefix), skip");
         }
-        pendingEdgeFacts.clear();
+        pendingEdgeObservations.clear();
     };
 
     auto discardEdge = [&]() {
-        pendingEdgeFacts.clear();
+        pendingEdgeObservations.clear();
     };
 
     /* Dispatcher: turns a Request hash into the current Response
@@ -121,7 +121,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         /* Buffer ambient facts for this in-flight Asks edge; the
            walk-loop commits them via onEdgeCommitted on success. */
         if (isAmbient && ambientFromHash) {
-            pendingEdgeFacts.push_back({
+            pendingEdgeObservations.push_back({
                 *ambientFromHash,
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), requestHash, h),
@@ -859,7 +859,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
                     if (!respPayload)
                         continue;
                     auto respHash = TracingDecisionGraph::computeResponseHash(*respPayload);
-                    cidasks::Fact f{
+                    cidasks::Observation f{
                         .fromHash = argCdi,
                         .elementHash = TracingDecisionGraph::xorFactIntoHash(
                             Hash(HashAlgorithm::SHA256), reqHash, respHash),

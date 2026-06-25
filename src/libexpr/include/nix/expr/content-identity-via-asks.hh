@@ -74,24 +74,29 @@ struct Subject
 
 /** A single observation reduced to the two hashes contentIdAt needs.
     `fromHash` is the content id the query was issued against;
-    `elementHash` is SHA-256(reqHash || respHash) — the v13 H_element. */
-struct Fact
+    `elementHash` is SHA-256(reqHash || respHash) — the v13 H_element.
+    Named `Observation` to match the doc's per-Asks-edge "facts about V"
+    membership language (= each element is one observed (req, resp)
+    against a subject identified by `fromHash`); distinct from the
+    Asks-level `factSetHash` (= XOR-fold of all `elementHash`es, no
+    `fromHash` distinction). */
+struct Observation
 {
     Hash fromHash;
     Hash elementHash;
 };
 
-/** An Asks edge's worth of facts. Facts in one edge are dispatched
-    against a single shared precondition factset; their `from`
-    fields all refer to subjects' content ids at that precondition. */
+/** An Asks edge's worth of observations. Observations in one edge are
+    dispatched against a single shared precondition factset; their
+    `from` fields all refer to subjects' content ids at that precondition. */
 struct Edge
 {
-    std::vector<Fact> facts;
+    std::vector<Observation> observations;
 };
 
-/** Build a Fact from a QueryVariant/ResultVariant pair. Used by the
-    writer at flush time where it already holds the variants. */
-Fact factFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result);
+/** Build an Observation from a QueryVariant/ResultVariant pair. Used by
+    the writer at flush time where it already holds the variants. */
+Observation observationFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result);
 
 /** Compute the content id of `subject` after walking through all
     `edges`, inheriting `scope` (the XOR of outer-scope CDIs — e.g.
@@ -231,7 +236,7 @@ struct ApplyContext
 {
     Subject argSubject;
     Hash scope;
-    std::vector<Fact> observations;
+    std::vector<Observation> observations;
     bool finalized = false;
 };
 
