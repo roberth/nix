@@ -37,15 +37,19 @@ class TracingReplayObject : public Object
     /* Per-cb-apply observation context for the apply that produced
        this object. Set on apply-result wrappers by
        TracingReplayEvaluator::apply when the arg was a cb-arg
-       AmbientObject carrying one. Used to compute the apply-result's
-       evolved Content Id via cidasks (the ApplyResultSubject's
-       recursive arg cdi reflects the observations). Null on
-       non-apply-result wrappers (= navigation children). */
+       AmbientObject carrying one. Retained for the
+       finalised-on-ensureInner side-channel that other code paths
+       still inspect; not used for evolvedQueryFrom under the
+       option-2 encoding (which routes through the evaluator's
+       cumulative cidasksWalk). */
     std::shared_ptr<cidasks::ApplyContext> applyContext;
     /* When apply-result, the ApplyResultSubject identifying it
-       structurally. Used together with applyContext to compute the
-       evolved cdi at lookup time. */
+       structurally + the inherited scope (= CDI(Q)). Used together
+       with the evaluator's cidasksWalk to compute the evolved cdi
+       at lookup time via the same formula the writer's TracingObject
+       uses. */
     std::optional<cidasks::Subject> applyResultSubject;
+    Hash applyScope{HashAlgorithm::SHA256};
 
     ref<Object> ensureInner() const;
 
@@ -90,6 +94,28 @@ public:
     {
         applyContext = std::move(ctx);
         applyResultSubject = std::move(resultSubject);
+        if (applyContext)
+            applyScope = applyContext->scope;
+        return *this;
+    }
+
+    /** Attach the apply-result Subject + scope without going through
+        ApplyContext. Mirrors the writer-side
+        `TracingObject::withApplyResultSubject`. */
+    TracingReplayObject & withApplyResultSubject(cidasks::Subject subject, Hash scope)
+    {
+        applyResultSubject = std::move(subject);
+        applyScope = std::move(scope);
+        return *this;
+    }
+
+    /** Attach just the ApplyContext (for the finalised side-channel),
+        leaving applyResultSubject/applyScope alone. Used by
+        TracingReplayEvaluator::apply after it has already set the
+        Subject via withApplyResultSubject. */
+    TracingReplayObject & withApplyContextOnly(std::shared_ptr<cidasks::ApplyContext> ctx)
+    {
+        applyContext = std::move(ctx);
         return *this;
     }
 

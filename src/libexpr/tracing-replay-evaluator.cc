@@ -91,24 +91,55 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             return Hash(HashAlgorithm::SHA256);
         bool isAmbient = false;
         std::optional<Hash> ambientFromHash;
+        std::string queryTag;
+        std::string queryDescription;
         try {
             auto reqJson = cborStringToJson(*requestPayload);
             isAmbient = reqJson.contains("query");
-            if (isAmbient && reqJson.contains("params") && reqJson["params"].is_object()
-                && reqJson["params"].contains("from")) {
-                try {
-                    ambientFromHash = Hash::parseNonSRIUnprefixed(
-                        reqJson["params"]["from"].get<std::string>(), HashAlgorithm::SHA256);
-                } catch (...) {}
+            if (isAmbient) {
+                queryTag = reqJson["query"].get<std::string>();
+                queryDescription = queryTag;
+                if (reqJson.contains("params") && reqJson["params"].is_object()) {
+                    auto & params = reqJson["params"];
+                    if (params.contains("from")) {
+                        try {
+                            ambientFromHash = Hash::parseNonSRIUnprefixed(
+                                params["from"].get<std::string>(), HashAlgorithm::SHA256);
+                        } catch (...) {}
+                    }
+                    if (params.contains("name"))
+                        queryDescription += " name=\"" + params["name"].get<std::string>() + "\"";
+                    if (params.contains("index"))
+                        queryDescription += " index=" + std::to_string(params["index"].get<size_t>());
+                    if (queryTag == "apply") {
+                        if (params.contains("fn"))
+                            queryDescription += " fn=" + params["fn"].get<std::string>().substr(0, 12);
+                        if (params.contains("arg"))
+                            queryDescription += " arg=" + params["arg"].get<std::string>().substr(0, 12);
+                    }
+                }
+            } else if (reqJson.contains("absPath")) {
+                queryDescription = "env-file " + reqJson["absPath"].get<std::string>();
+            } else if (reqJson.contains("name")) {
+                queryDescription = "env-var " + reqJson["name"].get<std::string>();
+            } else {
+                queryDescription = "(opaque)";
             }
-        } catch (...) {}
+        } catch (...) {
+            queryDescription = "(parse-failed)";
+        }
         if (!isAmbient) {
             if (auto it = dispatchCache.find(requestHash); it != dispatchCache.end())
                 return it->second;
         }
         auto currentResp = getCurrentResponse(*requestPayload, ctx);
-        if (!currentResp)
+        if (!currentResp) {
+            tracingCacheLog(
+                "dispatch FAIL req=%s payload=%s (no current response)",
+                requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                queryDescription);
             return Hash(HashAlgorithm::SHA256);
+        }
         auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
         if (!isAmbient)
             dispatchCache.emplace(requestHash, h);
@@ -127,14 +158,22 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
                     Hash(HashAlgorithm::SHA256), requestHash, h),
             });
             tracingCacheLog(
-                "dispatch ambient: req=%s from=%s resp=%s",
+                "dispatch ambient: req=%s payload=%s from=%s resp=%s",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                queryDescription,
                 ambientFromHash->to_string(HashFormat::Base16, false).substr(0, 12),
                 h.to_string(HashFormat::Base16, false).substr(0, 12));
-        } else if (!isAmbient) {
+        } else if (isAmbient) {
             tracingCacheLog(
-                "dispatch env: req=%s resp=%s",
+                "dispatch ambient (no-from): req=%s payload=%s resp=%s",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                queryDescription,
+                h.to_string(HashFormat::Base16, false).substr(0, 12));
+        } else {
+            tracingCacheLog(
+                "dispatch env: req=%s payload=%s resp=%s",
+                requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                queryDescription,
                 h.to_string(HashFormat::Base16, false).substr(0, 12));
         }
         return h;
@@ -788,91 +827,63 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto fnId = getId(*fn);
     auto argId = getId(*arg);
 
-    /* The recording side doesn't write a Q_apply Terminal -- a
-       fresh app thunk has no result type. Synthesize the
-       TriePosition from (fnId, argId) directly and always wrap the
-       result in TracingReplayObject. Child queries on the apply
-       result still walk independently; they fall through to inner
-       only when their own walks miss.
+    /* Build the ApplyResultSubject from fn/arg constituents — mirror
+       of TracingEvaluator::apply. Fall back to OpaqueContent where no
+       structural Subject is exposed. Scope comes from the arg's
+       inheritedScope (= callScope, set on AmbientObject by the
+       <cached-fn> PrimOp impl). */
+    auto fnIdHash = Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256);
+    auto argIdHash = Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256);
 
-       The previous pre-bind into a per-evaluator ambientState is
-       gone — the live arg / fn live on the result proxy's argScope
-       cell, and resolveCdiId walks the proxy graph from
-       whichever proxy is being forced. Per-call resolution naturally
-       isolates concurrent cache invocations. */
-    auto queryHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{fnId, argId});
+    cidasks::Subject fnSubj;
+    if (auto * fnAmb = dynamic_cast<AmbientObject *>(fn.get_ptr().get())) {
+        if (auto * s = fnAmb->getSubject())
+            fnSubj = *s;
+        else
+            fnSubj = cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
+    } else {
+        fnSubj = cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
+    }
+
+    cidasks::Subject argSubj;
+    Hash applyScope(HashAlgorithm::SHA256);
+    if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
+        if (auto * s = argAmb->getSubject())
+            argSubj = *s;
+        else
+            argSubj = cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
+        applyScope = argAmb->getInheritedScope();
+    } else {
+        argSubj = cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
+    }
+
+    cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
+        .fn = std::make_shared<const cidasks::Subject>(std::move(fnSubj)),
+        .arg = std::make_shared<const cidasks::Subject>(std::move(argSubj)),
+    }};
+
+    auto & walk = cidasksWalk;
+    auto applyCdi = cidasks::contentIdAt(resultSubject, applyScope, walk, walk.size());
+    auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
+
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
-        .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
+        .queryHashStr = applyCdiHex,
     };
     auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
     /* Apply-result scope cell. Parent = fn proxy's cell. */
     auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
     obj->withScope(std::move(cell));
-    /* If the arg is a cb-arg AmbientObject (carrying an ApplyContext),
-       attach it to the apply-result so its subsequent queries compute
-       evolved Content Ids via cidasks and disambiguate sibling cb
-       applies. The ApplyResultSubject identifies this apply-result
-       structurally; cidasks composes it with arg's evolved cdi
-       (driven by observations accumulated into the context). */
+    obj->withApplyResultSubject(std::move(resultSubject), applyScope);
+    /* Keep the applyContext attachment for the ensureInner-finalisation
+       side-channel that other paths still inspect (e.g. tests that
+       check applyContext->finalized). Pre-population of observations
+       from the Requests pool is no longer needed — evolvedQueryFrom
+       reads the evaluator's cidasksWalk instead. */
     if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
-        if (auto ctx = argAmb->getApplyContext()) {
-            auto fnSubject = argAmb->getSubject();
-            (void) fnSubject;
-            // Build ApplyResultSubject{fn=fn's-subject, arg=arg's-subject}.
-            // fn's subject: prefer fn's getSubject if available; otherwise opaque on its CDI.
-            cidasks::Subject fnSubj;
-            if (auto * fnAmb = dynamic_cast<AmbientObject *>(fn.get_ptr().get())) {
-                if (auto * s = fnAmb->getSubject())
-                    fnSubj = *s;
-                else
-                    fnSubj = cidasks::Subject{cidasks::OpaqueContentSubject{
-                        Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256)}};
-            } else {
-                fnSubj = cidasks::Subject{cidasks::OpaqueContentSubject{
-                    Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256)}};
-            }
-            cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
-                .fn = std::make_shared<const cidasks::Subject>(std::move(fnSubj)),
-                .arg = std::make_shared<const cidasks::Subject>(ctx->argSubject),
-            }};
-
-            /* Pre-populate `ctx->observations` from the trie's
-               recorded facts about the arg subject so warm-replay
-               child queries compute the same evolved cdi the
-               recorder wrote at. Without this, observations stay
-               empty until ensureInner forces live (= breaks
-               DISALLOW_PARSE) and TracingReplayObject's
-               evolvedQueryFrom falls back to the static cdi the
-               recorder no longer writes at. The recorder's
-               observations come from `queryFn` pushing into the
-               same ApplyContext as the inner runs; the walker can
-               pull the same set of (req, resp) pairs straight from
-               the pool by filtering Requests on `params.from`. */
-            if (ctx->observations.empty()) {
-                auto argCdi = argAmb->getCdi();
-                auto argCdiHex = argCdi.to_string(HashFormat::Base16, false);
-                auto facts = decisionGraph.getRequestsWithFrom(argCdiHex);
-                for (auto & [reqHash, _payload] : facts) {
-                    auto respPayload = decisionGraph.getLocalResponsePayload(reqHash);
-                    if (!respPayload)
-                        continue;
-                    auto respHash = TracingDecisionGraph::computeResponseHash(*respPayload);
-                    cidasks::Observation f{
-                        .fromHash = argCdi,
-                        .elementHash = TracingDecisionGraph::xorFactIntoHash(
-                            Hash(HashAlgorithm::SHA256), reqHash, respHash),
-                    };
-                    ctx->observations.push_back(std::move(f));
-                }
-                tracingCacheLog(
-                    "pre-populate applyContext: arg=%s observations=%zu",
-                    argCdiHex.substr(0, 12), ctx->observations.size());
-            }
-
-            obj->withApplyContext(std::move(ctx), std::move(resultSubject));
-        }
+        if (auto ctx = argAmb->getApplyContext())
+            obj->withApplyContextOnly(std::move(ctx));
     }
     return obj;
 }

@@ -7,6 +7,7 @@
 
 #include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/trace-sink.hh"
+#include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/util/ref.hh"
 
@@ -148,6 +149,18 @@ public:
         , decisionGraph(decisionGraph)
         , v13FactSetHash(TracingDecisionGraph::emptySetHash())
     {
+    }
+
+    /** Cumulative cidasks walk over depth-1 ambient observations.
+        One edge per logResult-triggered flush. Exposed so writer-side
+        apply-result wrappers (TracingObject with applyResultSubject)
+        can compute `contentIdAt(subject, scope, walk, walk.size())`
+        — the per-arg evolved cdi the design's principle #3 requires
+        for child queries on those wrappers. Walker's parallel handle
+        is TracingReplayEvaluator::getCidasksWalk. */
+    const std::vector<cidasks::Edge> & getD1CidasksWalk() const
+    {
+        return d1CidasksWalk;
     }
 
     /** Cumulative factSet hash maintained per-fact via XOR-fold.
@@ -397,9 +410,17 @@ public:
         if (!pendingNewRequests.empty()) {
             auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
             perQAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+            tracingCacheLog("logResult: new Asks edge from=%s rs-size=%zu (perQ=%zu)",
+                            prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                            pendingNewRequests.size(),
+                            perQAsksEdges.size());
             prevQFactSetHash = v13FactSetHash;
             pendingNewRequests.clear();
         }
+        tracingCacheLog("logResult: Q=%s factSet=%s -> result (inserting %zu Asks edges)",
+                        qh.queryHash->to_string(HashFormat::Base16, false).substr(0, 12),
+                        v13FactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                        perQAsksEdges.size());
         for (const auto & edge : perQAsksEdges)
             decisionGraph->insertAsks(*qh.queryHash, edge.fromFactSetHash, edge.requestSetHash);
 

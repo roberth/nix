@@ -129,8 +129,12 @@ void TracingWriter::flushPendingAmbient()
                 pendingNewRequests.push_back(queryHash);
         }
     }
-    if (!d1NewEdge.observations.empty())
+    if (!d1NewEdge.observations.empty()) {
         d1CidasksWalk.push_back(std::move(d1NewEdge));
+        tracingCacheLog("writer d1CidasksWalk += 1 -> %zu (obs=%zu)",
+                        d1CidasksWalk.size(),
+                        d1CidasksWalk.back().observations.size());
+    }
 
     /* Depth-2: per cb-apply, build a multi-edge walk incrementally
        so each fact's substituted `from` is computed against prior

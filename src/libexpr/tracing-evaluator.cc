@@ -259,21 +259,65 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto argId = getId(*arg);
 
     tracingCacheLog("tracing: apply fnId=%s argId=%s", fnId, argId);
-    /* Don't record a Q_apply Terminal: a fresh app thunk has no
-       result type. Compute the TriePosition structurally so
-       downstream queries on this apply result still chain off
-       Q_apply via queryHashStr (Merkle parent for v13's queryHash). */
-    auto queryHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{fnId, argId});
+
+    /* Build the ApplyResultSubject from fn/arg constituents. fn is
+       typically a TracingObject (the cached function from evalFile)
+       without a structural Subject; arg is typically an AmbientObject
+       (the cb-arg) with a PositionalSeed Subject. Fall back to
+       OpaqueContentSubject where no Subject is exposed; the resulting
+       constituents enter `contentIdAt` via the standard formula. */
+    auto fnIdHash = Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256);
+    auto argIdHash = Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256);
+
+    cidasks::Subject fnSubj;
+    if (auto * fnAmb = dynamic_cast<AmbientObject *>(fn.get_ptr().get())) {
+        if (auto * s = fnAmb->getSubject())
+            fnSubj = *s;
+        else
+            fnSubj = cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
+    } else {
+        fnSubj = cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
+    }
+
+    cidasks::Subject argSubj;
+    Hash applyScope(HashAlgorithm::SHA256);
+    if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
+        if (auto * s = argAmb->getSubject())
+            argSubj = *s;
+        else
+            argSubj = cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
+        applyScope = argAmb->getInheritedScope();
+    } else {
+        argSubj = cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
+    }
+
+    cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
+        .fn = std::make_shared<const cidasks::Subject>(std::move(fnSubj)),
+        .arg = std::make_shared<const cidasks::Subject>(std::move(argSubj)),
+    }};
+
+    /* Option-2 encoding: apply triePos uses the same cidasks formula
+       child queries use later. Two cb-applies of the same cached fn
+       in the same builtins.cache call land at distinct queryHashStrs
+       once the writer's d1CidasksWalk has accumulated the prior
+       sibling's observations — that's principle #3's
+       observation-driven discrimination, made structural through
+       the same formula evaluated at different walk indices. */
+    auto & walk = writer.getD1CidasksWalk();
+    auto applyCdi = cidasks::contentIdAt(resultSubject, applyScope, walk, walk.size());
+    auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
+
     auto v = writer.getSink().logQuery(trace::QueryApply{fnId, argId});
     auto result = inner->apply(fn, arg);
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel; v13 doesn't key off this
-        .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
+        .queryHashStr = applyCdiHex,
     };
     auto obj = TracingObject::create(result, writer, v, triePos);
     /* Apply-result scope cell. Parent = fn proxy's cell. */
     auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
     obj->withScope(std::move(cell));
+    obj->withApplyResultSubject(std::move(resultSubject), applyScope);
     return obj;
 }
 

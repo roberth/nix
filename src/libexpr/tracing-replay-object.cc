@@ -41,32 +41,12 @@ ref<Object> TracingReplayObject::ensureInner() const
 
 std::string TracingReplayObject::evolvedQueryFrom() const
 {
-    /* For apply-result wrappers, the apply's depth-2 observations
-       on the cb arg evolve the result's Content Id via cidasks
-       (ApplyResultSubject's recursive arg cdi). If the body has
-       already executed (= applyContext is finalized) and has
-       observations, we use the evolved cdi — that's the
-       disambiguation depth-2 needs across sibling cb applies.
-
-       But we do NOT force ensureInner here: forcing eagerly
-       defeats warm-replay where the cache hit at the static cdi
-       is the right answer (e.g. cb-local-descendants step 2). The
-       depth-2 walk that populates applyContext without running
-       live is the proper mechanism for warm replay; until that
-       lands, callers that need evolved cdi must trigger
-       ensureInner themselves (e.g., via a leaf method's fallback
-       path) and then re-look up via subsequent get* calls.
-
-       Non-apply-result wrappers, and apply-results whose body
-       hasn't been forced yet, fall back to the static
-       triePos.queryHashStr. */
-    if (applyContext && applyResultSubject && applyContext->finalized
-        && !applyContext->observations.empty()) {
-        cidasks::Edge edge{.observations = applyContext->observations};
-        std::vector<cidasks::Edge> walk{std::move(edge)};
-        auto evolved = cidasks::contentIdAfter(*applyResultSubject, applyContext->scope, walk);
-        return evolved.to_string(HashFormat::Base16, false);
-    }
+    /* Bisect: temporarily disable walker-side evolution. With cidasks
+       routed only at apply triePos time (= TracingReplayEvaluator::apply
+       still uses the cidasks formula), the wrapper's static
+       triePos.queryHashStr is the evolved cdi at apply time. Child
+       queries on the wrapper use that static hash — matching the
+       writer's static-emission path. */
     return triePos.queryHashStr;
 }
 
@@ -91,12 +71,19 @@ template<typename Q, typename R>
 std::optional<R> TracingReplayObject::lookupResult(const Q & query) const
 {
     auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+    tracingCacheLog("walker lookup: %s Q=%s",
+                    Q::tag,
+                    queryHash.to_string(HashFormat::Base16, false).substr(0, 12));
     /* Thread `this` through as currentProxy so resolveCdiId can
        walk the proxy's parent/argScope chain to ground ambient ids
        in this call's live state. */
     auto v13 = evaluator.v13Walk(queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this());
-    if (!v13)
+    if (!v13) {
+        tracingCacheLog("walker lookup: %s MISS Q=%s",
+                        Q::tag,
+                        queryHash.to_string(HashFormat::Base16, false).substr(0, 12));
         return std::nullopt;
+    }
     try {
         auto j = cborStringToJson(v13->first);
         tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
@@ -111,9 +98,16 @@ template<typename Q, typename R>
 std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralChild(const Q & query) const
 {
     auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+    tracingCacheLog("walker lookup: %s Q=%s",
+                    Q::tag,
+                    queryHash.to_string(HashFormat::Base16, false).substr(0, 12));
     auto v13 = evaluator.v13Walk(queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this());
-    if (!v13)
+    if (!v13) {
+        tracingCacheLog("walker lookup: %s MISS Q=%s",
+                        Q::tag,
+                        queryHash.to_string(HashFormat::Base16, false).substr(0, 12));
         return std::nullopt;
+    }
     try {
         auto j = cborStringToJson(v13->first);
         tracingCacheLog("replay hit (v13 walk): %s", Q::tag);

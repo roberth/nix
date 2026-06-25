@@ -127,6 +127,27 @@ public:
         TracingWriter & writer,
         TracingDecisionGraph & decisionGraph);
 
+    /** Cumulative cidasks walk on the walker, mirroring the writer's
+        `d1CidasksWalk`. Exposed so apply-result wrappers
+        (TracingReplayObject with applyResultSubject) can compute
+        `contentIdAt(subject, scope, walk, walk.size())` and match the
+        writer's evolved cdi at the same walk index — the per-arg
+        identity alignment principle #3 requires. */
+    const std::vector<cidasks::Edge> & getCidasksWalk() const
+    {
+        return cidasksWalk;
+    }
+
+    /** Access the shared TracingWriter. Used by TracingReplayObject's
+        `evolvedQueryFrom` to read the writer's `d1CidasksWalk`
+        directly — single source of truth for the cumulative walk on
+        both writer and walker sides, so option-2 encoding can't drift
+        between the two. */
+    TracingWriter & getWriter() const
+    {
+        return writer;
+    }
+
     /**
      * Compute the current response for a recorded request (file hash,
      * env var, or ambient interaction) by executing against the

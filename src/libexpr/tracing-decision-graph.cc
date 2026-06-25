@@ -1,4 +1,5 @@
 #include "nix/expr/tracing-decision-graph.hh"
+#include "nix/expr/tracing-cache-log.hh"
 #include "nix/store/sqlite.hh"
 #include <sqlite3.h>
 #include "nix/util/environment-variables.hh"
@@ -1389,13 +1390,29 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
        too) guarantees the XOR-extension below isn't fed a fact
        that's already folded into cur. */
     std::unordered_set<RequestHash> curRequests = startCurRequests;
+    tracingCacheLog("walk Q=%s startCur=%s",
+                    q.to_string(HashFormat::Base16, false).substr(0, 12),
+                    cur.to_string(HashFormat::Base16, false).substr(0, 12));
     for (;;) {
-        if (auto term = getTerminal(q, cur))
+        if (auto term = getTerminal(q, cur)) {
+            tracingCacheLog("walk Q=%s TERMINAL at cur=%s",
+                            q.to_string(HashFormat::Base16, false).substr(0, 12),
+                            cur.to_string(HashFormat::Base16, false).substr(0, 12));
             return *term;
+        }
 
         auto outgoing = getAsks(q, cur);
-        if (outgoing.empty())
+        if (outgoing.empty()) {
+            tracingCacheLog("walk Q=%s NO OUTGOING at cur=%s -> miss",
+                            q.to_string(HashFormat::Base16, false).substr(0, 12),
+                            cur.to_string(HashFormat::Base16, false).substr(0, 12));
             return std::nullopt; // no path forward, no terminal
+        }
+
+        tracingCacheLog("walk Q=%s cur=%s outgoing=%zu",
+                        q.to_string(HashFormat::Base16, false).substr(0, 12),
+                        cur.to_string(HashFormat::Base16, false).substr(0, 12),
+                        outgoing.size());
 
         bool advanced = false;
         for (const auto & requestSetHash : outgoing) {
@@ -1421,11 +1438,22 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
                (Q, nextCur) — i.e., the dispatched responses lead to
                a position where the recording continues or terminates. */
             if (!hasAnyEdge(q, nextCur)) {
+                tracingCacheLog("walk Q=%s rs=%s useful=%zu nextCur=%s NO RECORDED EDGE -> try next",
+                                q.to_string(HashFormat::Base16, false).substr(0, 12),
+                                requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                                useful.size(),
+                                nextCur.to_string(HashFormat::Base16, false).substr(0, 12));
                 if (onEdgeAttempt)
                     onEdgeAttempt(/*committed=*/ false, useful);
                 continue; // wrong branch
             }
 
+            tracingCacheLog("walk Q=%s rs=%s useful=%zu cur=%s -> nextCur=%s",
+                            q.to_string(HashFormat::Base16, false).substr(0, 12),
+                            requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                            useful.size(),
+                            cur.to_string(HashFormat::Base16, false).substr(0, 12),
+                            nextCur.to_string(HashFormat::Base16, false).substr(0, 12));
             cur = nextCur;
             for (const auto & req : useful)
                 curRequests.insert(req);
@@ -1435,8 +1463,12 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
             break;
         }
 
-        if (!advanced)
+        if (!advanced) {
+            tracingCacheLog("walk Q=%s NO EDGE COMMITTED at cur=%s -> miss",
+                            q.to_string(HashFormat::Base16, false).substr(0, 12),
+                            cur.to_string(HashFormat::Base16, false).substr(0, 12));
             return std::nullopt;
+        }
     }
 }
 

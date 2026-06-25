@@ -1,8 +1,10 @@
 #pragma once
 
 #include "nix/expr/arg-scope.hh"
+#include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/tracing-writer.hh"
+#include "nix/util/hash.hh"
 #include "nix/util/ref.hh"
 
 #include <optional>
@@ -28,6 +30,22 @@ class TracingObject : public Object
        ancestor chain. */
     std::shared_ptr<const ArgScopeCell> argScope;
 
+    /* For apply-result wrappers: the cidasks Subject that identifies
+       this apply structurally (ApplyResultSubject{fn, arg}), and the
+       inherited scope (= CDI(Q) at the cb-apply boundary). Child
+       queries on this wrapper emit at
+       `contentIdAt(applyResultSubject, applyScope, writer.d1CidasksWalk,
+       walk.size())` — the per-arg evolved cdi the design's
+       principle #3 requires for sibling discrimination. Null on
+       non-apply-result wrappers (= navigation children). */
+    std::optional<cidasks::Subject> applyResultSubject;
+    Hash applyScope{HashAlgorithm::SHA256};
+
+    /* Compute the apply-result's evolved query-hash prefix via the
+       cumulative d1CidasksWalk. Falls back to the static
+       triePos.queryHashStr when this is not an apply-result wrapper. */
+    std::string evolvedQueryFrom() const;
+
     TracingObject(ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos);
 
 public:
@@ -41,6 +59,16 @@ public:
     TracingObject & withScope(std::shared_ptr<const ArgScopeCell> argScope_)
     {
         argScope = std::move(argScope_);
+        return *this;
+    }
+
+    /** Attach the apply-result structural identity — for apply-result
+        wrappers, so subsequent child queries emit at the evolved cdi.
+        Mirrors TracingReplayObject's machinery. */
+    TracingObject & withApplyResultSubject(cidasks::Subject subject, Hash scope)
+    {
+        applyResultSubject = std::move(subject);
+        applyScope = std::move(scope);
         return *this;
     }
 
