@@ -1379,14 +1379,16 @@ bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factS
 std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
     const QueryHash & q,
     const std::function<ResponseHash(const RequestHash &)> & dispatch,
-    const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt)
+    const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt,
+    const SetHash & startCur,
+    const std::unordered_set<RequestHash> & startCurRequests)
 {
-    auto cur = emptySetHash();
+    auto cur = startCur;
     /* curRequests speeds up the "is this request already in cur?"
        filter on each edge, and (since dispatch filters them out
        too) guarantees the XOR-extension below isn't fed a fact
        that's already folded into cur. */
-    std::unordered_set<RequestHash> curRequests;
+    std::unordered_set<RequestHash> curRequests = startCurRequests;
     for (;;) {
         if (auto term = getTerminal(q, cur))
             return *term;

@@ -306,7 +306,17 @@ public:
     std::optional<ResultHash> walk(
         const QueryHash & q,
         const std::function<ResponseHash(const RequestHash &)> & dispatch,
-        const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt = {});
+        const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt = {},
+        /* Starting cur for the walk. Defaults to ∅. Callers that
+           have prior dispatched state (= lastQFactsHash) can hand
+           it in so the walk skips already-traversed shared prefix
+           and resumes from there — crucial for sibling
+           discrimination (cb-sibling), where stopping at the first
+           reachable terminal from ∅ would return the prior sibling's
+           result. Also pass the set of requests already in `cur` so
+           usefulDispatch correctly trims them. */
+        const SetHash & startCur = SetHash(HashAlgorithm::SHA256),
+        const std::unordered_set<RequestHash> & startCurRequests = {});
 
     /* Persist one trie node by hash. Idempotent (INSERT OR IGNORE +
        in-process cache short-circuit). Used by TrieBuilder to push
