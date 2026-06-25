@@ -99,9 +99,54 @@ Terminals, no discrimination-via-cur required — discrimination
 falls out structurally from principle 3's apply-result formula.
 
 That's the next piece of work, and it's a wider edit than
-what's currently in tree (= touches `TracingObject` recording,
-`TracingReplayObject` lookup, and the `triePos.queryHashStr`
-contract that several call sites depend on).
+what's currently in tree.
+
+### Encoding alignment is the obstacle
+
+A direct first attempt — adding `applyResultSubject` to
+`TracingObject` and computing `evolvedParentHash` via
+`cidasks::contentIdAt(applyResultSubject, scope, d1CidasksWalk,
+walk.size())` — regressed 19/25 tests. The root cause is an
+encoding mismatch in how the apply-result's structural CDI is
+computed:
+
+- `TracingEvaluator::apply` currently records the apply's
+  triePos via `computeQueryHash(QueryApply{fnId, argId})`,
+  where `fnId` and `argId` are the hex `getCdiHex()` of the
+  fn/arg proxies — used **as-is**, no scope XOR.
+- The cidasks formula for `ApplyResultSubject::structuralAt(K)`
+  builds `QueryApply{hashHex(structuralAddress(fn, scope, …)),
+  hashHex(structuralAddress(arg, scope, …))}`. For an
+  `OpaqueContentSubject{H}` constituent, `structuralAddress` is
+  `xorHashes(H, scope)` — so when `scope ≠ 0` (= cb-applies,
+  where `fn.getInheritedScope()` carries the cb_scope), the
+  constituent CDI is double-XOR'd: once when `getCdiHex()`
+  embedded the scope, again when cidasks applies it.
+
+Result: the cidasks-evolved hash and the static `triePos.queryHashStr`
+disagree for the same logical apply-result, breaking every Q
+whose `from` came from `evolvedParentHash`. Reverted.
+
+A principled fix needs to reconcile this — either:
+
+1. Make `computeQueryHash(QueryApply{fnId, argId})` and the
+   cidasks formula produce the same hash by construction (= so
+   when no observations have evolved anything, the two
+   encodings coincide bit-for-bit). This likely means making
+   `OpaqueContentSubject`'s structuralAt NOT apply the scope
+   (= treat the already-CDI'd hash as scope-saturated), and
+   relying on the scope being baked into the constituent CDIs
+   upstream.
+2. Or switch the apply's triePos to *also* go through cidasks
+   (= compute `triePos.queryHashStr = contentIdAt(applyResult
+   Subject, scope, walk_at_apply_time, …)` at apply time). Then
+   `evolvedParentHash` at later child-query time is the same
+   formula at a later walk index — naturally consistent.
+
+Option 2 is more invasive (every apply site changes) but
+better aligned with the via-asks principles. Option 1 is local
+to cidasks but needs careful reasoning about when scope has
+already been applied vs not.
 
 ## Cautionary tale: Fix A
 
