@@ -41,32 +41,18 @@ ref<Object> TracingReplayObject::ensureInner() const
 
 std::string TracingReplayObject::evolvedQueryFrom() const
 {
-    /* For apply-result wrappers, the apply's depth-2 observations
-       on the cb arg evolve the result's Content Id via cidasks
-       (ApplyResultSubject's recursive arg cdi). If the body has
-       already executed (= applyContext is finalized) and has
-       observations, we use the evolved cdi — that's the
-       disambiguation depth-2 needs across sibling cb applies.
-
-       But we do NOT force ensureInner here: forcing eagerly
-       defeats warm-replay where the cache hit at the static cdi
-       is the right answer (e.g. cb-local-descendants step 2). The
-       depth-2 walk that populates applyContext without running
-       live is the proper mechanism for warm replay; until that
-       lands, callers that need evolved cdi must trigger
-       ensureInner themselves (e.g., via a leaf method's fallback
-       path) and then re-look up via subsequent get* calls.
-
-       Non-apply-result wrappers, and apply-results whose body
-       hasn't been forced yet, fall back to the static
-       triePos.queryHashStr. */
-    if (applyContext && applyResultSubject && applyContext->finalized
-        && !applyContext->observations.empty()) {
-        cidasks::Edge edge{.facts = applyContext->observations};
-        std::vector<cidasks::Edge> walk{std::move(edge)};
-        auto evolved = cidasks::contentIdAfter(*applyResultSubject, applyContext->scope, walk);
-        return evolved.to_string(HashFormat::Base16, false);
-    }
+    /* Under per-arg-completion Fix A, sibling discrimination is
+       routed through the walker's evolving `cur` (= the v13Walk's
+       runningWalk), not through evolving each child query's `from`
+       field. Writer stamps every fact at the cb_arg root's static
+       cdi; walker must match that encoding. So child queries on
+       apply-result wrappers use the unevolved `triePos.queryHashStr`
+       unconditionally — the same payload the writer keyed into the
+       Asks trie. Sibling A's and sibling B's `.whatever` reqHashes
+       are identical by construction; the trie hosts two Terminals
+       at the same reqHash but different `cur`, and the walker's
+       cur advances through the prior sibling's folded observations
+       to land at sibling B's Terminal position on the second lookup. */
     return triePos.queryHashStr;
 }
 

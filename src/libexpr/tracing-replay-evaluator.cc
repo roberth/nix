@@ -249,20 +249,18 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
     }
 
     /* Walk the proxy's argScope chain looking for a cell whose
-       liveObject's content id matches idStr. The id is computed via
-       cidasks::contentIdAt against the walk's running factset
-       (= edgeIndex 0 for single-edge walks; future-proofed for
-       multi-edge). Symmetric to recording. */
+       liveObject's content id matches idStr. Under Fix A (per-arg-
+       completion doc), writer stamps facts at the root's STATIC cdi
+       — so the walker also matches at the static edge, regardless of
+       how many prior probes preceded. No runningWalk/edgeIndex
+       threading needed. */
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
         if (auto live = cell->liveObject) {
             if (auto * subj = live->getSubject()) {
-                /* Use the live proxy's own inherited scope so the
-                   walker's content id matches what the recorder
-                   computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
-                auto cdi = cidasks::contentIdAt(*subj, scope, ctx.runningWalk, ctx.edgeIndex);
+                auto cdi = cidasks::structuralAddressAfter(*subj, scope, {});
                 auto cdiHex = cdi.to_string(HashFormat::Base16, false);
                 tracingCacheLog(
                     "resolve %s: cell[%d] subject=%s cdi=%s %s",
