@@ -149,7 +149,7 @@ public:
         EvalState * state = nullptr)
         : subject(std::move(subject_))
         , scope(std::move(scope_))
-        , localId(cidasks::contentIdAt(subject, scope, *walkFacts_, 0))
+        , localId(cidasks::structuralAddress(subject, scope, *walkFacts_, 0))
         , walkFacts(std::move(walkFacts_))
         , chainCursor(std::move(chainCursor_))
         , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state), knownType(type) {}

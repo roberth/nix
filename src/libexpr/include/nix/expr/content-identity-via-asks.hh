@@ -111,8 +111,51 @@ Hash contentIdAfter(const Subject & subject, const Hash & scope, const std::vect
     edge at index `edgeIndex` in `walk`, inheriting `scope`.
     `edgeIndex == 0` means the initial precondition (= empty
     factset); `edgeIndex == walk.size()` means the postcondition of
-    the whole walk (equivalent to `contentIdAfter`). */
+    the whole walk (equivalent to `contentIdAfter`).
+
+    **Argument-level only.** Per the design (Principle 3, per-arg
+    centralization), only argument-level subjects bear CDIs:
+    `PositionalSeed` (cb_arg seed, evolves via own-loop),
+    `ApplyResultSubject` (composes constituent argument CDIs), and
+    `OpaqueContentSubject` (escape hatch). `DerivedSubject` does not
+    have a CDI — observations on derived values fold into the cb_arg
+    root's own-loop and the derived value is referenced via
+    `(root_cdi, path)`. Passing a `DerivedSubject` traps; callers
+    that want a content-addressed identifier for any Subject
+    (including derived) should use `structuralAddress` instead. */
 Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex);
+
+/** Compute a content-addressed structural identifier for any
+    `subject` — including `DerivedSubject`, where `contentIdAt`
+    traps. For non-derived subjects this delegates to `contentIdAt`.
+    For `DerivedSubject` it returns the producer query's hash:
+    `qH(QueryGetAttr{name, from = root_cdi, fromCIDs, path})` for
+    `GetAttr`, similarly for `GetListElem`. Used by `AmbientObject`,
+    `TracingLocalObject`, etc. to expose a single-`Hash` identity
+    handle even though derived values don't have CDIs proper. */
+Hash structuralAddress(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex);
+
+/** Convenience: `structuralAddress` at the walk's tail (= edgeIndex
+    = walk.size()). Mirrors `contentIdAfter` but defined for all
+    subject forms. */
+Hash structuralAddressAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk);
+
+/** Build the per-arg-encoded `QueryApply` payload for an apply-result
+    subject at a given walk edge index. The returned query's JSON
+    hash equals `contentIdAt(applyResult, scope, walk, edgeIndex)`,
+    so callers can use the same value as both the Requests-pool key
+    (= reqHash) and the apply-result's cdi (= what's recorded as
+    `from` on downstream facts). Threads cb_arg root cdis at
+    `edgeIndex` into `fromCIDs[]`, copies the Apply step's
+    `fnPath`/`argPath`/root indices into the top-level query, and
+    leaves `fn`/`arg` populated only if the caller passes them for
+    the legacy direct payload's readability — the per-arg fields
+    alone determine the hash. */
+trace::QueryApply makeApplyResultQuery(
+    const Subject & applyResultSubject,
+    const Hash & scope,
+    const std::vector<Edge> & walk,
+    size_t edgeIndex);
 
 /** Convenience: extract a query's `from` field as a Hash, if it has
     one. Apply queries don't have a `from`; throws. */
@@ -146,6 +189,20 @@ PathAndRoots pathAndRootsFromSubject(const Subject & subject);
     the cb_arg root's CDI for `from` substitution while the access
     path is encoded separately as a PathExpr. */
 const Subject & rootSubjectOf(const Subject & subject);
+
+/** Bridge from an Object's identity surface to a cidasks Subject.
+    Prefers `getSubject()` (= the proxy's static structural identifier
+    when one is registered); falls back to wrapping `getCdiHex()` as
+    an `OpaqueContentSubject` for non-proxy or pre-existing-cdi
+    Objects. Returns nullopt if the Object exposes neither. Used at
+    apply boundaries to compose `ApplyResultSubject` from the fn/arg
+    constituents without needing to dynamic_cast each proxy type. */
+struct ObjectIdentityLike
+{
+    const Subject * subject; ///< from `Object::getSubject()`, may be null
+    std::optional<std::string> cdiHex; ///< from `Object::getCdiHex()`, fallback
+};
+std::optional<Subject> subjectFromObjectIdentity(const ObjectIdentityLike & id);
 
 /** Short readable representation of a Subject — for tracing logs.
     Example: `seed(2)`, `getAttr(seed(2), "left")`,

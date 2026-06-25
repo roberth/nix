@@ -50,7 +50,7 @@ class TracingLocalObject : public Object
 
     /** This local's content id, scoped via inheritedScope. Computed
         on demand from `subject` + `inheritedScope`. */
-    AmbientId localId() const { return cidasks::contentIdAfter(subject, inheritedScope, {}); }
+    AmbientId localId() const { return cidasks::structuralAddressAfter(subject, inheritedScope, {}); }
 
     /* The argScope cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;

@@ -46,7 +46,7 @@ AmbientObject::AmbientObject(
 
 std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 {
-    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto cdi = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetAttr q{name, std::string{}};
     auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(cdi, q, subject, inheritedScope);
@@ -71,7 +71,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 
 std::vector<std::string> AmbientObject::getAttrNames()
 {
-    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto cdi = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetAttrNames q{std::string{}};
     auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(cdi, q, subject, inheritedScope);
@@ -83,7 +83,7 @@ std::vector<std::string> AmbientObject::getAttrNames()
 
 std::string AmbientObject::getStringIgnoreContext()
 {
-    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto cdi = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetString q{std::string{}};
     auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(cdi, q, subject, inheritedScope);
@@ -100,7 +100,7 @@ std::string AmbientObject::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
 {
-    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto cdi = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetStringWithContext q{std::string{}};
     auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(cdi, q, subject, inheritedScope);
@@ -115,7 +115,7 @@ std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
 
 RootedPath AmbientObject::getPath()
 {
-    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto cdi = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetPath q{std::string{}};
     auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(cdi, q, subject, inheritedScope);
@@ -132,7 +132,7 @@ RootedPath AmbientObject::getPath()
 
 bool AmbientObject::getBool(std::string_view)
 {
-    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto cdi = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetBool q{std::string{}};
     auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(cdi, q, subject, inheritedScope);
@@ -144,7 +144,7 @@ bool AmbientObject::getBool(std::string_view)
 
 NixInt AmbientObject::getInt(std::string_view)
 {
-    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto cdi = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetInt q{std::string{}};
     auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(cdi, q, subject, inheritedScope);
@@ -156,7 +156,7 @@ NixInt AmbientObject::getInt(std::string_view)
 
 NixFloat AmbientObject::getFloat(std::string_view)
 {
-    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto cdi = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetFloat q{std::string{}};
     auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(cdi, q, subject, inheritedScope);
@@ -168,7 +168,7 @@ NixFloat AmbientObject::getFloat(std::string_view)
 
 size_t AmbientObject::getListSize()
 {
-    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto cdi = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetListSize q{std::string{}};
     auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(cdi, q, subject, inheritedScope);
@@ -180,7 +180,7 @@ size_t AmbientObject::getListSize()
 
 std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
 {
-    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto cdi = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetListElem q{std::string{}, index};
     auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(cdi, q, subject, inheritedScope);
@@ -205,7 +205,7 @@ ObjectType AmbientObject::getTypeLazy()
 
 ObjectType AmbientObject::getType()
 {
-    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto cdi = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetType q{std::string{}};
     auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(cdi, q, subject, inheritedScope);
@@ -222,7 +222,7 @@ RootValue AmbientObject::defeatCache()
 
 std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
 {
-    auto cdi = cidasks::contentIdAfter(subject, inheritedScope, {});
+    auto cdi = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetFunctionInfo q{std::string{}};
     auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(cdi, q, subject, inheritedScope);
@@ -262,7 +262,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
        for queryFn lookups agree. */
     int localDepth = callerScope ? callerScope->depth + 1 : 0;
     cidasks::Subject argSubject{cidasks::PositionalSeed{localDepth}};
-    applyFn(cidasks::contentIdAfter(subject, inheritedScope, {}), std::move(argObj), callerScope);
+    applyFn(cidasks::structuralAddressAfter(subject, inheritedScope, {}), std::move(argObj), callerScope);
     cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
         .fn = std::make_shared<const cidasks::Subject>(subject),
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),

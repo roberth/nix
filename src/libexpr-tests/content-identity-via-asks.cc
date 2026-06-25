@@ -60,11 +60,14 @@ TEST(CidAsks, DifferentDepthsHaveDifferentInitialIds)
 
 TEST(CidAsks, DerivedSubjectIncludesParentInitial)
 {
+    /* Derived subjects don't have CDIs — only structural addresses
+       (= producer query hashes). Same property holds: different
+       names / different parents → different addresses. */
     auto x = getAttrOn(seed(0), "x");
     auto y = getAttrOn(seed(0), "y");
     auto xOn1 = getAttrOn(seed(1), "x");
-    EXPECT_NE(contentIdAfter(x, noScope(), {}), contentIdAfter(y, noScope(), {}));
-    EXPECT_NE(contentIdAfter(x, noScope(), {}), contentIdAfter(xOn1, noScope(), {}));
+    EXPECT_NE(structuralAddressAfter(x, noScope(), {}), structuralAddressAfter(y, noScope(), {}));
+    EXPECT_NE(structuralAddressAfter(x, noScope(), {}), structuralAddressAfter(xOn1, noScope(), {}));
 }
 
 TEST(CidAsks, ApplyResultDistinguishesFnAndArg)
@@ -147,30 +150,35 @@ TEST(CidAsks, DerivedAdvancesWhenParentAdvances)
     auto child = getAttrOn(parent, "x");
 
     auto parentInitial = contentIdAfter(parent, noScope(), {});
-    auto childInitial = contentIdAfter(child, noScope(), {});
+    auto childInitial = structuralAddressAfter(child, noScope(), {});
 
     // A fact on the parent.
     trace::QueryGetType q{hex(parentInitial)};
     trace::ResultType r{"set"};
     Edge e{.facts = {factFromQR(q, r)}};
 
-    auto childAfter = contentIdAfter(child, noScope(), {e});
-    EXPECT_NE(childInitial, childAfter);  // child's id changed because parent's did
+    auto childAfter = structuralAddressAfter(child, noScope(), {e});
+    EXPECT_NE(childInitial, childAfter);  // address changes because parent's CDI did
 }
 
-TEST(CidAsks, DerivedAlsoAdvancesOnOwnObservations)
+TEST(CidAsks, DerivedDoesNotAdvanceOnFactsTargetedAtItself)
 {
+    /* Per-arg centralization: facts about derived values get
+       stamped at `from = root_cdi`, never `from = derived_address`.
+       A hypothetical fact with from=derived_address therefore does
+       NOT advance derived's address — only facts on the root do
+       (via the root's CDI evolving), which the prior test covers. */
     auto parent = seed(0);
     auto child = getAttrOn(parent, "x");
 
-    auto childInitial = contentIdAfter(child, noScope(), {});
+    auto childInitial = structuralAddressAfter(child, noScope(), {});
 
-    // A fact directly on the child.
+    // A fact whose `from` matches the child's address (not the root's).
     trace::QueryGetInt q{hex(childInitial)};
     trace::ResultInt r{7};
     Edge e{.facts = {factFromQR(q, r)}};
 
-    EXPECT_NE(contentIdAfter(child, noScope(), {e}), childInitial);
+    EXPECT_EQ(structuralAddressAfter(child, noScope(), {e}), childInitial);
 }
 
 /* ---- inheritance: outer-scope CDIs make sibling content ids distinct ---- */
@@ -195,7 +203,7 @@ TEST(CidAsks, InheritanceDistinguishesDerivedAcrossScopes)
     auto scopeA = scopeFor("A");
     auto scopeB = scopeFor("B");
 
-    EXPECT_NE(contentIdAfter(child, scopeA, {}), contentIdAfter(child, scopeB, {}));
+    EXPECT_NE(structuralAddressAfter(child, scopeA, {}), structuralAddressAfter(child, scopeB, {}));
 }
 
 TEST(CidAsks, InheritancePropagatesIntoDerivedQueryPayload)
@@ -213,8 +221,8 @@ TEST(CidAsks, InheritancePropagatesIntoDerivedQueryPayload)
     auto parentInB = contentIdAfter(parent, scopeB, {});
     EXPECT_NE(parentInA, parentInB);
 
-    auto childInA = contentIdAfter(child, scopeA, {});
-    auto childInB = contentIdAfter(child, scopeB, {});
+    auto childInA = structuralAddressAfter(child, scopeA, {});
+    auto childInB = structuralAddressAfter(child, scopeB, {});
     EXPECT_NE(childInA, childInB);
 }
 
@@ -227,7 +235,7 @@ TEST(CidAsks, InheritanceWithEmptyScopeMatchesUnscoped)
     auto child = getAttrOn(s, "x");
 
     EXPECT_EQ(contentIdAfter(s, noScope(), {}), contentIdAfter(s, Hash(HashAlgorithm::SHA256), {}));
-    EXPECT_EQ(contentIdAfter(child, noScope(), {}), contentIdAfter(child, Hash(HashAlgorithm::SHA256), {}));
+    EXPECT_EQ(structuralAddressAfter(child, noScope(), {}), structuralAddressAfter(child, Hash(HashAlgorithm::SHA256), {}));
 }
 
 TEST(CidAsks, InheritanceDistinguishesApplyResultAcrossScopes)

@@ -1,6 +1,7 @@
 #include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-writer.hh"  // for jsonToCborString
+#include "nix/util/error.hh"
 
 #include <nlohmann/json.hpp>
 
@@ -9,6 +10,21 @@ namespace nix::cidasks {
 static std::string hashHex(const Hash & h)
 {
     return h.to_string(HashFormat::Base16, false);
+}
+
+std::optional<Subject> subjectFromObjectIdentity(const ObjectIdentityLike & id)
+{
+    if (id.subject)
+        return *id.subject;
+    if (id.cdiHex) {
+        try {
+            auto h = Hash::parseNonSRIUnprefixed(*id.cdiHex, HashAlgorithm::SHA256);
+            return Subject{OpaqueContentSubject{h}};
+        } catch (const std::exception &) {
+            return std::nullopt;
+        }
+    }
+    return std::nullopt;
 }
 
 Hash extractFrom(const trace::QueryVariant & query)
@@ -153,6 +169,34 @@ Fact factFromQR(const trace::QueryVariant & query, const trace::ResultVariant & 
     };
 }
 
+trace::QueryApply makeApplyResultQuery(
+    const Subject & applyResultSubject, const Hash & scope,
+    const std::vector<Edge> & walk, size_t edgeIndex)
+{
+    if (!std::holds_alternative<ApplyResultSubject>(applyResultSubject.data))
+        throw Error("cidasks::makeApplyResultQuery: subject is not an ApplyResultSubject");
+
+    auto par = pathAndRootsFromSubject(applyResultSubject);
+    if (par.path.steps.size() != 1
+        || par.path.steps[0].kind != trace::PathStep::Kind::Apply
+        || !par.path.steps[0].fnPath
+        || !par.path.steps[0].argPath)
+        throw Error("cidasks::makeApplyResultQuery: unexpected path shape");
+    const auto & applyStep = par.path.steps[0];
+
+    trace::QueryApply q;
+    q.fromCIDs.reserve(par.roots.size());
+    for (auto & root : par.roots) {
+        auto cid = contentIdAt(root, scope, walk, edgeIndex);
+        q.fromCIDs.emplace_back(hashHex(cid));
+    }
+    q.fnPath = *applyStep.fnPath;
+    q.argPath = *applyStep.argPath;
+    q.fnRootIndex = applyStep.fnRootIndex;
+    q.argRootIndex = applyStep.argRootIndex;
+    return q;
+}
+
 Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
 {
     /* Compute subject's content id at the precondition of the
@@ -183,35 +227,20 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
                     auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
                     return TracingDecisionGraph::xorHashes(base, scope);
                 } else if constexpr (std::is_same_v<T, DerivedSubject>) {
-                    /* Per-arg CDI under multi-root: derived's identity
-                       hashes the leaf step (name/index), the parent's
-                       path expression, and the full list of roots
-                       (via fromCIDs[]). The legacy `from` field carries
-                       fromCIDs[0] for backward compatibility. */
-                    auto [pathToParent, parentRoots] = pathAndRootsFromSubject(*alt.parent);
-                    std::vector<trace::QueryLeaf> fromCIDs;
-                    fromCIDs.reserve(parentRoots.size());
-                    for (auto & root : parentRoots) {
-                        auto cid = contentIdAt(root, scope, walk, k);
-                        fromCIDs.emplace_back(hashHex(cid));
-                    }
-                    auto fromLeaf = fromCIDs.empty() ? trace::QueryLeaf("") : fromCIDs[0];
-                    nlohmann::json qj;
-                    if (alt.kind == DerivedSubject::Kind::GetAttr) {
-                        trace::QueryGetAttr q{alt.name, fromLeaf};
-                        q.path = pathToParent;
-                        q.fromCIDs = fromCIDs;
-                        qj = q;
-                    } else {
-                        trace::QueryGetListElem q{fromLeaf, alt.index};
-                        q.path = pathToParent;
-                        q.fromCIDs = fromCIDs;
-                        qj = q;
-                    }
-                    return hashString(HashAlgorithm::SHA256, qj.dump());
+                    /* Derived subjects have no CDI — only an address
+                       (= producer query hash). Callers that need an
+                       address for any subject use `structuralAddress`;
+                       reaching this branch via `contentIdAt` means a
+                       caller passed a derived subject where the design
+                       requires an argument-level subject. */
+                    nix::unreachable();
                 } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
-                    auto fnAtK = contentIdAt(*alt.fn, scope, walk, k);
-                    auto argAtK = contentIdAt(*alt.arg, scope, walk, k);
+                    /* Apply-result composes its constituents' CDIs.
+                       Constituents may be Derived → route through
+                       structuralAddress (which dispatches Derived to
+                       the producer-query-hash path). */
+                    auto fnAtK = structuralAddress(*alt.fn, scope, walk, k);
+                    auto argAtK = structuralAddress(*alt.arg, scope, walk, k);
                     nlohmann::json qj = trace::QueryApply{hashHex(fnAtK), hashHex(argAtK)};
                     return hashString(HashAlgorithm::SHA256, qj.dump());
                 } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
@@ -239,6 +268,44 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
 Hash contentIdAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk)
 {
     return contentIdAt(subject, scope, walk, walk.size());
+}
+
+Hash structuralAddress(
+    const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
+{
+    /* For non-derived subjects, the structural address IS the CDI.
+       For DerivedSubject, contentIdAt traps; we compute the
+       producer query hash (= what a `from = root_cdi` flush would
+       hash for a query naming this derived value) directly. */
+    if (auto * d = std::get_if<DerivedSubject>(&subject.data)) {
+        auto [pathToParent, parentRoots] = pathAndRootsFromSubject(*d->parent);
+        std::vector<trace::QueryLeaf> fromCIDs;
+        fromCIDs.reserve(parentRoots.size());
+        for (auto & root : parentRoots) {
+            auto cid = contentIdAt(root, scope, walk, edgeIndex);
+            fromCIDs.emplace_back(hashHex(cid));
+        }
+        auto fromLeaf = fromCIDs.empty() ? trace::QueryLeaf("") : fromCIDs[0];
+        nlohmann::json qj;
+        if (d->kind == DerivedSubject::Kind::GetAttr) {
+            trace::QueryGetAttr q{d->name, fromLeaf};
+            q.path = pathToParent;
+            q.fromCIDs = fromCIDs;
+            qj = q;
+        } else {
+            trace::QueryGetListElem q{fromLeaf, d->index};
+            q.path = pathToParent;
+            q.fromCIDs = fromCIDs;
+            qj = q;
+        }
+        return hashString(HashAlgorithm::SHA256, qj.dump());
+    }
+    return contentIdAt(subject, scope, walk, edgeIndex);
+}
+
+Hash structuralAddressAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk)
+{
+    return structuralAddress(subject, scope, walk, walk.size());
 }
 
 std::string describe(const Subject & subject)

@@ -105,7 +105,7 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
     /* Child cdi is the producer query's queryHash. With Subject-based
        construction the AmbientObject derives this from DerivedSubject
        at construction time. */
-    auto childCdi = cidasks::contentIdAfter(
+    auto childCdi = cidasks::structuralAddressAfter(
         cidasks::Subject{cidasks::DerivedSubject{
             .parent = std::make_shared<const cidasks::Subject>(testSubject(0)),
             .kind = cidasks::DerivedSubject::Kind::GetAttr,
@@ -137,7 +137,7 @@ TEST(AmbientObjectTest, GetAttrMissing)
 TEST(AmbientObjectTest, GetListElem)
 {
     auto seed = testId(0);
-    auto childCdi = cidasks::contentIdAfter(
+    auto childCdi = cidasks::structuralAddressAfter(
         cidasks::Subject{cidasks::DerivedSubject{
             .parent = std::make_shared<const cidasks::Subject>(testSubject(0)),
             .kind = cidasks::DerivedSubject::Kind::GetListElem,

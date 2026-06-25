@@ -636,12 +636,36 @@ void from_json(const nlohmann::json & j, ResultFunctionInfo & r)
 void to_json(nlohmann::json & j, const QueryApply & q)
 {
     j = nlohmann::json{{"query", QueryApply::tag}, {"params", {{"fn", q.fn}, {"arg", q.arg}}}};
+    /* Per-arg mode (= ApplyResultSubject cdi computation under
+       per-arg centralization) emits fromCIDs + fn/argPath + root
+       indices. Legacy direct mode leaves them empty. */
+    if (!q.fromCIDs.empty())
+        j["params"]["fromCIDs"] = q.fromCIDs;
+    if (!q.fnPath.steps.empty())
+        j["params"]["fnPath"] = q.fnPath;
+    if (!q.argPath.steps.empty())
+        j["params"]["argPath"] = q.argPath;
+    if (q.fnRootIndex != 0)
+        j["params"]["fnRootIndex"] = q.fnRootIndex;
+    if (q.argRootIndex != 0)
+        j["params"]["argRootIndex"] = q.argRootIndex;
 }
 
 void from_json(const nlohmann::json & j, QueryApply & q)
 {
     j.at("params").at("fn").get_to(q.fn);
     j.at("params").at("arg").get_to(q.arg);
+    const auto & params = j.at("params");
+    if (params.contains("fromCIDs"))
+        params.at("fromCIDs").get_to(q.fromCIDs);
+    if (params.contains("fnPath"))
+        params.at("fnPath").get_to(q.fnPath);
+    if (params.contains("argPath"))
+        params.at("argPath").get_to(q.argPath);
+    if (params.contains("fnRootIndex"))
+        params.at("fnRootIndex").get_to(q.fnRootIndex);
+    if (params.contains("argRootIndex"))
+        params.at("argRootIndex").get_to(q.argRootIndex);
 }
 
 // ---------------------------------------------------------------------------

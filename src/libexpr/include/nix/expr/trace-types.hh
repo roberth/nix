@@ -543,12 +543,35 @@ struct ResultFunctionInfo
 
 DECLARE_QUERY_RESULT(QueryGetFunctionInfo, ResultFunctionInfo)
 
-/** Apply a function to an argument. */
+/** Apply a function to an argument.
+
+    Two construction modes, with the same content-addressed semantics:
+
+    - **Legacy direct mode** populates `fn`/`arg` with the constituents'
+      content ids. Used by the cb-apply boundary recording on the writer
+      side, where the apply's `fn` and `arg` are already content-addressed
+      leaf-form Objects (TracingObject, AmbientObject).
+
+    - **Per-arg path-encoded mode** populates `fromCIDs` with the root
+      cb_args' CDIs and uses `fnPath`/`argPath`+`fnRootIndex`/`argRootIndex`
+      to encode how fn and arg are reached from those roots. Used by
+      cidasks to compute an ApplyResultSubject's cdi without needing
+      standalone derived-subject cdis — see
+      `content-identity-via-asks.md` §Principle 3 (per-arg
+      centralization). `fn`/`arg` stay empty in this mode.
+
+    Both modes share the same JSON envelope; consumers distinguish by
+    whether `fromCIDs` is populated. */
 struct QueryApply
 {
     static constexpr std::string_view tag = "apply";
-    QueryLeaf fn;  ///< Function identity (a `ContentLeaf` hex in the eval-cache path)
-    QueryLeaf arg; ///< Argument identity (a `ContentLeaf` hex in the eval-cache path)
+    QueryLeaf fn;  ///< Function identity (legacy direct mode)
+    QueryLeaf arg; ///< Argument identity (legacy direct mode)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg CDIs (per-arg mode)
+    PathExpr fnPath;                  ///< Path from `fromCIDs[fnRootIndex]` to fn
+    PathExpr argPath;                 ///< Path from `fromCIDs[argRootIndex]` to arg
+    size_t fnRootIndex{0};
+    size_t argRootIndex{0};
     auto operator<=>(const QueryApply &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryApply, ResultType)

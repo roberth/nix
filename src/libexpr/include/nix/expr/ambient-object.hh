@@ -168,7 +168,7 @@ public:
         /* Content id at the empty factset, with this proxy's inherited
            scope applied. For multi-edge use, callers must pass the
            relevant walk via cidasks::contentIdAt instead. */
-        return cidasks::contentIdAfter(subject, inheritedScope, {});
+        return cidasks::structuralAddressAfter(subject, inheritedScope, {});
     }
 
     std::optional<std::string> getCdiHex() const override
