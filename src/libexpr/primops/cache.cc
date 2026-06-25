@@ -149,10 +149,22 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     interpreter->ambientResolver = resolver;
     /* Inherited scope for cidasks: uniquely identifies this cached
        call so sibling cached calls (different import / expr) get
-       distinct content ids throughout the cb-apply boundary. */
-    setAmbientResolverCallScope(*resolver, importPath
+       distinct content ids throughout the cb-apply boundary.
+       XOR-fold with `state.inheritedCallScope` to accumulate
+       across enclosing cached calls (= per via-asks
+       `ContentId(LocalObject) = ... ⊕ CDI(Q) ⊕ CDI(Q_outer) ⊕
+       ...`). For a top-level cached call, `inheritedCallScope`
+       is 0 and this reduces to the own contribution. The inner
+       EvalState (= cached body's evaluator) carries the combined
+       value forward so deeper-nested cached calls accumulate
+       further. */
+    auto ownContribution = importPath
         ? hashString(HashAlgorithm::SHA256, "cache-import:" + importPath->path.abs())
-        : hashString(HashAlgorithm::SHA256, "cache-expr:" + *expr + ":" + baseDir->path.abs()));
+        : hashString(HashAlgorithm::SHA256, "cache-expr:" + *expr + ":" + baseDir->path.abs());
+    auto effectiveCallScope = TracingDecisionGraph::xorHashes(
+        state.inheritedCallScope, ownContribution);
+    setAmbientResolverCallScope(*resolver, effectiveCallScope);
+    innerState->inheritedCallScope = effectiveCallScope;
 
     // Convert paths to use the inner accessor (TracingSourceAccessor)
     // so file reads are recorded as dependencies for invalidation.

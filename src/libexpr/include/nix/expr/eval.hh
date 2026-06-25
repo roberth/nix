@@ -559,6 +559,17 @@ public:
        primop falls back to cacheState.ownedDecisionGraph. */
     TracingDecisionGraph * rootDecisionGraph = nullptr;
 
+    /* Accumulated callScope from enclosing cached calls (=
+       XOR-fold of all ancestor cached-call contributions per
+       via-asks's `ContentId(LocalObject) = ... ⊕ CDI(Q) ⊕
+       CDI(Q_outer) ⊕ ...` formula). When `builtins.cache` runs,
+       the new resolver's callScope = `inheritedCallScope XOR
+       own contribution`, and the inner EvalState created for the
+       cached body inherits that combined value as its own
+       `inheritedCallScope`. Top-level (= user-facing) state
+       starts at zero. */
+    Hash inheritedCallScope{HashAlgorithm::SHA256};
+
     /**
      * State for builtins.cache calls (see src/libexpr/primops/cache.cc).
      */
