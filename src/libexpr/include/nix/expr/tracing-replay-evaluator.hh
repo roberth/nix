@@ -46,25 +46,18 @@ class TracingReplayEvaluator : public Evaluator
         /** Memoise id → resolved Object within this single walk so
             recursive resolveCdiId calls don't redo work. */
         std::map<std::string, std::shared_ptr<Object>> memo;
+        /** The walk constructed in lockstep with dispatch. Each
+            dispatched fact appends to the trailing edge; matching
+            a live proxy's subject uses
+            `cidasks::contentIdAt(subject, runningWalk, edgeIndex)`.
+            For single-edge walks (the default fast path), all
+            facts share one edge and `edgeIndex == 0` (the
+            precondition is the empty factset). */
+        std::vector<cidasks::Edge> runningWalk;
+        /** Index into runningWalk that subjects' content ids are
+            evaluated at. Stays 0 for single-edge walks. */
+        size_t edgeIndex = 0;
     };
-
-    /** Cumulative walk across all v13Walk calls in this session.
-        Each successfully committed Asks edge appends one entry,
-        deduplicated by the edge's content-equal fact set so re-
-        traversing a shared prefix doesn't double-fold. Mirrors the
-        writer's `d1CidasksWalk` — both grow per Asks edge ever
-        committed, so `contentIdAt(subject, scope, cidasksWalk, K)`
-        on the walker matches the writer's `contentIdAt` at the
-        same edge K. This alignment is what makes per-fact `from`
-        encodings reproducible at warm — without it, cell-chain
-        cdi computation lands at the wrong edge index (= cb-385's
-        original failure mode) and per-arg `from` lookups miss. */
-    std::vector<cidasks::Edge> cidasksWalk;
-    /** Dedup committed edges by their elementHash-set fingerprint
-        (= XOR-fold of fact element hashes within the edge). When
-        a later v13Walk re-traverses an Asks edge already in
-        cidasksWalk (= shared prefix), commitEdge is a no-op. */
-    std::unordered_set<Hash> committedEdgeFingerprints;
 
     /* Walks across the same process invocation re-dispatch the same
        Requests many times (each top-level lookup re-walks the shared
@@ -81,11 +74,6 @@ class TracingReplayEvaluator : public Evaluator
        Q's recorded RS. */
     TracingDecisionGraph::SetHash lastQFactsHash;
     TracingDecisionGraph::TrieBuilder dispatchedTrie;
-    /** Flat set of dispatched request hashes that contributed to
-        `lastQFactsHash`. Used as `startCurRequests` for the slow
-        walk() fallback so it doesn't re-dispatch already-folded
-        reqs (= which would XOR-cancel them out of cur). */
-    std::unordered_set<TracingDecisionGraph::RequestHash> dispatchedRequestSet;
 
     std::optional<std::string> dispatchAmbientQuery(const nlohmann::json & reqJson, ResolutionContext & ctx);
 
