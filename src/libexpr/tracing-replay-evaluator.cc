@@ -34,32 +34,43 @@ TracingReplayEvaluator::TracingReplayEvaluator(
 std::optional<std::pair<std::string, Hash>>
 TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy)
 {
-    /* Per-walk resolution context. `runningWalk` accumulates one
-       cidasks::Edge per committed Asks-edge transition within this
-       Q's walk; ctx.edgeIndex tracks the chain length so cell-chain
-       cdi lookups evaluate proxies at the right precondition. */
+    /* Per-walk resolution context. The cumulative cidasks walk
+       (= `this->cidasksWalk`) lives on the evaluator so it
+       persists across v13Walk calls — required for cell-chain
+       cdi computation to land at the writer's `d1EdgeIndex` (=
+       cumulative across logResults). */
     ResolutionContext ctx{
         std::move(currentProxy),
         {},
-        std::vector<cidasks::Edge>{},
-        0,
     };
 
     /* Per-edge buffer: dispatch() appends ambient facts here; the
-       walk-loop promotes the buffer to a runningWalk edge on commit
-       (via onEdgeCommitted) or discards it on reject. Without the
-       buffer, rejected-edge facts would pollute runningWalk and
-       throw off the cell-chain cdi computations. */
+       walk-loop promotes the buffer to a cumulative cidasksWalk
+       edge on commit (via commitEdge) or discards it on reject.
+       Without the buffer, rejected-edge facts would pollute
+       cidasksWalk and throw off the cell-chain cdi computations. */
     std::vector<cidasks::Fact> pendingEdgeFacts;
 
     auto commitEdge = [&]() {
         if (pendingEdgeFacts.empty()) return;
-        cidasks::Edge edge;
-        edge.facts = std::move(pendingEdgeFacts);
+        /* Dedup by the edge's element-hash fingerprint (= XOR-fold
+           of its fact element hashes) so re-traversing a shared
+           Asks prefix in a later v13Walk doesn't double-append.
+           XOR is a true set algebra here (Component F): same set
+           of facts → same fingerprint regardless of order. */
+        Hash fingerprint(HashAlgorithm::SHA256);
+        for (const auto & f : pendingEdgeFacts)
+            fingerprint = TracingDecisionGraph::xorFactIntoHash(
+                fingerprint, f.fromHash, f.elementHash);
+        if (committedEdgeFingerprints.insert(fingerprint).second) {
+            cidasks::Edge edge;
+            edge.facts = std::move(pendingEdgeFacts);
+            cidasksWalk.push_back(std::move(edge));
+            tracingCacheLog("dispatch: committed edge, cidasksWalk=%zu", cidasksWalk.size());
+        } else {
+            tracingCacheLog("dispatch: edge already in cidasksWalk (shared prefix), skip");
+        }
         pendingEdgeFacts.clear();
-        ctx.runningWalk.push_back(std::move(edge));
-        ctx.edgeIndex = ctx.runningWalk.size();
-        tracingCacheLog("dispatch: committed edge, walk=%zu", ctx.edgeIndex);
     };
 
     auto discardEdge = [&]() {
@@ -173,8 +184,10 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             if (auto term = decisionGraph.getTerminal(queryHash, candidateCur)) {
                 auto payload = decisionGraph.getResultPayload(*term);
                 if (payload) {
-                    for (const auto & req : onlyInEdge)
+                    for (const auto & req : onlyInEdge) {
                         dispatchedTrie.insert(req);
+                        dispatchedRequestSet.insert(req);
+                    }
                     lastQFactsHash = candidateCur;
                     tracingCacheStats().hits++;
                     commitEdge();
@@ -187,12 +200,33 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         discardEdge();
     }
 
-    /* Fall back to a regular walk from ∅. */
+    /* Fall back to walk(). Two attempts in order:
+       1. From `lastQFactsHash` — the cumulative dispatched
+          position. This skips already-traversed shared prefix
+          and resumes from there, crucial for sibling
+          discrimination (cb-sibling): starting from ∅ would
+          stop at the first reachable Terminal (= prior sibling),
+          but starting from lastQFactsHash continues the chain
+          past prior siblings' terminals to this Q's recorded
+          position.
+       2. From ∅ — the original behavior. Needed for Q's whose
+          recorded chain doesn't extend from lastQFactsHash
+          (= e.g., cb-385's deep-indep `b` fact, recorded at a
+          cur that's a *prefix* of where lastQFactsHash sits). */
     auto walkHit = decisionGraph.walk(queryHash, dispatch,
         [&](bool committed, const std::vector<Hash> &) {
             if (committed) commitEdge();
             else discardEdge();
-        });
+        },
+        lastQFactsHash,
+        dispatchedRequestSet);
+    if (!walkHit) {
+        walkHit = decisionGraph.walk(queryHash, dispatch,
+            [&](bool committed, const std::vector<Hash> &) {
+                if (committed) commitEdge();
+                else discardEdge();
+            });
+    }
     if (!walkHit) {
         tracingCacheStats().misses++;
         return std::nullopt;
@@ -249,10 +283,18 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
     }
 
     /* Walk the proxy's argScope chain looking for a cell whose
-       liveObject's content id matches idStr. The id is computed via
-       cidasks::contentIdAt against the walk's running factset
-       (= edgeIndex 0 for single-edge walks; future-proofed for
-       multi-edge). Symmetric to recording. */
+       liveObject's content id matches idStr. The id was stamped
+       at some writer-side `d1CidasksWalk` index N at flush time,
+       but the lookup carries only the cdi value — not the index.
+       So try every edge boundary 0..cidasksWalk.size() against
+       this subject's contentIdAt and accept the first match.
+       cidasksWalk is cumulative across v13Walk calls (= mirror of
+       writer's d1CidasksWalk), so the matching index always falls
+       within range provided the walker has processed at least N
+       prior Asks-edge commits — which it has by the time this
+       lookup runs, since writer's flush K only stamps facts that
+       reference cdis from flushes 0..K-1 (= already in walker's
+       cidasksWalk by the time Q_K's dispatch reaches them). */
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
@@ -262,17 +304,23 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    walker's content id matches what the recorder
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
-                auto cdi = cidasks::contentIdAt(*subj, scope, ctx.runningWalk, ctx.edgeIndex);
-                auto cdiHex = cdi.to_string(HashFormat::Base16, false);
-                tracingCacheLog(
-                    "resolve %s: cell[%d] subject=%s cdi=%s %s",
-                    idStr.substr(0, 12), cellDepth,
-                    cidasks::describe(*subj), cdiHex.substr(0, 12),
-                    cdiHex == idStr ? "MATCH" : "miss");
-                if (cdiHex == idStr) {
-                    ctx.memo[idStr] = live;
-                    return live;
+                bool matched = false;
+                for (size_t k = 0; k <= cidasksWalk.size() && !matched; ++k) {
+                    auto cdi = cidasks::contentIdAt(*subj, scope, cidasksWalk, k);
+                    auto cdiHex = cdi.to_string(HashFormat::Base16, false);
+                    if (cdiHex == idStr) {
+                        tracingCacheLog(
+                            "resolve %s: cell[%d] subject=%s MATCH at edge=%zu",
+                            idStr.substr(0, 12), cellDepth,
+                            cidasks::describe(*subj), k);
+                        ctx.memo[idStr] = live;
+                        return live;
+                    }
                 }
+                tracingCacheLog(
+                    "resolve %s: cell[%d] subject=%s miss across %zu edges",
+                    idStr.substr(0, 12), cellDepth,
+                    cidasks::describe(*subj), cidasksWalk.size() + 1);
             } else {
                 tracingCacheLog("resolve %s: cell[%d] live has no subject", idStr.substr(0, 12), cellDepth);
             }

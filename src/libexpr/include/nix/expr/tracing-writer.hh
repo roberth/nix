@@ -150,6 +150,22 @@ public:
     {
     }
 
+    /** Cumulative factSet hash maintained per-fact via XOR-fold.
+        At cold time, advances at `noteEnvObservation` (= walker
+        dispatches), `logResponse` (= env/file recordings), and
+        `flushPendingAmbient` (= inner's ambient observations).
+        At warm time, advances only at `noteEnvObservation` —
+        which captures every dispatched fact, mirroring cold's
+        cumulative. The walker reads this as the ground-truth
+        cur for the cascading Terminal lookup (= when fast-path's
+        per-edge math doesn't reach the recorded position because
+        the Q has multiple terminals at curs that depend on prior
+        sibling-style divergence). */
+    const TracingDecisionGraph::SetHash & getV13FactSetHash() const
+    {
+        return v13FactSetHash;
+    }
+
     /**
      * Opaque handle linking a query to its result.
      */
