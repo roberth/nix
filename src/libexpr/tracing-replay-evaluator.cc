@@ -459,8 +459,40 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
 
     auto reqPayload = decisionGraph.getRequestPayload(idHash);
     if (!reqPayload) {
-        tracingCacheLog("resolve %s: not in pool -> materialise local standin", idStr.substr(0, 12));
-        return materialiseLocalStandin(idHash, idStr, ctx);
+        /* "Not in pool" means the id has no recorded provenance — no
+           producer Request and no localArg sidecar. Such ids are
+           OUTER-direction by elimination: an inner local's argId is
+           always sidecar-registered by AmbientResolver::apply (=
+           inserting `{kind: "localArg", applyResultId: ...}` at the
+           argId), and any derived value has a producer Request. Only
+           outer-seed CDIs minted by makeCachedFnPrimOp.impl — e.g.
+           a nested AmbientObject for the int the outer body passes
+           to inner_lambda in cb-higher-order's `g 10` — reach here.
+
+           For OUTER values the via-Asks design forbids serving from
+           the Responses pool ("ambient responses are
+           capability-mediated, not cached" — primop doc §Replay
+           semantics). The previous fallback materialised an RLO and
+           let its methods read out of LocalResponseMap, which was
+           correct for INNER locals but wrong here: it served the
+           recorded outer response regardless of whether the live
+           outer would produce it, silently masking outer-body change
+           (cb-higher-order step 3 returning stale 6 when outer
+           changed from `g 5` to `g 10`).
+
+           INNER locals are unaffected by this change: their sidecar
+           presence routes them via `chaseLocalArgSidecar`, and
+           `resolveApplyId` with explicit `isLocalArgId`
+           discrimination materialises their RLO. Serving inner
+           locals from the reconstructed value tree backed by
+           LocalResponseMap is per design (= depth-2 Replay's
+           "walker reconstructs the LocalObject as a live Nix Value
+           tree from the CAS pool"). The forbidden thing is treating
+           an OUTER-direction id as if it were a local. */
+        tracingCacheLog(
+            "resolve %s: not in pool — no provenance (outer-seed by elimination); returning null",
+            idStr.substr(0, 12));
+        return nullptr;
     }
 
     nlohmann::json reqJson;
