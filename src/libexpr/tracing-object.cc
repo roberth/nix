@@ -251,10 +251,10 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     if (!fnIdOpt || !argIdOpt)
         throw Error("TracingObject::queryApply: fn/arg lacks a content-defined identity");
 
-    /* cb-apply boundary: split the writer's flush so applyCdi is
-       computed at the post-flush walk index. See parallel call in
-       TracingEvaluator::apply. */
-    writer.splitFlush();
+    /* cb-apply boundary: record an explicit ε edge for this apply.
+       See parallel call in TracingEvaluator::apply. */
+    nlohmann::json applyBoundaryJson = trace::QueryApply{*fnIdOpt, *argIdOpt};
+    writer.markApplyBoundary(applyBoundaryJson);
 
     auto fnIdHash = Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256);
     auto argIdHash = Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256);

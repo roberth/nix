@@ -377,6 +377,26 @@ public:
     void splitFlush();
 
     /**
+     * Mark a cb-apply boundary in the recording. End the current
+     * Asks edge, then add a synthetic apply observation
+     * `(applyRequestHash, Hash(0))` that closes its own Asks edge
+     * — both sides advance their cumulative cidasks walk by one
+     * for this boundary, even when there are no other
+     * observations between cb-applies.
+     *
+     * The synthetic observation is paired with `Hash(0)` as
+     * response on both writer and walker (= walker's
+     * `dispatchAmbientQuery` returns nullopt for tag="apply", so
+     * dispatch returns the zero hash). The `fromHash` is also
+     * `Hash(0)` — the apply boundary is a walk-advance marker,
+     * not a fact about any subject, so it doesn't fold into any
+     * subject's own-loop. The boundary contributes only to cur
+     * (via factElementHash) and to walker/writer walk-index
+     * synchronisation.
+     */
+    void markApplyBoundary(const nlohmann::json & applyQueryPayload);
+
+    /**
      * When true, every file-read / env-var response payload gets
      * persisted into the decisionGraph's LocalResponseMap too —
      * useful for offline debugging when JSON traces aren't

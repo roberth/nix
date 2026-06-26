@@ -260,16 +260,15 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     tracingCacheLog("tracing: apply fnId=%s argId=%s", fnId, argId);
 
-    /* cb-apply boundary: end the current Asks edge before computing
-       applyCdi. This advances writer.d1CidasksWalk by one (when there
-       are pending ambient observations), so the apply-result's CDI is
-       computed at the same walk index the walker will be at after
-       committing the corresponding Asks edge. Without this, a body
-       run that fires multiple cb-applies collapses into a single
-       writer-side edge while the walker advances per-edge — leading
-       to walker and writer computing the apply-result's triePos at
-       different walk indices. */
-    writer.splitFlush();
+    /* cb-apply boundary: record an explicit ε edge for this apply.
+       markApplyBoundary closes the preceding observations as one
+       Asks edge (β1) and then records a synthetic single-observation
+       Asks edge (ε) carrying just the apply Request — both sides
+       advance their cumulative cidasks walk by one for ε, so the
+       apply-result's CDI is computed at a walk index the walker
+       can reach via the recorded chain. */
+    nlohmann::json applyQ = trace::QueryApply{fnId, argId};
+    writer.markApplyBoundary(applyQ);
 
     /* Build the ApplyResultSubject from fn/arg constituents. fn is
        typically a TracingObject (the cached function from evalFile)

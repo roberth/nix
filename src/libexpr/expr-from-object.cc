@@ -278,15 +278,6 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
     if (!outerState)
         throw Error("ambient apply requires outerState");
 
-    /* cb-apply boundary: end the current Asks edge before computing
-       argId/resultId. See parallel call in TracingEvaluator::apply
-       for the principle (= principle 4 + 6 + 7: each cb-apply
-       advances cidasks state, walker advances per Asks edge, writer
-       must produce one Asks edge per advance for the two sides to
-       agree on the walk index). */
-    if (innerWriter)
-        innerWriter->splitFlush();
-
     /* Scope-graph cell for the cb arg, rooted at the caller's
        effective scope (which AmbientObject::queryApply passes in
        because a resolved fn may be an InterpreterObject without a
@@ -311,6 +302,14 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        AmbientAsks edge at flush. */
     auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
     auto argIdStr = argId.to_string(HashFormat::Base16, false);
+
+    /* cb-apply boundary: record the apply's synthetic walk-advance
+       edge (= ε) now that we have fnIdStr and argIdStr. See parallel
+       call in TracingEvaluator::apply for the principle. */
+    if (innerWriter) {
+        nlohmann::json applyQ = trace::QueryApply{fnIdStr, argIdStr};
+        innerWriter->markApplyBoundary(applyQ);
+    }
     trace::QueryApply applyQuery{fnIdStr, argIdStr};
     auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
 

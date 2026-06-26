@@ -243,4 +243,74 @@ void TracingWriter::splitFlush()
     }
 }
 
+void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
+{
+    if (!decisionGraph)
+        return;
+
+    /* First close any preceding observations into their own Asks edge
+       (= β1). This is the standard splitFlush. */
+    splitFlush();
+
+    /* Now record the cb-apply boundary itself as a single-observation
+       Asks edge (= ε). The observation is synthetic: `requestHash` is
+       the apply payload's natural hash, `responseHash` is `Hash(0)`
+       (= 32 zero bytes — matching what the walker's dispatch returns
+       for tag="apply"). Both sides compute the same `elementHash`
+       and the same XOR contribution to cur, so they stay aligned.
+
+       `fromHash = Hash(0)` because the apply boundary is not an
+       observation about any specific subject — it's a walk-advance
+       marker. Subject CDIs don't fold it into their own-loops since
+       no subject's CDI equals 0. */
+    auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQueryPayload.dump());
+    auto applyRespHash = Hash(HashAlgorithm::SHA256);
+    auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
+    decisionGraph->insertRequest(applyReqHash, applyPayloadCbor);
+
+    /* Fold the synthetic fact into v13FactSet (= cur tracking) and
+       into the writer-side bookkeeping (responseFor, allRequestsTrie,
+       pendingNewRequests). Symmetric with logResponse's accounting
+       for env facts. */
+    auto factHash = TracingDecisionGraph::xorFactIntoHash(
+        Hash(HashAlgorithm::SHA256), applyReqHash, applyRespHash);
+    if (seenRequests.insert(factHash).second) {
+        v13FactSet.push_back({applyReqHash, applyRespHash});
+        v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
+            v13FactSetHash, applyReqHash, applyRespHash);
+        responseFor.emplace(applyReqHash, applyRespHash);
+        allRequestsTrie.insert(applyReqHash);
+        if (allRequestHashes.insert(applyReqHash).second)
+            pendingNewRequests.push_back(applyReqHash);
+    }
+
+    /* Append the ε edge to d1CidasksWalk: one observation with
+       `fromHash=Hash(0)`, `elementHash=factElementHash(reqHash,
+       Hash(0))`. d1CidasksWalk.size() grows by 1, so subsequent
+       cidasks::contentIdAt calls land at a new walk index — same
+       as the walker after it dispatches this Asks edge. */
+    cidasks::Edge applyEdge;
+    applyEdge.observations.push_back({
+        Hash(HashAlgorithm::SHA256), // fromHash = 0: walk-advance marker
+        factHash,                    // elementHash = factElementHash(reqHash, 0)
+    });
+    d1CidasksWalk.push_back(std::move(applyEdge));
+    tracingCacheLog("markApplyBoundary: d1CidasksWalk += 1 -> %zu (apply reqHash=%s)",
+                    d1CidasksWalk.size(),
+                    applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12));
+
+    /* Close ε's perQAsksEdge boundary — the apply Request is in
+       pendingNewRequests so the resulting RS contains exactly it. */
+    if (!pendingNewRequests.empty()) {
+        auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
+        perQAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+        tracingCacheLog("markApplyBoundary: ε Asks edge from=%s rs-size=%zu (perQ=%zu)",
+                        prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                        pendingNewRequests.size(),
+                        perQAsksEdges.size());
+        prevQFactSetHash = v13FactSetHash;
+        pendingNewRequests.clear();
+    }
+}
+
 } // namespace nix

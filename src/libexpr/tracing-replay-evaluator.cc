@@ -132,6 +132,27 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             if (auto it = dispatchCache.find(requestHash); it != dispatchCache.end())
                 return it->second;
         }
+        /* Apply-boundary marker: short-circuit before getCurrentResponse
+           since dispatchAmbientQuery returns nullopt for tag="apply"
+           (= the apply is materialised via resolveCdiId on subsequent
+           observations referencing the apply-result, not via direct
+           dispatch). The synthetic response is `Hash(0)` —
+           symmetric with TracingWriter::markApplyBoundary. The
+           pendingEdgeObservations push happens below so commitEdge
+           fires for this Asks edge and walker.cidasksWalk grows. */
+        if (isAmbient && queryTag == "apply") {
+            auto applyRespHash = Hash(HashAlgorithm::SHA256);
+            pendingEdgeObservations.push_back({
+                Hash(HashAlgorithm::SHA256),
+                TracingDecisionGraph::xorFactIntoHash(
+                    Hash(HashAlgorithm::SHA256), requestHash, applyRespHash),
+            });
+            tracingCacheLog(
+                "dispatch apply boundary: req=%s payload=%s",
+                requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                queryDescription);
+            return applyRespHash;
+        }
         auto currentResp = getCurrentResponse(*requestPayload, ctx);
         if (!currentResp) {
             tracingCacheLog(
