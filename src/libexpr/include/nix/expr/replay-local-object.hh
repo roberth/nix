@@ -170,8 +170,27 @@ public:
         return *this;
     }
 
+    /** Set the d=2 chain's starting cursor. Each cb-apply's d=2
+        chain is rooted at its applyReqHash (= the natural hash of
+        the cb-apply payload) — different cb-applies' chains live in
+        disjoint subtrees of AmbientAsks. The walker passes the
+        apply_qH it's resolving here so the standin's per-probe walk
+        starts at the right root. */
+    ReplayLocalObject & withChainStart(Hash root)
+    {
+        *chainCursor = std::move(root);
+        return *this;
+    }
+
     /** Whether per-probe validation is enabled for this proxy. */
     bool hasAmbientAsksValidation() const { return validateAgainstAmbientAsks; }
+
+    /** Current value of the d=2 chain cursor. Read after the outer
+        has finished probing the standin (= after fn->queryApply
+        returns) to obtain the chain's terminal — that's the
+        AmbientResult fed back as the cb-apply Request's d=1
+        respHash. */
+    Hash getChainCursor() const { return *chainCursor; }
 
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 

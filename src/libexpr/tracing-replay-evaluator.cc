@@ -132,28 +132,37 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             if (auto it = dispatchCache.find(requestHash); it != dispatchCache.end())
                 return it->second;
         }
-        /* Apply-boundary marker: short-circuit before getCurrentResponse
-           since dispatchAmbientQuery returns nullopt for tag="apply".
-           The synthetic response is `Hash(0)` — symmetric with
-           TracingWriter::markApplyBoundary. The pendingEdgeObservations
-           push happens below so commitEdge fires for this Asks edge
-           and walker.cidasksWalk grows. The cb apply's wrapper is
-           materialised lazily later via resolveCdiId / queryApply when
-           a downstream lookup actually needs it; each materialisation
-           is a fresh per-invocation Object, not a cross-invocation
-           shared one (= the via-Asks design's boundary-trace-only
-           discipline). */
+        /* Apply-boundary: AmbientResult split by chain presence.
+            - No chain at applyReqHash: AmbientResult = applyReqHash
+              (= chain root; matches writer's empty-d=2-group path).
+            - Chain present: invoke fn live via dispatchApplyLive,
+              which forces the result so outer's f drives probes
+              against a fresh standin. On divergence, fail dispatch. */
         if (isAmbient && queryTag == "apply") {
-            auto applyRespHash = Hash(HashAlgorithm::SHA256);
+            auto outgoing = decisionGraph.getAmbientAsks(requestHash);
+            Hash applyRespHash{HashAlgorithm::SHA256};
+            if (outgoing.empty()) {
+                applyRespHash = requestHash;
+            } else {
+                nlohmann::json reqJson;
+                try {
+                    reqJson = cborStringToJson(*requestPayload);
+                } catch (const std::exception &) {
+                    return Hash(HashAlgorithm::SHA256);
+                }
+                if (!reqJson.contains("params") || !reqJson["params"].is_object())
+                    return Hash(HashAlgorithm::SHA256);
+                auto maybeAmbientResult = dispatchApplyLive(
+                    requestHash, reqJson["params"], ctx);
+                if (!maybeAmbientResult)
+                    return Hash(HashAlgorithm::SHA256);
+                applyRespHash = *maybeAmbientResult;
+            }
             pendingEdgeObservations.push_back({
                 Hash(HashAlgorithm::SHA256),
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), requestHash, applyRespHash),
             });
-            tracingCacheLog(
-                "dispatch apply boundary: req=%s payload=%s",
-                requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                queryDescription);
             return applyRespHash;
         }
         auto currentResp = getCurrentResponse(*requestPayload, ctx);
@@ -547,8 +556,22 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            validation — their facts live at depth-1, not in
            AmbientAsks. */
         auto standin = materialiseLocalStandin(argHash, argIdStr, ctx);
-        if (auto * replayLocal = dynamic_cast<ReplayLocalObject *>(standin.get()))
+        if (auto * replayLocal = dynamic_cast<ReplayLocalObject *>(standin.get())) {
             replayLocal->withAmbientAsksValidation();
+            /* Root the d=2 chain at the applyReqHash. Each cb-apply's
+               chain lives in its own subtree of AmbientAsks; the
+               apply_qH `idStr` resolved here IS that root. Matches
+               the writer's `cumulativeFactSet = boundary.applyRequestHash`
+               in flushPendingAmbient's finalize loop. */
+            try {
+                replayLocal->withChainStart(
+                    Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256));
+            } catch (const std::exception &) {
+                /* idStr should be a valid hex hash here; if not, leave
+                   chainCursor at its default (emptySetHash) — the walk
+                   will fail safely. */
+            }
+        }
         argObj = standin;
     } else {
         argObj = resolveCdiId(argIdStr, ctx);
@@ -566,6 +589,71 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     if (resultObj)
         ctx.memo[idStr] = resultObj;
     return resultObj;
+}
+
+std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
+    const Hash & applyReqHash,
+    const nlohmann::json & params,
+    ResolutionContext & ctx)
+{
+    auto fnIdStr = params["fn"].get<std::string>();
+    auto fnObj = resolveCdiId(fnIdStr, ctx);
+    if (!fnObj) {
+        tracingCacheLog(
+            "dispatchApplyLive: cannot resolve fn %s for applyReqHash=%s",
+            fnIdStr,
+            applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12));
+        return std::nullopt;
+    }
+
+    auto argIdStr = params["arg"].get<std::string>();
+    Hash argHash{HashAlgorithm::SHA256};
+    try {
+        argHash = Hash::parseNonSRIUnprefixed(argIdStr, HashAlgorithm::SHA256);
+    } catch (const std::exception &) {
+        tracingCacheLog(
+            "dispatchApplyLive: cannot parse arg id %s", argIdStr);
+        return std::nullopt;
+    }
+    if (!isLocalArgId(argHash)) {
+        tracingCacheLog(
+            "dispatchApplyLive: arg %s is not a local; no d=2 standin to drive",
+            argIdStr.substr(0, 12));
+        return std::nullopt;
+    }
+
+    /* Fresh per-dispatch standin. No ctx.memo lookup — per-call
+       discipline, each cb-apply Fact dispatch creates its own. */
+    auto standin = std::make_shared<ReplayLocalObject>(
+        argHash, decisionGraph, inner->getEvalState().rootFSRoot, &inner->getEvalState());
+    standin->withAmbientAsksValidation().withChainStart(applyReqHash);
+
+    try {
+        auto resultObj = fnObj->queryApply(standin);
+        /* Force the apply result so outer's `f` actually evaluates.
+           `queryApply` only sets up the application (= mkApp thunk,
+           result AmbientObject); without forcing, outer's `f` body
+           doesn't run and the standin never gets probed. Forcing
+           the result's type drives `ExprFromObject::eval` on the
+           bridged thunk, which evaluates outer's `f` against the
+           standin — the same path cold record went through, so the
+           probe sequence matches. */
+        if (resultObj)
+            (void) resultObj->getType();
+    } catch (const std::exception & e) {
+        tracingCacheLog(
+            "dispatchApplyLive: divergence during queryApply for applyReqHash=%s: %s",
+            applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            e.what());
+        return std::nullopt;
+    }
+
+    auto ambientResult = standin->getChainCursor();
+    tracingCacheLog(
+        "dispatchApplyLive: applyReqHash=%s AmbientResult=%s",
+        applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        ambientResult.to_string(HashFormat::Base16, false).substr(0, 12));
+    return ambientResult;
 }
 
 /* Outer-direction: derived child id whose producer Request is a
@@ -692,88 +780,6 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
     if (child)
         ctx.memo[idStr] = child;
     return child;
-}
-
-bool TracingReplayEvaluator::walkD2ChainAtBoundary(
-    const Hash & applyRequestHash,
-    std::shared_ptr<Object> applyResult,
-    ResolutionContext & ctx)
-{
-    /* The writer's flushPendingAmbient persists each cb-apply's d2
-       chain starting at the empty factSet (= cumulativeFactSet
-       initialised to emptySetHash, then each fact appends one
-       AmbientAsks edge). Walker starts the same way and follows
-       the chain until either it reaches a factSet with no
-       outgoing edges (= terminal) or a recorded edge whose live
-       dispatch produces a response hash that doesn't match the
-       transition (= divergence → stale). */
-    auto cur = TracingDecisionGraph::emptySetHash();
-    size_t step = 0;
-    while (true) {
-        auto outgoing = decisionGraph.getAmbientAsks(cur);
-        if (outgoing.empty()) {
-            tracingCacheLog(
-                "d2 walk: reqHash=%s step=%zu terminal at cur=%s",
-                applyRequestHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                step,
-                cur.to_string(HashFormat::Base16, false).substr(0, 12));
-            return true;
-        }
-        /* Scaffolding stage: enumerate the chain so we can see the
-           recorded structure. Live validation will land
-           incrementally — for now, we just pick the first edge
-           (= no branching expected since each cb-apply's d2 chain
-           was recorded linearly) and advance to its toFactSet
-           without dispatch. This means the d1 walker still trusts
-           the recorded apply-result; the staleness gap stays open
-           until validation lands. */
-        auto [rsHash, toFactSet] = outgoing.front();
-        auto rsMembers = decisionGraph.getRequestSet(rsHash);
-        tracingCacheLog(
-            "d2 walk: reqHash=%s step=%zu cur=%s -> toFactSet=%s rs-size=%zu",
-            applyRequestHash.to_string(HashFormat::Base16, false).substr(0, 12),
-            step,
-            cur.to_string(HashFormat::Base16, false).substr(0, 12),
-            toFactSet.to_string(HashFormat::Base16, false).substr(0, 12),
-            rsMembers ? rsMembers->size() : 0);
-        if (rsMembers) {
-            for (auto & reqHash : *rsMembers) {
-                auto payload = decisionGraph.getRequestPayload(reqHash);
-                if (!payload) continue;
-                try {
-                    auto reqJson = cborStringToJson(*payload);
-                    std::string desc = reqJson.value("query", std::string("(no-query-tag)"));
-                    if (reqJson.contains("params") && reqJson["params"].is_object()) {
-                        auto & params = reqJson["params"];
-                        if (params.contains("name"))
-                            desc += " name=\"" + params["name"].get<std::string>() + "\"";
-                        if (params.contains("from"))
-                            desc += " from=" + params["from"].get<std::string>().substr(0, 12);
-                    }
-                    tracingCacheLog(
-                        "d2 walk:   probe req=%s payload=%s",
-                        reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                        desc);
-                } catch (...) {
-                    tracingCacheLog(
-                        "d2 walk:   probe req=%s (payload parse failed)",
-                        reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
-                }
-            }
-        }
-        cur = toFactSet;
-        ++step;
-        /* Hard cap on chain depth to guard against unforeseen cycles
-           in the recorded structure. cb-apply d2 chains in practice
-           are short (= a handful of probes per apply). */
-        if (step > 64) {
-            tracingCacheLog(
-                "d2 walk: reqHash=%s aborting at step=%zu (depth cap)",
-                applyRequestHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                step);
-            return true;
-        }
-    }
 }
 
 std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nlohmann::json & reqJson, ResolutionContext & ctx)

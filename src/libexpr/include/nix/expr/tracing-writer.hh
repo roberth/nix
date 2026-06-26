@@ -102,7 +102,13 @@ class TracingWriter
            grouping this fact into the depth-2 sub-trace for that apply. */
         Hash depth2ApplyId{HashAlgorithm::SHA256};
     };
-    std::vector<PendingFact> pendingFacts;
+    /* Depth-1 facts (= ambient observations on outer state). Drained
+       at every intermediate splitFlush and at finalize. */
+    std::vector<PendingFact> pendingDepth1Facts;
+    /* Depth-2 facts live on their owning PendingApplyBoundary so
+       each cb-apply invocation's chain is built from exactly its
+       own probe sequence. Storage is below (= PendingApplyBoundary's
+       facts field). */
 
     /* Persistent cidasks chain for depth-1 ambient observations.
        One edge per logResult — covers the ambient facts substituted
@@ -142,6 +148,23 @@ class TracingWriter
         std::optional<std::string> keyPlaceholder;
     };
     std::vector<PendingRequest> pendingRequests;
+
+    /* Deferred cb-apply boundaries. markApplyBoundary pushes a new
+       entry with empty facts; logDepth2Observation appends probes to
+       the most recently-pushed boundary whose applyId matches.
+       flushPendingAmbient processes each boundary's d=2 chain (=
+       just its own facts), computes the terminal cumulative
+       factSet as AmbientResult, and synthesises the d=1 apply Fact
+       at `(applyReqHash, AmbientResult)`. Each cb-apply invocation
+       owns exactly its own probe sequence. Recording order = vector
+       order. */
+    struct PendingApplyBoundary
+    {
+        Hash applyId;            ///< depth2ApplyId for the d=2 group
+        Hash applyRequestHash;   ///< natural hash of applyQueryPayload
+        std::vector<PendingFact> facts;
+    };
+    std::vector<PendingApplyBoundary> pendingApplyBoundaries;
 
 public:
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
@@ -272,7 +295,7 @@ public:
     {
         if (!decisionGraph)
             return;
-        pendingFacts.push_back({query, result, std::move(subject), std::move(inheritedScope),
+        pendingDepth1Facts.push_back({query, result, std::move(subject), std::move(inheritedScope),
             /*depth2ApplyId=*/ Hash(HashAlgorithm::SHA256)});
     }
 
@@ -291,8 +314,26 @@ public:
     {
         if (!decisionGraph)
             return;
-        pendingFacts.push_back({query, result, std::move(subject),
-            std::move(inheritedScope), std::move(applyId)});
+        /* Append to the most recently pushed boundary whose applyId
+           matches — that's the cb-apply invocation currently
+           building its probe sequence. Each invocation's probes
+           land in its own facts vector, no cross-invocation mixing. */
+        for (auto it = pendingApplyBoundaries.rbegin();
+             it != pendingApplyBoundaries.rend(); ++it) {
+            if (it->applyId == applyId) {
+                it->facts.push_back({query, result, std::move(subject),
+                    std::move(inheritedScope), applyId});
+                return;
+            }
+        }
+        /* No matching boundary — should not happen if recorder
+           invariants hold (= every depth2ApplyId comes from a
+           TracingLocalObject whose construction was preceded by
+           a markApplyBoundary for the same applyId). Drop on the
+           floor with a log. */
+        tracingCacheLog(
+            "logDepth2Observation: no matching pending boundary for applyId=%s",
+            applyId.to_string(HashFormat::Base16, false).substr(0, 12));
     }
 
     /**
@@ -346,11 +387,20 @@ public:
 
     /**
      * Flush buffered ambient facts and Requests into the pool at
-     * their natural reqHashes. Called from logResult, before
-     * record(). Under the via-Asks design, facts carry positional
-     * initial content ids in `from`; no per-fact substitution.
+     * their natural reqHashes.
+     *
+     * Called from `splitFlush` (= every cb-apply boundary and at
+     * logResult). With `finalize=false` (= intermediate flushes),
+     * only depth-1 facts are drained; depth-2 facts and buffered
+     * `pendingApplyBoundaries` stay buffered for later. With
+     * `finalize=true` (= logResult), pendingApplyBoundaries are
+     * also processed: for each, the d=2 chain group is built,
+     * its terminal `cumulativeFactSet` is the AmbientResult, and
+     * the d=1 synthetic apply Fact `(applyReqHash, AmbientResult)`
+     * is folded into v13FactSet / d1CidasksWalk / pendingNewRequests
+     * just like an ordinary depth-1 ambient observation.
      */
-    void flushPendingAmbient();
+    void flushPendingAmbient(bool finalize = false);
 
     /**
      * End the current Asks edge at a cb-apply boundary inside a
@@ -374,25 +424,28 @@ public:
      * with no ambient observations doesn't move cidasks state, so
      * walker's commitEdge is a no-op for it. Same on the writer.
      */
-    void splitFlush();
+    void splitFlush(bool finalize = false);
 
     /**
-     * Mark a cb-apply boundary in the recording. End the current
-     * Asks edge, then add a synthetic apply observation
-     * `(applyRequestHash, Hash(0))` that closes its own Asks edge
-     * — both sides advance their cumulative cidasks walk by one
-     * for this boundary, even when there are no other
-     * observations between cb-applies.
+     * Mark a cb-apply boundary in the recording. Closes the
+     * preceding observations into their own Asks edge (= β1 via
+     * splitFlush), inserts the apply Request payload into the CAS
+     * pool, and buffers a `PendingApplyBoundary` recording the
+     * applyId and reqHash.
      *
-     * The synthetic observation is paired with `Hash(0)` as
-     * response on both writer and walker (= walker's
-     * `dispatchAmbientQuery` returns nullopt for tag="apply", so
-     * dispatch returns the zero hash). The `fromHash` is also
-     * `Hash(0)` — the apply boundary is a walk-advance marker,
-     * not a fact about any subject, so it doesn't fold into any
-     * subject's own-loop. The boundary contributes only to cur
-     * (via factElementHash) and to walker/writer walk-index
-     * synchronisation.
+     * The d=1 apply Fact itself is *not* folded into v13FactSet
+     * here. Its response hash is the AmbientResult (= terminal of
+     * the d=2 chain captured for this applyId), which is only known
+     * at flushPendingAmbient time. Deferring synthesis keeps the
+     * d=1 cur consistent with via-Asks §"Recording (depth-2)":
+     * "The terminal factSet hash *is* the `AmbientResult`, which
+     * the depth-1 walker XOR-folds into its own `cur` as the
+     * `Response` for the enclosing `AmbientQuery`."
+     *
+     * The `fromHash` of the synthetic d=1 apply Fact's
+     * d1CidasksWalk observation is `Hash(0)` — the apply boundary
+     * is a walk-advance marker, not a fact about any subject, so
+     * it doesn't fold into any subject's own-loop.
      */
     void markApplyBoundary(const nlohmann::json & applyQueryPayload);
 
@@ -420,13 +473,17 @@ public:
         if (!decisionGraph || !qh.queryHash)
             return std::nullopt;
 
-        /* Process any pending ambient observations and finalise the
-           trailing Asks edge boundary in one go. splitFlush is also
-           called at every cb-apply boundary inside a body run, so
-           by the time logResult fires there may already be N
-           boundaries accumulated in perQAsksEdges; this one just
-           closes off whatever's still pending. */
-        splitFlush();
+        /* Process any pending ambient observations, finalise
+           buffered cb-apply boundaries (computing each one's
+           AmbientResult from its d=2 chain and folding the
+           synthetic d=1 apply Fact in), and close the trailing
+           Asks edge boundary. splitFlush is also called at every
+           cb-apply boundary inside a body run, but with
+           finalize=false; the d=2-driven AmbientResult computation
+           happens only here at logResult, since intermediate
+           splitFlushes can be interleaved with the apply's body
+           and the d=2 chain may not be complete yet. */
+        splitFlush(/*finalize=*/ true);
 
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);

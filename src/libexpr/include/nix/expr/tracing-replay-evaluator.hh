@@ -115,24 +115,27 @@ class TracingReplayEvaluator : public Evaluator
         parseable producer query payload. */
     bool isLocalArgId(const Hash & idHash);
     std::shared_ptr<Object> resolveApplyId(const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx);
-    std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx);
 
-    /** Walk the depth-2 AmbientAsks chain anchored at this cb-apply
-        boundary, validating each recorded outer probe against live
-        dispatch through `applyResult`. Returns `true` if every edge's
-        live response hash matches the recorded transition (=
-        toFactSet); `false` on divergence. The d2 chain starts at
-        the empty factSet (= per writer's flushPendingAmbient's d2
-        path). A `false` return signals the d1 walker that the
-        recorded apply-result is stale and the cache entry should
-        miss.
+    /** d=2 live AmbientResult computation for a cb-apply Fact
+        dispatch. Materialises a fresh standin rooted at
+        `applyReqHash`, invokes `fn->queryApply(standin)` live, then
+        FORCES the apply result (= via `getType()`) so outer's `f`
+        actually evaluates and drives probes against the standin
+        through `ExprFromObject`'s bridge thunk. Per-probe
+        `validateAgainstAmbientAsks` walks the recorded chain;
+        divergence throws and is caught here. Returns
+        `std::nullopt` on divergence so the d=1 dispatch fails.
 
-        Scaffolding stage: currently iterates the chain and logs
-        what's there. Live validation will land incrementally. */
-    bool walkD2ChainAtBoundary(
-        const Hash & applyRequestHash,
-        std::shared_ptr<Object> applyResult,
+        Returns the standin's terminal `chainCursor` — the
+        AmbientResult to fold into d=1 cur as the cb-apply
+        Request's respHash. No memoisation: per via-Asks principle
+        9, each dispatch re-invokes fn fresh. */
+    std::optional<Hash> dispatchApplyLive(
+        const Hash & applyReqHash,
+        const nlohmann::json & params,
         ResolutionContext & ctx);
+
+    std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx);
 
     template<typename Q>
     std::optional<std::pair<std::string, TriePosition>> lookup(const Q & query, std::shared_ptr<Object> currentProxy = nullptr);
