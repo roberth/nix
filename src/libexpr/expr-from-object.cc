@@ -447,7 +447,7 @@ static PrimOp * makeCachedFnPrimOp(
                            the same cached call (`inner.f 5` vs
                            `inner.f 2`), per the depth-2 design. */
                         auto applyContext = std::make_shared<cidasks::ApplyContext>(
-                            cidasks::ApplyContext{seedSubject, callScope, {}, false});
+                            cidasks::ApplyContext{seedSubject, callScope, {}});
                         /* Boundary-trace-only discipline: do NOT
                            register outerArgObj under rootId in the
                            shared resolver. Sibling cb apply invocations
@@ -482,15 +482,14 @@ static PrimOp * makeCachedFnPrimOp(
                                 inheritedScope);
                             /* Route the observation into the per-apply
                                context so the apply-result's evolved
-                               cdi reflects this probe. While the
-                               apply is still running (not finalized),
-                               observations accumulate. Guard
+                               cdi reflects this probe. The context is
+                               always live — no finalization gate. Guard
                                observationFromQR with try/catch: queries
                                without a `from` field (e.g. apply,
                                which goes through applyFn anyway) and
                                malformed Subject/Result types must
                                not break the recording. */
-                            if (applyContext && !applyContext->finalized) {
+                            if (applyContext) {
                                 try {
                                     applyContext->observations.push_back(cidasks::observationFromQR(q, qr.result));
                                 } catch (...) {

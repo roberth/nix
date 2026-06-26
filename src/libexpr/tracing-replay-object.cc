@@ -30,11 +30,6 @@ ref<Object> TracingReplayObject::ensureInner() const
         tracingCacheLog("replay fallback: activating inner");
         tracingCacheStats().fallbacks++;
         inner = getInner();
-        /* The deferred body has now executed; observations on the
-           cb arg have been recorded into applyContext. Mark
-           finalized so subsequent reads see a stable walk. */
-        if (applyContext)
-            applyContext->finalized = true;
     }
     return *inner;
 }

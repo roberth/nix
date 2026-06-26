@@ -216,28 +216,33 @@ std::string describe(const Subject & subject);
 
 /** Per-cb-apply observation context.
 
-    A fresh instance is created at each cb-apply boundary
-    (`AmbientApply::run`) and shared by the apply's `TracingLocalObject`
-    (which records the outer's probes on the local arg) and the
-    apply-result Object wrapping (`TracingReplayObject` /
-    `TracingObject`, which uses the accumulated observations to compute
-    the apply-result's evolved Content Id).
+    A fresh instance is created at each cb-apply boundary and shared
+    by every Object participating in that single invocation: the
+    cb-arg side AmbientObject's queryFn pushes observations the inner
+    makes on the outer arg; the apply-result side TracingObject /
+    TracingReplayObject pushes observations made via the wrapper or
+    its derived children. Both directions land in `observations` in
+    chronological order, one Observation per call. Each Observation
+    is conceptually its own one-fact Asks edge; `evolvedQueryFrom` on
+    the wrapper wraps `observations` as a vector<Edge> with one fact
+    per edge so the cidasks own-loop re-evaluates `myCidAtK` per
+    observation.
+
+    The context is **always read live**: no snapshot, no freeze. CIDs
+    are retrieved by re-running `cidasks::contentIdAt` against the
+    current state of `observations` on every `evolvedQueryFrom` call.
+    Derived children of the wrapper share the same shared_ptr to the
+    same ApplyContext so the chain `wrapper.getAttr("foo").getInt()`
+    accumulates all three observations into one walk.
 
     `argSubject`/`scope` identify the cb arg's structural Subject and
-    its inherited scope; `observations` accumulates depth-2 facts in
-    insertion order as the outer's f-body probes the bridged value.
-
-    Once the apply's body has finished executing (= the deferred
-    `ensureInner` returns), `finalized` is set and `observations` is
-    treated as immutable; subsequent reads use it to compute the
-    `ApplyResultSubject`'s evolved cdi for cache lookups on the
-    apply result. */
+    its inherited scope (= per the cidasks Inheritance section, the
+    outer-scope CDIs that the per-invocation CIDs compose with). */
 struct ApplyContext
 {
     Subject argSubject;
     Hash scope;
     std::vector<Observation> observations;
-    bool finalized = false;
 };
 
 } // namespace nix::cidasks
