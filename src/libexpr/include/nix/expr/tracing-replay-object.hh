@@ -53,20 +53,16 @@ class TracingReplayObject : public Object
 
     ref<Object> ensureInner() const;
 
-    /* Compute the apply-result's evolved query-hash prefix (= the
-       hex hash to use as `from` for child queries) by running
-       cidasks::contentIdAfter on applyResultSubject with the
-       accumulated observations in applyContext. Falls back to the
-       static triePos.queryHashStr when this is not an apply-result
-       wrapper or the context has no observations. */
     std::string evolvedQueryFrom() const;
+    void pushObservation(const std::string & fromHex, const Hash & queryHash, const Hash & responseHash);
 
     /**
-     * Cascading lookup for leaf results (getString, getBool, etc.).
-     * Tries temporal → structural → shortcut strategies.
+     * Cascading lookup for leaf results. Returns the parsed R plus
+     * the recorded resultHash so callers can push an observation
+     * onto the per-invocation walk for chain symmetry with the writer.
      */
     template<typename Q, typename R>
-    std::optional<R> lookupResult(const Q & query) const;
+    std::optional<std::pair<R, Hash>> lookupResult(const Q & query) const;
 
     /**
      * Cascading lookup for structural children (getAttr, getListElem).

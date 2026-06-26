@@ -41,10 +41,16 @@ class TracingObject : public Object
     std::optional<cidasks::Subject> applyResultSubject;
     Hash applyScope{HashAlgorithm::SHA256};
 
-    /* Compute the apply-result's evolved query-hash prefix via the
-       cumulative d1CidasksWalk. Falls back to the static
-       triePos.queryHashStr when this is not an apply-result wrapper. */
+    /* Per-invocation observation context shared with the cb-arg
+       AmbientObject's queryFn and propagated to derived children
+       via shared_ptr. */
+    std::shared_ptr<cidasks::ApplyContext> applyContext;
+
+    /* Compute the wrapper's evolved CDI live from
+       applyContext->observations. */
     std::string evolvedQueryFrom() const;
+
+    void pushObservation(const std::string & fromHex, const Hash & queryHash, const Hash & responseHash);
 
     TracingObject(ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos);
 
@@ -71,6 +77,14 @@ public:
         applyScope = std::move(scope);
         return *this;
     }
+
+    TracingObject & withApplyContext(std::shared_ptr<cidasks::ApplyContext> ctx)
+    {
+        applyContext = std::move(ctx);
+        return *this;
+    }
+
+    std::shared_ptr<cidasks::ApplyContext> getApplyContext() const { return applyContext; }
 
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 

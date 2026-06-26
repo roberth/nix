@@ -27,36 +27,55 @@ ref<TracingObject> TracingObject::create(
 
 std::string TracingObject::evolvedQueryFrom() const
 {
-    /* Bisect: writer-side matches walker — static triePos.queryHashStr
-       for both apply-result and non-apply-result wrappers. The cidasks
-       evolution happens only at the apply triePos site (=
-       TracingEvaluator::apply), not at the child-query emission point. */
+    if (applyResultSubject && applyContext) {
+        std::vector<cidasks::Edge> walk;
+        walk.reserve(applyContext->observations.size());
+        for (auto & obs : applyContext->observations) {
+            cidasks::Edge edge;
+            edge.observations.push_back(obs);
+            walk.push_back(std::move(edge));
+        }
+        auto evolved = cidasks::contentIdAt(*applyResultSubject, applyScope, walk, walk.size());
+        auto hex = evolved.to_string(HashFormat::Base16, false);
+        return hex;
+    }
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());
+}
+
+void TracingObject::pushObservation(const std::string & fromHex, const Hash & queryHash, const Hash & responseHash)
+{
+    if (!applyContext) return;
+    Hash fromHash{HashAlgorithm::SHA256};
+    try {
+        fromHash = Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
+    } catch (...) {
+        return;
+    }
+    auto elementHash = TracingDecisionGraph::xorFactIntoHash(
+        Hash(HashAlgorithm::SHA256), queryHash, responseHash);
+    applyContext->observations.push_back({fromHash, elementHash});
 }
 
 std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
 {
-    /* Force inner FIRST so that any ambient observations the body
-       makes get flushed into d1CidasksWalk by an intervening logResult
-       before we hash this query's `from`. evolvedQueryFrom reads the
-       walk's tail and produces a hash that matches what the walker
-       computes when it re-traverses the same chain on warm replay. */
     auto result = inner->maybeGetAttr(name);
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetAttr query{name, parentHash};
     auto [valueId, qh] = writer.logQuery(query, triePos);
     if (result) {
-        // Don't call getType() here — that would force thunks and break laziness.
-        // The type is discovered later via a separate getType query on the child.
         trace::ResultMaybeType resJson{std::string("deferred")};
         auto childTriePos = writer.logResult(valueId, resJson, qh);
+        if (qh.queryHash && childTriePos)
+            pushObservation(parentHash, *qh.queryHash, childTriePos->resultNodeHash);
         auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
-        /* Navigation child inherits parent's argScope cell. */
         child->withScope(argScope);
+        if (applyContext) child->withApplyContext(applyContext);
         return child;
     }
     trace::ResultMaybeType resJson{std::nullopt};
-    writer.logResult(valueId, resJson, qh);
+    auto tp = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && tp)
+        pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return nullptr;
 }
 
@@ -67,7 +86,8 @@ std::vector<std::string> TracingObject::getAttrNames()
     trace::QueryGetAttrNames query{parentHash};
     auto [valueId, qh] = writer.logQuery(query, triePos);
     trace::ResultListOfStrings resJson{result};
-    writer.logResult(valueId, resJson, qh);
+    auto tp = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return result;
 }
 
@@ -78,7 +98,8 @@ std::string TracingObject::getStringIgnoreContext()
     trace::QueryGetString query{parentHash};
     auto [valueId, qh] = writer.logQuery(query, triePos);
     trace::ResultString resJson{result};
-    writer.logResult(valueId, resJson, qh);
+    auto tp = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return result;
 }
 
@@ -89,7 +110,8 @@ std::string TracingObject::getStringWithoutContext()
     trace::QueryGetString query{parentHash};
     auto [valueId, qh] = writer.logQuery(query, triePos);
     trace::ResultString resJson{result};
-    writer.logResult(valueId, resJson, qh);
+    auto tp = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return result;
 }
 
@@ -103,7 +125,8 @@ std::pair<std::string, NixStringContext> TracingObject::getStringWithContext()
     for (auto & elem : result.second)
         ctxStrings.push_back(elem.to_string());
     trace::ResultStringWithContext resJson{result.first, std::move(ctxStrings)};
-    writer.logResult(valueId, resJson, qh);
+    auto tp = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return result;
 }
 
@@ -114,7 +137,8 @@ RootedPath TracingObject::getPath()
     trace::QueryGetPath query{parentHash};
     auto [valueId, qh] = writer.logQuery(query, triePos);
     trace::ResultPath resJson{result.path.abs()};
-    writer.logResult(valueId, resJson, qh);
+    auto tp = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return result;
 }
 
@@ -125,7 +149,8 @@ bool TracingObject::getBool(std::string_view errorCtx)
     trace::QueryGetBool query{parentHash};
     auto [valueId, qh] = writer.logQuery(query, triePos);
     trace::ResultBool resJson{result};
-    writer.logResult(valueId, resJson, qh);
+    auto tp = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return result;
 }
 
@@ -136,7 +161,8 @@ NixInt TracingObject::getInt(std::string_view errorCtx)
     trace::QueryGetInt query{parentHash};
     auto [valueId, qh] = writer.logQuery(query, triePos);
     trace::ResultInt resJson{result.value};
-    writer.logResult(valueId, resJson, qh);
+    auto tp = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return result;
 }
 
@@ -147,7 +173,8 @@ NixFloat TracingObject::getFloat(std::string_view errorCtx)
     trace::QueryGetFloat query{parentHash};
     auto [valueId, qh] = writer.logQuery(query, triePos);
     trace::ResultFloat resJson{result};
-    writer.logResult(valueId, resJson, qh);
+    auto tp = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return result;
 }
 
@@ -158,7 +185,8 @@ size_t TracingObject::getListSize()
     trace::QueryGetListSize query{parentHash};
     auto [valueId, qh] = writer.logQuery(query, triePos);
     trace::ResultListSize resJson{result};
-    writer.logResult(valueId, resJson, qh);
+    auto tp = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return result;
 }
 
@@ -171,9 +199,11 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     auto [valueId, qh] = writer.logQuery(query, triePos);
     trace::ResultType resJson{objectTypeToString(type)};
     auto childTriePos = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && childTriePos)
+        pushObservation(parentHash, *qh.queryHash, childTriePos->resultNodeHash);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
-    /* Navigation child inherits parent's argScope cell. */
     child->withScope(argScope);
+    if (applyContext) child->withApplyContext(applyContext);
     return child;
 }
 
@@ -184,7 +214,8 @@ std::vector<std::string> TracingObject::getListOfStringsNoCtx()
     trace::QueryGetListOfStrings query{parentHash};
     auto [valueId, qh] = writer.logQuery(query, triePos);
     trace::ResultListOfStrings resJson{result};
-    writer.logResult(valueId, resJson, qh);
+    auto tp = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return result;
 }
 
@@ -195,7 +226,8 @@ ObjectType TracingObject::getTypeLazy()
     trace::QueryGetType query{parentHash};
     auto [valueId, qh] = writer.logQuery(query, triePos);
     trace::ResultType resJson{objectTypeToString(result)};
-    writer.logResult(valueId, resJson, qh);
+    auto tp = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return result;
 }
 
@@ -206,7 +238,8 @@ ObjectType TracingObject::getType()
     trace::QueryGetType query{parentHash};
     auto [valueId, qh] = writer.logQuery(query, triePos);
     trace::ResultType resJson{objectTypeToString(result)};
-    writer.logResult(valueId, resJson, qh);
+    auto tp = writer.logResult(valueId, resJson, qh);
+    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return result;
 }
 
@@ -227,7 +260,8 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
     } else {
         traceResult = {.hasInfo = false};
     }
-    writer.logResult(valueId, traceResult, qh);
+    auto tp = writer.logResult(valueId, traceResult, qh);
+    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return result;
 }
 
@@ -298,10 +332,15 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     };
     auto child = std::shared_ptr<TracingObject>(
         new TracingObject(ref<Object>(result), writer, v, applyTriePos));
-    /* Apply-result scope cell rooted at fn's scope. */
     auto cell = ArgScopeCell::make(argScope, argObj);
     child->withScope(std::move(cell));
     child->withApplyResultSubject(std::move(resultSubject), applyScopeLocal);
+    if (auto * argAmb = dynamic_cast<AmbientObject *>(argObj.get())) {
+        if (auto ctx = argAmb->getApplyContext())
+            child->withApplyContext(std::move(ctx));
+    } else if (applyContext) {
+        child->withApplyContext(applyContext);
+    }
     return child;
 }
 

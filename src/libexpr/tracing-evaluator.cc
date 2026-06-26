@@ -334,10 +334,13 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         .queryHashStr = applyCdiHex,
     };
     auto obj = TracingObject::create(result, writer, v, triePos);
-    /* Apply-result scope cell. Parent = fn proxy's cell. */
     auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
     obj->withScope(std::move(cell));
     obj->withApplyResultSubject(std::move(resultSubject), applyScope);
+    if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
+        if (auto ctx = argAmb->getApplyContext())
+            obj->withApplyContext(std::move(ctx));
+    }
     return obj;
 }
 

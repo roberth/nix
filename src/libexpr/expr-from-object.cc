@@ -480,23 +480,24 @@ static PrimOp * makeCachedFnPrimOp(
                                 [&](const trace::QueryVariant &) { return qr.result; },
                                 subject,
                                 inheritedScope);
-                            /* Route the observation into the per-apply
-                               context so the apply-result's evolved
-                               cdi reflects this probe. The context is
-                               always live — no finalization gate. Guard
-                               observationFromQR with try/catch: queries
-                               without a `from` field (e.g. apply,
-                               which goes through applyFn anyway) and
-                               malformed Subject/Result types must
-                               not break the recording. */
-                            if (applyContext) {
-                                try {
-                                    applyContext->observations.push_back(cidasks::observationFromQR(q, qr.result));
-                                } catch (...) {
-                                    /* Skip observation; it can't
-                                       contribute to evolved cdi. */
-                                }
-                            }
+                            /* Note: queryFn (= cb-arg side) observations
+                               are NOT pushed into applyContext.observations.
+                               They would be noise from the apply-result
+                               wrapper's perspective (their `fromHash` is
+                               the cb-arg seed's CDI, not the wrapper's,
+                               so the cidasks own-loop on the wrapper
+                               doesn't fold them in) but the walk's size
+                               growing from these silent pushes would
+                               diverge writer (queryFn fires before
+                               evolvedQueryFrom because inner.method()
+                               is called first) from walker (queryFn
+                               fires after evolvedQueryFrom because
+                               parentHash must be computed first to
+                               build the query). The cb-arg
+                               AmbientObject's own CDI uses
+                               structuralAddressAfter with empty walk
+                               (= content-only) anyway, so dropping
+                               these pushes is consistent throughout. */
                             return qr;
                         };
                         /* applyFn does NOT record a QueryApply Fact:
