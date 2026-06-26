@@ -175,6 +175,14 @@ public:
 
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
+    /** Content-defined identity is the localId (= the cb-apply local
+        arg's CDI hash recorded at write time). Lets evaluator.apply
+        compute the apply Request hash when this standin is the arg. */
+    std::optional<std::string> getCdiHex() const override
+    {
+        return localId.to_string(HashFormat::Base16, false);
+    }
+
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
     std::string getStringIgnoreContext() override;

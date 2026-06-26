@@ -244,7 +244,19 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
                     nlohmann::json qj = trace::QueryApply{hashHex(fnAtK), hashHex(argAtK)};
                     return hashString(HashAlgorithm::SHA256, qj.dump());
                 } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
-                    return TracingDecisionGraph::xorHashes(alt.hash, scope);
+                    /* X is treated as scope-saturated. Callers pass
+                       hashes that already encode the relevant scope
+                       — `AmbientObject::getCdi()` returns
+                       structuralAddressAfter with inheritedScope
+                       baked in; ReplayLocalObject's localId is
+                       contentIdAfter(PositionalSeed{D}, callScope, {})
+                       which is also scope-saturated. Re-XORing scope
+                       here would either double-XOR (= scope-saturated
+                       inputs) or under-XOR (= un-scoped inputs) — the
+                       per-arg-completion doc (= option 1) avoids
+                       both by treating OpaqueContent as a
+                       pre-computed-CDI atom. */
+                    return alt.hash;
                 } else {
                     throw Error("cidasks::contentIdAt: unknown subject variant");
                 }
