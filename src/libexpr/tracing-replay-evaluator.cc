@@ -990,16 +990,32 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto fnId = getId(*fn);
     auto argId = getId(*arg);
 
-    /* Registry check: if a v13Walk has already materialised this
-       apply-result wrapper at ε dispatch time (= when walker's
-       cidasksWalk matched writer's d1CidasksWalk at record time),
-       return the registered wrapper instead of constructing a new
-       one against the now-larger cidasksWalk. Without this, a
-       wrapper constructed during a deep resolveCdiId chain triggered
-       by some downstream observation would compute applyCdi at a
-       walk index that includes Asks edges committed after the
-       apply's ε edge — producing a hash that doesn't appear in any
-       writer-recorded Q namespace. */
+    /* Outer-direction applies (= fn is an AmbientObject) must NEVER
+       be replayed from cache — the outer value's behaviour is the
+       *only* thing that can change between cold and warm, so its
+       apply-result must always go through live dispatch. The
+       registry intercepts and the TracingReplayObject wrapper's
+       lookupResult both serve recorded responses; both are wrong
+       for outer-direction. Skip both: invoke fn->queryApply(arg)
+       directly, return whatever the AmbientObject yields.
+       AmbientObject's own queryFn/applyFn closures handle live
+       dispatch + the outer-side validation chain. */
+    if (auto * fnAmb = dynamic_cast<AmbientObject *>(fn.get_ptr().get())) {
+        (void) fnAmb;
+        tracingCacheLog(
+            "walker apply: outer-direction (fn is AmbientObject) — live dispatch, no registry");
+        auto result = fn->queryApply(arg.get_ptr());
+        if (!result)
+            throw Error("TracingReplayEvaluator::apply: outer-direction queryApply returned null");
+        return ref<Object>(result);
+    }
+
+    /* Inner-direction applies: fn is a recorded/cached entity
+       (TracingReplayObject from evalFile, TracingLocalObject's
+       counterparts, or an opaque CDI). The wrapper is safe to
+       register because the inner's behaviour is frozen at record
+       time; identical Q lookups against the wrapper produce the
+       same Terminal. */
     auto applyReqHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{fnId, argId});
     if (auto it = applyWrapperRegistry.find(applyReqHash); it != applyWrapperRegistry.end()) {
         tracingCacheLog(
