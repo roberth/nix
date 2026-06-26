@@ -280,11 +280,9 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubj)),
     }};
 
-    /* Apply triePos goes through cidasks: same formula at apply time
-       as evolvedQueryFrom at child-query time, evaluated at the
-       current d1CidasksWalk tail. */
-    auto & walk = writer.getD1CidasksWalk();
-    auto applyCdi = cidasks::contentIdAt(resultSubject, applyScopeLocal, walk, walk.size());
+    /* apply-result CDI is content-only — see commentary in
+       TracingEvaluator::apply. */
+    auto applyCdi = cidasks::contentIdAfter(resultSubject, applyScopeLocal, {});
     auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
 
     /* Record the apply Request payload at the cidasks hash so dispatch

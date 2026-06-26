@@ -306,24 +306,24 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubj)),
     }};
 
-    /* Option-2 encoding: apply triePos uses the same cidasks formula
-       child queries use later. Two cb-applies of the same cached fn
-       in the same builtins.cache call land at distinct queryHashStrs
-       once the writer's d1CidasksWalk has accumulated the prior
-       sibling's observations — that's principle #3's
-       observation-driven discrimination, made structural through
-       the same formula evaluated at different walk indices. */
-    auto & walk = writer.getD1CidasksWalk();
-    auto applyCdi = cidasks::contentIdAt(resultSubject, applyScope, walk, walk.size());
+    /* apply-result CDI is content-only: pure function of (subject, scope)
+       at this apply boundary, with no observations folded in. Two cb
+       apply invocations of the same cached fn at the same scope produce
+       the same applyCdi by construction — observations during each
+       invocation's body live in that invocation's own factSet (= visible
+       to the trie via per-(Q, factSet) Terminal rows), not in the apply
+       result's identity. Same-shape collapse happens via shared (Q,
+       factSet) keys; observation-driven discrimination between siblings
+       happens via differing factSets at the Terminal row. */
+    auto applyCdi = cidasks::contentIdAfter(resultSubject, applyScope, {});
     auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(
-            "writer apply: fn=%s arg=%s scope=%s walk=%zu -> applyCdi=%s",
+            "writer apply: fn=%s arg=%s scope=%s -> applyCdi=%s",
             cidasks::describe(*apr.fn),
             cidasks::describe(*apr.arg),
             applyScope.to_string(HashFormat::Base16, false).substr(0, 12),
-            walk.size(),
             applyCdiHex.substr(0, 16));
     }
 
