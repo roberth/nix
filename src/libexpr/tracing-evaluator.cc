@@ -316,6 +316,16 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto & walk = writer.getD1CidasksWalk();
     auto applyCdi = cidasks::contentIdAt(resultSubject, applyScope, walk, walk.size());
     auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
+    {
+        const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
+        tracingCacheLog(
+            "writer apply: fn=%s arg=%s scope=%s walk=%zu -> applyCdi=%s",
+            cidasks::describe(*apr.fn),
+            cidasks::describe(*apr.arg),
+            applyScope.to_string(HashFormat::Base16, false).substr(0, 12),
+            walk.size(),
+            applyCdiHex.substr(0, 16));
+    }
 
     auto v = writer.getSink().logQuery(trace::QueryApply{fnId, argId});
     auto result = inner->apply(fn, arg);

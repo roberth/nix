@@ -886,6 +886,16 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto & walk = cidasksWalk;
     auto applyCdi = cidasks::contentIdAt(resultSubject, applyScope, walk, walk.size());
     auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
+    {
+        const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
+        tracingCacheLog(
+            "walker apply: fn=%s arg=%s scope=%s walk=%zu -> applyCdi=%s",
+            cidasks::describe(*apr.fn),
+            cidasks::describe(*apr.arg),
+            applyScope.to_string(HashFormat::Base16, false).substr(0, 12),
+            walk.size(),
+            applyCdiHex.substr(0, 16));
+    }
 
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
