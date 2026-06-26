@@ -215,4 +215,32 @@ void TracingWriter::flushPendingAmbient()
     pendingRequests.clear();
 }
 
+void TracingWriter::splitFlush()
+{
+    if (!decisionGraph)
+        return;
+
+    /* Process pending ambient observations into one new Asks edge
+       transition (= advances v13FactSetHash and d1CidasksWalk when
+       observations are present). */
+    flushPendingAmbient();
+
+    /* Materialise the perQAsksEdge boundary so the trailing logResult
+       (or a later splitFlush) inserts an Asks(Q, fromFactSet, RS) row
+       for this transition into Q's namespace. Skip-on-empty is
+       deliberate: an edge with no requests has nothing to advance, so
+       neither writer's d1CidasksWalk nor walker's cidasksWalk grows
+       for it (= principles 4 + 7). */
+    if (!pendingNewRequests.empty()) {
+        auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
+        perQAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+        tracingCacheLog("splitFlush: new Asks edge from=%s rs-size=%zu (perQ=%zu)",
+                        prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                        pendingNewRequests.size(),
+                        perQAsksEdges.size());
+        prevQFactSetHash = v13FactSetHash;
+        pendingNewRequests.clear();
+    }
+}
+
 } // namespace nix

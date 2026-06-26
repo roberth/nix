@@ -260,6 +260,17 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     tracingCacheLog("tracing: apply fnId=%s argId=%s", fnId, argId);
 
+    /* cb-apply boundary: end the current Asks edge before computing
+       applyCdi. This advances writer.d1CidasksWalk by one (when there
+       are pending ambient observations), so the apply-result's CDI is
+       computed at the same walk index the walker will be at after
+       committing the corresponding Asks edge. Without this, a body
+       run that fires multiple cb-applies collapses into a single
+       writer-side edge while the walker advances per-edge — leading
+       to walker and writer computing the apply-result's triePos at
+       different walk indices. */
+    writer.splitFlush();
+
     /* Build the ApplyResultSubject from fn/arg constituents. fn is
        typically a TracingObject (the cached function from evalFile)
        without a structural Subject; arg is typically an AmbientObject

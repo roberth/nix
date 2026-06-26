@@ -353,6 +353,30 @@ public:
     void flushPendingAmbient();
 
     /**
+     * End the current Asks edge at a cb-apply boundary inside a
+     * body run. Processes pending observations (advancing
+     * d1CidasksWalk by one edge if any ambient observations are
+     * pending), finalises the perQAsksEdge boundary, and resets
+     * pendingNewRequests so the next observation set starts a
+     * fresh edge.
+     *
+     * Required at every cb-apply boundary the writer crosses
+     * during a body run — TracingEvaluator::apply,
+     * TracingObject::queryApply, AmbientResolver::apply. Without
+     * this split, multiple body-level cb-applies collapse into a
+     * single Asks edge in the recorded trie, but the walker
+     * advances its cumulative `cidasksWalk` once per dispatched
+     * Asks edge (= principle 6) — leaving writer and walker at
+     * different walk indices when they each compute the
+     * apply-result's CDI, producing different queryHashes.
+     *
+     * Skip-on-empty per the principle 4 + 7 read: an Asks edge
+     * with no ambient observations doesn't move cidasks state, so
+     * walker's commitEdge is a no-op for it. Same on the writer.
+     */
+    void splitFlush();
+
+    /**
      * When true, every file-read / env-var response payload gets
      * persisted into the decisionGraph's LocalResponseMap too —
      * useful for offline debugging when JSON traces aren't
@@ -376,9 +400,13 @@ public:
         if (!decisionGraph || !qh.queryHash)
             return std::nullopt;
 
-        /* Insert buffered ambient facts/Requests into the pool and
-           populate the v13FactSet structures record() reads below. */
-        flushPendingAmbient();
+        /* Process any pending ambient observations and finalise the
+           trailing Asks edge boundary in one go. splitFlush is also
+           called at every cb-apply boundary inside a body run, so
+           by the time logResult fires there may already be N
+           boundaries accumulated in perQAsksEdges; this one just
+           closes off whatever's still pending. */
+        splitFlush();
 
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);
@@ -401,22 +429,6 @@ public:
         decisionGraph->primeFactSetCache(v13FactSetHash, v13FactSet);
         allRequestsTrie.persist(*decisionGraph);
 
-        /* Finalize this logResult's Asks edge (= ambient + env/file
-           facts since the last logResult) and append it to the
-           per-Q chain. Each Q's logResult then pre-inserts ALL
-           accumulated boundaries in its namespace so the trie's
-           recorded path is structured as one Asks edge per writer
-           logResult, matching d1CidasksWalk 1:1 (= principles 5/7). */
-        if (!pendingNewRequests.empty()) {
-            auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
-            perQAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-            tracingCacheLog("logResult: new Asks edge from=%s rs-size=%zu (perQ=%zu)",
-                            prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                            pendingNewRequests.size(),
-                            perQAsksEdges.size());
-            prevQFactSetHash = v13FactSetHash;
-            pendingNewRequests.clear();
-        }
         tracingCacheLog("logResult: Q=%s factSet=%s -> result (inserting %zu Asks edges)",
                         qh.queryHash->to_string(HashFormat::Base16, false).substr(0, 12),
                         v13FactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
