@@ -50,11 +50,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        Without the buffer, rejected-edge facts would pollute
        cidasksWalk and throw off the cell-chain cdi computations. */
     std::vector<cidasks::Observation> pendingEdgeObservations;
-    /* Apply Requests in this edge's dispatch — captured for
-       materialisation at post-commit, when walker.cidasksWalk has
-       grown to match writer.d1CidasksWalk at record time. See
-       applyWrapperRegistry comment in the header. */
-    std::vector<std::pair<Hash, nlohmann::json>> pendingApplyMaterialisations;
 
     auto commitEdge = [&]() {
         if (pendingEdgeObservations.empty()) return;
@@ -76,54 +71,10 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             tracingCacheLog("dispatch: edge already in cidasksWalk (shared prefix), skip");
         }
         pendingEdgeObservations.clear();
-        /* Materialise any apply-result wrappers for this edge's
-           apply Requests. cidasksWalk has just grown by one, so
-           evaluator.apply now sees the same walk index the writer
-           saw after its markApplyBoundary for the same apply. The
-           wrapper is registered in applyWrapperRegistry so later
-           resolveCdiId / primop-impl invocations short-circuit
-           to it. */
-        for (auto & [reqHash, reqJson] : pendingApplyMaterialisations) {
-            if (applyWrapperRegistry.count(reqHash))
-                continue;
-            try {
-                auto & params = reqJson["params"];
-                auto fnIdStr = params["fn"].get<std::string>();
-                auto argIdStr = params["arg"].get<std::string>();
-                auto fnObj = resolveCdiId(fnIdStr, ctx);
-                auto argObj = resolveCdiId(argIdStr, ctx);
-                if (!fnObj || !argObj) {
-                    tracingCacheLog(
-                        "materialise apply at ε: reqHash=%s — fn/arg resolution failed",
-                        reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
-                    continue;
-                }
-                /* Calling apply() here both constructs the wrapper at
-                   the right cidasksWalk state AND registers it via
-                   applyWrapperRegistry inside apply() itself. */
-                auto wrapper = apply(ref<Object>(fnObj), ref<Object>(argObj));
-                tracingCacheLog(
-                    "materialise apply at ε: reqHash=%s registered",
-                    reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
-                /* Walk the recorded d2 chain anchored at this
-                   boundary. Currently scaffolding only — logs
-                   the recorded chain structure. When live
-                   validation lands, a `false` return becomes a
-                   d1 walker miss for this Q. */
-                walkD2ChainAtBoundary(reqHash, wrapper.get_ptr(), ctx);
-            } catch (const std::exception & e) {
-                tracingCacheLog(
-                    "materialise apply at ε: reqHash=%s threw: %s",
-                    reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    e.what());
-            }
-        }
-        pendingApplyMaterialisations.clear();
     };
 
     auto discardEdge = [&]() {
         pendingEdgeObservations.clear();
-        pendingApplyMaterialisations.clear();
     };
 
     /* Dispatcher: turns a Request hash into the current Response
@@ -186,12 +137,12 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
            The synthetic response is `Hash(0)` — symmetric with
            TracingWriter::markApplyBoundary. The pendingEdgeObservations
            push happens below so commitEdge fires for this Asks edge
-           and walker.cidasksWalk grows. We also capture the apply
-           Request payload so commitEdge can materialise the
-           apply-result wrapper at the post-commit walk index — that
-           moment matches writer.d1CidasksWalk at the corresponding
-           markApplyBoundary, so applyCdi computed on both sides
-           agrees. */
+           and walker.cidasksWalk grows. The cb apply's wrapper is
+           materialised lazily later via resolveCdiId / queryApply when
+           a downstream lookup actually needs it; each materialisation
+           is a fresh per-invocation Object, not a cross-invocation
+           shared one (= the via-Asks design's boundary-trace-only
+           discipline). */
         if (isAmbient && queryTag == "apply") {
             auto applyRespHash = Hash(HashAlgorithm::SHA256);
             pendingEdgeObservations.push_back({
@@ -199,14 +150,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), requestHash, applyRespHash),
             });
-            try {
-                pendingApplyMaterialisations.push_back({requestHash, cborStringToJson(*requestPayload)});
-            } catch (...) {
-                /* Payload parse already succeeded once above when we
-                   set queryTag. Defensive: if it suddenly fails here,
-                   skip materialisation; the wrapper will fall back
-                   to the late-construction path. */
-            }
             tracingCacheLog(
                 "dispatch apply boundary: req=%s payload=%s",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -1044,17 +987,14 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     /* Inner-direction applies: fn is a recorded/cached entity
        (TracingReplayObject from evalFile, TracingLocalObject's
-       counterparts, or an opaque CDI). The wrapper is safe to
-       register because the inner's behaviour is frozen at record
-       time; identical Q lookups against the wrapper produce the
-       same Terminal. */
-    auto applyReqHash = TracingDecisionGraph::computeQueryHash(trace::QueryApply{fnId, argId});
-    if (auto it = applyWrapperRegistry.find(applyReqHash); it != applyWrapperRegistry.end()) {
-        tracingCacheLog(
-            "walker apply: registry hit reqHash=%s",
-            applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12));
-        return ref<Object>(it->second);
-    }
+       counterparts, or an opaque CDI). Each call constructs a
+       fresh wrapper. Sibling cb apply invocations share the same
+       (fnId, argId) at the boundary by construction (= the arg's
+       CDI is the same positional seed across siblings), so a
+       cross-invocation registry keyed by the apply Request hash
+       would last-write-wins and conflate sibling invocations'
+       per-call observation state — exactly the anti-pattern the
+       via-Asks doc's boundary-trace-only discipline calls out. */
 
     /* Build the ApplyResultSubject from fn/arg constituents — mirror
        of TracingEvaluator::apply. Fall back to OpaqueContent where no
@@ -1124,13 +1064,6 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         if (auto ctx = argAmb->getApplyContext())
             obj->withApplyContextOnly(std::move(ctx));
     }
-    /* Register the freshly-constructed wrapper so subsequent
-       evaluator.apply calls with the same (fn, arg) — including
-       those triggered indirectly via resolveCdiId or primop impls
-       running later in the dispatch chain — short-circuit to this
-       wrapper rather than computing a fresh applyCdi against a
-       later walker.cidasksWalk state. */
-    applyWrapperRegistry[applyReqHash] = obj.get_ptr();
     return obj;
 }
 

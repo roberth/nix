@@ -72,25 +72,6 @@ class TracingReplayEvaluator : public Evaluator
        CBOR encode + SHA-256 happens once per request. */
     std::unordered_map<Hash, Hash> dispatchCache;
 
-    /* Anchors apply-result wrapper construction to ε dispatch time.
-       When the walker dispatches a cb-apply Request inside a v13Walk,
-       it commits the synthetic observation and then — at the
-       post-commit walk index — materialises the apply-result
-       wrapper by calling `apply(fn, arg)`. The wrapper goes into
-       this registry keyed by the apply Request's hash. Any
-       subsequent `apply(fn', arg')` call whose Request hash matches
-       (= same fn / arg identity) returns the registered wrapper
-       instead of constructing a fresh one. This guarantees writer
-       and walker compute the apply-result's triePos at the same
-       walk content (= the writer's d1CidasksWalk at record time),
-       since walker.cidasksWalk and writer.d1CidasksWalk grow in
-       lockstep through the same Asks chain. Without the anchor,
-       wrapper construction can happen much later (= deep in the
-       resolveCdiId chain triggered by downstream observations),
-       by which time walker.cidasksWalk has additional edges that
-       contaminate the apply-result's CDI. */
-    std::unordered_map<Hash, std::shared_ptr<Object>> applyWrapperRegistry;
-
     /* Replay-side "where we left off" — see design comment in
        v13Walk. lastQFactsHash is the cur where the last successful
        walk landed; dispatchedTrie is the cumulative set of requests
