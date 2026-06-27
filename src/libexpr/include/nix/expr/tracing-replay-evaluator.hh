@@ -87,6 +87,16 @@ class TracingReplayEvaluator : public Evaluator
         reqs (= which would XOR-cancel them out of cur). */
     std::unordered_set<TracingDecisionGraph::RequestHash> dispatchedRequestSet;
 
+    /** applyReqHashes currently being driven by `dispatchApplyLive`.
+        When the walker re-enters `dispatchApplyLive` for the same
+        applyReqHash (= `fnObj->queryApply(standin)` builds a new TRO
+        at the same `applyCdiHex` and forcing it walks for the same
+        apply Fact again), we treat it as `outgoing.empty()` (chain
+        root) to break the recursion. The outermost invocation still
+        drives the standin's d=2 probes via the inner walker's body-
+        Fact dispatch; the inner re-entries don't add anything new. */
+    std::unordered_set<TracingDecisionGraph::RequestHash> inFlightApplyReqs;
+
     std::optional<std::string> dispatchAmbientQuery(const nlohmann::json & reqJson, ResolutionContext & ctx);
 
     /** Resolve a recorded ambient id (hex of a Hash) to a live

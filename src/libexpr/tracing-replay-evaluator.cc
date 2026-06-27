@@ -622,6 +622,27 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         return std::nullopt;
     }
 
+    /* Cycle break: `fnObj->queryApply(standin)` routes through
+       `TracingReplayEvaluator::apply` which builds a new TRO whose
+       `applyCdiHex` matches this dispatch's `applyReqHash` by
+       construction. Forcing it via `getType()` re-enters `v13Walk`
+       for the same apply Fact, calling us recursively. The outer
+       call already drives the standin's d=2 probes via the inner
+       walker's body-Fact dispatch — the recursive inner re-entries
+       have nothing new to add, so short-circuit to the chain root
+       (= same path as `outgoing.empty()`). */
+    if (!inFlightApplyReqs.insert(applyReqHash).second) {
+        tracingCacheLog(
+            "dispatchApplyLive: re-entry for applyReqHash=%s — return chain root",
+            applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12));
+        return applyReqHash;
+    }
+    struct InFlightGuard {
+        std::unordered_set<TracingDecisionGraph::RequestHash> & set;
+        Hash key;
+        ~InFlightGuard() { set.erase(key); }
+    } guard{inFlightApplyReqs, applyReqHash};
+
     /* Fresh per-dispatch standin. No ctx.memo lookup — per-call
        discipline, each cb-apply Fact dispatch creates its own. */
     auto standin = std::make_shared<ReplayLocalObject>(
