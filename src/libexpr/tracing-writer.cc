@@ -187,7 +187,21 @@ void TracingWriter::flushPendingAmbient(bool finalize)
        its own chain — collapsing the boundary list before processing
        conflates probes across boundaries and the resulting
        AmbientResult doesn't match what a per-call walker would
-       reproduce. */
+       reproduce.
+
+       Chronological ε insertion: each boundary's ε perQAsksEdge is
+       INSERTED at boundary.insertionIndex (= captured at
+       markApplyBoundary time, AFTER splitFlush(false) drained the
+       pre-boundary d=1 chunk), not appended at the end. This puts
+       ε BEFORE its body's d=1 facts in walker dispatch order. Each
+       insertion shifts subsequent indices by 1, tracked via `shift`.
+       Each ε's elementHash propagates into all subsequent
+       perQAsksEdges' fromFactSetHash (= walker's cur advances by
+       ε at that position). priorEpsilonAccum accumulates earlier
+       ε contributions so each new ε's own fromFactSetHash reflects
+       all prior ε contributions to its left. */
+    size_t shift = 0;
+    Hash priorEpsilonAccum(HashAlgorithm::SHA256);
     for (auto & boundary : pendingApplyBoundaries) {
         auto & group = boundary.facts;
 
@@ -278,8 +292,10 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                 v13FactSetHash, boundary.applyRequestHash, ambientResult);
             responseFor.emplace(boundary.applyRequestHash, ambientResult);
             allRequestsTrie.insert(boundary.applyRequestHash);
-            if (allRequestHashes.insert(boundary.applyRequestHash).second)
-                pendingNewRequests.push_back(boundary.applyRequestHash);
+            allRequestHashes.insert(boundary.applyRequestHash);
+            /* No pendingNewRequests.push_back — ε's reqHash goes
+               directly into its own perQAsksEdge below, not into
+               the trailing d=1-chunk close. */
         }
 
         cidasks::Edge applyEdge;
@@ -289,19 +305,42 @@ void TracingWriter::flushPendingAmbient(bool finalize)
         });
         d1CidasksWalk.push_back(std::move(applyEdge));
 
-        /* Each finalised boundary gets its own perQAsksEdge — mirrors
-           the original synchronous markApplyBoundary's per-ε closure
-           so the walker sees one Asks edge per cb-apply Fact. */
-        if (!pendingNewRequests.empty()) {
-            auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
-            perQAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-            tracingCacheLog("finalize: ε Asks edge from=%s rs-size=%zu (perQ=%zu)",
-                            prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                            pendingNewRequests.size(),
-                            perQAsksEdges.size());
-            prevQFactSetHash = v13FactSetHash;
-            pendingNewRequests.clear();
-        }
+        /* Insert ε perQAsksEdge at boundary.insertionIndex + shift.
+           shift accounts for prior ε insertions in this loop, since
+           each insertion shifts subsequent indices. priorEpsilonAccum
+           accumulates earlier ε elementHashes so each new ε's
+           fromFactSetHash reflects all prior ε contributions (= the
+           cur the walker would have at the start of this ε's
+           dispatch). After insertion, propagate this ε's elementHash
+           to all subsequent perQAsksEdges so their fromFactSetHash
+           reflects this ε's contribution at walker dispatch time. */
+        auto epsilonReqSet = decisionGraph->insertRequestSet({boundary.applyRequestHash});
+        size_t pos = boundary.insertionIndex + shift;
+        Hash epsilonFromHash = TracingDecisionGraph::xorHashes(
+            boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
+        perQAsksEdges.insert(perQAsksEdges.begin() + pos,
+            {epsilonFromHash, epsilonReqSet});
+        tracingCacheLog("finalize: ε Asks edge inserted at pos=%zu from=%s (insertionIndex=%zu shift=%zu perQ=%zu)",
+                        pos,
+                        epsilonFromHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                        boundary.insertionIndex,
+                        shift,
+                        perQAsksEdges.size());
+        ++shift;
+
+        /* Propagate this ε's elementHash to subsequent perQAsksEdges'
+           fromFactSetHash. The walker's cur at those edges advances
+           by this ε's contribution. */
+        for (size_t i = pos + 1; i < perQAsksEdges.size(); ++i)
+            perQAsksEdges[i].fromFactSetHash = TracingDecisionGraph::xorHashes(
+                perQAsksEdges[i].fromFactSetHash, factHash);
+        priorEpsilonAccum = TracingDecisionGraph::xorHashes(priorEpsilonAccum, factHash);
+
+        /* prevQFactSetHash tracks the cur for any subsequent
+           perQAsksEdge added via splitFlush's trailing close (= e.g.,
+           depth-1 facts logged AFTER the last apply boundary). It
+           was advanced by the d=1 apply Fact fold above; no extra
+           propagation needed since we used xorFactIntoHash to fold. */
     }
 
     pendingApplyBoundaries.clear();
@@ -360,11 +399,23 @@ void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
        is the AmbientResult = terminal of this cb-apply's d=2 chain,
        only known after the body finishes. flushPendingAmbient at
        logResult walks pendingApplyBoundaries in order and finalises
-       each one. */
-    pendingApplyBoundaries.push_back({applyReqHash, applyReqHash});
-    tracingCacheLog("markApplyBoundary: buffered (applyReqHash=%s, pendingBoundaries=%zu)",
+       each one, INSERTING the ε perQAsksEdge at the chronological
+       insertionIndex (= position in perQAsksEdges captured AFTER
+       splitFlush(false) drained the pre-boundary d=1 chunk). This
+       puts ε BEFORE its body's d=1 facts in walker dispatch order,
+       so the lambda-standin's seedCell extension fires before
+       seed(N+1) probes try to resolve. */
+    pendingApplyBoundaries.push_back({
+        applyReqHash,
+        applyReqHash,
+        {},
+        perQAsksEdges.size(),  // insertionIndex AFTER pre-boundary chunk
+        prevQFactSetHash       // fromFactSetHashAtBoundary
+    });
+    tracingCacheLog("markApplyBoundary: buffered (applyReqHash=%s, pendingBoundaries=%zu, insertionIndex=%zu)",
                     applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    pendingApplyBoundaries.size());
+                    pendingApplyBoundaries.size(),
+                    perQAsksEdges.size());
 }
 
 } // namespace nix

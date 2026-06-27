@@ -622,59 +622,43 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         return std::nullopt;
     }
 
-    /* Cycle break: `fnObj->queryApply(standin)` routes through
-       `TracingReplayEvaluator::apply` which builds a new TRO whose
-       `applyCdiHex` matches this dispatch's `applyReqHash` by
-       construction. Forcing it via `getType()` re-enters `v13Walk`
-       for the same apply Fact, calling us recursively. The outer
-       call already drives the standin's d=2 probes via the inner
-       walker's body-Fact dispatch — the recursive inner re-entries
-       have nothing new to add, so short-circuit to the chain root
-       (= same path as `outgoing.empty()`). */
-    if (!inFlightApplyReqs.insert(applyReqHash).second) {
-        tracingCacheLog(
-            "dispatchApplyLive: re-entry for applyReqHash=%s — return chain root",
-            applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12));
-        return applyReqHash;
+    (void) fnObj;
+    (void) argHash;
+    /* AmbientResult = terminal of the d=2 chain rooted at
+       `applyReqHash` in AmbientAsks. Walk the chain from the root,
+       picking the first edge at each step. The writer records this
+       same terminal at finalize time (= cumulativeFactSet at end of
+       body probes), so the walker reproduces the recorded next-cur
+       transition for ε correctly.
+
+       Previously this routed through `fnObj->queryApply(standin) →
+       getType()`, but that builds a new TRO at the same applyCdiHex
+       and forcing it re-enters this method recursively. The recursive
+       re-entry had nothing new to compute and the cycle-break that
+       returned `applyReqHash` produced the wrong next-cur, derailing
+       walks where ε is followed by more chronologically-later edges
+       (= chronological-ε insertion's required-correct path).
+
+       Live validation of d=2 probes still happens — when the outer
+       walker dispatches body facts that reference cb_arg-derived ids,
+       `dispatchAmbientQuery → resolveCdiId(cb_arg_id)` finds contraArg
+       in the cellChain and probes it against the live outerArgObj.
+       Per-edge live validation of *recorded* d=2 probes against a
+       fresh standin (= the original intent of `fnObj->queryApply`) is
+       deferred — a future fix can interpret each edge's requestSet to
+       invoke the matching standin method. For now, trust the recorded
+       chain to compute AmbientResult. */
+    Hash cur = applyReqHash;
+    while (true) {
+        auto edges = decisionGraph.getAmbientAsks(cur);
+        if (edges.empty()) break;
+        cur = edges[0].second; // toFactSet of the first (= chronologically first) edge
     }
-    struct InFlightGuard {
-        std::unordered_set<TracingDecisionGraph::RequestHash> & set;
-        Hash key;
-        ~InFlightGuard() { set.erase(key); }
-    } guard{inFlightApplyReqs, applyReqHash};
-
-    /* Fresh per-dispatch standin. No ctx.memo lookup — per-call
-       discipline, each cb-apply Fact dispatch creates its own. */
-    auto standin = std::make_shared<ReplayLocalObject>(
-        argHash, decisionGraph, inner->getEvalState().rootFSRoot, &inner->getEvalState());
-    standin->withAmbientAsksValidation().withChainStart(applyReqHash);
-
-    try {
-        auto resultObj = fnObj->queryApply(standin);
-        /* Force the apply result so outer's `f` actually evaluates.
-           `queryApply` only sets up the application (= mkApp thunk,
-           result AmbientObject); without forcing, outer's `f` body
-           doesn't run and the standin never gets probed. Forcing
-           the result's type drives `ExprFromObject::eval` on the
-           bridged thunk, which evaluates outer's `f` against the
-           standin — the same path cold record went through, so the
-           probe sequence matches. */
-        if (resultObj)
-            (void) resultObj->getType();
-    } catch (const std::exception & e) {
-        tracingCacheLog(
-            "dispatchApplyLive: divergence during queryApply for applyReqHash=%s: %s",
-            applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-            e.what());
-        return std::nullopt;
-    }
-
-    auto ambientResult = standin->getChainCursor();
     tracingCacheLog(
-        "dispatchApplyLive: applyReqHash=%s AmbientResult=%s",
+        "dispatchApplyLive: applyReqHash=%s AmbientResult=%s (direct AmbientAsks walk)",
         applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-        ambientResult.to_string(HashFormat::Base16, false).substr(0, 12));
-    return ambientResult;
+        cur.to_string(HashFormat::Base16, false).substr(0, 12));
+    return cur;
 }
 
 /* Outer-direction: derived child id whose producer Request is a

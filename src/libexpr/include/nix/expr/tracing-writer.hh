@@ -163,6 +163,21 @@ class TracingWriter
         Hash applyId;            ///< depth2ApplyId for the d=2 group
         Hash applyRequestHash;   ///< natural hash of applyQueryPayload
         std::vector<PendingFact> facts;
+        /* Chronological insertion: ε perQAsksEdge for this boundary
+           is inserted into perQAsksEdges at this position at finalize
+           time (= position recorded at markApplyBoundary time, AFTER
+           splitFlush(false) drained pre-boundary d=1 chunk). This
+           makes the walker dispatch the ε edge BEFORE the body's
+           d=1 facts that follow, so the lambda-standin's primop
+           fires and seedCell extension happens in time for seed(N+1)
+           probes to resolve. */
+        size_t insertionIndex;
+        /* prevQFactSetHash AT markApplyBoundary time = cur the
+           walker would have at the start of ε's dispatch BEFORE
+           any prior ε's contributions. After each ε insertion at
+           finalize, this gets XOR-propagated by prior ε's element
+           hashes. */
+        Hash fromFactSetHashAtBoundary;
     };
     std::vector<PendingApplyBoundary> pendingApplyBoundaries;
 
