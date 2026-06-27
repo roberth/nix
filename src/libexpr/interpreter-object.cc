@@ -192,20 +192,12 @@ std::shared_ptr<Object> InterpreterObject::queryApply(std::shared_ptr<Object> ar
 {
     /* Object-method entry point for value-level apply. Mirrors
        `Interpreter::apply` for cases where the caller has an Object
-       reference (not an Evaluator). The arg may be a virtual Object
-       (AmbientObject, ReplayLocalObject) whose defeatCache throws;
-       bridge those via ExprFromObject so the outer evaluator forces
-       them lazily through Object methods, just like `Interpreter::apply`
-       does for its arg. */
-    RootValue argValue;
-    try {
-        argValue = argObj->defeatCache();
-    } catch (Error &) {
-        auto * thunk = state.allocValue();
-        auto * expr = new ExprFromObject(argObj, nullptr, nullptr);
-        state.mkThunk_(*thunk, expr);
-        argValue = allocRootValue(thunk);
-    }
+       reference (not an Evaluator). Routes through `toValueOrProxy`
+       so virtual-value subclasses (AmbientObject's ExprFromObject
+       thunk, ReplayLocalObject's standin primop) pick their own
+       Value representation — `defeatCache` on those throws because
+       they ARE the cache. */
+    auto argValue = argObj->toValueOrProxy(state, nullptr);
     auto * result = state.allocValue();
     result->mkApp(*value, *argValue);
     return std::make_shared<InterpreterObject>(state, allocRootValue(result));

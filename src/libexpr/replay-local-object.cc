@@ -309,6 +309,19 @@ ObjectType ReplayLocalObject::getTypeLazy()
 
 RootValue ReplayLocalObject::defeatCache()
 {
+    /* `defeatCache` means "bypass the cache and force the original
+       expression to get the actual Value" — but a ReplayLocalObject
+       IS the cache for a frozen local arg whose original Value isn't
+       live during replay. There's nothing to bypass to. Callers that
+       want a Value-shaped handle for `mkApp` should use
+       `toValueOrProxy` instead. */
+    throw Error(
+        "ReplayLocalObject::defeatCache: cannot bypass the cache on a "
+        "frozen local — use toValueOrProxy to obtain a primop standin");
+}
+
+RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_ptr<AmbientResolver> /*resolver*/)
+{
     /* Per the via-Asks design's depth-2 replay section, a lambda
        LocalObject (= an inner-supplied function reaching back across
        the cb boundary) reconstructs as a primop. Its `impl`
@@ -326,11 +339,6 @@ RootValue ReplayLocalObject::defeatCache()
        apply result flows through depth-1 facts about the recursive
        apply). On mismatch, throw a divergence signal that surrounding
        walker layers catch as a walker miss (= depth-1 fallback). */
-
-    if (!state)
-        throw Error(
-            "ReplayLocalObject::defeatCache: no EvalState wired in for primop construction "
-            "(walker integration is incomplete)");
 
     auto localIdSaved = localId;
     auto * dg = &decisionGraph;
@@ -395,21 +403,9 @@ RootValue ReplayLocalObject::defeatCache()
                 ExprFromObject(synthetic, nullptr, nullptr).eval(state, state.baseEnv, v);
             },
         };
-    auto * val = state->allocValue();
+    auto * val = evalState.allocValue();
     val->mkPrimOp(primOp);
     return allocRootValue(val);
-}
-
-RootValue ReplayLocalObject::toValueOrProxy(EvalState & /*evalState*/, std::shared_ptr<AmbientResolver> /*resolver*/)
-{
-    /* Behaviour parity with `defeatCache`: returns the same lambda-standin
-       primop. The structural fix that uses the correct `ApplyResultSubject`
-       encoding for the synthetic's reads lives in task #5's follow-up; it
-       reimplements *this* method (= not `defeatCache`), so once it lands
-       `defeatCache` can be aligned with its original semantics ("bypass
-       the cache and force the original expression" — which, for a
-       recorded local, has no original expression to force). */
-    return defeatCache();
 }
 
 std::optional<FunctionInfo> ReplayLocalObject::getFunctionInfo()
