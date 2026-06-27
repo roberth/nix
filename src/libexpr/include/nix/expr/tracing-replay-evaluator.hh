@@ -87,6 +87,14 @@ class TracingReplayEvaluator : public Evaluator
         reqs (= which would XOR-cancel them out of cur). */
     std::unordered_set<TracingDecisionGraph::RequestHash> dispatchedRequestSet;
 
+    /** applyReqHashes currently being driven by `dispatchApplyLive`.
+        Short-circuits walker re-entry while outer's-f-invocation is
+        still routed through TracingReplayEvaluator::apply. TODO:
+        drop once invocation goes through a path that doesn't re-enter
+        the d=1 walker (= live Interpreter::apply against the
+        reconstructed value tree). */
+    std::unordered_set<TracingDecisionGraph::RequestHash> inFlightApplyReqs;
+
     std::optional<std::string> dispatchAmbientQuery(const nlohmann::json & reqJson, ResolutionContext & ctx);
 
     /** Resolve a recorded ambient id (hex of a Hash) to a live
