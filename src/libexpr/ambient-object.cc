@@ -1,4 +1,6 @@
 #include "nix/expr/ambient-object.hh"
+#include "nix/expr/eval.hh"
+#include "nix/expr/expr-from-object.hh"
 #include "nix/expr/object-type.hh"
 #include "nix/util/source-accessor.hh"
 
@@ -218,6 +220,18 @@ ObjectType AmbientObject::getType()
 RootValue AmbientObject::defeatCache()
 {
     throw Error("ambient defeatCache: not supported on virtual values");
+}
+
+RootValue AmbientObject::toValueOrProxy(EvalState & state, std::shared_ptr<AmbientResolver> resolver)
+{
+    /* The virtual-value path: build a thunk that, when forced, evaluates
+       an `ExprFromObject` proxy against this Object — same construction
+       `Interpreter::apply` used to do in its `defeatCache` try/catch
+       fallback, just relocated to where the dispatch belongs. */
+    auto * thunk = state.allocValue();
+    auto * expr = new ExprFromObject(shared_from_this(), nullptr, std::move(resolver));
+    state.mkThunk_(*thunk, expr);
+    return allocRootValue(thunk);
 }
 
 std::optional<FunctionInfo> AmbientObject::getFunctionInfo()

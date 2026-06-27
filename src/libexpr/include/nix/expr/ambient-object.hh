@@ -153,6 +153,7 @@ public:
     ObjectType getTypeLazy() override;
     ObjectType getType() override;
     RootValue defeatCache() override;
+    RootValue toValueOrProxy(EvalState & state, std::shared_ptr<AmbientResolver> resolver) override;
     std::optional<FunctionInfo> getFunctionInfo() override;
     PosIdx getPos() override;
     std::optional<std::vector<std::string>> getAttrPath() override;

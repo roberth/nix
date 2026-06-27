@@ -216,6 +216,16 @@ public:
     ObjectType getType() override;
     ObjectType getTypeLazy() override;
     RootValue defeatCache() override;
+    /** `toValueOrProxy` is the principled entry point for callers that
+        want a Value-shaped representation of this recorded local —
+        e.g., `Interpreter::apply` constructing an `mkApp` thunk where
+        this Object is the fn. The current implementation delegates to
+        `defeatCache` for behaviour parity; the structural-fix follow-up
+        (= task #5) reimplements it to produce a primop with the correct
+        `ApplyResultSubject` encoding so the synthetic standin's reads
+        match what the recorder wrote (= avoids the cb-higher-order
+        recursion). */
+    RootValue toValueOrProxy(EvalState & state, std::shared_ptr<AmbientResolver> resolver) override;
     std::optional<FunctionInfo> getFunctionInfo() override;
     /** Recorded LocalObjects (frozen images) can't be applied without
         either reconstructing the function body from value-structure

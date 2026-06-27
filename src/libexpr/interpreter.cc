@@ -107,19 +107,15 @@ ref<Object> Interpreter::mkAttrs(const std::map<std::string, ref<Object>> & attr
 
 ref<Object> Interpreter::apply(ref<Object> fn, ref<Object> arg)
 {
-    auto fnValue = fn->defeatCache();
-
-    // For virtual values (e.g. AmbientObject), defeatCache throws.
-    // Create a thunk via ExprFromObject instead.
-    RootValue argValue;
-    try {
-        argValue = arg->defeatCache();
-    } catch (Error &) {
-        auto * thunk = evalState->allocValue();
-        auto * expr = new ExprFromObject(arg.get_ptr(), nullptr, ambientResolver);
-        evalState->mkThunk_(*thunk, expr);
-        argValue = allocRootValue(thunk);
-    }
+    /* `toValueOrProxy` is the right method here: for concrete Objects
+       it returns the underlying forced Value (= same as `defeatCache`);
+       for `AmbientObject` it returns a thunk wrapping an `ExprFromObject`
+       proxy that defers materialisation. This replaces the old try/catch
+       defeatCache pattern — `defeatCache` was the wrong name for the
+       virtual-value case, since AmbientObjects can't be "defeated"
+       (they ARE the cache). */
+    auto fnValue = fn->toValueOrProxy(*evalState, ambientResolver);
+    auto argValue = arg->toValueOrProxy(*evalState, ambientResolver);
 
     auto result = evalState->allocValue();
     // Create a lazy application thunk - evaluation happens when forced

@@ -182,6 +182,41 @@ public:
     virtual RootValue defeatCache() = 0;
 
     /**
+     * Get a Value-shaped representation of this Object — *possibly cache-backed*.
+     *
+     * Unlike `defeatCache` (= "bypass the cache and force the original
+     * expression"), `toValueOrProxy` is the right method for callers that
+     * just need a Value to pass into Value-level APIs (e.g.,
+     * `Interpreter::apply` constructing an `mkApp` thunk). Each subclass
+     * picks its own representation:
+     *
+     *  - `InterpreterObject` / `TracingObject` / `TracingReplayObject`:
+     *    return the underlying `RootValue` directly (= same as
+     *    `defeatCache`).
+     *  - `AmbientObject`: returns a thunk wrapping an `ExprFromObject`
+     *    proxy that, when forced, dispatches through the resolver. Its
+     *    `defeatCache` throws ("you can't bypass a cache you ARE").
+     *  - `ReplayLocalObject`: returns a primop standin that, when
+     *    applied, materialises the next-level cached representation.
+     *    Its `defeatCache` could also throw under the same principle.
+     *
+     * The `resolver` argument is needed to construct `AmbientObject`'s
+     * proxy thunk; pass `nullptr` if the caller doesn't have one (= and
+     * accept that virtual-object subclasses may throw).
+     *
+     * Default: delegate to `defeatCache()` (= existing behavior for
+     * subclasses that haven't been migrated).
+     */
+    virtual RootValue toValueOrProxy(
+        EvalState & state,
+        std::shared_ptr<struct AmbientResolver> resolver = nullptr)
+    {
+        (void) state;
+        (void) resolver;
+        return defeatCache();
+    }
+
+    /**
      * Get information about a function's formal arguments.
      * Returns nullopt if:
      * - This is not a lambda (use getType() to check)
