@@ -107,6 +107,19 @@ class ReplayLocalObject : public Object
        the recorder's TLO. */
     bool getTypeProbed = false;
 
+    /* cb-arg apply context, sourced from the writer's localArg
+       sidecar. `applyDepth` = `localCell->depth` at the recorder's
+       AmbientResolver::apply boundary. `applyScope` = the resolver's
+       callScope. Used by the lambda primop to compose nested
+       apply-result subjects matching the recorder's encoding (=
+       `ApplyResultSubject{fn=this.subject, arg=PositionalSeed{depth+1}}`
+       at `applyScope`). Inherited unchanged through derived
+       children (= the nested apply's positional depth is one
+       deeper than the cb-arg's, regardless of attr/list navigation
+       within the cb-arg's structure). */
+    std::optional<int> applyDepth;
+    std::optional<Hash> applyScope;
+
     /* Argument-scope cell. Navigation children carry the same cell
        as their parent; the top-level (cb-arg) Local carries the
        apply's cell. Cell's own `parent` field gives ancestor chain. */
@@ -181,6 +194,23 @@ public:
         *chainCursor = std::move(root);
         return *this;
     }
+
+    /** Set the cb-arg apply context (depth + scope) so the lambda
+        primop on this RLO (or its derived children) can compose the
+        nested apply-result's synthetic subject as
+        `ApplyResultSubject{fn=this.subject, arg=PositionalSeed{depth+1}}`
+        with the proper scope. Sourced from the writer's localArg
+        sidecar at the standin's localId. Derived children inherit
+        the parent's applyContext via the same setter. */
+    ReplayLocalObject & withApplyContext(int depth_, Hash scope_)
+    {
+        applyDepth = depth_;
+        applyScope = std::move(scope_);
+        return *this;
+    }
+
+    std::optional<int> getApplyDepth() const { return applyDepth; }
+    std::optional<Hash> getApplyScope() const { return applyScope; }
 
     /** Whether per-probe validation is enabled for this proxy. */
     bool hasAmbientAsksValidation() const { return validateAgainstAmbientAsks; }

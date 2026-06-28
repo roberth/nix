@@ -164,6 +164,12 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
         child->withAmbientAsksValidation();
     /* Navigation child inherits parent's argScope cell directly. */
     child->withScope(argScope);
+    /* Inherit cb-arg apply context — derived navigation stays within
+       the same cb-arg's depth/scope (= the nested apply's positional
+       depth is one deeper than the cb-arg's, regardless of how many
+       getAttr/getListElem steps deep the apply happens). */
+    if (applyDepth && applyScope)
+        child->withApplyContext(*applyDepth, *applyScope);
     return child;
 }
 
@@ -282,6 +288,8 @@ std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
     if (validateAgainstAmbientAsks)
         child->withAmbientAsksValidation();
     child->withScope(argScope);
+    if (applyDepth && applyScope)
+        child->withApplyContext(*applyDepth, *applyScope);
     return child;
 }
 
@@ -346,9 +354,14 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
         return allocRootValue(thunk);
     }
 
-    auto localIdSaved = localId;
     auto * dg = &decisionGraph;
     auto rootFSRootSaved = rootFSRoot;
+    auto subjectSaved = subject;
+    auto scopeSaved = scope;
+    auto walkFactsSaved = walkFacts;
+    auto chainCursorSaved = chainCursor;
+    auto applyDepthSaved = applyDepth;
+    auto applyScopeSaved = applyScope;
 
     auto * primOp = new
 #if NIX_USE_BOEHMGC
@@ -358,50 +371,62 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
             .name = "<replay-local-lambda>",
             .args = {"args"},
             .arity = 1,
-            .impl = [localIdSaved, dg, rootFSRootSaved](
+            .impl = [dg, rootFSRootSaved, subjectSaved, scopeSaved,
+                     walkFactsSaved, chainCursorSaved,
+                     applyDepthSaved, applyScopeSaved](
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
-                /* AmbientAsks structural check: this local must have
-                   at least one recorded depth-2 edge from ∅. If not,
-                   the local wasn't recorded by the cb apply we're
-                   replaying — that's a divergence we must surface.
-                   (Walker's surrounding try/catch turns this into a
-                   miss; depth-1 fallback handles re-eval.) */
-                auto emptySet = TracingDecisionGraph::emptySetHash();
-                auto edges = dg->getAmbientAsks(emptySet);
-                if (edges.empty())
-                    throw Error(
-                        "ReplayLocalObject primop: no depth-2 AmbientAsks edges from ∅ "
-                        "for this local — recording is missing or doesn't apply (divergence)");
-                /* Each recorded edge's requestSet names probes the
-                   outer made on the local during the recorded cb
-                   apply. For now we only check that an edge exists;
-                   per-probe validation against a live arg requires
-                   the outer to drive the probes through the
-                   reconstructed value tree (see design doc's "Replay
-                   (depth-2)" section). MVP cut: trust the edge and
-                   reconstruct the apply result from depth-1 facts. */
+                /* Reconstruct the recursive apply result's subject to
+                   match what the recorder built at cold via
+                   AmbientObject::queryApply (= line ~280 of
+                   ambient-object.cc):
+                     ApplyResultSubject{
+                       fn  = this AmbientObject's subject,
+                       arg = PositionalSeed{localCell.depth},
+                     }
+                   where `localCell.depth = callerScope.depth + 1`.
 
-                auto fromHex = localIdSaved.to_string(HashFormat::Base16, false);
+                   The lambda primop fires on this RLO (= the fn of
+                   the nested apply); its `subject` IS the recorder's
+                   "this AmbientObject's subject". The arg subject is
+                   PositionalSeed{applyDepth + 1} at applyScope, with
+                   applyDepth = the cb-arg standin's seedCell depth
+                   threaded in through the localArg sidecar.
 
-                /* args[0]'s content id at the recursive cb apply
-                   boundary is positional (PositionalSeed at the
-                   newly opened cell's depth). We don't have a cell
-                   chain here, so use the zero hex — the recorded
-                   apply's argId at flush was also computed without
-                   proper depth at this level, so they match by
-                   construction. (Future work: thread depth through
-                   the apply chain so sibling recursive applies
-                   disambiguate.) */
-                std::string argIdHex(64, '0');
+                   Without applyContext (= legacy traces predating
+                   the sidecar fields), fall back to the OpaqueContent
+                   encoding which won't match the recorder; the
+                   ensuing CAS-read miss is then the divergence
+                   signal (= surrounding try/catch turns into a miss
+                   → depth-1 fallback). */
+                cidasks::Subject syntheticSubject;
+                Hash syntheticScope = scopeSaved;
+                if (applyDepthSaved && applyScopeSaved) {
+                    cidasks::Subject argSubject{
+                        cidasks::PositionalSeed{*applyDepthSaved + 1}};
+                    syntheticSubject = cidasks::Subject{cidasks::ApplyResultSubject{
+                        .fn = std::make_shared<const cidasks::Subject>(subjectSaved),
+                        .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
+                    }};
+                    syntheticScope = *applyScopeSaved;
+                } else {
+                    /* Legacy path: opaque-content encoding (= won't
+                       match the recorder's ApplyResultSubject
+                       encoding, but doesn't regress anything that
+                       worked before the sidecar fields landed). */
+                    auto fromHex = cidasks::structuralAddressAfter(subjectSaved, scopeSaved, *walkFactsSaved)
+                                       .to_string(HashFormat::Base16, false);
+                    trace::QueryApply applyQuery{fromHex, std::string(64, '0')};
+                    auto applyResultId = TracingDecisionGraph::computeQueryHash(applyQuery);
+                    syntheticSubject = cidasks::Subject{cidasks::OpaqueContentSubject{applyResultId}};
+                }
 
-                trace::QueryApply applyQuery{fromHex, argIdHex};
-                auto applyResultId = TracingDecisionGraph::computeQueryHash(applyQuery);
-
-                /* Reconstruct the recursive apply result as a
-                   synthetic ReplayLocalObject; its methods read
-                   recorded responses with from=applyResultIdHex. */
+                /* Synthetic shares the parent's walk/cursor so
+                   continued probing inside ExprFromObject::eval
+                   advances the same d=2 chain. */
                 auto synthetic = std::make_shared<ReplayLocalObject>(
-                    applyResultId, *dg, rootFSRootSaved, &state);
+                    std::move(syntheticSubject), syntheticScope,
+                    walkFactsSaved, chainCursorSaved,
+                    *dg, rootFSRootSaved, /*type=*/ nThunk, &state);
 
                 /* Convert to a Value. ExprFromObject probes
                    synthetic for type/scalar value and constructs the

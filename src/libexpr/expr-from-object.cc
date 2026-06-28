@@ -361,6 +361,17 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
         nlohmann::json localSidecar = {
             {"kind", "localArg"},
             {"applyResultId", resultId.to_string(HashFormat::Base16, false)},
+            /* Depth + scope let the replay-side lambda primop compose
+               the synthetic apply-result subject as
+               `ApplyResultSubject{fn=this.subject, arg=PositionalSeed{depth+1}}`
+               with `scope` — matching what the writer's recording
+               produced when AmbientObject::queryApply built the apply
+               result's subject. Without these fields the synthetic
+               falls back to OpaqueContent encoding which disagrees
+               with the recorder's encoding, breaking CAS reads of
+               the apply-result observations. */
+            {"depth", localCell->depth},
+            {"scope", resolverHandle->callScope.to_string(HashFormat::Base16, false)},
         };
         /* getTypeLazy (not getType) avoids forcing self-referential
            thunks like `args // { extra = true; }` where args is
