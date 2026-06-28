@@ -659,15 +659,11 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     std::optional<int> sidecarDepth;
     std::optional<Hash> sidecarScope;
     if (auto sidecarPayload = decisionGraph.getRequestPayload(argHash)) {
-        try {
-            auto sidecarJson = cborStringToJson(*sidecarPayload);
-            if (sidecarJson.contains("depth") && sidecarJson.contains("scope")) {
-                sidecarDepth = sidecarJson["depth"].get<int>();
-                auto scopeHex = sidecarJson["scope"].get<std::string>();
-                sidecarScope = Hash::parseNonSRIUnprefixed(scopeHex, HashAlgorithm::SHA256);
-            }
-        } catch (const std::exception &) {
-            /* Sidecar parse failure: stay on the legacy path. */
+        auto sidecarJson = cborStringToJson(*sidecarPayload);
+        if (sidecarJson.contains("depth") && sidecarJson.contains("scope")) {
+            sidecarDepth = sidecarJson["depth"].get<int>();
+            sidecarScope = Hash::parseNonSRIUnprefixed(
+                sidecarJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
         }
     }
 
