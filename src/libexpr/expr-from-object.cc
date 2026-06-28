@@ -657,6 +657,18 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
            will throw at apply time (matching the prior behaviour
            for that combination, which the unit tests rely on for
            construction-only checks). */
+        /* ReplayLocalObject reconstructs a lambda LocalObject as a
+           primop via its own `toValueOrProxy` (= the
+           <replay-local-lambda> mechanism in
+           replay-local-object.cc). Use it directly so the recorded
+           d=2 chain drives apply-time behaviour; the generic
+           cached/ambient primops here would dispatch on
+           `RLO::queryApply` which throws by design. */
+        if (dynamic_cast<ReplayLocalObject *>(obj.get())) {
+            auto val = obj->toValueOrProxy(state, ambientResolver);
+            v = **val;
+            break;
+        }
         PrimOp * primOp;
         if (dynamic_cast<AmbientObject *>(obj.get())) {
             primOp = makeAmbientFnPrimOp(obj, ambientResolver);

@@ -1,4 +1,5 @@
 #include "nix/expr/tracing-replay-evaluator.hh"
+#include "nix/expr/interpreter-object.hh"
 #include "nix/expr/ambient-object.hh"
 #include "nix/expr/arg-scope.hh"
 #include "nix/expr/eval.hh"
@@ -622,14 +623,10 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         return std::nullopt;
     }
 
-    /* Cycle break: `fnObj->queryApply(replayLocal)` routes through
-       `TracingReplayEvaluator::apply` which builds a new TRO whose
-       `applyCdiHex` matches this dispatch's `applyReqHash` by
-       construction. Forcing it via `getType()` re-enters `v13Walk`
-       for the same apply Fact, calling us recursively. Short-circuit
-       inner re-entries with the chain root for now — TODO: route the
-       outer-f invocation through the live `Interpreter::apply` path
-       so the recursion doesn't happen, then drop this. */
+    /* Cycle break (interim): the live invocation below can still
+       trigger walker re-entry through nested cached-fn impls (=
+       inside the cb body's `<cached-fn>` on a TLO). Until that path
+       is also rewired, short-circuit re-entries to chain root. */
     if (!inFlightApplyReqs.insert(applyReqHash).second) {
         tracingCacheLog(
             "dispatchApplyLive: re-entry for applyReqHash=%s — return chain root",
@@ -644,30 +641,51 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
 
     /* Fresh per-dispatch ReplayLocalObject for the inner-supplied
        value. Per via-Asks Replay (depth-2): the walker reconstructs
-       the LocalObject from CAS atoms, hands it to outer's f, and
-       lets f run natively. For lambda LocalObjects, the
-       `<replay-local-lambda>` primop the RLO produces consults
-       AmbientAsks at apply-time. Per-call discipline: each cb-apply
-       Fact dispatch creates its own RLO; no ctx.memo lookup. */
+       the LocalObject as a live Nix Value tree (= lazily produced
+       from CAS atoms), hands it to outer's f, and lets f run
+       natively. For lambda LocalObjects, the `<replay-local-lambda>`
+       primop the RLO produces consults AmbientAsks at apply-time.
+       Per-call discipline: each cb-apply Fact dispatch creates its
+       own RLO; no ctx.memo lookup. */
     auto replayLocal = std::make_shared<ReplayLocalObject>(
         argHash, decisionGraph, inner->getEvalState().rootFSRoot, &inner->getEvalState());
     replayLocal->withAmbientAsksValidation().withChainStart(applyReqHash);
 
     try {
-        auto resultObj = fnObj->queryApply(replayLocal);
-        /* Force the apply result so outer's `f` actually evaluates.
-           `queryApply` only sets up the application (= mkApp thunk,
-           result AmbientObject); without forcing, outer's `f` body
-           doesn't run and the RLO never gets probed. Forcing
-           the result's type drives `ExprFromObject::eval` on the
-           bridged thunk, which evaluates outer's `f` against the
-           RLO — same path cold record went through, so the probe
-           sequence matches. */
-        if (resultObj)
-            (void) resultObj->getType();
+        /* Invoke outer's f LIVE against the reconstructed value tree
+           (= mirroring `Interpreter::apply`'s pattern). Going through
+           `fnObj->queryApply` instead would, for a `TracingReplayObject`
+           fnObj (= the cb fn from evalFile), route into
+           `TracingReplayEvaluator::apply` and re-enter `v13Walk` for
+           the same apply Fact (infinite recursion). The
+           `toValueOrProxy` path:
+
+           - TRO/TLO/InterpreterObject fnObj → `toValueOrProxy`'s
+             default delegates to `defeatCache` → underlying live
+             Value (= the cb lambda).
+           - RLO replayLocal → type-aware `toValueOrProxy`: lambda
+             primop for nFunction, lazy `ExprFromObject` thunk
+             otherwise (= materialises attrs/list/scalars on demand).
+
+           `mkApp` + force then runs outer's f.body natively. When
+           outer's body does the recursive apply on an inner-supplied
+           lambda, the lambda primop's impl fires and consults
+           `AmbientAsks` — feeding observations into `replayLocal`'s
+           chainCursor. */
+        auto & evalState = inner->getEvalState();
+        auto fnValue = fnObj->toValueOrProxy(evalState, /*resolver=*/ nullptr);
+        auto argValue = replayLocal->toValueOrProxy(evalState, /*resolver=*/ nullptr);
+        auto * resultVal = evalState.allocValue();
+        resultVal->mkApp(*fnValue, *argValue);
+        /* Force via getType so the apply Value evaluates to WHNF;
+           that's the trigger for outer's f.body running, which is
+           what drives replayLocal's probes. */
+        auto resultObj = std::make_shared<InterpreterObject>(
+            evalState, allocRootValue(resultVal));
+        (void) resultObj->getType();
     } catch (const std::exception & e) {
         tracingCacheLog(
-            "dispatchApplyLive: divergence during queryApply for applyReqHash=%s: %s",
+            "dispatchApplyLive: divergence during live apply for applyReqHash=%s: %s",
             applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
             e.what());
         return std::nullopt;

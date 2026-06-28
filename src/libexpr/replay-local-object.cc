@@ -320,25 +320,31 @@ RootValue ReplayLocalObject::defeatCache()
         "frozen local — use toValueOrProxy to obtain a primop standin");
 }
 
-RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_ptr<AmbientResolver> /*resolver*/)
+RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_ptr<AmbientResolver> resolver)
 {
-    /* Per the via-Asks design's depth-2 replay section, a lambda
-       LocalObject (= an inner-supplied function reaching back across
-       the cb boundary) reconstructs as a primop. Its `impl`
-       consults the `AmbientAsks` trie for a recorded edge matching
-       the live arg's evolved content id, either reproducing the
-       recorded apply result via downstream depth-1 facts or throwing
-       a depth-2 divergence signal.
+    /* Per via-Asks Replay (depth-2): the walker reconstructs the
+       LocalObject as a live Nix Value tree, lazily produced from
+       CAS atoms. The shape depends on the recorded type:
 
-       Today's MVP: dispatch each recorded probe of the depth-2 edge
-       (= edges from ∅ in AmbientAsks for this local's factSet at ∅)
-       against `this` live, fold into a running factSet, and require
-       it to reach the recorded `toFactSet`. On match, build a
-       synthetic `ReplayLocalObject` keyed by the recursive apply's
-       qH and let ExprFromObject convert it to a Value (= the recorded
-       apply result flows through depth-1 facts about the recursive
-       apply). On mismatch, throw a divergence signal that surrounding
-       walker layers catch as a walker miss (= depth-1 fallback). */
+       - `nFunction` (= an inner-supplied lambda LocalObject):
+         reconstruct as a primop whose impl consults `AmbientAsks`
+         at apply-time for a recorded edge matching the live arg's
+         evolved content id, and reproduces the recorded apply
+         result. Per the via-Asks doc's "Lambda LocalObjects don't
+         need their body stored" — the application behavior lives
+         in the recorded d=2 chain, not in a stored body.
+
+       - Other types (attrset / list / scalars): return a thunk
+         wrapping `ExprFromObject(self)` so the consumer materialises
+         the value tree lazily via Object methods, each call reading
+         the corresponding recorded response from CAS. */
+    auto type = getType();
+    if (type != nFunction) {
+        auto * thunk = evalState.allocValue();
+        auto * expr = new ExprFromObject(shared_from_this(), nullptr, std::move(resolver));
+        evalState.mkThunk_(*thunk, expr);
+        return allocRootValue(thunk);
+    }
 
     auto localIdSaved = localId;
     auto * dg = &decisionGraph;
