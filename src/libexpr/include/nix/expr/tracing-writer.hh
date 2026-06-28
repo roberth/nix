@@ -465,6 +465,43 @@ public:
     void markApplyBoundary(const nlohmann::json & applyQueryPayload);
 
     /**
+     * Log a nested cb-apply as a depth-2 fact under the enclosing
+     * cb-apply's chain. Used by TracingEvaluator::apply when the
+     * fn is a TracingLocalObject (= inner-supplied lambda being
+     * applied by the outer). Per via-Asks Replay (depth-2): the
+     * lambda primop at warm pulls this edge by (chainCursor,
+     * stampedReqHash). Walker-side counterpart in
+     * `<replay-local-lambda>` impl advances the standin's
+     * chainCursor by this fact's elementHash.
+     *
+     * Subject = OpaqueContent{applyReqHash} so stamping produces
+     * `fromCIDs=[applyReqHash]` and the walker can reproduce the
+     * stamped reqHash from just the apply's reqHash. No-op when
+     * there's no enclosing cb-apply.
+     */
+    void logDepth2ApplyFact(
+        const nlohmann::json & applyQueryPayload,
+        const Hash & applyReqHash)
+    {
+        if (!decisionGraph)
+            return;
+        if (pendingApplyBoundaries.empty())
+            return;
+        auto & enclosing = pendingApplyBoundaries.back();
+        trace::QueryApply applyQ{
+            applyQueryPayload["params"]["fn"].get<std::string>(),
+            applyQueryPayload["params"]["arg"].get<std::string>(),
+        };
+        enclosing.facts.push_back({
+            trace::QueryVariant{applyQ},
+            trace::ResultVariant{trace::ResultType{"apply"}},
+            cidasks::Subject{cidasks::OpaqueContentSubject{applyReqHash}},
+            Hash{HashAlgorithm::SHA256},  // OpaqueContent is scope-saturated
+            enclosing.applyId,
+        });
+    }
+
+    /**
      * When true, every file-read / env-var response payload gets
      * persisted into the decisionGraph's LocalResponseMap too —
      * useful for offline debugging when JSON traces aren't

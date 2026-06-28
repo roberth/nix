@@ -268,6 +268,29 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        apply-result's CDI is computed at a walk index the walker
        can reach via the recorded chain. */
     nlohmann::json applyQ = trace::QueryApply{fnId, argId};
+
+    /* If fn is a TracingLocalObject (= inner-supplied lambda the
+       outer is now applying — the cb-higher-order case), record
+       this apply as a depth-2 fact under the ENCLOSING cb-apply's
+       chain. Per via-Asks Replay (depth-2): the lambda primop at
+       warm pulls this edge by `(chainCursor, stampedReqHash)`.
+       Walker-side counterpart: the lambda primop's impl advances
+       the standin's chainCursor by this fact's elementHash.
+
+       MUST run BEFORE markApplyBoundary — that pushes a NEW
+       boundary entry, after which `pendingApplyBoundaries.back()`
+       is the just-opened one (not the enclosing).
+
+       Filtered to TLO fn specifically so we don't add d=2 facts
+       for ordinary nested cb-applies (= cached-fn applied to outer
+       values) — those don't go through the lambda-primop path at
+       warm and would just contaminate the enclosing chain's
+       AmbientResult. */
+    if (dynamic_cast<TracingLocalObject *>(fn.get_ptr().get())) {
+        auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQ.dump());
+        writer.logDepth2ApplyFact(applyQ, applyReqHash);
+    }
+
     writer.markApplyBoundary(applyQ);
 
     /* Build the ApplyResultSubject from fn/arg constituents. fn is

@@ -400,6 +400,56 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                     .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
                 }};
 
+                /* Advance the standin's chainCursor by the recorded
+                   apply Fact's elementHash — matching the writer's
+                   d=2 fact in markApplyBoundary's enclosing-chain
+                   path. The writer used subject=OpaqueContent{applyReqHash}
+                   and result=ResultType{"apply"}; reproduce both sides
+                   here so the cumulativeFactSet evolution matches.
+
+                   The walker's d=1 dispatch of ε reads this updated
+                   chainCursor as the AmbientResult; without this
+                   advance, ε's response would be the pre-apply
+                   cursor and the d=1 walk would derail. */
+                {
+                    auto fnCdi = cidasks::contentIdAfter(subjectSaved, *applyScopeSaved, *walkFactsSaved);
+                    auto argCdi = cidasks::contentIdAfter(
+                        cidasks::Subject{cidasks::PositionalSeed{*applyDepthSaved + 1}},
+                        *applyScopeSaved, *walkFactsSaved);
+                    trace::QueryApply applyQ{
+                        fnCdi.to_string(HashFormat::Base16, false),
+                        argCdi.to_string(HashFormat::Base16, false),
+                    };
+                    nlohmann::json applyJson = applyQ;
+                    auto applyReqHash = hashString(HashAlgorithm::SHA256, applyJson.dump());
+
+                    /* Match the writer's stamping in flushPendingAmbient's
+                       d=2 loop for subject=OpaqueContent{applyReqHash}:
+                       pathAndRootsFromSubject returns ({}, [OpaqueContent]);
+                       fromCIDs[0] = OpaqueContent.hash = applyReqHash;
+                       path stays empty; rewriteFromInQuery is a no-op
+                       for QueryApply (which has no `from` field). The
+                       only stamping effect on QueryApply is populating
+                       fromCIDs in the JSON payload. */
+                    trace::QueryApply stampedQ{applyQ.fn, applyQ.arg};
+                    stampedQ.fromCIDs = {trace::QueryLeaf{
+                        applyReqHash.to_string(HashFormat::Base16, false)}};
+                    nlohmann::json stampedJson = stampedQ;
+                    auto stampedReqHash = hashString(HashAlgorithm::SHA256, stampedJson.dump());
+
+                    nlohmann::json respJson = trace::ResultType{"apply"};
+                    auto respPayload = jsonToCborString(respJson);
+                    auto respHash = TracingDecisionGraph::computeResponseHash(respPayload);
+                    auto elementHash = TracingDecisionGraph::xorFactIntoHash(
+                        Hash(HashAlgorithm::SHA256), stampedReqHash, respHash);
+
+                    cidasks::Edge edge;
+                    edge.observations.push_back({applyReqHash, elementHash});
+                    walkFactsSaved->push_back(std::move(edge));
+                    *chainCursorSaved = TracingDecisionGraph::xorHashes(
+                        *chainCursorSaved, elementHash);
+                }
+
                 /* Synthetic shares the parent's walk/cursor so
                    continued probing inside ExprFromObject::eval
                    advances the same d=2 chain. */
