@@ -357,7 +357,6 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
     auto * dg = &decisionGraph;
     auto rootFSRootSaved = rootFSRoot;
     auto subjectSaved = subject;
-    auto scopeSaved = scope;
     auto walkFactsSaved = walkFacts;
     auto chainCursorSaved = chainCursor;
     auto applyDepthSaved = applyDepth;
@@ -371,60 +370,41 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
             .name = "<replay-local-lambda>",
             .args = {"args"},
             .arity = 1,
-            .impl = [dg, rootFSRootSaved, subjectSaved, scopeSaved,
+            .impl = [dg, rootFSRootSaved, subjectSaved,
                      walkFactsSaved, chainCursorSaved,
                      applyDepthSaved, applyScopeSaved](
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
-                /* Reconstruct the recursive apply result's subject to
+                /* Compose the recursive apply result's subject to
                    match what the recorder built at cold via
-                   AmbientObject::queryApply (= line ~280 of
-                   ambient-object.cc):
+                   `AmbientObject::queryApply` (= ambient-object.cc
+                   line ~280):
                      ApplyResultSubject{
                        fn  = this AmbientObject's subject,
                        arg = PositionalSeed{localCell.depth},
                      }
                    where `localCell.depth = callerScope.depth + 1`.
 
-                   The lambda primop fires on this RLO (= the fn of
-                   the nested apply); its `subject` IS the recorder's
-                   "this AmbientObject's subject". The arg subject is
-                   PositionalSeed{applyDepth + 1} at applyScope, with
-                   applyDepth = the cb-arg standin's seedCell depth
-                   threaded in through the localArg sidecar.
-
-                   Without applyContext (= legacy traces predating
-                   the sidecar fields), fall back to the OpaqueContent
-                   encoding which won't match the recorder; the
-                   ensuing CAS-read miss is then the divergence
-                   signal (= surrounding try/catch turns into a miss
-                   → depth-1 fallback). */
-                cidasks::Subject syntheticSubject;
-                Hash syntheticScope = scopeSaved;
-                if (applyDepthSaved && applyScopeSaved) {
-                    cidasks::Subject argSubject{
-                        cidasks::PositionalSeed{*applyDepthSaved + 1}};
-                    syntheticSubject = cidasks::Subject{cidasks::ApplyResultSubject{
-                        .fn = std::make_shared<const cidasks::Subject>(subjectSaved),
-                        .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
-                    }};
-                    syntheticScope = *applyScopeSaved;
-                } else {
-                    /* Legacy path: opaque-content encoding (= won't
-                       match the recorder's ApplyResultSubject
-                       encoding, but doesn't regress anything that
-                       worked before the sidecar fields landed). */
-                    auto fromHex = cidasks::structuralAddressAfter(subjectSaved, scopeSaved, *walkFactsSaved)
-                                       .to_string(HashFormat::Base16, false);
-                    trace::QueryApply applyQuery{fromHex, std::string(64, '0')};
-                    auto applyResultId = TracingDecisionGraph::computeQueryHash(applyQuery);
-                    syntheticSubject = cidasks::Subject{cidasks::OpaqueContentSubject{applyResultId}};
-                }
+                   This lambda primop fires on the RLO that
+                   represents the fn of the nested apply; its
+                   `subject` IS the recorder's "this AmbientObject's
+                   subject". The arg subject is PositionalSeed{depth+1}
+                   at applyScope, with `depth` threaded in through the
+                   localArg sidecar. The standin's construction (in
+                   dispatchApplyLive) requires the sidecar to carry
+                   depth+scope, so the optionals are always set
+                   here. */
+                cidasks::Subject argSubject{
+                    cidasks::PositionalSeed{*applyDepthSaved + 1}};
+                cidasks::Subject syntheticSubject{cidasks::ApplyResultSubject{
+                    .fn = std::make_shared<const cidasks::Subject>(subjectSaved),
+                    .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
+                }};
 
                 /* Synthetic shares the parent's walk/cursor so
                    continued probing inside ExprFromObject::eval
                    advances the same d=2 chain. */
                 auto synthetic = std::make_shared<ReplayLocalObject>(
-                    std::move(syntheticSubject), syntheticScope,
+                    std::move(syntheticSubject), *applyScopeSaved,
                     walkFactsSaved, chainCursorSaved,
                     *dg, rootFSRootSaved, /*type=*/ nThunk, &state);
 

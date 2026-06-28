@@ -647,47 +647,29 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        primop the RLO produces consults AmbientAsks at apply-time.
        Per-call discipline: each cb-apply Fact dispatch creates its
        own RLO; no ctx.memo lookup. */
-    /* Read the writer's localArg sidecar at argHash for depth+scope.
-       The structural subject (= PositionalSeed{depth} at scope)
-       evolves with observations on cb_arg as they're dispatched —
-       matching the recorder's encoding. Fall back to the
-       content-only OpaqueContent encoding only when the sidecar
-       fields aren't present (legacy traces predating their
-       addition); that path won't match the recorder's encoding so
-       higher-order replay misses, but other paths continue to
-       work. */
-    std::optional<int> sidecarDepth;
-    std::optional<Hash> sidecarScope;
-    if (auto sidecarPayload = decisionGraph.getRequestPayload(argHash)) {
-        auto sidecarJson = cborStringToJson(*sidecarPayload);
-        if (sidecarJson.contains("depth") && sidecarJson.contains("scope")) {
-            sidecarDepth = sidecarJson["depth"].get<int>();
-            sidecarScope = Hash::parseNonSRIUnprefixed(
-                sidecarJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
-        }
-    }
+    /* Read the writer's localArg sidecar at argHash. depth+scope are
+       required: the structural subject (= PositionalSeed{depth} at
+       scope) evolves with observations on cb_arg the same way the
+       writer did, which is what makes the synthetic's apply-result
+       CAS reads find the recorded facts. */
+    auto sidecarPayload = decisionGraph.getRequestPayload(argHash);
+    if (!sidecarPayload)
+        throw Error(
+            "dispatchApplyLive: no localArg sidecar at argHash=%s",
+            argHash.to_string(HashFormat::Base16, false));
+    auto sidecarJson = cborStringToJson(*sidecarPayload);
+    auto sidecarDepth = sidecarJson["depth"].get<int>();
+    auto sidecarScope = Hash::parseNonSRIUnprefixed(
+        sidecarJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
 
-    std::shared_ptr<ReplayLocalObject> replayLocal;
-    if (sidecarDepth && sidecarScope) {
-        /* Structural encoding: subject = PositionalSeed{depth} at
-           scope. Matches the recorder's
-           contentIdAfter(PositionalSeed{D}, callScope, {}) for the
-           cb-arg's localId AND lets observation evolution on
-           cb_arg fold into derived/apply-result CDIs the same way
-           the writer did. */
-        cidasks::Subject rootSubject{cidasks::PositionalSeed{*sidecarDepth}};
-        replayLocal = std::make_shared<ReplayLocalObject>(
-            std::move(rootSubject), *sidecarScope,
-            std::make_shared<std::vector<cidasks::Edge>>(),
-            std::make_shared<Hash>(HashAlgorithm::SHA256),
-            decisionGraph, inner->getEvalState().rootFSRoot,
-            /*type=*/ nThunk, &inner->getEvalState());
-        replayLocal->withApplyContext(*sidecarDepth, *sidecarScope);
-    } else {
-        /* Legacy / no-sidecar path: opaque-content encoding. */
-        replayLocal = std::make_shared<ReplayLocalObject>(
-            argHash, decisionGraph, inner->getEvalState().rootFSRoot, &inner->getEvalState());
-    }
+    cidasks::Subject rootSubject{cidasks::PositionalSeed{sidecarDepth}};
+    auto replayLocal = std::make_shared<ReplayLocalObject>(
+        std::move(rootSubject), sidecarScope,
+        std::make_shared<std::vector<cidasks::Edge>>(),
+        std::make_shared<Hash>(HashAlgorithm::SHA256),
+        decisionGraph, inner->getEvalState().rootFSRoot,
+        /*type=*/ nThunk, &inner->getEvalState());
+    replayLocal->withApplyContext(sidecarDepth, sidecarScope);
     replayLocal->withAmbientAsksValidation().withChainStart(applyReqHash);
 
     try {
