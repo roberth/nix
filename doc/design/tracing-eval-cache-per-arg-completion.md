@@ -171,6 +171,38 @@ The lesson is in [`../../CLAUDE.md`](../../CLAUDE.md): test
 failures are not a problem until the principled design is fully
 implemented; principled fix beats convenient shortcut.
 
+## Cautionary tale: Fix B (`OpaqueContent` for apply-result observations)
+
+A later attempt (uncommitted, reverted in-session) tried to
+reconcile the writer/walker mismatch for cb-higher-order's
+apply-result observations by stamping their subject as
+`OpaqueContentSubject{applyReqHash}` on both sides — reasoning
+that `OpaqueContent.structuralAt` returns `H` unevolved, so the
+walk-grouping mismatch becomes moot.
+
+That framing splits the CDI principle the same way Fix A did:
+"the important part" (= which facts are recorded) vs. "the
+encoding" (= the subject's evolved CDI). `OpaqueContentSubject{H}`
+freezes a subject's CDI to `H` at construction time. Using it
+as the subject of an *observation* discards the discrimination
+that future observations would have provided through
+own-loop evolution — exactly the property cb-sibling discrimination
+relies on.
+
+**Per-use rule for `OpaqueContentSubject`.** It is legitimate ONLY
+when the subject is an *atom whose CDI is fully determined at
+construction time* and no future observation should re-discriminate
+it. The narrow legitimate site today is `TracingWriter::
+logDepth2ApplyFact` recording the apply Fact itself — the apply
+has happened, its constituents are baked into `applyReqHash`, and
+no subsequent observation distinguishes one apply from another
+that would coincide on `applyReqHash`. Any use as the subject of
+ambient *observations* (= queries on a value whose discrimination
+might evolve via subsequent probes) is the Fix B anti-pattern.
+
+Same outcome as Fix A: no new insights, the attempt was reverted
+before commit, and the principled implementation is still owed.
+
 ## Source map
 
 The principled fix touches:

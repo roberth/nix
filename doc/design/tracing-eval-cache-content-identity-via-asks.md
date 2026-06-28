@@ -349,6 +349,20 @@ component membership and any new compounding it introduces.
   the `OpaqueContent` wrapping path; cap allowed nesting depth at
   1 and prefer Merkle composition (= `qH(QueryWrap{inner=hex(X)})`)
   for any deeper case.
+- Per-use rule (separate from the nesting-depth audit above):
+  `OpaqueContentSubject{H}` freezes its CDI to `H` ⊕ scope —
+  observation-driven evolution does not apply because the
+  cidasks own-loop only folds in facts whose `fromHash ==
+  myCidAtK`, and `myCidAtK` for an `OpaqueContent` subject is
+  constant in `k`. Legitimate only when the subject describes
+  an *atom whose constituents are already hashed into `H`* and
+  no subsequent observation should re-discriminate it.
+  Today's legitimate site is `TracingWriter::logDepth2ApplyFact`,
+  whose subject is the cb-apply Fact — the apply has happened
+  and its CDI doesn't evolve. Illegitimate use is as the subject
+  of *observations* whose discrimination should depend on later
+  facts; that's the "Fix B" pattern documented in
+  [`tracing-eval-cache-per-arg-completion.md`](./tracing-eval-cache-per-arg-completion.md#cautionary-tale-fix-b-opaquecontent-for-apply-result-observations).
 
 *Cross-component bridges.*
 - G → F: `cdi → hex → qH(query) → SHA-256 seal → reqHash →
