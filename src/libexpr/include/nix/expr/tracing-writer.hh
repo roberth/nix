@@ -479,6 +479,23 @@ public:
      * stamped reqHash from just the apply's reqHash. No-op when
      * there's no enclosing cb-apply.
      */
+    /**
+     * Return the `applyId` of the cb-apply boundary currently on top
+     * of `pendingApplyBoundaries`. Used by `IT::apply` when fn is a
+     * TracingLocalObject (= the recursive cb-apply path) to capture
+     * the enclosing boundary's id before the recursive call would
+     * otherwise push a new boundary; the captured id then flows to
+     * the `LambdaApplyResultObject` wrapping the apply result, so
+     * its observations land in the same boundary's d=2 chain as the
+     * recursive apply Fact `logDepth2ApplyFact` appended.
+     */
+    std::optional<Hash> getCurrentApplyBoundaryId() const
+    {
+        if (pendingApplyBoundaries.empty())
+            return std::nullopt;
+        return pendingApplyBoundaries.back().applyId;
+    }
+
     void logDepth2ApplyFact(
         const nlohmann::json & applyQueryPayload,
         const Hash & applyReqHash)

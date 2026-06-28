@@ -572,6 +572,32 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                    chainCursor at its default (emptySetHash) — the walk
                    will fail safely. */
             }
+            /* Read the localArg sidecar to source the cb-arg apply
+               context (depth + scope). When this standin's
+               `<replay-local-lambda>` primop fires it composes the
+               synthetic apply-result subject as
+               `ApplyResultSubject{this.subject, PositionalSeed{depth+1}}`
+               at `applyScope`, mirroring the recorder. Without these
+               fields the optionals stay empty and dereferencing
+               `*applyDepthSaved + 1` in the primop reads garbage,
+               producing a synthetic subject `seed(<random>)` that
+               doesn't match the writer's recording → divergence. */
+            try {
+                auto sidecarPayload = decisionGraph.getRequestPayload(argHash);
+                if (sidecarPayload) {
+                    auto sidecarJson = cborStringToJson(*sidecarPayload);
+                    if (sidecarJson.contains("depth") && sidecarJson.contains("scope")) {
+                        auto sidecarDepth = sidecarJson["depth"].get<int>();
+                        auto sidecarScope = Hash::parseNonSRIUnprefixed(
+                            sidecarJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
+                        replayLocal->withApplyContext(sidecarDepth, sidecarScope);
+                    }
+                }
+            } catch (const std::exception &) {
+                /* Sidecar missing or malformed — primop will throw on
+                   dereferencing the optionals; surrounding catch maps to
+                   walker miss. */
+            }
         }
         argObj = standin;
     } else {
@@ -672,41 +698,43 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     replayLocal->withApplyContext(sidecarDepth, sidecarScope);
     replayLocal->withAmbientAsksValidation().withChainStart(applyReqHash);
 
+    /* Invoke outer's f LIVE via the Object-level apply entry. Object-
+       level apply preserves the RLO replayLocal as an Object through
+       the bridging chain (= AmbientObject::queryApply → applyFn →
+       resolver->apply → runOn sees argObj as the RLO, NOT as an
+       InterpreterObject wrapping a primop Value). That is what lets
+       Change B's TLO-skip kick in and lets outer's `g 5` fire the
+       standin's primop directly instead of routing through a
+       `<cached-fn>(TLO)` cascade that bypasses the d=2 lambda-LO
+       mechanism. The earlier Value-level `mkApp + force` path lost
+       the RLO's Object-ness behind two layers of Value wrapping.
+       Divergence (= depth-2 mismatch thrown out of the standin's
+       primop, or an outer-side query failure) is caught and signaled
+       as nullopt — the surrounding walker treats this as a miss. */
+    std::shared_ptr<Object> resultObj;
     try {
-        /* Invoke outer's f LIVE against the reconstructed value tree
-           (= mirroring `Interpreter::apply`'s pattern). Going through
-           `fnObj->queryApply` instead would, for a `TracingReplayObject`
-           fnObj (= the cb fn from evalFile), route into
-           `TracingReplayEvaluator::apply` and re-enter `v13Walk` for
-           the same apply Fact (infinite recursion). The
-           `toValueOrProxy` path:
-
-           - TRO/TLO/InterpreterObject fnObj → `toValueOrProxy`'s
-             default delegates to `defeatCache` → underlying live
-             Value (= the cb lambda).
-           - RLO replayLocal → type-aware `toValueOrProxy`: lambda
-             primop for nFunction, lazy `ExprFromObject` thunk
-             otherwise (= materialises attrs/list/scalars on demand).
-
-           `mkApp` + force then runs outer's f.body natively. When
-           outer's body does the recursive apply on an inner-supplied
-           lambda, the lambda primop's impl fires and consults
-           `AmbientAsks` — feeding observations into `replayLocal`'s
-           chainCursor. */
-        auto & evalState = inner->getEvalState();
-        auto fnValue = fnObj->toValueOrProxy(evalState, /*resolver=*/ nullptr);
-        auto argValue = replayLocal->toValueOrProxy(evalState, /*resolver=*/ nullptr);
-        auto * resultVal = evalState.allocValue();
-        resultVal->mkApp(*fnValue, *argValue);
-        /* Force via getType so the apply Value evaluates to WHNF;
-           that's the trigger for outer's f.body running, which is
-           what drives replayLocal's probes. */
-        auto resultObj = std::make_shared<InterpreterObject>(
-            evalState, allocRootValue(resultVal));
+        resultObj = fnObj->queryApply(replayLocal);
+    } catch (const std::exception & e) {
+        tracingCacheLog(
+            "dispatchApplyLive: divergence at queryApply for applyReqHash=%s: %s",
+            applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            e.what());
+        return std::nullopt;
+    }
+    if (!resultObj) {
+        tracingCacheLog(
+            "dispatchApplyLive: queryApply returned null for applyReqHash=%s",
+            applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12));
+        return std::nullopt;
+    }
+    /* Force via getType so the apply result evaluates to WHNF; that
+       triggers outer's f.body running, which drives replayLocal's
+       probes. */
+    try {
         (void) resultObj->getType();
     } catch (const std::exception & e) {
         tracingCacheLog(
-            "dispatchApplyLive: divergence during live apply for applyReqHash=%s: %s",
+            "dispatchApplyLive: divergence forcing apply-result for applyReqHash=%s: %s",
             applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
             e.what());
         return std::nullopt;

@@ -599,3 +599,59 @@ regression. Revert the step that introduced it and diagnose.
   to clean. The two doc memos (`tracing-eval-cache-higher-order-
   replay.md` and `tracing-eval-cache-outer-change-fallthrough.md`)
   already note what was reverted under "What I am NOT proposing".
+
+## Implementation status (= what landed)
+
+All three changes shipped:
+- **Change A** (`dispatchApplyLive` Object-level apply): in
+  `src/libexpr/tracing-replay-evaluator.cc`.
+- **Change B** (`runOn` skips TLO wrap for RLO): in
+  `src/libexpr/expr-from-object.cc`.
+- **Change C** (writer routes lambda apply-results to
+  `LocalResponseMap`): new `LambdaApplyResultObject` sibling in
+  `src/libexpr/{include/nix/expr/,}lambda-apply-result-object.{hh,cc}`,
+  wired through `TracingEvaluator::apply`'s TLO-fn branch.
+
+Walker-side support landed alongside Change C:
+- Synthetic apply-result is constructed with
+  `withAmbientAsksValidation()` so each post-apply probe advances
+  `chainCursor` through the recorded d=2 chain.
+- The `<replay-local-lambda>` primop uses LOCAL copies of
+  `walkFacts`/`chainCursor` per firing — same standin re-fired
+  across multiple walker dispatches stays aligned with the cold
+  recording. The recursive apply Fact's stamped fn/arg now use
+  `contentIdAt(...,0)` so the walker's stampedReqHash matches what
+  `logDepth2ApplyFact` records.
+- `resolveApplyId`'s standin path reads the `localArg` sidecar's
+  `depth`/`scope` and sets `applyContext` so the synthetic's
+  `PositionalSeed{depth+1}` is the right one (previously
+  dereferenced an empty optional and produced garbage subjects).
+
+### Test outcomes
+
+- `cb-higher-order-nested`: was red, **now green** (cold and outer
+  change steps; warm-replay DISALLOW_PARSE is commented out in the
+  test by design).
+- `cb-higher-order` cold + outer-change steps: green.
+- `cb-higher-order` warm-replay DISALLOW_PARSE (steps 2, 4):
+  **still red**. Failure shifted from the lambda-primop bypass
+  diagnosed in the predecessor memos to a separate gap: the OUTER
+  walker, after dispatching the cb-apply Fact, tries to dispatch
+  d=1 facts whose `from` is the inner-side cb-arg seed CDI
+  (= `seed(applyDepth+1).initial`, e.g.,
+  `de4269a965a5...` for cb-higher-order's contraArg_5). This CDI
+  has no provenance — neither a producer Request nor a localArg
+  sidecar — so `resolveCdiId` falls through "outer-seed by
+  elimination" and returns null. The walker's dispatch fails for
+  those facts and the d=1 cur diverges from the recorded position.
+  This gap pre-dates Change C and isn't addressed by the three
+  changes here; closing it likely requires the standin's primop to
+  register an outer-direction proxy for `args[0]` (= outer's
+  passed value) under the seed's initial CDI so subsequent walker
+  dispatches can live-resolve it. Recommended as the follow-up
+  work item.
+- `cb-stats-higher-order-baseline`: red on hit-count drift, as the
+  verification plan predicted.
+- `cb-385`, `cb-sibling-discrimination-via-observation`: red as
+  documented; orthogonal.
+- All other tests (237/249): unchanged.

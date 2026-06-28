@@ -316,8 +316,23 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
     /* Wrap the argObj in TracingLocalObject so the outer's
        accesses on it during the apply land in the inner trace
        with `from=hex(argId)`. Inherit callScope so sibling cached
-       calls' local-args have distinct content ids. */
-    auto wrappedArg = (innerWriter && outerRootFSRoot)
+       calls' local-args have distinct content ids.
+
+       Skip the TLO wrap when argObj is a ReplayLocalObject. At warm
+       replay, the RLO standin reaching `runOn` already encapsulates
+       the recorded contract for the cb-arg crossing — the standin's
+       primop and its synthetic apply-result handle the per-probe
+       AmbientAsks lookups directly. Wrapping the standin in TLO
+       would (1) add a redundant recording layer with no new
+       information to capture (the writer isn't recording here at
+       warm) and (2) convert the standin's primop into the
+       `<cached-fn>(TLO)` cascade that bypasses the design's
+       lambda-LO mechanism — exactly the bypass diagnosed in
+       `tracing-eval-cache-higher-order-replay.md`. At cold, argObj
+       is an `InterpreterObject` of a real inner Value and the cast
+       returns null, leaving the TLO wrap path unchanged. */
+    auto wrappedArg = (innerWriter && outerRootFSRoot
+                       && !dynamic_cast<ReplayLocalObject *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingLocalObject>(
               argObj, argSubject, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell,
               resolverHandle->callScope, resultId))

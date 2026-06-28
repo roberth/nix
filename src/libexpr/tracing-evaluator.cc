@@ -1,5 +1,6 @@
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/ambient-object.hh"
+#include "nix/expr/lambda-apply-result-object.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-local-object.hh"
 #include "nix/expr/tracing-object.hh"
@@ -277,21 +278,41 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        Walker-side counterpart: the lambda primop's impl advances
        the standin's chainCursor by this fact's elementHash.
 
-       MUST run BEFORE markApplyBoundary — that pushes a NEW
-       boundary entry, after which `pendingApplyBoundaries.back()`
-       is the just-opened one (not the enclosing).
+       Capture the enclosing boundary's applyId BEFORE
+       logDepth2ApplyFact / markApplyBoundary so the apply-result
+       observations recorded after `inner->apply` returns (via
+       `LambdaApplyResultObject` below) route to the same enclosing
+       boundary the recursive apply Fact landed in. Their d=2
+       chain order is: [recursiveApplyFact, applyResult.getType,
+       applyResult.getInt, ...] — matching the walker's standin's
+       primop manual-push (= one fact) followed by the synthetic's
+       per-probe `advanceChainAndAppendFact` calls.
+
+       Skip `markApplyBoundary` entirely for the TLO-fn path: it
+       would push a fresh empty boundary whose synthetic d=1 fact
+       `(applyReqHash, applyReqHash)` enters v13FactSet at finalize
+       and forces the outer walker into a `dispatchApplyLive` whose
+       arg has no sidecar — a guaranteed miss that destabilises the
+       outer chain. The recursive apply Fact (recorded in the
+       enclosing boundary by `logDepth2ApplyFact`) already covers
+       the d=2 chain entry for this apply, so a separate boundary
+       carries no information.
 
        Filtered to TLO fn specifically so we don't add d=2 facts
        for ordinary nested cb-applies (= cached-fn applied to outer
        values) — those don't go through the lambda-primop path at
        warm and would just contaminate the enclosing chain's
        AmbientResult. */
-    if (dynamic_cast<TracingLocalObject *>(fn.get_ptr().get())) {
+    bool fnIsTlo = dynamic_cast<TracingLocalObject *>(fn.get_ptr().get()) != nullptr;
+    Hash enclosingApplyId(HashAlgorithm::SHA256);
+    if (fnIsTlo) {
+        if (auto enclosingId = writer.getCurrentApplyBoundaryId())
+            enclosingApplyId = *enclosingId;
         auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQ.dump());
         writer.logDepth2ApplyFact(applyQ, applyReqHash);
+    } else {
+        writer.markApplyBoundary(applyQ);
     }
-
-    writer.markApplyBoundary(applyQ);
 
     /* Build the ApplyResultSubject from fn/arg constituents. fn is
        typically a TracingObject (the cached function from evalFile)
@@ -352,12 +373,29 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     auto v = writer.getSink().logQuery(trace::QueryApply{fnId, argId});
     auto result = inner->apply(fn, arg);
+    auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
+
+    /* For the TLO-fn case (= cb-higher-order's recursive cb-apply):
+       wrap the result in a LambdaApplyResultObject so subsequent
+       method calls (`getType`, `getInt`, etc.) record d=2
+       observations on the enclosing cb-apply boundary instead of
+       d=1 main-trie Terminals. The walker's `<replay-local-lambda>`
+       primop reads these from LocalResponseMap via the same
+       per-arg-stamped reqHash; the AmbientAsks edges enable its
+       synthetic's `advanceChainAndAppendFact` to keep
+       `chainCursor` aligned with the cold AmbientResult. */
+    if (fnIsTlo) {
+        auto laro = std::make_shared<LambdaApplyResultObject>(
+            result, writer, std::move(resultSubject), applyScope, enclosingApplyId);
+        laro->withScope(std::move(cell));
+        return ref<Object>(laro);
+    }
+
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel; v13 doesn't key off this
         .queryHashStr = applyCdiHex,
     };
     auto obj = TracingObject::create(result, writer, v, triePos);
-    auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
     obj->withScope(std::move(cell));
     obj->withApplyResultSubject(std::move(resultSubject), applyScope);
     if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {

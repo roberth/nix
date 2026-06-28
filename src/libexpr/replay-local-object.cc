@@ -361,6 +361,18 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
     auto chainCursorSaved = chainCursor;
     auto applyDepthSaved = applyDepth;
     auto applyScopeSaved = applyScope;
+    /* Capture the standin's chainCursor at primop-construction time
+       (= AFTER ExprFromObject(standin).eval's `obj->getType()` call
+       fires `standin.getType` and advances chainCursor via
+       `advanceChainAndAppendFact`, but BEFORE any primop firing has
+       added apply Fact / synthetic probes). This is the chain root
+       for each primop firing's local advance — resetting localChainCursor
+       to this at every firing ensures multiple firings (= when the
+       cached standin's primop is invoked more than once) each
+       reproduce the same cold-side AmbientResult instead of
+       accumulating XOR contributions across firings. */
+    auto initialChainCursor = std::make_shared<Hash>(*chainCursor);
+    auto initialWalkFactsSize = walkFacts->size();
 
     auto * primOp = new
 #if NIX_USE_BOEHMGC
@@ -372,8 +384,40 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
             .arity = 1,
             .impl = [dg, rootFSRootSaved, subjectSaved,
                      walkFactsSaved, chainCursorSaved,
+                     initialChainCursor, initialWalkFactsSize,
                      applyDepthSaved, applyScopeSaved](
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
+                /* Each primop firing replays the standin's chain
+                   advance (apply Fact + synthetic probes) on a LOCAL
+                   copy of walkFacts/chainCursor so the standin's
+                   persistent shared state isn't polluted across
+                   firings.
+
+                   Why this is needed: the standin (materialised by
+                   `materialiseLocalStandin` and cached in
+                   `ResolutionContext::memo`) is reused when the
+                   walker dispatches multiple d=1 facts whose
+                   resolution paths force the same standin's primop.
+                   Without a copy, walkFacts would accumulate
+                   entries from prior firings and the synthetic's
+                   `stampPerArgFields` would compute its `from` at a
+                   later edge index than the writer's
+                   `flushPendingAmbient` stamped, breaking the
+                   LocalResponseMap lookup.
+
+                   localWalkFacts copies just the standin's
+                   surface-probe portion (= entries pushed before
+                   any primop firing), trimming any contributions
+                   from prior firings. localChainCursor resets to
+                   the snapshot taken at primop-construction time
+                   (= post-surface-probe). This makes each firing's
+                   chain advance independent of prior firings while
+                   still starting from the right position in the
+                   recorded chain. */
+                auto localWalkFacts = std::make_shared<std::vector<cidasks::Edge>>(
+                    walkFactsSaved->begin(),
+                    walkFactsSaved->begin() + std::min(initialWalkFactsSize, walkFactsSaved->size()));
+                auto localChainCursor = std::make_shared<Hash>(*initialChainCursor);
                 /* Compose the recursive apply result's subject to
                    match what the recorder built at cold via
                    `AmbientObject::queryApply` (= ambient-object.cc
@@ -412,10 +456,25 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                    advance, ε's response would be the pre-apply
                    cursor and the d=1 walk would derail. */
                 {
-                    auto fnCdi = cidasks::contentIdAfter(subjectSaved, *applyScopeSaved, *walkFactsSaved);
-                    auto argCdi = cidasks::contentIdAfter(
+                    /* Use edge 0 cdis (= initial structural-address
+                       values) for fn/arg. Mirrors the recorder side:
+                       `TracingEvaluator::apply` records
+                       `QueryApply{fnId, argId}` where `fnId` /
+                       `argId` come from `Object::getCdiHex()` at
+                       construction-time (= `structuralAddressAfter`
+                       with empty walk = `contentIdAt(.., .., {}, 0)`).
+                       The recursive apply Fact's identity is fixed
+                       at IT::apply-time; observations recorded
+                       between then and now should NOT shift its
+                       reqHash, or the walker's stampedReqHash
+                       diverges from what the writer's
+                       `flushPendingAmbient` stamped for the
+                       `logDepth2ApplyFact` entry. */
+                    auto fnCdi = cidasks::contentIdAt(
+                        subjectSaved, *applyScopeSaved, *walkFactsSaved, 0);
+                    auto argCdi = cidasks::contentIdAt(
                         cidasks::Subject{cidasks::PositionalSeed{*applyDepthSaved + 1}},
-                        *applyScopeSaved, *walkFactsSaved);
+                        *applyScopeSaved, *walkFactsSaved, 0);
                     trace::QueryApply applyQ{
                         fnCdi.to_string(HashFormat::Base16, false),
                         argCdi.to_string(HashFormat::Base16, false),
@@ -445,23 +504,53 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
 
                     cidasks::Edge edge;
                     edge.observations.push_back({applyReqHash, elementHash});
-                    walkFactsSaved->push_back(std::move(edge));
-                    *chainCursorSaved = TracingDecisionGraph::xorHashes(
-                        *chainCursorSaved, elementHash);
+                    localWalkFacts->push_back(std::move(edge));
+                    *localChainCursor = TracingDecisionGraph::xorHashes(
+                        *localChainCursor, elementHash);
                 }
 
-                /* Synthetic shares the parent's walk/cursor so
-                   continued probing inside ExprFromObject::eval
-                   advances the same d=2 chain. */
+                /* Synthetic shares the LOCAL walk/cursor so its
+                   probes don't pollute the standin's persistent
+                   state. */
                 auto synthetic = std::make_shared<ReplayLocalObject>(
                     std::move(syntheticSubject), *applyScopeSaved,
-                    walkFactsSaved, chainCursorSaved,
+                    localWalkFacts, localChainCursor,
                     *dg, rootFSRootSaved, /*type=*/ nThunk, &state);
+                /* Enable per-probe AmbientAsks validation. After the
+                   `LambdaApplyResultObject` writer change, the
+                   apply-result observations live in the d=2 chain
+                   (= same boundary as the recursive apply Fact above),
+                   so the synthetic's `getType` / `getInt` etc. must
+                   walk one AmbientAsks edge per probe to (a) keep
+                   `chainCursor` aligned with the cold AmbientResult
+                   (= principle 6 lockstep) and (b) detect divergence
+                   when the outer's behaviour changed. The standin's
+                   primop has already pushed the recursive apply Fact
+                   to `walkFacts` and advanced `chainCursor`, so the
+                   first synthetic probe stamps at `walkFacts.size() == 1`
+                   — matching the writer's flushPendingAmbient d=2
+                   loop at index 1 (= position after `logDepth2ApplyFact`'s
+                   fact in the boundary). */
+                synthetic->withAmbientAsksValidation();
+                /* Propagate apply context so a nested cb-higher-order
+                   case (= the apply result is itself a function whose
+                   `toValueOrProxy` builds another `<replay-local-lambda>`
+                   primop) composes the right depth/scope downstream. */
+                synthetic->withApplyContext(*applyDepthSaved, *applyScopeSaved);
 
                 /* Convert to a Value. ExprFromObject probes
                    synthetic for type/scalar value and constructs the
                    matching Value. */
                 ExprFromObject(synthetic, nullptr, nullptr).eval(state, state.baseEnv, v);
+
+                /* Propagate the firing's final chainCursor to the
+                   standin's persistent state. `dispatchApplyLive`
+                   reads this as the AmbientResult for the cb-apply
+                   Fact. Each firing's local chain advance produces
+                   the same final cursor by construction, so this
+                   assignment is deterministic across multiple
+                   firings of the same standin. */
+                *chainCursorSaved = *localChainCursor;
             },
         };
     auto * val = evalState.allocValue();
