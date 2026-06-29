@@ -99,7 +99,7 @@ and inspecting the resulting SQLite trie, the diagnosis is
 confirmed at the recording layer:
 
 - `localSyntheticCdi_g5 = 2ae5ce38951569df…` (= `qH(QueryApply{
-  fn=hex(OpaqueContent{TLO.cdi}.structural), arg=hex(PositionalSeed{3}.cdi)})`).
+  fn=hex(PostulatedIdempotentRead{TLO.cdi}.structural), arg=hex(PositionalSeed{3}.cdi)})`).
 - `Q=qH(QueryGetType{from=hex(localSyntheticCdi_g5)}) = 6f80070d00ef…`
   has a recorded `Terminals(Q, factSet=3ea4764803…)` row with
   result payload `ResultType{"int"}`.
@@ -121,7 +121,7 @@ fires for the bridged TLO (= constructed at warm by the
 `<ambient-fn>` flow's `runOn` inside `dispatchApplyLive`'s force);
 that `<cached-fn>`'s impl calls `innerEval->apply(TLO, contraArg)`
 = `IR.apply`; `IR.apply` constructs a `TracingReplayObject` with
-`applyResultSubject = ApplyResultSubject{OpaqueContent{TLO.cdi},
+`applyResultSubject = ApplyResultSubject{PostulatedIdempotentRead{TLO.cdi},
 PositionalSeed{depth+1}}` (= the local-synthetic subject). The
 proposed elaborate primop rewrite, `ctx.memo` plumbing, and
 `AmbientResolver` threading are all **not actually needed** —

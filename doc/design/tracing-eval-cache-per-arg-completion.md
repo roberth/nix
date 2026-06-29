@@ -10,7 +10,7 @@ The cidasks math is implemented and argument-level only:
 
 - `cidasks::contentIdAt(DerivedSubject, ...)` traps via
   `nix::unreachable()`. Only argument-bearing subjects
-  (`PositionalSeed`, `ApplyResultSubject`, `OpaqueContentSubject`)
+  (`PositionalSeed`, `ApplyResultSubject`, `PostulatedIdempotentRead`)
   have CDIs.
 - `cidasks::structuralAddress(subject, scope, walk, edgeIndex)` /
   `structuralAddressAfter` exposes a content-addressed identifier
@@ -25,8 +25,6 @@ The cidasks math is implemented and argument-level only:
   `fn`/`arg`.
 - `cidasks::makeApplyResultQuery` builds the per-arg-encoded
   `QueryApply` payload.
-- `cidasks::subjectFromObjectIdentity` bridges `Object` identity
-  to `Subject`.
 
 The writer's per-arg flush (`tracing-writer.cc:flushPendingAmbient`)
 collapses derived chains to the cb_arg root via
@@ -117,7 +115,7 @@ computed:
 - The cidasks formula for `ApplyResultSubject::structuralAt(K)`
   builds `QueryApply{hashHex(structuralAddress(fn, scope, …)),
   hashHex(structuralAddress(arg, scope, …))}`. For an
-  `OpaqueContentSubject{H}` constituent, `structuralAddress` is
+  `PostulatedIdempotentRead{H}` constituent, `structuralAddress` is
   `xorHashes(H, scope)` — so when `scope ≠ 0` (= cb-applies,
   where `fn.getInheritedScope()` carries the cb_scope), the
   constituent CDI is double-XOR'd: once when `getCdiHex()`
@@ -133,7 +131,7 @@ A principled fix needs to reconcile this — either:
    cidasks formula produce the same hash by construction (= so
    when no observations have evolved anything, the two
    encodings coincide bit-for-bit). This likely means making
-   `OpaqueContentSubject`'s structuralAt NOT apply the scope
+   `PostulatedIdempotentRead`'s structuralAt NOT apply the scope
    (= treat the already-CDI'd hash as scope-saturated), and
    relying on the scope being baked into the constituent CDIs
    upstream.
@@ -171,34 +169,39 @@ The lesson is in [`../../CLAUDE.md`](../../CLAUDE.md): test
 failures are not a problem until the principled design is fully
 implemented; principled fix beats convenient shortcut.
 
-## Cautionary tale: Fix B (`OpaqueContent` for apply-result observations)
+## Cautionary tale: Fix B (`PostulatedIdempotentRead` for apply-result observations)
 
 A later attempt (uncommitted, reverted in-session) tried to
 reconcile the writer/walker mismatch for cb-higher-order's
 apply-result observations by stamping their subject as
-`OpaqueContentSubject{applyReqHash}` on both sides — reasoning
-that `OpaqueContent.structuralAt` returns `H` unevolved, so the
+`PostulatedIdempotentRead{applyReqHash}` on both sides — reasoning
+that `PostulatedIdempotentRead.structuralAt` returns `H` unevolved, so the
 walk-grouping mismatch becomes moot.
 
 That framing splits the CDI principle the same way Fix A did:
 "the important part" (= which facts are recorded) vs. "the
-encoding" (= the subject's evolved CDI). `OpaqueContentSubject{H}`
+encoding" (= the subject's evolved CDI). `PostulatedIdempotentRead{H}`
 freezes a subject's CDI to `H` at construction time. Using it
 as the subject of an *observation* discards the discrimination
 that future observations would have provided through
 own-loop evolution — exactly the property cb-sibling discrimination
 relies on.
 
-**Per-use rule for `OpaqueContentSubject`.** It is legitimate ONLY
-when the subject is an *atom whose CDI is fully determined at
-construction time* and no future observation should re-discriminate
-it. The narrow legitimate site today is `TracingWriter::
-logDepth2ApplyFact` recording the apply Fact itself — the apply
-has happened, its constituents are baked into `applyReqHash`, and
-no subsequent observation distinguishes one apply from another
-that would coincide on `applyReqHash`. Any use as the subject of
-ambient *observations* (= queries on a value whose discrimination
-might evolve via subsequent probes) is the Fix B anti-pattern.
+**Per-use rule** — superseded. The canonical contract for
+`PostulatedIdempotentRead` now lives in its docstring at
+`src/libexpr/include/nix/expr/content-identity-via-asks.hh`. It
+postulates an *idempotent source*, not "an atom whose CDI is fully
+determined at construction." Valid: filesystem reads (snapshot
+semantics), expression strings hashed for parsing (referential
+transparency). Invalid: values that can't be characterized
+completely ahead of time (e.g. a lazy fn arg given as a `Value`);
+taking an arbitrary subject id by value and using it as if it's
+up-to-date. The earlier "narrow legitimate site"
+(`TracingWriter::logDepth2ApplyFact` for the apply Fact's subject)
+is **not** legitimate under the new framing — an apply is a
+behavior, not a read; its identity is `ApplyResultSubject{fn, arg}`
+with constituents that evolve. Fixing that site is open work
+(task #20's remaining call-site audit).
 
 Same outcome as Fix A: no new insights, the attempt was reverted
 before commit, and the principled implementation is still owed.

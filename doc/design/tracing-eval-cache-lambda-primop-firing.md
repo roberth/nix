@@ -165,7 +165,7 @@ existing `logDepth2ApplyFact` call), it wraps the result in a
 method calls store responses in `LocalResponseMap` (= d=2
 storage) instead of main-trie `Terminals` (= d=1 storage). The
 `from` field for these recordings is the local-synthetic CDI
-(= `ApplyResultSubject{OpaqueContent{TLO.cdi}, contraArg.subject}`).
+(= `ApplyResultSubject{PostulatedIdempotentRead{TLO.cdi}, contraArg.subject}`).
 
 Two implementation shapes:
 
@@ -373,7 +373,7 @@ and walker side via the same `cidasks::contentIdAfter` formula.
 ✓
 
 **Design principle 2 (subjects are static structural
-identifiers).** `ApplyResultSubject{OpaqueContent{TLO/RLO.cdi},
+identifiers).** `ApplyResultSubject{PostulatedIdempotentRead{TLO/RLO.cdi},
 PositionalSeed{depth+1}}` is structural. ✓
 
 **Design principle 3 (apply-result formula).** Both sides
@@ -417,10 +417,10 @@ LocalResponseMap. Validation = `AmbientAsks` lookup; divergence
 memory describes. ✓
 
 **Fix A / Fix B avoidance.** Fix A removed CDI evolution to
-make cb-385 green; Fix B froze CDI via OpaqueContent for
+make cb-385 green; Fix B froze CDI via PostulatedIdempotentRead for
 apply-result observations. This proposal does neither — CDIs
 evolve via cidasks per the principles; subjects are structural
-ApplyResultSubject (not OpaqueContent for observation
+ApplyResultSubject (not PostulatedIdempotentRead for observation
 subjects). ✓
 
 ## Risks

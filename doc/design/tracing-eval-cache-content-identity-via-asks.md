@@ -321,7 +321,7 @@ component membership and any new compounding it introduces.
   - `factElementHash(req, resp)` for own-fold contributions.
 - Members: every `cdi` returned by `contentIdAt`; every `own_k`
   partial sum; every `structural(k)` for `PositionalSeed` /
-  `OpaqueContentSubject`.
+  `PostulatedIdempotentRead`.
 - Operations:
   - Leaf: `structural = base XOR scope`.
   - Own-fold: `own_k = XOR-fold of {f.elementHash : f at edges
@@ -333,7 +333,7 @@ component membership and any new compounding it introduces.
   - Equality check inside the cidasks filter
     (`f.fromHash == myCidAtK`) — **stays in G**.
 - Compounding sites observed:
-  - `OpaqueContentSubject{X}.structural = X XOR scope` where `X`
+  - `PostulatedIdempotentRead{X}.structural = X XOR scope` where `X`
     is itself drawn from G: today this happens at
     `replay-local-object.hh` (walker, with `scope=0` — the new
     scope is the identity, so no algebraic compounding) and at
@@ -341,28 +341,31 @@ component membership and any new compounding it introduces.
     `argObj.cdi` when the arg has no proper Subject — one nesting
     layer, distinct scope from the wrapped cdi's origin).
   - All current sites are one layer deep. A second nesting layer
-    (= wrapping an `OpaqueContent`-derived value into another
-    `OpaqueContent`) is the moment to worry — it stacks two
+    (= wrapping an `PostulatedIdempotentRead`-derived value into another
+    `PostulatedIdempotentRead`) is the moment to worry — it stacks two
     independent scopes via XOR and the cancellation surface area
     grows multiplicatively.
 - Verdict: sound today, under SHA-256 entropy. Fragility lives in
-  the `OpaqueContent` wrapping path; cap allowed nesting depth at
+  the `PostulatedIdempotentRead` wrapping path; cap allowed nesting depth at
   1 and prefer Merkle composition (= `qH(QueryWrap{inner=hex(X)})`)
   for any deeper case.
-- Per-use rule (separate from the nesting-depth audit above):
-  `OpaqueContentSubject{H}` freezes its CDI to `H` ⊕ scope —
-  observation-driven evolution does not apply because the
-  cidasks own-loop only folds in facts whose `fromHash ==
-  myCidAtK`, and `myCidAtK` for an `OpaqueContent` subject is
-  constant in `k`. Legitimate only when the subject describes
-  an *atom whose constituents are already hashed into `H`* and
-  no subsequent observation should re-discriminate it.
-  Today's legitimate site is `TracingWriter::logDepth2ApplyFact`,
-  whose subject is the cb-apply Fact — the apply has happened
-  and its CDI doesn't evolve. Illegitimate use is as the subject
-  of *observations* whose discrimination should depend on later
-  facts; that's the "Fix B" pattern documented in
-  [`tracing-eval-cache-per-arg-completion.md`](./tracing-eval-cache-per-arg-completion.md#cautionary-tale-fix-b-opaquecontent-for-apply-result-observations).
+- Per-use rule (separate from the nesting-depth audit above): see
+  the variant's docstring at
+  `src/libexpr/include/nix/expr/content-identity-via-asks.hh` for
+  the contract. Summary: `PostulatedIdempotentRead` postulates that
+  the *source* can be re-read idempotently (= fs reads under
+  snapshot semantics, expression strings hashed for parsing). It
+  does NOT promise that the resulting subject id is stable — the
+  full `scopeStateId` is still a function of `(subject, scope,
+  walk, K)`, and the own-loop continues folding observations whose
+  `from` matches the running id. Invalid uses: values that can't
+  be characterized completely ahead of time (= lazy fn args given
+  as a `Value`); taking a subject id by value and treating it as
+  up-to-date. `TracingWriter::logDepth2ApplyFact`'s current use of
+  `PostulatedIdempotentRead{applyReqHash}` is invalid under this
+  framing — an apply is a behavior, not a read; its identity is
+  `ApplyResultSubject{fn, arg}` with evolving constituents. Fixing
+  that site is open work.
 
 *Cross-component bridges.*
 - G → F: `cdi → hex → qH(query) → SHA-256 seal → reqHash →
