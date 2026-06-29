@@ -71,6 +71,10 @@ struct ApplyResultSubject
       parsing and loading parameters are identical, this uniquely
       identifies the value *by content* (and no Facts are necessary
       to pin down its behavior).
+    - **Hash of a literal's construction parameters** (= `mkInt(42)`,
+      `mkString("foo")`, `mkBool(true)`). The literal is fully
+      determined by its parameters, so the hash identifies it; no
+      Facts are necessary to pin down its behavior.
 
     ## Invalid cases
 
