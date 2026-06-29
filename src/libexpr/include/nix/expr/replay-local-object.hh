@@ -260,6 +260,16 @@ public:
         return localId.to_string(HashFormat::Base16, false);
     }
 
+    /** Symmetric to TracingLocalObject: expose the standin's structural
+        Subject so a subsequent apply on this standin (= the cb-arg
+        standin used as `arg` in `<replay-local-lambda>`'s recursive
+        apply) composes ApplyResultSubject with this standin's
+        evolving Subject rather than falling back to
+        `OpaqueContent{this.localId}`. */
+    const cidasks::Subject * getSubject() const override { return &subject; }
+
+    Hash getInheritedScope() const override { return scope; }
+
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
     std::string getStringIgnoreContext() override;
