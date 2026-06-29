@@ -143,122 +143,148 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
     return ensureInner()->maybeGetAttr(name);
 }
 
+std::optional<const trace::ResultWHNF *> TracingReplayObject::whnf()
+{
+    if (cachedWHNF)
+        return &*cachedWHNF;
+    auto parentHash = evolvedQueryFrom();
+    trace::QueryGetWHNF query{parentHash};
+    auto r = lookupResult<trace::QueryGetWHNF, trace::ResultWHNF>(query);
+    if (!r)
+        return std::nullopt;
+    pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
+    cachedWHNF = std::move(r->first);
+    return &*cachedWHNF;
+}
+
 std::vector<std::string> TracingReplayObject::getAttrNames()
 {
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetAttrNames query{parentHash};
-    if (auto r = lookupResult<trace::QueryGetAttrNames, trace::ResultListOfStrings>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
-        return r->first.values;
+    auto wp = whnf();
+    if (!wp) {
+        tracingCacheLog("replay fallback: getAttrNames");
+        return ensureInner()->getAttrNames();
     }
-    tracingCacheLog("replay fallback: getAttrNames");
-    return ensureInner()->getAttrNames();
+    auto * p = std::get_if<trace::WHNFAttrs>(&(*wp)->payload);
+    if (!p)
+        return ensureInner()->getAttrNames();
+    return p->names;
 }
 
 std::string TracingReplayObject::getStringIgnoreContext()
 {
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetString query{parentHash};
-    if (auto r = lookupResult<trace::QueryGetString, trace::ResultString>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
-        return r->first.value;
+    auto wp = whnf();
+    if (!wp) {
+        tracingCacheLog("replay fallback: getStringIgnoreContext");
+        return ensureInner()->getStringIgnoreContext();
     }
-    tracingCacheLog("replay fallback: getStringIgnoreContext");
-    return ensureInner()->getStringIgnoreContext();
+    auto * p = std::get_if<trace::WHNFString>(&(*wp)->payload);
+    if (!p)
+        return ensureInner()->getStringIgnoreContext();
+    return p->value;
 }
 
 std::string TracingReplayObject::getStringWithoutContext()
 {
-    // getStringWithoutContext checks for empty context which the cache doesn't track
-    tracingCacheLog("replay fallback: getStringWithoutContext");
-    return ensureInner()->getStringWithoutContext();
+    auto wp = whnf();
+    if (!wp) {
+        tracingCacheLog("replay fallback: getStringWithoutContext");
+        return ensureInner()->getStringWithoutContext();
+    }
+    auto * p = std::get_if<trace::WHNFString>(&(*wp)->payload);
+    if (!p || !p->context.empty())
+        return ensureInner()->getStringWithoutContext();
+    return p->value;
 }
 
 std::pair<std::string, NixStringContext> TracingReplayObject::getStringWithContext()
 {
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetStringWithContext query{parentHash};
-    if (auto r = lookupResult<trace::QueryGetStringWithContext, trace::ResultStringWithContext>(query)) {
-        NixStringContext ctx;
-        for (const auto & s : r->first.context)
-            ctx.insert(NixStringContextElem::parse(s));
-
-        auto & store = evaluator.getStore();
-        for (const auto & elem : ctx) {
-            const StorePath & path = std::visit(
-                overloaded{
-                    [&](const NixStringContextElem::DrvDeep & d) -> const StorePath & { return d.drvPath; },
-                    [&](const NixStringContextElem::Built & b) -> const StorePath & {
-                        return b.drvPath->getBaseStorePath();
-                    },
-                    [&](const NixStringContextElem::Opaque & o) -> const StorePath & { return o.path; },
-                },
-                elem.raw);
-            if (!store.isValidPath(path)) {
-                tracingCacheLog("replay miss: context path %s no longer valid", store.printStorePath(path));
-                tracingCacheLog("replay fallback: getStringWithContext (invalid context)");
-                return ensureInner()->getStringWithContext();
-            }
-        }
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
-        return {r->first.value, std::move(ctx)};
+    auto wp = whnf();
+    if (!wp) {
+        tracingCacheLog("replay fallback: getStringWithContext");
+        return ensureInner()->getStringWithContext();
     }
-    tracingCacheLog("replay fallback: getStringWithContext");
-    return ensureInner()->getStringWithContext();
+    auto * p = std::get_if<trace::WHNFString>(&(*wp)->payload);
+    if (!p)
+        return ensureInner()->getStringWithContext();
+    NixStringContext ctx;
+    for (const auto & s : p->context)
+        ctx.insert(NixStringContextElem::parse(s));
+    auto & store = evaluator.getStore();
+    for (const auto & elem : ctx) {
+        const StorePath & path = std::visit(
+            overloaded{
+                [&](const NixStringContextElem::DrvDeep & d) -> const StorePath & { return d.drvPath; },
+                [&](const NixStringContextElem::Built & b) -> const StorePath & {
+                    return b.drvPath->getBaseStorePath();
+                },
+                [&](const NixStringContextElem::Opaque & o) -> const StorePath & { return o.path; },
+            },
+            elem.raw);
+        if (!store.isValidPath(path)) {
+            tracingCacheLog("replay miss: context path %s no longer valid", store.printStorePath(path));
+            return ensureInner()->getStringWithContext();
+        }
+    }
+    return {p->value, std::move(ctx)};
 }
 
 RootedPath TracingReplayObject::getPath()
 {
+    whnf();
     tracingCacheLog("replay fallback: getPath");
     return ensureInner()->getPath();
 }
 
 bool TracingReplayObject::getBool(std::string_view errorCtx)
 {
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetBool query{parentHash};
-    if (auto r = lookupResult<trace::QueryGetBool, trace::ResultBool>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
-        return r->first.value;
+    auto wp = whnf();
+    if (!wp) {
+        tracingCacheLog("replay fallback: getBool");
+        return ensureInner()->getBool(errorCtx);
     }
-    tracingCacheLog("replay fallback: getBool");
-    return ensureInner()->getBool(errorCtx);
+    auto * p = std::get_if<trace::WHNFBool>(&(*wp)->payload);
+    if (!p)
+        return ensureInner()->getBool(errorCtx);
+    return p->value;
 }
 
 NixInt TracingReplayObject::getInt(std::string_view errorCtx)
 {
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetInt query{parentHash};
-    if (auto r = lookupResult<trace::QueryGetInt, trace::ResultInt>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
-        return NixInt{r->first.value};
+    auto wp = whnf();
+    if (!wp) {
+        tracingCacheLog("replay fallback: getInt");
+        return ensureInner()->getInt(errorCtx);
     }
-    tracingCacheLog("replay fallback: getInt");
-    return ensureInner()->getInt(errorCtx);
+    auto * p = std::get_if<trace::WHNFInt>(&(*wp)->payload);
+    if (!p)
+        return ensureInner()->getInt(errorCtx);
+    return NixInt{p->value};
 }
 
 NixFloat TracingReplayObject::getFloat(std::string_view errorCtx)
 {
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetFloat query{parentHash};
-    if (auto r = lookupResult<trace::QueryGetFloat, trace::ResultFloat>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
-        return r->first.value;
+    auto wp = whnf();
+    if (!wp) {
+        tracingCacheLog("replay fallback: getFloat");
+        return ensureInner()->getFloat(errorCtx);
     }
-    tracingCacheLog("replay fallback: getFloat");
-    return ensureInner()->getFloat(errorCtx);
+    auto * p = std::get_if<trace::WHNFFloat>(&(*wp)->payload);
+    if (!p)
+        return ensureInner()->getFloat(errorCtx);
+    return p->value;
 }
 
 size_t TracingReplayObject::getListSize()
 {
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetListSize query{parentHash};
-    if (auto r = lookupResult<trace::QueryGetListSize, trace::ResultListSize>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
-        return r->first.size;
+    auto wp = whnf();
+    if (!wp) {
+        tracingCacheLog("replay fallback: getListSize");
+        return ensureInner()->getListSize();
     }
-    tracingCacheLog("replay fallback: getListSize");
-    return ensureInner()->getListSize();
+    auto * p = std::get_if<trace::WHNFList>(&(*wp)->payload);
+    if (!p)
+        return ensureInner()->getListSize();
+    return p->size;
 }
 
 std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
@@ -300,14 +326,12 @@ ObjectType TracingReplayObject::getTypeLazy()
 
 ObjectType TracingReplayObject::getType()
 {
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetType query{parentHash};
-    if (auto r = lookupResult<trace::QueryGetType, trace::ResultType>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
-        return stringToObjectType(r->first.type);
+    auto wp = whnf();
+    if (!wp) {
+        tracingCacheLog("replay fallback: getType (from=%s)", triePos.queryHashStr);
+        return ensureInner()->getType();
     }
-    tracingCacheLog("replay fallback: getType (from=%s)", triePos.queryHashStr);
-    return ensureInner()->getType();
+    return stringToObjectType((*wp)->type);
 }
 
 RootValue TracingReplayObject::defeatCache()

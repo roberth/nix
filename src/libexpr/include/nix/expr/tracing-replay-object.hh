@@ -71,6 +71,12 @@ class TracingReplayObject : public Object
     template<typename Q, typename R>
     std::optional<std::pair<R, TriePosition>> lookupStructuralChild(const Q & query) const;
 
+    /* Memoized WHNF lookup. First call to any of the WHNF-subsumed
+       getters (getType / getInt / getString / etc.) fires `whnf()`
+       which looks up the recorded QueryGetWHNF response. */
+    mutable std::optional<trace::ResultWHNF> cachedWHNF;
+    std::optional<const trace::ResultWHNF *> whnf();
+
 public:
     TracingReplayObject(
         TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner);

@@ -12,6 +12,12 @@
 
 namespace nix {
 
+/** Compute a value's WHNF in one pass by calling the Object's
+    per-type getters. Used by TracingObject::whnf to record a single
+    QueryGetWHNF observation, and by the walker's dispatch to compute
+    the live response for a recorded QueryGetWHNF. */
+trace::ResultWHNF computeWHNFFromObject(Object & obj);
+
 /**
  * Object wrapper that logs all operations to a trace file and optionally
  * to a trie index via TracingWriter.

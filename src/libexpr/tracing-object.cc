@@ -144,113 +144,87 @@ trace::ResultWHNF & TracingObject::whnf()
 
 std::vector<std::string> TracingObject::getAttrNames()
 {
-    auto result = inner->getAttrNames();
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetAttrNames query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
-    trace::ResultListOfStrings resJson{result};
-    auto tp = writer.logResult(valueId, resJson, qh);
-    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
-    return result;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
+    if (!p)
+        throw Error("getAttrNames on non-set value (type %s)", w.type);
+    return p->names;
 }
 
 std::string TracingObject::getStringIgnoreContext()
 {
-    auto result = inner->getStringIgnoreContext();
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetString query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
-    trace::ResultString resJson{result};
-    auto tp = writer.logResult(valueId, resJson, qh);
-    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
-    return result;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
+    if (!p)
+        throw Error("getStringIgnoreContext on non-string value (type %s)", w.type);
+    return p->value;
 }
 
 std::string TracingObject::getStringWithoutContext()
 {
-    auto result = inner->getStringWithoutContext();
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetString query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
-    trace::ResultString resJson{result};
-    auto tp = writer.logResult(valueId, resJson, qh);
-    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
-    return result;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
+    if (!p)
+        throw Error("getStringWithoutContext on non-string value (type %s)", w.type);
+    if (!p->context.empty())
+        throw Error("string has unexpected context (= %zu elements)", p->context.size());
+    return p->value;
 }
 
 std::pair<std::string, NixStringContext> TracingObject::getStringWithContext()
 {
-    auto result = inner->getStringWithContext();
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetStringWithContext query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
-    std::vector<std::string> ctxStrings;
-    for (auto & elem : result.second)
-        ctxStrings.push_back(elem.to_string());
-    trace::ResultStringWithContext resJson{result.first, std::move(ctxStrings)};
-    auto tp = writer.logResult(valueId, resJson, qh);
-    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
-    return result;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
+    if (!p)
+        throw Error("getStringWithContext on non-string value (type %s)", w.type);
+    NixStringContext ctx;
+    for (auto & s : p->context)
+        ctx.insert(NixStringContextElem::parse(s));
+    return {p->value, std::move(ctx)};
 }
 
 RootedPath TracingObject::getPath()
 {
-    auto result = inner->getPath();
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetPath query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
-    trace::ResultPath resJson{result.path.abs()};
-    auto tp = writer.logResult(valueId, resJson, qh);
-    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
-    return result;
+    /* WHNF records that this is a path; the actual RootedPath needs
+       a SourceRoot from inner. */
+    whnf();
+    return inner->getPath();
 }
 
-bool TracingObject::getBool(std::string_view errorCtx)
+bool TracingObject::getBool(std::string_view)
 {
-    auto result = inner->getBool(errorCtx);
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetBool query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
-    trace::ResultBool resJson{result};
-    auto tp = writer.logResult(valueId, resJson, qh);
-    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
-    return result;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFBool>(&w.payload);
+    if (!p)
+        throw Error("getBool on non-bool value (type %s)", w.type);
+    return p->value;
 }
 
-NixInt TracingObject::getInt(std::string_view errorCtx)
+NixInt TracingObject::getInt(std::string_view)
 {
-    auto result = inner->getInt(errorCtx);
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetInt query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
-    trace::ResultInt resJson{result.value};
-    auto tp = writer.logResult(valueId, resJson, qh);
-    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
-    return result;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFInt>(&w.payload);
+    if (!p)
+        throw Error("getInt on non-int value (type %s)", w.type);
+    return NixInt{p->value};
 }
 
-NixFloat TracingObject::getFloat(std::string_view errorCtx)
+NixFloat TracingObject::getFloat(std::string_view)
 {
-    auto result = inner->getFloat(errorCtx);
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetFloat query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
-    trace::ResultFloat resJson{result};
-    auto tp = writer.logResult(valueId, resJson, qh);
-    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
-    return result;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
+    if (!p)
+        throw Error("getFloat on non-float value (type %s)", w.type);
+    return p->value;
 }
 
 size_t TracingObject::getListSize()
 {
-    auto result = inner->getListSize();
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetListSize query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
-    trace::ResultListSize resJson{result};
-    auto tp = writer.logResult(valueId, resJson, qh);
-    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
-    return result;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFList>(&w.payload);
+    if (!p)
+        throw Error("getListSize on non-list value (type %s)", w.type);
+    return p->size;
 }
 
 std::shared_ptr<Object> TracingObject::getListElem(size_t index)
@@ -284,26 +258,15 @@ std::vector<std::string> TracingObject::getListOfStringsNoCtx()
 
 ObjectType TracingObject::getTypeLazy()
 {
-    auto result = inner->getTypeLazy();
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetType query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
-    trace::ResultType resJson{objectTypeToString(result)};
-    auto tp = writer.logResult(valueId, resJson, qh);
-    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
-    return result;
+    auto lazyType = inner->getTypeLazy();
+    if (lazyType == nThunk)
+        return nThunk;
+    return stringToObjectType(whnf().type);
 }
 
 ObjectType TracingObject::getType()
 {
-    auto result = inner->getType();
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetType query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
-    trace::ResultType resJson{objectTypeToString(result)};
-    auto tp = writer.logResult(valueId, resJson, qh);
-    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
-    return result;
+    return stringToObjectType(whnf().type);
 }
 
 RootValue TracingObject::defeatCache()

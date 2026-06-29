@@ -942,7 +942,9 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
 
     nlohmann::json resultJson;
     try {
-        if (tag == "getType") {
+        if (tag == "getWHNF") {
+            resultJson = computeWHNFFromObject(*obj);
+        } else if (tag == "getType") {
             resultJson = trace::ResultType{objectTypeToString(obj->getType())};
         } else if (tag == "getAttr") {
             auto name = params["name"].get<std::string>();
