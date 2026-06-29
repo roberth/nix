@@ -35,7 +35,7 @@ class TracingObject : public Object
        inherited scope (= CDI(Q) at the cb-apply boundary). Child
        queries on this wrapper emit at
        `scopeStateIdAt(applyResultSubject, applyScope, writer.d1CidasksWalk,
-       walk.size())` — the per-arg evolved cdi the design's
+       walk.size())` — the per-arg evolved scopeStateId the design's
        principle #3 requires for sibling discrimination. Null on
        non-apply-result wrappers (= navigation children). */
     std::optional<cidasks::Subject> applyResultSubject;
@@ -69,7 +69,7 @@ public:
     }
 
     /** Attach the apply-result structural identity — for apply-result
-        wrappers, so subsequent child queries emit at the evolved cdi.
+        wrappers, so subsequent child queries emit at the evolved scopeStateId.
         Mirrors TracingReplayObject's machinery. */
     TracingObject & withApplyResultSubject(cidasks::Subject subject, Hash scope)
     {
@@ -91,7 +91,7 @@ public:
         target of further queries). Surfacing the Subject lets the
         next apply build `ApplyResultSubject{fn=this.subject, ...}`
         with constituents whose CDIs *evolve* via cidasks own-loop,
-        instead of falling back to `OpaqueContent{this.cdi}` which
+        instead of falling back to `OpaqueContent{this.scopeStateId}` which
         freezes the CDI at construction time. Non-apply-result
         wrappers (= fresh from evalFile, navigation children)
         legitimately have no Subject — for those, the OpaqueContent

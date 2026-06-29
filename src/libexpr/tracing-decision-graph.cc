@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS Results (
 --
 -- Why keyed by requestHash, not by responseHash (= the natural CAS
 -- key): the depth-2 reqHash is `SHA-256(query{from =
--- cidasks-evolved cdi})` — a pure function of (subject, scope,
+-- cidasks-evolved scopeStateId})` — a pure function of (subject, scope,
 -- prior facts in the chain). Two recordings reaching the same
 -- reqHash necessarily observed the same history; a deterministic
 -- env then produces the same response, so (request → response) is

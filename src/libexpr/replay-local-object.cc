@@ -77,7 +77,7 @@ static Hash stampPerArgFields(
 
 /* Look up the recorded payload for `query` in LocalResponseMap.
    The map is keyed by requestHash and that's sound at depth-2
-   because reqHash is `SHA-256(query{from = cidasks-evolved cdi})`
+   because reqHash is `SHA-256(query{from = cidasks-evolved scopeStateId})`
    — a pure function of (subject, scope, prior chain facts). Two
    recordings reaching the same reqHash necessarily observed the
    same history; a deterministic env then produces the same
@@ -106,12 +106,12 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query)
    singleton-requestSet edge from `*chainCursor → toFactSet`, and
    (c) on a match advances the shared chain cursor and appends the
    fact to the shared walk so subsequent probes compose against the
-   correctly evolved cdis. On mismatch we throw a divergence signal
+   correctly evolved scopeStateIds. On mismatch we throw a divergence signal
    which the surrounding walker layer turns into a miss → depth-1
    fallback handles re-eval. */
 /* Append the just-probed fact to `walkFacts` so the next probe's
    `stampPerArgFields` sees its own-loop contribution. Whether or not
-   validation against AmbientAsks runs, the per-arg cdi evolution
+   validation against AmbientAsks runs, the per-arg scopeStateId evolution
    relies on the walk extending in lockstep with the recorder — so
    this needs to fire on every probe, not just validated ones. */
 template<typename Q>
@@ -175,7 +175,7 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
     if (!r.type)
         return nullptr;
     /* Child Subject is DerivedSubject of THIS subject — `scopeStateIdAt`
-       on the child will recompute parent's cdi at the child's
+       on the child will recompute parent's scopeStateId at the child's
        current edge index, so any further parent observations are
        reflected automatically. Pass shared walk/cursor. */
     cidasks::Subject childSubject{cidasks::DerivedSubject{
@@ -547,7 +547,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                    advance, ε's response would be the pre-apply
                    cursor and the d=1 walk would derail. */
                 {
-                    /* Use edge 0 cdis (= initial structural-address
+                    /* Use edge 0 scopeStateIds (= initial structural-address
                        values) for fn/arg. Mirrors the recorder side:
                        `TracingEvaluator::apply` records
                        `QueryApply{fnId, argId}` where `fnId` /

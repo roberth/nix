@@ -17,8 +17,8 @@ LambdaApplyResultObject::LambdaApplyResultObject(
     , applyScope(std::move(applyScope_))
     , depth2ApplyId(std::move(depth2ApplyId_))
 {
-    auto cdi = cidasks::scopeStateIdAfter(applyResultSubject, applyScope, {});
-    applyCdiHex = cdi.to_string(HashFormat::Base16, false);
+    auto scopeStateId = cidasks::scopeStateIdAfter(applyResultSubject, applyScope, {});
+    applyScopeStateIdHex = scopeStateId.to_string(HashFormat::Base16, false);
 }
 
 void LambdaApplyResultObject::recordD2(const trace::QueryVariant & query, const trace::ResultVariant & result)
@@ -136,8 +136,8 @@ ObjectType LambdaApplyResultObject::getType()
 {
     auto type = inner->getType();
     recordD2(trace::QueryGetType{std::string{}}, trace::ResultType{objectTypeToString(type)});
-    tracingCacheLog("laro: getType applyCdi=%s type=%s",
-        applyCdiHex.substr(0, 16), objectTypeToString(type));
+    tracingCacheLog("laro: getType applyScopeStateId=%s type=%s",
+        applyScopeStateIdHex.substr(0, 16), objectTypeToString(type));
     return type;
 }
 

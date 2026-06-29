@@ -124,7 +124,7 @@ public:
        `fromHex`. Used by the depth-2 walker to pre-populate an
        `ApplyContext` with observations the recorder made on a
        cb-arg seed, so warm-replay child queries can compute the
-       same evolved cdi the recorder wrote at.
+       same evolved scopeStateId the recorder wrote at.
 
        Implementation is a linear scan over Requests with a
        substring filter on the CBOR-encoded payload. Acceptable at

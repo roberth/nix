@@ -38,12 +38,12 @@ class TracingDecisionGraph;
 class ReplayLocalObject : public Object
 {
     /* Full structural identity. Combined with `scope` and the shared
-       `walkFacts`, `cidasks::scopeStateIdAt` computes this proxy's cdi
+       `walkFacts`, `cidasks::scopeStateIdAt` computes this proxy's scopeStateId
        at any walk position. The recorder's cidasks substitution at
        flush uses the same evaluation, so walker and recorder agree
        on per-probe `from` fields without snapshot/lazy hacks — even
        when a child's structural component depends on a parent's
-       evolving cdi.
+       evolving scopeStateId.
 
        For root (cb-apply) locals the subject is constructed by the
        walker as `OpaqueContentSubject{localId}` with scope = 0, so
@@ -53,19 +53,19 @@ class ReplayLocalObject : public Object
 
        For children minted by maybeGetAttr/getListElem the subject is
        `DerivedSubject{parent.subject, ...}` — `scopeStateIdAt`
-       recursively re-evaluates the parent's cdi at the child's
+       recursively re-evaluates the parent's scopeStateId at the child's
        current edge index, so children don't need to snapshot parent
        state at creation. */
     cidasks::Subject subject;
     Hash scope;
-    /* Initial cdi (= scopeStateIdAt(subject, scope, {}, 0)) — kept for
+    /* Initial scopeStateId (= scopeStateIdAt(subject, scope, {}, 0)) — kept for
        legacy id-string consumers (e.g. defeatCache's recursive
        apply construction). */
     AmbientId localId;
     /* Shared walk across all proxies in one cb apply. Each validated
        probe appends a Fact (one fact per edge, matching the writer's
        multi-edge AmbientAsks structure). `scopeStateIdAt` reads this
-       to compute each proxy's evolved cdi.
+       to compute each proxy's evolved scopeStateId.
 
        Backed as a shared single-fact-edge sequence: each entry is
        wrapped in a single-fact Edge so the walk's edge indices match
@@ -168,7 +168,7 @@ public:
     /* Constructor for derived children. Subject is built by the
        parent's maybeGetAttr / getListElem as `DerivedSubject{parent,
        ...}`. Inherits parent's shared walk/cursor so the child's
-       cdi evaluation rides on the same per-cb-apply chain. */
+       scopeStateId evaluation rides on the same per-cb-apply chain. */
     ReplayLocalObject(
         cidasks::Subject subject_,
         Hash scope_,

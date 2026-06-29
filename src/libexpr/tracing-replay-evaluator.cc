@@ -39,7 +39,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
     /* Per-walk resolution context. The cumulative cidasks walk
        (= `this->cidasksWalk`) lives on the evaluator so it
        persists across v13Walk calls — required for cell-chain
-       cdi computation to land at the writer's `d1EdgeIndex` (=
+       scopeStateId computation to land at the writer's `d1EdgeIndex` (=
        cumulative across logResults). */
     ResolutionContext ctx{
         std::move(currentProxy),
@@ -50,7 +50,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        walk-loop promotes the buffer to a cumulative cidasksWalk
        edge on commit (via commitEdge) or discards it on reject.
        Without the buffer, rejected-edge facts would pollute
-       cidasksWalk and throw off the cell-chain cdi computations. */
+       cidasksWalk and throw off the cell-chain scopeStateId computations. */
     std::vector<cidasks::Observation> pendingEdgeObservations;
 
     auto commitEdge = [&]() {
@@ -370,7 +370,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
     /* Walk the proxy's argScope chain looking for a cell whose
        liveObject's content id matches idStr. The id was stamped
        at some writer-side `d1CidasksWalk` index N at flush time,
-       but the lookup carries only the cdi value — not the index.
+       but the lookup carries only the scopeStateId value — not the index.
        So try every edge boundary 0..cidasksWalk.size() against
        this subject's scopeStateIdAt and accept the first match.
        cidasksWalk is cumulative across v13Walk calls (= mirror of
@@ -378,7 +378,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
        within range provided the walker has processed at least N
        prior Asks-edge commits — which it has by the time this
        lookup runs, since writer's flush K only stamps facts that
-       reference cdis from flushes 0..K-1 (= already in walker's
+       reference scopeStateIds from flushes 0..K-1 (= already in walker's
        cidasksWalk by the time Q_K's dispatch reaches them). */
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     int cellDepth = 0;
@@ -391,9 +391,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                 auto scope = live->getInheritedScope();
                 bool matched = false;
                 for (size_t k = 0; k <= cidasksWalk.size() && !matched; ++k) {
-                    auto cdi = cidasks::scopeStateIdAt(*subj, scope, cidasksWalk, k);
-                    auto cdiHex = cdi.to_string(HashFormat::Base16, false);
-                    if (cdiHex == idStr) {
+                    auto scopeStateId = cidasks::scopeStateIdAt(*subj, scope, cidasksWalk, k);
+                    auto scopeStateIdHex = scopeStateId.to_string(HashFormat::Base16, false);
+                    if (scopeStateIdHex == idStr) {
                         tracingCacheLog(
                             "resolve %s: cell[%d] subject=%s MATCH at edge=%zu",
                             idStr.substr(0, 12), cellDepth,
@@ -601,7 +601,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            PositionalSeed and OpaqueContent both yield `localId`),
            which is why this bug stayed latent until cb-sibling
            landed: it's the first test that needs the standin's
-           cdi to *evolve* via subsequent probes for downstream
+           scopeStateId to *evolve* via subsequent probes for downstream
            discrimination.
 
            Opt into depth-2 per-probe validation (= each probe
@@ -1161,7 +1161,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        apply-result wrappers (TracingReplayObject /
        TracingObject) expose their applyResultSubject as `fn` for
        further applies — their CDIs evolve via cidasks own-loop
-       instead of being frozen by `OpaqueContent{this.cdi}`. Fall
+       instead of being frozen by `OpaqueContent{this.scopeStateId}`. Fall
        back to OpaqueContent only when no Subject is exposed
        (= atom whose CDI is fully determined at construction). */
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256);
@@ -1187,21 +1187,21 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        edge-for-edge once all prior cb-applies' chains have been
        dispatched. */
     auto & walk = cidasksWalk;
-    auto applyCdi = cidasks::scopeStateIdAt(resultSubject, applyScope, walk, walk.size());
-    auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
+    auto applyScopeStateId = cidasks::scopeStateIdAt(resultSubject, applyScope, walk, walk.size());
+    auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(
-            "walker apply: fn=%s arg=%s scope=%s -> applyCdi=%s",
+            "walker apply: fn=%s arg=%s scope=%s -> applyScopeStateId=%s",
             cidasks::describe(*apr.fn),
             cidasks::describe(*apr.arg),
             applyScope.to_string(HashFormat::Base16, false).substr(0, 12),
-            applyCdiHex.substr(0, 16));
+            applyScopeStateIdHex.substr(0, 16));
     }
 
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
-        .queryHashStr = applyCdiHex,
+        .queryHashStr = applyScopeStateIdHex,
     };
     auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });

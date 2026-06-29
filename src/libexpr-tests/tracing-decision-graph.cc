@@ -75,7 +75,7 @@ TEST_F(TracingDecisionGraphTest, LocalResponseMap_KeyedByRequestHash_FunctionAtD
     /* `LocalResponseMap` is keyed by requestHash. This is sound at
        depth-2 (the only place the walker reads it) because the
        depth-2 reqHash is `SHA-256(query{from = cidasks-evolved
-       cdi})` — a pure function of (subject, scope, prior facts in
+       scopeStateId})` — a pure function of (subject, scope, prior facts in
        the chain). Two recordings reaching the same reqHash
        necessarily observed the same history; a deterministic env
        then produces the same response, so (request → response) is a

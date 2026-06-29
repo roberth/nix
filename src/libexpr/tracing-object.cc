@@ -317,8 +317,8 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
 
     /* apply-result CDI is content-only — see commentary in
        TracingEvaluator::apply. */
-    auto applyCdi = cidasks::scopeStateIdAfter(resultSubject, applyScopeLocal, {});
-    auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
+    auto applyScopeStateId = cidasks::scopeStateIdAfter(resultSubject, applyScopeLocal, {});
+    auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
 
     /* Record the apply Request payload at the cidasks hash so dispatch
        and the legacy QueryApply{fn, arg} payload coincide. The legacy
@@ -329,7 +329,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto result = inner->queryApply(argObj);
     TriePosition applyTriePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
-        .queryHashStr = applyCdiHex,
+        .queryHashStr = applyScopeStateIdHex,
     };
     auto child = std::shared_ptr<TracingObject>(
         new TracingObject(ref<Object>(result), writer, v, applyTriePos));

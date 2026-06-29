@@ -16,9 +16,9 @@ std::optional<Subject> subjectFromObjectIdentity(const ObjectIdentityLike & id)
 {
     if (id.subject)
         return *id.subject;
-    if (id.cdiHex) {
+    if (id.scopeStateIdHex) {
         try {
-            auto h = Hash::parseNonSRIUnprefixed(*id.cdiHex, HashAlgorithm::SHA256);
+            auto h = Hash::parseNonSRIUnprefixed(*id.scopeStateIdHex, HashAlgorithm::SHA256);
             return Subject{OpaqueContentSubject{h}};
         } catch (const std::exception &) {
             return std::nullopt;

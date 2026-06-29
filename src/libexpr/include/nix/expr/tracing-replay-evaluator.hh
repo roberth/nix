@@ -57,7 +57,7 @@ class TracingReplayEvaluator : public Evaluator
         on the walker matches the writer's `scopeStateIdAt` at the
         same edge K. This alignment is what makes per-fact `from`
         encodings reproducible at warm — without it, cell-chain
-        cdi computation lands at the wrong edge index (= cb-385's
+        scopeStateId computation lands at the wrong edge index (= cb-385's
         original failure mode) and per-arg `from` lookups miss. */
     std::vector<cidasks::Edge> cidasksWalk;
     /** Dedup committed edges by their elementHash-set fingerprint
@@ -159,7 +159,7 @@ public:
         `d1CidasksWalk`. Exposed so apply-result wrappers
         (TracingReplayObject with applyResultSubject) can compute
         `scopeStateIdAt(subject, scope, walk, walk.size())` and match the
-        writer's evolved cdi at the same walk index — the per-arg
+        writer's evolved scopeStateId at the same walk index — the per-arg
         identity alignment principle #3 requires. */
     const std::vector<cidasks::Edge> & getCidasksWalk() const
     {

@@ -102,7 +102,7 @@ TEST(AmbientObjectTest, GetBool)
 TEST(AmbientObjectTest, GetAttrReturnsChild)
 {
     auto seed = testId(0);
-    /* Child cdi is the producer query's queryHash. With Subject-based
+    /* Child scopeStateId is the producer query's queryHash. With Subject-based
        construction the AmbientObject derives this from DerivedSubject
        at construction time. */
     auto childCdi = cidasks::structuralAddressAfter(

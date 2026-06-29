@@ -55,7 +55,7 @@ class LambdaApplyResultObject : public Object
     ref<Object> inner;
     TracingWriter & writer;
 
-    /* ApplyResultSubject{OpaqueContent{TLO.cdi}, contraArg.subject}.
+    /* ApplyResultSubject{OpaqueContent{TLO.scopeStateId}, contraArg.subject}.
        Matches what `<replay-local-lambda>`'s primop builds for the
        synthetic apply-result subject at warm. flushPendingAmbient's
        d=2 loop uses this subject to stamp each observation's `from`
@@ -77,8 +77,8 @@ class LambdaApplyResultObject : public Object
     /* scopeStateIdAfter(applyResultSubject, applyScope, {}) hex — the
        content-only apply-result CDI exposed via getCdiHex. Computed
        once at construction to match `TracingEvaluator::apply`'s
-       `applyCdiHex` (= what the walker computes too). */
-    std::string applyCdiHex;
+       `applyScopeStateIdHex` (= what the walker computes too). */
+    std::string applyScopeStateIdHex;
 
     /* Argument-scope cell — same shape as TracingObject. */
     std::shared_ptr<const ArgScopeCell> argScope;
@@ -104,12 +104,12 @@ public:
     /** Symmetric to TracingObject/TracingReplayObject: surface the
         ApplyResultSubject so a subsequent apply on this wrapper
         composes evolving ApplyResultSubject constituents instead of
-        the frozen OpaqueContent{applyCdiHex} fallback. */
+        the frozen OpaqueContent{applyScopeStateIdHex} fallback. */
     const cidasks::Subject * getSubject() const override { return &applyResultSubject; }
 
     Hash getInheritedScope() const override { return applyScope; }
 
-    std::optional<std::string> getCdiHex() const override { return applyCdiHex; }
+    std::optional<std::string> getCdiHex() const override { return applyScopeStateIdHex; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

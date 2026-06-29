@@ -351,16 +351,16 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        have caught up to writer.d1.size at cold sib B apply (= all
        of sib A's perQAsksEdges traversed via prior v13Walks). */
     auto & d1Walk = writer.getD1CidasksWalk();
-    auto applyCdi = cidasks::scopeStateIdAt(resultSubject, applyScope, d1Walk, d1Walk.size());
-    auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
+    auto applyScopeStateId = cidasks::scopeStateIdAt(resultSubject, applyScope, d1Walk, d1Walk.size());
+    auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(
-            "writer apply: fn=%s arg=%s scope=%s -> applyCdi=%s",
+            "writer apply: fn=%s arg=%s scope=%s -> applyScopeStateId=%s",
             cidasks::describe(*apr.fn),
             cidasks::describe(*apr.arg),
             applyScope.to_string(HashFormat::Base16, false).substr(0, 12),
-            applyCdiHex.substr(0, 16));
+            applyScopeStateIdHex.substr(0, 16));
     }
 
     auto v = writer.getSink().logQuery(trace::QueryApply{fnId, argId});
@@ -385,7 +385,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel; v13 doesn't key off this
-        .queryHashStr = applyCdiHex,
+        .queryHashStr = applyScopeStateIdHex,
     };
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withScope(std::move(cell));
