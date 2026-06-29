@@ -223,15 +223,15 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
             using T = std::decay_t<decltype(alt)>;
 
             /* The subject's id at edge step `k`, BEFORE this subject's
-               own observation-fold (= `own`) gets XOR'd in. Naming
-               note: not pure De-Bruijn-style "structural" for all
-               variants. For PositionalSeed / OpaqueContentSubject it
-               IS k-invariant pure position. For ApplyResultSubject it
-               depends on `k` because it composes the constituents'
-               *fully evolved* CDIs (= constituents' scopeStateIdAt at
-               the same k) into a SHA-sealed shape — so the apply's
-               id varies with k via constituent evolution even before
-               this subject's own own-fold contributes. */
+               selfFactFold gets XOR'd in. Naming note: not pure
+               De-Bruijn-style "structural" for all variants. For
+               PositionalSeed / OpaqueContentSubject it IS k-invariant
+               pure position. For ApplyResultSubject it depends on `k`
+               because it composes the constituents' *fully evolved*
+               scopeStateIds (= constituents' scopeStateIdAt at the
+               same k) into a SHA-sealed shape — so the apply's id
+               varies with k via constituent evolution even before
+               this subject's selfFactFold contributes. */
             auto subjectIdAt = [&](size_t k) -> Hash {
                 if constexpr (std::is_same_v<T, PositionalSeed>) {
                     auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
@@ -272,17 +272,25 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
                 }
             };
 
-            // Run the walk and accumulate this subject's own-direct contributions.
-            Hash own = Hash(HashAlgorithm::SHA256);
+            /* Walk the chain and accumulate the XOR-fold of v13-fact
+               element hashes from observations that point at THIS
+               subject. An observation in `walk[k]` points at this
+               subject iff `obs.fromHash` (= the recorder-stamped
+               subject pointer carried in the `from` field of the
+               query that produced the fact) equals this subject's
+               running scopeStateId at step k. The result is the
+               contribution to scopeStateId that comes from v13 facts
+               about self. */
+            Hash selfFactFold = Hash(HashAlgorithm::SHA256);
             for (size_t k = 0; k < edgeIndex && k < walk.size(); ++k) {
-                Hash myCidAtK = TracingDecisionGraph::xorHashes(subjectIdAt(k), own);
+                Hash myScopeStateIdAtK = TracingDecisionGraph::xorHashes(subjectIdAt(k), selfFactFold);
                 for (auto & obs : walk[k].observations) {
-                    if (obs.fromHash == myCidAtK)
-                        own = TracingDecisionGraph::xorHashes(own, obs.elementHash);
+                    if (obs.fromHash == myScopeStateIdAtK)
+                        selfFactFold = TracingDecisionGraph::xorHashes(selfFactFold, obs.elementHash);
                 }
             }
 
-            return TracingDecisionGraph::xorHashes(subjectIdAt(edgeIndex), own);
+            return TracingDecisionGraph::xorHashes(subjectIdAt(edgeIndex), selfFactFold);
         },
         subject.data);
 }
