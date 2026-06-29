@@ -12,21 +12,6 @@ static std::string hashHex(const Hash & h)
     return h.to_string(HashFormat::Base16, false);
 }
 
-std::optional<Subject> subjectFromObjectIdentity(const ObjectIdentityLike & id)
-{
-    if (id.subject)
-        return *id.subject;
-    if (id.scopeStateIdHex) {
-        try {
-            auto h = Hash::parseNonSRIUnprefixed(*id.scopeStateIdHex, HashAlgorithm::SHA256);
-            return Subject{OpaqueContentSubject{h}};
-        } catch (const std::exception &) {
-            return std::nullopt;
-        }
-    }
-    return std::nullopt;
-}
-
 Hash extractFrom(const trace::QueryVariant & query)
 {
     return std::visit(

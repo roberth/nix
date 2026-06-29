@@ -195,20 +195,6 @@ PathAndRoots pathAndRootsFromSubject(const Subject & subject);
     path is encoded separately as a PathExpr. */
 const Subject & rootSubjectOf(const Subject & subject);
 
-/** Bridge from an Object's identity surface to a cidasks Subject.
-    Prefers `getSubject()` (= the proxy's static structural identifier
-    when one is registered); falls back to wrapping `getScopeStateIdHex()` as
-    an `OpaqueContentSubject` for non-proxy or pre-existing-scopeStateId
-    Objects. Returns nullopt if the Object exposes neither. Used at
-    apply boundaries to compose `ApplyResultSubject` from the fn/arg
-    constituents without needing to dynamic_cast each proxy type. */
-struct ObjectIdentityLike
-{
-    const Subject * subject; ///< from `Object::getSubject()`, may be null
-    std::optional<std::string> scopeStateIdHex; ///< from `Object::getScopeStateIdHex()`, fallback
-};
-std::optional<Subject> subjectFromObjectIdentity(const ObjectIdentityLike & id);
-
 /** Short readable representation of a Subject — for tracing logs.
     Example: `seed(2)`, `getAttr(seed(2), "left")`,
     `applyResult(seed(0), seed(1))`, `opaque(ab12cd...)`. */
