@@ -42,7 +42,7 @@ const Subject & rootSubjectOf(const Subject & subject)
 
 /* Subject leaf equality — used by the path builder to dedupe roots
    (= two derivation chains rooted at the same PositionalSeed or
-   OpaqueContentSubject share one entry in fromCIDs). Only meaningful
+   PostulatedIdempotentRead share one entry in fromCIDs). Only meaningful
    for leaf forms; the builder only compares leaves. */
 static bool sameLeaf(const Subject & a, const Subject & b)
 {
@@ -51,8 +51,8 @@ static bool sameLeaf(const Subject & a, const Subject & b)
             return ap->depth == bp->depth;
         return false;
     }
-    if (auto * ap = std::get_if<OpaqueContentSubject>(&a.data)) {
-        if (auto * bp = std::get_if<OpaqueContentSubject>(&b.data))
+    if (auto * ap = std::get_if<PostulatedIdempotentRead>(&a.data)) {
+        if (auto * bp = std::get_if<PostulatedIdempotentRead>(&b.data))
             return ap->hash == bp->hash;
         return false;
     }
@@ -65,7 +65,7 @@ PathAndRoots pathAndRootsFromSubject(const Subject & subject)
        DerivedSubject pushes a step onto its parent's path.
        ApplyResultSubject emits a single Apply step whose sub-paths
        carry their own (absolute-index) root references. Leaf
-       subjects (PositionalSeed, OpaqueContentSubject) deduplicate
+       subjects (PositionalSeed, PostulatedIdempotentRead) deduplicate
        against previously-collected roots so shared cb_args (= fn
        and arg derived from the same outer arg) collapse to one
        fromCIDs entry. */
@@ -94,7 +94,7 @@ PathAndRoots pathAndRootsFromSubject(const Subject & subject)
                 [&](const auto & alt) -> std::pair<trace::PathExpr, size_t> {
                     using T = std::decay_t<decltype(alt)>;
                     if constexpr (std::is_same_v<T, PositionalSeed>
-                                  || std::is_same_v<T, OpaqueContentSubject>) {
+                                  || std::is_same_v<T, PostulatedIdempotentRead>) {
                         size_t idx = findOrInsert(s);
                         return {{}, idx};
                     } else if constexpr (std::is_same_v<T, DerivedSubject>) {
@@ -191,7 +191,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
        Inheritance: `scope` is the XOR of outer-scope argStateIds (chiefly
        the cached call's argStateId(Q) at the cb-apply boundary). Passing
        zero gives the pure structural id. Leaf subjects
-       (PositionalSeed, OpaqueContentSubject) XOR `scope` into their
+       (PositionalSeed, PostulatedIdempotentRead) XOR `scope` into their
        base hash. Composite subjects (DerivedSubject,
        ApplyResultSubject) propagate `scope` recursively through
        their constituents' scope state ids; the structural derivation
@@ -210,7 +210,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
             /* The subject's id at edge step `k`, BEFORE this subject's
                selfFactFold gets XOR'd in. Naming note: not pure
                De-Bruijn-style "structural" for all variants. For
-               PositionalSeed / OpaqueContentSubject it IS k-invariant
+               PositionalSeed / PostulatedIdempotentRead it IS k-invariant
                pure position. For ApplyResultSubject it depends on `k`
                because it composes the constituents' *fully evolved*
                scopeStateIds (= constituents' scopeStateIdAt at the
@@ -238,7 +238,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
                     auto argAtK = structuralAddress(*alt.arg, scope, walk, k);
                     nlohmann::json qj = trace::QueryApply{hashHex(fnAtK), hashHex(argAtK)};
                     return hashString(HashAlgorithm::SHA256, qj.dump());
-                } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
+                } else if constexpr (std::is_same_v<T, PostulatedIdempotentRead>) {
                     /* X is treated as scope-saturated. Callers pass
                        hashes that already encode the relevant scope
                        — `AmbientObject::getCdi()` returns
@@ -339,7 +339,7 @@ std::string describe(const Subject & subject)
                 return kind + "(" + describe(*alt.parent) + ", " + sel + ")";
             } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
                 return "applyResult(" + describe(*alt.fn) + ", " + describe(*alt.arg) + ")";
-            } else if constexpr (std::is_same_v<T, OpaqueContentSubject>) {
+            } else if constexpr (std::is_same_v<T, PostulatedIdempotentRead>) {
                 return "opaque(" + alt.hash.to_string(HashFormat::Base16, false).substr(0, 12) + "...)";
             } else {
                 return "?";

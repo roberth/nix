@@ -569,7 +569,7 @@ public:
         enclosing.facts.push_back({
             trace::QueryVariant{applyQ},
             trace::ResultVariant{trace::ResultType{"apply"}},
-            cidasks::Subject{cidasks::OpaqueContentSubject{applyReqHash}},
+            cidasks::Subject{cidasks::PostulatedIdempotentRead{applyReqHash}},
             Hash{HashAlgorithm::SHA256},  // OpaqueContent is scope-saturated
             enclosing.applyId,
         });

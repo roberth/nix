@@ -12,7 +12,7 @@ static ref<SourceRoot> stubAmbientRoot()
     return SourceRoot::make(getFSSourceAccessor(), SourceRootKind::Internal);
 }
 
-/* Tests use OpaqueContentSubject to pin the proxy's content id to a
+/* Tests use PostulatedIdempotentRead to pin the proxy's content id to a
    stable per-test value. The Subject variant exists for cases like
    apply-result args that don't have a positional/derived form. */
 static AmbientId testId(int n)
@@ -22,7 +22,7 @@ static AmbientId testId(int n)
 
 static cidasks::Subject testSubject(int n)
 {
-    return cidasks::Subject{cidasks::OpaqueContentSubject{testId(n)}};
+    return cidasks::Subject{cidasks::PostulatedIdempotentRead{testId(n)}};
 }
 
 static std::string ambientHex(AmbientId id)

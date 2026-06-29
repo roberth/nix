@@ -303,11 +303,11 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
        OpaqueContent fallback fires as a fixed-atom identity. */
     cidasks::Subject fnSubj = getSubject()
         ? *getSubject()
-        : cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
+        : cidasks::Subject{cidasks::PostulatedIdempotentRead{fnIdHash}};
     Hash applyScopeLocal = getSubject() ? getInheritedScope() : applyScope;
     cidasks::Subject argSubj = argObj->getSubject()
         ? *argObj->getSubject()
-        : cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
+        : cidasks::Subject{cidasks::PostulatedIdempotentRead{argIdHash}};
     if (argObj->getSubject())
         applyScopeLocal = argObj->getInheritedScope();
     cidasks::Subject resultSubject{cidasks::ApplyResultSubject{

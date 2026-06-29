@@ -202,7 +202,7 @@ std::shared_ptr<Object> TracingLocalObject::queryApply(std::shared_ptr<Object> a
     auto argCdiHex = argObj->getScopeStateIdHex();
     cidasks::Subject argSubject = argObj->getSubject()
         ? *argObj->getSubject()
-        : cidasks::Subject{cidasks::OpaqueContentSubject{
+        : cidasks::Subject{cidasks::PostulatedIdempotentRead{
               argCdiHex
                   ? Hash::parseNonSRIUnprefixed(*argCdiHex, HashAlgorithm::SHA256)
                   : Hash{HashAlgorithm::SHA256}}};

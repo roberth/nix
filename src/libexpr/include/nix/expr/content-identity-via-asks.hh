@@ -57,19 +57,40 @@ struct ApplyResultSubject
     std::shared_ptr<const Subject> arg;
 };
 
-/** Escape hatch for values whose structural Subject isn't reachable
-    from a positional handle — typically apply-result args that come
-    from raw inner Values (not CdiObject-wrapped). Carries the
-    value's scope state id directly; observations on this value still
-    XOR-fold into its scope state id at the relevant factset point. */
-struct OpaqueContentSubject
+/** A Subject postulating that its source can be re-read idempotently
+    within an evaluator invocation; `hash` identifies the source. The
+    link to actual content is established by Facts as evaluation
+    proceeds, not by this hash.
+
+    ## Valid cases
+
+    - **Filesystem reads.** Nix treats the FS as a snapshot within
+      one evaluator invocation, so a file read is identified by its
+      path (= or a hash of the path, assuming a single root — WIP).
+    - **Hash of an expression string to be parsed.** Assuming the
+      parsing and loading parameters are identical, this uniquely
+      identifies the value *by content* (and no Facts are necessary
+      to pin down its behavior).
+
+    ## Invalid cases
+
+    - **Values that cannot be characterized completely ahead of
+      time** — e.g. a lazy function argument given as a `Value`. Its
+      behavior is whatever the caller eventually probes through it,
+      which can't be summarized by a single hash up front.
+    - **Taking an arbitrary subject id by value and using it as if
+      it's an up-to-date id.** The id may have come from a lazy
+      function argument; downstream behavior keyed on that id then
+      conflates all possible future states of the argument and
+      silently picks one of them, or produces other buggy behavior. */
+struct PostulatedIdempotentRead
 {
     Hash hash;
 };
 
 struct Subject
 {
-    std::variant<PositionalSeed, DerivedSubject, ApplyResultSubject, OpaqueContentSubject> data;
+    std::variant<PositionalSeed, DerivedSubject, ApplyResultSubject, PostulatedIdempotentRead> data;
 };
 
 /** A single observation reduced to the two hashes scopeStateIdAt needs.
@@ -105,7 +126,7 @@ Observation observationFromQR(const trace::QueryVariant & query, const trace::Re
     no inheritance.
 
     Inheritance applies at the leaf: `PositionalSeed` and
-    `OpaqueContentSubject` XOR `scope` into their base hash.
+    `PostulatedIdempotentRead` XOR `scope` into their base hash.
     `DerivedSubject` and `ApplyResultSubject` propagate `scope`
     via their constituents' (recursively scope-aware) scope state ids,
     so the structural derivation incorporates inheritance naturally
@@ -122,7 +143,7 @@ Hash scopeStateIdAfter(const Subject & subject, const Hash & scope, const std::v
     centralization), only argument-level subjects bear argStateIds:
     `PositionalSeed` (cb_arg seed, evolves via own-loop),
     `ApplyResultSubject` (composes constituent argument argStateIds), and
-    `OpaqueContentSubject` (escape hatch). `DerivedSubject` does not
+    `PostulatedIdempotentRead` (escape hatch). `DerivedSubject` does not
     have a argStateId — observations on derived values fold into the cb_arg
     root's own-loop and the derived value is referenced via
     `(root_cdi, path)`. Passing a `DerivedSubject` traps; callers
@@ -175,7 +196,7 @@ trace::PathExpr pathFromSubject(const Subject & subject);
     the natural root (= `roots[0]`); Apply steps inside the path
     reference other roots by absolute index via `fnRootIndex` /
     `argRootIndex`. Roots are leaves of the subject tree: PositionalSeeds
-    or OpaqueContentSubjects. Same-leaf occurrences (= e.g. fn and arg
+    or PostulatedIdempotentReads. Same-leaf occurrences (= e.g. fn and arg
     both deriving from the same cb_arg) collapse to one entry by Subject
     equality. Function characterization (= task #87) needs this so that
     observations on apply-result descendants reference both fn-root and
@@ -189,7 +210,7 @@ struct PathAndRoots
 PathAndRoots pathAndRootsFromSubject(const Subject & subject);
 
 /** Walk a Subject's parent chain through DerivedSubject nodes to
-    the root form (PositionalSeed, OpaqueContentSubject, or
+    the root form (PositionalSeed, PostulatedIdempotentRead, or
     ApplyResultSubject). Used by the per-arg flush path to compute
     the cb_arg root's argStateId for `from` substitution while the access
     path is encoded separately as a PathExpr. */

@@ -572,10 +572,10 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            and construct the standin with `PositionalSeed{depth}`
            — matching the recorder's TracingLocalObject subject.
 
-           Using OpaqueContentSubject{localId} here is the Fix B
+           Using PostulatedIdempotentRead{localId} here is the Fix B
            anti-pattern documented in
            `tracing-eval-cache-per-arg-completion.md`:
-           `OpaqueContentSubject`'s argStateId is constant in `k`
+           `PostulatedIdempotentRead`'s argStateId is constant in `k`
            (= no own-loop evolution), so once the standin's first
            probe extends the chain, every subsequent probe's
            `stampPerArgFields` reads back `localId` instead of the
@@ -1146,11 +1146,11 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     cidasks::Subject fnSubj = fn->getSubject()
         ? *fn->getSubject()
-        : cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
+        : cidasks::Subject{cidasks::PostulatedIdempotentRead{fnIdHash}};
 
     cidasks::Subject argSubj = arg->getSubject()
         ? *arg->getSubject()
-        : cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
+        : cidasks::Subject{cidasks::PostulatedIdempotentRead{argIdHash}};
     Hash applyScope = arg->getInheritedScope();
 
     cidasks::Subject resultSubject{cidasks::ApplyResultSubject{

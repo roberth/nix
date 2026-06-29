@@ -320,7 +320,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        TracingReplayObject when they're themselves apply results
        (ApplyResultSubject surfaced from applyResultSubject), and
        TracingLocalObject (PositionalSeed local). Fall back to
-       OpaqueContentSubject only when getSubject() is null — that
+       PostulatedIdempotentRead only when getSubject() is null — that
        narrows the fallback to atoms whose argStateId is fully determined
        at construction (e.g. fresh TracingObject from evalFile, an
        InterpreterObject wrapping a concrete value) and not subject
@@ -331,11 +331,11 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     cidasks::Subject fnSubj = fn->getSubject()
         ? *fn->getSubject()
-        : cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
+        : cidasks::Subject{cidasks::PostulatedIdempotentRead{fnIdHash}};
 
     cidasks::Subject argSubj = arg->getSubject()
         ? *arg->getSubject()
-        : cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
+        : cidasks::Subject{cidasks::PostulatedIdempotentRead{argIdHash}};
     Hash applyScope = arg->getInheritedScope();
 
     cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
