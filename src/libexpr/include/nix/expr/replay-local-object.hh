@@ -107,6 +107,24 @@ class ReplayLocalObject : public Object
        the recorder's TLO. */
     bool getTypeProbed = false;
 
+    /* Idempotency cache for value-returning probes (getInt, getBool,
+       getFloat, getString*, getListSize). The recorder logs exactly
+       one observation per such probe at cold; the walker must
+       advance `chainCursor` once to stay in lockstep but reuse the
+       cached response on any subsequent call. Without this, when
+       `dispatchAmbientQuery::navigatePath` invokes `queryApply`
+       multiple times against the same standin (= once per fact
+       dispatched on the apply result), each Apply Value's force
+       re-fires the standin's surface probes and pushes a fresh
+       fact past where the recorder stopped recording — the next
+       lookup at `walkFacts.size() > recorded_size` then misses
+       LocalResponseMap and the walker fails. */
+    std::optional<NixInt> knownInt;
+    std::optional<NixFloat> knownFloat;
+    std::optional<bool> knownBool;
+    std::optional<size_t> knownListSize;
+    std::optional<std::string> knownStringIgnoreContext;
+
     /* cb-arg apply context, sourced from the writer's localArg
        sidecar. `applyDepth` = `localCell->depth` at the recorder's
        AmbientResolver::apply boundary. `applyScope` = the resolver's

@@ -41,19 +41,17 @@ result=$(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/nes
 echo "Got: $result"
 [[ "$result" == 105 ]]
 
+echo "=== replay (expect 105) ==="
+result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/nested-ho.nix; }) { apply2 = midfn: midfn (n: n + 100); }')
+echo "Got: $result"
+[[ "$result" == 105 ]]
+
 echo "=== outer change to (n + 200) (expect 205) ==="
 result=$(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/nested-ho.nix; }) { apply2 = midfn: midfn (n: n + 200); }')
 echo "Got: $result"
 [[ "$result" == 205 ]]
 
-# TODO: warm-replay paths still need the depth-2 walker to evolve
-# argId via observations. Until that lands, _NIX_DISALLOW_PARSE
-# falls through to inner re-eval. Re-enable when the recursive cb
-# apply's argId carries the right observation history at warm replay.
-#   echo "=== replay (expect 105) ==="
-#   result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/nested-ho.nix; }) { apply2 = midfn: midfn (n: n + 100); }')
-#   [[ "$result" == 105 ]]
-#
-#   echo "=== restore (expect 105) ==="
-#   result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/nested-ho.nix; }) { apply2 = midfn: midfn (n: n + 100); }')
-#   [[ "$result" == 105 ]]
+echo "=== restore (expect 105) ==="
+result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/nested-ho.nix; }) { apply2 = midfn: midfn (n: n + 100); }')
+echo "Got: $result"
+[[ "$result" == 105 ]]

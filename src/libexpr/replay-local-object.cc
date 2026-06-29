@@ -187,12 +187,14 @@ std::vector<std::string> ReplayLocalObject::getAttrNames()
 
 std::string ReplayLocalObject::getStringIgnoreContext()
 {
+    if (knownStringIgnoreContext) return *knownStringIgnoreContext;
     trace::QueryGetString query{std::string{}};
     auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultString r = rJson;
+    knownStringIgnoreContext = r.value;
     return r.value;
 }
 
@@ -228,45 +230,53 @@ RootedPath ReplayLocalObject::getPath()
 
 bool ReplayLocalObject::getBool(std::string_view)
 {
+    if (knownBool) return *knownBool;
     trace::QueryGetBool query{std::string{}};
     auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultBool r = rJson;
+    knownBool = r.value;
     return r.value;
 }
 
 NixInt ReplayLocalObject::getInt(std::string_view)
 {
+    if (knownInt) return *knownInt;
     trace::QueryGetInt query{std::string{}};
     auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultInt r = rJson;
-    return NixInt{r.value};
+    knownInt = NixInt{r.value};
+    return *knownInt;
 }
 
 NixFloat ReplayLocalObject::getFloat(std::string_view)
 {
+    if (knownFloat) return *knownFloat;
     trace::QueryGetFloat query{std::string{}};
     auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultFloat r = rJson;
+    knownFloat = r.value;
     return r.value;
 }
 
 size_t ReplayLocalObject::getListSize()
 {
+    if (knownListSize) return *knownListSize;
     trace::QueryGetListSize query{std::string{}};
     auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     trace::ResultListSize r = rJson;
+    knownListSize = r.size;
     return r.size;
 }
 
@@ -400,25 +410,26 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                      resolverSaved](
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
                 /* Publish the live arg under the cb-arg seed's
-                   initial CDI so the OUTER walker's `resolveCdiId`
-                   can resolve d=1 facts whose `from` references this
-                   seed (= the inner's observations on the AmbientObject
-                   wrapping outer's value at cold). Registration uses
-                   `contentIdAfter(seed(applyDepth+1), applyScope, {})`
-                   — the same expression `makeCachedFnPrimOp`'s impl
-                   computes for `rootId` at cold, so the OUTER walker
-                   reaches us via the same CDI key. Wraps args[0] in
-                   an `InterpreterObject` so the walker can call
-                   getType / getInt / etc. live against outer's actual
-                   Value. */
+                   structural identity so the OUTER walker's
+                   `resolveCdiId` can resolve d=1 facts whose `from`
+                   is the seed's cidasks-evolved CDI at any
+                   walk-edge index. Registration carries the
+                   subject + scope (= `PositionalSeed{applyDepth+1}`
+                   at `applyScope`), matching what
+                   `makeCachedFnPrimOp`'s impl uses for its
+                   `seedSubject` / `callScope` at cold; the walker
+                   iterates `cidasksWalk` to find the matching edge.
+                   Wraps args[0] in an `InterpreterObject` so the
+                   walker can call getType / getInt / etc. live
+                   against outer's actual Value. */
                 if (resolverSaved) {
-                    auto seedCdi = cidasks::contentIdAfter(
-                        cidasks::Subject{cidasks::PositionalSeed{*applyDepthSaved + 1}},
-                        *applyScopeSaved, {});
+                    cidasks::Subject seedSubject{
+                        cidasks::PositionalSeed{*applyDepthSaved + 1}};
                     auto outerArgObj = std::make_shared<InterpreterObject>(
                         state, allocRootValue(args[0]));
                     registerAmbientResolverProxy(
-                        *resolverSaved, seedCdi, std::move(outerArgObj));
+                        *resolverSaved, std::move(seedSubject),
+                        *applyScopeSaved, std::move(outerArgObj));
                 }
                 /* Each primop firing replays the standin's chain
                    advance (apply Fact + synthetic probes) on a LOCAL

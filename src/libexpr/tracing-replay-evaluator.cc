@@ -454,7 +454,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
            tree from the CAS pool"). The forbidden thing is treating
            an OUTER-direction id as if it were a local. */
         if (auto resolver = inner->getAmbientResolver()) {
-            if (auto live = tryResolveAmbientResolverProxy(*resolver, idHash)) {
+            if (auto live = tryResolveAmbientResolverProxy(*resolver, idHash, cidasksWalk)) {
                 tracingCacheLog(
                     "resolve %s: not in pool — found live-proxy registration",
                     idStr.substr(0, 12));

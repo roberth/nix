@@ -11,6 +11,7 @@
 #include "nix/expr/tracing-local-object.hh"
 #include "nix/expr/tracing-writer.hh"
 
+#include <cassert>
 #include <nlohmann/json.hpp>
 
 namespace nix {
@@ -223,6 +224,22 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
        distinct via cidasks inheritance. Zero hash means no
        inheritance (= no scope discrimination). */
     Hash callScope = Hash(HashAlgorithm::SHA256);
+
+    /* Outer-direction proxies registered live by the standin's
+       `<replay-local-lambda>` primop (= `registerAmbientResolverProxy`).
+       Keyed by `(subject, scope)` so the walker's `resolveCdiId`
+       can match the registered seed's cidasks-evolved CDI at any
+       walk-edge index, not just the initial one. List rather than
+       map because subject equality isn't trivially hashable;
+       n_registrations is small (= one per cb-apply boundary the
+       primop fires at). */
+    struct LiveProxyEntry
+    {
+        cidasks::Subject subject;
+        Hash scope;
+        std::shared_ptr<Object> obj;
+    };
+    std::vector<LiveProxyEntry> liveProxies;
 
     AmbientQueryResult query(AmbientId objectId, const trace::QueryVariant & q)
     {
@@ -741,18 +758,56 @@ void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callScope)
 }
 
 void registerAmbientResolverProxy(
-    AmbientResolver & resolver, Hash id, std::shared_ptr<Object> obj)
+    AmbientResolver & resolver,
+    cidasks::Subject subject,
+    Hash scope,
+    std::shared_ptr<Object> obj)
 {
-    resolver.registry.registerOuterAt(std::move(id), std::move(obj));
+    /* Overwrite-on-conflict for the same (subject, scope) key. The
+       primop fires once per cb-apply boundary it covers; re-firing
+       with the same args produces the same registration. Different
+       boundaries register different subjects (= different
+       `applyDepth+1` values), so collisions across boundaries
+       within one cache call are non-existent unless sibling
+       cb-applies share the same cb-arg seed depth — same
+       boundary-trace-only caveat as the previous CDI-keyed version.
+
+       `cidasks::Subject` has no `operator==`; the primop only ever
+       registers `PositionalSeed{depth}` here, so structural
+       equality reduces to comparing the depth field. Asserting on
+       the variant tag keeps this collapse honest if a future caller
+       passes a different variant. */
+    auto * newSeed = std::get_if<cidasks::PositionalSeed>(&subject.data);
+    assert(newSeed && "registerAmbientResolverProxy: subject must be a PositionalSeed");
+    for (auto & entry : resolver.liveProxies) {
+        auto * existingSeed = std::get_if<cidasks::PositionalSeed>(&entry.subject.data);
+        if (existingSeed && existingSeed->depth == newSeed->depth && entry.scope == scope) {
+            entry.obj = std::move(obj);
+            return;
+        }
+    }
+    resolver.liveProxies.push_back({std::move(subject), std::move(scope), std::move(obj)});
 }
 
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(
-    AmbientResolver & resolver, Hash id)
+    AmbientResolver & resolver,
+    const Hash & idHash,
+    const std::vector<cidasks::Edge> & cidasksWalk)
 {
-    auto it = resolver.registry.outerValues.find(id);
-    if (it == resolver.registry.outerValues.end())
-        return nullptr;
-    return it->second;
+    /* For each registered (subject, scope), try every edge boundary
+       0..cidasksWalk.size() and check whether the subject's CDI at
+       that boundary matches the queried idHash. The fact's `from`
+       at flush time uses the writer's `d1CidasksWalk` index AT
+       FLUSH; the walker doesn't know that index, so iterating all
+       prefixes is the only way to match without a side index. */
+    for (auto & entry : resolver.liveProxies) {
+        for (size_t k = 0; k <= cidasksWalk.size(); ++k) {
+            auto cdi = cidasks::contentIdAt(entry.subject, entry.scope, cidasksWalk, k);
+            if (cdi == idHash)
+                return entry.obj;
+        }
+    }
+    return nullptr;
 }
 
 } // namespace nix

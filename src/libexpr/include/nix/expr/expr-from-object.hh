@@ -5,10 +5,12 @@
  * ExprFromObject - Expr that evaluates by pulling from an Object.
  */
 
+#include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/nixexpr.hh"
 
 #include <memory>
+#include <vector>
 
 namespace nix {
 
@@ -120,26 +122,39 @@ std::shared_ptr<AmbientResolver> makeAmbientResolver(
     Should be unique per cached call (e.g. hash of import path). */
 void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callScope);
 
-/** Register a live outer-direction proxy under `id` in the resolver's
-    outer-values map. Used by the `<replay-local-lambda>` primop at
-    warm replay to publish the live arg it received (args[0]) under
-    the cb-arg seed's initial CDI, so the OUTER walker can later
-    resolve d=1 facts whose `from` references that CDI. The d=1 facts
-    in question are inner observations on the cb-arg AmbientObject
-    (e.g., `getType from=seed(applyDepth+1).initial_cdi`); at cold
-    these queries' answers came from the queryFn closure that
-    captured the live outer arg, and at warm this registration is
-    the equivalent live channel. Single-entry contract (= overwrite-
-    on-conflict) matches the existing `registerOuterAt` semantics. */
+/** Register a live outer-direction proxy under a cidasks `subject` +
+    `scope` in the resolver's outer-values map. Used by the
+    `<replay-local-lambda>` primop at warm replay to publish the
+    live arg it received (args[0]) under the cb-arg seed's
+    structural identity, so the OUTER walker can resolve d=1 facts
+    whose `from` references the seed's CDI — at ANY walk-edge
+    index, since the d=1 fact's `from` is the seed's cidasks-evolved
+    CDI at flush time and the walker doesn't know that index a
+    priori. At cold these queries' answers came from the queryFn
+    closure that captured the live outer arg; at warm this
+    registration is the equivalent live channel. Single-entry
+    contract (= overwrite-on-conflict) keyed by `(subject, scope)`
+    structural-equality. */
 void registerAmbientResolverProxy(
-    AmbientResolver & resolver, Hash id, std::shared_ptr<Object> obj);
+    AmbientResolver & resolver,
+    cidasks::Subject subject,
+    Hash scope,
+    std::shared_ptr<Object> obj);
 
-/** Look up an outer-direction proxy previously registered via
-    `registerAmbientResolverProxy`. Returns nullptr if no
-    registration exists. Used by `TracingReplayEvaluator::resolveCdiId`
-    as a fallback after cell-chain and Requests-pool resolution
-    fail, before the "outer-seed by elimination" miss path. */
+/** Try to resolve a registered live-proxy from the resolver by
+    matching its registered `(subject, scope)` against the given
+    `idHash` at any edge boundary of `cidasksWalk`. Returns nullptr
+    if no registration matches at any edge. Used by
+    `TracingReplayEvaluator::resolveCdiId` as a fallback after
+    cell-chain and Requests-pool resolution fail, before the
+    "outer-seed by elimination" miss path. Iterating every edge
+    boundary is necessary because the d=1 fact's `from` is the
+    seed's CDI at the writer's flush-time `d1CidasksWalk` index
+    (= post-observations evolution), which differs from the
+    initial CDI we registered under. */
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(
-    AmbientResolver & resolver, Hash id);
+    AmbientResolver & resolver,
+    const Hash & idHash,
+    const std::vector<cidasks::Edge> & cidasksWalk);
 
 } // namespace nix
