@@ -45,11 +45,10 @@ class ReplayLocalObject : public Object
        when a child's structural component depends on a parent's
        evolving scopeStateId.
 
-       For root (cb-apply) locals the subject is constructed by the
-       walker as `OpaqueContentSubject{localId}` with scope = 0, so
-       the structural part at edge 0 equals localId itself (= what
-       the recorder computed as `scopeStateIdAfter(PositionalSeed{D},
-       callScope, {})`).
+       For root (cb-apply) locals the subject is `PositionalSeed{depth}`
+       with the recorded callScope (per the localArg sidecar), so the
+       walker reproduces the recorder's
+       `scopeStateIdAfter(PositionalSeed{D}, callScope, {})` directly.
 
        For children minted by maybeGetAttr/getListElem the subject is
        `DerivedSubject{parent.subject, ...}` — `scopeStateIdAt`
@@ -144,27 +143,6 @@ class ReplayLocalObject : public Object
     std::shared_ptr<const ArgScopeCell> argScope;
 
 public:
-    /* Constructor for a root cb-apply local. Wraps the recorded
-       localId as an `OpaqueContentSubject` with scope=0 so the
-       walker's structuralAt at edge 0 reproduces the recorder's
-       `scopeStateIdAfter(PositionalSeed{D}, callScope, {})` (= localId)
-       without needing to know the original depth/scope. */
-    ReplayLocalObject(AmbientId localId, TracingDecisionGraph & dg, ref<SourceRoot> rootFSRoot, EvalState * state = nullptr)
-        : subject{cidasks::OpaqueContentSubject{localId}}
-        , scope(HashAlgorithm::SHA256)
-        , localId(localId)
-        , walkFacts(std::make_shared<std::vector<cidasks::Edge>>())
-        , chainCursor(std::make_shared<Hash>(HashAlgorithm::SHA256))
-        , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
-
-    ReplayLocalObject(AmbientId localId, TracingDecisionGraph & dg, ref<SourceRoot> rootFSRoot, ObjectType type, EvalState * state = nullptr)
-        : subject{cidasks::OpaqueContentSubject{localId}}
-        , scope(HashAlgorithm::SHA256)
-        , localId(localId)
-        , walkFacts(std::make_shared<std::vector<cidasks::Edge>>())
-        , chainCursor(std::make_shared<Hash>(HashAlgorithm::SHA256))
-        , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state), knownType(type) {}
-
     /* Constructor for derived children. Subject is built by the
        parent's maybeGetAttr / getListElem as `DerivedSubject{parent,
        ...}`. Inherits parent's shared walk/cursor so the child's
@@ -264,8 +242,7 @@ public:
         Subject so a subsequent apply on this standin (= the cb-arg
         standin used as `arg` in `<replay-local-lambda>`'s recursive
         apply) composes ApplyResultSubject with this standin's
-        evolving Subject rather than falling back to
-        `OpaqueContent{this.localId}`. */
+        evolving Subject. */
     const cidasks::Subject * getSubject() const override { return &subject; }
 
     Hash getInheritedScope() const override { return scope; }
