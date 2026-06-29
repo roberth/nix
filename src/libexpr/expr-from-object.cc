@@ -311,7 +311,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        regardless of where the arg's source came from. */
     cidasks::Subject argSubject{cidasks::PositionalSeed{localCell->depth}};
     Hash argScope = resolverHandle->callScope;
-    auto argId = cidasks::contentIdAfter(argSubject, argScope, {});
+    auto argId = cidasks::scopeStateIdAfter(argSubject, argScope, {});
 
     /* Compute the resultId early so we can pass it to the
        TracingLocalObject as depth2ApplyId — groups all depth-2 facts
@@ -478,7 +478,7 @@ static PrimOp * makeCachedFnPrimOp(
                            therefore distinct subject-derived content
                            ids throughout this cb-apply boundary. */
                         Hash callScope = resolver->callScope;
-                        auto rootId = cidasks::contentIdAfter(seedSubject, callScope, {});
+                        auto rootId = cidasks::scopeStateIdAfter(seedSubject, callScope, {});
                         /* Per-apply observation context. Captures the
                            outer's probes on the cb arg as they fire
                            through queryFn; the apply-result wrapper
@@ -802,7 +802,7 @@ std::shared_ptr<Object> tryResolveAmbientResolverProxy(
        prefixes is the only way to match without a side index. */
     for (auto & entry : resolver.liveProxies) {
         for (size_t k = 0; k <= cidasksWalk.size(); ++k) {
-            auto cdi = cidasks::contentIdAt(entry.subject, entry.scope, cidasksWalk, k);
+            auto cdi = cidasks::scopeStateIdAt(entry.subject, entry.scope, cidasksWalk, k);
             if (cdi == idHash)
                 return entry.obj;
         }

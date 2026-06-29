@@ -283,7 +283,7 @@ public:
      * The proxy's static structural identifier — for AmbientObject
      * and TracingLocalObject, the Subject they carry. Used by the
      * walker to evolve content ids in lockstep with the recorder
-     * (cidasks::contentIdAt against the running walk). Returns null
+     * (cidasks::scopeStateIdAt against the running walk). Returns null
      * for non-proxy Objects.
      */
     virtual const cidasks::Subject * getSubject() const
@@ -293,7 +293,7 @@ public:
 
     /**
      * The proxy's inherited scope — the XOR of outer-scope CDIs used
-     * by cidasks::contentIdAt to make sibling cached-call recordings'
+     * by cidasks::scopeStateIdAt to make sibling cached-call recordings'
      * content ids distinct. Zero hash for non-proxy Objects.
      */
     virtual Hash getInheritedScope() const

@@ -44,7 +44,7 @@ std::string TracingReplayObject::evolvedQueryFrom() const
             edge.observations.push_back(obs);
             walk.push_back(std::move(edge));
         }
-        auto evolved = cidasks::contentIdAt(*applyResultSubject, applyScope, walk, walk.size());
+        auto evolved = cidasks::scopeStateIdAt(*applyResultSubject, applyScope, walk, walk.size());
         auto hex = evolved.to_string(HashFormat::Base16, false);
         return hex;
     }

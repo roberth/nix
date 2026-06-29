@@ -351,7 +351,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        have caught up to writer.d1.size at cold sib B apply (= all
        of sib A's perQAsksEdges traversed via prior v13Walks). */
     auto & d1Walk = writer.getD1CidasksWalk();
-    auto applyCdi = cidasks::contentIdAt(resultSubject, applyScope, d1Walk, d1Walk.size());
+    auto applyCdi = cidasks::scopeStateIdAt(resultSubject, applyScope, d1Walk, d1Walk.size());
     auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);

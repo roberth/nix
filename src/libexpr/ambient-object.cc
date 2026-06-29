@@ -25,7 +25,7 @@ static Hash stampPerArgFieldsAmbient(Q & q, const cidasks::Subject & subject, co
     fromCIDs.reserve(par.roots.size());
     Hash rootCdi(HashAlgorithm::SHA256);
     for (size_t i = 0; i < par.roots.size(); ++i) {
-        auto cid = cidasks::contentIdAfter(par.roots[i], inheritedScope, {});
+        auto cid = cidasks::scopeStateIdAfter(par.roots[i], inheritedScope, {});
         if (i == 0)
             rootCdi = cid;
         fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));

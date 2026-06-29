@@ -187,7 +187,7 @@ trace::QueryApply makeApplyResultQuery(
     trace::QueryApply q;
     q.fromCIDs.reserve(par.roots.size());
     for (auto & root : par.roots) {
-        auto cid = contentIdAt(root, scope, walk, edgeIndex);
+        auto cid = scopeStateIdAt(root, scope, walk, edgeIndex);
         q.fromCIDs.emplace_back(hashHex(cid));
     }
     q.fnPath = *applyStep.fnPath;
@@ -197,7 +197,7 @@ trace::QueryApply makeApplyResultQuery(
     return q;
 }
 
-Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
+Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
 {
     /* Compute subject's content id at the precondition of the
        `edgeIndex`-th edge by replaying the first `edgeIndex` edges'
@@ -228,7 +228,7 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
                variants. For PositionalSeed / OpaqueContentSubject it
                IS k-invariant pure position. For ApplyResultSubject it
                depends on `k` because it composes the constituents'
-               *fully evolved* CDIs (= constituents' contentIdAt at
+               *fully evolved* CDIs (= constituents' scopeStateIdAt at
                the same k) into a SHA-sealed shape — so the apply's
                id varies with k via constituent evolution even before
                this subject's own own-fold contributes. */
@@ -240,7 +240,7 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
                     /* Derived subjects have no CDI — only an address
                        (= producer query hash). Callers that need an
                        address for any subject use `structuralAddress`;
-                       reaching this branch via `contentIdAt` means a
+                       reaching this branch via `scopeStateIdAt` means a
                        caller passed a derived subject where the design
                        requires an argument-level subject. */
                     nix::unreachable();
@@ -259,7 +259,7 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
                        — `AmbientObject::getCdi()` returns
                        structuralAddressAfter with inheritedScope
                        baked in; ReplayLocalObject's localId is
-                       contentIdAfter(PositionalSeed{D}, callScope, {})
+                       scopeStateIdAfter(PositionalSeed{D}, callScope, {})
                        which is also scope-saturated. Re-XORing scope
                        here would either double-XOR (= scope-saturated
                        inputs) or under-XOR (= un-scoped inputs) — the
@@ -268,7 +268,7 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
                        pre-computed-CDI atom. */
                     return alt.hash;
                 } else {
-                    throw Error("cidasks::contentIdAt: unknown subject variant");
+                    throw Error("cidasks::scopeStateIdAt: unknown subject variant");
                 }
             };
 
@@ -287,16 +287,16 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
         subject.data);
 }
 
-Hash contentIdAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk)
+Hash scopeStateIdAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk)
 {
-    return contentIdAt(subject, scope, walk, walk.size());
+    return scopeStateIdAt(subject, scope, walk, walk.size());
 }
 
 Hash structuralAddress(
     const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
 {
     /* For non-derived subjects, the structural address IS the CDI.
-       For DerivedSubject, contentIdAt traps; we compute the
+       For DerivedSubject, scopeStateIdAt traps; we compute the
        producer query hash (= what a `from = root_cdi` flush would
        hash for a query naming this derived value) directly. */
     if (auto * d = std::get_if<DerivedSubject>(&subject.data)) {
@@ -304,7 +304,7 @@ Hash structuralAddress(
         std::vector<trace::QueryLeaf> fromCIDs;
         fromCIDs.reserve(parentRoots.size());
         for (auto & root : parentRoots) {
-            auto cid = contentIdAt(root, scope, walk, edgeIndex);
+            auto cid = scopeStateIdAt(root, scope, walk, edgeIndex);
             fromCIDs.emplace_back(hashHex(cid));
         }
         auto fromLeaf = fromCIDs.empty() ? trace::QueryLeaf("") : fromCIDs[0];
@@ -322,7 +322,7 @@ Hash structuralAddress(
         }
         return hashString(HashAlgorithm::SHA256, qj.dump());
     }
-    return contentIdAt(subject, scope, walk, edgeIndex);
+    return scopeStateIdAt(subject, scope, walk, edgeIndex);
 }
 
 Hash structuralAddressAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk)

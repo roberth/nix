@@ -372,7 +372,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
        at some writer-side `d1CidasksWalk` index N at flush time,
        but the lookup carries only the cdi value — not the index.
        So try every edge boundary 0..cidasksWalk.size() against
-       this subject's contentIdAt and accept the first match.
+       this subject's scopeStateIdAt and accept the first match.
        cidasksWalk is cumulative across v13Walk calls (= mirror of
        writer's d1CidasksWalk), so the matching index always falls
        within range provided the walker has processed at least N
@@ -391,7 +391,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                 auto scope = live->getInheritedScope();
                 bool matched = false;
                 for (size_t k = 0; k <= cidasksWalk.size() && !matched; ++k) {
-                    auto cdi = cidasks::contentIdAt(*subj, scope, cidasksWalk, k);
+                    auto cdi = cidasks::scopeStateIdAt(*subj, scope, cidasksWalk, k);
                     auto cdiHex = cdi.to_string(HashFormat::Base16, false);
                     if (cdiHex == idStr) {
                         tracingCacheLog(
@@ -1187,7 +1187,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        edge-for-edge once all prior cb-applies' chains have been
        dispatched. */
     auto & walk = cidasksWalk;
-    auto applyCdi = cidasks::contentIdAt(resultSubject, applyScope, walk, walk.size());
+    auto applyCdi = cidasks::scopeStateIdAt(resultSubject, applyScope, walk, walk.size());
     auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);

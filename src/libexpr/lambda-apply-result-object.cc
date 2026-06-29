@@ -17,7 +17,7 @@ LambdaApplyResultObject::LambdaApplyResultObject(
     , applyScope(std::move(applyScope_))
     , depth2ApplyId(std::move(depth2ApplyId_))
 {
-    auto cdi = cidasks::contentIdAfter(applyResultSubject, applyScope, {});
+    auto cdi = cidasks::scopeStateIdAfter(applyResultSubject, applyScope, {});
     applyCdiHex = cdi.to_string(HashFormat::Base16, false);
 }
 

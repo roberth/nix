@@ -65,7 +65,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
         std::vector<trace::QueryLeaf> fromCIDs;
         fromCIDs.reserve(roots.size());
         for (auto & root : roots) {
-            auto cid = cidasks::contentIdAt(root, pf.inheritedScope, d1CidasksWalk, d1EdgeIndex);
+            auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, d1CidasksWalk, d1EdgeIndex);
             fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
         }
         std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
@@ -98,7 +98,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
         decisionGraph->insertLocalResponse(queryHash, responsePayload);
 
         /* Append the substituted fact to the new d1 cidasks edge so
-           later logResults' contentIdAt sees it in the own-loop. */
+           later logResults' scopeStateIdAt sees it in the own-loop. */
         auto elementHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), queryHash, responseHash);
         d1NewEdge.observations.push_back({fromCdi, elementHash});
@@ -157,7 +157,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
     /* Finalize pass: process each buffered cb-apply boundary in the
        order recorded. For each boundary:
         1. Look up its d=2 group (may be empty if no probes happened).
-        2. Build the d=2 chain via incremental contentIdAt
+        2. Build the d=2 chain via incremental scopeStateIdAt
            substitution — each fact's `from` is computed against the
            chain prefix the walker reconstructs probe-by-probe.
         3. The terminal `cumulativeFactSet` IS the AmbientResult
@@ -230,7 +230,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             std::vector<trace::QueryLeaf> fromCIDs;
             fromCIDs.reserve(roots.size());
             for (auto & root : roots) {
-                auto cid = cidasks::contentIdAt(root, pf.inheritedScope, walk, /*edgeIndex=*/ i);
+                auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, walk, /*edgeIndex=*/ i);
                 fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
             }
             std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();

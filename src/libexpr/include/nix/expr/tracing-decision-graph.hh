@@ -162,7 +162,7 @@ public:
        cost of insertFactSet. */
     static Hash xorFactIntoHash(const Hash & h, const Hash & request, const Hash & response);
 
-    /* XOR two set-hashes. Used by cidasks::contentIdAt and similar
+    /* XOR two set-hashes. Used by cidasks::scopeStateIdAt and similar
        XOR-fold operations over factSet hashes. */
     static Hash xorHashes(const Hash & a, const Hash & b);
 

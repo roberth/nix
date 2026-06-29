@@ -35,7 +35,7 @@ std::string TracingObject::evolvedQueryFrom() const
             edge.observations.push_back(obs);
             walk.push_back(std::move(edge));
         }
-        auto evolved = cidasks::contentIdAt(*applyResultSubject, applyScope, walk, walk.size());
+        auto evolved = cidasks::scopeStateIdAt(*applyResultSubject, applyScope, walk, walk.size());
         auto hex = evolved.to_string(HashFormat::Base16, false);
         return hex;
     }
@@ -317,7 +317,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
 
     /* apply-result CDI is content-only — see commentary in
        TracingEvaluator::apply. */
-    auto applyCdi = cidasks::contentIdAfter(resultSubject, applyScopeLocal, {});
+    auto applyCdi = cidasks::scopeStateIdAfter(resultSubject, applyScopeLocal, {});
     auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
 
     /* Record the apply Request payload at the cidasks hash so dispatch

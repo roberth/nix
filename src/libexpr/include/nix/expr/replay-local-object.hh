@@ -38,7 +38,7 @@ class TracingDecisionGraph;
 class ReplayLocalObject : public Object
 {
     /* Full structural identity. Combined with `scope` and the shared
-       `walkFacts`, `cidasks::contentIdAt` computes this proxy's cdi
+       `walkFacts`, `cidasks::scopeStateIdAt` computes this proxy's cdi
        at any walk position. The recorder's cidasks substitution at
        flush uses the same evaluation, so walker and recorder agree
        on per-probe `from` fields without snapshot/lazy hacks — even
@@ -48,23 +48,23 @@ class ReplayLocalObject : public Object
        For root (cb-apply) locals the subject is constructed by the
        walker as `OpaqueContentSubject{localId}` with scope = 0, so
        the structural part at edge 0 equals localId itself (= what
-       the recorder computed as `contentIdAfter(PositionalSeed{D},
+       the recorder computed as `scopeStateIdAfter(PositionalSeed{D},
        callScope, {})`).
 
        For children minted by maybeGetAttr/getListElem the subject is
-       `DerivedSubject{parent.subject, ...}` — `contentIdAt`
+       `DerivedSubject{parent.subject, ...}` — `scopeStateIdAt`
        recursively re-evaluates the parent's cdi at the child's
        current edge index, so children don't need to snapshot parent
        state at creation. */
     cidasks::Subject subject;
     Hash scope;
-    /* Initial cdi (= contentIdAt(subject, scope, {}, 0)) — kept for
+    /* Initial cdi (= scopeStateIdAt(subject, scope, {}, 0)) — kept for
        legacy id-string consumers (e.g. defeatCache's recursive
        apply construction). */
     AmbientId localId;
     /* Shared walk across all proxies in one cb apply. Each validated
        probe appends a Fact (one fact per edge, matching the writer's
-       multi-edge AmbientAsks structure). `contentIdAt` reads this
+       multi-edge AmbientAsks structure). `scopeStateIdAt` reads this
        to compute each proxy's evolved cdi.
 
        Backed as a shared single-fact-edge sequence: each entry is
@@ -147,7 +147,7 @@ public:
     /* Constructor for a root cb-apply local. Wraps the recorded
        localId as an `OpaqueContentSubject` with scope=0 so the
        walker's structuralAt at edge 0 reproduces the recorder's
-       `contentIdAfter(PositionalSeed{D}, callScope, {})` (= localId)
+       `scopeStateIdAfter(PositionalSeed{D}, callScope, {})` (= localId)
        without needing to know the original depth/scope. */
     ReplayLocalObject(AmbientId localId, TracingDecisionGraph & dg, ref<SourceRoot> rootFSRoot, EvalState * state = nullptr)
         : subject{cidasks::OpaqueContentSubject{localId}}

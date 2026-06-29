@@ -84,7 +84,7 @@ class TracingWriter
     /* Ambient facts buffered during recording and flushed at
        logResult time via flushPendingAmbient. The Subject identifies
        which value the observation is about — flush uses it via
-       cidasks::contentIdAt to compute the fact's `from` field
+       cidasks::scopeStateIdAt to compute the fact's `from` field
        against the relevant Asks-edge precondition factset.
 
        Layer marker: depth-1 facts (inner asks outer about an outer
@@ -97,7 +97,7 @@ class TracingWriter
         trace::QueryVariant query;
         trace::ResultVariant result;
         cidasks::Subject subject;
-        Hash inheritedScope; ///< outer-scope CDIs for contentIdAt
+        Hash inheritedScope; ///< outer-scope CDIs for scopeStateIdAt
         /* Empty hash = depth-1; otherwise = the cb apply's resultId,
            grouping this fact into the depth-2 sub-trace for that apply. */
         Hash depth2ApplyId{HashAlgorithm::SHA256};
@@ -116,7 +116,7 @@ class TracingWriter
        a d1 edge inserted at the SAME index. This invariant lets the
        walker's `cidasksWalk` — which grows once per dispatched Asks
        edge via `commitEdge` — match the writer's d1 walk
-       edge-for-edge, so `contentIdAt(subject, scope, walk, K)`
+       edge-for-edge, so `scopeStateIdAt(subject, scope, walk, K)`
        computes the same value on both sides. Per-arg-completion
        option 2 depends on this alignment. */
     std::vector<cidasks::Edge> d1CidasksWalk;
@@ -237,7 +237,7 @@ public:
     /** Cumulative cidasks walk over depth-1 ambient observations.
         One edge per logResult-triggered flush. Exposed so writer-side
         apply-result wrappers (TracingObject with applyResultSubject)
-        can compute `contentIdAt(subject, scope, walk, walk.size())`
+        can compute `scopeStateIdAt(subject, scope, walk, walk.size())`
         — the per-arg evolved cdi the design's principle #3 requires
         for child queries on those wrappers. Walker's parallel handle
         is TracingReplayEvaluator::getCidasksWalk. */

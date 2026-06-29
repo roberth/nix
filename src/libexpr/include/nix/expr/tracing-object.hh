@@ -34,7 +34,7 @@ class TracingObject : public Object
        this apply structurally (ApplyResultSubject{fn, arg}), and the
        inherited scope (= CDI(Q) at the cb-apply boundary). Child
        queries on this wrapper emit at
-       `contentIdAt(applyResultSubject, applyScope, writer.d1CidasksWalk,
+       `scopeStateIdAt(applyResultSubject, applyScope, writer.d1CidasksWalk,
        walk.size())` — the per-arg evolved cdi the design's
        principle #3 requires for sibling discrimination. Null on
        non-apply-result wrappers (= navigation children). */
@@ -102,7 +102,7 @@ public:
         return applyResultSubject ? &*applyResultSubject : nullptr;
     }
 
-    /** Inherited scope for `contentIdAt(getSubject(), getInheritedScope(), …)`.
+    /** Inherited scope for `scopeStateIdAt(getSubject(), getInheritedScope(), …)`.
         For apply-result wrappers it's the cb-apply boundary's scope
         baked at construction. */
     Hash getInheritedScope() const override { return applyScope; }

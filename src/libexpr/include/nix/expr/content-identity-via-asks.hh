@@ -72,7 +72,7 @@ struct Subject
     std::variant<PositionalSeed, DerivedSubject, ApplyResultSubject, OpaqueContentSubject> data;
 };
 
-/** A single observation reduced to the two hashes contentIdAt needs.
+/** A single observation reduced to the two hashes scopeStateIdAt needs.
     `fromHash` is the content id the query was issued against;
     `elementHash` is SHA-256(reqHash || respHash) — the v13 H_element.
     Named `Observation` to match the doc's per-Asks-edge "facts about V"
@@ -110,13 +110,13 @@ Observation observationFromQR(const trace::QueryVariant & query, const trace::Re
     via their constituents' (recursively scope-aware) content ids,
     so the structural derivation incorporates inheritance naturally
     via the constituents' `from`-field values. */
-Hash contentIdAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk);
+Hash scopeStateIdAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk);
 
 /** Compute the content id of `subject` at the precondition of the
     edge at index `edgeIndex` in `walk`, inheriting `scope`.
     `edgeIndex == 0` means the initial precondition (= empty
     factset); `edgeIndex == walk.size()` means the postcondition of
-    the whole walk (equivalent to `contentIdAfter`).
+    the whole walk (equivalent to `scopeStateIdAfter`).
 
     **Argument-level only.** Per the design (Principle 3, per-arg
     centralization), only argument-level subjects bear CDIs:
@@ -128,11 +128,11 @@ Hash contentIdAfter(const Subject & subject, const Hash & scope, const std::vect
     `(root_cdi, path)`. Passing a `DerivedSubject` traps; callers
     that want a content-addressed identifier for any Subject
     (including derived) should use `structuralAddress` instead. */
-Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex);
+Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex);
 
 /** Compute a content-addressed structural identifier for any
-    `subject` — including `DerivedSubject`, where `contentIdAt`
-    traps. For non-derived subjects this delegates to `contentIdAt`.
+    `subject` — including `DerivedSubject`, where `scopeStateIdAt`
+    traps. For non-derived subjects this delegates to `scopeStateIdAt`.
     For `DerivedSubject` it returns the producer query's hash:
     `qH(QueryGetAttr{name, from = root_cdi, fromCIDs, path})` for
     `GetAttr`, similarly for `GetListElem`. Used by `AmbientObject`,
@@ -141,13 +141,13 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
 Hash structuralAddress(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex);
 
 /** Convenience: `structuralAddress` at the walk's tail (= edgeIndex
-    = walk.size()). Mirrors `contentIdAfter` but defined for all
+    = walk.size()). Mirrors `scopeStateIdAfter` but defined for all
     subject forms. */
 Hash structuralAddressAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk);
 
 /** Build the per-arg-encoded `QueryApply` payload for an apply-result
     subject at a given walk edge index. The returned query's JSON
-    hash equals `contentIdAt(applyResult, scope, walk, edgeIndex)`,
+    hash equals `scopeStateIdAt(applyResult, scope, walk, edgeIndex)`,
     so callers can use the same value as both the Requests-pool key
     (= reqHash) and the apply-result's cdi (= what's recorded as
     `from` on downstream facts). Threads cb_arg root cdis at
@@ -229,7 +229,7 @@ std::string describe(const Subject & subject);
     observation.
 
     The context is **always read live**: no snapshot, no freeze. CIDs
-    are retrieved by re-running `cidasks::contentIdAt` against the
+    are retrieved by re-running `cidasks::scopeStateIdAt` against the
     current state of `observations` on every `evolvedQueryFrom` call.
     Derived children of the wrapper share the same shared_ptr to the
     same ApplyContext so the chain `wrapper.getAttr("foo").getInt()`

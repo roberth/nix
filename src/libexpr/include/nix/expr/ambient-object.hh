@@ -76,7 +76,7 @@ class AmbientObject : public Object
        by makeCachedFnPrimOp.impl at the apply boundary; the queryFn
        closure routes observations through this context so the
        apply-result wrapping can compute its evolved content id via
-       cidasks::contentIdAfter against the accumulated walk. Null on
+       cidasks::scopeStateIdAfter against the accumulated walk. Null on
        non-cb-arg AmbientObjects. */
     std::shared_ptr<cidasks::ApplyContext> applyContext;
     AmbientQueryFn queryFn;   ///< Callback to issue ambient queries
@@ -168,7 +168,7 @@ public:
     {
         /* Content id at the empty factset, with this proxy's inherited
            scope applied. For multi-edge use, callers must pass the
-           relevant walk via cidasks::contentIdAt instead. */
+           relevant walk via cidasks::scopeStateIdAt instead. */
         return cidasks::structuralAddressAfter(subject, inheritedScope, {});
     }
 

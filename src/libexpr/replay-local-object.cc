@@ -62,7 +62,7 @@ static Hash stampPerArgFields(
     fromCIDs.reserve(par.roots.size());
     Hash fromCdi(HashAlgorithm::SHA256);
     for (size_t i = 0; i < par.roots.size(); ++i) {
-        auto cid = cidasks::contentIdAt(par.roots[i], scope, walkFacts, edgeIndex);
+        auto cid = cidasks::scopeStateIdAt(par.roots[i], scope, walkFacts, edgeIndex);
         if (i == 0)
             fromCdi = cid;
         fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
@@ -100,7 +100,7 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query)
 
 /* Multi-edge AmbientAsks walker: dispatch and validate one probe at
    a time. Per the design's "Replay (depth-2)" section, each probe
-   (a) composes with `from = hex(contentIdAt(subject, scope,
+   (a) composes with `from = hex(scopeStateIdAt(subject, scope,
    walkFacts, walkFacts.size()))` so its reqHash matches what the
    recorder wrote at this point in the chain, (b) is looked up as a
    singleton-requestSet edge from `*chainCursor → toFactSet`, and
@@ -174,7 +174,7 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
     trace::ResultMaybeType r = rJson;
     if (!r.type)
         return nullptr;
-    /* Child Subject is DerivedSubject of THIS subject — `contentIdAt`
+    /* Child Subject is DerivedSubject of THIS subject — `scopeStateIdAt`
        on the child will recompute parent's cdi at the child's
        current edge index, so any further parent observations are
        reflected automatically. Pass shared walk/cursor. */
@@ -553,7 +553,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                        `QueryApply{fnId, argId}` where `fnId` /
                        `argId` come from `Object::getCdiHex()` at
                        construction-time (= `structuralAddressAfter`
-                       with empty walk = `contentIdAt(.., .., {}, 0)`).
+                       with empty walk = `scopeStateIdAt(.., .., {}, 0)`).
                        The recursive apply Fact's identity is fixed
                        at IT::apply-time; observations recorded
                        between then and now should NOT shift its
@@ -561,9 +561,9 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                        diverges from what the writer's
                        `flushPendingAmbient` stamped for the
                        `logDepth2ApplyFact` entry. */
-                    auto fnCdi = cidasks::contentIdAt(
+                    auto fnCdi = cidasks::scopeStateIdAt(
                         subjectSaved, *applyScopeSaved, *walkFactsSaved, 0);
-                    auto argCdi = cidasks::contentIdAt(
+                    auto argCdi = cidasks::scopeStateIdAt(
                         cidasks::Subject{cidasks::PositionalSeed{*applyDepthSaved + 1}},
                         *applyScopeSaved, *walkFactsSaved, 0);
                     trace::QueryApply applyQ{

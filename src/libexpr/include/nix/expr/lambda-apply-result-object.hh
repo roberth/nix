@@ -18,7 +18,7 @@
  *    enclosing cb-apply boundary's recursive apply Fact (= the same
  *    boundary `logDepth2ApplyFact` appended to). At flushPendingAmbient
  *    finalize the writer's d=2 loop stamps each observation with
- *    `from = hex(contentIdAt(applyResultSubject, scope, walk, i))`,
+ *    `from = hex(scopeStateIdAt(applyResultSubject, scope, walk, i))`,
  *    inserts the response payload into `LocalResponseMap` keyed by
  *    the resulting reqHash, and inserts an `AmbientAsks` edge.
  *
@@ -74,7 +74,7 @@ class LambdaApplyResultObject : public Object
        observations route to the correct boundary's d=2 chain. */
     Hash depth2ApplyId;
 
-    /* contentIdAfter(applyResultSubject, applyScope, {}) hex — the
+    /* scopeStateIdAfter(applyResultSubject, applyScope, {}) hex — the
        content-only apply-result CDI exposed via getCdiHex. Computed
        once at construction to match `TracingEvaluator::apply`'s
        `applyCdiHex` (= what the walker computes too). */
