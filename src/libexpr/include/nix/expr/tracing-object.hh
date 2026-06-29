@@ -52,6 +52,14 @@ class TracingObject : public Object
 
     void pushObservation(const std::string & fromHex, const Hash & queryHash, const Hash & responseHash);
 
+    /* Memoized WHNF observation. First call to any of getType / getInt /
+       getString / etc. fires `whnf()`, which records ONE QueryGetWHNF
+       observation against this Object's identity carrying the type
+       discriminator plus the type-determined payload. Subsequent calls
+       on this Object decode the cached result without re-recording. */
+    std::optional<trace::ResultWHNF> cachedWHNF;
+    trace::ResultWHNF & whnf();
+
     TracingObject(ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos);
 
 public:

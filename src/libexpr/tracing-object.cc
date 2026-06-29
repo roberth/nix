@@ -4,11 +4,59 @@
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/trace-types.hh"
 #include "nix/expr/object-type.hh"
+#include "nix/util/error.hh"
 #include "nix/util/hash.hh"
 
 #include <nlohmann/json.hpp>
 
 namespace nix {
+
+/* Compute a value's WHNF in one pass by calling the Object's
+   per-type getters. Used by TracingObject::whnf to record a single
+   QueryGetWHNF observation, and by the walker's dispatch to compute
+   the live response for a recorded QueryGetWHNF. */
+trace::ResultWHNF computeWHNFFromObject(Object & obj)
+{
+    auto type = obj.getType();
+    trace::ResultWHNF r;
+    r.type = objectTypeToString(type);
+    switch (type) {
+        case nInt:
+            r.payload = trace::WHNFInt{obj.getInt().value};
+            break;
+        case nFloat:
+            r.payload = trace::WHNFFloat{obj.getFloat()};
+            break;
+        case nBool:
+            r.payload = trace::WHNFBool{obj.getBool()};
+            break;
+        case nString: {
+            auto pair = obj.getStringWithContext();
+            std::vector<std::string> ctxStrs;
+            for (auto & c : pair.second)
+                ctxStrs.push_back(c.to_string());
+            r.payload = trace::WHNFString{std::move(pair.first), std::move(ctxStrs)};
+            break;
+        }
+        case nPath:
+            r.payload = trace::WHNFPath{obj.getPath().path.abs()};
+            break;
+        case nAttrs:
+            r.payload = trace::WHNFAttrs{obj.getAttrNames()};
+            break;
+        case nList:
+            r.payload = trace::WHNFList{obj.getListSize()};
+            break;
+        case nFunction:
+        case nNull:
+        case nThunk:
+        case nExternal:
+        case nFailed:
+            r.payload = trace::WHNFEmpty{};
+            break;
+    }
+    return r;
+}
 
 TracingObject::TracingObject(
     ref<Object> inner, TracingWriter & writer, ValueHandle valueNum, std::optional<TriePosition> triePos)
@@ -77,6 +125,21 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     if (qh.queryHash && tp)
         pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
     return nullptr;
+}
+
+trace::ResultWHNF & TracingObject::whnf()
+{
+    if (cachedWHNF)
+        return *cachedWHNF;
+    auto whnfResult = computeWHNFFromObject(*inner);
+    auto parentHash = evolvedQueryFrom();
+    trace::QueryGetWHNF query{parentHash};
+    auto [valueId, qh] = writer.logQuery(query, triePos);
+    auto tp = writer.logResult(valueId, whnfResult, qh);
+    if (qh.queryHash && tp)
+        pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
+    cachedWHNF = std::move(whnfResult);
+    return *cachedWHNF;
 }
 
 std::vector<std::string> TracingObject::getAttrNames()
