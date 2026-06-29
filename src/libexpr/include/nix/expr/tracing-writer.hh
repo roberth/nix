@@ -531,7 +531,7 @@ public:
      * `<replay-local-lambda>` impl advances the standin's
      * chainCursor by this fact's elementHash.
      *
-     * Subject = OpaqueContent{applyReqHash} so stamping produces
+     * Subject = PostulatedIdempotentRead{applyReqHash} so stamping produces
      * `fromCIDs=[applyReqHash]` and the walker can reproduce the
      * stamped reqHash from just the apply's reqHash. No-op when
      * there's no enclosing cb-apply.
@@ -570,7 +570,7 @@ public:
             trace::QueryVariant{applyQ},
             trace::ResultVariant{trace::ResultType{"apply"}},
             cidasks::Subject{cidasks::PostulatedIdempotentRead{applyReqHash}},
-            Hash{HashAlgorithm::SHA256},  // OpaqueContent is scope-saturated
+            Hash{HashAlgorithm::SHA256},  // PostulatedIdempotentRead is scope-saturated
             enclosing.applyId,
         });
     }

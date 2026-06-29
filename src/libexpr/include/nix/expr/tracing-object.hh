@@ -91,10 +91,10 @@ public:
         target of further queries). Surfacing the Subject lets the
         next apply build `ApplyResultSubject{fn=this.subject, ...}`
         with constituents whose argStateIds *evolve* via cidasks own-loop,
-        instead of falling back to `OpaqueContent{this.scopeStateId}` which
+        instead of falling back to `PostulatedIdempotentRead{this.scopeStateId}` which
         freezes the argStateId at construction time. Non-apply-result
         wrappers (= fresh from evalFile, navigation children)
-        legitimately have no Subject — for those, the OpaqueContent
+        legitimately have no Subject — for those, the PostulatedIdempotentRead
         fallback in callers describes an atom whose argStateId is fully
         determined and not subject to observation-driven evolution. */
     const cidasks::Subject * getSubject() const override

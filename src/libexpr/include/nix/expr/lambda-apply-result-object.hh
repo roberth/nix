@@ -55,7 +55,7 @@ class LambdaApplyResultObject : public Object
     ref<Object> inner;
     TracingWriter & writer;
 
-    /* ApplyResultSubject{OpaqueContent{TLO.scopeStateId}, contraArg.subject}.
+    /* ApplyResultSubject{PostulatedIdempotentRead{TLO.scopeStateId}, contraArg.subject}.
        Matches what `<replay-local-lambda>`'s primop builds for the
        synthetic apply-result subject at warm. flushPendingAmbient's
        d=2 loop uses this subject to stamp each observation's `from`
@@ -104,7 +104,7 @@ public:
     /** Symmetric to TracingObject/TracingReplayObject: surface the
         ApplyResultSubject so a subsequent apply on this wrapper
         composes evolving ApplyResultSubject constituents instead of
-        the frozen OpaqueContent{applyScopeStateIdHex} fallback. */
+        the frozen PostulatedIdempotentRead{applyScopeStateIdHex} fallback. */
     const cidasks::Subject * getSubject() const override { return &applyResultSubject; }
 
     Hash getInheritedScope() const override { return applyScope; }

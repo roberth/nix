@@ -121,7 +121,7 @@ public:
         result Subject when this wrapper is an apply result so the
         next apply / further queries build `ApplyResultSubject{...}`
         constituents whose argStateIds evolve via cidasks own-loop, instead
-        of falling back to `OpaqueContent{this.scopeStateId}`. */
+        of falling back to `PostulatedIdempotentRead{this.scopeStateId}`. */
     const cidasks::Subject * getSubject() const override
     {
         return applyResultSubject ? &*applyResultSubject : nullptr;

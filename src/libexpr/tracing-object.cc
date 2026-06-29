@@ -297,10 +297,10 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
        `getSubject()`. fn = `this`: when this TracingObject is itself
        an apply result, `getSubject()` surfaces its
        applyResultSubject — the next apply sees an evolving
-       ApplyResultSubject constituent instead of `OpaqueContent{
+       ApplyResultSubject constituent instead of `PostulatedIdempotentRead{
        this.triePos}` which would freeze the argStateId. Plain TracingObjects
        (= from evalFile, navigation children) return null and the
-       OpaqueContent fallback fires as a fixed-atom identity. */
+       PostulatedIdempotentRead fallback fires as a fixed-atom identity. */
     cidasks::Subject fnSubj = getSubject()
         ? *getSubject()
         : cidasks::Subject{cidasks::PostulatedIdempotentRead{fnIdHash}};

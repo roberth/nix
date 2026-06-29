@@ -399,7 +399,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
                with `scope` — matching what the writer's recording
                produced when AmbientObject::queryApply built the apply
                result's subject. Without these fields the synthetic
-               falls back to OpaqueContent encoding which disagrees
+               falls back to PostulatedIdempotentRead encoding which disagrees
                with the recorder's encoding, breaking CAS reads of
                the apply-result observations. */
             {"depth", localCell->depth},

@@ -249,7 +249,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
                        here would either double-XOR (= scope-saturated
                        inputs) or under-XOR (= un-scoped inputs) — the
                        per-arg-completion doc (= option 1) avoids
-                       both by treating OpaqueContent as a
+                       both by treating PostulatedIdempotentRead as a
                        pre-computed-argStateId atom. */
                     return alt.hash;
                 } else {

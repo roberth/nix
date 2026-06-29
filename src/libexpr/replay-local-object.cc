@@ -538,7 +538,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                 /* Advance the standin's chainCursor by the recorded
                    apply Fact's elementHash — matching the writer's
                    d=2 fact in markApplyBoundary's enclosing-chain
-                   path. The writer used subject=OpaqueContent{applyReqHash}
+                   path. The writer used subject=PostulatedIdempotentRead{applyReqHash}
                    and result=ResultType{"apply"}; reproduce both sides
                    here so the cumulativeFactSet evolution matches.
 
@@ -574,9 +574,9 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                     auto applyReqHash = hashString(HashAlgorithm::SHA256, applyJson.dump());
 
                     /* Match the writer's stamping in flushPendingAmbient's
-                       d=2 loop for subject=OpaqueContent{applyReqHash}:
-                       pathAndRootsFromSubject returns ({}, [OpaqueContent]);
-                       fromCIDs[0] = OpaqueContent.hash = applyReqHash;
+                       d=2 loop for subject=PostulatedIdempotentRead{applyReqHash}:
+                       pathAndRootsFromSubject returns ({}, [PostulatedIdempotentRead]);
+                       fromCIDs[0] = PostulatedIdempotentRead.hash = applyReqHash;
                        path stays empty; rewriteFromInQuery is a no-op
                        for QueryApply (which has no `from` field). The
                        only stamping effect on QueryApply is populating

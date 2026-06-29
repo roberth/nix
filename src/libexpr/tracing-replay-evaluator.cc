@@ -585,7 +585,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            "no recorded response for getType on local". Both
            sibling cb-applies share the same first probe's stamped
            reqHash regardless of subject (= at edgeIndex=0,
-           PositionalSeed and OpaqueContent both yield `localId`),
+           PositionalSeed and PostulatedIdempotentRead both yield `localId`),
            which is why this bug stayed latent until cb-sibling
            landed: it's the first test that needs the standin's
            scopeStateId to *evolve* via subsequent probes for downstream
@@ -627,7 +627,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                     ctx.memo[argIdStr] = standin;
                 }
             } catch (const std::exception &) {
-                /* Sidecar malformed — fall through to the OpaqueContent
+                /* Sidecar malformed — fall through to the PostulatedIdempotentRead
                    fallback below. */
             }
         }
@@ -635,7 +635,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            the depth/scope needed to reconstruct the cb-arg's
            PositionalSeed Subject. Signal resolution failure so the
            caller falls through to inner re-eval. The previous
-           OpaqueContent fallback violated principle 8's corollary
+           PostulatedIdempotentRead fallback violated principle 8's corollary
            (= observation-driven evolution) and produced a standin
            whose discrimination was frozen at edgeIndex=0. */
         argObj = standin;
@@ -1138,8 +1138,8 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        apply-result wrappers (TracingReplayObject /
        TracingObject) expose their applyResultSubject as `fn` for
        further applies — their argStateIds evolve via cidasks own-loop
-       instead of being frozen by `OpaqueContent{this.scopeStateId}`. Fall
-       back to OpaqueContent only when no Subject is exposed
+       instead of being frozen by `PostulatedIdempotentRead{this.scopeStateId}`. Fall
+       back to PostulatedIdempotentRead only when no Subject is exposed
        (= atom whose argStateId is fully determined at construction). */
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256);
     auto argIdHash = Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256);
