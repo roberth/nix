@@ -354,7 +354,7 @@ void from_json(const nlohmann::json & j, ResultWHNF & r)
         if (j.contains("context"))
             j.at("context").get_to(s.context);
         r.payload = std::move(s);
-    } else if (r.type == "attrs") {
+    } else if (r.type == "set") {  /* objectTypeToString(nAttrs) = "set" */
         WHNFAttrs a;
         j.at("names").get_to(a.names);
         r.payload = std::move(a);
