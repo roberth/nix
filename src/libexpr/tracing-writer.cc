@@ -4,6 +4,8 @@
 #include "nix/expr/tracing-cache-stats.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 
+#include <set>
+
 namespace nix {
 
 void TracingWriter::flushPendingAmbient(bool finalize)
@@ -55,6 +57,11 @@ void TracingWriter::flushPendingAmbient(bool finalize)
     size_t d1EdgeIndex = d1CidasksWalk.size();
     cidasks::Edge & d1NewEdge = pendingD1Edge;
     d1NewEdge = {};
+    /* Per-edge dedup of observations by elementHash. An Asks edge is a
+       set, not a list — XOR-folding the same observation twice cancels
+       its contribution to cur. The walker dispatches each unique
+       observation once, so the writer must too. */
+    std::set<Hash> d1NewEdgeSeen;
 
     for (auto & pf : pendingDepth1Facts) {
         /* Per-arg with multi-root: `from` is the first cb_arg's argStateId;
@@ -98,10 +105,26 @@ void TracingWriter::flushPendingAmbient(bool finalize)
         decisionGraph->insertLocalResponse(queryHash, responsePayload);
 
         /* Append the substituted fact to the new d1 cidasks edge so
-           later logResults' scopeStateIdAt sees it in the own-loop. */
+           later logResults' scopeStateIdAt sees it in the own-loop.
+
+           Per-edge dedup by elementHash: an Asks edge is a SET of
+           observations (per the design's principle 4), not a list. The
+           walker's `commitEdge` already dedups by edge-fingerprint, so
+           if the writer leaves duplicates in the edge here the XOR-fold
+           on each side computes different cumulative cur — when a fact
+           appears EVEN times here it cancels, ODD it contributes; the
+           walker's single contribution per unique fact then mismatches.
+           This used to be papered over by symmetric over-recording
+           where every observation type fired an even number of times
+           and canceled together; WHNF memoization (which records once
+           per Object instance) broke that symmetry by making one
+           observation appear once while siblings still fire many.
+           Dedup makes the writer match the walker independent of how
+           often each method is called. */
         auto elementHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), queryHash, responseHash);
-        d1NewEdge.observations.push_back({fromCdi, elementHash});
+        if (d1NewEdgeSeen.insert(elementHash).second)
+            d1NewEdge.observations.push_back({fromCdi, elementHash});
 
         /* Dedupe by (request, response). See logResponse. */
         auto factHash = elementHash;
