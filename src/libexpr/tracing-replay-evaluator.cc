@@ -368,7 +368,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
     }
 
     /* Walk the proxy's argScope chain looking for a cell whose
-       liveObject's content id matches idStr. The id was stamped
+       liveObject's scope state id matches idStr. The id was stamped
        at some writer-side `d1CidasksWalk` index N at flush time,
        but the lookup carries only the scopeStateId value — not the index.
        So try every edge boundary 0..cidasksWalk.size() against
@@ -386,7 +386,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
         if (auto live = cell->liveObject) {
             if (auto * subj = live->getSubject()) {
                 /* Use the live proxy's own inherited scope so the
-                   walker's content id matches what the recorder
+                   walker's scope state id matches what the recorder
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
                 bool matched = false;
@@ -430,13 +430,13 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
            always sidecar-registered by AmbientResolver::apply (=
            inserting `{kind: "localArg", applyResultId: ...}` at the
            argId), and any derived value has a producer Request. Only
-           outer-seed CDIs minted by makeCachedFnPrimOp.impl — e.g.
+           outer-seed argStateIds minted by makeCachedFnPrimOp.impl — e.g.
            a nested AmbientObject for the int the outer body passes
            to inner_lambda in cb-higher-order's `g 10` — reach here.
 
            Live-proxy fallback: the `<replay-local-lambda>` primop
            registers the args[0] it receives under the cb-arg seed's
-           initial CDI when fired (= registerAmbientResolverProxy in
+           initial argStateId when fired (= registerAmbientResolverProxy in
            replay-local-object.cc). If we find a matching registration
            here, the OUTER walker resolves to that live proxy and
            dispatches the d=1 fact live against outer's actual value
@@ -588,11 +588,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            Using OpaqueContentSubject{localId} here is the Fix B
            anti-pattern documented in
            `tracing-eval-cache-per-arg-completion.md`:
-           `OpaqueContentSubject`'s CDI is constant in `k`
+           `OpaqueContentSubject`'s argStateId is constant in `k`
            (= no own-loop evolution), so once the standin's first
            probe extends the chain, every subsequent probe's
            `stampPerArgFields` reads back `localId` instead of the
-           cidasks-evolved CDI the recorder stamped its facts
+           cidasks-evolved argStateId the recorder stamped its facts
            against. The recorded reqHashes then can't be found in
            LocalResponseMap → cb-sibling fails with
            "no recorded response for getType on local". Both
@@ -1147,10 +1147,10 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     /* Inner-direction applies: fn is a recorded/cached entity
        (TracingReplayObject from evalFile, TracingLocalObject's
-       counterparts, or an opaque CDI). Each call constructs a
+       counterparts, or an opaque argStateId). Each call constructs a
        fresh wrapper. Sibling cb apply invocations share the same
        (fnId, argId) at the boundary by construction (= the arg's
-       CDI is the same positional seed across siblings), so a
+       argStateId is the same positional seed across siblings), so a
        cross-invocation registry keyed by the apply Request hash
        would last-write-wins and conflate sibling invocations'
        per-call observation state — exactly the anti-pattern the
@@ -1160,10 +1160,10 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        of TracingEvaluator::apply. Use polymorphic `getSubject()` so
        apply-result wrappers (TracingReplayObject /
        TracingObject) expose their applyResultSubject as `fn` for
-       further applies — their CDIs evolve via cidasks own-loop
+       further applies — their argStateIds evolve via cidasks own-loop
        instead of being frozen by `OpaqueContent{this.scopeStateId}`. Fall
        back to OpaqueContent only when no Subject is exposed
-       (= atom whose CDI is fully determined at construction). */
+       (= atom whose argStateId is fully determined at construction). */
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256);
     auto argIdHash = Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256);
 

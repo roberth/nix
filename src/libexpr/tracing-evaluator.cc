@@ -129,7 +129,7 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
     auto obj = TracingObject::create(result, writer, v, triePos);
     /* Root scope-graph cell for the cached value. Cells now carry
-       only topology (depth/parent/liveObject); content ids are pure
+       only topology (depth/parent/liveObject); scope state ids are pure
        functions of the proxy's Subject under the via-Asks design. */
     obj->withScope(ArgScopeCell::make(nullptr, obj.get_ptr()));
     return obj;
@@ -266,7 +266,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        Asks edge (β1) and then records a synthetic single-observation
        Asks edge (ε) carrying just the apply Request — both sides
        advance their cumulative cidasks walk by one for ε, so the
-       apply-result's CDI is computed at a walk index the walker
+       apply-result's argStateId is computed at a walk index the walker
        can reach via the recorded chain. */
     nlohmann::json applyQ = trace::QueryApply{fnId, argId};
 
@@ -321,7 +321,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        (ApplyResultSubject surfaced from applyResultSubject), and
        TracingLocalObject (PositionalSeed local). Fall back to
        OpaqueContentSubject only when getSubject() is null — that
-       narrows the fallback to atoms whose CDI is fully determined
+       narrows the fallback to atoms whose argStateId is fully determined
        at construction (e.g. fresh TracingObject from evalFile, an
        InterpreterObject wrapping a concrete value) and not subject
        to observation-driven evolution, matching the per-use rule
@@ -343,7 +343,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubj)),
     }};
 
-    /* Per-arg-completion option 2: apply-result CDI evolves with
+    /* Per-arg-completion option 2: apply-result argStateId evolves with
        the writer's d1CidasksWalk at the moment of apply. With the
        1:1 alignment restructure, writer.d1.size grows in lockstep
        with perQAsksEdges; walker.cidasksWalk grows per dispatched

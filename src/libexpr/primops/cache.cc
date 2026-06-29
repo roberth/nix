@@ -32,7 +32,7 @@ void NullTraceSink::log(const nlohmann::json &) {}
 static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value & v)
 {
     /* Arm the stats sidecar writer (no-op unless NIX_CACHE_STATS_FILE
-       is set; idempotent across calls). Tests that assert CDI-layer
+       is set; idempotent across calls). Tests that assert argStateId-layer
        hit/miss counts rely on this. */
     armTracingCacheStatsExitWriter();
 
@@ -149,10 +149,10 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     interpreter->ambientResolver = resolver;
     /* Inherited scope for cidasks: uniquely identifies this cached
        call so sibling cached calls (different import / expr) get
-       distinct content ids throughout the cb-apply boundary.
+       distinct scope state ids throughout the cb-apply boundary.
        XOR-fold with `state.inheritedCallScope` to accumulate
        across enclosing cached calls (= per via-asks
-       `ContentId(LocalObject) = ... ⊕ CDI(Q) ⊕ CDI(Q_outer) ⊕
+       `scopeStateId(LocalObject) = ... ⊕ argStateId(Q) ⊕ argStateId(Q_outer) ⊕
        ...`). For a top-level cached call, `inheritedCallScope`
        is 0 and this reduces to the own contribution. The inner
        EvalState (= cached body's evaluator) carries the combined

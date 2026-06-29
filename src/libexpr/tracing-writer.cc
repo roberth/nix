@@ -15,7 +15,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
     for (auto & req : pendingRequests) {
         if (req.keyPlaceholder) {
             /* Sidecar: keyPlaceholder is the local arg's
-               positional initial content id. Insert at that key. */
+               positional initial scope state id. Insert at that key. */
             auto key = Hash::parseNonSRIUnprefixed(*req.keyPlaceholder, HashAlgorithm::SHA256);
             decisionGraph->insertRequest(key, jsonToCborString(req.payload));
         } else {
@@ -57,7 +57,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
     d1NewEdge = {};
 
     for (auto & pf : pendingDepth1Facts) {
-        /* Per-arg with multi-root: `from` is the first cb_arg's CDI;
+        /* Per-arg with multi-root: `from` is the first cb_arg's argStateId;
            `fromCIDs[]` carries all cb_arg roots reached via the
            subject tree; `path` encodes the access expression that
            walks from fromCIDs[0] to the observed subject. */
@@ -180,8 +180,8 @@ void TracingWriter::flushPendingAmbient(bool finalize)
        cb-apply's chain its own subtree in AmbientAsks, so the
        walker can pick the right chain by knowing the apply Fact's
        reqHash — no ambiguity when multiple cb-applies are recorded.
-       via-Asks discrimination via inherited CDI propagation still
-       flows through: different inherited CDIs → different argId →
+       via-Asks discrimination via inherited argStateId propagation still
+       flows through: different inherited argStateIds → different argId →
        different applyReqHash → different chain root. Same-shape
        collapse still holds for identical cb-applies (= same fnId,
        same argId, same observations → same applyReqHash → same

@@ -233,7 +233,7 @@ public:
        It records the observations the outer makes against an
        inner-supplied LocalObject during a covariant callback.
        Same-call sibling collapse within is intentional;
-       cross-call disambiguation is via Content Id inheritance.
+       cross-call disambiguation is via scope state id inheritance.
 
        Unlike depth-1, edges store toFactSetHash explicitly: at
        depth-2 there is no live producer for incoming-ambient

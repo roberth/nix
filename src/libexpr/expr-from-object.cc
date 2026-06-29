@@ -193,7 +193,7 @@ struct AmbientApply
     /** Same as run, but the fnObj is provided directly instead of
         being resolved via the registry. Used by makeCachedFnPrimOp's
         applyFn closure when the seed AmbientObject itself is being
-        applied (= fnId is the seed's CDI, which boundary discipline
+        applied (= fnId is the seed's argStateId, which boundary discipline
         keeps unregistered to avoid sibling collisions; the closure
         captures outerArgObj instead). */
     std::pair<AmbientId, AmbientId> runOn(
@@ -219,8 +219,8 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
        outer EvalState's rootFSRoot. Held as shared_ptr (rather than
        ref) so AmbientResolver stays default-constructible. */
     std::shared_ptr<SourceRoot> outerRootFSRoot;
-    /* Inherited scope (CDI of this cached call's Q) — used by the
-       cb-apply boundary to make sibling cached calls' content ids
+    /* Inherited scope (argStateId of this cached call's Q) — used by the
+       cb-apply boundary to make sibling cached calls' scope state ids
        distinct via cidasks inheritance. Zero hash means no
        inheritance (= no scope discrimination). */
     Hash callScope = Hash(HashAlgorithm::SHA256);
@@ -228,7 +228,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
     /* Outer-direction proxies registered live by the standin's
        `<replay-local-lambda>` primop (= `registerAmbientResolverProxy`).
        Keyed by `(subject, scope)` so the walker's `resolveCdiId`
-       can match the registered seed's cidasks-evolved CDI at any
+       can match the registered seed's cidasks-evolved argStateId at any
        walk-edge index, not just the initial one. List rather than
        map because subject equality isn't trivially hashable;
        n_registrations is small (= one per cb-apply boundary the
@@ -333,7 +333,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
     /* Wrap the argObj in TracingLocalObject so the outer's
        accesses on it during the apply land in the inner trace
        with `from=hex(argId)`. Inherit callScope so sibling cached
-       calls' local-args have distinct content ids.
+       calls' local-args have distinct scope state ids.
 
        Skip the TLO wrap when argObj is a ReplayLocalObject. At warm
        replay, the RLO standin reaching `runOn` already encapsulates
@@ -466,13 +466,13 @@ static PrimOp * makeCachedFnPrimOp(
                            navigation returns the proxy. */
                         auto parentCell = effectiveArgScope(*fnObj);
                         auto seedCell = ArgScopeCell::make(parentCell, /*liveObject set below*/ nullptr);
-                        /* CDI fix: this seed's Subject is the positional
+                        /* argStateId fix: this seed's Subject is the positional
                            handle at this static apply-stack depth.
                            Sibling cb apply invocations share the same
                            Subject and discriminate via their observation
                            factsets, not via state-creep. */
                         cidasks::Subject seedSubject{cidasks::PositionalSeed{seedCell->depth}};
-                        /* Inherit the resolver's callScope (= CDI(Q)
+                        /* Inherit the resolver's callScope (= argStateId(Q)
                            of this cached call). Sibling cached calls
                            with different Qs get distinct rootIds and
                            therefore distinct subject-derived content
@@ -483,7 +483,7 @@ static PrimOp * makeCachedFnPrimOp(
                            outer's probes on the cb arg as they fire
                            through queryFn; the apply-result wrapper
                            uses these observations to compute its
-                           evolved Content Id (via cidasks
+                           evolved scope state id (via cidasks
                            ApplyResultSubject recursion through the
                            arg's evolved scopeStateId). This is what
                            distinguishes sibling apply calls within
@@ -527,7 +527,7 @@ static PrimOp * makeCachedFnPrimOp(
                                are NOT pushed into applyContext.observations.
                                They would be noise from the apply-result
                                wrapper's perspective (their `fromHash` is
-                               the cb-arg seed's CDI, not the wrapper's,
+                               the cb-arg seed's argStateId, not the wrapper's,
                                so the cidasks own-loop on the wrapper
                                doesn't fold them in) but the walk's size
                                growing from these silent pushes would
@@ -537,7 +537,7 @@ static PrimOp * makeCachedFnPrimOp(
                                fires after evolvedQueryFrom because
                                parentHash must be computed first to
                                build the query). The cb-arg
-                               AmbientObject's own CDI uses
+                               AmbientObject's own argStateId uses
                                structuralAddressAfter with empty walk
                                (= content-only) anyway, so dropping
                                these pushes is consistent throughout. */
@@ -770,7 +770,7 @@ void registerAmbientResolverProxy(
        `applyDepth+1` values), so collisions across boundaries
        within one cache call are non-existent unless sibling
        cb-applies share the same cb-arg seed depth — same
-       boundary-trace-only caveat as the previous CDI-keyed version.
+       boundary-trace-only caveat as the previous argStateId-keyed version.
 
        `cidasks::Subject` has no `operator==`; the primop only ever
        registers `PositionalSeed{depth}` here, so structural
@@ -795,7 +795,7 @@ std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     const std::vector<cidasks::Edge> & cidasksWalk)
 {
     /* For each registered (subject, scope), try every edge boundary
-       0..cidasksWalk.size() and check whether the subject's CDI at
+       0..cidasksWalk.size() and check whether the subject's argStateId at
        that boundary matches the queried idHash. The fact's `from`
        at flush time uses the writer's `d1CidasksWalk` index AT
        FLUSH; the walker doesn't know that index, so iterating all

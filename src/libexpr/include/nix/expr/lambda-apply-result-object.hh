@@ -11,7 +11,7 @@
  *  - TracingObject's getType/getInt/etc. record sub-Q `Terminals`
  *    rows in the main trie via `writer.logQuery + logResult`. That's
  *    d=1 storage — appropriate for cached-fn results and other
- *    apply-results whose evolved CDI participates in the d=1 walk.
+ *    apply-results whose evolved argStateId participates in the d=1 walk.
  *
  *  - LambdaApplyResultObject's methods record d=2 observations via
  *    `writer.logDepth2Observation`. They are grouped with the
@@ -75,7 +75,7 @@ class LambdaApplyResultObject : public Object
     Hash depth2ApplyId;
 
     /* scopeStateIdAfter(applyResultSubject, applyScope, {}) hex — the
-       content-only apply-result CDI exposed via getScopeStateIdHex. Computed
+       content-only apply-result argStateId exposed via getScopeStateIdHex. Computed
        once at construction to match `TracingEvaluator::apply`'s
        `applyScopeStateIdHex` (= what the walker computes too). */
     std::string applyScopeStateIdHex;

@@ -46,8 +46,8 @@ static AmbientId replayDerivedLocalId(const Q & query)
 /* Populate `query`'s per-arg fields (from, path, fromCIDs) so its
    reqHash matches what the writer flushed for the corresponding
    recorder probe. Multi-root applies fill fromCIDs[] with multiple
-   leaf-root CDIs; the canonical `from` field carries fromCIDs[0].
-   Returns the first-root CDI for callers (= used to log/diagnose
+   leaf-root argStateIds; the canonical `from` field carries fromCIDs[0].
+   Returns the first-root argStateId for callers (= used to log/diagnose
    and for the AmbientAsks chain advance). */
 template <typename Q>
 static Hash stampPerArgFields(
@@ -395,7 +395,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
        - `nFunction` (= an inner-supplied lambda LocalObject):
          reconstruct as a primop whose impl consults `AmbientAsks`
          at apply-time for a recorded edge matching the live arg's
-         evolved content id, and reproduces the recorded apply
+         evolved scope state id, and reproduces the recorded apply
          result. Per the via-Asks doc's "Lambda LocalObjects don't
          need their body stored" — the application behavior lives
          in the recorded d=2 chain, not in a stored body.
@@ -422,7 +422,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
     /* Capture the resolver so the primop can register the live arg
        it receives (args[0]) as an outer-direction proxy. The OUTER
        walker dispatches d=1 facts whose `from` references the cb-arg
-       seed's initial CDI (= what the inner-side queryFn closure
+       seed's initial argStateId (= what the inner-side queryFn closure
        captured at cold); without this registration the walker's
        resolveCdiId falls through "outer-seed by elimination" and the
        fact's dispatch fails. May be nullptr in unit-test paths that
@@ -459,7 +459,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                 /* Publish the live arg under the cb-arg seed's
                    structural identity so the OUTER walker's
                    `resolveCdiId` can resolve d=1 facts whose `from`
-                   is the seed's cidasks-evolved CDI at any
+                   is the seed's cidasks-evolved argStateId at any
                    walk-edge index. Registration carries the
                    subject + scope (= `PositionalSeed{applyDepth+1}`
                    at `applyScope`), matching what

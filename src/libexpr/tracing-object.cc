@@ -298,7 +298,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
        an apply result, `getSubject()` surfaces its
        applyResultSubject — the next apply sees an evolving
        ApplyResultSubject constituent instead of `OpaqueContent{
-       this.triePos}` which would freeze the CDI. Plain TracingObjects
+       this.triePos}` which would freeze the argStateId. Plain TracingObjects
        (= from evalFile, navigation children) return null and the
        OpaqueContent fallback fires as a fixed-atom identity. */
     cidasks::Subject fnSubj = getSubject()
@@ -315,7 +315,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubj)),
     }};
 
-    /* apply-result CDI is content-only — see commentary in
+    /* apply-result argStateId is content-only — see commentary in
        TracingEvaluator::apply. */
     auto applyScopeStateId = cidasks::scopeStateIdAfter(resultSubject, applyScopeLocal, {});
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);

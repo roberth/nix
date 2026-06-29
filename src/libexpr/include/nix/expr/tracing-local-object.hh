@@ -38,7 +38,7 @@ class TracingLocalObject : public Object
 {
     std::shared_ptr<Object> inner;
     cidasks::Subject subject;  ///< Static structural identifier
-    /* Inherited scope: XOR of outer-scope CDIs (CDI(Q) at the
+    /* Inherited scope: XOR of outer-scope argStateIds (argStateId(Q) at the
        cb-apply boundary). Propagated to navigation children. */
     Hash inheritedScope;
     /* The cb apply this local belongs to (= apply's resultId). Used
@@ -48,13 +48,13 @@ class TracingLocalObject : public Object
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
-    /** This local's content id, scoped via inheritedScope. Computed
+    /** This local's scope state id, scoped via inheritedScope. Computed
         on demand from `subject` + `inheritedScope`. */
     AmbientId localId() const { return cidasks::structuralAddressAfter(subject, inheritedScope, {}); }
 
     /* The argScope cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;
-       content ids are derived from `subject`, not the cell. */
+       scope state ids are derived from `subject`, not the cell. */
     std::shared_ptr<const ArgScopeCell> argScope;
 
     void recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result);

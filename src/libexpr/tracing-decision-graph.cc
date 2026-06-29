@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS Terminals (
 -- Depth-2 (interaction-tracing) layer: the cb-apply boundary's
 -- sub-trie. Per doc/design/tracing-eval-cache-content-identity-via-asks.md,
 -- depth-2 edges key on factSet alone (no Q column) — sibling cached
--- calls' depth-2 sub-traces are kept apart by Content Id inheritance,
+-- calls' depth-2 sub-traces are kept apart by scope state id inheritance,
 -- and same-shape collapse within a call is intentional. toFactSetHash
 -- is stored explicitly: at depth-2 there is no live producer for
 -- incoming-ambient observations, so the walker can't reproduce the

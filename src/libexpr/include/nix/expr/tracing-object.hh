@@ -32,7 +32,7 @@ class TracingObject : public Object
 
     /* For apply-result wrappers: the cidasks Subject that identifies
        this apply structurally (ApplyResultSubject{fn, arg}), and the
-       inherited scope (= CDI(Q) at the cb-apply boundary). Child
+       inherited scope (= argStateId(Q) at the cb-apply boundary). Child
        queries on this wrapper emit at
        `scopeStateIdAt(applyResultSubject, applyScope, writer.d1CidasksWalk,
        walk.size())` — the per-arg evolved scopeStateId the design's
@@ -46,7 +46,7 @@ class TracingObject : public Object
        via shared_ptr. */
     std::shared_ptr<cidasks::ApplyContext> applyContext;
 
-    /* Compute the wrapper's evolved CDI live from
+    /* Compute the wrapper's evolved argStateId live from
        applyContext->observations. */
     std::string evolvedQueryFrom() const;
 
@@ -90,12 +90,12 @@ public:
         is itself an apply result (= curried fn for the next apply, or
         target of further queries). Surfacing the Subject lets the
         next apply build `ApplyResultSubject{fn=this.subject, ...}`
-        with constituents whose CDIs *evolve* via cidasks own-loop,
+        with constituents whose argStateIds *evolve* via cidasks own-loop,
         instead of falling back to `OpaqueContent{this.scopeStateId}` which
-        freezes the CDI at construction time. Non-apply-result
+        freezes the argStateId at construction time. Non-apply-result
         wrappers (= fresh from evalFile, navigation children)
         legitimately have no Subject — for those, the OpaqueContent
-        fallback in callers describes an atom whose CDI is fully
+        fallback in callers describes an atom whose argStateId is fully
         determined and not subject to observation-driven evolution. */
     const cidasks::Subject * getSubject() const override
     {

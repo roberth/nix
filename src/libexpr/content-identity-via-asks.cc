@@ -199,17 +199,17 @@ trace::QueryApply makeApplyResultQuery(
 
 Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
 {
-    /* Compute subject's content id at the precondition of the
+    /* Compute subject's scope state id at the precondition of the
        `edgeIndex`-th edge by replaying the first `edgeIndex` edges'
-       effects on the subject's running content id.
+       effects on the subject's running scope state id.
 
-       Inheritance: `scope` is the XOR of outer-scope CDIs (chiefly
-       the cached call's CDI(Q) at the cb-apply boundary). Passing
+       Inheritance: `scope` is the XOR of outer-scope argStateIds (chiefly
+       the cached call's argStateId(Q) at the cb-apply boundary). Passing
        zero gives the pure structural id. Leaf subjects
        (PositionalSeed, OpaqueContentSubject) XOR `scope` into their
        base hash. Composite subjects (DerivedSubject,
        ApplyResultSubject) propagate `scope` recursively through
-       their constituents' content ids; the structural derivation
+       their constituents' scope state ids; the structural derivation
        at this level uses those scoped constituents' values in its
        query payload, so inheritance ripples through naturally
        without a second XOR at this level.
@@ -237,7 +237,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
                     auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
                     return TracingDecisionGraph::xorHashes(base, scope);
                 } else if constexpr (std::is_same_v<T, DerivedSubject>) {
-                    /* Derived subjects have no CDI — only an address
+                    /* Derived subjects have no argStateId — only an address
                        (= producer query hash). Callers that need an
                        address for any subject use `structuralAddress`;
                        reaching this branch via `scopeStateIdAt` means a
@@ -245,7 +245,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
                        requires an argument-level subject. */
                     nix::unreachable();
                 } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
-                    /* Apply-result composes its constituents' CDIs.
+                    /* Apply-result composes its constituents' argStateIds.
                        Constituents may be Derived → route through
                        structuralAddress (which dispatches Derived to
                        the producer-query-hash path). */
@@ -265,7 +265,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
                        inputs) or under-XOR (= un-scoped inputs) — the
                        per-arg-completion doc (= option 1) avoids
                        both by treating OpaqueContent as a
-                       pre-computed-CDI atom. */
+                       pre-computed-argStateId atom. */
                     return alt.hash;
                 } else {
                     throw Error("cidasks::scopeStateIdAt: unknown subject variant");
@@ -303,7 +303,7 @@ Hash scopeStateIdAfter(const Subject & subject, const Hash & scope, const std::v
 Hash structuralAddress(
     const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
 {
-    /* For non-derived subjects, the structural address IS the CDI.
+    /* For non-derived subjects, the structural address IS the argStateId.
        For DerivedSubject, scopeStateIdAt traps; we compute the
        producer query hash (= what a `from = root_cdi` flush would
        hash for a query naming this derived value) directly. */

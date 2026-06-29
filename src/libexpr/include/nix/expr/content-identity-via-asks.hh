@@ -4,7 +4,7 @@
  * Content-defined identity computed as a pure function of subject
  * and factset. See `doc/design/tracing-eval-cache-content-identity-via-asks.md`.
  *
- * Content ids are not stored anywhere; they're computed on demand
+ * scope state ids are not stored anywhere; they're computed on demand
  * from a value's static structural identifier (the "subject") and
  * the current factset. The recorder and the walker call the same
  * function with the same arguments and obtain identical hashes.
@@ -60,8 +60,8 @@ struct ApplyResultSubject
 /** Escape hatch for values whose structural Subject isn't reachable
     from a positional handle — typically apply-result args that come
     from raw inner Values (not CdiObject-wrapped). Carries the
-    value's content id directly; observations on this value still
-    XOR-fold into its content id at the relevant factset point. */
+    value's scope state id directly; observations on this value still
+    XOR-fold into its scope state id at the relevant factset point. */
 struct OpaqueContentSubject
 {
     Hash hash;
@@ -73,7 +73,7 @@ struct Subject
 };
 
 /** A single observation reduced to the two hashes scopeStateIdAt needs.
-    `fromHash` is the content id the query was issued against;
+    `fromHash` is the scope state id the query was issued against;
     `elementHash` is SHA-256(reqHash || respHash) — the v13 H_element.
     Named `Observation` to match the doc's per-Asks-edge "facts about V"
     membership language (= each element is one observed (req, resp)
@@ -88,7 +88,7 @@ struct Observation
 
 /** An Asks edge's worth of observations. Observations in one edge are
     dispatched against a single shared precondition factset; their
-    `from` fields all refer to subjects' content ids at that precondition. */
+    `from` fields all refer to subjects' scope state ids at that precondition. */
 struct Edge
 {
     std::vector<Observation> observations;
@@ -98,32 +98,32 @@ struct Edge
     the writer at flush time where it already holds the variants. */
 Observation observationFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result);
 
-/** Compute the content id of `subject` after walking through all
-    `edges`, inheriting `scope` (the XOR of outer-scope CDIs — e.g.
-    CDI(Q) at the cb-apply boundary). Passing the zero hash for
-    `scope` gives the pure structural content id, equivalent to
+/** Compute the scope state id of `subject` after walking through all
+    `edges`, inheriting `scope` (the XOR of outer-scope argStateIds — e.g.
+    argStateId(Q) at the cb-apply boundary). Passing the zero hash for
+    `scope` gives the pure structural scope state id, equivalent to
     no inheritance.
 
     Inheritance applies at the leaf: `PositionalSeed` and
     `OpaqueContentSubject` XOR `scope` into their base hash.
     `DerivedSubject` and `ApplyResultSubject` propagate `scope`
-    via their constituents' (recursively scope-aware) content ids,
+    via their constituents' (recursively scope-aware) scope state ids,
     so the structural derivation incorporates inheritance naturally
     via the constituents' `from`-field values. */
 Hash scopeStateIdAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk);
 
-/** Compute the content id of `subject` at the precondition of the
+/** Compute the scope state id of `subject` at the precondition of the
     edge at index `edgeIndex` in `walk`, inheriting `scope`.
     `edgeIndex == 0` means the initial precondition (= empty
     factset); `edgeIndex == walk.size()` means the postcondition of
     the whole walk (equivalent to `scopeStateIdAfter`).
 
     **Argument-level only.** Per the design (Principle 3, per-arg
-    centralization), only argument-level subjects bear CDIs:
+    centralization), only argument-level subjects bear argStateIds:
     `PositionalSeed` (cb_arg seed, evolves via own-loop),
-    `ApplyResultSubject` (composes constituent argument CDIs), and
+    `ApplyResultSubject` (composes constituent argument argStateIds), and
     `OpaqueContentSubject` (escape hatch). `DerivedSubject` does not
-    have a CDI — observations on derived values fold into the cb_arg
+    have a argStateId — observations on derived values fold into the cb_arg
     root's own-loop and the derived value is referenced via
     `(root_cdi, path)`. Passing a `DerivedSubject` traps; callers
     that want a content-addressed identifier for any Subject
@@ -137,7 +137,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
     `qH(QueryGetAttr{name, from = root_cdi, fromCIDs, path})` for
     `GetAttr`, similarly for `GetListElem`. Used by `AmbientObject`,
     `TracingLocalObject`, etc. to expose a single-`Hash` identity
-    handle even though derived values don't have CDIs proper. */
+    handle even though derived values don't have argStateIds proper. */
 Hash structuralAddress(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex);
 
 /** Convenience: `structuralAddress` at the walk's tail (= edgeIndex
@@ -191,7 +191,7 @@ PathAndRoots pathAndRootsFromSubject(const Subject & subject);
 /** Walk a Subject's parent chain through DerivedSubject nodes to
     the root form (PositionalSeed, OpaqueContentSubject, or
     ApplyResultSubject). Used by the per-arg flush path to compute
-    the cb_arg root's CDI for `from` substitution while the access
+    the cb_arg root's argStateId for `from` substitution while the access
     path is encoded separately as a PathExpr. */
 const Subject & rootSubjectOf(const Subject & subject);
 
@@ -228,7 +228,7 @@ std::string describe(const Subject & subject);
     per edge so the cidasks own-loop re-evaluates `myCidAtK` per
     observation.
 
-    The context is **always read live**: no snapshot, no freeze. CIDs
+    The context is **always read live**: no snapshot, no freeze. scopeStateIds
     are retrieved by re-running `cidasks::scopeStateIdAt` against the
     current state of `observations` on every `evolvedQueryFrom` call.
     Derived children of the wrapper share the same shared_ptr to the
@@ -237,7 +237,7 @@ std::string describe(const Subject & subject);
 
     `argSubject`/`scope` identify the cb arg's structural Subject and
     its inherited scope (= per the cidasks Inheritance section, the
-    outer-scope CDIs that the per-invocation CIDs compose with). */
+    outer-scope argStateIds that the per-invocation scopeStateIds compose with). */
 struct ApplyContext
 {
     Subject argSubject;

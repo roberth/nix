@@ -118,7 +118,7 @@ std::shared_ptr<AmbientResolver> makeAmbientResolver(
     TracingWriter * innerWriter = nullptr);
 
 /** Set the resolver's cached-call scope — used by cidasks to make
-    sibling cached calls' content ids distinct via inheritance.
+    sibling cached calls' scope state ids distinct via inheritance.
     Should be unique per cached call (e.g. hash of import path). */
 void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callScope);
 
@@ -127,9 +127,9 @@ void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callScope);
     `<replay-local-lambda>` primop at warm replay to publish the
     live arg it received (args[0]) under the cb-arg seed's
     structural identity, so the OUTER walker can resolve d=1 facts
-    whose `from` references the seed's CDI — at ANY walk-edge
+    whose `from` references the seed's argStateId — at ANY walk-edge
     index, since the d=1 fact's `from` is the seed's cidasks-evolved
-    CDI at flush time and the walker doesn't know that index a
+    argStateId at flush time and the walker doesn't know that index a
     priori. At cold these queries' answers came from the queryFn
     closure that captured the live outer arg; at warm this
     registration is the equivalent live channel. Single-entry
@@ -149,9 +149,9 @@ void registerAmbientResolverProxy(
     cell-chain and Requests-pool resolution fail, before the
     "outer-seed by elimination" miss path. Iterating every edge
     boundary is necessary because the d=1 fact's `from` is the
-    seed's CDI at the writer's flush-time `d1CidasksWalk` index
+    seed's argStateId at the writer's flush-time `d1CidasksWalk` index
     (= post-observations evolution), which differs from the
-    initial CDI we registered under. */
+    initial argStateId we registered under. */
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     AmbientResolver & resolver,
     const Hash & idHash,

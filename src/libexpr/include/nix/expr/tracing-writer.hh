@@ -97,7 +97,7 @@ class TracingWriter
         trace::QueryVariant query;
         trace::ResultVariant result;
         cidasks::Subject subject;
-        Hash inheritedScope; ///< outer-scope CDIs for scopeStateIdAt
+        Hash inheritedScope; ///< outer-scope argStateIds for scopeStateIdAt
         /* Empty hash = depth-1; otherwise = the cb apply's resultId,
            grouping this fact into the depth-2 sub-trace for that apply. */
         Hash depth2ApplyId{HashAlgorithm::SHA256};
@@ -446,7 +446,7 @@ public:
      *
      * AmbientResolver::apply uses this to register the QueryApply
      * Request and the localArg sidecar. At flush: if `keyPlaceholder`
-     * is set the insert key is that key (the local's content id);
+     * is set the insert key is that key (the local's scope state id);
      * otherwise the insert key is the hash of the payload (the apply
      * Q's own queryHash).
      */
@@ -490,7 +490,7 @@ public:
      * advances its cumulative `cidasksWalk` once per dispatched
      * Asks edge (= principle 6) — leaving writer and walker at
      * different walk indices when they each compute the
-     * apply-result's CDI, producing different queryHashes.
+     * apply-result's argStateId, producing different queryHashes.
      *
      * Skip-on-empty per the principle 4 + 7 read: an Asks edge
      * with no ambient observations doesn't move cidasks state, so

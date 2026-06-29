@@ -265,10 +265,10 @@ public:
     /**
      * If this Object is a cache-boundary proxy with a content-defined
      * identity — AmbientObject, TracingLocalObject, TracingObject,
-     * TracingReplayObject — return its CDI hex. Returns nullopt for
+     * TracingReplayObject — return its argStateId hex. Returns nullopt for
      * regular Objects (InterpreterObject and friends). Used to build
      * apply Q hashes (`TracingReplayEvaluator::apply`) and to match
-     * `cell->liveObject` against a recorded CDI
+     * `cell->liveObject` against a recorded argStateId
      * (`TracingReplayEvaluator::resolveCdiId`'s cell-chain branch).
      *
      * Virtual rather than dynamic_cast so callers don't have to
@@ -282,7 +282,7 @@ public:
     /**
      * The proxy's static structural identifier — for AmbientObject
      * and TracingLocalObject, the Subject they carry. Used by the
-     * walker to evolve content ids in lockstep with the recorder
+     * walker to evolve scope state ids in lockstep with the recorder
      * (cidasks::scopeStateIdAt against the running walk). Returns null
      * for non-proxy Objects.
      */
@@ -292,9 +292,9 @@ public:
     }
 
     /**
-     * The proxy's inherited scope — the XOR of outer-scope CDIs used
+     * The proxy's inherited scope — the XOR of outer-scope argStateIds used
      * by cidasks::scopeStateIdAt to make sibling cached-call recordings'
-     * content ids distinct. Zero hash for non-proxy Objects.
+     * scope state ids distinct. Zero hash for non-proxy Objects.
      */
     virtual Hash getInheritedScope() const
     {
@@ -429,7 +429,7 @@ public:
      *
      * The walker uses this to consult outer-direction proxies
      * registered live by the `<replay-local-lambda>` primop when
-     * resolving an inner-side cb-arg seed CDI that has no recorded
+     * resolving an inner-side cb-arg seed argStateId that has no recorded
      * provenance — closes the gap where the warm walker dispatches
      * d=1 facts on the apply's argObj and the cb-arg seed has
      * neither a producer Request nor a localArg sidecar.

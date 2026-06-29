@@ -44,7 +44,7 @@ class TracingReplayObject : public Object
        cumulative cidasksWalk). */
     std::shared_ptr<cidasks::ApplyContext> applyContext;
     /* When apply-result, the ApplyResultSubject identifying it
-       structurally + the inherited scope (= CDI(Q)). Used together
+       structurally + the inherited scope (= argStateId(Q)). Used together
        with the evaluator's cidasksWalk to compute the evolved scopeStateId
        at lookup time via the same formula the writer's TracingObject
        uses. */
@@ -84,7 +84,7 @@ public:
 
     /** Attach the per-apply observation context — for apply-result
         wrappers, so subsequent queries can compute the evolved
-        Content Id via cidasks. */
+        scope state id via cidasks. */
     TracingReplayObject & withApplyContext(
         std::shared_ptr<cidasks::ApplyContext> ctx, cidasks::Subject resultSubject)
     {
@@ -120,7 +120,7 @@ public:
     /** Symmetric to `TracingObject::getSubject()`: surface the apply-
         result Subject when this wrapper is an apply result so the
         next apply / further queries build `ApplyResultSubject{...}`
-        constituents whose CDIs evolve via cidasks own-loop, instead
+        constituents whose argStateIds evolve via cidasks own-loop, instead
         of falling back to `OpaqueContent{this.scopeStateId}`. */
     const cidasks::Subject * getSubject() const override
     {

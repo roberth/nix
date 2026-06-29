@@ -67,15 +67,15 @@ using AmbientApplyFn = std::function<AmbientId(
 class AmbientObject : public Object
 {
     cidasks::Subject subject; ///< Static structural identifier (positional/derived/apply)
-    /* Inherited scope: XOR of outer-scope CDIs (chiefly the cached
-       call's CDI(Q)) for content-id inheritance, per
+    /* Inherited scope: XOR of outer-scope argStateIds (chiefly the cached
+       call's argStateId(Q)) for content-id inheritance, per
        content-identity-via-asks.md. Set at the cb-apply boundary;
        propagated to children. Zero hash if no inheritance. */
     Hash inheritedScope;
     /* Per-apply observation context. Set on cb-arg seed AmbientObjects
        by makeCachedFnPrimOp.impl at the apply boundary; the queryFn
        closure routes observations through this context so the
-       apply-result wrapping can compute its evolved content id via
+       apply-result wrapping can compute its evolved scope state id via
        cidasks::scopeStateIdAfter against the accumulated walk. Null on
        non-cb-arg AmbientObjects. */
     std::shared_ptr<cidasks::ApplyContext> applyContext;
@@ -103,9 +103,9 @@ public:
         apply-result), per the content-identity-via-asks design. */
     const cidasks::Subject * getSubject() const override { return &subject; }
 
-    /** This proxy's inherited scope (outer-scope CDIs composed),
+    /** This proxy's inherited scope (outer-scope argStateIds composed),
         used by cidasks to make sibling cached-call recordings'
-        content ids distinct. */
+        scope state ids distinct. */
     Hash getInheritedScope() const override { return inheritedScope; }
 
     /** Set the proxy's argScope. Call right after construction at
@@ -116,7 +116,7 @@ public:
         return *this;
     }
 
-    /** Set the proxy's inherited scope (outer-scope CDIs).
+    /** Set the proxy's inherited scope (outer-scope argStateIds).
         Children created by this proxy inherit this scope. */
     AmbientObject & withInheritedScope(const Hash & h)
     {
@@ -166,7 +166,7 @@ public:
 
     AmbientId getCdi() const
     {
-        /* Content id at the empty factset, with this proxy's inherited
+        /* scope state id at the empty factset, with this proxy's inherited
            scope applied. For multi-edge use, callers must pass the
            relevant walk via cidasks::scopeStateIdAt instead. */
         return cidasks::structuralAddressAfter(subject, inheritedScope, {});
