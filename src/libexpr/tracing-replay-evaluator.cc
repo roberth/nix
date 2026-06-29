@@ -3,6 +3,7 @@
 #include "nix/expr/ambient-object.hh"
 #include "nix/expr/arg-scope.hh"
 #include "nix/expr/eval.hh"
+#include "nix/expr/expr-from-object.hh"
 #include "nix/expr/replay-local-object.hh"
 #include "nix/expr/tracing-cache-stats.hh"
 #include "nix/expr/tracing-local-object.hh"
@@ -422,16 +423,26 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
            a nested AmbientObject for the int the outer body passes
            to inner_lambda in cb-higher-order's `g 10` — reach here.
 
-           For OUTER values the via-Asks design forbids serving from
-           the Responses pool ("ambient responses are
-           capability-mediated, not cached" — primop doc §Replay
-           semantics). The previous fallback materialised an RLO and
-           let its methods read out of LocalResponseMap, which was
-           correct for INNER locals but wrong here: it served the
-           recorded outer response regardless of whether the live
-           outer would produce it, silently masking outer-body change
-           (cb-higher-order step 3 returning stale 6 when outer
-           changed from `g 5` to `g 10`).
+           Live-proxy fallback: the `<replay-local-lambda>` primop
+           registers the args[0] it receives under the cb-arg seed's
+           initial CDI when fired (= registerAmbientResolverProxy in
+           replay-local-object.cc). If we find a matching registration
+           here, the OUTER walker resolves to that live proxy and
+           dispatches the d=1 fact live against outer's actual value
+           — capability-mediated, not cached. This closes the seed-
+           resolution gap that otherwise kills cb-higher-order's
+           DISALLOW_PARSE warm-replay steps.
+
+           Without a registration, fall through to nullptr. The via-
+           Asks design forbids serving from the Responses pool for
+           OUTER values ("ambient responses are capability-mediated,
+           not cached" — primop doc §Replay semantics); the previous
+           fallback materialised an RLO and let its methods read out
+           of LocalResponseMap, which was correct for INNER locals but
+           wrong here: it served the recorded outer response regardless
+           of whether the live outer would produce it, silently masking
+           outer-body change (cb-higher-order step 3 returning stale 6
+           when outer changed from `g 5` to `g 10`).
 
            INNER locals are unaffected by this change: their sidecar
            presence routes them via `chaseLocalArgSidecar`, and
@@ -442,6 +453,15 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
            "walker reconstructs the LocalObject as a live Nix Value
            tree from the CAS pool"). The forbidden thing is treating
            an OUTER-direction id as if it were a local. */
+        if (auto resolver = inner->getAmbientResolver()) {
+            if (auto live = tryResolveAmbientResolverProxy(*resolver, idHash)) {
+                tracingCacheLog(
+                    "resolve %s: not in pool — found live-proxy registration",
+                    idStr.substr(0, 12));
+                ctx.memo[idStr] = live;
+                return live;
+            }
+        }
         tracingCacheLog(
             "resolve %s: not in pool — no provenance (outer-seed by elimination); returning null",
             idStr.substr(0, 12));

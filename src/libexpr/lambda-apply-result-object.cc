@@ -123,9 +123,13 @@ std::shared_ptr<Object> LambdaApplyResultObject::getListElem(size_t index)
 
 ObjectType LambdaApplyResultObject::getTypeLazy()
 {
-    auto type = inner->getTypeLazy();
-    recordD2(trace::QueryGetType{std::string{}}, trace::ResultType{objectTypeToString(type)});
-    return type;
+    /* Delegate to `inner` for the type, but skip the d=2 recording —
+       `getType` records the same `QueryGetType` payload, and the
+       depth-2 chain has no dedup (= same fact appended twice cancels
+       via XOR-fold at flush, breaking AmbientResult). Callers that
+       need both `getTypeLazy` and `getType` get exactly one
+       observation through the `getType` call. */
+    return inner->getTypeLazy();
 }
 
 ObjectType LambdaApplyResultObject::getType()

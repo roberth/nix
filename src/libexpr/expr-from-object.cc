@@ -740,4 +740,19 @@ void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callScope)
     resolver.callScope = std::move(callScope);
 }
 
+void registerAmbientResolverProxy(
+    AmbientResolver & resolver, Hash id, std::shared_ptr<Object> obj)
+{
+    resolver.registry.registerOuterAt(std::move(id), std::move(obj));
+}
+
+std::shared_ptr<Object> tryResolveAmbientResolverProxy(
+    AmbientResolver & resolver, Hash id)
+{
+    auto it = resolver.registry.outerValues.find(id);
+    if (it == resolver.registry.outerValues.end())
+        return nullptr;
+    return it->second;
+}
+
 } // namespace nix

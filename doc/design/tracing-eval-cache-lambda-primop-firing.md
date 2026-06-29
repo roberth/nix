@@ -627,31 +627,66 @@ Walker-side support landed alongside Change C:
   `PositionalSeed{depth+1}` is the right one (previously
   dereferenced an empty optional and produced garbage subjects).
 
+### Live-proxy registration (= seed-resolution gap closer)
+
+In addition to Changes A/B/C the implementation also closes a
+downstream gap that the memo above did not anticipate. After the
+three changes were in tree, cb-higher-order's DISALLOW_PARSE warm
+replay still missed — but for a different reason than the
+lambda-primop bypass: the OUTER walker, after correctly dispatching
+the cb-apply Fact, then tries to dispatch d=1 facts whose `from`
+is the inner-side cb-arg seed CDI (= `seed(applyDepth+1).initial`,
+e.g., `de4269a965a5...` for cb-higher-order's contraArg_5). Cold
+recorded these as the inner's observations on the AmbientObject the
+`<cached-fn>(TLO).impl` constructed around outer's passed value;
+the AmbientObject is transient (constructed inside the impl and
+never registered, per `makeCachedFnPrimOp`'s "boundary-trace-only
+discipline" comment), so at warm `resolveCdiId` has no producer
+Request and no localArg sidecar to chase, and falls through
+"outer-seed by elimination" returning null.
+
+The fix is the standin's `<replay-local-lambda>` primop itself
+registering args[0] under the cb-arg seed's initial CDI at fire
+time. Each firing publishes an `InterpreterObject(state, args[0])`
+into the shared `AmbientResolver.registry.outerValues` keyed by
+`contentIdAfter(PositionalSeed{applyDepth+1}, applyScope, {})` —
+the same expression `makeCachedFnPrimOp` uses for its `rootId`, so
+the OUTER walker reaches us via matching CDI keys. The walker's
+`resolveCdiId` calls `inner->getAmbientResolver()` (a new virtual
+on `Evaluator`) and consults `outerValues` before the
+"outer-seed by elimination" fall-through. Dispatch on the resolved
+`InterpreterObject` is live (= capability-mediated) — outer-side
+behaviour change still surfaces as a divergent live response and a
+clean walker miss.
+
+Plumbing required:
+- `Evaluator::getAmbientResolver()` virtual (default null), with
+  `Interpreter` returning its `ambientResolver` field and the two
+  wrapping evaluators delegating to `inner`.
+- `registerAmbientResolverProxy` / `tryResolveAmbientResolverProxy`
+  free functions in `expr-from-object.{hh,cc}` exposing the
+  resolver's outer-values registration without leaking
+  `AmbientRegistry`'s definition into the header.
+
+Boundary-trace-only discipline still applies for SIBLING cb-applies
+sharing the same cb_arg seed: the registration is last-write-wins,
+so cb-sibling tests (which exercise multiple cb-applies in the
+same cache call against the same seed) aren't necessarily helped by
+this; they remain red, in line with the
+[`per-arg-completion`](./tracing-eval-cache-per-arg-completion.md#whats-still-missing-for-cb-sibling)
+plan. The narrow fix is sound for cb-higher-order because there
+is only one cb-apply per cache call.
+
 ### Test outcomes
 
-- `cb-higher-order-nested`: was red, **now green** (cold and outer
-  change steps; warm-replay DISALLOW_PARSE is commented out in the
-  test by design).
-- `cb-higher-order` cold + outer-change steps: green.
-- `cb-higher-order` warm-replay DISALLOW_PARSE (steps 2, 4):
-  **still red**. Failure shifted from the lambda-primop bypass
-  diagnosed in the predecessor memos to a separate gap: the OUTER
-  walker, after dispatching the cb-apply Fact, tries to dispatch
-  d=1 facts whose `from` is the inner-side cb-arg seed CDI
-  (= `seed(applyDepth+1).initial`, e.g.,
-  `de4269a965a5...` for cb-higher-order's contraArg_5). This CDI
-  has no provenance — neither a producer Request nor a localArg
-  sidecar — so `resolveCdiId` falls through "outer-seed by
-  elimination" and returns null. The walker's dispatch fails for
-  those facts and the d=1 cur diverges from the recorded position.
-  This gap pre-dates Change C and isn't addressed by the three
-  changes here; closing it likely requires the standin's primop to
-  register an outer-direction proxy for `args[0]` (= outer's
-  passed value) under the seed's initial CDI so subsequent walker
-  dispatches can live-resolve it. Recommended as the follow-up
-  work item.
+- `cb-higher-order`: was red, **now green** (all four steps —
+  cold, warm-replay DISALLOW_PARSE, outer-change, and restore
+  DISALLOW_PARSE).
+- `cb-higher-order-nested`: was red, **now green** (cold and
+  outer-change steps; warm-replay DISALLOW_PARSE is commented out
+  in the test by design).
 - `cb-stats-higher-order-baseline`: red on hit-count drift, as the
   verification plan predicted.
 - `cb-385`, `cb-sibling-discrimination-via-observation`: red as
   documented; orthogonal.
-- All other tests (237/249): unchanged.
+- All other tests (238/249): unchanged.

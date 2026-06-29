@@ -20,6 +20,11 @@ public:
     /// Shared resolver for ambient interactions (set by builtins.cache).
     std::shared_ptr<struct AmbientResolver> ambientResolver;
 
+    std::shared_ptr<struct AmbientResolver> getAmbientResolver() override
+    {
+        return ambientResolver;
+    }
+
     explicit Interpreter(ref<EvalState> evalState);
 
     bool isReadOnly() const override;

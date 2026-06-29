@@ -1,6 +1,7 @@
 #include "nix/expr/replay-local-object.hh"
 #include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/expr-from-object.hh"
+#include "nix/expr/interpreter-object.hh"
 #include "nix/expr/object-type.hh"
 #include "nix/expr/primops.hh"
 #include "nix/expr/tracing-cache-log.hh"
@@ -361,6 +362,16 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
     auto chainCursorSaved = chainCursor;
     auto applyDepthSaved = applyDepth;
     auto applyScopeSaved = applyScope;
+    /* Capture the resolver so the primop can register the live arg
+       it receives (args[0]) as an outer-direction proxy. The OUTER
+       walker dispatches d=1 facts whose `from` references the cb-arg
+       seed's initial CDI (= what the inner-side queryFn closure
+       captured at cold); without this registration the walker's
+       resolveCdiId falls through "outer-seed by elimination" and the
+       fact's dispatch fails. May be nullptr in unit-test paths that
+       construct a standin without a resolver — registration is
+       skipped then. */
+    auto resolverSaved = resolver;
     /* Capture the standin's chainCursor at primop-construction time
        (= AFTER ExprFromObject(standin).eval's `obj->getType()` call
        fires `standin.getType` and advances chainCursor via
@@ -385,8 +396,30 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
             .impl = [dg, rootFSRootSaved, subjectSaved,
                      walkFactsSaved, chainCursorSaved,
                      initialChainCursor, initialWalkFactsSize,
-                     applyDepthSaved, applyScopeSaved](
+                     applyDepthSaved, applyScopeSaved,
+                     resolverSaved](
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
+                /* Publish the live arg under the cb-arg seed's
+                   initial CDI so the OUTER walker's `resolveCdiId`
+                   can resolve d=1 facts whose `from` references this
+                   seed (= the inner's observations on the AmbientObject
+                   wrapping outer's value at cold). Registration uses
+                   `contentIdAfter(seed(applyDepth+1), applyScope, {})`
+                   — the same expression `makeCachedFnPrimOp`'s impl
+                   computes for `rootId` at cold, so the OUTER walker
+                   reaches us via the same CDI key. Wraps args[0] in
+                   an `InterpreterObject` so the walker can call
+                   getType / getInt / etc. live against outer's actual
+                   Value. */
+                if (resolverSaved) {
+                    auto seedCdi = cidasks::contentIdAfter(
+                        cidasks::Subject{cidasks::PositionalSeed{*applyDepthSaved + 1}},
+                        *applyScopeSaved, {});
+                    auto outerArgObj = std::make_shared<InterpreterObject>(
+                        state, allocRootValue(args[0]));
+                    registerAmbientResolverProxy(
+                        *resolverSaved, seedCdi, std::move(outerArgObj));
+                }
                 /* Each primop firing replays the standin's chain
                    advance (apply Fact + synthetic probes) on a LOCAL
                    copy of walkFacts/chainCursor so the standin's

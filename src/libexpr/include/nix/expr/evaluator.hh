@@ -419,6 +419,25 @@ public:
      * All Evaluator implementations ultimately wrap an EvalState.
      */
     virtual EvalState & getEvalState() = 0;
+
+    /**
+     * Get the shared AmbientResolver if one is wired up below this
+     * evaluator. `Interpreter` returns its own `ambientResolver`
+     * field; wrapping evaluators (`TracingEvaluator`,
+     * `TracingReplayEvaluator`) delegate down. Returns null when no
+     * cache stack is active.
+     *
+     * The walker uses this to consult outer-direction proxies
+     * registered live by the `<replay-local-lambda>` primop when
+     * resolving an inner-side cb-arg seed CDI that has no recorded
+     * provenance — closes the gap where the warm walker dispatches
+     * d=1 facts on the apply's argObj and the cb-arg seed has
+     * neither a producer Request nor a localArg sidecar.
+     */
+    virtual std::shared_ptr<struct AmbientResolver> getAmbientResolver()
+    {
+        return nullptr;
+    }
 };
 
 } // namespace nix

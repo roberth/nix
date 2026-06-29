@@ -120,4 +120,26 @@ std::shared_ptr<AmbientResolver> makeAmbientResolver(
     Should be unique per cached call (e.g. hash of import path). */
 void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callScope);
 
+/** Register a live outer-direction proxy under `id` in the resolver's
+    outer-values map. Used by the `<replay-local-lambda>` primop at
+    warm replay to publish the live arg it received (args[0]) under
+    the cb-arg seed's initial CDI, so the OUTER walker can later
+    resolve d=1 facts whose `from` references that CDI. The d=1 facts
+    in question are inner observations on the cb-arg AmbientObject
+    (e.g., `getType from=seed(applyDepth+1).initial_cdi`); at cold
+    these queries' answers came from the queryFn closure that
+    captured the live outer arg, and at warm this registration is
+    the equivalent live channel. Single-entry contract (= overwrite-
+    on-conflict) matches the existing `registerOuterAt` semantics. */
+void registerAmbientResolverProxy(
+    AmbientResolver & resolver, Hash id, std::shared_ptr<Object> obj);
+
+/** Look up an outer-direction proxy previously registered via
+    `registerAmbientResolverProxy`. Returns nullptr if no
+    registration exists. Used by `TracingReplayEvaluator::resolveCdiId`
+    as a fallback after cell-chain and Requests-pool resolution
+    fail, before the "outer-seed by elimination" miss path. */
+std::shared_ptr<Object> tryResolveAmbientResolverProxy(
+    AmbientResolver & resolver, Hash id);
+
 } // namespace nix
