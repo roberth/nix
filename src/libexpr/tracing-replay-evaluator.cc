@@ -580,54 +580,85 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     }
     std::shared_ptr<Object> argObj;
     if (isLocalArgId(argHash)) {
-        /* The cb apply's local arg: opt this standin into depth-2
-           per-probe validation (= each subsequent probe on it must
-           appear in some recorded AmbientAsks edge's requestSet,
-           or we throw divergence). Standins materialised by
-           resolveCdiId for non-cb-apply ids stay without
-           validation — their facts live at depth-1, not in
-           AmbientAsks. */
-        auto standin = materialiseLocalStandin(argHash, argIdStr, ctx);
-        if (auto * replayLocal = dynamic_cast<ReplayLocalObject *>(standin.get())) {
-            replayLocal->withAmbientAsksValidation();
-            /* Root the d=2 chain at the applyReqHash. Each cb-apply's
-               chain lives in its own subtree of AmbientAsks; the
-               apply_qH `idStr` resolved here IS that root. Matches
-               the writer's `cumulativeFactSet = boundary.applyRequestHash`
-               in flushPendingAmbient's finalize loop. */
+        /* The cb apply's local arg. Read the localArg sidecar to
+           source the cb-arg's structural subject (depth + scope)
+           and construct the standin with `PositionalSeed{depth}`
+           — matching the recorder's TracingLocalObject subject.
+
+           Using OpaqueContentSubject{localId} here is the Fix B
+           anti-pattern documented in
+           `tracing-eval-cache-per-arg-completion.md`:
+           `OpaqueContentSubject`'s CDI is constant in `k`
+           (= no own-loop evolution), so once the standin's first
+           probe extends the chain, every subsequent probe's
+           `stampPerArgFields` reads back `localId` instead of the
+           cidasks-evolved CDI the recorder stamped its facts
+           against. The recorded reqHashes then can't be found in
+           LocalResponseMap → cb-sibling fails with
+           "no recorded response for getType on local". Both
+           sibling cb-applies share the same first probe's stamped
+           reqHash regardless of subject (= at edgeIndex=0,
+           PositionalSeed and OpaqueContent both yield `localId`),
+           which is why this bug stayed latent until cb-sibling
+           landed: it's the first test that needs the standin's
+           cdi to *evolve* via subsequent probes for downstream
+           discrimination.
+
+           Opt into depth-2 per-probe validation (= each probe
+           must appear in some recorded AmbientAsks edge's
+           requestSet, or we throw divergence) and root the chain
+           at applyReqHash — different cb-applies' chains live in
+           disjoint AmbientAsks subtrees; `idStr` IS this apply's
+           chain root. */
+        auto sidecarPayload = decisionGraph.getRequestPayload(argHash);
+        std::shared_ptr<Object> standin;
+        if (sidecarPayload) {
             try {
-                replayLocal->withChainStart(
-                    Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256));
-            } catch (const std::exception &) {
-                /* idStr should be a valid hex hash here; if not, leave
-                   chainCursor at its default (emptySetHash) — the walk
-                   will fail safely. */
-            }
-            /* Read the localArg sidecar to source the cb-arg apply
-               context (depth + scope). When this standin's
-               `<replay-local-lambda>` primop fires it composes the
-               synthetic apply-result subject as
-               `ApplyResultSubject{this.subject, PositionalSeed{depth+1}}`
-               at `applyScope`, mirroring the recorder. Without these
-               fields the optionals stay empty and dereferencing
-               `*applyDepthSaved + 1` in the primop reads garbage,
-               producing a synthetic subject `seed(<random>)` that
-               doesn't match the writer's recording → divergence. */
-            try {
-                auto sidecarPayload = decisionGraph.getRequestPayload(argHash);
-                if (sidecarPayload) {
-                    auto sidecarJson = cborStringToJson(*sidecarPayload);
-                    if (sidecarJson.contains("depth") && sidecarJson.contains("scope")) {
-                        auto sidecarDepth = sidecarJson["depth"].get<int>();
-                        auto sidecarScope = Hash::parseNonSRIUnprefixed(
-                            sidecarJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
-                        replayLocal->withApplyContext(sidecarDepth, sidecarScope);
+                auto sidecarJson = cborStringToJson(*sidecarPayload);
+                if (sidecarJson.contains("depth") && sidecarJson.contains("scope")) {
+                    auto sidecarDepth = sidecarJson["depth"].get<int>();
+                    auto sidecarScope = Hash::parseNonSRIUnprefixed(
+                        sidecarJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
+                    cidasks::Subject rootSubject{cidasks::PositionalSeed{sidecarDepth}};
+                    auto rlo = std::make_shared<ReplayLocalObject>(
+                        std::move(rootSubject), sidecarScope,
+                        std::make_shared<std::vector<cidasks::Edge>>(),
+                        std::make_shared<Hash>(HashAlgorithm::SHA256),
+                        decisionGraph, inner->getEvalState().rootFSRoot,
+                        /*type=*/ nThunk, &inner->getEvalState());
+                    rlo->withAmbientAsksValidation();
+                    try {
+                        rlo->withChainStart(
+                            Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256));
+                    } catch (const std::exception &) {
+                        /* idStr should be a valid hex hash here; if not,
+                           leave chainCursor at its default
+                           (emptySetHash) — the walk will fail safely. */
                     }
+                    rlo->withApplyContext(sidecarDepth, sidecarScope);
+                    standin = rlo;
+                    ctx.memo[argIdStr] = standin;
                 }
             } catch (const std::exception &) {
-                /* Sidecar missing or malformed — primop will throw on
-                   dereferencing the optionals; surrounding catch maps to
-                   walker miss. */
+                /* Sidecar malformed — fall through to the OpaqueContent
+                   fallback below. */
+            }
+        }
+        if (!standin) {
+            /* Fallback: no sidecar metadata. Construct an
+               OpaqueContent standin so the surface lookup succeeds,
+               but observation-driven discrimination won't work past
+               edgeIndex=0. Callers that need discrimination must
+               ensure the sidecar is recorded — which
+               `AmbientApply::runOn` does for every cb-apply local. */
+            standin = materialiseLocalStandin(argHash, argIdStr, ctx);
+            if (auto * rlo = dynamic_cast<ReplayLocalObject *>(standin.get())) {
+                rlo->withAmbientAsksValidation();
+                try {
+                    rlo->withChainStart(
+                        Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256));
+                } catch (const std::exception &) {
+                }
             }
         }
         argObj = standin;
