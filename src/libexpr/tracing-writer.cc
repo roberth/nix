@@ -215,15 +215,17 @@ void TracingWriter::flushPendingAmbient(bool finalize)
     for (auto & boundary : pendingApplyBoundaries) {
         auto & group = boundary.facts;
 
-        std::vector<cidasks::Edge> walk;
-        walk.reserve(group.size());
-
-        Hash cumulativeFactSet = boundary.applyRequestHash;
-        for (size_t i = 0; i < group.size(); ++i) {
+        /* Helper: stamp the i-th fact and emit Request/LocalResponse
+           into the pool. AmbientAsks is inserted iff `withAmbientAsks`
+           is true. Returns (cumulativeFactSet, walk-edge-to-append).
+           Used both for first-finalize processing (with AmbientAsks)
+           and for late-d2-obs re-processing (without AmbientAsks —
+           see commentary at the "late probe" branch below). */
+        auto stampAndEmit = [&](size_t i, const std::vector<cidasks::Edge> & walk,
+                                Hash cumulativeFactSet, bool withAmbientAsks)
+            -> std::pair<Hash, cidasks::Edge>
+        {
             auto & pf = group[i];
-            /* Per-arg with multi-root: compute fromCIDs + path against
-               the prefix-walk built so far (so the walker observes the
-               same evolved CDI at each step). */
             auto [path, roots] = cidasks::pathAndRootsFromSubject(pf.subject);
             std::vector<trace::QueryLeaf> fromCIDs;
             fromCIDs.reserve(roots.size());
@@ -239,10 +241,10 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             std::string queryTag = std::visit(
                 [](const auto & q) -> std::string { return std::string(q.tag); }, pf.query);
             tracingCacheLog(
-                "flush d2 fact: applyId=%s i=%zu subject=%s query=%s from=%s path=%zu fromCIDs=%zu",
+                "flush d2 fact: applyId=%s i=%zu subject=%s query=%s from=%s path=%zu fromCIDs=%zu ambientAsks=%s",
                 boundary.applyId.to_string(HashFormat::Base16, false).substr(0, 12),
                 i, cidasks::describe(pf.subject), queryTag, fromHex.substr(0, 12),
-                path.steps.size(), fromCIDs.size());
+                path.steps.size(), fromCIDs.size(), withAmbientAsks ? "yes" : "no");
 
             nlohmann::json queryJson;
             std::visit([&](const auto & q) { queryJson = q; }, pf.query);
@@ -261,102 +263,130 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
             decisionGraph->insertLocalResponse(queryHash, responsePayload);
 
-            auto requestSet = decisionGraph->insertRequestSet({queryHash});
             auto toFactSet = TracingDecisionGraph::xorFactIntoHash(
                 cumulativeFactSet, queryHash, responseHash);
-            decisionGraph->insertAmbientAsks(cumulativeFactSet, requestSet, toFactSet);
-            cumulativeFactSet = toFactSet;
+            if (withAmbientAsks) {
+                auto requestSet = decisionGraph->insertRequestSet({queryHash});
+                decisionGraph->insertAmbientAsks(cumulativeFactSet, requestSet, toFactSet);
+            }
 
-            /* Append the SUBSTITUTED fact so the next iteration's
-               contentIdAt sees the chain the walker reconstructs. */
             cidasks::Edge edge;
             auto elementHash = TracingDecisionGraph::xorFactIntoHash(
                 Hash(HashAlgorithm::SHA256), queryHash, responseHash);
             edge.observations.push_back({fromCdi, elementHash});
-            walk.push_back(std::move(edge));
+            return {toFactSet, std::move(edge)};
+        };
+
+        if (!boundary.finalized) {
+            /* First finalize for this boundary. Process all facts
+               accumulated so far, insert d=1 apply Fact, ε edge, and
+               propagate the factHash to downstream perQAsksEdges. */
+            std::vector<cidasks::Edge> walk;
+            walk.reserve(group.size());
+            Hash cumulativeFactSet = boundary.applyRequestHash;
+            for (size_t i = 0; i < group.size(); ++i) {
+                auto [nextCfs, edge] = stampAndEmit(i, walk, cumulativeFactSet, /*withAmbientAsks=*/ true);
+                cumulativeFactSet = nextCfs;
+                walk.push_back(std::move(edge));
+            }
+            auto ambientResult = cumulativeFactSet;
+            tracingCacheLog(
+                "finalize apply boundary: applyId=%s probes=%zu AmbientResult=%s",
+                boundary.applyId.to_string(HashFormat::Base16, false).substr(0, 12),
+                group.size(),
+                ambientResult.to_string(HashFormat::Base16, false).substr(0, 12));
+
+            auto factHash = TracingDecisionGraph::xorFactIntoHash(
+                Hash(HashAlgorithm::SHA256), boundary.applyRequestHash, ambientResult);
+            if (seenRequests.insert(factHash).second) {
+                v13FactSet.push_back({boundary.applyRequestHash, ambientResult});
+                v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
+                    v13FactSetHash, boundary.applyRequestHash, ambientResult);
+                responseFor.emplace(boundary.applyRequestHash, ambientResult);
+                allRequestsTrie.insert(boundary.applyRequestHash);
+                allRequestHashes.insert(boundary.applyRequestHash);
+            }
+
+            cidasks::Edge applyEdge;
+            applyEdge.observations.push_back({
+                Hash(HashAlgorithm::SHA256),
+                factHash,
+            });
+
+            auto epsilonReqSet = decisionGraph->insertRequestSet({boundary.applyRequestHash});
+            size_t pos = boundary.insertionIndex + shift;
+            Hash epsilonFromHash = TracingDecisionGraph::xorHashes(
+                boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
+            perQAsksEdges.insert(perQAsksEdges.begin() + pos,
+                {epsilonFromHash, epsilonReqSet});
+            d1CidasksWalk.insert(d1CidasksWalk.begin() + pos, std::move(applyEdge));
+            tracingCacheLog("finalize: ε Asks edge inserted at pos=%zu from=%s (insertionIndex=%zu shift=%zu perQ=%zu)",
+                            pos,
+                            epsilonFromHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                            boundary.insertionIndex,
+                            shift,
+                            perQAsksEdges.size());
+            ++shift;
+
+            for (size_t i = pos + 1; i < perQAsksEdges.size(); ++i)
+                perQAsksEdges[i].fromFactSetHash = TracingDecisionGraph::xorHashes(
+                    perQAsksEdges[i].fromFactSetHash, factHash);
+            priorEpsilonAccum = TracingDecisionGraph::xorHashes(priorEpsilonAccum, factHash);
+
+            /* Stash state on the boundary so subsequent re-processing
+               passes (= late d2 obs) can pick up where this finalize
+               left off. */
+            boundary.finalized = true;
+            boundary.cumulativeFactSet = ambientResult;
+            boundary.factHash = factHash;
+            boundary.pos = pos;
+            boundary.lastProcessedCount = group.size();
+        } else if (group.size() > boundary.lastProcessedCount) {
+            /* Late d2 obs path: the boundary was finalized in a
+               previous flush, but new probes have since arrived
+               (= cb-sibling's `{f,x}: f x` only forces its local on
+               the outer's `.whatever` access, after `TO_A.getType`'s
+               logResult already ran the boundary's first finalize).
+
+               Process the tail facts `[lastProcessedCount..end]` with
+               `withAmbientAsks=false`: extending the AmbientAsks
+               chain would change what `dispatchApplyLive` returns at
+               warm (= different AmbientResult), so the walker's cur
+               would diverge from the recorded factHash that
+               `[finalize: ε Asks edge]` baked into downstream
+               perQAsksEdges. Instead we only need the late probes'
+               request payloads and recorded responses in the pool
+               so `ReplayLocalObject`'s `readResponse` finds them.
+               Validation against AmbientAsks is skipped for boundaries
+               whose chain is empty at chainStart — see
+               `ReplayLocalObject::withChainStart`. */
+            std::vector<cidasks::Edge> walk;
+            walk.reserve(group.size());
+            Hash cumulativeFactSet = boundary.applyRequestHash;
+            for (size_t i = 0; i < boundary.lastProcessedCount; ++i) {
+                /* Re-stamp prior facts to rebuild walk; inserts are
+                   idempotent (INSERT OR IGNORE) so the duplicate
+                   Request/LocalResponse calls are harmless. */
+                auto [nextCfs, edge] = stampAndEmit(i, walk, cumulativeFactSet, /*withAmbientAsks=*/ false);
+                cumulativeFactSet = nextCfs;
+                walk.push_back(std::move(edge));
+            }
+            for (size_t i = boundary.lastProcessedCount; i < group.size(); ++i) {
+                auto [nextCfs, edge] = stampAndEmit(i, walk, cumulativeFactSet, /*withAmbientAsks=*/ false);
+                cumulativeFactSet = nextCfs;
+                walk.push_back(std::move(edge));
+            }
+            tracingCacheLog(
+                "late-d2 process: applyId=%s tail=%zu..%zu (probes now %zu)",
+                boundary.applyId.to_string(HashFormat::Base16, false).substr(0, 12),
+                boundary.lastProcessedCount, group.size() - 1, group.size());
+            boundary.lastProcessedCount = group.size();
         }
-
-        /* AmbientResult = terminal of the d=2 chain (per via-Asks
-           §"Recording (depth-2)"). For an empty chain, this is the
-           XOR-fold identity (= empty factSet hash) — "no probes
-           happened" is a meaningful AmbientResult that any cb-apply
-           with the same applyId and no probes will reconstruct. */
-        auto ambientResult = cumulativeFactSet;
-        tracingCacheLog(
-            "finalize apply boundary: applyId=%s probes=%zu AmbientResult=%s",
-            boundary.applyId.to_string(HashFormat::Base16, false).substr(0, 12),
-            group.size(),
-            ambientResult.to_string(HashFormat::Base16, false).substr(0, 12));
-
-        /* Synthesize the d=1 apply Fact at (applyReqHash, AmbientResult).
-           Fold into v13FactSet symmetrically with logResponse. The
-           d1CidasksWalk gets one phantom edge with fromHash=Hash(0)
-           (= walk-advance marker; doesn't contribute to any subject's
-           own-fold per the cidasks formula's `f.fromHash == myCidAtK`
-           check, which can't match because no subject CDI equals 0). */
-        auto factHash = TracingDecisionGraph::xorFactIntoHash(
-            Hash(HashAlgorithm::SHA256), boundary.applyRequestHash, ambientResult);
-        if (seenRequests.insert(factHash).second) {
-            v13FactSet.push_back({boundary.applyRequestHash, ambientResult});
-            v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                v13FactSetHash, boundary.applyRequestHash, ambientResult);
-            responseFor.emplace(boundary.applyRequestHash, ambientResult);
-            allRequestsTrie.insert(boundary.applyRequestHash);
-            allRequestHashes.insert(boundary.applyRequestHash);
-            /* No pendingNewRequests.push_back — ε's reqHash goes
-               directly into its own perQAsksEdge below, not into
-               the trailing d=1-chunk close. */
-        }
-
-        cidasks::Edge applyEdge;
-        applyEdge.observations.push_back({
-            Hash(HashAlgorithm::SHA256), // fromHash = 0: walk-advance marker
-            factHash,                    // elementHash = factElementHash(reqHash, AmbientResult)
-        });
-
-        /* Insert ε perQAsksEdge at boundary.insertionIndex + shift.
-           shift accounts for prior ε insertions in this loop, since
-           each insertion shifts subsequent indices. priorEpsilonAccum
-           accumulates earlier ε elementHashes so each new ε's
-           fromFactSetHash reflects all prior ε contributions (= the
-           cur the walker would have at the start of this ε's
-           dispatch). After insertion, propagate this ε's elementHash
-           to all subsequent perQAsksEdges so their fromFactSetHash
-           reflects this ε's contribution at walker dispatch time.
-
-           1:1 alignment: insert ε d1 edge at the SAME pos in
-           d1CidasksWalk. Both indices shift together. */
-        auto epsilonReqSet = decisionGraph->insertRequestSet({boundary.applyRequestHash});
-        size_t pos = boundary.insertionIndex + shift;
-        Hash epsilonFromHash = TracingDecisionGraph::xorHashes(
-            boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
-        perQAsksEdges.insert(perQAsksEdges.begin() + pos,
-            {epsilonFromHash, epsilonReqSet});
-        d1CidasksWalk.insert(d1CidasksWalk.begin() + pos, std::move(applyEdge));
-        tracingCacheLog("finalize: ε Asks edge inserted at pos=%zu from=%s (insertionIndex=%zu shift=%zu perQ=%zu)",
-                        pos,
-                        epsilonFromHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                        boundary.insertionIndex,
-                        shift,
-                        perQAsksEdges.size());
-        ++shift;
-
-        /* Propagate this ε's elementHash to subsequent perQAsksEdges'
-           fromFactSetHash. The walker's cur at those edges advances
-           by this ε's contribution. */
-        for (size_t i = pos + 1; i < perQAsksEdges.size(); ++i)
-            perQAsksEdges[i].fromFactSetHash = TracingDecisionGraph::xorHashes(
-                perQAsksEdges[i].fromFactSetHash, factHash);
-        priorEpsilonAccum = TracingDecisionGraph::xorHashes(priorEpsilonAccum, factHash);
-
-        /* prevQFactSetHash tracks the cur for any subsequent
-           perQAsksEdge added via splitFlush's trailing close (= e.g.,
-           depth-1 facts logged AFTER the last apply boundary). It
-           was advanced by the d=1 apply Fact fold above; no extra
-           propagation needed since we used xorFactIntoHash to fold. */
     }
 
-    pendingApplyBoundaries.clear();
+    /* Don't clear pendingApplyBoundaries — finalized entries stay
+       so `logDepth2Observation` can find them on late probes
+       (option (b)). */
 }
 
 void TracingWriter::splitFlush(bool finalize)

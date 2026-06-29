@@ -13,6 +13,17 @@
 
 namespace nix {
 
+ReplayLocalObject & ReplayLocalObject::withChainStart(Hash root)
+{
+    *chainCursor = std::move(root);
+    if (validateAgainstAmbientAsks) {
+        auto outgoing = decisionGraph.getAmbientAsks(*chainCursor);
+        if (outgoing.empty())
+            validateAgainstAmbientAsks = false;
+    }
+    return *this;
+}
+
 /* These mirror the same-named helpers in tracing-local-object.cc.
    Both translation units are unity-built into libnixexpr, so the
    helpers must have distinct names to avoid ODR collisions. */
@@ -98,6 +109,26 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query)
    correctly evolved cdis. On mismatch we throw a divergence signal
    which the surrounding walker layer turns into a miss → depth-1
    fallback handles re-eval. */
+/* Append the just-probed fact to `walkFacts` so the next probe's
+   `stampPerArgFields` sees its own-loop contribution. Whether or not
+   validation against AmbientAsks runs, the per-arg cdi evolution
+   relies on the walk extending in lockstep with the recorder — so
+   this needs to fire on every probe, not just validated ones. */
+template<typename Q>
+static void appendFactToWalk(
+    const Q & query, const Hash & fromCdi, const nlohmann::json & responseJson,
+    std::vector<cidasks::Edge> & walkFacts)
+{
+    auto reqHash = TracingDecisionGraph::computeQueryHash(query);
+    auto responsePayload = jsonToCborString(responseJson);
+    auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
+    auto elementHash = TracingDecisionGraph::xorFactIntoHash(
+        Hash(HashAlgorithm::SHA256), reqHash, responseHash);
+    cidasks::Edge edge;
+    edge.observations.push_back({fromCdi, elementHash});
+    walkFacts.push_back(std::move(edge));
+}
+
 template<typename Q>
 static void advanceChainAndAppendFact(
     TracingDecisionGraph & dg, const Q & query, const Hash & fromCdi,
@@ -118,13 +149,7 @@ static void advanceChainAndAppendFact(
             continue;
         if (std::find(requestSet->begin(), requestSet->end(), reqHash) == requestSet->end())
             continue;
-        auto responsePayload = jsonToCborString(responseJson);
-        auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
-        auto elementHash = TracingDecisionGraph::xorFactIntoHash(
-            Hash(HashAlgorithm::SHA256), reqHash, responseHash);
-        cidasks::Edge edge;
-        edge.observations.push_back({fromCdi, elementHash});
-        walkFacts.push_back(std::move(edge));
+        appendFactToWalk(query, fromCdi, responseJson, walkFacts);
         chainCursor = toFactSet;
         return;
     }
@@ -144,6 +169,8 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+    else
+        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
     trace::ResultMaybeType r = rJson;
     if (!r.type)
         return nullptr;
@@ -181,6 +208,8 @@ std::vector<std::string> ReplayLocalObject::getAttrNames()
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+    else
+        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
     trace::ResultListOfStrings r = rJson;
     return r.values;
 }
@@ -193,6 +222,8 @@ std::string ReplayLocalObject::getStringIgnoreContext()
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+    else
+        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
     trace::ResultString r = rJson;
     knownStringIgnoreContext = r.value;
     return r.value;
@@ -210,6 +241,8 @@ std::pair<std::string, NixStringContext> ReplayLocalObject::getStringWithContext
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+    else
+        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
     trace::ResultStringWithContext r = rJson;
     NixStringContext ctx;
     for (auto & s : r.context)
@@ -224,6 +257,8 @@ RootedPath ReplayLocalObject::getPath()
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+    else
+        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
     trace::ResultPath r = rJson;
     return RootedPath{rootFSRoot, CanonPath{r.path}};
 }
@@ -236,6 +271,8 @@ bool ReplayLocalObject::getBool(std::string_view)
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+    else
+        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
     trace::ResultBool r = rJson;
     knownBool = r.value;
     return r.value;
@@ -249,6 +286,8 @@ NixInt ReplayLocalObject::getInt(std::string_view)
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+    else
+        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
     trace::ResultInt r = rJson;
     knownInt = NixInt{r.value};
     return *knownInt;
@@ -262,6 +301,8 @@ NixFloat ReplayLocalObject::getFloat(std::string_view)
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+    else
+        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
     trace::ResultFloat r = rJson;
     knownFloat = r.value;
     return r.value;
@@ -275,6 +316,8 @@ size_t ReplayLocalObject::getListSize()
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+    else
+        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
     trace::ResultListSize r = rJson;
     knownListSize = r.size;
     return r.size;
@@ -287,6 +330,8 @@ std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+    else
+        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
     trace::ResultType r = rJson;
     cidasks::Subject childSubject{cidasks::DerivedSubject{
         .parent = std::make_shared<const cidasks::Subject>(subject),
@@ -314,6 +359,8 @@ ObjectType ReplayLocalObject::getType()
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+    else
+        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
     trace::ResultType r = rJson;
     auto type = stringToObjectType(r.type);
     knownType = type;
@@ -609,6 +656,8 @@ std::optional<FunctionInfo> ReplayLocalObject::getFunctionInfo()
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+    else
+        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
     trace::ResultFunctionInfo r = rJson;
     if (!r.hasInfo)
         return std::nullopt;

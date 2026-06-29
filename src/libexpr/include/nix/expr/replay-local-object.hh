@@ -206,12 +206,22 @@ public:
         the cb-apply payload) — different cb-applies' chains live in
         disjoint subtrees of AmbientAsks. The walker passes the
         apply_qH it's resolving here so the standin's per-probe walk
-        starts at the right root. */
-    ReplayLocalObject & withChainStart(Hash root)
-    {
-        *chainCursor = std::move(root);
-        return *this;
-    }
+        starts at the right root.
+
+        Side-effect: if the chain at this root is empty (= no
+        AmbientAsks rows), demote `validateAgainstAmbientAsks` to
+        false. This handles the late-d2-obs option (b) case where
+        the recorder's first finalize pass for this boundary saw
+        probes=0 (= the inner body didn't force the local) and the
+        actual probes only arrived later — by then those probes
+        were inserted into `LocalResponseMap` but NOT into
+        `AmbientAsks` (= extending the chain would corrupt
+        dispatchApplyLive's AmbientResult and break the d=1
+        per-Q cur propagation). The cb-apply local can still
+        readResponse the late probes; we just can't per-probe
+        validate them against AmbientAsks because the chain row
+        wasn't recorded. */
+    ReplayLocalObject & withChainStart(Hash root);
 
     /** Set the cb-arg apply context (depth + scope) so the lambda
         primop on this RLO (or its derived children) can compose the

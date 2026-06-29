@@ -186,8 +186,45 @@ class TracingWriter
            finalize, this gets XOR-propagated by prior ε's element
            hashes. */
         Hash fromFactSetHashAtBoundary;
+        /* Option (b) — late d2 obs support. Once a boundary's first
+           finalize pass runs, it stays in `pendingApplyBoundaries`
+           with `finalized=true` so a later `logDepth2Observation`
+           with the same applyId can find it and process the probe
+           incrementally instead of dropping it. State preserved
+           across re-processings:
+            - `cumulativeFactSet` = current d=2 chain terminal (=
+              AmbientResult so far).
+            - `factHash` = current SHA-256(applyReqHash || cumulativeFactSet),
+              i.e. the synthetic d=1 apply Fact's element hash. On
+              each re-process, recomputed; the delta between old and
+              new is XOR-applied to v13FactSetHash and downstream
+              perQAsksEdges' fromFactSetHash to keep the writer
+              state consistent with the extended chain.
+            - `pos` = the actual perQAsksEdges position where this
+              boundary's ε edge ended up after insertion (=
+              `insertionIndex + shift` at finalize time). Needed
+              because subsequent boundaries' insertions don't shift
+              this entry, but the in-memory shift counter is local
+              to the finalize loop. */
+        bool finalized = false;
+        Hash cumulativeFactSet{HashAlgorithm::SHA256};
+        Hash factHash{HashAlgorithm::SHA256};
+        size_t pos = 0;
+        /* Facts up to (but not including) this index have been
+           processed in a previous finalize pass — their Request /
+           LocalResponse / AmbientAsks entries are already in the
+           DB. Re-entrant finalize passes only need to insert the
+           tail `facts[lastProcessedCount..]`. */
+        size_t lastProcessedCount = 0;
     };
     std::vector<PendingApplyBoundary> pendingApplyBoundaries;
+    /* Q hashes that have been logResult'd in this writer's lifetime.
+       Re-inserted under at late-d2-obs re-process time so the
+       updated `perQAsksEdges` (with corrected downstream
+       `fromFactSetHash`) lands as additional Asks rows under each
+       prior Q — letting the walker's chain walk for those Q's use
+       the post-re-open propagation. */
+    std::unordered_set<Hash> recordedQHashes;
 
 public:
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
@@ -340,22 +377,34 @@ public:
         /* Append to the most recently pushed boundary whose applyId
            matches — that's the cb-apply invocation currently
            building its probe sequence. Each invocation's probes
-           land in its own facts vector, no cross-invocation mixing. */
+           land in its own facts vector, no cross-invocation mixing.
+
+           Option (b) — late d2 obs: the boundary may already be
+           `finalized=true` (e.g. cb-sibling's `{f,x}: f x` doesn't
+           force its local during the body, so probes only fire
+           when the outer subsequently accesses `.whatever` on the
+           apply-result — by then the boundary's first finalize
+           pass has already run). Boundaries are no longer cleared
+           after finalize; this search still finds them, and the
+           next `flushPendingAmbient(true)` pass picks up the new
+           facts via `lastProcessedCount` and processes them
+           incrementally. */
         for (auto it = pendingApplyBoundaries.rbegin();
              it != pendingApplyBoundaries.rend(); ++it) {
             if (it->applyId == applyId) {
                 it->facts.push_back({query, result, std::move(subject),
                     std::move(inheritedScope), applyId});
+                if (it->finalized)
+                    tracingCacheLog(
+                        "logDepth2Observation: late probe queued for finalized applyId=%s (now %zu facts, %zu processed)",
+                        applyId.to_string(HashFormat::Base16, false).substr(0, 12),
+                        it->facts.size(), it->lastProcessedCount);
                 return;
             }
         }
-        /* No matching boundary — should not happen if recorder
-           invariants hold (= every depth2ApplyId comes from a
-           TracingLocalObject whose construction was preceded by
-           a markApplyBoundary for the same applyId). Drop on the
-           floor with a log. */
+        /* No matching boundary at all — true invariant violation. */
         tracingCacheLog(
-            "logDepth2Observation: no matching pending boundary for applyId=%s",
+            "logDepth2Observation: no matching boundary for applyId=%s",
             applyId.to_string(HashFormat::Base16, false).substr(0, 12));
     }
 
