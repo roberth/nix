@@ -104,7 +104,7 @@ static void queryVariantFromJson(const nlohmann::json & j, QueryVariant & query)
         || tryParse.template operator()<QueryGetFloat>() || tryParse.template operator()<QueryGetListOfStrings>()
         || tryParse.template operator()<QueryGetListSize>() || tryParse.template operator()<QueryGetListElem>()
         || tryParse.template operator()<QueryGetPath>() || tryParse.template operator()<QueryGetFunctionInfo>()
-        || tryParse.template operator()<QueryApply>())
+        || tryParse.template operator()<QueryGetWHNF>() || tryParse.template operator()<QueryApply>())
         return;
 
     throw nlohmann::json::parse_error::create(302, 0, "unknown ambient query tag: " + std::string(tag), &j);
@@ -305,6 +305,64 @@ void to_json(nlohmann::json & j, const ResultListSize & r)
 void from_json(const nlohmann::json & j, ResultListSize & r)
 {
     j.at("size").get_to(r.size);
+}
+
+/* ResultWHNF: `type` is the discriminator; `payload`'s variant
+   alternative is selected by it. The JSON shape is a flat object
+   with `type` plus the payload fields appropriate for that type — no
+   wrapper object around the payload, for readability and for
+   matching the rest of the trace's flat JSON style. */
+void to_json(nlohmann::json & j, const ResultWHNF & r)
+{
+    j = nlohmann::json{{"type", r.type}};
+    std::visit([&](const auto & p) {
+        using T = std::decay_t<decltype(p)>;
+        if constexpr (std::is_same_v<T, WHNFInt>) {
+            j["value"] = p.value;
+        } else if constexpr (std::is_same_v<T, WHNFBool>) {
+            j["value"] = p.value;
+        } else if constexpr (std::is_same_v<T, WHNFFloat>) {
+            j["value"] = p.value;
+        } else if constexpr (std::is_same_v<T, WHNFPath>) {
+            j["path"] = p.path;
+        } else if constexpr (std::is_same_v<T, WHNFString>) {
+            j["value"] = p.value;
+            j["context"] = p.context;
+        } else if constexpr (std::is_same_v<T, WHNFAttrs>) {
+            j["names"] = p.names;
+        } else if constexpr (std::is_same_v<T, WHNFList>) {
+            j["size"] = p.size;
+        }
+        /* WHNFEmpty: nothing to add beyond `type`. */
+    }, r.payload);
+}
+
+void from_json(const nlohmann::json & j, ResultWHNF & r)
+{
+    j.at("type").get_to(r.type);
+    if (r.type == "int") {
+        r.payload = WHNFInt{j.at("value").get<int64_t>()};
+    } else if (r.type == "bool") {
+        r.payload = WHNFBool{j.at("value").get<bool>()};
+    } else if (r.type == "float") {
+        r.payload = WHNFFloat{j.at("value").get<double>()};
+    } else if (r.type == "path") {
+        r.payload = WHNFPath{j.at("path").get<std::string>()};
+    } else if (r.type == "string") {
+        WHNFString s;
+        j.at("value").get_to(s.value);
+        if (j.contains("context"))
+            j.at("context").get_to(s.context);
+        r.payload = std::move(s);
+    } else if (r.type == "attrs") {
+        WHNFAttrs a;
+        j.at("names").get_to(a.names);
+        r.payload = std::move(a);
+    } else if (r.type == "list") {
+        r.payload = WHNFList{j.at("size").get<size_t>()};
+    } else {
+        r.payload = WHNFEmpty{};
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -633,6 +691,18 @@ void from_json(const nlohmann::json & j, ResultFunctionInfo & r)
     j.at("ellipsis").get_to(r.ellipsis);
 }
 
+void to_json(nlohmann::json & j, const QueryGetWHNF & q)
+{
+    j = nlohmann::json{{"query", QueryGetWHNF::tag}, {"params", {{"from", q.from}}}};
+    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+}
+
+void from_json(const nlohmann::json & j, QueryGetWHNF & q)
+{
+    j.at("params").at("from").get_to(q.from);
+    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+}
+
 void to_json(nlohmann::json & j, const QueryApply & q)
 {
     j = nlohmann::json{{"query", QueryApply::tag}, {"params", {{"fn", q.fn}, {"arg", q.arg}}}};
@@ -757,6 +827,8 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
         if (auto r = tryParseQuery<QueryGetListElem>(type, j))
             return r;
         if (auto r = tryParseQuery<QueryGetPath>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryGetWHNF>(type, j))
             return r;
         if (auto r = tryParseQuery<QueryGetFunctionInfo>(type, j))
             return r;

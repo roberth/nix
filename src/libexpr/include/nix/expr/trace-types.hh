@@ -239,6 +239,30 @@ struct ResultListSize
     size_t size;
 };
 
+/** Payload alternatives for `ResultWHNF`. One per Nix object type
+    that carries something at WHNF. nFunction/nNull/nExternal/nThunk
+    use `WHNFEmpty` (nothing to record beyond the type). */
+struct WHNFEmpty {};
+struct WHNFInt { int64_t value; };
+struct WHNFBool { bool value; };
+struct WHNFFloat { double value; };
+struct WHNFPath { std::string path; };
+struct WHNFString { std::string value; std::vector<std::string> context; };
+struct WHNFAttrs { std::vector<std::string> names; };
+struct WHNFList { size_t size; };
+
+/** Result of a single WHNF (Weak Head Normal Form) force. Carries the
+    type discriminator plus the type-determined payload as a tagged
+    variant. A single observation instead of separate getType +
+    getInt/getString/etc., so siblings that force the same value
+    record symmetric chains regardless of inner-evaluator memoization
+    that would otherwise skip getType on subsequent forces. */
+struct ResultWHNF
+{
+    std::string type;
+    std::variant<WHNFEmpty, WHNFInt, WHNFBool, WHNFFloat, WHNFPath, WHNFString, WHNFAttrs, WHNFList> payload;
+};
+
 // ---------------------------------------------------------------------------
 // QueryLeaf: typed `from` / `fn` / `arg` field of Query types
 // ---------------------------------------------------------------------------
@@ -523,6 +547,22 @@ struct QueryGetPath
 };
 DECLARE_QUERY_RESULT(QueryGetPath, ResultPath)
 
+/** Force a value to WHNF and read its type + type-determined payload
+    in one shot. Used by the cache-layer Objects to combine what would
+    otherwise be separate getType + getInt/getString/etc. observations
+    — a single WHNF probe per value force, recorded once. The
+    individual getType/getInt/etc. paths remain for callers that don't
+    need WHNF semantics. */
+struct QueryGetWHNF
+{
+    static constexpr std::string_view tag = "getWHNF";
+    QueryLeaf from;
+    std::vector<QueryLeaf> fromCIDs;
+    PathExpr path;
+    auto operator<=>(const QueryGetWHNF &) const = default;
+};
+DECLARE_QUERY_RESULT(QueryGetWHNF, ResultWHNF)
+
 /** Get function argument info (formals). */
 struct QueryGetFunctionInfo
 {
@@ -630,6 +670,7 @@ using Queries = ApplyWrapper<
     QueryGetListElem,
     QueryGetPath,
     QueryGetFunctionInfo,
+    QueryGetWHNF,
     QueryApply>;
 
 /**
@@ -648,7 +689,8 @@ using Results = ApplyWrapper<
     ResultListOfStrings,
     ResultStringWithContext,
     ResultListSize,
-    ResultFunctionInfo>;
+    ResultFunctionInfo,
+    ResultWHNF>;
 
 // ---------------------------------------------------------------------------
 // Variant types for QueryVariant / ResultVariant
@@ -670,6 +712,7 @@ using QueryVariant = std::variant<
     QueryGetListElem,
     QueryGetPath,
     QueryGetFunctionInfo,
+    QueryGetWHNF,
     QueryApply>;
 
 using ResultVariant = std::variant<
@@ -683,7 +726,8 @@ using ResultVariant = std::variant<
     ResultListOfStrings,
     ResultStringWithContext,
     ResultListSize,
-    ResultFunctionInfo>;
+    ResultFunctionInfo,
+    ResultWHNF>;
 
 // ---------------------------------------------------------------------------
 // Ambient interaction trace types
