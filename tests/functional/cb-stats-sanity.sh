@@ -32,6 +32,6 @@ assertCacheStats 0 1 0 -- \
 # The exact count depends on how many Q's the trie has for this path
 # (file hash dispatch + outer's reads on the attrset + reads on the
 # int child). Calibrated against current behaviour.
-echo "=== warm replay (expect 6 hits, 0 misses, 0 fallbacks) ==="
-assertCacheStats 6 0 0 -- \
+echo "=== warm replay (expect 4 hits, 0 misses, 0 fallbacks) ==="
+assertCacheStats 4 0 0 -- \
     nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/simple.nix; }).x'

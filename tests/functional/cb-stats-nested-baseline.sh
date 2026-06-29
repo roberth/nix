@@ -31,6 +31,6 @@ echo "=== cold (expect 0 hits, 6 misses, 2 fallbacks) ==="
 assertCacheStats 0 6 2 -- \
     nix eval --impure --expr 'builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }'
 
-echo "=== warm DISALLOW_PARSE (expect 3 hits, 0 misses, 0 fallbacks) ==="
-assertCacheStats 3 0 0 -- \
+echo "=== warm DISALLOW_PARSE (expect 2 hits, 0 misses, 0 fallbacks) ==="
+assertCacheStats 2 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr 'builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }'

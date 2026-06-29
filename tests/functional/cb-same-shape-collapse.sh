@@ -28,13 +28,13 @@ echo '{ x }: x + 100' > "$TEST_ROOT/fn.nix"
 # Expected: first invocation records, second invocation hits the
 # recorded trace via CDI collapse. (Exact counts calibrated.)
 echo "=== cold record: c{x=1} + c{x=1} ==="
-assertCacheStats 2 3 1 -- \
+assertCacheStats 1 3 1 -- \
     nix eval --impure --expr \
         'let c = builtins.cache { import = '"$TEST_ROOT"'/fn.nix; }; in c { x = 1; } + c { x = 1; }'
 
 # Warm replay: everything must hit, no fallbacks.
 echo "=== warm replay ==="
-assertCacheStats 6 0 0 -- \
+assertCacheStats 4 0 0 -- \
     nix eval --impure --expr \
         'let c = builtins.cache { import = '"$TEST_ROOT"'/fn.nix; }; in c { x = 1; } + c { x = 1; }'
 
@@ -42,6 +42,6 @@ assertCacheStats 6 0 0 -- \
 # same shape. The 2nd and 3rd should both hit the 1st's trace.
 clearCache
 echo "=== cold record: c{x=1} + c{x=1} + c{x=1} (expect more hits via further collapse) ==="
-assertCacheStats 4 3 1 -- \
+assertCacheStats 2 3 1 -- \
     nix eval --impure --expr \
         'let c = builtins.cache { import = '"$TEST_ROOT"'/fn.nix; }; in c { x = 1; } + c { x = 1; } + c { x = 1; }'

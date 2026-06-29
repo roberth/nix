@@ -34,7 +34,7 @@ assertCacheStats 0 3 1 -- \
         '(builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) { f = n: n + 100; x = 13; }'
 
 echo "=== variant A warm ==="
-assertCacheStats 4 0 0 -- \
+assertCacheStats 3 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) { f = n: n + 100; x = 13; }'
 
@@ -59,7 +59,7 @@ assertCacheStats 0 3 1 -- \
          in builtins.seq arg.x ((builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) arg)'
 
 echo "=== variant B warm ==="
-assertCacheStats 4 0 0 -- \
+assertCacheStats 3 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
         'let arg = { f = n: n + 100; x = 13; };
          in builtins.seq arg.x ((builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) arg)'

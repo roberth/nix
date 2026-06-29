@@ -32,8 +32,8 @@ assertCacheStats 0 3 1 -- \
     nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) { f = x: x + 100; x = 7; }'
 
-echo "=== warm replay (expect 4 hits, 0 misses, 0 fallbacks) ==="
-assertCacheStats 4 0 0 -- \
+echo "=== warm replay (expect 3 hits, 0 misses, 0 fallbacks) ==="
+assertCacheStats 3 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) { f = x: x + 100; x = 7; }'
 

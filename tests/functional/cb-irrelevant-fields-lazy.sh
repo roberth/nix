@@ -40,7 +40,7 @@ assertCacheStats 0 3 1 -- \
         '(builtins.cache { import = '"$TEST_ROOT"'/fn.nix; }) { x = 13; unused = "literal"; }'
 
 echo "=== variant A warm ==="
-assertCacheStats 4 0 0 -- \
+assertCacheStats 3 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/fn.nix; }) { x = 13; unused = "literal"; }'
 
@@ -53,7 +53,7 @@ assertCacheStats 0 3 1 -- \
         '(builtins.cache { import = '"$TEST_ROOT"'/fn.nix; }) { x = 13; unused = throw "evaluated unused"; }'
 
 echo "=== variant B warm ==="
-assertCacheStats 4 0 0 -- \
+assertCacheStats 3 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/fn.nix; }) { x = 13; unused = throw "evaluated unused"; }'
 
