@@ -3,6 +3,25 @@
 Follow-up to [`tracing-eval-cache-per-arg-completion.md`](./tracing-eval-cache-per-arg-completion.md):
 how to close the remaining cb-sibling warm-DISALLOW_PARSE gap.
 
+## Required reading
+
+Read in this order, in full — per `CLAUDE.md`'s design-doc discipline,
+partial reading of these produces proposals that violate invariants
+they didn't see:
+
+1. [`tracing-eval-cache.md`](./tracing-eval-cache.md) — v13 data
+   model, Asks/Terminals schema, walker fast/slow paths, FactSet
+   XOR-fold semantics.
+2. [`tracing-eval-cache-content-identity-via-asks.md`](./tracing-eval-cache-content-identity-via-asks.md)
+   — cidasks formula, subject/scope/walk parameters, principles 3/5/7
+   on per-flush evolution, XOR-audit catalogue (components F/G).
+3. [`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md)
+   — depth-1 vs depth-2 layering, AmbientAsks, the d1/d2 flip at
+   cb-apply boundaries, dispatcher routing.
+4. [`tracing-eval-cache-per-arg-completion.md`](./tracing-eval-cache-per-arg-completion.md)
+   — option 1 vs option 2, the cold/warm asymmetry postmortem, the
+   1:1 restructure that this doc builds on.
+
 ## The gap
 
 With the 1:1 restructure (`5e9758253`) plus option 2 apply triePos
@@ -203,9 +222,73 @@ will skip. So no double-commit.
 ## Test plan
 
 After landing option C:
-- cb-sibling warm DISALLOW_PARSE should pass (= return 1100,
-  no fallback).
-- cb-higher-order should not regress (= still handles outer-fn
-  invalidation correctly via the AmbientAsks chain).
-- cb-385 deep-indep test 4 is independent and won't be fixed
-  by this change; investigate separately.
+- `tests/functional/cb-sibling-discrimination-via-observation.sh`
+  warm DISALLOW_PARSE should pass (= return 1100, no fallback).
+- `tests/functional/cb-higher-order.sh` should not regress (= still
+  handles outer-fn invalidation correctly via the AmbientAsks chain).
+- `tests/functional/cb-385.sh` deep-indep test 4 is independent and
+  won't be fixed by this change; investigate separately.
+
+## Source map
+
+Writer side (= what option C must mirror):
+- `src/libexpr/tracing-writer.cc:9` — `flushPendingAmbient`. Drains
+  `pendingDepth1Facts` into `pendingD1Edge`; processes
+  `pendingApplyBoundaries` and inserts ε perQAsksEdge +
+  ε d1CidasksWalk entries at `boundary.insertionIndex + shift`.
+- `src/libexpr/tracing-writer.cc:349` — `splitFlush`. After
+  `flushPendingAmbient`, pairs `pendingNewRequests` → perQAsksEdge
+  push with `pendingD1Edge` → d1CidasksWalk push (the 1:1
+  invariant).
+- `src/libexpr/tracing-writer.cc:379` — `markApplyBoundary`.
+  Calls `splitFlush(false)`, inserts apply Request payload into
+  the CAS pool, buffers a new `PendingApplyBoundary` with
+  `insertionIndex = perQAsksEdges.size()` and
+  `fromFactSetHashAtBoundary = prevQFactSetHash`.
+- `src/libexpr/include/nix/expr/tracing-writer.hh:122` —
+  `d1CidasksWalk` declaration with the 1:1 alignment invariant
+  documented.
+- `src/libexpr/include/nix/expr/tracing-writer.hh:169` —
+  `PendingApplyBoundary` struct with the `finalized`/`cumulativeFactSet`/
+  `factHash`/`pos`/`lastProcessedCount` fields option (b) added.
+
+Walker side (= where option C edits land):
+- `src/libexpr/tracing-replay-evaluator.cc:56` — `commitEdge` lambda
+  in `v13Walk`. Currently pushes one cidasksWalk edge per Asks edge
+  dispatched with non-empty observations; option C also fires for
+  apply-Request-triggered side effects.
+- `src/libexpr/tracing-replay-evaluator.cc:154` — the apply-tag
+  branch in `dispatch`. Currently pushes
+  `pendingEdgeObservations` and calls `dispatchApplyLive`. Option
+  C adds a `cidasksWalk.push_back` (or pushes a solo edge that
+  bypasses `pendingEdgeObservations` to avoid double-commit
+  through `commitEdge`'s subsequent fire).
+- `src/libexpr/tracing-replay-evaluator.cc:652` —
+  `dispatchApplyLive`. Lives outside the walk loop;
+  `commitEdge` integration must coordinate with whichever
+  caller pushed `pendingEdgeObservations`.
+- `src/libexpr/include/nix/expr/tracing-replay-evaluator.hh:62`
+  — `cidasksWalk` declaration with the cumulative-across-`v13Walk`
+  semantics.
+
+Bridge between walker dispatch and writer flushes:
+- `src/libexpr/expr-from-object.cc:291` — `AmbientApply::runOn`,
+  called by `AmbientObject::queryApply` via `applyFn` whenever the
+  outer applies a cached entity. Line 328 fires
+  `innerWriter->markApplyBoundary` — that's the writer-side event
+  option C mirrors.
+
+cidasks formula:
+- `src/libexpr/content-identity-via-asks.cc:200` — `contentIdAt`,
+  the own-loop iteration that consumes the walk's observations.
+  Understanding edge order vs `myCidAtK` matching is load-bearing
+  for the "Risks" section.
+
+Committed groundwork on this branch:
+- `5e9758253 refactor(eval-cache): align d1CidasksWalk 1:1 with perQAsksEdges`
+  — the writer-side invariant option C extends to walker side.
+- `6c4250cef feat(eval-cache): land option 2 apply triePos via cidasks evolution`
+  — the apply CDI computation that needs aligned walk sizes.
+- `8d9d4c58e feat(eval-cache): re-open finalized apply boundaries for late d2 obs`
+  — option (b) infrastructure that closes the LocalResponseMap
+  miss, independent of this doc's gap.
