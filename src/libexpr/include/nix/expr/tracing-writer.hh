@@ -531,10 +531,10 @@ public:
      * `<replay-local-lambda>` impl advances the standin's
      * chainCursor by this fact's elementHash.
      *
-     * Subject = PostulatedIdempotentRead{applyReqHash} so stamping produces
-     * `fromCIDs=[applyReqHash]` and the walker can reproduce the
-     * stamped reqHash from just the apply's reqHash. No-op when
-     * there's no enclosing cb-apply.
+     * Subject = ApplyResultSubject{fn, arg} (caller-built) so the
+     * generic flushPendingAmbient stamping puts the constituents'
+     * roots into `fromCIDs[]` and an Apply step into `path`. Matches
+     * walker stamping. No-op when there's no enclosing cb-apply.
      */
     /**
      * Return the `applyId` of the cb-apply boundary currently on top
@@ -555,7 +555,8 @@ public:
 
     void logDepth2ApplyFact(
         const nlohmann::json & applyQueryPayload,
-        const Hash & applyReqHash)
+        const cidasks::Subject & resultSubject,
+        const Hash & applyScope)
     {
         if (!decisionGraph)
             return;
@@ -569,8 +570,8 @@ public:
         enclosing.facts.push_back({
             trace::QueryVariant{applyQ},
             trace::ResultVariant{trace::ResultType{"apply"}},
-            cidasks::Subject{cidasks::PostulatedIdempotentRead{applyReqHash}},
-            Hash{HashAlgorithm::SHA256},  // PostulatedIdempotentRead is scope-saturated
+            resultSubject,
+            applyScope,
             enclosing.applyId,
         });
     }

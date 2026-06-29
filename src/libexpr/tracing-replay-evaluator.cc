@@ -1151,7 +1151,11 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     cidasks::Subject argSubj = arg->getSubject()
         ? *arg->getSubject()
         : cidasks::Subject{cidasks::PostulatedIdempotentRead{argIdHash}};
-    Hash applyScope = arg->getInheritedScope();
+
+    /* Apply boundary's scope combines fn's and arg's inherited scopes
+       symmetrically but non-commutatively — mirrors the writer's
+       formula in `TracingEvaluator::apply`. */
+    Hash applyScope = cidasks::applyScope(fn->getInheritedScope(), arg->getInheritedScope());
 
     cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
         .fn = std::make_shared<const cidasks::Subject>(std::move(fnSubj)),

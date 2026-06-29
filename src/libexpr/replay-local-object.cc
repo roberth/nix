@@ -535,57 +535,66 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                     .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
                 }};
 
+                /* Apply scope: Merkle(fn.scope, arg.scope). The arg
+                   crosses the boundary as a fresh positional seed
+                   (scope=0); fn carries applyScopeSaved (= callScope
+                   from sidecar). Used for stamping the apply Fact AND
+                   for the synthetic's downstream probes — both
+                   mirror the writer's `LambdaApplyResultObject` whose
+                   scope is the same Merkle. */
+                Hash mergedApplyScope = cidasks::applyScope(
+                    *applyScopeSaved, Hash{HashAlgorithm::SHA256});
+
                 /* Advance the standin's chainCursor by the recorded
-                   apply Fact's elementHash — matching the writer's
-                   d=2 fact in markApplyBoundary's enclosing-chain
-                   path. The writer used subject=PostulatedIdempotentRead{applyReqHash}
-                   and result=ResultType{"apply"}; reproduce both sides
-                   here so the cumulativeFactSet evolution matches.
+                   apply Fact's elementHash. Mirrors the writer's d=2
+                   stamping in flushPendingAmbient: subject =
+                   ApplyResultSubject{fn, arg} = syntheticSubject;
+                   scope = mergedApplyScope; edgeIndex =
+                   walkFactsSaved->size() (= the apply Fact's position
+                   in the writer's boundary facts list, AFTER the
+                   standin's surface probes).
 
-                   The walker's d=1 dispatch of ε reads this updated
-                   chainCursor as the AmbientResult; without this
-                   advance, ε's response would be the pre-apply
-                   cursor and the d=1 walk would derail. */
+                   Walker's d=1 dispatch of ε reads this updated
+                   chainCursor as the AmbientResult. */
                 {
-                    /* Use edge 0 scopeStateIds (= initial structural-address
-                       values) for fn/arg. Mirrors the recorder side:
-                       `TracingEvaluator::apply` records
-                       `QueryApply{fnId, argId}` where `fnId` /
-                       `argId` come from `Object::getScopeStateIdHex()` at
-                       construction-time (= `structuralAddressAfter`
-                       with empty walk = `scopeStateIdAt(.., .., {}, 0)`).
-                       The recursive apply Fact's identity is fixed
-                       at IT::apply-time; observations recorded
-                       between then and now should NOT shift its
-                       reqHash, or the walker's stampedReqHash
-                       diverges from what the writer's
-                       `flushPendingAmbient` stamped for the
-                       `logDepth2ApplyFact` entry. */
-                    auto fnCdi = cidasks::scopeStateIdAt(
-                        subjectSaved, *applyScopeSaved, *walkFactsSaved, 0);
-                    auto argCdi = cidasks::scopeStateIdAt(
-                        cidasks::Subject{cidasks::PositionalSeed{*applyDepthSaved + 1}},
-                        *applyScopeSaved, *walkFactsSaved, 0);
-                    trace::QueryApply applyQ{
-                        fnCdi.to_string(HashFormat::Base16, false),
-                        argCdi.to_string(HashFormat::Base16, false),
-                    };
-                    nlohmann::json applyJson = applyQ;
-                    auto applyReqHash = hashString(HashAlgorithm::SHA256, applyJson.dump());
+                    size_t edgeIndex = walkFactsSaved->size();
+                    Hash applyScope = mergedApplyScope;
 
-                    /* Match the writer's stamping in flushPendingAmbient's
-                       d=2 loop for subject=PostulatedIdempotentRead{applyReqHash}:
-                       pathAndRootsFromSubject returns ({}, [PostulatedIdempotentRead]);
-                       fromCIDs[0] = PostulatedIdempotentRead.hash = applyReqHash;
-                       path stays empty; rewriteFromInQuery is a no-op
-                       for QueryApply (which has no `from` field). The
-                       only stamping effect on QueryApply is populating
-                       fromCIDs in the JSON payload. */
-                    trace::QueryApply stampedQ{applyQ.fn, applyQ.arg};
-                    stampedQ.fromCIDs = {trace::QueryLeaf{
-                        applyReqHash.to_string(HashFormat::Base16, false)}};
+                    auto fnSubjHex = cidasks::scopeStateIdAt(
+                        subjectSaved, applyScope, *walkFactsSaved, edgeIndex)
+                        .to_string(HashFormat::Base16, false);
+                    cidasks::Subject argSubjLocal{
+                        cidasks::PositionalSeed{*applyDepthSaved + 1}};
+                    auto argSubjHex = cidasks::scopeStateIdAt(
+                        argSubjLocal, applyScope, *walkFactsSaved, edgeIndex)
+                        .to_string(HashFormat::Base16, false);
+
+                    /* Generic stamping via syntheticSubject. */
+                    auto [path, roots] = cidasks::pathAndRootsFromSubject(syntheticSubject);
+                    std::vector<trace::QueryLeaf> fromCIDs;
+                    fromCIDs.reserve(roots.size());
+                    for (auto & root : roots) {
+                        auto cid = cidasks::scopeStateIdAt(
+                            root, applyScope, *walkFactsSaved, edgeIndex);
+                        fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
+                    }
+
+                    trace::QueryApply stampedQ{fnSubjHex, argSubjHex};
                     nlohmann::json stampedJson = stampedQ;
+                    if (!path.steps.empty())
+                        stampedJson["params"]["path"] = path;
+                    if (!fromCIDs.empty())
+                        stampedJson["params"]["fromCIDs"] = fromCIDs;
                     auto stampedReqHash = hashString(HashAlgorithm::SHA256, stampedJson.dump());
+
+                    tracingCacheLog(
+                        "walker primop applyFact: subject=%s applyScope=%s edgeIndex=%zu fnHex=%s argHex=%s stampedReqHash=%s",
+                        cidasks::describe(syntheticSubject),
+                        applyScope.to_string(HashFormat::Base16, false).substr(0, 12),
+                        edgeIndex,
+                        fnSubjHex.substr(0, 12),
+                        argSubjHex.substr(0, 12),
+                        stampedReqHash.to_string(HashFormat::Base16, false).substr(0, 12));
 
                     nlohmann::json respJson = trace::ResultType{"apply"};
                     auto respPayload = jsonToCborString(respJson);
@@ -593,8 +602,13 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                     auto elementHash = TracingDecisionGraph::xorFactIntoHash(
                         Hash(HashAlgorithm::SHA256), stampedReqHash, respHash);
 
+                    Hash fromCdi = fromCIDs.empty()
+                        ? Hash(HashAlgorithm::SHA256)
+                        : Hash::parseNonSRIUnprefixed(
+                              fromCIDs[0].contentHash(), HashAlgorithm::SHA256);
+
                     cidasks::Edge edge;
-                    edge.observations.push_back({applyReqHash, elementHash});
+                    edge.observations.push_back({fromCdi, elementHash});
                     localWalkFacts->push_back(std::move(edge));
                     *localChainCursor = TracingDecisionGraph::xorHashes(
                         *localChainCursor, elementHash);
@@ -602,9 +616,11 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
 
                 /* Synthetic shares the LOCAL walk/cursor so its
                    probes don't pollute the standin's persistent
-                   state. */
+                   state. Scope = mergedApplyScope — matches writer's
+                   `LambdaApplyResultObject` which carries this same
+                   Merkle scope for its downstream observations. */
                 auto synthetic = std::make_shared<ReplayLocalObject>(
-                    std::move(syntheticSubject), *applyScopeSaved,
+                    std::move(syntheticSubject), mergedApplyScope,
                     localWalkFacts, localChainCursor,
                     *dg, rootFSRootSaved, /*type=*/ nThunk, &state);
                 /* Enable per-probe AmbientAsks validation. After the

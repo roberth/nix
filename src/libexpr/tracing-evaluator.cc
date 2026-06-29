@@ -304,28 +304,18 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        warm and would just contaminate the enclosing chain's
        AmbientResult. */
     bool fnIsTlo = dynamic_cast<TracingLocalObject *>(fn.get_ptr().get()) != nullptr;
-    Hash enclosingApplyId(HashAlgorithm::SHA256);
-    if (fnIsTlo) {
-        if (auto enclosingId = writer.getCurrentApplyBoundaryId())
-            enclosingApplyId = *enclosingId;
-        auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQ.dump());
-        writer.logDepth2ApplyFact(applyQ, applyReqHash);
-    } else {
-        writer.markApplyBoundary(applyQ);
-    }
 
-    /* Build the ApplyResultSubject from fn/arg constituents via
-       polymorphic `getSubject()` — works for AmbientObject (PositionalSeed
-       cb-arg or DerivedSubject child), TracingObject /
-       TracingReplayObject when they're themselves apply results
-       (ApplyResultSubject surfaced from applyResultSubject), and
-       TracingLocalObject (PositionalSeed local). Fall back to
-       PostulatedIdempotentRead only when getSubject() is null — that
-       narrows the fallback to atoms whose argStateId is fully determined
-       at construction (e.g. fresh TracingObject from evalFile, an
-       InterpreterObject wrapping a concrete value) and not subject
-       to observation-driven evolution, matching the per-use rule
-       in `tracing-eval-cache-per-arg-completion.md`. */
+    /* Build the ApplyResultSubject from fn/arg constituents.
+
+       Non-TLO: `getSubject()` on each with PostulatedIdempotentRead
+       fallback (= satisfied by fresh-from-evalFile TracingObjects and
+       literal `mk*` Objects per the variant contract).
+
+       TLO-fn (= recursive cb-apply): the arg crosses the cb-apply
+       boundary as `PositionalSeed{depth+1}` regardless of its
+       outside-the-boundary Subject. Same convention as
+       `AmbientObject::queryApply` and the walker's
+       `<replay-local-lambda>` primop. */
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256);
     auto argIdHash = Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256);
 
@@ -333,15 +323,55 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         ? *fn->getSubject()
         : cidasks::Subject{cidasks::PostulatedIdempotentRead{fnIdHash}};
 
-    cidasks::Subject argSubj = arg->getSubject()
-        ? *arg->getSubject()
-        : cidasks::Subject{cidasks::PostulatedIdempotentRead{argIdHash}};
-    Hash applyScope = arg->getInheritedScope();
+    cidasks::Subject argSubj;
+    Hash argScopeForApply{HashAlgorithm::SHA256};
+    if (fnIsTlo) {
+        auto callerScope = effectiveArgScope(*fn);
+        int localDepth = callerScope ? callerScope->depth + 1 : 0;
+        argSubj = cidasks::Subject{cidasks::PositionalSeed{localDepth}};
+        argScopeForApply = Hash{HashAlgorithm::SHA256};
+    } else {
+        argSubj = arg->getSubject()
+            ? *arg->getSubject()
+            : cidasks::Subject{cidasks::PostulatedIdempotentRead{argIdHash}};
+        argScopeForApply = arg->getInheritedScope();
+    }
+
+    /* Apply boundary's scope combines fn's and arg's inherited scopes
+       symmetrically but non-commutatively. The walker mirrors this. */
+    Hash applyScope = cidasks::applyScope(fn->getInheritedScope(), argScopeForApply);
 
     cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
         .fn = std::make_shared<const cidasks::Subject>(std::move(fnSubj)),
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubj)),
     }};
+
+    Hash enclosingApplyId(HashAlgorithm::SHA256);
+    if (fnIsTlo) {
+        if (auto enclosingId = writer.getCurrentApplyBoundaryId())
+            enclosingApplyId = *enclosingId;
+        /* d=2 apply Fact: Subject = resultSubject built above;
+           flushPendingAmbient stamps via the generic
+           pathAndRootsFromSubject path. The QueryApply payload's
+           fn/arg use Subject-derived hex so the walker (which has
+           only Subjects at primop firing time) can byte-match. */
+        const auto & ars = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
+        auto fnSubjHex = cidasks::scopeStateIdAfter(*ars.fn, applyScope, {})
+            .to_string(HashFormat::Base16, false);
+        auto argSubjHex = cidasks::scopeStateIdAfter(*ars.arg, applyScope, {})
+            .to_string(HashFormat::Base16, false);
+        tracingCacheLog(
+            "writer logDepth2ApplyFact: fnSubj=%s argSubj=%s applyScope=%s fnHex=%s argHex=%s",
+            cidasks::describe(*ars.fn),
+            cidasks::describe(*ars.arg),
+            applyScope.to_string(HashFormat::Base16, false).substr(0, 12),
+            fnSubjHex.substr(0, 12),
+            argSubjHex.substr(0, 12));
+        nlohmann::json applyQd2 = trace::QueryApply{fnSubjHex, argSubjHex};
+        writer.logDepth2ApplyFact(applyQd2, resultSubject, applyScope);
+    } else {
+        writer.markApplyBoundary(applyQ);
+    }
 
     /* Per-arg-completion option 2: apply-result argStateId evolves with
        the writer's d1CidasksWalk at the moment of apply. With the

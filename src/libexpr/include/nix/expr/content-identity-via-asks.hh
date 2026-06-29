@@ -220,6 +220,21 @@ PathAndRoots pathAndRootsFromSubject(const Subject & subject);
     path is encoded separately as a PathExpr. */
 const Subject & rootSubjectOf(const Subject & subject);
 
+/** Combine fn's and arg's inherited scopes into an apply boundary's
+    scope. Apply treats both sides equally (= unlike QueryAttr or
+    curried-result subjects which have a neat single parent), but the
+    combination must be non-commutative (= `f a` ≠ `a f`; cf.
+    `flip apply`), so SHA-256 over a tagged concatenation rather
+    than XOR. */
+inline Hash applyScope(const Hash & fnScope, const Hash & argScope)
+{
+    std::string s = "apply-scope:";
+    s += fnScope.to_string(HashFormat::Base16, false);
+    s += ":";
+    s += argScope.to_string(HashFormat::Base16, false);
+    return hashString(HashAlgorithm::SHA256, s);
+}
+
 /** Short readable representation of a Subject — for tracing logs.
     Example: `seed(2)`, `getAttr(seed(2), "left")`,
     `applyResult(seed(0), seed(1))`, `opaque(ab12cd...)`. */
