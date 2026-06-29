@@ -65,23 +65,6 @@ void TracingReplayObject::pushObservation(const std::string & fromHex, const Has
     applyContext->observations.push_back({fromHash, elementHash});
 }
 
-/**
- * Cascading Lookup Strategy (see doc/tracing-index-data-model.md)
- *
- * For each lookup, we try three strategies in order:
- *
- * 1. **Trie following** — temporal children whose afterHash equals our result.
- *    Fastest when the access pattern matches the recorded order.
- *    Validates incrementally from our known-valid position.
- *
- * 2. **Structural lookup** — structural children whose structuralParent equals
- *    our result. Handles same operations in different order.
- *    Validates incrementally from our known-valid position.
- *
- * 3. **Shortcut lookup** — global shortcut table keyed by queryHash.
- *    Can switch to entirely different traces.
- *    Requires full validation from root.
- */
 template<typename Q, typename R>
 std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & query) const
 {

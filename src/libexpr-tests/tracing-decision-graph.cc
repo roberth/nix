@@ -819,7 +819,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndNestedQueries)
    Phase 1 design tests
    ─────────────────────────────────────────────────────────────────────
    Specification-by-test for the faithful Phase 1 record() at
-   doc/tracing-decision-graph-data-model.md lines 386–415.
+   doc/outdated/tracing-decision-graph-data-model.md lines 386–415.
 
    These tests will FAIL against the current per-fact singleton-edge
    strawman in record() and provide the green target for the rewrite.

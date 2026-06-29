@@ -3,7 +3,9 @@
  * @file
  * SQLite-based decision-graph index for the tracing evaluation cache.
  *
- * Implements doc/tracing-decision-graph-data-model.md. Two layers:
+ * Implements doc/design/tracing-eval-cache.md (v13 schema; see also
+ * doc/outdated/tracing-decision-graph-data-model.md for the
+ * superseded Phase-1 sketch). Two layers:
  *
  *   1. Storage layer — content-addressed pools of atoms (Request,
  *      Response, Query, Result) and sets (RequestSet, FactSet). Each
