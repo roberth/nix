@@ -101,6 +101,14 @@ public:
 
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
+    /** Symmetric to TracingObject/TracingReplayObject: surface the
+        ApplyResultSubject so a subsequent apply on this wrapper
+        composes evolving ApplyResultSubject constituents instead of
+        the frozen OpaqueContent{applyCdiHex} fallback. */
+    const cidasks::Subject * getSubject() const override { return &applyResultSubject; }
+
+    Hash getInheritedScope() const override { return applyScope; }
+
     std::optional<std::string> getCdiHex() const override { return applyCdiHex; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
