@@ -293,22 +293,23 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto fnIdHash = Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256);
     auto argIdHash = Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256);
 
-    /* Build ApplyResultSubject from fn/arg. fn here is `this` — a
-       TracingObject without a structural Subject of its own; we wrap
-       its triePos hash. arg may carry a proper Subject (AmbientObject)
-       or fall back similarly. */
-    cidasks::Subject fnSubj{cidasks::OpaqueContentSubject{fnIdHash}};
-    cidasks::Subject argSubj;
-    Hash applyScopeLocal = applyScope;
-    if (auto * argAmb = dynamic_cast<AmbientObject *>(argObj.get())) {
-        if (auto * s = argAmb->getSubject())
-            argSubj = *s;
-        else
-            argSubj = cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
-        applyScopeLocal = argAmb->getInheritedScope();
-    } else {
-        argSubj = cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
-    }
+    /* Build ApplyResultSubject from fn/arg via polymorphic
+       `getSubject()`. fn = `this`: when this TracingObject is itself
+       an apply result, `getSubject()` surfaces its
+       applyResultSubject — the next apply sees an evolving
+       ApplyResultSubject constituent instead of `OpaqueContent{
+       this.triePos}` which would freeze the CDI. Plain TracingObjects
+       (= from evalFile, navigation children) return null and the
+       OpaqueContent fallback fires as a fixed-atom identity. */
+    cidasks::Subject fnSubj = getSubject()
+        ? *getSubject()
+        : cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
+    Hash applyScopeLocal = getSubject() ? getInheritedScope() : applyScope;
+    cidasks::Subject argSubj = argObj->getSubject()
+        ? *argObj->getSubject()
+        : cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
+    if (argObj->getSubject())
+        applyScopeLocal = argObj->getInheritedScope();
     cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
         .fn = std::make_shared<const cidasks::Subject>(std::move(fnSubj)),
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubj)),

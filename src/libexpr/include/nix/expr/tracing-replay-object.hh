@@ -117,6 +117,18 @@ public:
 
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
+    /** Symmetric to `TracingObject::getSubject()`: surface the apply-
+        result Subject when this wrapper is an apply result so the
+        next apply / further queries build `ApplyResultSubject{...}`
+        constituents whose CDIs evolve via cidasks own-loop, instead
+        of falling back to `OpaqueContent{this.cdi}`. */
+    const cidasks::Subject * getSubject() const override
+    {
+        return applyResultSubject ? &*applyResultSubject : nullptr;
+    }
+
+    Hash getInheritedScope() const override { return applyScope; }
+
     const TriePosition & getTriePos() const
     {
         return triePos;

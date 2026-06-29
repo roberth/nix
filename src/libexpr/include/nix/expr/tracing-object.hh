@@ -86,6 +86,27 @@ public:
 
     std::shared_ptr<cidasks::ApplyContext> getApplyContext() const { return applyContext; }
 
+    /** Expose the apply-result structural Subject when this wrapper
+        is itself an apply result (= curried fn for the next apply, or
+        target of further queries). Surfacing the Subject lets the
+        next apply build `ApplyResultSubject{fn=this.subject, ...}`
+        with constituents whose CDIs *evolve* via cidasks own-loop,
+        instead of falling back to `OpaqueContent{this.cdi}` which
+        freezes the CDI at construction time. Non-apply-result
+        wrappers (= fresh from evalFile, navigation children)
+        legitimately have no Subject — for those, the OpaqueContent
+        fallback in callers describes an atom whose CDI is fully
+        determined and not subject to observation-driven evolution. */
+    const cidasks::Subject * getSubject() const override
+    {
+        return applyResultSubject ? &*applyResultSubject : nullptr;
+    }
+
+    /** Inherited scope for `contentIdAt(getSubject(), getInheritedScope(), …)`.
+        For apply-result wrappers it's the cb-apply boundary's scope
+        baked at construction. */
+    Hash getInheritedScope() const override { return applyScope; }
+
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
     /** Get the query hash string for trie identity, if available. */

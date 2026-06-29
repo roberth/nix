@@ -314,36 +314,29 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         writer.markApplyBoundary(applyQ);
     }
 
-    /* Build the ApplyResultSubject from fn/arg constituents. fn is
-       typically a TracingObject (the cached function from evalFile)
-       without a structural Subject; arg is typically an AmbientObject
-       (the cb-arg) with a PositionalSeed Subject. Fall back to
-       OpaqueContentSubject where no Subject is exposed; the resulting
-       constituents enter `contentIdAt` via the standard formula. */
+    /* Build the ApplyResultSubject from fn/arg constituents via
+       polymorphic `getSubject()` — works for AmbientObject (PositionalSeed
+       cb-arg or DerivedSubject child), TracingObject /
+       TracingReplayObject when they're themselves apply results
+       (ApplyResultSubject surfaced from applyResultSubject), and
+       TracingLocalObject (PositionalSeed local). Fall back to
+       OpaqueContentSubject only when getSubject() is null — that
+       narrows the fallback to atoms whose CDI is fully determined
+       at construction (e.g. fresh TracingObject from evalFile, an
+       InterpreterObject wrapping a concrete value) and not subject
+       to observation-driven evolution, matching the per-use rule
+       in `tracing-eval-cache-per-arg-completion.md`. */
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256);
     auto argIdHash = Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256);
 
-    cidasks::Subject fnSubj;
-    if (auto * fnAmb = dynamic_cast<AmbientObject *>(fn.get_ptr().get())) {
-        if (auto * s = fnAmb->getSubject())
-            fnSubj = *s;
-        else
-            fnSubj = cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
-    } else {
-        fnSubj = cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
-    }
+    cidasks::Subject fnSubj = fn->getSubject()
+        ? *fn->getSubject()
+        : cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
 
-    cidasks::Subject argSubj;
-    Hash applyScope(HashAlgorithm::SHA256);
-    if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
-        if (auto * s = argAmb->getSubject())
-            argSubj = *s;
-        else
-            argSubj = cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
-        applyScope = argAmb->getInheritedScope();
-    } else {
-        argSubj = cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
-    }
+    cidasks::Subject argSubj = arg->getSubject()
+        ? *arg->getSubject()
+        : cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
+    Hash applyScope = arg->getInheritedScope();
 
     cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
         .fn = std::make_shared<const cidasks::Subject>(std::move(fnSubj)),

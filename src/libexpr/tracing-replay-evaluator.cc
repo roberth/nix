@@ -1157,34 +1157,24 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        via-Asks doc's boundary-trace-only discipline calls out. */
 
     /* Build the ApplyResultSubject from fn/arg constituents — mirror
-       of TracingEvaluator::apply. Fall back to OpaqueContent where no
-       structural Subject is exposed. Scope comes from the arg's
-       inheritedScope (= callScope, set on AmbientObject by the
-       <cached-fn> PrimOp impl). */
+       of TracingEvaluator::apply. Use polymorphic `getSubject()` so
+       apply-result wrappers (TracingReplayObject /
+       TracingObject) expose their applyResultSubject as `fn` for
+       further applies — their CDIs evolve via cidasks own-loop
+       instead of being frozen by `OpaqueContent{this.cdi}`. Fall
+       back to OpaqueContent only when no Subject is exposed
+       (= atom whose CDI is fully determined at construction). */
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256);
     auto argIdHash = Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256);
 
-    cidasks::Subject fnSubj;
-    if (auto * fnAmb = dynamic_cast<AmbientObject *>(fn.get_ptr().get())) {
-        if (auto * s = fnAmb->getSubject())
-            fnSubj = *s;
-        else
-            fnSubj = cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
-    } else {
-        fnSubj = cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
-    }
+    cidasks::Subject fnSubj = fn->getSubject()
+        ? *fn->getSubject()
+        : cidasks::Subject{cidasks::OpaqueContentSubject{fnIdHash}};
 
-    cidasks::Subject argSubj;
-    Hash applyScope(HashAlgorithm::SHA256);
-    if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
-        if (auto * s = argAmb->getSubject())
-            argSubj = *s;
-        else
-            argSubj = cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
-        applyScope = argAmb->getInheritedScope();
-    } else {
-        argSubj = cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
-    }
+    cidasks::Subject argSubj = arg->getSubject()
+        ? *arg->getSubject()
+        : cidasks::Subject{cidasks::OpaqueContentSubject{argIdHash}};
+    Hash applyScope = arg->getInheritedScope();
 
     cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
         .fn = std::make_shared<const cidasks::Subject>(std::move(fnSubj)),
