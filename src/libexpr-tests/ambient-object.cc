@@ -71,7 +71,9 @@ TEST(AmbientObjectTest, GetType)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        testSubject(0), mockResolver({{"getType:" + ambientHex(seed), trace::ResultType{"int"}}}), stubAmbientRoot());
+        testSubject(0),
+        mockResolver({{"getWHNF:" + ambientHex(seed), trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
+        stubAmbientRoot());
     EXPECT_EQ(obj->getType(), nInt);
 }
 
@@ -79,7 +81,9 @@ TEST(AmbientObjectTest, GetInt)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        testSubject(0), mockResolver({{"getInt:" + ambientHex(seed), trace::ResultInt{42}}}), stubAmbientRoot());
+        testSubject(0),
+        mockResolver({{"getWHNF:" + ambientHex(seed), trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
+        stubAmbientRoot());
     EXPECT_EQ(obj->getInt().value, 42);
 }
 
@@ -87,7 +91,9 @@ TEST(AmbientObjectTest, GetString)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        testSubject(0), mockResolver({{"getString:" + ambientHex(seed), trace::ResultString{"hello"}}}), stubAmbientRoot());
+        testSubject(0),
+        mockResolver({{"getWHNF:" + ambientHex(seed), trace::ResultWHNF{"string", trace::WHNFString{"hello", {}}}}}),
+        stubAmbientRoot());
     EXPECT_EQ(obj->getStringIgnoreContext(), "hello");
 }
 
@@ -95,7 +101,9 @@ TEST(AmbientObjectTest, GetBool)
 {
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
-        testSubject(0), mockResolver({{"getBool:" + ambientHex(seed), trace::ResultBool{true}}}), stubAmbientRoot());
+        testSubject(0),
+        mockResolver({{"getWHNF:" + ambientHex(seed), trace::ResultWHNF{"bool", trace::WHNFBool{true}}}}),
+        stubAmbientRoot());
     EXPECT_TRUE(obj->getBool());
 }
 
@@ -118,7 +126,7 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
         testSubject(0),
         mockResolver({
             {"getAttr:" + ambientHex(seed), trace::ResultMaybeType{std::optional<std::string>{"int"}}},
-            {"getInt:" + childHex, trace::ResultInt{99}},
+            {"getWHNF:" + childHex, trace::ResultWHNF{"int", trace::WHNFInt{99}}},
         }),
         stubAmbientRoot());
     auto child = obj->maybeGetAttr("x");
@@ -150,7 +158,7 @@ TEST(AmbientObjectTest, GetListElem)
         testSubject(0),
         mockResolver({
             {"getListElem:" + ambientHex(seed), trace::ResultType{"string"}},
-            {"getString:" + childHex, trace::ResultString{"world"}},
+            {"getWHNF:" + childHex, trace::ResultWHNF{"string", trace::WHNFString{"world", {}}}},
         }),
         stubAmbientRoot());
     auto child = obj->getListElem(1);
@@ -163,7 +171,9 @@ TEST(AmbientObjectTest, GetAttrNames)
     auto seed = testId(0);
     auto obj = std::make_shared<AmbientObject>(
         testSubject(0),
-        mockResolver({{"getAttrNames:" + ambientHex(seed), trace::ResultListOfStrings{{"a", "b", "c"}}}}),
+        mockResolver({
+            {"getWHNF:" + ambientHex(seed), trace::ResultWHNF{"set", trace::WHNFAttrs{{"a", "b", "c"}}}},
+        }),
         stubAmbientRoot());
     auto names = obj->getAttrNames();
     EXPECT_EQ(names.size(), 3u);

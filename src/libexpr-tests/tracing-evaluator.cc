@@ -154,10 +154,13 @@ TEST_F(TracingEvaluatorTest, GetAttrNamesTracesNames)
     auto names = obj->getAttrNames();
     EXPECT_EQ(names.size(), 2u);
 
+    /* getAttrNames now goes through whnf() — the result entry carries a
+       ResultWHNF with type="set" and a names[] payload. */
     ASSERT_GE(sink->entries.size(), 2u);
     auto & result = sink->entries[1];
-    auto values = result.at("result").at("values").get<std::vector<std::string>>();
-    EXPECT_EQ(values.size(), 2u);
+    EXPECT_EQ(result.at("result").at("type"), "set");
+    auto attrNames = result.at("result").at("names").get<std::vector<std::string>>();
+    EXPECT_EQ(attrNames.size(), 2u);
 }
 
 TEST_F(TracingEvaluatorTest, GetListSizeTracesSize)

@@ -96,8 +96,6 @@ struct AmbientQuery
 
                     if constexpr (std::is_same_v<Q, trace::QueryGetWHNF>) {
                         return {computeWHNFFromObject(*obj), std::nullopt};
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetType>) {
-                        return {trace::ResultType{objectTypeToString(obj->getType())}, std::nullopt};
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetAttr>) {
                         auto child = obj->maybeGetAttr(query.name);
                         if (!child)
@@ -108,31 +106,11 @@ struct AmbientQuery
                         return {
                             trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}},
                             childId};
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetString>) {
-                        return {trace::ResultString{obj->getStringIgnoreContext()}, std::nullopt};
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetStringWithContext>) {
-                        auto [str, ctx] = obj->getStringWithContext();
-                        std::vector<std::string> ctxStrings;
-                        for (auto & c : ctx)
-                            ctxStrings.push_back(c.to_string());
-                        return {trace::ResultStringWithContext{str, std::move(ctxStrings)}, std::nullopt};
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetAttrNames>) {
-                        return {trace::ResultListOfStrings{obj->getAttrNames()}, std::nullopt};
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetBool>) {
-                        return {trace::ResultBool{obj->getBool()}, std::nullopt};
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetInt>) {
-                        return {trace::ResultInt{obj->getInt().value}, std::nullopt};
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetFloat>) {
-                        return {trace::ResultFloat{obj->getFloat()}, std::nullopt};
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetListSize>) {
-                        return {trace::ResultListSize{obj->getListSize()}, std::nullopt};
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
                         auto child = obj->getListElem(query.index);
                         auto childId = TracingDecisionGraph::computeQueryHash(query);
                         registry.registerOuterAt(childId, child);
                         return {trace::ResultType{objectTypeToString(child->getType())}, childId};
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetPath>) {
-                        return {trace::ResultPath{obj->getPath().path.abs()}, std::nullopt};
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetFunctionInfo>) {
                         auto info = obj->getFunctionInfo();
                         if (!info)

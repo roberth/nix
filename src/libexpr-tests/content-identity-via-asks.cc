@@ -86,8 +86,8 @@ TEST(CidAsks, ObservationOnSeedAdvancesContentId)
     auto initial = scopeStateIdAfter(s, noScope(), {});
 
     // A getInt fact whose from matches the seed's initial id.
-    trace::QueryGetInt q{hex(initial)};
-    trace::ResultInt r{42};
+    trace::QueryGetWHNF q{hex(initial)};
+    trace::ResultWHNF r{"int", trace::WHNFInt{42}};
     Edge e{.observations = {observationFromQR(q, r)}};
 
     auto after = scopeStateIdAfter(s, noScope(), {e});
@@ -106,8 +106,8 @@ TEST(CidAsks, FactOnUnrelatedSubjectDoesNotAdvance)
     auto s1Initial = scopeStateIdAfter(s1, noScope(), {});
 
     // Fact whose from matches s1, not s0.
-    trace::QueryGetInt q{hex(s1Initial)};
-    trace::ResultInt r{99};
+    trace::QueryGetWHNF q{hex(s1Initial)};
+    trace::ResultWHNF r{"int", trace::WHNFInt{99}};
     Edge e{.observations = {observationFromQR(q, r)}};
 
     EXPECT_EQ(scopeStateIdAfter(s0, noScope(), {}), scopeStateIdAfter(s0, noScope(), {e}));
@@ -128,10 +128,10 @@ TEST(CidAsks, XorCommutativityWithinEdge)
     auto s = seed(0);
     auto initial = scopeStateIdAfter(s, noScope(), {});
 
-    trace::QueryGetInt q1{hex(initial)};
-    trace::ResultInt r1{1};
-    trace::QueryGetType q2{hex(initial)};
-    trace::ResultType r2{"int"};
+    trace::QueryGetWHNF q1{hex(initial)};
+    trace::ResultWHNF r1{"int", trace::WHNFInt{1}};
+    trace::QueryGetAttr q2{"foo", hex(initial)};
+    trace::ResultMaybeType r2{std::nullopt};
 
     auto f1 = observationFromQR(q1, r1);
     auto f2 = observationFromQR(q2, r2);
@@ -153,8 +153,8 @@ TEST(CidAsks, DerivedAdvancesWhenParentAdvances)
     auto childInitial = structuralAddressAfter(child, noScope(), {});
 
     // A fact on the parent.
-    trace::QueryGetType q{hex(parentInitial)};
-    trace::ResultType r{"set"};
+    trace::QueryGetWHNF q{hex(parentInitial)};
+    trace::ResultWHNF r{"set", trace::WHNFAttrs{{"x"}}};
     Edge e{.observations = {observationFromQR(q, r)}};
 
     auto childAfter = structuralAddressAfter(child, noScope(), {e});
@@ -174,8 +174,8 @@ TEST(CidAsks, DerivedDoesNotAdvanceOnFactsTargetedAtItself)
     auto childInitial = structuralAddressAfter(child, noScope(), {});
 
     // A fact whose `from` matches the child's address (not the root's).
-    trace::QueryGetInt q{hex(childInitial)};
-    trace::ResultInt r{7};
+    trace::QueryGetWHNF q{hex(childInitial)};
+    trace::ResultWHNF r{"int", trace::WHNFInt{7}};
     Edge e{.observations = {observationFromQR(q, r)}};
 
     EXPECT_EQ(structuralAddressAfter(child, noScope(), {e}), childInitial);
@@ -261,9 +261,9 @@ TEST(CidAsks, ObservationOnScopedSeedRequiresMatchingScopedFromHash)
     auto unscopedInitial = scopeStateIdAfter(s, noScope(), {});
     EXPECT_NE(scopedInitial, unscopedInitial);
 
-    trace::QueryGetInt qScoped{hex(scopedInitial)};
-    trace::QueryGetInt qUnscoped{hex(unscopedInitial)};
-    trace::ResultInt r{1};
+    trace::QueryGetWHNF qScoped{hex(scopedInitial)};
+    trace::QueryGetWHNF qUnscoped{hex(unscopedInitial)};
+    trace::ResultWHNF r{"int", trace::WHNFInt{1}};
     Edge eScoped{.observations = {observationFromQR(qScoped, r)}};
     Edge eUnscoped{.observations = {observationFromQR(qUnscoped, r)}};
 

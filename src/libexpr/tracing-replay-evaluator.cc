@@ -944,8 +944,6 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
     try {
         if (tag == "getWHNF") {
             resultJson = computeWHNFFromObject(*obj);
-        } else if (tag == "getType") {
-            resultJson = trace::ResultType{objectTypeToString(obj->getType())};
         } else if (tag == "getAttr") {
             auto name = params["name"].get<std::string>();
             auto child = obj->maybeGetAttr(name);
@@ -954,30 +952,10 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
             } else {
                 resultJson = trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}};
             }
-        } else if (tag == "getString") {
-            resultJson = trace::ResultString{obj->getStringIgnoreContext()};
-        } else if (tag == "getStringWithContext") {
-            auto [str, ctx] = obj->getStringWithContext();
-            std::vector<std::string> ctxStrings;
-            for (auto & c : ctx)
-                ctxStrings.push_back(c.to_string());
-            resultJson = trace::ResultStringWithContext{str, std::move(ctxStrings)};
-        } else if (tag == "getAttrNames") {
-            resultJson = trace::ResultListOfStrings{obj->getAttrNames()};
-        } else if (tag == "getBool") {
-            resultJson = trace::ResultBool{obj->getBool()};
-        } else if (tag == "getInt") {
-            resultJson = trace::ResultInt{obj->getInt().value};
-        } else if (tag == "getFloat") {
-            resultJson = trace::ResultFloat{obj->getFloat()};
-        } else if (tag == "getListSize") {
-            resultJson = trace::ResultListSize{obj->getListSize()};
         } else if (tag == "getListElem") {
             auto index = params["index"].get<size_t>();
             auto child = obj->getListElem(index);
             resultJson = trace::ResultType{objectTypeToString(child->getType())};
-        } else if (tag == "getPath") {
-            resultJson = trace::ResultPath{obj->getPath().path.abs()};
         } else if (tag == "getFunctionInfo") {
             auto info = obj->getFunctionInfo();
             if (!info)
