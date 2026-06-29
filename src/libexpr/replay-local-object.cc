@@ -24,25 +24,6 @@ ReplayLocalObject & ReplayLocalObject::withChainStart(Hash root)
     return *this;
 }
 
-/* These mirror the same-named helpers in tracing-local-object.cc.
-   Both translation units are unity-built into libnixexpr, so the
-   helpers must have distinct names to avoid ODR collisions. */
-static std::string replayFromOf(AmbientId id)
-{
-    return id.to_string(HashFormat::Base16, false);
-}
-
-static std::string replayFromHex(const Hash & h)
-{
-    return h.to_string(HashFormat::Base16, false);
-}
-
-template<typename Q>
-static AmbientId replayDerivedLocalId(const Q & query)
-{
-    return TracingDecisionGraph::computeQueryHash(query);
-}
-
 /* Populate `query`'s per-arg fields (from, path, fromCIDs) so its
    reqHash matches what the writer flushed for the corresponding
    recorder probe. Multi-root applies fill fromCIDs[] with multiple

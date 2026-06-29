@@ -8,34 +8,22 @@
 
 namespace nix {
 
-/* Under Step C, AmbientId is a Hash. The wire format puts the
-   hex representation in the query's `from` field. */
-static std::string fromOf(AmbientId scopeStateId)
-{
-    return scopeStateId.to_string(HashFormat::Base16, false);
-}
-
 /* Populate `q`'s per-arg fields (from, path, fromCIDs) so its
    reqHash matches what the writer flushed for the corresponding
-   observation. Returns the first-root argStateId (= fromCIDs[0]) so callers
-   can pass it where the legacy single-root rootCdi was expected. */
+   observation. */
 template <typename Q>
-static Hash stampPerArgFieldsAmbient(Q & q, const cidasks::Subject & subject, const Hash & inheritedScope)
+static void stampPerArgFieldsAmbient(Q & q, const cidasks::Subject & subject, const Hash & inheritedScope)
 {
     auto par = cidasks::pathAndRootsFromSubject(subject);
     std::vector<trace::QueryLeaf> fromCIDs;
     fromCIDs.reserve(par.roots.size());
-    Hash rootCdi(HashAlgorithm::SHA256);
     for (size_t i = 0; i < par.roots.size(); ++i) {
         auto cid = cidasks::scopeStateIdAfter(par.roots[i], inheritedScope, {});
-        if (i == 0)
-            rootCdi = cid;
         fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
     }
     q.from = fromCIDs.empty() ? trace::QueryLeaf{std::string{}} : fromCIDs[0];
     q.path = std::move(par.path);
     q.fromCIDs = std::move(fromCIDs);
-    return rootCdi;
 }
 
 AmbientObject::AmbientObject(
@@ -52,7 +40,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 {
     auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetAttr q{name, std::string{}};
-    auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
+    stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultMaybeType>(&qr.result);
     if (!r || !r->type)
@@ -79,7 +67,7 @@ trace::ResultWHNF & AmbientObject::whnf()
         return *cachedWHNF;
     auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetWHNF q{std::string{}};
-    auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
+    stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
@@ -177,7 +165,7 @@ std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
 {
     auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetListElem q{std::string{}, index};
-    auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
+    stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
     if (!qr.childId)
         throw Error("ambient getListElem: resolver didn't return child id");
@@ -224,7 +212,7 @@ std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
 {
     auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetFunctionInfo q{std::string{}};
-    auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
+    stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
