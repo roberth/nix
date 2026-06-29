@@ -1160,10 +1160,13 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubj)),
     }};
 
-    /* apply-result CDI is content-only — see commentary in
-       TracingEvaluator::apply. Walker mirrors the writer's
-       computation. */
-    auto applyCdi = cidasks::contentIdAfter(resultSubject, applyScope, {});
+    /* Walker mirror of TracingEvaluator::apply's option 2 evolution.
+       Uses walker.cidasksWalk (the cumulative committed walk), which
+       under the 1:1 alignment restructure matches writer.d1CidasksWalk
+       edge-for-edge once all prior cb-applies' chains have been
+       dispatched. */
+    auto & walk = cidasksWalk;
+    auto applyCdi = cidasks::contentIdAt(resultSubject, applyScope, walk, walk.size());
     auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);

@@ -350,16 +350,15 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubj)),
     }};
 
-    /* apply-result CDI is content-only: pure function of (subject, scope)
-       at this apply boundary, with no observations folded in. Two cb
-       apply invocations of the same cached fn at the same scope produce
-       the same applyCdi by construction — observations during each
-       invocation's body live in that invocation's own factSet (= visible
-       to the trie via per-(Q, factSet) Terminal rows), not in the apply
-       result's identity. Same-shape collapse happens via shared (Q,
-       factSet) keys; observation-driven discrimination between siblings
-       happens via differing factSets at the Terminal row. */
-    auto applyCdi = cidasks::contentIdAfter(resultSubject, applyScope, {});
+    /* Per-arg-completion option 2: apply-result CDI evolves with
+       the writer's d1CidasksWalk at the moment of apply. With the
+       1:1 alignment restructure, writer.d1.size grows in lockstep
+       with perQAsksEdges; walker.cidasksWalk grows per dispatched
+       Asks edge. At sibling B's apply, walker.cidasksWalk should
+       have caught up to writer.d1.size at cold sib B apply (= all
+       of sib A's perQAsksEdges traversed via prior v13Walks). */
+    auto & d1Walk = writer.getD1CidasksWalk();
+    auto applyCdi = cidasks::contentIdAt(resultSubject, applyScope, d1Walk, d1Walk.size());
     auto applyCdiHex = applyCdi.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
