@@ -220,5 +220,56 @@ The principled fix touches:
   `startCurRequests` parameters.
 
 Writer-side `d1CidasksWalk` machinery in `tracing-writer.cc` /
-`tracing-writer.hh` is unchanged (= already-correct evolution
-mechanism that Fix A removed and the revert restored).
+`tracing-writer.hh` was originally append-only and grew
+independently of `perQAsksEdges`. As part of the option-2
+groundwork, it is now kept 1:1-aligned with `perQAsksEdges`:
+every perQAsksEdge added is paired with a d1 edge at the same
+index (ε boundaries insert into both at `boundary.insertionIndex`;
+trailing closes append to both). The walker's `commitEdge`
+always pushes, even for empty observation sets, so its
+`cidasksWalk` matches the writer's d1 edge-for-edge under
+expected dispatch order. This alignment is the precondition for
+option 2 — but the cold/warm flush-pattern asymmetry is a
+separate obstacle:
+
+## Cold/warm flush-pattern asymmetry
+
+After the 1:1 alignment restructure landed, a follow-up
+attempt to land option 2's apply triePos via writer's
+`d1CidasksWalk.size()` at apply time still regressed cb-same-
+shape, cb-stats-derived-id-collision, and didn't close
+cb-sibling. The root cause is a cold/warm asymmetry in *when*
+flushes fire on the writer:
+
+- **Cold:** `writer.d1CidasksWalk` grows at every `splitFlush`
+  event — both `markApplyBoundary` (= one edge per cb-apply
+  boundary opening) AND `logResult` (= 1 edge per pending d1
+  chunk + N edges per processed pendingApplyBoundary). Each
+  child query on the apply-result wrapper fires `logResult` →
+  flushes. After sibling A's full child-query sequence
+  (`getType`/`getAttrNames`/`maybeGetAttr`/`getInt` on the
+  wrapper and on the resulting child) the cumulative d1 size
+  is ~8–10 entries before sibling B's apply.
+- **Warm:** the walker only triggers writer flushes through
+  `markApplyBoundary` side effects (= when dispatching apply
+  Request reqHashes via `dispatchApplyLive` → outer apply →
+  `AmbientApply::runOn` → `writer.markApplyBoundary`). No
+  `logResult`-equivalent fires at warm — the recordings are
+  already in the trie, so the walker just dispatches them.
+  Cumulative d1 size at warm sibling B's apply is just ~2 (one
+  per ε apply Request in sibling A's body).
+
+Result: `writer.d1.size` at warm sibling B's apply ≠
+`writer.d1.size` at cold sibling B's apply. The cidasks
+evolution formula evaluated on the two sizes produces different
+applyCdis. Sibling B's recorded child queries (at cold's
+applyCdi_B) and the walker's looked-up child queries (at warm's
+applyCdi_B) hash to different Q values → MISS → fallback re-
+recording at yet another inconsistent applyCdi.
+
+Closing this gap requires the walker to fire writer flushes at
+the same rate cold did — essentially synthesising `logResult`
+equivalents during `v13Walk` so `writer.d1.size` advances in
+lockstep with cold's growth pattern. That's a wider edit than
+option 2 alone: it touches the writer/walker contract for what
+"a flush" means and when it fires. Deferred as follow-up work.

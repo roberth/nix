@@ -111,13 +111,21 @@ class TracingWriter
        facts field). */
 
     /* Persistent cidasks chain for depth-1 ambient observations.
-       One edge per logResult — covers the ambient facts substituted
-       at that logResult's flushPendingAmbient. Per-flush evolution
-       (= principles 3/5/7): later flushes substitute fact `from` at
-       `edgeIndex = d1CidasksWalk.size()`, so the root cdi accumulates
-       prior flushes' contributions via the own-loop. The walker
-       advances `ctx.runningWalk` 1:1 via per-Q Asks edges. */
+       d1CidasksWalk is kept 1:1-aligned with `perQAsksEdges`:
+       every Asks edge inserted into `perQAsksEdges` is paired with
+       a d1 edge inserted at the SAME index. This invariant lets the
+       walker's `cidasksWalk` — which grows once per dispatched Asks
+       edge via `commitEdge` — match the writer's d1 walk
+       edge-for-edge, so `contentIdAt(subject, scope, walk, K)`
+       computes the same value on both sides. Per-arg-completion
+       option 2 depends on this alignment. */
     std::vector<cidasks::Edge> d1CidasksWalk;
+    /* Stages the next d1 edge between `flushPendingAmbient` (which
+       drains pendingDepth1Facts into it) and `splitFlush` (which
+       pushes it to d1CidasksWalk paired with a perQAsksEdge). May
+       be empty (= file-read-only Asks edge) — still pushed so that
+       d1CidasksWalk.size() == perQAsksEdges.size() always holds. */
+    cidasks::Edge pendingD1Edge;
 
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
        new query hash added to v13FactSet since the last logResult,

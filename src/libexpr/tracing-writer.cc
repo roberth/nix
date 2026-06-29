@@ -45,9 +45,16 @@ void TracingWriter::flushPendingAmbient(bool finalize)
        the persistent `d1CidasksWalk` chain (= principles 3/5/7). Each
        fact's `from` substitutes against `d1CidasksWalk[walk.size()]`
        — the precondition for the new edge — so per-arg roots evolve
-       across logResults. */
+       across logResults.
+
+       Under the 1:1 alignment invariant, the new edge is NOT pushed
+       here; it's staged in `pendingD1Edge` for `splitFlush` to push
+       paired with the corresponding perQAsksEdge. This keeps
+       writer.d1CidasksWalk.size() == perQAsksEdges.size() at every
+       transition. */
     size_t d1EdgeIndex = d1CidasksWalk.size();
-    cidasks::Edge d1NewEdge;
+    cidasks::Edge & d1NewEdge = pendingD1Edge;
+    d1NewEdge = {};
 
     for (auto & pf : pendingDepth1Facts) {
         /* Per-arg with multi-root: `from` is the first cb_arg's CDI;
@@ -108,12 +115,8 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                 pendingNewRequests.push_back(queryHash);
         }
     }
-    if (!d1NewEdge.observations.empty()) {
-        d1CidasksWalk.push_back(std::move(d1NewEdge));
-        tracingCacheLog("writer d1CidasksWalk += 1 -> %zu (obs=%zu)",
-                        d1CidasksWalk.size(),
-                        d1CidasksWalk.back().observations.size());
-    }
+    /* d1NewEdge is staged in pendingD1Edge — splitFlush pushes it
+       paired with the perQAsksEdge so the 1:1 alignment holds. */
     pendingDepth1Facts.clear();
 
     if (!finalize) {
@@ -136,10 +139,17 @@ void TracingWriter::flushPendingAmbient(bool finalize)
     if (!pendingNewRequests.empty()) {
         auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
         perQAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-        tracingCacheLog("finalize: final d1 Asks edge from=%s rs-size=%zu (perQ=%zu)",
+        /* 1:1 alignment: push the staged d1 edge alongside the
+           perQAsksEdge. The d1 edge may be empty (= file-read-only
+           Asks edge with no ambient observations) — still pushed so
+           the indices match. */
+        d1CidasksWalk.push_back(std::move(pendingD1Edge));
+        pendingD1Edge = {};
+        tracingCacheLog("finalize: final d1 Asks edge from=%s rs-size=%zu (perQ=%zu d1=%zu)",
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
-                        perQAsksEdges.size());
+                        perQAsksEdges.size(),
+                        d1CidasksWalk.size());
         prevQFactSetHash = v13FactSetHash;
         pendingNewRequests.clear();
     }
@@ -303,7 +313,6 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             Hash(HashAlgorithm::SHA256), // fromHash = 0: walk-advance marker
             factHash,                    // elementHash = factElementHash(reqHash, AmbientResult)
         });
-        d1CidasksWalk.push_back(std::move(applyEdge));
 
         /* Insert ε perQAsksEdge at boundary.insertionIndex + shift.
            shift accounts for prior ε insertions in this loop, since
@@ -313,13 +322,17 @@ void TracingWriter::flushPendingAmbient(bool finalize)
            cur the walker would have at the start of this ε's
            dispatch). After insertion, propagate this ε's elementHash
            to all subsequent perQAsksEdges so their fromFactSetHash
-           reflects this ε's contribution at walker dispatch time. */
+           reflects this ε's contribution at walker dispatch time.
+
+           1:1 alignment: insert ε d1 edge at the SAME pos in
+           d1CidasksWalk. Both indices shift together. */
         auto epsilonReqSet = decisionGraph->insertRequestSet({boundary.applyRequestHash});
         size_t pos = boundary.insertionIndex + shift;
         Hash epsilonFromHash = TracingDecisionGraph::xorHashes(
             boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
         perQAsksEdges.insert(perQAsksEdges.begin() + pos,
             {epsilonFromHash, epsilonReqSet});
+        d1CidasksWalk.insert(d1CidasksWalk.begin() + pos, std::move(applyEdge));
         tracingCacheLog("finalize: ε Asks edge inserted at pos=%zu from=%s (insertionIndex=%zu shift=%zu perQ=%zu)",
                         pos,
                         epsilonFromHash.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -363,14 +376,22 @@ void TracingWriter::splitFlush(bool finalize)
        for this transition into Q's namespace. Skip-on-empty is
        deliberate: an edge with no requests has nothing to advance, so
        neither writer's d1CidasksWalk nor walker's cidasksWalk grows
-       for it (= principles 4 + 7). */
+       for it (= principles 4 + 7).
+
+       1:1 alignment: push the staged d1 edge alongside the
+       perQAsksEdge. May be empty (= file-read-only Asks edge with no
+       ambient observations contributing observations to d1) — still
+       pushed so the indices match the walker's commitEdge counts. */
     if (!pendingNewRequests.empty()) {
         auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
         perQAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-        tracingCacheLog("splitFlush: new Asks edge from=%s rs-size=%zu (perQ=%zu)",
+        d1CidasksWalk.push_back(std::move(pendingD1Edge));
+        pendingD1Edge = {};
+        tracingCacheLog("splitFlush: new Asks edge from=%s rs-size=%zu (perQ=%zu d1=%zu)",
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
-                        perQAsksEdges.size());
+                        perQAsksEdges.size(),
+                        d1CidasksWalk.size());
         prevQFactSetHash = v13FactSetHash;
         pendingNewRequests.clear();
     }
