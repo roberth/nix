@@ -222,7 +222,17 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
         [&](const auto & alt) -> Hash {
             using T = std::decay_t<decltype(alt)>;
 
-            auto structuralAt = [&](size_t k) -> Hash {
+            /* The subject's id at edge step `k`, BEFORE this subject's
+               own observation-fold (= `own`) gets XOR'd in. Naming
+               note: not pure De-Bruijn-style "structural" for all
+               variants. For PositionalSeed / OpaqueContentSubject it
+               IS k-invariant pure position. For ApplyResultSubject it
+               depends on `k` because it composes the constituents'
+               *fully evolved* CDIs (= constituents' contentIdAt at
+               the same k) into a SHA-sealed shape — so the apply's
+               id varies with k via constituent evolution even before
+               this subject's own own-fold contributes. */
+            auto subjectIdAt = [&](size_t k) -> Hash {
                 if constexpr (std::is_same_v<T, PositionalSeed>) {
                     auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
                     return TracingDecisionGraph::xorHashes(base, scope);
@@ -265,14 +275,14 @@ Hash contentIdAt(const Subject & subject, const Hash & scope, const std::vector<
             // Run the walk and accumulate this subject's own-direct contributions.
             Hash own = Hash(HashAlgorithm::SHA256);
             for (size_t k = 0; k < edgeIndex && k < walk.size(); ++k) {
-                Hash myCidAtK = TracingDecisionGraph::xorHashes(structuralAt(k), own);
+                Hash myCidAtK = TracingDecisionGraph::xorHashes(subjectIdAt(k), own);
                 for (auto & obs : walk[k].observations) {
                     if (obs.fromHash == myCidAtK)
                         own = TracingDecisionGraph::xorHashes(own, obs.elementHash);
                 }
             }
 
-            return TracingDecisionGraph::xorHashes(structuralAt(edgeIndex), own);
+            return TracingDecisionGraph::xorHashes(subjectIdAt(edgeIndex), own);
         },
         subject.data);
 }
