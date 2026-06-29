@@ -612,7 +612,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                         std::make_shared<std::vector<cidasks::Edge>>(),
                         std::make_shared<Hash>(HashAlgorithm::SHA256),
                         decisionGraph, inner->getEvalState().rootFSRoot,
-                        /*type=*/ nThunk, &inner->getEvalState());
+                        &inner->getEvalState());
                     rlo->withAmbientAsksValidation();
                     try {
                         rlo->withChainStart(
@@ -733,7 +733,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         std::make_shared<std::vector<cidasks::Edge>>(),
         std::make_shared<Hash>(HashAlgorithm::SHA256),
         decisionGraph, inner->getEvalState().rootFSRoot,
-        /*type=*/ nThunk, &inner->getEvalState());
+        &inner->getEvalState());
     replayLocal->withApplyContext(sidecarDepth, sidecarScope);
     replayLocal->withAmbientAsksValidation().withChainStart(applyReqHash);
 

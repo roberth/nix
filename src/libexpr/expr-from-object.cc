@@ -9,6 +9,7 @@
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-local-object.hh"
+#include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-writer.hh"
 
 #include <cassert>
@@ -93,7 +94,9 @@ struct AmbientQuery
                 } else {
                     (void) 0;  // obj already provided
 
-                    if constexpr (std::is_same_v<Q, trace::QueryGetType>) {
+                    if constexpr (std::is_same_v<Q, trace::QueryGetWHNF>) {
+                        return {computeWHNFFromObject(*obj), std::nullopt};
+                    } else if constexpr (std::is_same_v<Q, trace::QueryGetType>) {
                         return {trace::ResultType{objectTypeToString(obj->getType())}, std::nullopt};
                     } else if constexpr (std::is_same_v<Q, trace::QueryGetAttr>) {
                         auto child = obj->maybeGetAttr(query.name);

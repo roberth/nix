@@ -91,38 +91,24 @@ class ReplayLocalObject : public Object
        has this false because its facts live in depth-1, not in
        AmbientAsks. */
     bool validateAgainstAmbientAsks = false;
-    /* Optimistic type cache. The recorder's TracingLocalObject *does*
-       log a getType fact on every child the first time the outer
-       probes it (= via the new TLO wrapping the child), so the
-       walker must probe at least once on the child too — knownType
-       only short-circuits SECOND and later calls. Set when the
-       parent's maybeGetAttr / getListElem response embeds a type
-       string. Cleared after the first probe so subsequent calls
-       return it without re-probing. */
-    std::optional<ObjectType> knownType;
-    /* True once a getType probe has been dispatched against this
-       proxy. Until then `getType` always probes (regardless of
-       knownType) so the walker's chain advances in lockstep with
-       the recorder's TLO. */
-    bool getTypeProbed = false;
 
-    /* Idempotency cache for value-returning probes (getInt, getBool,
-       getFloat, getString*, getListSize). The recorder logs exactly
-       one observation per such probe at cold; the walker must
-       advance `chainCursor` once to stay in lockstep but reuse the
-       cached response on any subsequent call. Without this, when
+    /* Memoized WHNF response. The recorder logs ONE QueryGetWHNF d=2
+       observation per value force; the walker must advance
+       `chainCursor` once to stay in lockstep but reuse the cached
+       response on any subsequent call. Without this, when
        `dispatchAmbientQuery::navigatePath` invokes `queryApply`
        multiple times against the same standin (= once per fact
        dispatched on the apply result), each Apply Value's force
-       re-fires the standin's surface probes and pushes a fresh
-       fact past where the recorder stopped recording — the next
-       lookup at `walkFacts.size() > recorded_size` then misses
+       re-fires the standin's surface probes and pushes a fresh fact
+       past where the recorder stopped recording — the next lookup at
+       `walkFacts.size() > recorded_size` then misses
        LocalResponseMap and the walker fails. */
-    std::optional<NixInt> knownInt;
-    std::optional<NixFloat> knownFloat;
-    std::optional<bool> knownBool;
-    std::optional<size_t> knownListSize;
-    std::optional<std::string> knownStringIgnoreContext;
+    std::optional<trace::ResultWHNF> cachedWHNF;
+    /** Read recorded WHNF for this proxy (= one QueryGetWHNF read +
+        chain advance). Memoized; subsequent calls return the same
+        result without re-probing. Returns the cached WHNF as a const
+        reference so callers can decode the payload by alternative. */
+    const trace::ResultWHNF & whnf();
 
     /* cb-arg apply context, sourced from the writer's localArg
        sidecar. `applyDepth` = `localCell->depth` at the recorder's
@@ -154,14 +140,13 @@ public:
         std::shared_ptr<Hash> chainCursor_,
         TracingDecisionGraph & dg,
         ref<SourceRoot> rootFSRoot,
-        ObjectType type,
         EvalState * state = nullptr)
         : subject(std::move(subject_))
         , scope(std::move(scope_))
         , localId(cidasks::structuralAddress(subject, scope, *walkFacts_, 0))
         , walkFacts(std::move(walkFacts_))
         , chainCursor(std::move(chainCursor_))
-        , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state), knownType(type) {}
+        , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
 
     /** Set the proxy's argScope. Returns *this for chaining. */
     ReplayLocalObject & withScope(std::shared_ptr<const ArgScopeCell> argScope_)

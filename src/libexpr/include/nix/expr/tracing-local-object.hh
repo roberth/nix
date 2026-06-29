@@ -57,6 +57,12 @@ class TracingLocalObject : public Object
        scope state ids are derived from `subject`, not the cell. */
     std::shared_ptr<const ArgScopeCell> argScope;
 
+    /* Memoized WHNF observation. First call to any of getType / getInt /
+       getString / etc. fires `whnf()`, which records ONE QueryGetWHNF
+       d=2 observation. Subsequent calls decode the cached result. */
+    std::optional<trace::ResultWHNF> cachedWHNF;
+    trace::ResultWHNF & whnf();
+
     void recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result);
 
 public:

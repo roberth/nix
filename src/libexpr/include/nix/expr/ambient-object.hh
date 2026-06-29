@@ -96,6 +96,13 @@ class AmbientObject : public Object
        field needed. */
     std::shared_ptr<const ArgScopeCell> argScope;
 
+    /* Memoized WHNF observation. First call to any of getType / getInt /
+       getString / etc. fires `whnf()`, which issues ONE QueryGetWHNF
+       through `queryFn`. Subsequent calls decode the cached result
+       without re-querying. */
+    std::optional<trace::ResultWHNF> cachedWHNF;
+    trace::ResultWHNF & whnf();
+
 public:
     AmbientObject(cidasks::Subject subject, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
 

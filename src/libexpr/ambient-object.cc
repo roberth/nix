@@ -2,6 +2,8 @@
 #include "nix/expr/eval.hh"
 #include "nix/expr/expr-from-object.hh"
 #include "nix/expr/object-type.hh"
+#include "nix/expr/tracing-object.hh"
+#include "nix/util/error.hh"
 #include "nix/util/source-accessor.hh"
 
 namespace nix {
@@ -71,28 +73,37 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
     return child;
 }
 
-std::vector<std::string> AmbientObject::getAttrNames()
+trace::ResultWHNF & AmbientObject::whnf()
 {
+    if (cachedWHNF)
+        return *cachedWHNF;
     auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
-    trace::QueryGetAttrNames q{std::string{}};
+    trace::QueryGetWHNF q{std::string{}};
     auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
-    auto * r = std::get_if<trace::ResultListOfStrings>(&qr.result);
+    auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
-        throw Error("ambient getAttrNames: unexpected result type");
-    return r->values;
+        throw Error("ambient getWHNF: unexpected result type");
+    cachedWHNF = std::move(*r);
+    return *cachedWHNF;
+}
+
+std::vector<std::string> AmbientObject::getAttrNames()
+{
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
+    if (!p)
+        throw Error("ambient getAttrNames: WHNF payload not attrs (type %s)", w.type);
+    return p->names;
 }
 
 std::string AmbientObject::getStringIgnoreContext()
 {
-    auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
-    trace::QueryGetString q{std::string{}};
-    auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
-    auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
-    auto * r = std::get_if<trace::ResultString>(&qr.result);
-    if (!r)
-        throw Error("ambient getString: unexpected result type");
-    return r->value;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
+    if (!p)
+        throw Error("ambient getStringIgnoreContext: WHNF payload not string (type %s)", w.type);
+    return p->value;
 }
 
 std::string AmbientObject::getStringWithoutContext()
@@ -102,82 +113,64 @@ std::string AmbientObject::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
 {
-    auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
-    trace::QueryGetStringWithContext q{std::string{}};
-    auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
-    auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
-    auto * r = std::get_if<trace::ResultStringWithContext>(&qr.result);
-    if (!r)
-        throw Error("ambient getStringWithContext: unexpected result type");
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
+    if (!p)
+        throw Error("ambient getStringWithContext: WHNF payload not string (type %s)", w.type);
     NixStringContext ctx;
-    for (auto & s : r->context)
+    for (auto & s : p->context)
         ctx.insert(NixStringContextElem::parse(s));
-    return {r->value, std::move(ctx)};
+    return {p->value, std::move(ctx)};
 }
 
 RootedPath AmbientObject::getPath()
 {
-    auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
-    trace::QueryGetPath q{std::string{}};
-    auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
-    auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
-    auto * r = std::get_if<trace::ResultPath>(&qr.result);
-    if (!r)
-        throw Error("ambient getPath: unexpected result type");
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFPath>(&w.payload);
+    if (!p)
+        throw Error("ambient getPath: WHNF payload not path (type %s)", w.type);
     /* lazy-paths: reuse the outer EvalState's `rootFSRoot` so the
        SourceRoot outlives the Value the outer evaluator constructs
        from this path. A one-off `SourceRoot::make` here would be
        freed when the returned RootedPath drops, leaving Value's raw
        SourceRoot pointer dangling. */
-    return RootedPath{ambientRootFSRoot, CanonPath(r->path)};
+    return RootedPath{ambientRootFSRoot, CanonPath(p->path)};
 }
 
 bool AmbientObject::getBool(std::string_view)
 {
-    auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
-    trace::QueryGetBool q{std::string{}};
-    auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
-    auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
-    auto * r = std::get_if<trace::ResultBool>(&qr.result);
-    if (!r)
-        throw Error("ambient getBool: unexpected result type");
-    return r->value;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFBool>(&w.payload);
+    if (!p)
+        throw Error("ambient getBool: WHNF payload not bool (type %s)", w.type);
+    return p->value;
 }
 
 NixInt AmbientObject::getInt(std::string_view)
 {
-    auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
-    trace::QueryGetInt q{std::string{}};
-    auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
-    auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
-    auto * r = std::get_if<trace::ResultInt>(&qr.result);
-    if (!r)
-        throw Error("ambient getInt: unexpected result type");
-    return NixInt{r->value};
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFInt>(&w.payload);
+    if (!p)
+        throw Error("ambient getInt: WHNF payload not int (type %s)", w.type);
+    return NixInt{p->value};
 }
 
 NixFloat AmbientObject::getFloat(std::string_view)
 {
-    auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
-    trace::QueryGetFloat q{std::string{}};
-    auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
-    auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
-    auto * r = std::get_if<trace::ResultFloat>(&qr.result);
-    if (!r)
-        throw Error("ambient getFloat: unexpected result type");
-    return r->value;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
+    if (!p)
+        throw Error("ambient getFloat: WHNF payload not float (type %s)", w.type);
+    return p->value;
 }
 
 size_t AmbientObject::getListSize()
 {
-    auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
-    trace::QueryGetListSize q{std::string{}};
-    auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
-    auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
-    auto * r = std::get_if<trace::ResultListSize>(&qr.result);
-    if (!r)
-        throw Error("ambient getListSize: unexpected result type");
-    return r->size;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFList>(&w.payload);
+    if (!p)
+        throw Error("ambient getListSize: WHNF payload not list (type %s)", w.type);
+    return p->size;
 }
 
 std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
@@ -207,14 +200,7 @@ ObjectType AmbientObject::getTypeLazy()
 
 ObjectType AmbientObject::getType()
 {
-    auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
-    trace::QueryGetType q{std::string{}};
-    auto rootCdi = stampPerArgFieldsAmbient(q, subject, inheritedScope);
-    auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
-    auto * r = std::get_if<trace::ResultType>(&qr.result);
-    if (!r)
-        throw Error("ambient getType: unexpected result type");
-    return stringToObjectType(r->type);
+    return stringToObjectType(whnf().type);
 }
 
 RootValue AmbientObject::defeatCache()

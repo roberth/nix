@@ -2,6 +2,8 @@
 #include "nix/expr/object-type.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
+#include "nix/expr/tracing-object.hh"
+#include "nix/util/error.hh"
 
 namespace nix {
 
@@ -45,18 +47,32 @@ std::shared_ptr<Object> LambdaApplyResultObject::maybeGetAttr(const std::string 
     return child;
 }
 
+trace::ResultWHNF & LambdaApplyResultObject::whnf()
+{
+    if (cachedWHNF)
+        return *cachedWHNF;
+    auto whnfResult = computeWHNFFromObject(*inner);
+    recordD2(trace::QueryGetWHNF{std::string{}}, whnfResult);
+    cachedWHNF = std::move(whnfResult);
+    return *cachedWHNF;
+}
+
 std::vector<std::string> LambdaApplyResultObject::getAttrNames()
 {
-    auto names = inner->getAttrNames();
-    recordD2(trace::QueryGetAttrNames{std::string{}}, trace::ResultListOfStrings{names});
-    return names;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
+    if (!p)
+        throw Error("laro getAttrNames: WHNF payload not attrs (type %s)", w.type);
+    return p->names;
 }
 
 std::string LambdaApplyResultObject::getStringIgnoreContext()
 {
-    auto value = inner->getStringIgnoreContext();
-    recordD2(trace::QueryGetString{std::string{}}, trace::ResultString{value});
-    return value;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
+    if (!p)
+        throw Error("laro getStringIgnoreContext: WHNF payload not string (type %s)", w.type);
+    return p->value;
 }
 
 std::string LambdaApplyResultObject::getStringWithoutContext()
@@ -66,49 +82,58 @@ std::string LambdaApplyResultObject::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> LambdaApplyResultObject::getStringWithContext()
 {
-    auto [str, ctx] = inner->getStringWithContext();
-    std::vector<std::string> ctxStrings;
-    for (auto & c : ctx)
-        ctxStrings.push_back(c.to_string());
-    recordD2(
-        trace::QueryGetStringWithContext{std::string{}},
-        trace::ResultStringWithContext{str, std::move(ctxStrings)});
-    return {str, std::move(ctx)};
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
+    if (!p)
+        throw Error("laro getStringWithContext: WHNF payload not string (type %s)", w.type);
+    NixStringContext ctx;
+    for (auto & s : p->context)
+        ctx.insert(NixStringContextElem::parse(s));
+    return {p->value, std::move(ctx)};
 }
 
 RootedPath LambdaApplyResultObject::getPath()
 {
-    auto path = inner->getPath();
-    recordD2(trace::QueryGetPath{std::string{}}, trace::ResultPath{path.path.abs()});
-    return path;
+    /* WHNF records that this is a path; the actual RootedPath needs the
+       inner's SourceRoot. */
+    whnf();
+    return inner->getPath();
 }
 
-bool LambdaApplyResultObject::getBool(std::string_view errorCtx)
+bool LambdaApplyResultObject::getBool(std::string_view)
 {
-    auto value = inner->getBool(errorCtx);
-    recordD2(trace::QueryGetBool{std::string{}}, trace::ResultBool{value});
-    return value;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFBool>(&w.payload);
+    if (!p)
+        throw Error("laro getBool: WHNF payload not bool (type %s)", w.type);
+    return p->value;
 }
 
-NixInt LambdaApplyResultObject::getInt(std::string_view errorCtx)
+NixInt LambdaApplyResultObject::getInt(std::string_view)
 {
-    auto value = inner->getInt(errorCtx);
-    recordD2(trace::QueryGetInt{std::string{}}, trace::ResultInt{value.value});
-    return value;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFInt>(&w.payload);
+    if (!p)
+        throw Error("laro getInt: WHNF payload not int (type %s)", w.type);
+    return NixInt{p->value};
 }
 
-NixFloat LambdaApplyResultObject::getFloat(std::string_view errorCtx)
+NixFloat LambdaApplyResultObject::getFloat(std::string_view)
 {
-    auto value = inner->getFloat(errorCtx);
-    recordD2(trace::QueryGetFloat{std::string{}}, trace::ResultFloat{value});
-    return value;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
+    if (!p)
+        throw Error("laro getFloat: WHNF payload not float (type %s)", w.type);
+    return p->value;
 }
 
 size_t LambdaApplyResultObject::getListSize()
 {
-    auto size = inner->getListSize();
-    recordD2(trace::QueryGetListSize{std::string{}}, trace::ResultListSize{size});
-    return size;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFList>(&w.payload);
+    if (!p)
+        throw Error("laro getListSize: WHNF payload not list (type %s)", w.type);
+    return p->size;
 }
 
 std::shared_ptr<Object> LambdaApplyResultObject::getListElem(size_t index)
@@ -124,18 +149,18 @@ std::shared_ptr<Object> LambdaApplyResultObject::getListElem(size_t index)
 ObjectType LambdaApplyResultObject::getTypeLazy()
 {
     /* Delegate to `inner` for the type, but skip the d=2 recording —
-       `getType` records the same `QueryGetType` payload, and the
-       depth-2 chain has no dedup (= same fact appended twice cancels
-       via XOR-fold at flush, breaking AmbientResult). Callers that
-       need both `getTypeLazy` and `getType` get exactly one
-       observation through the `getType` call. */
+       `getType` goes through `whnf()` which records the same
+       QueryGetWHNF payload, and the depth-2 chain has no dedup (= same
+       fact appended twice cancels via XOR-fold at flush, breaking
+       AmbientResult). Callers that need both `getTypeLazy` and
+       `getType` get exactly one observation through the `getType`
+       call. */
     return inner->getTypeLazy();
 }
 
 ObjectType LambdaApplyResultObject::getType()
 {
-    auto type = inner->getType();
-    recordD2(trace::QueryGetType{std::string{}}, trace::ResultType{objectTypeToString(type)});
+    auto type = stringToObjectType(whnf().type);
     tracingCacheLog("laro: getType applyScopeStateId=%s type=%s",
         applyScopeStateIdHex.substr(0, 16), objectTypeToString(type));
     return type;

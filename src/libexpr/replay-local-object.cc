@@ -185,7 +185,7 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
     }};
     auto child = std::make_shared<ReplayLocalObject>(
         std::move(childSubject), scope, walkFacts, chainCursor,
-        decisionGraph, rootFSRoot, stringToObjectType(*r.type), state);
+        decisionGraph, rootFSRoot, state);
     /* Children inherit per-probe validation if the parent has it —
        they're observed within the same cb apply's recorded chain. */
     if (validateAgainstAmbientAsks)
@@ -201,32 +201,37 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
     return child;
 }
 
-std::vector<std::string> ReplayLocalObject::getAttrNames()
+const trace::ResultWHNF & ReplayLocalObject::whnf()
 {
-    trace::QueryGetAttrNames query{std::string{}};
+    if (cachedWHNF)
+        return *cachedWHNF;
+    trace::QueryGetWHNF query{std::string{}};
     auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     else
         appendFactToWalk(query, fromCdi, rJson, *walkFacts);
-    trace::ResultListOfStrings r = rJson;
-    return r.values;
+    cachedWHNF = rJson.get<trace::ResultWHNF>();
+    return *cachedWHNF;
+}
+
+std::vector<std::string> ReplayLocalObject::getAttrNames()
+{
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
+    if (!p)
+        throw Error("rlo getAttrNames: WHNF payload not attrs (type %s)", w.type);
+    return p->names;
 }
 
 std::string ReplayLocalObject::getStringIgnoreContext()
 {
-    if (knownStringIgnoreContext) return *knownStringIgnoreContext;
-    trace::QueryGetString query{std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query);
-    if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
-    else
-        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
-    trace::ResultString r = rJson;
-    knownStringIgnoreContext = r.value;
-    return r.value;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
+    if (!p)
+        throw Error("rlo getStringIgnoreContext: WHNF payload not string (type %s)", w.type);
+    return p->value;
 }
 
 std::string ReplayLocalObject::getStringWithoutContext()
@@ -236,91 +241,59 @@ std::string ReplayLocalObject::getStringWithoutContext()
 
 std::pair<std::string, NixStringContext> ReplayLocalObject::getStringWithContext()
 {
-    trace::QueryGetStringWithContext query{std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query);
-    if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
-    else
-        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
-    trace::ResultStringWithContext r = rJson;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
+    if (!p)
+        throw Error("rlo getStringWithContext: WHNF payload not string (type %s)", w.type);
     NixStringContext ctx;
-    for (auto & s : r.context)
+    for (auto & s : p->context)
         ctx.insert(NixStringContextElem::parse(s));
-    return {r.value, std::move(ctx)};
+    return {p->value, std::move(ctx)};
 }
 
 RootedPath ReplayLocalObject::getPath()
 {
-    trace::QueryGetPath query{std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query);
-    if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
-    else
-        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
-    trace::ResultPath r = rJson;
-    return RootedPath{rootFSRoot, CanonPath{r.path}};
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFPath>(&w.payload);
+    if (!p)
+        throw Error("rlo getPath: WHNF payload not path (type %s)", w.type);
+    return RootedPath{rootFSRoot, CanonPath{p->path}};
 }
 
 bool ReplayLocalObject::getBool(std::string_view)
 {
-    if (knownBool) return *knownBool;
-    trace::QueryGetBool query{std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query);
-    if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
-    else
-        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
-    trace::ResultBool r = rJson;
-    knownBool = r.value;
-    return r.value;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFBool>(&w.payload);
+    if (!p)
+        throw Error("rlo getBool: WHNF payload not bool (type %s)", w.type);
+    return p->value;
 }
 
 NixInt ReplayLocalObject::getInt(std::string_view)
 {
-    if (knownInt) return *knownInt;
-    trace::QueryGetInt query{std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query);
-    if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
-    else
-        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
-    trace::ResultInt r = rJson;
-    knownInt = NixInt{r.value};
-    return *knownInt;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFInt>(&w.payload);
+    if (!p)
+        throw Error("rlo getInt: WHNF payload not int (type %s)", w.type);
+    return NixInt{p->value};
 }
 
 NixFloat ReplayLocalObject::getFloat(std::string_view)
 {
-    if (knownFloat) return *knownFloat;
-    trace::QueryGetFloat query{std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query);
-    if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
-    else
-        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
-    trace::ResultFloat r = rJson;
-    knownFloat = r.value;
-    return r.value;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
+    if (!p)
+        throw Error("rlo getFloat: WHNF payload not float (type %s)", w.type);
+    return p->value;
 }
 
 size_t ReplayLocalObject::getListSize()
 {
-    if (knownListSize) return *knownListSize;
-    trace::QueryGetListSize query{std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query);
-    if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
-    else
-        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
-    trace::ResultListSize r = rJson;
-    knownListSize = r.size;
-    return r.size;
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFList>(&w.payload);
+    if (!p)
+        throw Error("rlo getListSize: WHNF payload not list (type %s)", w.type);
+    return p->size;
 }
 
 std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
@@ -332,7 +305,6 @@ std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     else
         appendFactToWalk(query, fromCdi, rJson, *walkFacts);
-    trace::ResultType r = rJson;
     cidasks::Subject childSubject{cidasks::DerivedSubject{
         .parent = std::make_shared<const cidasks::Subject>(subject),
         .kind = cidasks::DerivedSubject::Kind::GetListElem,
@@ -340,7 +312,7 @@ std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
     }};
     auto child = std::make_shared<ReplayLocalObject>(
         std::move(childSubject), scope, walkFacts, chainCursor,
-        decisionGraph, rootFSRoot, stringToObjectType(r.type), state);
+        decisionGraph, rootFSRoot, state);
     if (validateAgainstAmbientAsks)
         child->withAmbientAsksValidation();
     child->withScope(argScope);
@@ -351,21 +323,7 @@ std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
 
 ObjectType ReplayLocalObject::getType()
 {
-    /* Subsequent calls return cached. */
-    if (getTypeProbed && knownType)
-        return *knownType;
-    trace::QueryGetType query{std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query);
-    if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
-    else
-        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
-    trace::ResultType r = rJson;
-    auto type = stringToObjectType(r.type);
-    knownType = type;
-    getTypeProbed = true;
-    return type;
+    return stringToObjectType(whnf().type);
 }
 
 ObjectType ReplayLocalObject::getTypeLazy()
@@ -622,7 +580,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                 auto synthetic = std::make_shared<ReplayLocalObject>(
                     std::move(syntheticSubject), mergedApplyScope,
                     localWalkFacts, localChainCursor,
-                    *dg, rootFSRootSaved, /*type=*/ nThunk, &state);
+                    *dg, rootFSRootSaved, &state);
                 /* Enable per-probe AmbientAsks validation. After the
                    `LambdaApplyResultObject` writer change, the
                    apply-result observations live in the d=2 chain
