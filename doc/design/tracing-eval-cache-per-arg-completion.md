@@ -198,10 +198,13 @@ completely ahead of time (e.g. a lazy fn arg given as a `Value`);
 taking an arbitrary subject id by value and using it as if it's
 up-to-date. The earlier "narrow legitimate site"
 (`TracingWriter::logDepth2ApplyFact` for the apply Fact's subject)
-is **not** legitimate under the new framing — an apply is a
+was **not** legitimate under the new framing — an apply is a
 behavior, not a read; its identity is `ApplyResultSubject{fn, arg}`
-with constituents that evolve. Fixing that site is open work
-(task #20's remaining call-site audit).
+with constituents that evolve. Fixed in commit 6f0cb3f53: the apply
+Fact's subject is now `ApplyResultSubject{fn, arg}`, stamped
+through `flushPendingAmbient`'s generic
+pathAndRootsFromSubject path. Walker mirrors via the
+`<replay-local-lambda>` primop.
 
 Same outcome as Fix A: no new insights, the attempt was reverted
 before commit, and the principled implementation is still owed.

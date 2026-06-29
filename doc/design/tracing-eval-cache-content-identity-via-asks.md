@@ -361,11 +361,16 @@ component membership and any new compounding it introduces.
   `from` matches the running id. Invalid uses: values that can't
   be characterized completely ahead of time (= lazy fn args given
   as a `Value`); taking a subject id by value and treating it as
-  up-to-date. `TracingWriter::logDepth2ApplyFact`'s current use of
-  `PostulatedIdempotentRead{applyReqHash}` is invalid under this
+  up-to-date. `TracingWriter::logDepth2ApplyFact`'s previous use of
+  `PostulatedIdempotentRead{applyReqHash}` was invalid under this
   framing — an apply is a behavior, not a read; its identity is
-  `ApplyResultSubject{fn, arg}` with evolving constituents. Fixing
-  that site is open work.
+  `ApplyResultSubject{fn, arg}` with evolving constituents. Fixed
+  in commit 6f0cb3f53: the apply Fact's subject is now
+  `ApplyResultSubject{fn, arg}`, stamped through the generic
+  `pathAndRootsFromSubject` path. Apply boundary's scope combines
+  fn's and arg's inherited scopes via Merkle (cf.
+  `cidasks::applyScope`) — symmetric but non-commutative
+  (`f a` ≠ `a f`).
 
 *Cross-component bridges.*
 - G → F: `cdi → hex → qH(query) → SHA-256 seal → reqHash →
