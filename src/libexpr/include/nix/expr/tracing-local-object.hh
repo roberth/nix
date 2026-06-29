@@ -105,7 +105,7 @@ public:
 
     AmbientId getCdi() const { return localId(); }
 
-    std::optional<std::string> getCdiHex() const override
+    std::optional<std::string> getScopeStateIdHex() const override
     {
         return localId().to_string(HashFormat::Base16, false);
     }

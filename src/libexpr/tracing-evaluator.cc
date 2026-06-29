@@ -231,7 +231,7 @@ ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> &
     std::string content = "mkAttrs:";
     for (auto & [name, obj] : attrs) {
         content += name + "=";
-        if (auto hex = obj->getCdiHex())
+        if (auto hex = obj->getScopeStateIdHex())
             content += *hex;
         content += ",";
     }
@@ -248,7 +248,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        content-defined. No counter fallback — see the parallel
        comment in TracingReplayEvaluator::apply. */
     auto getId = [](Object & obj) -> std::string {
-        if (auto hex = obj.getCdiHex())
+        if (auto hex = obj.getScopeStateIdHex())
             return *hex;
         throw Error(
             "TracingEvaluator::apply: fn/arg lacks a content-defined "

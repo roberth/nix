@@ -199,7 +199,7 @@ std::shared_ptr<Object> TracingLocalObject::queryApply(std::shared_ptr<Object> a
        The result wrapper carries an ApplyResultSubject so accesses
        on the apply result continue to be recorded in the depth-2
        trace with an evolved scopeStateId (per the cidasks design). */
-    auto argCdiHex = argObj->getCdiHex();
+    auto argCdiHex = argObj->getScopeStateIdHex();
     cidasks::Subject argSubject = argObj->getSubject()
         ? *argObj->getSubject()
         : cidasks::Subject{cidasks::OpaqueContentSubject{

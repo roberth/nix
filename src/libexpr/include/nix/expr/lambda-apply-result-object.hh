@@ -75,7 +75,7 @@ class LambdaApplyResultObject : public Object
     Hash depth2ApplyId;
 
     /* scopeStateIdAfter(applyResultSubject, applyScope, {}) hex — the
-       content-only apply-result CDI exposed via getCdiHex. Computed
+       content-only apply-result CDI exposed via getScopeStateIdHex. Computed
        once at construction to match `TracingEvaluator::apply`'s
        `applyScopeStateIdHex` (= what the walker computes too). */
     std::string applyScopeStateIdHex;
@@ -109,7 +109,7 @@ public:
 
     Hash getInheritedScope() const override { return applyScope; }
 
-    std::optional<std::string> getCdiHex() const override { return applyScopeStateIdHex; }
+    std::optional<std::string> getScopeStateIdHex() const override { return applyScopeStateIdHex; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

@@ -274,7 +274,7 @@ public:
      * Virtual rather than dynamic_cast so callers don't have to
      * enumerate the proxy types.
      */
-    virtual std::optional<std::string> getCdiHex() const
+    virtual std::optional<std::string> getScopeStateIdHex() const
     {
         return std::nullopt;
     }

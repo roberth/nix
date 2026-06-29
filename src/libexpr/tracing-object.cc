@@ -280,8 +280,8 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     /* Object-method counterpart of TracingEvaluator::apply. See
        parallel commentary there for the cidasks routing of the
        apply's triePos and the applyResultSubject attachment. */
-    auto fnIdOpt = getCdiHex();
-    auto argIdOpt = argObj->getCdiHex();
+    auto fnIdOpt = getScopeStateIdHex();
+    auto argIdOpt = argObj->getScopeStateIdHex();
     if (!fnIdOpt || !argIdOpt)
         throw Error("TracingObject::queryApply: fn/arg lacks a content-defined identity");
 

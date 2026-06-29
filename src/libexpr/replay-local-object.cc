@@ -551,7 +551,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                        values) for fn/arg. Mirrors the recorder side:
                        `TracingEvaluator::apply` records
                        `QueryApply{fnId, argId}` where `fnId` /
-                       `argId` come from `Object::getCdiHex()` at
+                       `argId` come from `Object::getScopeStateIdHex()` at
                        construction-time (= `structuralAddressAfter`
                        with empty walk = `scopeStateIdAt(.., .., {}, 0)`).
                        The recursive apply Fact's identity is fixed
