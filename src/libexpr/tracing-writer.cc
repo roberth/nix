@@ -101,6 +101,19 @@ void TracingWriter::flushPendingAmbient(bool finalize)
         auto responsePayload = jsonToCborString(resultJson);
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
 
+        /* Diff-ready logging: render the exact bytes that fed reqHash and
+           respHash (= reqJson.dump() and resultJson.dump()). Compare these
+           between cold's flush here and warm's `dispatch ambient:` log to
+           isolate which (q, r) pair differs and why curs diverge. */
+        tracingCacheLog(
+            "  reqHash=%s reqJSON=%s",
+            queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            queryJson.dump());
+        tracingCacheLog(
+            "  respHash=%s respJSON=%s",
+            responseHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            resultJson.dump());
+
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
         decisionGraph->insertLocalResponse(queryHash, responsePayload);
 

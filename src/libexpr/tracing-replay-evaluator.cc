@@ -197,6 +197,22 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         writer.noteEnvObservation(requestHash, h);
         /* Buffer ambient facts for this in-flight Asks edge; the
            walk-loop commits them via onEdgeCommitted on success. */
+        /* Decode for diffing: render the full request + response JSON
+           bytes that feed `req` and `resp`. SHA256(reqJson.dump()) = req;
+           SHA256(currentResp) = h. Diffing these strings between cold and
+           warm is what isolates which exact (q, r) differs. */
+        std::string reqJsonStr;
+        try {
+            reqJsonStr = cborStringToJson(*requestPayload).dump();
+        } catch (...) {
+            reqJsonStr = "(unparseable)";
+        }
+        std::string respJsonStr;
+        try {
+            respJsonStr = cborStringToJson(*currentResp).dump();
+        } catch (...) {
+            respJsonStr = "(unparseable)";
+        }
         if (isAmbient && ambientFromHash) {
             pendingEdgeObservations.push_back({
                 *ambientFromHash,
@@ -204,17 +220,21 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
                     Hash(HashAlgorithm::SHA256), requestHash, h),
             });
             tracingCacheLog(
-                "dispatch ambient: req=%s payload=%s from=%s resp=%s",
+                "dispatch ambient: req=%s payload=%s from=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
                 queryDescription,
                 ambientFromHash->to_string(HashFormat::Base16, false).substr(0, 12),
-                h.to_string(HashFormat::Base16, false).substr(0, 12));
+                h.to_string(HashFormat::Base16, false).substr(0, 12),
+                reqJsonStr,
+                respJsonStr);
         } else if (isAmbient) {
             tracingCacheLog(
-                "dispatch ambient (no-from): req=%s payload=%s resp=%s",
+                "dispatch ambient (no-from): req=%s payload=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
                 queryDescription,
-                h.to_string(HashFormat::Base16, false).substr(0, 12));
+                h.to_string(HashFormat::Base16, false).substr(0, 12),
+                reqJsonStr,
+                respJsonStr);
         } else {
             tracingCacheLog(
                 "dispatch env: req=%s payload=%s resp=%s",
