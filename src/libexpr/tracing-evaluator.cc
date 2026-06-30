@@ -119,8 +119,40 @@ EvalState & TracingEvaluator::getEvalState()
     return inner->getEvalState();
 }
 
+namespace {
+
+/** `TracingEvaluator` is constructed only by `prim_cache`, so every
+    instance is by definition the recording layer of a `builtins.cache`
+    boundary. Reaching one of its root-value methods means the cache
+    layer is about to construct (or has just constructed via a replay
+    miss → delegation) a fresh root value — either as a top-level
+    `evalFile`/`evalExpr` miss in the replay evaluator above, or as a
+    `TracingReplayObject::ensureInner` escape that targets this
+    evaluator directly via its `getInner` callback.
+
+    `_NIX_DISALLOW_CACHE_INTERPRET_INNER=1` asserts that neither path
+    is allowed — the cache replay must serve every recorded value's
+    behaviour from the cache alone. */
+void guardCacheRecording(std::string_view method, std::string_view target)
+{
+    static const bool disallow =
+        getEnv("_NIX_DISALLOW_CACHE_INTERPRET_INNER").value_or("") == "1";
+    if (!disallow)
+        return;
+    throw Error(
+        "tracing eval cache: the recording layer of a `builtins.cache` "
+        "boundary was asked to %s `%s` (_NIX_DISALLOW_CACHE_INTERPRET_INNER=1). "
+        "A recorded value's behaviour could not be served from the cache "
+        "alone — the recording is either keyed at a query the walker "
+        "cannot reach, or absent entirely.",
+        method, target);
+}
+
+} // namespace
+
 ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::string & displayPath)
 {
+    guardCacheRecording("evalFile", displayPath);
     ensurePreloaded();
     tracingCacheLog("tracing: evalFile %s", displayPath);
     auto [v, qh] = writer.logRootQuery(trace::QueryImport{displayPath});
@@ -137,6 +169,7 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
 
 ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPath & basePath)
 {
+    guardCacheRecording("evalExpr", expr);
     ensurePreloaded();
     tracingCacheLog("tracing: evalExpr %s", expr);
     auto [v, qh] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
@@ -150,6 +183,7 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
 
 ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const RootedPath & basePath)
 {
+    guardCacheRecording("evalExprLazy", expr);
     ensurePreloaded();
     auto [v, qh] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
     auto result = inner->evalExprLazy(expr, basePath);
