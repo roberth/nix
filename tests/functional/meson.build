@@ -173,6 +173,7 @@ suites = [
       'builtins-cache.sh',
       'cb-385.sh',
       'cb-deep-indep-orders.sh',
+      'cb-deep-indep-singles.sh',
       'cb-apply-cli.sh',
       'cb-higher-order.sh',
       'cb-curried-state-creep.sh',
