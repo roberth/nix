@@ -100,9 +100,11 @@ template<typename Q, typename R>
 std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & query) const
 {
     auto queryHash = TracingDecisionGraph::computeQueryHash(query);
-    tracingCacheLog("walker lookup: %s Q=%s",
+    nlohmann::json qj = query;
+    tracingCacheLog("walker lookup: %s Q=%s queryJSON=%s",
                     Q::tag,
-                    queryHash.to_string(HashFormat::Base16, false).substr(0, 12));
+                    queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                    qj.dump());
     auto v13 = evaluator.v13Walk(queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this());
     if (!v13) {
         tracingCacheLog("walker lookup: %s MISS Q=%s",
@@ -124,9 +126,11 @@ template<typename Q, typename R>
 std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralChild(const Q & query) const
 {
     auto queryHash = TracingDecisionGraph::computeQueryHash(query);
-    tracingCacheLog("walker lookup: %s Q=%s",
+    nlohmann::json qj = query;
+    tracingCacheLog("walker lookup: %s Q=%s queryJSON=%s",
                     Q::tag,
-                    queryHash.to_string(HashFormat::Base16, false).substr(0, 12));
+                    queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                    qj.dump());
     auto v13 = evaluator.v13Walk(queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this());
     if (!v13) {
         tracingCacheLog("walker lookup: %s MISS Q=%s",

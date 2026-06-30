@@ -314,6 +314,11 @@ public:
         if (!decisionGraph)
             return {valueNum, {}};
         auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+        nlohmann::json qj = query;
+        tracingCacheLog(
+            "writer logRootQuery: Q=%s queryJSON=%s",
+            queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            qj.dump());
         return {valueNum, {queryHash}};
     }
 
@@ -329,6 +334,11 @@ public:
         if (!decisionGraph)
             return {valueNum, {}};
         auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+        nlohmann::json qj = query;
+        tracingCacheLog(
+            "writer logQuery: Q=%s queryJSON=%s",
+            queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            qj.dump());
         return {valueNum, {queryHash}};
     }
 
