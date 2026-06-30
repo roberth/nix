@@ -1,4 +1,5 @@
 #include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-writer.hh"  // for jsonToCborString
 #include "nix/util/error.hh"
@@ -267,15 +268,33 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
                contribution to scopeStateId that comes from v13 facts
                about self. */
             Hash selfFactFold = Hash(HashAlgorithm::SHA256);
+            std::string foldTrace;
             for (size_t k = 0; k < edgeIndex && k < walk.size(); ++k) {
                 Hash myScopeStateIdAtK = TracingDecisionGraph::xorHashes(subjectIdAt(k), selfFactFold);
                 for (auto & obs : walk[k].observations) {
-                    if (obs.fromHash == myScopeStateIdAtK)
+                    bool matches = (obs.fromHash == myScopeStateIdAtK);
+                    foldTrace += "\n    k=" + std::to_string(k)
+                        + " myId=" + hashHex(myScopeStateIdAtK).substr(0, 12)
+                        + " obs.from=" + hashHex(obs.fromHash).substr(0, 12)
+                        + " obs.elem=" + hashHex(obs.elementHash).substr(0, 12)
+                        + (matches ? " MATCH→fold" : " skip");
+                    if (matches)
                         selfFactFold = TracingDecisionGraph::xorHashes(selfFactFold, obs.elementHash);
                 }
             }
 
-            return TracingDecisionGraph::xorHashes(subjectIdAt(edgeIndex), selfFactFold);
+            auto result = TracingDecisionGraph::xorHashes(subjectIdAt(edgeIndex), selfFactFold);
+            tracingCacheLog(
+                "scopeStateIdAt: subject=%s scope=%s walk.size=%zu edgeIndex=%zu\n"
+                "  subjectIdAt(edgeIndex)=%s selfFactFold=%s result=%s%s",
+                describe(subject),
+                hashHex(scope).substr(0, 12),
+                walk.size(), edgeIndex,
+                hashHex(subjectIdAt(edgeIndex)).substr(0, 12),
+                hashHex(selfFactFold).substr(0, 12),
+                hashHex(result).substr(0, 12),
+                foldTrace);
+            return result;
         },
         subject.data);
 }
