@@ -305,18 +305,18 @@ public:
        rejecting this branch. Used by the cidasks-aware caller to
        promote per-edge dispatched facts into a `cidasks::Edge`
        on commit (= principle 5/7) or discard them on reject. */
-    std::optional<ResultHash> walk(
+    /* Hit: returns (resultHash, terminalCur). The terminalCur is the
+       factSet the walk landed on when committing the terminal — child
+       Q lookups use it as their candidate startCur, so a child's walk
+       starts from its parent's structural anchor. */
+    struct WalkHit { ResultHash resultHash; SetHash terminalCur; };
+    std::optional<WalkHit> walk(
         const QueryHash & q,
         const std::function<ResponseHash(const RequestHash &)> & dispatch,
         const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt = {},
         /* Starting cur for the walk. Defaults to ∅. Callers that
-           have prior dispatched state (= lastQFactsHash) can hand
-           it in so the walk skips already-traversed shared prefix
-           and resumes from there — crucial for sibling
-           discrimination (cb-sibling), where stopping at the first
-           reachable terminal from ∅ would return the prior sibling's
-           result. Also pass the set of requests already in `cur` so
-           usefulDispatch correctly trims them. */
+           have a structural anchor (= parent TR's terminalCur) can
+           hand it in so the walk starts at that lookup position. */
         const SetHash & startCur = SetHash(HashAlgorithm::SHA256),
         const std::unordered_set<RequestHash> & startCurRequests = {});
 

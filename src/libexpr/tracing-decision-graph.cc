@@ -1377,7 +1377,7 @@ bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factS
     return check.next();
 }
 
-std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
+std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
     const QueryHash & q,
     const std::function<ResponseHash(const RequestHash &)> & dispatch,
     const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt,
@@ -1398,7 +1398,7 @@ std::optional<TracingDecisionGraph::ResultHash> TracingDecisionGraph::walk(
             tracingCacheLog("walk Q=%s TERMINAL at cur=%s",
                             q.to_string(HashFormat::Base16, false).substr(0, 12),
                             cur.to_string(HashFormat::Base16, false).substr(0, 12));
-            return *term;
+            return WalkHit{*term, cur};
         }
 
         auto outgoing = getAsks(q, cur);

@@ -390,7 +390,7 @@ TEST_F(TracingDecisionGraphTest, RecordThenWalkSimpleHit)
         return Hash(HashAlgorithm::SHA256);
     });
     ASSERT_TRUE(hit.has_value());
-    EXPECT_EQ(*hit, result);
+    EXPECT_EQ(hit->resultHash, result);
 }
 
 TEST_F(TracingDecisionGraphTest, WalkMissesWhenDispatchReturnsDifferentResponse)
@@ -446,7 +446,7 @@ TEST_F(TracingDecisionGraphTest, TwoRec_TwoFactsEach_DivergentSecond)
         return Hash(HashAlgorithm::SHA256);
     });
     ASSERT_TRUE(hit1.has_value());
-    EXPECT_EQ(*hit1, r1);
+    EXPECT_EQ(hit1->resultHash, r1);
 }
 
 TEST_F(TracingDecisionGraphTest, DivergentResponses_Minimal)
@@ -468,11 +468,11 @@ TEST_F(TracingDecisionGraphTest, DivergentResponses_Minimal)
 
     auto hit1 = g.walk(q, [&](const Hash &) { return v1; });
     ASSERT_TRUE(hit1.has_value());
-    EXPECT_EQ(*hit1, r1);
+    EXPECT_EQ(hit1->resultHash, r1);
 
     auto hit2 = g.walk(q, [&](const Hash &) { return v2; });
     ASSERT_TRUE(hit2.has_value());
-    EXPECT_EQ(*hit2, r2);
+    EXPECT_EQ(hit2->resultHash, r2);
 }
 
 TEST_F(TracingDecisionGraphTest, DivergentResponses_OnlyOneRecording)
@@ -498,7 +498,7 @@ TEST_F(TracingDecisionGraphTest, DivergentResponses_OnlyOneRecording)
         return Hash(HashAlgorithm::SHA256);
     });
     ASSERT_TRUE(hit.has_value());
-    EXPECT_EQ(*hit, r1);
+    EXPECT_EQ(hit->resultHash, r1);
 }
 
 TEST_F(TracingDecisionGraphTest, IdempotentRecord)
@@ -519,7 +519,7 @@ TEST_F(TracingDecisionGraphTest, IdempotentRecord)
         return Hash(HashAlgorithm::SHA256);
     });
     ASSERT_TRUE(hit.has_value());
-    EXPECT_EQ(*hit, result);
+    EXPECT_EQ(hit->resultHash, result);
 }
 
 TEST_F(TracingDecisionGraphTest, PersistsAcrossReopen)
@@ -581,7 +581,7 @@ TEST_F(TracingDecisionGraphTest, ManyQueriesAreIsolated)
             return sha("resp-" + std::to_string(i));
         });
         ASSERT_TRUE(hit.has_value()) << "Q " << i << " missed";
-        EXPECT_EQ(*hit, results[i]) << "Q " << i << " hit wrong Result";
+        EXPECT_EQ(hit->resultHash, results[i]) << "Q " << i << " hit wrong Result";
     }
 
     /* Replay Q[0] with Q[1]'s response — should miss (wrong
@@ -640,7 +640,7 @@ TEST_F(TracingDecisionGraphTest, ManyRecordingsSameQDeepRecordings)
             return it->second;
         });
         ASSERT_TRUE(hit.has_value()) << "recording " << i << " missed";
-        EXPECT_EQ(*hit, allResults[i]) << "recording " << i << " hit wrong Result";
+        EXPECT_EQ(hit->resultHash, allResults[i]) << "recording " << i << " hit wrong Result";
     }
 }
 
@@ -671,7 +671,7 @@ TEST_F(TracingDecisionGraphTest, DeepRecordingPersistsAcrossReopen)
         return Hash(HashAlgorithm::SHA256);
     });
     ASSERT_TRUE(hit.has_value());
-    EXPECT_EQ(*hit, r);
+    EXPECT_EQ(hit->resultHash, r);
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -741,7 +741,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndOnEventThenWalk)
         return Hash(HashAlgorithm::SHA256);
     });
     ASSERT_TRUE(hit_v1.has_value());
-    EXPECT_EQ(*hit_v1, result_v1);
+    EXPECT_EQ(hit_v1->resultHash, result_v1);
 
     /* Replay in v2 world: dispatch returns contentA_v2 for reqA. */
     auto hit_v2 = g.walk(q, [&](const Hash & req) {
@@ -750,7 +750,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndOnEventThenWalk)
         return Hash(HashAlgorithm::SHA256);
     });
     ASSERT_TRUE(hit_v2.has_value());
-    EXPECT_EQ(*hit_v2, result_v2);
+    EXPECT_EQ(hit_v2->resultHash, result_v2);
 
     /* Replay in a third world (a.nix is some unknown content):
        should miss because no recording covers this scenario. */
@@ -803,7 +803,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndNestedQueries)
         return Hash(HashAlgorithm::SHA256);
     });
     ASSERT_TRUE(innerHit.has_value());
-    EXPECT_EQ(*innerHit, innerResult);
+    EXPECT_EQ(innerHit->resultHash, innerResult);
 
     /* Replay outer-Q similarly. */
     auto outerHit = g.walk(outerQ, [&](const Hash & req) {
@@ -812,7 +812,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndNestedQueries)
         return Hash(HashAlgorithm::SHA256);
     });
     ASSERT_TRUE(outerHit.has_value());
-    EXPECT_EQ(*outerHit, outerResult);
+    EXPECT_EQ(outerHit->resultHash, outerResult);
 }
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -883,7 +883,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_RecordEmitsSingleEdgeForFirstRecording)
         return Hash(HashAlgorithm::SHA256);
     });
     ASSERT_TRUE(hit.has_value());
-    EXPECT_EQ(*hit, result);
+    EXPECT_EQ(hit->resultHash, result);
 }
 
 TEST_F(TracingDecisionGraphTest, Phase1_RecordReusesEdgeWhenExtendingSuperset)
@@ -940,7 +940,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_RecordReusesEdgeWhenExtendingSuperset)
        walk checks Terminal at every intermediate cur. After
        dispatching {r1,r2} it reaches fs1, where Terminal(Q, fs1, R1)
        is present. */
-    EXPECT_EQ(*hit1, sha("R1"));
+    EXPECT_EQ(hit1->resultHash, sha("R1"));
 }
 
 TEST_F(TracingDecisionGraphTest, Phase1_PatriciaSplitsOnOverlappingDivergence)
@@ -995,7 +995,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_PatriciaSplitsOnOverlappingDivergence)
     /* With both responses available, walk will reach whichever
        terminal sits at the cur it converges to — but it must reach
        *some* recorded Result, not miss. */
-    EXPECT_TRUE(*hit1 == sha("R1") || *hit1 == sha("R2"));
+    EXPECT_TRUE(hit1->resultHash == sha("R1") || hit1->resultHash == sha("R2"));
 
     /* Walk where d's response is wrong: only the c-branch survives,
        must hit R1. */
@@ -1007,7 +1007,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_PatriciaSplitsOnOverlappingDivergence)
         return Hash(HashAlgorithm::SHA256);
     });
     ASSERT_TRUE(hitC.has_value());
-    EXPECT_EQ(*hitC, sha("R1"));
+    EXPECT_EQ(hitC->resultHash, sha("R1"));
 
     /* Walk where c's response is wrong: only the d-branch survives,
        must hit R2. */
@@ -1019,7 +1019,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_PatriciaSplitsOnOverlappingDivergence)
         return Hash(HashAlgorithm::SHA256);
     });
     ASSERT_TRUE(hitD.has_value());
-    EXPECT_EQ(*hitD, sha("R2"));
+    EXPECT_EQ(hitD->resultHash, sha("R2"));
 }
 
 TEST_F(TracingDecisionGraphTest, Phase1_RequestSetSharedAcrossQs)
@@ -1083,7 +1083,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_WalkDispatchesMultiElementRequestSet)
         return it->second;
     });
     ASSERT_TRUE(hit.has_value());
-    EXPECT_EQ(*hit, sha("R"));
+    EXPECT_EQ(hit->resultHash, sha("R"));
 }
 
 } // namespace nix

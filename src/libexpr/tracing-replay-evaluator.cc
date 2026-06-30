@@ -33,7 +33,7 @@ TracingReplayEvaluator::TracingReplayEvaluator(
 {
 }
 
-std::optional<std::pair<std::string, Hash>>
+std::optional<TracingReplayEvaluator::V13WalkResult>
 TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy)
 {
     /* The entire walk is VALIDATION of recorded state — any apply
@@ -309,7 +309,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
                     lastQFactsHash = candidateCur;
                     tracingCacheStats().hits++;
                     commitEdge();
-                    return std::make_pair(std::move(*payload), *term);
+                    return V13WalkResult{std::move(*payload), *term, candidateCur};
                 }
             }
         }
@@ -318,27 +318,30 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         discardEdge();
     }
 
-    /* Fall back to walk(). Two attempts in order:
-       1. From `lastQFactsHash` — the cumulative dispatched
-          position. This skips already-traversed shared prefix
-          and resumes from there, crucial for sibling
-          discrimination (cb-sibling): starting from ∅ would
-          stop at the first reachable Terminal (= prior sibling),
-          but starting from lastQFactsHash continues the chain
-          past prior siblings' terminals to this Q's recorded
-          position.
-       2. From ∅ — the original behavior. Needed for Q's whose
-          recorded chain doesn't extend from lastQFactsHash
-          (= e.g., cb-385's deep-indep `b` fact, recorded at a
-          cur that's a *prefix* of where lastQFactsHash sits). */
+    /* Fall back to walk(). Two anchor candidates in order:
+       1. Parent TR's terminalCur — the structural-anchor lookup
+          position. Child Q's recording was made starting from
+          parent's reached factSet (= where the parent walk landed),
+          so anchoring the child walk there matches the recording's
+          frame. This isolates each child Q from sibling Q's
+          accumulated state: the prior session-leaky `lastQFactsHash`
+          would carry a sibling's terminal into this Q's startCur,
+          dragging in observations the recording doesn't expect.
+       2. From ∅ — original behavior. Needed when no parent anchor
+          exists (top-level Q like evalFile/evalExpr, no TR) and as
+          a backstop when the parent-anchored attempt finds no
+          matching Asks chain. */
+    Hash parentAnchor = TracingDecisionGraph::emptySetHash();
+    if (auto * parentTR = dynamic_cast<TracingReplayObject *>(currentProxy.get()))
+        parentAnchor = parentTR->getTriePos().factSetHash;
     auto walkHit = decisionGraph.walk(queryHash, dispatch,
         [&](bool committed, const std::vector<Hash> &) {
             if (committed) commitEdge();
             else discardEdge();
         },
-        lastQFactsHash,
-        dispatchedRequestSet);
-    if (!walkHit) {
+        parentAnchor,
+        /*startCurRequests=*/ {});
+    if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
         walkHit = decisionGraph.walk(queryHash, dispatch,
             [&](bool committed, const std::vector<Hash> &) {
                 if (committed) commitEdge();
@@ -349,13 +352,13 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         tracingCacheStats().misses++;
         return std::nullopt;
     }
-    auto payload = decisionGraph.getResultPayload(*walkHit);
+    auto payload = decisionGraph.getResultPayload(walkHit->resultHash);
     if (!payload) {
         tracingCacheStats().misses++;
         return std::nullopt;
     }
     tracingCacheStats().hits++;
-    return std::make_pair(std::move(*payload), *walkHit);
+    return V13WalkResult{std::move(*payload), walkHit->resultHash, walkHit->terminalCur};
 }
 
 std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std::string & requestCbor, ResolutionContext & ctx)
@@ -1013,13 +1016,13 @@ TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentP
     auto v13 = v13Walk(queryHash, std::move(currentProxy));
     if (!v13)
         return std::nullopt;
-    const auto & [payload, resultHash] = *v13;
     tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
     return std::make_pair(
-        payload,
+        v13->payload,
         TriePosition{
-            .resultNodeHash = resultHash,
+            .resultNodeHash = v13->resultNodeHash,
             .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
+            .factSetHash = v13->terminalCur,
         });
 }
 

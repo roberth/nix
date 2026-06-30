@@ -191,7 +191,13 @@ public:
      * top-level entry points (evalFile/evalExpr) that have no
      * proxy yet.
      */
-    std::optional<std::pair<std::string, Hash>> v13Walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy = nullptr);
+    /** Returned (payload, resultNodeHash, terminalCur). `terminalCur`
+        is the factSet the walker landed on when committing the
+        Terminal — child Q lookups thread it through their TR's
+        TriePosition.factSetHash and use it as their structural-anchor
+        candidate startCur. */
+    struct V13WalkResult { std::string payload; Hash resultNodeHash; Hash terminalCur; };
+    std::optional<V13WalkResult> v13Walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy = nullptr);
 
     bool isReadOnly() const override;
     Store & getStore() override;
