@@ -45,7 +45,7 @@ result=$(nix eval --impure --expr "$EXPR")
 echo "Got: $result"
 [[ "$result" == 1100 ]]
 
-echo "=== warm DISALLOW_PARSE (expect 1100) ==="
-result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr "$EXPR")
+echo "=== warm DISALLOW_CACHE_INTERPRET_INNER (expect 1100) ==="
+result=$(_NIX_DISALLOW_CACHE_INTERPRET_INNER=1 nix eval --impure --expr "$EXPR")
 echo "Got: $result"
 [[ "$result" == 1100 ]]
