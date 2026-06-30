@@ -370,6 +370,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         nlohmann::json applyQd2 = trace::QueryApply{fnSubjHex, argSubjHex};
         writer.logDepth2ApplyFact(applyQd2, resultSubject, applyScope);
     } else {
+        tracingCacheLog("markApplyBoundary callsite=TracingEvaluator::apply fn=%s arg=%s",
+                        fnId.substr(0, 12), argId.substr(0, 12));
         writer.markApplyBoundary(applyQ);
     }
 

@@ -306,6 +306,8 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        call in TracingEvaluator::apply for the principle. */
     if (innerWriter) {
         nlohmann::json applyQ = trace::QueryApply{fnIdStr, argIdStr};
+        tracingCacheLog("markApplyBoundary callsite=AmbientApply::run fn=%s arg=%s",
+                        fnIdStr.substr(0, 12), argIdStr.substr(0, 12));
         innerWriter->markApplyBoundary(applyQ);
     }
     trace::QueryApply applyQuery{fnIdStr, argIdStr};

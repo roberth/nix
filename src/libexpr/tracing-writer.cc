@@ -468,6 +468,16 @@ void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
     if (!decisionGraph)
         return;
 
+    /* Suppressed during walker re-dispatch of an already-recorded
+       apply (= `dispatchApplyLive`). Re-dispatch is validation, not a
+       new cb-apply event — each re-dispatch would otherwise add a
+       redundant ε edge to d1CidasksWalk, breaking the 1:1 alignment
+       with walker.cidasksWalk at warm. */
+    if (suppressApplyBoundary > 0) {
+        tracingCacheLog("markApplyBoundary: SUPPRESSED (in dispatchApplyLive)");
+        return;
+    }
+
     /* Close any preceding observations into their own Asks edge
        (= β1). The intermediate flush only drains depth-1 facts; any
        depth-2 facts from prior unfinalised cb-applies (= nested case)

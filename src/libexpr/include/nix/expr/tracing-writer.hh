@@ -218,6 +218,32 @@ class TracingWriter
         size_t lastProcessedCount = 0;
     };
     std::vector<PendingApplyBoundary> pendingApplyBoundaries;
+
+    /* RAII suppress counter for `markApplyBoundary` while > 0. Used to
+       elide redundant boundary firings during walker re-dispatch of a
+       recorded apply (= `dispatchApplyLive`): walker's
+       `fnObj->queryApply(replayLocal)` re-routes through
+       `AmbientObject::queryApply` → `applyFn` → `AmbientApply::run`,
+       which would normally fire `markApplyBoundary` — but that path
+       represents validation of an already-recorded apply event, not a
+       NEW event. Letting it fire inflates `d1CidasksWalk` with ε edges
+       per re-validation, breaking the walker's 1:1 alignment with
+       cold's writer at warm. */
+    size_t suppressApplyBoundary = 0;
+
+public:
+    /* RAII helper: scoped suppress of markApplyBoundary. */
+    class SuppressApplyBoundary
+    {
+        TracingWriter & writer;
+    public:
+        explicit SuppressApplyBoundary(TracingWriter & w) : writer(w) { ++writer.suppressApplyBoundary; }
+        ~SuppressApplyBoundary() { --writer.suppressApplyBoundary; }
+        SuppressApplyBoundary(const SuppressApplyBoundary &) = delete;
+        SuppressApplyBoundary & operator=(const SuppressApplyBoundary &) = delete;
+    };
+private:
+
     /* Q hashes that have been logResult'd in this writer's lifetime.
        Re-inserted under at late-d2-obs re-process time so the
        updated `perQAsksEdges` (with corrected downstream

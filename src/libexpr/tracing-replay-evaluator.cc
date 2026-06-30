@@ -36,6 +36,19 @@ TracingReplayEvaluator::TracingReplayEvaluator(
 std::optional<std::pair<std::string, Hash>>
 TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy)
 {
+    /* The entire walk is VALIDATION of recorded state — any apply
+       queries triggered through `fnObj->queryApply(...)` during
+       dispatch (resolveApplyId, navigatePath's Apply step,
+       dispatchApplyLive) re-route through `AmbientObject::queryApply
+       → applyFn → AmbientApply::run` and would each fire a fresh
+       `markApplyBoundary` on the writer if not suppressed. Each fresh
+       boundary inflates `d1CidasksWalk` with a redundant ε edge
+       beyond the genuine cb-apply events the recorder already
+       captured. Suppress for the walk's duration so writer's
+       d1CidasksWalk stays in 1:1 alignment with walker's
+       cidasksWalk. */
+    TracingWriter::SuppressApplyBoundary suppressBoundary(writer);
+
     /* Per-walk resolution context. The cumulative cidasks walk
        (= `this->cidasksWalk`) lives on the evaluator so it
        persists across v13Walk calls — required for cell-chain
