@@ -51,7 +51,7 @@ struct TriePosition
        this terminal. Used by child Q lookups as a candidate startCur
        (= structurally-anchored lookup position) so a child walk
        starts from its parent's reached factSet rather than from
-       session-leaky lastQFactsHash. Empty hash on TRs synthesized
+       session-leaky lastQFactsHash. Empty hash on TracingReplayObjects synthesized
        outside the walker (recording side). */
     Hash factSetHash{HashAlgorithm::SHA256};
 };

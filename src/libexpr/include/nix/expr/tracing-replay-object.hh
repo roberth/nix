@@ -87,7 +87,7 @@ class TracingReplayObject : public Object
     std::optional<const trace::ResultWHNF *> whnf();
 
     /* Snapshot of `applyContext->observations.size()` right after
-       this TR's own `whnf()` push. The "parent's initial discovery
+       this TracingReplayObject's own `whnf()` push. The "parent's initial discovery
        state" — sibling attr probes recorded in independent sessions
        were stamped with parent hash = scopeStateIdAt at THIS prefix.
        parentHashCandidates uses it as a second lookup candidate

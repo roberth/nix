@@ -193,7 +193,7 @@ public:
      */
     /** Returned (payload, resultNodeHash, terminalCur). `terminalCur`
         is the factSet the walker landed on when committing the
-        Terminal — child Q lookups thread it through their TR's
+        Terminal — child Q lookups thread it through their TracingReplayObject's
         TriePosition.factSetHash and use it as their structural-anchor
         candidate startCur. */
     struct V13WalkResult { std::string payload; Hash resultNodeHash; Hash terminalCur; };

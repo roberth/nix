@@ -315,7 +315,7 @@ public:
         const std::function<ResponseHash(const RequestHash &)> & dispatch,
         const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt = {},
         /* Starting cur for the walk. Defaults to ∅. Callers that
-           have a structural anchor (= parent TR's terminalCur) can
+           have a structural anchor (= parent TracingReplayObject's terminalCur) can
            hand it in so the walk starts at that lookup position. */
         const SetHash & startCur = SetHash(HashAlgorithm::SHA256),
         const std::unordered_set<RequestHash> & startCurRequests = {});

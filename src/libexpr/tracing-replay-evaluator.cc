@@ -319,7 +319,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
     }
 
     /* Fall back to walk(). Two anchor candidates in order:
-       1. Parent TR's terminalCur — the structural-anchor lookup
+       1. Parent TracingReplayObject's terminalCur — the structural-anchor lookup
           position. Child Q's recording was made starting from
           parent's reached factSet (= where the parent walk landed),
           so anchoring the child walk there matches the recording's
@@ -328,7 +328,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
           would carry a sibling's terminal into this Q's startCur,
           dragging in observations the recording doesn't expect.
        2. From ∅ — original behavior. Needed when no parent anchor
-          exists (top-level Q like evalFile/evalExpr, no TR) and as
+          exists (top-level Q like evalFile/evalExpr, no TracingReplayObject) and as
           a backstop when the parent-anchored attempt finds no
           matching Asks chain. */
     Hash parentAnchor = TracingDecisionGraph::emptySetHash();
