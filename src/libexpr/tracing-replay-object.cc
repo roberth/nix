@@ -51,6 +51,37 @@ std::string TracingReplayObject::evolvedQueryFrom() const
     return triePos.queryHashStr;
 }
 
+std::vector<std::string> TracingReplayObject::parentHashCandidates() const
+{
+    std::vector<std::string> out;
+    if (applyResultSubject && applyContext) {
+        out.push_back(evolvedQueryFrom());
+        /* If we've completed our WHNF probe, query at the post-WHNF
+           prefix too. IDs are consistent with facts: a smaller fact
+           set produces different IDs that align with recordings made
+           at that state. Useful for composition of independent
+           warmups where each warmup probed one attr after WHNF —
+           sibling attrs in those warmups recorded at this prefix
+           regardless of which warmup wrote them. */
+        if (postWHNFObservationCount && *postWHNFObservationCount < applyContext->observations.size()) {
+            std::vector<cidasks::Edge> walk;
+            walk.reserve(*postWHNFObservationCount);
+            for (size_t i = 0; i < *postWHNFObservationCount; ++i) {
+                cidasks::Edge edge;
+                edge.observations.push_back(applyContext->observations[i]);
+                walk.push_back(std::move(edge));
+            }
+            auto snap = cidasks::scopeStateIdAt(*applyResultSubject, applyScope, walk, walk.size());
+            auto snapHex = snap.to_string(HashFormat::Base16, false);
+            if (snapHex != out.front())
+                out.push_back(snapHex);
+        }
+    } else {
+        out.push_back(triePos.queryHashStr);
+    }
+    return out;
+}
+
 void TracingReplayObject::pushObservation(const std::string & fromHex, const Hash & queryHash, const Hash & responseHash)
 {
     if (!applyContext) return;
@@ -121,25 +152,23 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 
 std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & name)
 {
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetAttr query{name, parentHash};
-
-    if (auto result = lookupStructuralChild<trace::QueryGetAttr, trace::ResultMaybeType>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), result->second.resultNodeHash);
-        if (!result->first.type) {
-            tracingCacheLog("replay hit: getAttr '%s' -> missing", name);
-            return nullptr;
+    for (auto & parentHash : parentHashCandidates()) {
+        trace::QueryGetAttr query{name, parentHash};
+        if (auto result = lookupStructuralChild<trace::QueryGetAttr, trace::ResultMaybeType>(query)) {
+            pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), result->second.resultNodeHash);
+            if (!result->first.type) {
+                tracingCacheLog("replay hit: getAttr '%s' -> missing", name);
+                return nullptr;
+            }
+            tracingCacheLog("replay hit: getAttr '%s' -> found", name);
+            auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
+            auto child = std::make_shared<TracingReplayObject>(
+                evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
+            child->withScope(argScope);
+            if (applyContext) child->withApplyContextOnly(applyContext);
+            return child;
         }
-
-        tracingCacheLog("replay hit: getAttr '%s' -> found", name);
-        auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
-        auto child = std::make_shared<TracingReplayObject>(
-            evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
-        child->withScope(argScope);
-        if (applyContext) child->withApplyContextOnly(applyContext);
-        return child;
     }
-
     tracingCacheLog("replay fallback: maybeGetAttr '%s'", name);
     return ensureInner()->maybeGetAttr(name);
 }
@@ -148,14 +177,21 @@ std::optional<const trace::ResultWHNF *> TracingReplayObject::whnf()
 {
     if (cachedWHNF)
         return &*cachedWHNF;
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetWHNF query{parentHash};
-    auto r = lookupResult<trace::QueryGetWHNF, trace::ResultWHNF>(query);
-    if (!r)
-        return std::nullopt;
-    pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
-    cachedWHNF = std::move(r->first);
-    return &*cachedWHNF;
+    for (auto & parentHash : parentHashCandidates()) {
+        trace::QueryGetWHNF query{parentHash};
+        auto r = lookupResult<trace::QueryGetWHNF, trace::ResultWHNF>(query);
+        if (!r)
+            continue;
+        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
+        /* Snapshot applyContext.observations size right after our
+           WHNF push: the "parent's initial discovery state" baseline
+           for sibling-attr lookups. */
+        if (applyContext)
+            postWHNFObservationCount = applyContext->observations.size();
+        cachedWHNF = std::move(r->first);
+        return &*cachedWHNF;
+    }
+    return std::nullopt;
 }
 
 std::vector<std::string> TracingReplayObject::getAttrNames()
@@ -290,31 +326,31 @@ size_t TracingReplayObject::getListSize()
 
 std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
 {
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetListElem query{parentHash, idx};
-
-    if (auto result = lookupStructuralChild<trace::QueryGetListElem, trace::ResultType>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), result->second.resultNodeHash);
-        tracingCacheLog("replay hit: getListElem %d", idx);
-        auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
-        auto child = std::make_shared<TracingReplayObject>(
-            evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); });
-        child->withScope(argScope);
-        if (applyContext) child->withApplyContextOnly(applyContext);
-        return child;
+    for (auto & parentHash : parentHashCandidates()) {
+        trace::QueryGetListElem query{parentHash, idx};
+        if (auto result = lookupStructuralChild<trace::QueryGetListElem, trace::ResultType>(query)) {
+            pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), result->second.resultNodeHash);
+            tracingCacheLog("replay hit: getListElem %d", idx);
+            auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
+            auto child = std::make_shared<TracingReplayObject>(
+                evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); });
+            child->withScope(argScope);
+            if (applyContext) child->withApplyContextOnly(applyContext);
+            return child;
+        }
     }
-
     tracingCacheLog("replay fallback: getListElem %d", idx);
     return ensureInner()->getListElem(idx);
 }
 
 std::vector<std::string> TracingReplayObject::getListOfStringsNoCtx()
 {
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetListOfStrings query{parentHash};
-    if (auto r = lookupResult<trace::QueryGetListOfStrings, trace::ResultListOfStrings>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
-        return r->first.values;
+    for (auto & parentHash : parentHashCandidates()) {
+        trace::QueryGetListOfStrings query{parentHash};
+        if (auto r = lookupResult<trace::QueryGetListOfStrings, trace::ResultListOfStrings>(query)) {
+            pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
+            return r->first.values;
+        }
     }
     tracingCacheLog("replay fallback: getListOfStringsNoCtx");
     return ensureInner()->getListOfStringsNoCtx();
@@ -343,13 +379,14 @@ RootValue TracingReplayObject::defeatCache()
 
 std::optional<FunctionInfo> TracingReplayObject::getFunctionInfo()
 {
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetFunctionInfo query{parentHash};
-    if (auto r = lookupResult<trace::QueryGetFunctionInfo, trace::ResultFunctionInfo>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
-        if (!r->first.hasInfo)
-            return std::nullopt;
-        return FunctionInfo{.formals = r->first.formals, .ellipsis = r->first.ellipsis};
+    for (auto & parentHash : parentHashCandidates()) {
+        trace::QueryGetFunctionInfo query{parentHash};
+        if (auto r = lookupResult<trace::QueryGetFunctionInfo, trace::ResultFunctionInfo>(query)) {
+            pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
+            if (!r->first.hasInfo)
+                return std::nullopt;
+            return FunctionInfo{.formals = r->first.formals, .ellipsis = r->first.ellipsis};
+        }
     }
     tracingCacheLog("replay fallback: getFunctionInfo");
     return ensureInner()->getFunctionInfo();
