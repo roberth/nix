@@ -179,10 +179,6 @@ void TracingWriter::flushPendingAmbient(bool finalize)
            perQAsksEdge. The d1 edge may be empty (= file-read-only
            Asks edge with no ambient observations) — still pushed so
            the indices match. */
-        if (decisionGraph)
-            decisionGraph->insertSessionD1Edge(
-                sessionHash, d1CidasksWalk.size(),
-                cidasks::serialiseEdge(pendingD1Edge));
         d1CidasksWalk.push_back(std::move(pendingD1Edge));
         pendingD1Edge = {};
         tracingCacheLog("finalize: final d1 Asks edge from=%s rs-size=%zu (perQ=%zu d1=%zu)",
@@ -455,9 +451,6 @@ void TracingWriter::splitFlush(bool finalize)
     if (!pendingNewRequests.empty()) {
         auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
         perQAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-        decisionGraph->insertSessionD1Edge(
-            sessionHash, d1CidasksWalk.size(),
-            cidasks::serialiseEdge(pendingD1Edge));
         d1CidasksWalk.push_back(std::move(pendingD1Edge));
         pendingD1Edge = {};
         tracingCacheLog("splitFlush: new Asks edge from=%s rs-size=%zu (perQ=%zu d1=%zu)",
