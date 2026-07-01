@@ -101,11 +101,13 @@ TEST_F(TracingDecisionGraphTest, LocalResponseMap_KeyedByRequestHash_FunctionAtD
 TEST_F(TracingDecisionGraphTest, EdgeResponses_KeyedByQueryAndFromFactSet)
 {
     /* `EdgeResponses` keys responses by (queryHash, fromFactSetHash,
-       requestHash) — one edge-context lookup per Asks edge cold
-       recorded. Same requestHash used at DIFFERENT (queryHash,
-       fromFactSetHash) positions stores per-edge, so the walker can
-       fetch cold's response for THIS specific edge context rather than
-       the LRM's first-writer-wins global. */
+       requestHash) — one row per Asks edge member cold recorded.
+       Same requestHash used at DIFFERENT (queryHash, fromFactSetHash)
+       positions stores per-edge without first-writer-wins collision.
+       Offline-inspection / diagnostic surface only: d=1 walker
+       live-dispatches (see the LRM contract test above), so this
+       table is NOT a walker dispatch source — the API header spells
+       out the intent. */
     TracingDecisionGraph g(dbPath);
 
     auto q1 = sha("q1"), q2 = sha("q2");
