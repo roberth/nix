@@ -387,21 +387,42 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
     Hash parentAnchor = TracingDecisionGraph::emptySetHash();
     if (auto * parentTR = dynamic_cast<TracingReplayObject *>(currentProxy.get()))
         parentAnchor = parentTR->getTriePos().factSetHash;
+    /* Track rejected-edge obs across all attempts. Committed on walk
+       MISS so subsequent v13Walk calls' resolveCdiId sees the obs
+       walker produced during the failed traversal — those obs carry
+       real (req, resp) pairs from cold's recorded responses, and
+       future resolves at deeper edgeIndex may need them. Only
+       preserve on final miss; on hit, the winning edges are already
+       committed and the rejected ones represent wrong branches whose
+       obs would contaminate the correct chain. */
+    std::vector<cidasks::Observation> rejectedObs;
+    auto commitRejected = [&](const std::vector<Hash> &) {
+        for (auto & obs : pendingEdgeObservations)
+            rejectedObs.push_back(std::move(obs));
+        pendingEdgeObservations.clear();
+    };
     auto walkHit = decisionGraph.walk(queryHash, dispatch,
-        [&](bool committed, const std::vector<Hash> &) {
+        [&](bool committed, const std::vector<Hash> & useful) {
             if (committed) commitEdge();
-            else discardEdge();
+            else commitRejected(useful);
         },
         parentAnchor,
         /*startCurRequests=*/ {});
     if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
         walkHit = decisionGraph.walk(queryHash, dispatch,
-            [&](bool committed, const std::vector<Hash> &) {
+            [&](bool committed, const std::vector<Hash> & useful) {
                 if (committed) commitEdge();
-                else discardEdge();
+                else commitRejected(useful);
             });
     }
     if (!walkHit) {
+        /* Walker missed. Commit rejected-edge obs to cidasksWalk so
+           future resolves benefit. Dedup by fingerprint keeps this
+           safe against re-attempts of the same edge. */
+        if (!rejectedObs.empty()) {
+            pendingEdgeObservations = std::move(rejectedObs);
+            commitEdge();
+        }
         tracingCacheStats().misses++;
         return std::nullopt;
     }
