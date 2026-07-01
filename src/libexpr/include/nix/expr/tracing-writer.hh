@@ -79,6 +79,7 @@ class TracingWriter
        and re-fold all members) is bypassed via primeFactSetCache. */
     std::vector<TracingDecisionGraph::Fact> v13FactSet;
     TracingDecisionGraph::SetHash v13FactSetHash;
+    Hash sessionHash{HashAlgorithm::SHA256};
     std::unordered_set<Hash> seenRequests;
     /* request → response lookup, maintained as facts arrive.
        Handed to record() by reference so it doesn't rebuild
@@ -272,7 +273,15 @@ public:
         , decisionGraph(decisionGraph)
         , v13FactSetHash(TracingDecisionGraph::emptySetHash())
     {
+        /* Per-session hash for SessionD1Edges: hash of a random 32-byte
+           payload keeps sessions distinct in the DB even if the same
+           process runs multiple sequential cold recordings. */
+        auto rand = std::to_string(reinterpret_cast<uintptr_t>(this))
+            + ":" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        sessionHash = hashString(HashAlgorithm::SHA256, rand);
     }
+
+    Hash getSessionHash() const { return sessionHash; }
 
     /** Cumulative cidasks walk over depth-1 ambient observations.
         One edge per logResult-triggered flush. Exposed so writer-side
@@ -300,6 +309,11 @@ public:
     {
         cidasks::Edge edge;
         edge.observations.push_back({Hash(HashAlgorithm::SHA256), applyReqHash});
+        if (decisionGraph)
+            decisionGraph->insertSessionD1Edge(
+                sessionHash,
+                d1CidasksWalk.size(),
+                cidasks::serialiseEdge(edge));
         d1CidasksWalk.push_back(std::move(edge));
     }
 
