@@ -158,20 +158,75 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
 {
     for (auto & parentHash : parentHashCandidates()) {
         trace::QueryGetAttr query{name, parentHash};
-        if (auto result = lookupStructuralChild<trace::QueryGetAttr, trace::ResultMaybeType>(query)) {
-            pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), result->second.resultNodeHash);
-            if (!result->first.type) {
-                tracingCacheLog("replay hit: getAttr '%s' -> missing", name);
-                return nullptr;
+        auto result = lookupStructuralChild<trace::QueryGetAttr, trace::ResultMaybeType>(query);
+        if (!result)
+            continue;
+        auto shallowQueryHash = TracingDecisionGraph::computeQueryHash(query);
+        auto shallowResp = result->second.resultNodeHash;
+        auto shallowResult = std::move(*result);
+
+        /* Speculative deeper lookup: if we pushed this getAttr's
+           observation, evolvedQueryFrom would advance one step. Try
+           looking up at that deeper Q too — sibling recordings made
+           after a shallower recording share the same Q chain but
+           evolve one obs deeper (see cb-sibling-discrimination-via-
+           observation). If the deeper lookup hits AND its chain
+           validates against live env, prefer it. */
+        if (applyResultSubject && applyContext) {
+            std::vector<cidasks::Edge> specWalk;
+            specWalk.reserve(applyContext->observations.size() + 1);
+            for (auto & obs : applyContext->observations) {
+                cidasks::Edge edge;
+                edge.observations.push_back(obs);
+                specWalk.push_back(std::move(edge));
             }
-            tracingCacheLog("replay hit: getAttr '%s' -> found", name);
-            auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
-            auto child = std::make_shared<TracingReplayObject>(
-                evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
-            child->withScope(argScope);
-            if (applyContext) child->withApplyContextOnly(applyContext);
-            return child;
+            cidasks::Observation specObs{
+                Hash::parseNonSRIUnprefixed(parentHash, HashAlgorithm::SHA256),
+                TracingDecisionGraph::xorFactIntoHash(
+                    Hash(HashAlgorithm::SHA256), shallowQueryHash, shallowResp)};
+            cidasks::Edge specEdge;
+            specEdge.observations.push_back(specObs);
+            specWalk.push_back(std::move(specEdge));
+            auto deepFrom = cidasks::scopeStateIdAt(
+                *applyResultSubject, applyScope, specWalk, specWalk.size());
+            auto deepFromHex = deepFrom.to_string(HashFormat::Base16, false);
+            if (deepFromHex != parentHash) {
+                trace::QueryGetAttr deepQuery{name, deepFromHex};
+                if (auto deep = lookupStructuralChild<trace::QueryGetAttr, trace::ResultMaybeType>(deepQuery)) {
+                    /* Deeper hit validated (v13Walk's chain traversal
+                       returned success). Use it — this is a
+                       sibling-specific recording. */
+                    auto deepQueryHash = TracingDecisionGraph::computeQueryHash(deepQuery);
+                    pushObservation(deepFromHex, deepQueryHash, deep->second.resultNodeHash);
+                    if (!deep->first.type) {
+                        tracingCacheLog("replay hit: getAttr '%s' -> missing (deeper)", name);
+                        return nullptr;
+                    }
+                    tracingCacheLog("replay hit: getAttr '%s' -> found (deeper)", name);
+                    auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
+                    auto child = std::make_shared<TracingReplayObject>(
+                        evaluator, deep->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
+                    child->withScope(argScope);
+                    if (applyContext) child->withApplyContextOnly(applyContext);
+                    return child;
+                }
+            }
         }
+
+        /* Shallower hit — either speculation wasn't applicable or
+           the deeper Q missed / diverged. */
+        pushObservation(parentHash, shallowQueryHash, shallowResp);
+        if (!shallowResult.first.type) {
+            tracingCacheLog("replay hit: getAttr '%s' -> missing", name);
+            return nullptr;
+        }
+        tracingCacheLog("replay hit: getAttr '%s' -> found", name);
+        auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
+        auto child = std::make_shared<TracingReplayObject>(
+            evaluator, shallowResult.second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
+        child->withScope(argScope);
+        if (applyContext) child->withApplyContextOnly(applyContext);
+        return child;
     }
     tracingCacheLog("replay fallback: maybeGetAttr '%s'", name);
     return ensureInner()->maybeGetAttr(name);
