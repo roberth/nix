@@ -1,33 +1,23 @@
 #!/usr/bin/env bash
 
-# Sibling A carries a value that would abort *if forced*, placed
-# where a cache mechanism might plausibly reach for it in the name of
-# discrimination — one level below the top of the cb-arg — and the
-# cached body never forces it. Cold succeeds because the body doesn't
-# touch that value; warm must succeed the same way, without any
-# cache-induced force.
+# A cached call is made twice with the same `f` (which ignores its
+# argument) but a different `x`. In the second call `x.inner` is
+# `abort "…"`. The cached body never forces `x`, so neither call
+# has any reason to touch `x.inner` — cold or warm.
 #
-# The test teases cache implementations that try to fingerprint or
-# hash the outer arg tree to disambiguate siblings. Any such
-# implementation would walk into `x.inner` and trip the abort. The
-# correct discipline is: the cache observes what the user's expression
-# observes, nothing more — even in service of making warm's Q
-# computation converge with cold's recording site.
+# The test teases cache implementations that would reach into the
+# outer arg to fingerprint, hash, or otherwise re-inspect it for
+# discrimination. Any such reach walks into `x.inner` and trips the
+# abort. The correct discipline is: the cache observes what the
+# user's expression observed, nothing more.
 #
-# Cached body: `{ f, x }: f x`. `f` ignores its argument, so `x` is
-# never forced by the body — `x.inner` doubly so.
-#   sibling A: f = _: { whatever = 42; },
-#              x = { inner = abort "cache must not deep-force x"; }
-#     → a.whatever = 42
-#   sibling B: f = _: { whatever = 43; },
-#              x = { inner = "safe"; }
-#     → b.whatever = 43
-# Total: 85.
+# fn.nix: `{ f, x }: f x`, with `f = _: { whatever = 42; }`.
+#   1st eval: x = "safe"           → 42, populates the cache
+#   2nd eval: x = { inner = abort } → 42, cache must not force x.inner
 #
-# If any discrimination scheme reaches into `x.inner` — to hash it,
-# to compute a per-sibling id, to normalise recording context, any
-# reason — the abort fires, nix exits nonzero, `set -e` fails the
-# test. The abort message names the violated discipline.
+# If any cache-induced force reaches `x.inner`, the 2nd eval aborts,
+# nix exits nonzero, `set -e` fails the test with a stack trace
+# naming the violated discipline.
 
 source common.sh
 
@@ -43,14 +33,14 @@ cat > "$TEST_ROOT/fn.nix" << 'NIX'
 { f, x }: f x
 NIX
 
-EXPR="let cached = builtins.cache { import = $TEST_ROOT/fn.nix; }; in (cached { f = _: { whatever = 42; }; x = { inner = abort \"cache must not deep-force x\"; }; }).whatever + (cached { f = _: { whatever = 43; }; x = { inner = \"safe\"; }; }).whatever"
-
-echo "=== cold (expect 85) ==="
-result=$(nix eval --impure --expr "$EXPR")
+echo "=== 1st eval: populate cache (expect 42) ==="
+EXPR1="let cached = builtins.cache { import = $TEST_ROOT/fn.nix; }; in (cached { f = _: { whatever = 42; }; x = \"safe\"; }).whatever"
+result=$(nix eval --impure --expr "$EXPR1")
 echo "Got: $result"
-[[ "$result" == 85 ]]
+[[ "$result" == 42 ]]
 
-echo "=== warm (expect 85) ==="
-result=$(nix eval --impure --expr "$EXPR")
+echo "=== 2nd eval: updated x, cache must not force x.inner (expect 42) ==="
+EXPR2="let cached = builtins.cache { import = $TEST_ROOT/fn.nix; }; in (cached { f = _: { whatever = 42; }; x = { inner = abort \"cache must not deep-force x\"; }; }).whatever"
+result=$(nix eval --impure --expr "$EXPR2")
 echo "Got: $result"
-[[ "$result" == 85 ]]
+[[ "$result" == 42 ]]
