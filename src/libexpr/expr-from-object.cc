@@ -740,11 +740,6 @@ void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callScope)
     resolver.callScope = std::move(callScope);
 }
 
-Hash getAmbientResolverCallScope(const AmbientResolver & resolver)
-{
-    return resolver.callScope;
-}
-
 void registerAmbientResolverProxy(
     AmbientResolver & resolver,
     cidasks::Subject subject,

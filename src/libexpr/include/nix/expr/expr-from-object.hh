@@ -122,10 +122,6 @@ std::shared_ptr<AmbientResolver> makeAmbientResolver(
     Should be unique per cached call (e.g. hash of import path). */
 void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callScope);
 
-/** Get the resolver's current callScope for RAII save/restore around
-    per-cb-invocation scope overrides. */
-Hash getAmbientResolverCallScope(const AmbientResolver & resolver);
-
 /** Register a live outer-direction proxy under a cidasks `subject` +
     `scope` in the resolver's outer-values map. Used by the
     `<replay-local-lambda>` primop at warm replay to publish the
