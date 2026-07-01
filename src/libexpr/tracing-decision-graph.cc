@@ -193,7 +193,6 @@ struct TracingDecisionGraph::State
     SQLiteStmt insertRequest, insertQuery, insertResult, insertLocalResponse;
     SQLiteStmt selectRequest, selectQuery, selectResult, selectLocalResponse;
     SQLiteStmt insertEdgeResponse, selectEdgeResponse;
-    SQLiteStmt insertSessionD1Edge, selectSessionD1Edges;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
     SQLiteStmt countAsks, countTerminals;
@@ -478,10 +477,6 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "SELECT payload FROM LocalResponseMap WHERE requestHash = ?");
     state->selectEdgeResponse.create(state->db,
         "SELECT payload FROM EdgeResponses WHERE queryHash = ? AND fromFactSetHash = ? AND requestHash = ?");
-    state->insertSessionD1Edge.create(state->db,
-        "INSERT OR IGNORE INTO SessionD1Edges(sessionHash, edgeIndex, obsPayload) VALUES (?, ?, ?)");
-    state->selectSessionD1Edges.create(state->db,
-        "SELECT edgeIndex, obsPayload FROM SessionD1Edges WHERE sessionHash = ? ORDER BY edgeIndex");
 
     /* Drop obsolete tables from earlier schema versions. */
     state->db.exec("DROP TABLE IF EXISTS FactSets;");
@@ -583,34 +578,6 @@ std::optional<std::string> TracingDecisionGraph::getEdgeResponsePayload(
     if (!query.next())
         return std::nullopt;
     return query.getBlob(0);
-}
-
-void TracingDecisionGraph::insertSessionD1Edge(
-    const Hash & sessionHash,
-    int64_t edgeIndex,
-    std::string_view obsPayload)
-{
-    auto state(_state->lock());
-    auto use = state->insertSessionD1Edge.use();
-    dg_bindBlob(use, dg_hashToBlob(sessionHash));
-    use(edgeIndex);
-    dg_bindBlob(use, obsPayload);
-    use.exec();
-}
-
-std::vector<std::pair<int64_t, std::string>> TracingDecisionGraph::getSessionD1Edges(
-    const Hash & sessionHash)
-{
-    auto state(_state->lock());
-    auto query = state->selectSessionD1Edges.use();
-    dg_bindBlob(query, dg_hashToBlob(sessionHash));
-    std::vector<std::pair<int64_t, std::string>> out;
-    while (query.next()) {
-        int64_t idx = query.getInt(0);
-        std::string payload = query.getBlob(1);
-        out.emplace_back(idx, std::move(payload));
-    }
-    return out;
 }
 
 #define ATOM_GET_CACHED(NAME, CACHE)                                            \

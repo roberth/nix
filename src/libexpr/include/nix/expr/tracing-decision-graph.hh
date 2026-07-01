@@ -152,24 +152,6 @@ public:
         const SetHash & fromFactSetHash,
         const RequestHash & requestHash);
 
-    /** Insert a serialized cidasks::Edge onto the session's persisted
-        d1CidasksWalk. sessionHash discriminates across cold sessions;
-        edgeIndex is 0..N-1 within the session; obsPayload is the
-        serialized edge (observations as (fromHash, elementHash) pairs).
-        See tracing-decision-graph.cc's schema comment for the
-        end-to-end contract. */
-    void insertSessionD1Edge(
-        const Hash & sessionHash,
-        int64_t edgeIndex,
-        std::string_view obsPayload);
-
-    /** Load all persisted d1 edges for a session, ordered by
-        edgeIndex ascending. Returns the raw (edgeIndex, obsPayload)
-        pairs; caller deserialises each obsPayload into a
-        cidasks::Edge. */
-    std::vector<std::pair<int64_t, std::string>> getSessionD1Edges(
-        const Hash & sessionHash);
-
     /* Enumerate Requests whose payload's `params.from` field equals
        `fromHex`. Used by the depth-2 walker to pre-populate an
        `ApplyContext` with observations the recorder made on a
