@@ -83,6 +83,30 @@ CREATE TABLE IF NOT EXISTS LocalResponseMap (
 -- cur diverges → miss → invalidate. (For this to work, walker still
 -- prefers live over stored when they differ AND fromCID resolves to a
 -- proxy walker recognizes as its current-session value.)
+-- Persisted d1CidasksWalk edges from the cold session's writer.
+-- Walker at warm loads all entries at session start to seed
+-- writer.d1CidasksWalk with cold's walk state. This lets
+-- scopeStateIdAt(subject, scope, walk, k) at warm produce hashes
+-- matching cold's recorded IDs at all k — critical for
+-- resolveCdiId's cell-chain and session-registry lookups when the
+-- target ID was stamped at some historic cold walk-index.
+--
+-- Session hash discriminates cross-session mixing (cb-curried has
+-- multiple cold runs; walker must not merge their walks). Cold's
+-- writer computes a stable per-session hash and includes it in
+-- every edge insertion; walker at warm decides which session's
+-- walk to load (see TracingReplayEvaluator's session-selection).
+--
+-- edgeIndex is 0..N-1 within the session. obsPayload is a
+-- serialized cidasks::Edge (sequence of (fromHash, elementHash)
+-- observation pairs).
+CREATE TABLE IF NOT EXISTS SessionD1Edges (
+    sessionHash BLOB NOT NULL,
+    edgeIndex   INTEGER NOT NULL,
+    obsPayload  BLOB NOT NULL,
+    PRIMARY KEY (sessionHash, edgeIndex)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS EdgeResponses (
     queryHash       BLOB NOT NULL,
     fromFactSetHash BLOB NOT NULL,
