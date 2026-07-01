@@ -179,18 +179,6 @@ public:
         cold's stamped IDs; this trades DB size for lookup breadth. */
     std::vector<std::string> getAllSessionD1Edges();
 
-    /** Store cold's edgeIndex-at-record-time for a specific
-        applyReqHash. See tracing-decision-graph.cc ApplyIndices
-        schema comment. */
-    void insertApplyIndex(
-        const Hash & sessionHash, const Hash & applyReqHash, int64_t edgeIndex);
-
-    /** Look up cold's edgeIndex for a given applyReqHash. Returns
-        nullopt if cold never recorded this apply. Warm walker's
-        TracingReplayEvaluator::apply uses this to compute
-        scopeStateIdAt at cold's k against the loaded walk. */
-    std::optional<int64_t> getApplyIndex(const Hash & applyReqHash);
-
     /* Enumerate Requests whose payload's `params.from` field equals
        `fromHex`. Used by the depth-2 walker to pre-populate an
        `ApplyContext` with observations the recorder made on a

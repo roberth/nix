@@ -420,16 +420,6 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto & d1Walk = writer.getD1CidasksWalk();
     auto applyScopeStateId = cidasks::scopeStateIdAt(resultSubject, applyScope, d1Walk, d1Walk.size());
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
-    /* Persist cold's per-apply walk-index so warm walker can look up
-       cold's k and evaluate scopeStateIdAt against the loaded walk at
-       the SAME index cold used. Closes the walker/cold applyScopeStateId
-       alignment gap that regressed 5 tests in the naive load path
-       (see commit 4113777f6's regression triage). */
-    if (writer.getDecisionGraph()) {
-        auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQ.dump());
-        writer.getDecisionGraph()->insertApplyIndex(
-            writer.getSessionHash(), applyReqHash, static_cast<int64_t>(d1Walk.size()));
-    }
     {
         const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(

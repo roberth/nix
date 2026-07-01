@@ -107,26 +107,6 @@ CREATE TABLE IF NOT EXISTS SessionD1Edges (
     PRIMARY KEY (sessionHash, edgeIndex)
 ) WITHOUT ROWID;
 
--- Cold's per-apply walk-index at record time. Cold's
--- TracingEvaluator::apply stamps each apply's applyScopeStateId at
--- writer.d1CidasksWalk.size() = k; storing k lets warm walker's
--- TracingReplayEvaluator::apply look up cold's k for the same apply
--- and evaluate scopeStateIdAt(subject, scope, loaded_walk, k)
--- against cold's persisted d1 walk (via SessionD1Edges). This is
--- the alignment mechanism that closes the walker/cold scopeStateIdAt
--- gap for cross-Q ID resolution (session-registry lookups and
--- resolveCdiId cell-chain matches at historical indices).
---
--- (sessionHash, applyReqHash) is the natural key: applyReqHash may
--- appear in multiple sessions (same fn+arg pair recorded across
--- cold runs); each session's edgeIndex is recorded independently.
-CREATE TABLE IF NOT EXISTS ApplyIndices (
-    sessionHash    BLOB NOT NULL,
-    applyReqHash   BLOB NOT NULL,
-    edgeIndex      INTEGER NOT NULL,
-    PRIMARY KEY (sessionHash, applyReqHash)
-) WITHOUT ROWID;
-
 CREATE TABLE IF NOT EXISTS EdgeResponses (
     queryHash       BLOB NOT NULL,
     fromFactSetHash BLOB NOT NULL,
@@ -214,7 +194,6 @@ struct TracingDecisionGraph::State
     SQLiteStmt selectRequest, selectQuery, selectResult, selectLocalResponse;
     SQLiteStmt insertEdgeResponse, selectEdgeResponse;
     SQLiteStmt insertSessionD1Edge, selectSessionD1Edges;
-    SQLiteStmt insertApplyIndex, selectApplyIndex;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
     SQLiteStmt countAsks, countTerminals;
@@ -503,10 +482,6 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO SessionD1Edges(sessionHash, edgeIndex, obsPayload) VALUES (?, ?, ?)");
     state->selectSessionD1Edges.create(state->db,
         "SELECT edgeIndex, obsPayload FROM SessionD1Edges WHERE sessionHash = ? ORDER BY edgeIndex");
-    state->insertApplyIndex.create(state->db,
-        "INSERT OR IGNORE INTO ApplyIndices(sessionHash, applyReqHash, edgeIndex) VALUES (?, ?, ?)");
-    state->selectApplyIndex.create(state->db,
-        "SELECT edgeIndex FROM ApplyIndices WHERE applyReqHash = ? LIMIT 1");
 
     /* Drop obsolete tables from earlier schema versions. */
     state->db.exec("DROP TABLE IF EXISTS FactSets;");
@@ -649,27 +624,6 @@ std::vector<std::string> TracingDecisionGraph::getAllSessionD1Edges()
     while (query.next())
         out.push_back(query.getBlob(0));
     return out;
-}
-
-void TracingDecisionGraph::insertApplyIndex(
-    const Hash & sessionHash, const Hash & applyReqHash, int64_t edgeIndex)
-{
-    auto state(_state->lock());
-    auto use = state->insertApplyIndex.use();
-    dg_bindBlob(use, dg_hashToBlob(sessionHash));
-    dg_bindBlob(use, dg_hashToBlob(applyReqHash));
-    use(edgeIndex);
-    use.exec();
-}
-
-std::optional<int64_t> TracingDecisionGraph::getApplyIndex(const Hash & applyReqHash)
-{
-    auto state(_state->lock());
-    auto query = state->selectApplyIndex.use();
-    dg_bindBlob(query, dg_hashToBlob(applyReqHash));
-    if (!query.next())
-        return std::nullopt;
-    return query.getInt(0);
 }
 
 #define ATOM_GET_CACHED(NAME, CACHE)                                            \
