@@ -1,5 +1,6 @@
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/ambient-object.hh"
+#include "nix/expr/expr-from-object.hh"
 #include "nix/expr/lambda-apply-result-object.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-local-object.hh"
@@ -430,6 +431,34 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     }
 
     auto v = writer.getSink().logQuery(trace::QueryApply{fnId, argId});
+
+    /* Per-invocation callScope contribution: XOR the resolver's
+       persistent callScope with this apply's `applyScopeStateId`
+       (which incorporates the OUTER Q's argStateId that discriminates
+       sibling cb-invocations like cb-sibling's fA vs fB). Without
+       this, sibling cb-apply invocations share the same
+       resolver->callScope, so their inner facts compute identical
+       `from` fields at flush time — reqhash collides between
+       siblings, `INSERT OR IGNORE` on LocalResponseMap keeps only
+       the first sibling's response, and walker's Q_B XOR-cur can't
+       reproduce cold's factSet (which had both siblings' distinct
+       fact hashes). RAII-restore on scope exit so nested/subsequent
+       cache invocations aren't polluted. */
+    struct CallScopeGuard {
+        std::shared_ptr<AmbientResolver> resolver;
+        Hash oldScope{HashAlgorithm::SHA256};
+        ~CallScopeGuard() {
+            if (resolver) setAmbientResolverCallScope(*resolver, oldScope);
+        }
+    } guard;
+    if (auto resolver = inner->getAmbientResolver()) {
+        guard.resolver = resolver;
+        guard.oldScope = getAmbientResolverCallScope(*resolver);
+        auto siblingScope = TracingDecisionGraph::xorHashes(
+            guard.oldScope, applyScopeStateId);
+        setAmbientResolverCallScope(*resolver, siblingScope);
+    }
+
     auto result = inner->apply(fn, arg);
     auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
 
