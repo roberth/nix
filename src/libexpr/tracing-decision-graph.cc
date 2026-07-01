@@ -66,6 +66,31 @@ CREATE TABLE IF NOT EXISTS LocalResponseMap (
     payload     BLOB NOT NULL
 );
 
+-- Edge-context-keyed responses: for each (queryHash, fromFactSetHash,
+-- requestHash) recorded, stores the response payload cold observed.
+-- Warm walker at edge (Q, fromCur) → dispatches reqhash: looks up
+-- (Q, fromCur, reqhash) to get per-edge-context response. Distinguishes
+-- cross-sibling contamination (walker's cell chain resolves to wrong
+-- sibling's proxy via XOR-fold coincidence) from outer-value change
+-- (walker's live legitimately differs from cold's recorded).
+--
+-- Cross-sibling case: reqhash appears in Q_B's edge at fromCur_B. Cold
+-- stores (Q_B, fromCur_B, reqhash) → resp. Walker at (Q_B, fromCur_B)
+-- gets resp → XOR-cur reaches cold's terminal. Hit.
+--
+-- Outer-change case: cold's recorded response for a Q's edge at fromCur
+-- is stale. Walker's live gives new value. Walker's XOR uses live →
+-- cur diverges → miss → invalidate. (For this to work, walker still
+-- prefers live over stored when they differ AND fromCID resolves to a
+-- proxy walker recognizes as its current-session value.)
+CREATE TABLE IF NOT EXISTS EdgeResponses (
+    queryHash       BLOB NOT NULL,
+    fromFactSetHash BLOB NOT NULL,
+    requestHash     BLOB NOT NULL,
+    payload         BLOB NOT NULL,
+    PRIMARY KEY (queryHash, fromFactSetHash, requestHash)
+);
+
 -- Storage layer: set pools.
 --
 -- RequestSets are stored as a hash-prefix trie of content-addressed
@@ -143,6 +168,7 @@ struct TracingDecisionGraph::State
     /* Storage layer */
     SQLiteStmt insertRequest, insertQuery, insertResult, insertLocalResponse;
     SQLiteStmt selectRequest, selectQuery, selectResult, selectLocalResponse;
+    SQLiteStmt insertEdgeResponse, selectEdgeResponse;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
     SQLiteStmt countAsks, countTerminals;
@@ -414,6 +440,8 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO Results(resultHash, payload) VALUES (?, ?)");
     state->insertLocalResponse.create(state->db,
         "INSERT OR IGNORE INTO LocalResponseMap(requestHash, payload) VALUES (?, ?)");
+    state->insertEdgeResponse.create(state->db,
+        "INSERT OR IGNORE INTO EdgeResponses(queryHash, fromFactSetHash, requestHash, payload) VALUES (?, ?, ?, ?)");
 
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
@@ -423,6 +451,8 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "SELECT payload FROM Results WHERE resultHash = ?");
     state->selectLocalResponse.create(state->db,
         "SELECT payload FROM LocalResponseMap WHERE requestHash = ?");
+    state->selectEdgeResponse.create(state->db,
+        "SELECT payload FROM EdgeResponses WHERE queryHash = ? AND fromFactSetHash = ? AND requestHash = ?");
 
     /* Drop obsolete tables from earlier schema versions. */
     state->db.exec("DROP TABLE IF EXISTS FactSets;");
@@ -495,6 +525,36 @@ ATOM_INSERT_CACHED(Result, resultPayloadCache)
 ATOM_INSERT_CACHED(LocalResponse, localResponsePayloadCache)
 #undef ATOM_INSERT_CACHED
 #undef ATOM_INSERT_PLAIN
+
+void TracingDecisionGraph::insertEdgeResponse(
+    const QueryHash & queryHash,
+    const SetHash & fromFactSetHash,
+    const RequestHash & requestHash,
+    std::string_view payload)
+{
+    auto state(_state->lock());
+    auto use = state->insertEdgeResponse.use();
+    dg_bindBlob(use, dg_hashToBlob(queryHash));
+    dg_bindBlob(use, dg_hashToBlob(fromFactSetHash));
+    dg_bindBlob(use, dg_hashToBlob(requestHash));
+    dg_bindBlob(use, payload);
+    use.exec();
+}
+
+std::optional<std::string> TracingDecisionGraph::getEdgeResponsePayload(
+    const QueryHash & queryHash,
+    const SetHash & fromFactSetHash,
+    const RequestHash & requestHash)
+{
+    auto state(_state->lock());
+    auto query = state->selectEdgeResponse.use();
+    dg_bindBlob(query, dg_hashToBlob(queryHash));
+    dg_bindBlob(query, dg_hashToBlob(fromFactSetHash));
+    dg_bindBlob(query, dg_hashToBlob(requestHash));
+    if (!query.next())
+        return std::nullopt;
+    return query.getBlob(0);
+}
 
 #define ATOM_GET_CACHED(NAME, CACHE)                                            \
     std::optional<std::string> TracingDecisionGraph::get##NAME##Payload(        \
@@ -1379,7 +1439,7 @@ bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factS
 
 std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
     const QueryHash & q,
-    const std::function<ResponseHash(const RequestHash &)> & dispatch,
+    const std::function<ResponseHash(const RequestHash &, const EdgeContext &)> & dispatch,
     const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt,
     const SetHash & startCur,
     const std::unordered_set<RequestHash> & startCurRequests)
@@ -1429,8 +1489,9 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                 continue; // degenerate edge — all its requests already in cur
 
             Hash nextCur = cur;
+            EdgeContext edgeCtx{q, cur, requestSetHash};
             for (const auto & req : useful) {
-                auto resp = dispatch(req);
+                auto resp = dispatch(req, edgeCtx);
                 nextCur = dg_xorHash(nextCur, dg_factElementHash(req, resp));
             }
 

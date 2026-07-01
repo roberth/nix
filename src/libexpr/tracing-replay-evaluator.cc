@@ -164,7 +164,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        which proxy (cb invocation) the walk is grounded in — sibling
        cb apply invocations of the same fn share a request hash but
        must see their own arg's live value, not a memoised sibling's. */
-    auto dispatch = [&](const Hash & requestHash) -> Hash {
+    auto dispatch = [&](const Hash & requestHash, const TracingDecisionGraph::EdgeContext & edgeCtx) -> Hash {
         auto requestPayload = decisionGraph.getRequestPayload(requestHash);
         if (!requestPayload)
             return Hash(HashAlgorithm::SHA256);
@@ -284,6 +284,13 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             }
         }
         auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
+        /* NOTE: edgeCtx.queryHash / fromFactSetHash / requestSetHash
+           are now available for per-edge-context lookups via
+           decisionGraph.getEdgeResponsePayload(...). Cold populates
+           EdgeResponses at logResult time. Any override logic here
+           must correctly discriminate cross-sibling contamination
+           from outer-value change (see task #91). */
+        (void) edgeCtx;
         if (!isAmbient)
             dispatchCache.emplace(requestHash, h);
         /* Dispatched facts are real environment observations; feed
@@ -366,8 +373,9 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
 
         Hash candidateCur = lastQFactsHash;
         bool dispatchFailed = false;
+        TracingDecisionGraph::EdgeContext fastPathCtx{queryHash, lastQFactsHash, edgeRsHash};
         for (const auto & req : onlyInEdge) {
-            auto resp = dispatch(req);
+            auto resp = dispatch(req, fastPathCtx);
             if (resp == Hash(HashAlgorithm::SHA256)) {
                 dispatchFailed = true;
                 break;

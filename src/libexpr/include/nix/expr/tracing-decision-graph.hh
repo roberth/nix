@@ -120,6 +120,21 @@ public:
     void insertLocalResponse(const RequestHash & requestHash, std::string_view payload);
     std::optional<std::string> getLocalResponsePayload(const RequestHash & requestHash);
 
+    /* Edge-context-keyed response storage. Cold records
+       (queryHash, fromFactSetHash, requestHash) → payload for each
+       fact in each Q's per-edge requestSet. Walker at dispatch time
+       within an edge looks up by the same triple to get the specific
+       response cold recorded for THAT edge context. */
+    void insertEdgeResponse(
+        const QueryHash & queryHash,
+        const SetHash & fromFactSetHash,
+        const RequestHash & requestHash,
+        std::string_view payload);
+    std::optional<std::string> getEdgeResponsePayload(
+        const QueryHash & queryHash,
+        const SetHash & fromFactSetHash,
+        const RequestHash & requestHash);
+
     /* Enumerate Requests whose payload's `params.from` field equals
        `fromHex`. Used by the depth-2 walker to pre-populate an
        `ApplyContext` with observations the recorder made on a
@@ -310,15 +325,43 @@ public:
        Q lookups use it as their candidate startCur, so a child's walk
        starts from its parent's structural anchor. */
     struct WalkHit { ResultHash resultHash; SetHash terminalCur; };
+    /* Edge context passed to dispatch: identifies the specific Asks
+       edge whose requests are being dispatched. Walker uses this to
+       key EdgeResponses lookups so it can distinguish cross-sibling
+       contamination (walker's context corresponds to a Q whose
+       cumulative factSet inherited a fact from a prior sibling)
+       from outer-value change (live truly differs from what cold
+       recorded at this edge). */
+    struct EdgeContext
+    {
+        QueryHash queryHash;
+        SetHash fromFactSetHash;
+        SetHash requestSetHash;
+    };
+
     std::optional<WalkHit> walk(
         const QueryHash & q,
-        const std::function<ResponseHash(const RequestHash &)> & dispatch,
+        const std::function<ResponseHash(const RequestHash &, const EdgeContext &)> & dispatch,
         const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt = {},
         /* Starting cur for the walk. Defaults to ∅. Callers that
            have a structural anchor (= parent TracingReplayObject's terminalCur) can
            hand it in so the walk starts at that lookup position. */
         const SetHash & startCur = SetHash(HashAlgorithm::SHA256),
         const std::unordered_set<RequestHash> & startCurRequests = {});
+
+    /* Backward-compat overload: dispatch takes only the request. Used
+       by unit tests that don't need edge context. */
+    std::optional<WalkHit> walk(
+        const QueryHash & q,
+        const std::function<ResponseHash(const RequestHash &)> & dispatch,
+        const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt = {},
+        const SetHash & startCur = SetHash(HashAlgorithm::SHA256),
+        const std::unordered_set<RequestHash> & startCurRequests = {})
+    {
+        return walk(q,
+            [&](const RequestHash & req, const EdgeContext &) { return dispatch(req); },
+            onEdgeAttempt, startCur, startCurRequests);
+    }
 
     /* Persist one trie node by hash. Idempotent (INSERT OR IGNORE +
        in-process cache short-circuit). Used by TrieBuilder to push
