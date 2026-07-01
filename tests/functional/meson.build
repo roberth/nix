@@ -198,6 +198,8 @@ suites = [
       'cb-deep-nav-and-indexing.sh',
       'cb-xor-evolution-repeated-cb-apply.sh',
       'cb-sibling-discrimination-via-observation.sh',
+      'cb-sibling-b-depends-on-a.sh',
+      'cb-sibling-a-has-bottom.sh',
       'path-from-hash-part.sh',
       'path-info.sh',
       'json.sh',
