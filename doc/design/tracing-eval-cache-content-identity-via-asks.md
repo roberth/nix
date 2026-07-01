@@ -465,6 +465,22 @@ Depth-1 doesn't read this map at all (= walker live-dispatches
 against the environment and validates structurally via factset
 evolution through `Asks`/`Terminals`).
 
+**The soundness scope is within-session.** The (subject, scope,
+prior facts) → reqHash function is well-defined per writer session.
+Across independent sessions, seed(N)'s pre-observation CDI is the
+same initial value regardless of what outer value the seed
+represents in that session — so first observations on the seed
+carry the same reqhash across sessions and can record different
+responses. cb-curried-state-creep exercises this: `(cache f 10) …`
+and `(cache f 100) …` recorded in separate sessions produce two
+LRM entries at the same seed(1)-derived reqhash with values 10 and
+100. LRM's first-writer-wins stores one; a d=1 lookup would return
+whichever session recorded first, regardless of which outer arg
+the warm walker is actually working with — the direct violation of
+this map's contract. Any d=1 dispatch fallback that reads LRM
+under this shape is unsound (see commit `d49af4181` reverting
+the ce9cefa53 hasFromCids fallback that reintroduced this bug).
+
 The pool also stores the LocalObject's value structure: small
 atoms covering attrset entries, list elements, scalars. These get
 content-addressed exactly the same way. They're what the walker
