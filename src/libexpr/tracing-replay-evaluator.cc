@@ -17,6 +17,8 @@
 #include "nix/expr/object-type.hh"
 
 #include <nlohmann/json.hpp>
+#include <set>
+#include <utility>
 
 namespace nix {
 
@@ -438,8 +440,46 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         return live;
                     }
                 }
+                /* Speculative: cold's writer may have folded many
+                   observations at a single edge (e.g. logResult's
+                   flushPendingAmbient dumps N ambient facts into
+                   walk[K].observations at once). Walker's cidasksWalk
+                   distributes the same obs across multiple v13Walk
+                   edges — so any single-edge fold produces only a
+                   subset. Try a hypothetical single-edge walk that
+                   collects ALL of walker's cidasksWalk observations —
+                   XOR-fold is commutative, so if walker's obs contain
+                   cold's fold contributors, the collected version
+                   reproduces cold's evolved id. */
+                if (!cidasksWalk.empty()) {
+                    /* Deduplicate observations by (from, elem) pair —
+                       walker may commit the same obs across multiple
+                       edges (shared prefix reuse), which XOR-cancels
+                       under naive collection. */
+                    cidasks::Edge collected;
+                    std::set<std::pair<std::string, std::string>> seen;
+                    for (const auto & edge : cidasksWalk) {
+                        for (const auto & obs : edge.observations) {
+                            auto key = std::make_pair(
+                                obs.fromHash.to_string(HashFormat::Base16, false),
+                                obs.elementHash.to_string(HashFormat::Base16, false));
+                            if (seen.insert(key).second)
+                                collected.observations.push_back(obs);
+                        }
+                    }
+                    std::vector<cidasks::Edge> hypWalk{std::move(collected)};
+                    auto collectedId = cidasks::scopeStateIdAt(*subj, scope, hypWalk, 1);
+                    if (collectedId.to_string(HashFormat::Base16, false) == idStr) {
+                        tracingCacheLog(
+                            "resolve %s: cell[%d] subject=%s MATCH at collected-single-edge",
+                            idStr.substr(0, 12), cellDepth,
+                            cidasks::describe(*subj));
+                        ctx.memo[idStr] = live;
+                        return live;
+                    }
+                }
                 tracingCacheLog(
-                    "resolve %s: cell[%d] subject=%s miss across %zu edges",
+                    "resolve %s: cell[%d] subject=%s miss across %zu edges (+collected)",
                     idStr.substr(0, 12), cellDepth,
                     cidasks::describe(*subj), cidasksWalk.size() + 1);
             } else {
