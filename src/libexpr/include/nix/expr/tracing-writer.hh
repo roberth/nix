@@ -286,6 +286,23 @@ public:
         return d1CidasksWalk;
     }
 
+    /** Walker-side hook: append a synthetic boundary edge with an ε
+        observation (from=0, elementHash=applyReqHash) onto
+        d1CidasksWalk. Matches cold's markApplyBoundary's d1 growth
+        pattern (each cb-apply boundary contributes an ε edge whose
+        elementHash is the apply's reqHash) WITHOUT triggering
+        markApplyBoundary's other side-effects (Asks-edge splitting,
+        pool inserts, suppressedBoundaryHook). The ε observation gives
+        the edge a distinct XOR-fold payload so consecutive sibling
+        applies with different reqHashes produce distinct evolved
+        subject CIDs at the post-boundary walk index. */
+    void walkerAppendBoundaryEdge(const Hash & applyReqHash)
+    {
+        cidasks::Edge edge;
+        edge.observations.push_back({Hash(HashAlgorithm::SHA256), applyReqHash});
+        d1CidasksWalk.push_back(std::move(edge));
+    }
+
     /** Cumulative factSet hash maintained per-fact via XOR-fold.
         At cold time, advances at `noteEnvObservation` (= walker
         dispatches), `logResponse` (= env/file recordings), and
