@@ -28,10 +28,19 @@ std::vector<std::string> InterpreterObject::getAttrNames()
     if ((*value)->type() != nAttrs)
         state.error<TypeError>("expected an attribute set but found %s", showType(**value)).debugThrow();
 
+    /* Sort lexicographically. Bindings' native iteration is symbol-id
+       order — symbol ids are assigned by SymbolTable in insertion
+       order, so across process invocations the same attribute set can
+       iterate as [x, y] or [y, x] depending on which symbol got
+       interned first. That reorders `WHNFAttrs::names`, which feeds
+       into request/response hashing and makes the walker's cur
+       non-deterministic. Lex sort makes the encoding a pure function
+       of the attrset's content. */
     std::vector<std::string> result;
-    for (auto & attr : *(*value)->attrs()) {
+    result.reserve((*value)->attrs()->size());
+    for (auto & attr : *(*value)->attrs())
         result.push_back(std::string(state.symbols[attr.name]));
-    }
+    std::sort(result.begin(), result.end());
     return result;
 }
 
