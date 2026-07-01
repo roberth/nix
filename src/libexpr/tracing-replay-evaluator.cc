@@ -289,7 +289,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
            decisionGraph.getEdgeResponsePayload(...). Cold populates
            EdgeResponses at logResult time. Any override logic here
            must correctly discriminate cross-sibling contamination
-           from outer-value change (see task #91). */
+           from outer-value change. */
         (void) edgeCtx;
         if (!isAmbient)
             dispatchCache.emplace(requestHash, h);

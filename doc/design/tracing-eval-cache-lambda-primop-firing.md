@@ -579,8 +579,7 @@ multiple LocalResponseMap entries.
 **Step 8 — Performance check (perf harness).** Multi-level
 LocalResponseMap entries add storage. cb-higher-order family
 is minimal; full nixpkgs flake with cached higher-order
-patterns would stress this. Defer perf measurement to
-post-merge.
+patterns would stress this. Perf measurement runs post-merge.
 
 **Rollback policy.** Any test failure outside the expected
 list (= cb-385, cb-sibling, cb-stats hit-count) means

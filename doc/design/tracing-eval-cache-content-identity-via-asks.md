@@ -125,8 +125,8 @@ These are the specific commitments of this design.
      = initial(N) XOR (XOR-fold over observations in F about seed_N)
    ```
 
-   For a derived subject S = parent[name] at factset F (= per-arg
-   centralization, task #86):
+   For a derived subject S = parent[name] at factset F (per-arg
+   centralization):
 
    ```
    contentId(S, F) = qH(producer_query{
@@ -150,9 +150,9 @@ These are the specific commitments of this design.
    ```
 
    Today apply-result observations fold into the apply-result's own
-   chain, not back into `fn`'s. Function characterization (= the
+   chain, not back into `fn`'s. Function characterization — the
    feedback that distinguishes siblings differing only in apply
-   behavior) is task #87.
+   behavior — is the next principled edit.
 
 4. **Membership in "observations about V" is decided per Asks edge.**
    At an Asks edge's precondition factset, each subject has a

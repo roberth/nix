@@ -202,9 +202,9 @@ trace::PathExpr pathFromSubject(const Subject & subject);
     `argRootIndex`. Roots are leaves of the subject tree: PositionalSeeds
     or PostulatedIdempotentReads. Same-leaf occurrences (= e.g. fn and arg
     both deriving from the same cb_arg) collapse to one entry by Subject
-    equality. Function characterization (= task #87) needs this so that
-    observations on apply-result descendants reference both fn-root and
-    arg-root in the wire payload. */
+    equality. Function characterization needs this so that observations
+    on apply-result descendants reference both fn-root and arg-root in
+    the wire payload. */
 struct PathAndRoots
 {
     trace::PathExpr path;

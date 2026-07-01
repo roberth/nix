@@ -278,4 +278,4 @@ the same rate cold did — essentially synthesising `logResult`
 equivalents during `v13Walk` so `writer.d1.size` advances in
 lockstep with cold's growth pattern. That's a wider edit than
 option 2 alone: it touches the writer/walker contract for what
-"a flush" means and when it fires. Deferred as follow-up work.
+"a flush" means and when it fires. Follow-up work.

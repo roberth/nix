@@ -348,9 +348,9 @@ struct PathExpr;  // forward — PathStep::Apply nests sub-PathExprs
     node whose `fnPath` and `argPath` are themselves sub-PathExprs;
     each sub-path resolves against an entry in the enclosing query's
     `fromCIDs[]` (selected by `fnRootIndex` / `argRootIndex`). The
-    apply form is used by function characterization (= task #87) so
-    observations on apply-result descendants compose into a path
-    rooted in the cb_args that fn and arg came from. */
+    apply form is used by function characterization so observations
+    on apply-result descendants compose into a path rooted in the
+    cb_args that fn and arg came from. */
 struct PathStep
 {
     enum class Kind {

@@ -392,7 +392,7 @@ for the same Q at different factSets — but which one a walk lands
 at depends on what the live env returns at dispatch time. The
 cache makes no attempt to detect or arbitrate genuine
 nondeterminism; it's a model-level concern Phase 2 sketched
-policies for and left deferred.
+policies for and left open.
 
 ## Integration
 
@@ -534,7 +534,7 @@ Performance harness under `tests/perf/tracing-cache/`:
   recent nixpkgs.
 - `v13-large-scale.sh` — K=1k..10k push toward `nix-env -qa` scale.
 
-## What's deferred
+## Open work
 
 - **Phase 2 from the legacy design doc**: passive-replay-before-insert
   (skip records whose factSet is a redundant superset of an existing

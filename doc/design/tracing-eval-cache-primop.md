@@ -45,7 +45,7 @@ This document covers:
   `EvalCommand` and `builtins.cache` when both are wired up in the
   same process.
 
-Out of scope here (deferred follow-ups):
+Out of scope here (follow-ups):
 
 - The future-extensions interface (`lookupPath`, `env`,
   cached-function-call roots as their own cache key).
@@ -156,7 +156,7 @@ What is missing or wrong, and so must change:
 
 4. The recording-side `TracingWriter` requires a `TraceSink &`
    reference. As in v12, the primop will satisfy it with a
-   `NullTraceSink`. Removing this is the deferred `TeeTracingWriter`
+   `NullTraceSink`. Removing this is the planned `TeeTracingWriter`
    work.
 
 5. `ExprFromObject::eval`'s `nFunction` arm
@@ -1012,7 +1012,7 @@ that bypasses live validation (see [§Replay semantics for
 **Step F — clean up and document.**
 Move the bulk of the design content here into the source-level
 comments where appropriate, add a paragraph to `tracing-eval-cache.md`
-that drops the "deferred" qualifier from the `builtins.cache` row,
+that drops the follow-up qualifier from the `builtins.cache` row,
 and remove the v12-era TODO comments in `cache.cc` that refer to
 removed types.
 
@@ -1178,7 +1178,7 @@ prerequisite of all the rest.
 
 **Step F — wrap-up** (~20 lines)
 
-- [x] `doc/design/tracing-eval-cache.md`: in the "What's deferred"
+- [x] `doc/design/tracing-eval-cache.md`: in the "Open work"
       section, drop the `builtins.cache` line.
 - [x] `src/libexpr/primops/cache.cc`: remove the "d=2 ambient layer
       pending" comment block.
@@ -1249,7 +1249,7 @@ These were in the v12-era follow-up list and remain valid:
 - Interaction-traced *outer→inner* nesting as an alternative to the
   current input-traced nesting (so the outer cache treats the inner
   as an oracle and benefits from per-method early cutoff). This is a
-  change in cost model rather than correctness; defer until we have
+  change in cost model rather than correctness; wait until we have
   numbers.
 - **Observation-driven unification — the general fallback for
   cross-invocation seed drift.** When two evaluations produce
@@ -1279,7 +1279,7 @@ These were in the v12-era follow-up list and remain valid:
   just the CLI, and compatible with the producer-query-as-id
   model since derived ids are content-addressed; only seed
   identification stays positional. Cost may be substantial;
-  defer until a workload justifies it.
+  wait until a workload justifies it.
 
   *Narrow CLI complement: named hints.* The CLI specifically could
   stabilise seed identity by supplying a semantic hint string at
