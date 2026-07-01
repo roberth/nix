@@ -253,12 +253,13 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             return Hash(HashAlgorithm::SHA256);
         }
         auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
-        /* NOTE: edgeCtx.queryHash / fromFactSetHash / requestSetHash
-           are now available for per-edge-context lookups via
-           decisionGraph.getEdgeResponsePayload(...). Cold populates
-           EdgeResponses at logResult time. Any override logic here
-           must correctly discriminate cross-sibling contamination
-           from outer-value change. */
+        /* edgeCtx is threaded through walk() for offline-inspection
+           consumers; d=1 dispatch MUST NOT read stored responses to
+           substitute for a failed live navigation — see the
+           EdgeResponses API header for the layering rule and the
+           `cross-session-seed-collision` memory for the failure
+           signature when this contract is violated. Live-dispatch or
+           miss; no third option. */
         (void) edgeCtx;
         if (!isAmbient)
             dispatchCache.emplace(requestHash, h);
