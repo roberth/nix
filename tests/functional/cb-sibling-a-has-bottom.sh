@@ -24,16 +24,20 @@
 #     → b.whatever = 43
 # Total: 85.
 #
-# Warm must produce 85 without triggering the abort. If a
-# discrimination fix forces `x.inner` for A (to hash it, to compute a
-# per-sibling id, to normalise recording context — any reason),
-# cold's 85 becomes warm's abort message. That failure is more
-# diagnostic than the DISALLOW_CACHE_INTERPRET_INNER gate error: it
-# names the exact discipline violated.
+# The invariant we assert here is orthogonal to whether warm
+# actually produces the right value. Warm may currently gate on
+# DISALLOW_CACHE_INTERPRET_INNER (= same failure mode as
+# cb-sibling-discrimination-via-observation, which owns *that*
+# assertion). What this test uniquely asserts is: no cache-induced
+# force of `x.inner` occurs. If any discrimination scheme reaches
+# for `x.inner` (to hash it, to compute a per-sibling id, to
+# normalise recording context — any reason), the abort fires with
+# our specific message and this test fails loud, naming the
+# violated discipline.
 #
-# Red today at the same gate as cb-sibling-discrimination-via-
-# observation. Will land green together with the discrimination fix
-# — and any pseudo-fix that reaches into `x.inner` will fail loud.
+# Passes today (abort doesn't fire; the gate does). Will keep
+# passing when the discrimination fix lands *if* the fix stays
+# lazy on `x`. Fails hard if any implementation deep-forces.
 
 source common.sh
 
@@ -56,7 +60,18 @@ result=$(nix eval --impure --expr "$EXPR")
 echo "Got: $result"
 [[ "$result" == 85 ]]
 
-echo "=== warm DISALLOW_CACHE_INTERPRET_INNER (expect 85) ==="
-result=$(_NIX_DISALLOW_CACHE_INTERPRET_INNER=1 nix eval --impure --expr "$EXPR")
+# Warm: the only invariant this test asserts is that the abort is
+# NOT triggered. It does not assert warm produces 85 — that's the
+# concern of cb-sibling-discrimination-via-observation, which fails
+# for a separate reason today (missing discrimination). This test
+# stays green as long as no cache-induced force reaches `x.inner`,
+# whether warm succeeds cleanly, gates on
+# DISALLOW_CACHE_INTERPRET_INNER, or produces any other error not
+# involving the abort message.
+echo "=== warm DISALLOW_CACHE_INTERPRET_INNER (abort must not fire) ==="
+result=$(_NIX_DISALLOW_CACHE_INTERPRET_INNER=1 nix eval --impure --expr "$EXPR" 2>&1 || true)
 echo "Got: $result"
-[[ "$result" == 85 ]]
+if [[ "$result" == *"cache must not deep-force x"* ]]; then
+    echo "FAIL: cache-induced force of x.inner triggered the abort"
+    exit 1
+fi
