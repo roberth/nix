@@ -1488,12 +1488,45 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
             if (useful.empty())
                 continue; // degenerate edge — all its requests already in cur
 
+            /* Two-pass dispatch within an edge: successful dispatches
+               populate the walker's pendingEdgeObservations, which
+               resolveCdiId consults for intra-edge subject-CDI
+               evolution. First-pass failures (dispatch returned the
+               zero sentinel) get retried in a second pass after the
+               successful obs have been buffered — this catches the
+               case where an earlier-in-edge fact's `from` references a
+               CDI that only becomes resolvable after a later-in-edge
+               fact contributes to the fold. Bounded to two passes; a
+               genuine dispatch failure stays zero and the walk's
+               hasAnyEdge validation catches the divergent nextCur. */
             Hash nextCur = cur;
             EdgeContext edgeCtx{q, cur, requestSetHash};
-            for (const auto & req : useful) {
-                auto resp = dispatch(req, edgeCtx);
-                nextCur = dg_xorHash(nextCur, dg_factElementHash(req, resp));
+            std::vector<std::pair<RequestHash, ResponseHash>> results;
+            results.reserve(useful.size());
+            std::vector<size_t> failedIndices;
+            for (size_t i = 0; i < useful.size(); ++i) {
+                auto resp = dispatch(useful[i], edgeCtx);
+                if (resp == Hash(HashAlgorithm::SHA256))
+                    failedIndices.push_back(i);
+                results.emplace_back(useful[i], resp);
             }
+            /* Iteratively retry failed dispatches: each pass may resolve
+               a new subset of previously-failing `from` values as more
+               obs land in pendingEdgeObservations. Bounded to prevent
+               runaway loops when a dispatch stays genuinely unresolvable. */
+            for (int pass = 0; pass < 4 && !failedIndices.empty(); ++pass) {
+                std::vector<size_t> stillFailed;
+                for (size_t idx : failedIndices) {
+                    auto resp = dispatch(useful[idx], edgeCtx);
+                    results[idx].second = resp;
+                    if (resp == Hash(HashAlgorithm::SHA256))
+                        stillFailed.push_back(idx);
+                }
+                if (stillFailed.size() == failedIndices.size()) break;
+                failedIndices = std::move(stillFailed);
+            }
+            for (const auto & pr : results)
+                nextCur = dg_xorHash(nextCur, dg_factElementHash(pr.first, pr.second));
 
             /* Validate that some recording for THIS query reaches
                (Q, nextCur) — i.e., the dispatched responses lead to
