@@ -128,9 +128,20 @@ public:
 
     /* Edge-context-keyed response storage. Cold records
        (queryHash, fromFactSetHash, requestHash) → payload for each
-       fact in each Q's per-edge requestSet. Walker at dispatch time
-       within an edge looks up by the same triple to get the specific
-       response cold recorded for THAT edge context. */
+       fact in each Q's per-edge requestSet.
+
+       NOT a d=1 dispatch source. Same rule as LocalResponseMap: d=1
+       walker live-dispatches; serving from storage bypasses the
+       structural-validation contract even when the per-edge triple
+       is more specific than LRM's reqhash-only key. See
+       `cross-session-seed-collision` memory for why per-edge-context
+       lookup isn't a safe workaround — if walker's live navigation
+       fails, that is the walker's miss signal, not a licence to
+       consult storage.
+
+       Kept as an offline-inspection / diagnostic surface. If a
+       future use lands, name it explicitly and document why the
+       lookup is safe at that layer. */
     void insertEdgeResponse(
         const QueryHash & queryHash,
         const SetHash & fromFactSetHash,
