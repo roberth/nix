@@ -11,6 +11,7 @@
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/util/ref.hh"
 
+#include <algorithm>
 #include <map>
 #include <optional>
 #include <unordered_set>
@@ -493,15 +494,37 @@ public:
     {
         if (!decisionGraph)
             return;
-        /* Same dedupe semantics as logResponse — see commentary
-           there. */
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), request, response);
         if (seenRequests.insert(factHash).second) {
+            /* Cross-context update: if we previously noted a different
+               response for the SAME request (cb-sibling's shared
+               reqhash across sibling contexts), replace the old fact
+               with the new one. Otherwise v13FactSet accumulates
+               multiple fact hashes per request but record() can only
+               emit one dispatch per request per chain — walker can
+               contribute one fact-hash per dispatch, so the chain
+               and cur diverge. Keeping the latest observation as the
+               canonical one aligns the chain with warm walker's
+               current-context live-dispatch. */
+            if (auto it = responseFor.find(request); it != responseFor.end() && it->second != response) {
+                /* XOR out the old fact from v13FactSetHash and drop the
+                   old entry from v13FactSet. seenRequests keeps the old
+                   factHash entry to guard against re-adding it. */
+                v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
+                    v13FactSetHash, request, it->second);
+                auto oldResp = it->second;
+                v13FactSet.erase(
+                    std::remove_if(v13FactSet.begin(), v13FactSet.end(),
+                        [&](const auto & f) { return f.request == request && f.response == oldResp; }),
+                    v13FactSet.end());
+                it->second = response;
+            } else {
+                responseFor.emplace(request, response);
+            }
             v13FactSet.push_back({request, response});
             v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 v13FactSetHash, request, response);
-            responseFor.emplace(request, response);
             allRequestsTrie.insert(request);
             if (allRequestHashes.insert(request).second)
                 pendingNewRequests.push_back(request);
