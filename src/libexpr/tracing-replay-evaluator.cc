@@ -69,36 +69,51 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
     std::vector<cidasks::Observation> pendingEdgeObservations;
 
     auto commitEdge = [&]() {
-        /* 1:1 alignment with writer's d1CidasksWalk (= keyed to
-           perQAsksEdges): always push, even when no ambient
-           observations were buffered (= file-read-only Asks edge).
-           Empty edges contribute nothing to cidasks own-loops but
-           advance the walk index in lockstep with the writer.
+        /* 1:1 alignment with writer's d1CidasksWalk: writer inserts each
+           cb-apply boundary's ε obs as a SEPARATE d1 edge at its
+           `insertionIndex`, not bundled with the real-obs edge that
+           triggered it. Walker's dispatch() pushes ε obs (fromHash=0)
+           into `pendingEdgeObservations` alongside real obs of the
+           same Asks edge — we need to split them at commit time so
+           each ε lives in its own edge, matching writer's layout.
 
-           Dedup by the edge's element-hash fingerprint (= XOR-fold
-           of its fact element hashes) so re-traversing a shared
-           Asks prefix in a later v13Walk doesn't double-append.
-           XOR is a true set algebra here (Component F): same set
-           of facts → same fingerprint regardless of order. The
-           empty fingerprint (= 0) deduplicates trivially — multiple
-           empty edges traversed in one v13Walk would collapse to
-           one. To keep distinct empty edges from different perQ
-           positions countable, dedup is skipped for empty edges. */
-        Hash fingerprint(HashAlgorithm::SHA256);
-        for (const auto & f : pendingEdgeObservations)
-            fingerprint = TracingDecisionGraph::xorFactIntoHash(
-                fingerprint, f.fromHash, f.elementHash);
-        bool isEmpty = pendingEdgeObservations.empty();
-        if (isEmpty || committedEdgeFingerprints.insert(fingerprint).second) {
-            cidasks::Edge edge;
-            edge.observations = std::move(pendingEdgeObservations);
-            cidasksWalk.push_back(std::move(edge));
-            tracingCacheLog("dispatch: committed edge, cidasksWalk=%zu (obs=%zu)",
-                            cidasksWalk.size(), cidasksWalk.back().observations.size());
-        } else {
-            tracingCacheLog("dispatch: edge already in cidasksWalk (shared prefix), skip");
+           Split: partition pending obs into ε (fromHash=0) and real
+           (non-zero fromHash). Commit real obs as the primary edge;
+           each ε obs becomes its own subsequent edge. */
+        std::vector<cidasks::Observation> realObs;
+        std::vector<cidasks::Observation> epsilonObs;
+        realObs.reserve(pendingEdgeObservations.size());
+        for (auto & obs : pendingEdgeObservations) {
+            if (obs.fromHash == Hash(HashAlgorithm::SHA256))
+                epsilonObs.push_back(std::move(obs));
+            else
+                realObs.push_back(std::move(obs));
         }
         pendingEdgeObservations.clear();
+
+        auto tryPush = [&](std::vector<cidasks::Observation> obs) {
+            if (obs.empty()) {
+                tracingCacheLog("dispatch: edge empty, skip commit");
+                return;
+            }
+            Hash fingerprint(HashAlgorithm::SHA256);
+            for (const auto & f : obs)
+                fingerprint = TracingDecisionGraph::xorFactIntoHash(
+                    fingerprint, f.fromHash, f.elementHash);
+            if (committedEdgeFingerprints.insert(fingerprint).second) {
+                cidasks::Edge edge;
+                edge.observations = std::move(obs);
+                cidasksWalk.push_back(std::move(edge));
+                tracingCacheLog("dispatch: committed edge, cidasksWalk=%zu (obs=%zu)",
+                                cidasksWalk.size(), cidasksWalk.back().observations.size());
+            } else {
+                tracingCacheLog("dispatch: edge already in cidasksWalk (shared prefix), skip");
+            }
+        };
+
+        tryPush(std::move(realObs));
+        for (auto & obs : epsilonObs)
+            tryPush({std::move(obs)});
     };
 
     auto discardEdge = [&]() {
