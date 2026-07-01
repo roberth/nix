@@ -119,6 +119,16 @@ struct Edge
     std::vector<Observation> observations;
 };
 
+/** Serialise an Edge to a compact binary blob: each observation is
+    fromHash bytes followed by elementHash bytes. Used by the
+    SessionD1Edges persistence path (see tracing-writer.cc for the
+    cold write and tracing-replay-evaluator.cc for the warm load). */
+std::string serialiseEdge(const Edge & edge);
+
+/** Deserialise a blob produced by serialiseEdge. Throws Error on
+    malformed input. */
+Edge deserialiseEdge(std::string_view blob);
+
 /** Build an Observation from a QueryVariant/ResultVariant pair. Used by
     the writer at flush time where it already holds the variants. */
 Observation observationFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result);
