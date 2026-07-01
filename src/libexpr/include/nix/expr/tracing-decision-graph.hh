@@ -170,15 +170,6 @@ public:
     std::vector<std::pair<int64_t, std::string>> getSessionD1Edges(
         const Hash & sessionHash);
 
-    /** Load all persisted d1 edges from ALL sessions in the DB,
-        ordered first by sessionHash then by edgeIndex. Returned as
-        a flat sequence of obsPayloads suitable for direct append onto
-        walker's writer.d1CidasksWalk. Cross-session concatenation:
-        walker's scopeStateIdAt evaluations iterate all k, so hitting
-        the right k somewhere in the concatenated walk reproduces
-        cold's stamped IDs; this trades DB size for lookup breadth. */
-    std::vector<std::string> getAllSessionD1Edges();
-
     /* Enumerate Requests whose payload's `params.from` field equals
        `fromHex`. Used by the depth-2 walker to pre-populate an
        `ApplyContext` with observations the recorder made on a
