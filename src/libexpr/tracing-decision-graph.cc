@@ -613,6 +613,19 @@ std::vector<std::pair<int64_t, std::string>> TracingDecisionGraph::getSessionD1E
     return out;
 }
 
+std::vector<std::string> TracingDecisionGraph::getAllSessionD1Edges()
+{
+    auto state(_state->lock());
+    SQLiteStmt stmt;
+    stmt.create(state->db,
+        "SELECT obsPayload FROM SessionD1Edges ORDER BY sessionHash, edgeIndex");
+    auto query = stmt.use();
+    std::vector<std::string> out;
+    while (query.next())
+        out.push_back(query.getBlob(0));
+    return out;
+}
+
 #define ATOM_GET_CACHED(NAME, CACHE)                                            \
     std::optional<std::string> TracingDecisionGraph::get##NAME##Payload(        \
         const Hash & h)                                                         \
