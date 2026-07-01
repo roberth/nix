@@ -112,11 +112,17 @@ public:
     std::optional<std::string> getQueryPayload(const QueryHash & h);
     std::optional<std::string> getResultPayload(const ResultHash & h);
 
-    /* Step E: response payload pool, keyed by the *request* hash.
-       Required for incoming ambient queries (the dispatcher reads
-       these back because there's no live source to recompute
-       from); optional for everything else (storage-only, used for
-       debugging when JSON traces aren't around). */
+    /* LocalResponseMap: response payload pool, keyed by the *request*
+       hash. d=2 REPLAY ONLY: `ReplayLocalObject` reads these back to
+       serve probes into a reconstructed LocalObject value tree — this
+       is the design's "d=2 walker is the only consumer" contract from
+       `content-identity-via-asks.md` ("Atom storage"). The soundness
+       argument requires the reqhash to be a pure function of
+       (subject, scope, prior facts in the chain); across writer
+       sessions with different outer args, that assumption can fail
+       (same seed(N) pre-observation CDI → same reqhash → different
+       responses from arg-dependent env), so d=1 dispatch MUST NOT
+       read this map. See `cross-session-seed-collision` memory. */
     void insertLocalResponse(const RequestHash & requestHash, std::string_view payload);
     std::optional<std::string> getLocalResponsePayload(const RequestHash & requestHash);
 
