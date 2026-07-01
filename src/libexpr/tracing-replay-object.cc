@@ -1,5 +1,6 @@
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-replay-evaluator.hh"
+#include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/value/context.hh"
@@ -36,6 +37,32 @@ ref<Object> TracingReplayObject::ensureInner() const
 
 std::string TracingReplayObject::evolvedQueryFrom() const
 {
+    /* If inner has been activated to a TracingObject, share its
+       applyContext for evolvedQueryFrom's computation — inner's
+       applyContext gets populated by TracingObject's own maybeGetAttr
+       / whnf / etc. as evaluation flows through it. TRO's own
+       applyContext only grows on cache HITS (via pushObservation from
+       maybeGetAttr's shallow/deep-lookup path); the two contexts
+       diverge whenever TRO falls through to inner. Sharing gives TRO
+       the same evolved from-hash cold's TracingObject would compute
+       at analogous points — the cb-sibling discrimination path
+       requires this alignment so warm's Q hashes match cold's stored
+       Q hashes for the derived .whatever queries. */
+    if (applyResultSubject && inner) {
+        if (auto * innerT = dynamic_cast<TracingObject *>(inner->get_ptr().get())) {
+            if (auto innerCtx = innerT->getApplyContext()) {
+                std::vector<cidasks::Edge> walk;
+                walk.reserve(innerCtx->observations.size());
+                for (auto & obs : innerCtx->observations) {
+                    cidasks::Edge edge;
+                    edge.observations.push_back(obs);
+                    walk.push_back(std::move(edge));
+                }
+                auto evolved = cidasks::scopeStateIdAt(*applyResultSubject, applyScope, walk, walk.size());
+                return evolved.to_string(HashFormat::Base16, false);
+            }
+        }
+    }
     if (applyResultSubject && applyContext) {
         std::vector<cidasks::Edge> walk;
         walk.reserve(applyContext->observations.size());
