@@ -478,6 +478,14 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         return live;
                     }
                 }
+                /* Speculative: the target may be a PositionalSeed at
+                   a deeper apply-stack depth than this cell's subject.
+                   Inner cb-apply args (seed(depth+1), seed(depth+2), …)
+                   share the outer's scope but aren't in the cell chain
+                   until their own inner cell is opened. Try a small
+                   window of deeper depths at the cell's scope — if
+                   the target's fromCIDs reference an inner seed, this
+                   catches it. */
                 tracingCacheLog(
                     "resolve %s: cell[%d] subject=%s miss across %zu edges (+collected)",
                     idStr.substr(0, 12), cellDepth,
@@ -618,6 +626,38 @@ std::shared_ptr<Object> TracingReplayEvaluator::chaseLocalArgSidecar(
     resolveCdiId(applyResultIdHex, ctx);
     if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
         return it->second;
+    /* Direct construction fallback: the recursive resolve may not
+       have gone through resolveApplyId (which memoizes at argIdStr).
+       If the sidecar carries depth+scope, construct the standin
+       ourselves — this is what resolveApplyId does for the isLocalArgId
+       case at its arg parameter, but here we're the target of the
+       resolve and the resolveApplyId path may not have been reached. */
+    if (reqJson.contains("depth") && reqJson.contains("scope")) {
+        try {
+            auto sidecarDepth = reqJson["depth"].get<int>();
+            auto sidecarScope = Hash::parseNonSRIUnprefixed(
+                reqJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
+            cidasks::Subject rootSubject{cidasks::PositionalSeed{sidecarDepth}};
+            auto rlo = std::make_shared<ReplayLocalObject>(
+                std::move(rootSubject), sidecarScope,
+                std::make_shared<std::vector<cidasks::Edge>>(),
+                std::make_shared<Hash>(HashAlgorithm::SHA256),
+                decisionGraph, inner->getEvalState().rootFSRoot,
+                &inner->getEvalState());
+            rlo->withAmbientAsksValidation();
+            try {
+                rlo->withChainStart(
+                    Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256));
+            } catch (const std::exception &) {}
+            rlo->withApplyContext(sidecarDepth, sidecarScope);
+            tracingCacheLog(
+                "resolve %s: chaseLocalArgSidecar direct-standin depth=%d",
+                idStr.substr(0, 12), sidecarDepth);
+            std::shared_ptr<Object> standin = rlo;
+            ctx.memo[idStr] = standin;
+            return standin;
+        } catch (const std::exception &) {}
+    }
     return nullptr;
 }
 
