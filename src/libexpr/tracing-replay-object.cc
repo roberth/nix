@@ -111,7 +111,6 @@ std::vector<std::string> TracingReplayObject::parentHashCandidates() const
 
 void TracingReplayObject::pushObservation(const std::string & fromHex, const Hash & queryHash, const Hash & responseHash)
 {
-    if (!applyContext) return;
     Hash fromHash{HashAlgorithm::SHA256};
     try {
         fromHash = Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
@@ -120,7 +119,21 @@ void TracingReplayObject::pushObservation(const std::string & fromHex, const Has
     }
     auto elementHash = TracingDecisionGraph::xorFactIntoHash(
         Hash(HashAlgorithm::SHA256), queryHash, responseHash);
-    applyContext->observations.push_back({fromHash, elementHash});
+    /* Mirror evolvedQueryFrom's inner-first preference: if inner is
+       an activated TracingObject with an applyContext, push into IT
+       so both TRO and cold's TracingObject share the same evolution
+       trajectory. Falls back to TRO's own applyContext when inner
+       isn't a TracingObject or hasn't been activated. */
+    if (inner) {
+        if (auto * innerT = dynamic_cast<TracingObject *>(inner->get_ptr().get())) {
+            if (auto innerCtx = innerT->getApplyContext()) {
+                innerCtx->observations.push_back({fromHash, elementHash});
+                return;
+            }
+        }
+    }
+    if (applyContext)
+        applyContext->observations.push_back({fromHash, elementHash});
 }
 
 template<typename Q, typename R>
