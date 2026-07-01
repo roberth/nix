@@ -241,10 +241,45 @@ std::optional<const trace::ResultWHNF *> TracingReplayObject::whnf()
         auto r = lookupResult<trace::QueryGetWHNF, trace::ResultWHNF>(query);
         if (!r)
             continue;
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
-        /* Snapshot applyContext.observations size right after our
-           WHNF push: the "parent's initial discovery state" baseline
-           for sibling-attr lookups. */
+        auto shallowQueryHash = TracingDecisionGraph::computeQueryHash(query);
+        auto shallowResp = r->second;
+
+        /* Speculative deeper lookup. Same mechanism as maybeGetAttr.
+           Only fires when the current apply-result's evolvedQueryFrom
+           depends on observations (i.e. applyContext with obs); if
+           there are no obs, deeper == shallow, no lookup needed. */
+        if (applyResultSubject && applyContext && !applyContext->observations.empty()) {
+            std::vector<cidasks::Edge> specWalk;
+            specWalk.reserve(applyContext->observations.size() + 1);
+            for (auto & obs : applyContext->observations) {
+                cidasks::Edge edge;
+                edge.observations.push_back(obs);
+                specWalk.push_back(std::move(edge));
+            }
+            cidasks::Observation specObs{
+                Hash::parseNonSRIUnprefixed(parentHash, HashAlgorithm::SHA256),
+                TracingDecisionGraph::xorFactIntoHash(
+                    Hash(HashAlgorithm::SHA256), shallowQueryHash, shallowResp)};
+            cidasks::Edge specEdge;
+            specEdge.observations.push_back(specObs);
+            specWalk.push_back(std::move(specEdge));
+            auto deepFrom = cidasks::scopeStateIdAt(
+                *applyResultSubject, applyScope, specWalk, specWalk.size());
+            auto deepFromHex = deepFrom.to_string(HashFormat::Base16, false);
+            if (deepFromHex != parentHash) {
+                trace::QueryGetWHNF deepQuery{deepFromHex};
+                if (auto deep = lookupResult<trace::QueryGetWHNF, trace::ResultWHNF>(deepQuery)) {
+                    auto deepQueryHash = TracingDecisionGraph::computeQueryHash(deepQuery);
+                    pushObservation(deepFromHex, deepQueryHash, deep->second);
+                    if (applyContext)
+                        postWHNFObservationCount = applyContext->observations.size();
+                    cachedWHNF = std::move(deep->first);
+                    return &*cachedWHNF;
+                }
+            }
+        }
+
+        pushObservation(parentHash, shallowQueryHash, shallowResp);
         if (applyContext)
             postWHNFObservationCount = applyContext->observations.size();
         cachedWHNF = std::move(r->first);
