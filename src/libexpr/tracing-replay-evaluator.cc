@@ -95,6 +95,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
     ResolutionContext ctx{
         std::move(currentProxy),
         {},
+        nullptr,
     };
 
     /* Per-edge buffer: dispatch() appends ambient facts here; the
@@ -103,6 +104,11 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        Without the buffer, rejected-edge facts would pollute
        cidasksWalk and throw off the cell-chain scopeStateId computations. */
     std::vector<cidasks::Observation> pendingEdgeObservations;
+    /* Expose to resolveCdiId via ctx so subject-CDI lookups can extend
+       the walk with in-flight edge obs. Enables intra-edge dependency:
+       an earlier dispatch's fold pushes a subject's evolved CDI into
+       range for a later dispatch in the same edge. */
+    ctx.pendingEdgeObservations = &pendingEdgeObservations;
 
     auto commitEdge = [&]() {
         /* 1:1 alignment with writer's d1CidasksWalk: writer inserts each
@@ -517,6 +523,30 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                             "resolve %s: cell[%d] subject=%s MATCH at edge=%zu",
                             idStr.substr(0, 12), cellDepth,
                             cidasks::describe(*subj), k);
+                        ctx.memo[idStr] = live;
+                        return live;
+                    }
+                }
+                /* Intra-edge extension: try scopeStateIdAt against a
+                   hypothetical walk = cidasksWalk + [pendingEdgeObservations].
+                   The dispatched-so-far obs for the current edge fold in
+                   at index cidasksWalk.size(); if the failing cid was
+                   stamped by cold at the writer's edgeIndex AFTER these
+                   obs would have folded (which happens when the cold flush
+                   emitted them together in one edge), the extended walk
+                   at k=cidasksWalk.size()+1 reproduces the same evolved
+                   subject id. */
+                if (ctx.pendingEdgeObservations && !ctx.pendingEdgeObservations->empty()) {
+                    std::vector<cidasks::Edge> extendedWalk = cidasksWalk;
+                    cidasks::Edge pendingEdge;
+                    pendingEdge.observations = *ctx.pendingEdgeObservations;
+                    extendedWalk.push_back(std::move(pendingEdge));
+                    auto extendedId = cidasks::scopeStateIdAt(*subj, scope, extendedWalk, extendedWalk.size());
+                    if (extendedId.to_string(HashFormat::Base16, false) == idStr) {
+                        tracingCacheLog(
+                            "resolve %s: cell[%d] subject=%s MATCH via pending-edge extension",
+                            idStr.substr(0, 12), cellDepth,
+                            cidasks::describe(*subj));
                         ctx.memo[idStr] = live;
                         return live;
                     }
