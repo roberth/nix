@@ -475,6 +475,15 @@ void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
        with walker.cidasksWalk at warm. */
     if (suppressApplyBoundary > 0) {
         tracingCacheLog("markApplyBoundary: SUPPRESSED (in dispatchApplyLive)");
+        if (suppressedBoundaryHook) {
+            auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQueryPayload.dump());
+            /* Insert the apply Request payload into the CAS pool even
+               when suppressed so the ε obs's factHash can be looked up
+               later by the walker's ambient-asks walk. */
+            auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
+            decisionGraph->insertRequest(applyReqHash, applyPayloadCbor);
+            suppressedBoundaryHook(applyReqHash);
+        }
         return;
     }
 

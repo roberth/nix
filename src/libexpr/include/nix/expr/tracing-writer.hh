@@ -239,6 +239,13 @@ class TracingWriter
     size_t suppressApplyBoundary = 0;
 
 public:
+    /* When markApplyBoundary is suppressed, this callback (if set)
+       receives the applyReqHash so the walker can synthesize an
+       equivalent ε obs in its own cidasksWalk — cold's writer
+       captured the same event as an ε insertion, so walker needs
+       the matching phantom obs to preserve edgeIndex alignment. */
+    std::function<void(const Hash &)> suppressedBoundaryHook;
+
     /* RAII helper: scoped suppress of markApplyBoundary. */
     class SuppressApplyBoundary
     {
