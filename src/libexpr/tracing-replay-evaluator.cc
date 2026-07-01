@@ -246,42 +246,11 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         }
         auto currentResp = getCurrentResponse(*requestPayload, ctx);
         if (!currentResp) {
-            /* Narrow fallback: for multi-root (fromCIDs.size() > 1)
-               ambient queries whose live navigation failed, fall back
-               to cold's recorded response. Multi-root queries encode
-               Apply-step navigation whose fn/arg roots come from
-               deeper cb-arg-scoped seed evolutions that walker's
-               cell chain often can't reach. Cold's recorded response
-               IS what cold's inner computed for the SAME (subject,
-               scope, edgeIndex) combination — serving it preserves
-               XOR-cur alignment. Single-root queries stay strict
-               (live-only) so outer-value invalidation still fires
-               (per builtins-cache.sh's outer-change tests). */
-            bool hasFromCids = false;
-            try {
-                auto reqJson = cborStringToJson(*requestPayload);
-                if (reqJson.contains("params") && reqJson["params"].is_object()
-                    && reqJson["params"].contains("fromCIDs")
-                    && reqJson["params"]["fromCIDs"].is_array()
-                    && !reqJson["params"]["fromCIDs"].empty())
-                    hasFromCids = true;
-            } catch (...) {}
-            if (hasFromCids && isAmbient) {
-                if (auto recorded = decisionGraph.getLocalResponsePayload(requestHash)) {
-                    tracingCacheLog(
-                        "dispatch fallback req=%s payload=%s (multi-root, using recorded local response)",
-                        requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                        queryDescription);
-                    currentResp = std::move(recorded);
-                }
-            }
-            if (!currentResp) {
-                tracingCacheLog(
-                    "dispatch FAIL req=%s payload=%s (no current response)",
-                    requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    queryDescription);
-                return Hash(HashAlgorithm::SHA256);
-            }
+            tracingCacheLog(
+                "dispatch FAIL req=%s payload=%s (no current response)",
+                requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                queryDescription);
+            return Hash(HashAlgorithm::SHA256);
         }
         auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
         /* NOTE: edgeCtx.queryHash / fromFactSetHash / requestSetHash
