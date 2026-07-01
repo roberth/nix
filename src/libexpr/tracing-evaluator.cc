@@ -1,5 +1,6 @@
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/ambient-object.hh"
+#include "nix/expr/expr-from-object.hh"
 #include "nix/expr/lambda-apply-result-object.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-local-object.hh"
@@ -430,6 +431,37 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     }
 
     auto v = writer.getSink().logQuery(trace::QueryApply{fnId, argId});
+
+    /* Per-invocation callScope for GENUINE cb-apply (not curried
+       follow-up): sibling cb-apply invocations of the SAME cached
+       primop (cb-sibling's `cached { fA }` vs `cached { fB }`) share
+       the same resolver->callScope, so their inner facts stamp
+       identical `from` fields → reqhash collision.
+
+       Distinguish genuine cb-apply from curried follow-up by fn's
+       Subject: genuine cb-apply's fn is a fresh cached primop (its
+       Subject is Opaque/PostulatedIdempotentRead of the primop's
+       identity hash). Curried follow-up's fn is an ApplyResultSubject
+       (result of a previous apply). Only XOR at the former. */
+    bool fnIsApplyResult = fn->getSubject()
+        && std::holds_alternative<cidasks::ApplyResultSubject>(fn->getSubject()->data);
+    struct CallScopeGuard {
+        std::shared_ptr<AmbientResolver> resolver;
+        Hash oldScope{HashAlgorithm::SHA256};
+        ~CallScopeGuard() {
+            if (resolver) setAmbientResolverCallScope(*resolver, oldScope);
+        }
+    } guard;
+    if (!fnIsTlo && !fnIsApplyResult) {
+        if (auto resolver = inner->getAmbientResolver()) {
+            guard.resolver = resolver;
+            guard.oldScope = getAmbientResolverCallScope(*resolver);
+            auto siblingScope = TracingDecisionGraph::xorHashes(
+                guard.oldScope, applyScopeStateId);
+            setAmbientResolverCallScope(*resolver, siblingScope);
+        }
+    }
+
     auto result = inner->apply(fn, arg);
     auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
 
