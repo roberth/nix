@@ -905,6 +905,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         std::vector<cidasks::Edge> w = cidasksWalk;
                         for (auto & e : ctx.crossQPulledExtensions)
                             w.push_back(e);
+                        /* Include cold's Q snapshot so progressive
+                           pool-pull starts from the same fold state
+                           cold used at Q's flush moment. */
+                        for (auto & e : ctx.snapshotWalk)
+                            w.push_back(e);
                         return w;
                     };
                     auto effective = buildEffective();
