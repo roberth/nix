@@ -760,14 +760,6 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                     }
                     ctx.inCrossQPull = false;
                 }
-                /* Speculative: the target may be a PositionalSeed at
-                   a deeper apply-stack depth than this cell's subject.
-                   Inner cb-apply args (seed(depth+1), seed(depth+2), …)
-                   share the outer's scope but aren't in the cell chain
-                   until their own inner cell is opened. Try a small
-                   window of deeper depths at the cell's scope — if
-                   the target's fromCIDs reference an inner seed, this
-                   catches it. */
                 tracingCacheLog(
                     "resolve %s: cell[%d] subject=%s miss across %zu edges (+collected)",
                     idStr.substr(0, 12), cellDepth,

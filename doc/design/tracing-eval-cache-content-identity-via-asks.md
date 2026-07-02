@@ -189,6 +189,23 @@ These are the specific commitments of this design.
    dispatched response into both the cumulative `factSetHash` and
    the content ids of relevant subjects. Symmetric to recording.
 
+   **Navigation invariant (mirroring `tracing-eval-cache.md`'s "IDs
+   are produced by hashing; only requests are looked up").** The
+   walker's inputs to CDI computation are the current walk state
+   (`cidasksWalk`) and the subjects it holds via its currentProxy
+   chain. For any known subject `S`, walker *produces* `S`'s CDI at
+   any walk-index `k` by hashing (`scopeStateIdAt(S, scope,
+   cidasksWalk, k)`). It never inverts the hash to ask "which
+   subject produces this target CDI." When a dispatched request
+   carries `from = X`, the walker checks whether any of its held
+   subjects produces `X` — and if so, routes the dispatch through
+   that subject's live proxy. If not, the walker's held state does
+   not correspond to that request, and the walker misses cleanly.
+   No subject is invented, no depth speculated. The recorder's
+   symmetric obligation is that any subject whose CDI appears in
+   its recorded facts is a subject the walker demonstrably holds at
+   the corresponding walk state.
+
 7. **XOR-fold commutativity preserves concurrency within an edge.**
    Dispatch order within a single Asks edge does not affect the
    resulting content ids or `factSetHash`. Edges advance one at a

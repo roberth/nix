@@ -340,6 +340,39 @@ In the sequential mapAttrs case, `onlyInThis` is empty and
 `O(|Q.RS|)` to `O(|delta| · log N)`. Across the whole session:
 linear in total facts.
 
+### Navigation invariant: IDs are produced by hashing; only requests
+are looked up
+
+The whole point of the Asks/Terminals machinery is that hash values
+— `factSetHash` (`cur`), `queryHash` (`Q`), request-set hashes — are
+*produced* by the walker as it dispatches requests and folds
+responses. They are never taken as targets and reverse-looked-up in
+"here's a hash, tell me its subject" mode. The trie is content-
+addressed *by* those hashes; what's stored there are Requests
+(atomic units of dispatch) and edge structure. The walker's inputs
+are the current hashed state and the live environment; its output
+is a new hashed state.
+
+Concretely, the pattern is:
+
+1. Walker holds a `cur` (its current hashed state).
+2. Walker asks `getAsks(Q, cur)` for outgoing edges. The trie returns
+   the *requests* stored at that state — this is the only kind of
+   "lookup" that happens. IDs are never inputs to a lookup.
+3. Walker dispatches each request against the live environment.
+4. Walker XOR-folds each `H_element(req, resp)` into `cur` to produce
+   a new hashed state.
+5. New state is *hashed*, not asked-for. If no edge exists at the
+   new state, the walker misses cleanly — it does not invent a
+   substitute state or search for one that "seems right."
+
+This is the property that makes the cache sound under environmental
+change: a divergent response naturally lands the walker in a state
+that has no recorded successor, and the miss is a graceful fall-
+back to the next branch or to inner interpretation. There is no
+"guess what state the recorder was in" step that could paper over a
+real divergence.
+
 ### Slow path: `decisionGraph.walk(Q, dispatch)`
 
 Walks the chain from ∅, one edge at a time. At each `(Q, cur)`:
