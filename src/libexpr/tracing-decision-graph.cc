@@ -91,6 +91,11 @@ CREATE TABLE IF NOT EXISTS EdgeResponses (
     PRIMARY KEY (queryHash, fromFactSetHash, requestHash)
 );
 
+CREATE TABLE IF NOT EXISTS QCidasksWalks (
+    queryHash BLOB PRIMARY KEY,
+    payload   BLOB NOT NULL
+) WITHOUT ROWID;
+
 -- Storage layer: set pools.
 --
 -- RequestSets are stored as a hash-prefix trie of content-addressed
@@ -169,6 +174,7 @@ struct TracingDecisionGraph::State
     SQLiteStmt insertRequest, insertQuery, insertResult, insertLocalResponse;
     SQLiteStmt selectRequest, selectQuery, selectResult, selectLocalResponse;
     SQLiteStmt insertEdgeResponse, selectEdgeResponse;
+    SQLiteStmt insertQCidasksWalk, selectQCidasksWalk;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
     SQLiteStmt countAsks, countTerminals;
@@ -442,6 +448,10 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO LocalResponseMap(requestHash, payload) VALUES (?, ?)");
     state->insertEdgeResponse.create(state->db,
         "INSERT OR IGNORE INTO EdgeResponses(queryHash, fromFactSetHash, requestHash, payload) VALUES (?, ?, ?, ?)");
+    state->insertQCidasksWalk.create(state->db,
+        "INSERT OR REPLACE INTO QCidasksWalks(queryHash, payload) VALUES (?, ?)");
+    state->selectQCidasksWalk.create(state->db,
+        "SELECT payload FROM QCidasksWalks WHERE queryHash = ?");
 
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
@@ -553,6 +563,28 @@ std::optional<std::string> TracingDecisionGraph::getEdgeResponsePayload(
     dg_bindBlob(query, dg_hashToBlob(queryHash));
     dg_bindBlob(query, dg_hashToBlob(fromFactSetHash));
     dg_bindBlob(query, dg_hashToBlob(requestHash));
+    if (!query.next())
+        return std::nullopt;
+    return query.getBlob(0);
+}
+
+void TracingDecisionGraph::insertQCidasksWalk(
+    const QueryHash & queryHash,
+    std::string_view payload)
+{
+    auto state(_state->lock());
+    auto use = state->insertQCidasksWalk.use();
+    dg_bindBlob(use, dg_hashToBlob(queryHash));
+    dg_bindBlob(use, payload);
+    use.exec();
+}
+
+std::optional<std::string> TracingDecisionGraph::getQCidasksWalkPayload(
+    const QueryHash & queryHash)
+{
+    auto state(_state->lock());
+    auto query = state->selectQCidasksWalk.use();
+    dg_bindBlob(query, dg_hashToBlob(queryHash));
     if (!query.next())
         return std::nullopt;
     return query.getBlob(0);

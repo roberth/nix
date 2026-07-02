@@ -104,6 +104,38 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        rationale (kept SEPARATE from `cidasksWalk`). */
     ctx.crossQPulledExtensions = persistentCrossQPulls;
 
+    /* Load cold's per-Q d1CidasksWalk snapshot (if any). Used as an
+       ADDITIONAL source of observations in resolveCdiId's
+       extended-walk match — provides bit-for-bit alignment with
+       cold's writer state at Q's flush moment so
+       scopeStateIdAt-based cell matching finds the recorded k
+       structurally rather than via XOR-fold-coincidence. */
+    if (auto snapshotPayload = decisionGraph.getQCidasksWalkPayload(queryHash)) {
+        try {
+            auto snapshotJson = nlohmann::json::parse(*snapshotPayload);
+            ctx.snapshotWalk.reserve(snapshotJson.size());
+            for (const auto & edgeJson : snapshotJson) {
+                cidasks::Edge edge;
+                for (const auto & obsPair : edgeJson) {
+                    auto fromHash = Hash::parseNonSRIUnprefixed(
+                        obsPair[0].get<std::string>(), HashAlgorithm::SHA256);
+                    auto elementHash = Hash::parseNonSRIUnprefixed(
+                        obsPair[1].get<std::string>(), HashAlgorithm::SHA256);
+                    edge.observations.push_back({fromHash, elementHash});
+                }
+                ctx.snapshotWalk.push_back(std::move(edge));
+            }
+            tracingCacheLog(
+                "v13Walk Q=%s: loaded snapshot with %zu edges (walker.cidasksWalk=%zu)",
+                queryHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                ctx.snapshotWalk.size(), cidasksWalk.size());
+        } catch (const std::exception & e) {
+            tracingCacheLog("v13Walk Q=%s: snapshot load failed: %s",
+                            queryHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                            e.what());
+        }
+    }
+
     /* Per-edge buffer: dispatch() appends ambient facts here; the
        walk-loop promotes the buffer to a cumulative cidasksWalk
        edge on commit (via commitEdge) or discards it on reject.
@@ -603,6 +635,21 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
             cidasksWalkObs.insert({obs.fromHash, obs.elementHash});
     std::vector<cidasks::Edge> extendedWalkForMatch = cidasksWalk;
     for (auto & e : ctx.crossQPulledExtensions) {
+        cidasks::Edge dedupedEdge;
+        for (auto & obs : e.observations) {
+            if (cidasksWalkObs.find({obs.fromHash, obs.elementHash}) == cidasksWalkObs.end()) {
+                dedupedEdge.observations.push_back(obs);
+                cidasksWalkObs.insert({obs.fromHash, obs.elementHash});
+            }
+        }
+        if (!dedupedEdge.observations.empty())
+            extendedWalkForMatch.push_back(std::move(dedupedEdge));
+    }
+    /* Include cold's Q-specific snapshot in the extended walk — its
+       obs are canonical writer-side observations that walker's own
+       cidasksWalk may not have accumulated. Dedup against
+       cidasksWalkObs (XOR-cancel avoidance). */
+    for (auto & e : ctx.snapshotWalk) {
         cidasks::Edge dedupedEdge;
         for (auto & obs : e.observations) {
             if (cidasksWalkObs.find({obs.fromHash, obs.elementHash}) == cidasksWalkObs.end()) {

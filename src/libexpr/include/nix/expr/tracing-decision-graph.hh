@@ -152,6 +152,20 @@ public:
         const SetHash & fromFactSetHash,
         const RequestHash & requestHash);
 
+    /** Per-Q cidasksWalk snapshot: at logResult, cold serialises
+        `d1CidasksWalk`. Warm walker at v13Walk for Q loads it as
+        an EXTRA source for `scopeStateIdAt` computations in
+        `resolveCdiId`'s extended-walk match — not overwriting
+        walker.cidasksWalk itself (that would truncate walker's
+        cumulative state and regress cb-higher-order etc.).
+        Purely additive. INSERT OR REPLACE: cumulative writer state
+        overwrites with the most-recent snapshot. */
+    void insertQCidasksWalk(
+        const QueryHash & queryHash,
+        std::string_view payload);
+    std::optional<std::string> getQCidasksWalkPayload(
+        const QueryHash & queryHash);
+
     /* Enumerate Requests whose payload's `params.from` field equals
        `fromHex`. Used by the depth-2 walker to pre-populate an
        `ApplyContext` with observations the recorder made on a

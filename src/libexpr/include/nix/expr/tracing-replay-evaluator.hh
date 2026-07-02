@@ -72,6 +72,16 @@ class TracingReplayEvaluator : public Evaluator
             confuse tests (e.g. cb-sibling-discrimination-via-observation)
             relying on writer-aligned walk position. */
         std::vector<cidasks::Edge> crossQPulledExtensions;
+
+        /** Cold's per-Q d1CidasksWalk snapshot loaded at v13Walk
+            startup. Used as an ADDITIONAL source of observations for
+            `resolveCdiId`'s extended-walk match, without overwriting
+            walker.cidasksWalk. Provides bit-for-bit alignment with
+            cold's writer flush state for CDI resolution, letting
+            `scopeStateIdAt(subject, scope, walk, K)` computations
+            reproduce cold's stamped `from` values. Empty if no
+            snapshot recorded. */
+        std::vector<cidasks::Edge> snapshotWalk;
     };
 
     /** Cumulative walk across all v13Walk calls in this session.
