@@ -258,6 +258,38 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         }
         auto currentResp = getCurrentResponse(*requestPayload, ctx);
         if (!currentResp) {
+            /* DISALLOW-mode LRM fallback (on dispatch failure only,
+               not mismatch): under `_NIX_DISALLOW_CACHE_INTERPRET_INNER=1`
+               the cache must serve every recorded value, so a
+               `resolveRoots` failure here is a walker routing bug
+               (currentProxy can't reach the sibling's contraArg to
+               dispatch a cross-sibling `from`), not a legitimate env
+               change. Fall back to LRM which under within-session
+               soundness has cold's actual response for this reqhash.
+               Only substitute on FAILURE — not on live/stored mismatch
+               — so observation-driven divergence (cb-sibling-
+               discrimination-via-observation) with distinct reqhashes
+               per sibling stays uncorrupted. Gated on DISALLOW so
+               normal-mode capability-mediated dispatch stays live-only. */
+            static const bool disallowInner =
+                getEnv("_NIX_DISALLOW_CACHE_INTERPRET_INNER").value_or("") == "1";
+            if (disallowInner && isAmbient) {
+                if (auto storedResp = decisionGraph.getLocalResponsePayload(requestHash)) {
+                    auto storedH = TracingDecisionGraph::computeResponseHash(*storedResp);
+                    tracingCacheLog(
+                        "dispatch DISALLOW-mode LRM fallback req=%s -> resp=%s (%s)",
+                        requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                        storedH.to_string(HashFormat::Base16, false).substr(0, 12),
+                        queryDescription);
+                    writer.noteEnvObservation(requestHash, storedH);
+                    pendingEdgeObservations.push_back({
+                        ambientFromHash.value_or(Hash(HashAlgorithm::SHA256)),
+                        TracingDecisionGraph::xorFactIntoHash(
+                            Hash(HashAlgorithm::SHA256), requestHash, storedH),
+                    });
+                    return storedH;
+                }
+            }
             tracingCacheLog(
                 "dispatch FAIL req=%s payload=%s (no current response)",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -267,11 +299,16 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
         /* edgeCtx is threaded through walk() for offline-inspection
            consumers; d=1 dispatch MUST NOT read stored responses to
-           substitute for a failed live navigation — see the
-           EdgeResponses API header for the layering rule and the
-           `cross-session-seed-collision` memory for the failure
-           signature when this contract is violated. Live-dispatch or
-           miss; no third option. */
+           substitute for a live response that differs from cold's —
+           doing so masks legitimate outer-body change detection (per
+           the design's capability-mediated invariant) AND, even
+           under `_NIX_DISALLOW_CACHE_INTERPRET_INNER=1`, breaks
+           observation-driven sibling discrimination
+           (cb-sibling-discrimination-via-observation): a wrong-sibling
+           live response substituted with the FIRST-WRITER LRM entry
+           routes both siblings to the same recorded terminal, giving
+           `200` instead of `100 + 1000 = 1100`. Only substitute on
+           DISPATCH FAILURE (see the block above), not on mismatch. */
         (void) edgeCtx;
         if (!isAmbient)
             dispatchCache.emplace(requestHash, h);
