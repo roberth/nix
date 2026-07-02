@@ -238,12 +238,6 @@ static void dg_bindBlob(SQLiteStmt::Use & use, std::string_view blob)
    choose set members can construct collisions algebraically. For
    an internal eval cache this is acceptable — the worst case is a
    wrong cache hit which is detected on next use. */
-static Hash dg_requestElementHash(const Hash & req)
-{
-    return hashString(HashAlgorithm::SHA256,
-        std::string_view(reinterpret_cast<const char *>(req.hash), req.hashSize));
-}
-
 static Hash dg_factElementHash(const Hash & request, const Hash & response)
 {
     std::string buf;
@@ -351,53 +345,6 @@ static DgTrieNode dg_parseTrieNode(std::string_view payload)
             out.children.emplace_back(bucket, dg_blobToHash(payload.substr(i + 1, hs)));
         }
     }
-    return out;
-}
-
-/* Set-pool serialisation. The pool blobs are internal; they don't need
-   to be human-readable or self-describing. SHA-256 hashes are fixed
-   size, so a raw concatenation of canonical members is both the
-   storage form and the hash input. This avoids per-call CBOR
-   encode/decode through nlohmann::json, which dominated walk()
-   profiles. Format version is implicit in the schema: changing it
-   invalidates the on-disk cache. */
-template<typename T>
-static std::string dg_serialiseMembers(const std::vector<T> & members);
-
-template<>
-std::string dg_serialiseMembers<Hash>(const std::vector<Hash> & members)
-{
-    const size_t hs = members.empty() ? Hash(HashAlgorithm::SHA256).hashSize : members[0].hashSize;
-    std::string out;
-    out.reserve(members.size() * hs);
-    for (const auto & h : members)
-        out.append(reinterpret_cast<const char *>(h.hash), h.hashSize);
-    return out;
-}
-
-template<>
-std::string dg_serialiseMembers<TracingDecisionGraph::Fact>(
-    const std::vector<TracingDecisionGraph::Fact> & members)
-{
-    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
-    std::string out;
-    out.reserve(members.size() * hs * 2);
-    for (const auto & f : members) {
-        out.append(reinterpret_cast<const char *>(f.request.hash), f.request.hashSize);
-        out.append(reinterpret_cast<const char *>(f.response.hash), f.response.hashSize);
-    }
-    return out;
-}
-
-static std::vector<Hash> dg_deserialiseRequestMembers(std::string_view bytes)
-{
-    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
-    if (bytes.size() % hs != 0)
-        throw Error("decision-graph: malformed RequestSet blob (size=%d)", bytes.size());
-    std::vector<Hash> out;
-    out.reserve(bytes.size() / hs);
-    for (size_t i = 0; i < bytes.size(); i += hs)
-        out.push_back(dg_blobToHash(bytes.substr(i, hs)));
     return out;
 }
 
