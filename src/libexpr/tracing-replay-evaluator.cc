@@ -515,11 +515,12 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         parentAnchor,
         parentAnchorCurRequests);
     if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
-        walkHit = decisionGraph.walk(queryHash, dispatch,
-            [&](bool committed, const std::vector<Hash> & useful) {
-                if (committed) commitEdge();
-                else commitRejected(useful);
-            });
+        walkHit = decisionGraph.walk(queryHash, dispatch, [&](bool committed, const std::vector<Hash> & useful) {
+            if (committed)
+                commitEdge();
+            else
+                commitRejected(useful);
+        });
     }
     /* Snapshot-padding retry on miss. When cold's snapshot for this Q
        exceeds walker's current cidasksWalk (cold/warm flush-pattern
@@ -538,29 +539,35 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             cidasksWalk.push_back(ctx.snapshotWalk[i]);
             ++paddingCount;
         }
-        tracingCacheLog("v13Walk Q=%s: snapshot-padded retry (cidasksWalk %zu -> %zu)",
-                        queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                        origSize, cidasksWalk.size());
-        walkHit = decisionGraph.walk(queryHash, dispatch,
+        tracingCacheLog(
+            "v13Walk Q=%s: snapshot-padded retry (cidasksWalk %zu -> %zu)",
+            queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            origSize,
+            cidasksWalk.size());
+        walkHit = decisionGraph.walk(
+            queryHash,
+            dispatch,
             [&](bool committed, const std::vector<Hash> & useful) {
-                if (committed) commitEdge();
-                else commitRejected(useful);
+                if (committed)
+                    commitEdge();
+                else
+                    commitRejected(useful);
             },
             parentAnchor,
             parentAnchorCurRequests);
         if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
-            walkHit = decisionGraph.walk(queryHash, dispatch,
-                [&](bool committed, const std::vector<Hash> & useful) {
-                    if (committed) commitEdge();
-                    else commitRejected(useful);
-                });
+            walkHit = decisionGraph.walk(queryHash, dispatch, [&](bool committed, const std::vector<Hash> & useful) {
+                if (committed)
+                    commitEdge();
+                else
+                    commitRejected(useful);
+            });
         }
         /* Splice out padding: keep original prefix + newly-committed suffix. */
         size_t paddingEnd = origSize + paddingCount;
         if (cidasksWalk.size() > paddingEnd) {
             std::vector<cidasks::Edge> committed(
-                std::make_move_iterator(cidasksWalk.begin() + paddingEnd),
-                std::make_move_iterator(cidasksWalk.end()));
+                std::make_move_iterator(cidasksWalk.begin() + paddingEnd), std::make_move_iterator(cidasksWalk.end()));
             cidasksWalk.resize(origSize);
             for (auto & e : committed)
                 cidasksWalk.push_back(std::move(e));
