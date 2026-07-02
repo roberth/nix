@@ -456,8 +456,18 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         if (auto resolver = inner->getAmbientResolver()) {
             guard.resolver = resolver;
             guard.oldScope = getAmbientResolverCallScope(*resolver);
+            /* Sibling discrimination (cb-sibling-b): applyScopeStateId
+               alone collides across siblings whose constituents are
+               structurally identical at apply time. XOR in
+               writer.v13FactSetHash so cold's sibling A (applying at
+               v13FactSet_A) and sibling B (applying at v13FactSet_B >
+               v13FactSet_A) get distinct siblingScopes → distinct
+               inner-ambient-object inheritedScopes → distinct
+               reqhashes for observations they emit. Walker mirrors
+               this in TracingReplayEvaluator::apply. */
             auto siblingScope = TracingDecisionGraph::xorHashes(
-                guard.oldScope, applyScopeStateId);
+                TracingDecisionGraph::xorHashes(guard.oldScope, applyScopeStateId),
+                writer.getV13FactSetHash());
             setAmbientResolverCallScope(*resolver, siblingScope);
         }
     }
