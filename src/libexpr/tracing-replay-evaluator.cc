@@ -788,8 +788,19 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         return w;
                     };
                     auto effective = buildEffective();
-                    for (size_t k = 0; k <= effective.size() && !matched; ++k) {
-                        auto currentId = cidasks::scopeStateIdAt(*subj, scope, effective, k);
+                    /* Progressive walk: as pool pulls at each k succeed,
+                       append their edges to `walkAccum` so subsequent
+                       k's compute currentId over the growing walk. This
+                       is the multi-hop path (e.g. cb-sibling-b's
+                       78b1d6c0d465 = 5738ea301d04 → 238cc048f09b →
+                       78b1d6c0d465 needs both from=5738ea301d04 and
+                       from=238cc048f09b obs to fold). Cap maxK at
+                       2× effective.size + 8 to bound blowup. */
+                    std::vector<cidasks::Edge> walkAccum = effective;
+                    std::vector<cidasks::Edge> pulledEdges;
+                    size_t maxK = effective.size() * 2 + 8;
+                    for (size_t k = 0; k <= maxK && !matched; ++k) {
+                        auto currentId = cidasks::scopeStateIdAt(*subj, scope, walkAccum, walkAccum.size());
                         auto currentHex = currentId.to_string(HashFormat::Base16, false);
                         auto poolReqs = decisionGraph.getRequestsWithFrom(currentHex);
                         std::vector<cidasks::Observation> pulled;
@@ -809,41 +820,23 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                             pulled.push_back({currentId, elementHash});
                         }
                         if (pulled.empty())
-                            continue;
-                        /* No dedupe against effective: an obs in
-                           cidasksWalk[j] is only folded at edge j when
-                           obs.from == myId at j. If it wasn't folded
-                           there (because myId at j didn't match), it
-                           stays inert. Adding the same obs to the
-                           pulled edge at k (where myId at k == obs.from
-                           by construction) is what actually folds it.
-                           No double-count. */
-                        auto & dedupedPulled = pulled;
-                        std::vector<cidasks::Edge> hypWalk = effective;
+                            break;
                         cidasks::Edge extra;
-                        extra.observations = dedupedPulled;
-                        hypWalk.push_back(std::move(extra));
+                        extra.observations = pulled;
+                        walkAccum.push_back(extra);
+                        pulledEdges.push_back(std::move(extra));
                         auto extendedId = cidasks::scopeStateIdAt(
-                            *subj, scope, hypWalk, hypWalk.size());
+                            *subj, scope, walkAccum, walkAccum.size());
                         if (extendedId.to_string(HashFormat::Base16, false) == idStr) {
                             matched = true;
                             tracingCacheLog(
-                                "resolve %s: cell[%d] subject=%s MATCH via cross-Q pool pull (k=%zu, %zu obs)",
+                                "resolve %s: cell[%d] subject=%s MATCH via progressive cross-Q pool pull (k=%zu, %zu pulled-edges)",
                                 idStr.substr(0, 12), cellDepth,
-                                cidasks::describe(*subj), k, pulled.size());
-                            cidasks::Edge landing;
-                            landing.observations = pulled;
-                            /* Also persist across walks so a subsequent
-                               v13Walk starting fresh gets the same fold
-                               state pre-loaded — cb-sibling-b's chain
-                               has multiple walks each depending on
-                               observations accumulated by other walks;
-                               without cross-walk persistence the FIRST
-                               walk fails before later walks' pulls
-                               benefit it. */
-                            landing.observations = dedupedPulled;
-                            persistentCrossQPulls.push_back(landing);
-                            ctx.crossQPulledExtensions.push_back(std::move(landing));
+                                cidasks::describe(*subj), k, pulledEdges.size());
+                            for (auto & pe : pulledEdges) {
+                                persistentCrossQPulls.push_back(pe);
+                                ctx.crossQPulledExtensions.push_back(pe);
+                            }
                             ctx.memo[idStr] = live;
                             ctx.inCrossQPull = prevInCrossQPull;
                             ctx.activePullTargets.erase(idStr);
