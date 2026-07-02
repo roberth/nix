@@ -429,13 +429,22 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             rejectedObs.push_back(std::move(obs));
         pendingEdgeObservations.clear();
     };
+    /* Pass dispatchedRequestSet as startCurRequests so walker at
+       parentAnchor knows which requests have already been dispatched
+       in prior walks reaching this cur. Without this, walker's
+       `useful = rs \ curRequests` computes wrongly, potentially
+       re-dispatching already-observed requests and diverging the cur.
+       Empty when starting from ∅ (nothing dispatched yet). */
+    std::unordered_set<Hash> parentAnchorCurRequests;
+    if (parentAnchor != TracingDecisionGraph::emptySetHash())
+        parentAnchorCurRequests = dispatchedRequestSet;
     auto walkHit = decisionGraph.walk(queryHash, dispatch,
         [&](bool committed, const std::vector<Hash> & useful) {
             if (committed) commitEdge();
             else commitRejected(useful);
         },
         parentAnchor,
-        /*startCurRequests=*/ {});
+        parentAnchorCurRequests);
     if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
         walkHit = decisionGraph.walk(queryHash, dispatch,
             [&](bool committed, const std::vector<Hash> & useful) {
