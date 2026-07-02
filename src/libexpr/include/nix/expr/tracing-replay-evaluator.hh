@@ -59,6 +59,11 @@ class TracingReplayEvaluator : public Evaluator
             for its roots — without a guard the pull ping-pongs on the
             same subject and blows the stack. */
         bool inCrossQPull = false;
+        /** Set of CDI targets whose pull is currently on the stack.
+            Nested pulls for DIFFERENT targets can safely fire without
+            re-entering the same pull. Prevents infinite recursion
+            on the same target while allowing productive nesting. */
+        std::set<std::string> activePullTargets;
         /** Observations accumulated from successful cross-Q pool pulls
             within this walk. Extends `cidasksWalk` locally for
             subsequent resolves in the same walk to build on prior

@@ -727,7 +727,13 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    resolves and breaks tests where the walker relies on
                    writer-aligned walk position (e.g. cb-sibling
                    discrimination). */
-                if (!ctx.inCrossQPull) {
+                /* Allow nested pulls for different targets: if the
+                   current target is on the active-pull stack, skip
+                   (would recurse infinitely). Otherwise, add to
+                   activePullTargets, run the pull, remove on exit. */
+                if (ctx.activePullTargets.find(idStr) == ctx.activePullTargets.end()) {
+                    ctx.activePullTargets.insert(idStr);
+                    bool prevInCrossQPull = ctx.inCrossQPull;
                     ctx.inCrossQPull = true;
                     bool matched = false;
                     /* Effective walk = cidasksWalk + prior pulls in
@@ -810,11 +816,13 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                             persistentCrossQPulls.push_back(landing);
                             ctx.crossQPulledExtensions.push_back(std::move(landing));
                             ctx.memo[idStr] = live;
-                            ctx.inCrossQPull = false;
+                            ctx.inCrossQPull = prevInCrossQPull;
+                            ctx.activePullTargets.erase(idStr);
                             return live;
                         }
                     }
-                    ctx.inCrossQPull = false;
+                    ctx.inCrossQPull = prevInCrossQPull;
+                    ctx.activePullTargets.erase(idStr);
                 }
                 tracingCacheLog(
                     "resolve %s: cell[%d] subject=%s miss across %zu edges (+collected)",
