@@ -7,12 +7,12 @@ principles. Companion to
 [`tracing-eval-cache-content-identity-via-asks.md`](./tracing-eval-cache-content-identity-via-asks.md)
 and [`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md).
 
-The cb-sibling failure is **out of scope** here — it has a separate
-principled fix sketched in
-[`tracing-eval-cache-per-arg-completion.md`](./tracing-eval-cache-per-arg-completion.md#whats-still-missing-for-cb-sibling)
-(= extend cidasks-evolved encoding to child queries on apply-result
-wrappers). The proposal in this doc is independent of that work
-and the two compose.
+The cb-sibling failures (`cb-sibling-discrimination-via-observation`,
+`cb-sibling-b-depends-on-a`) are **out of scope** here — they landed
+via separate work described in
+[`tracing-eval-cache-per-arg-completion.md`](./tracing-eval-cache-per-arg-completion.md#snapshot-padded-retry-committed-9184b703e).
+The proposal in this doc is independent of that work and the two
+compose.
 
 ## The failure
 
