@@ -627,6 +627,69 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         return live;
                     }
                 }
+                /* Cross-Q pool pull (LOCAL-ONLY, no cidasksWalk
+                   mutation): the writer's `pendingNewRequests` dedups
+                   reqhashes across Qs within a session, so a later Q
+                   whose Asks chain depends on observations flushed by
+                   an earlier Q (cb-sibling-b scenario) never re-emits
+                   those into its own chain. Recover by enumerating
+                   pool Requests whose `from` equals this subject's id
+                   at each candidate k, live-dispatching each via
+                   `dispatchAmbientQuery` (which resolves roots via THIS
+                   proxy's cell chain — responses reflect the current
+                   sibling's context, not the recorder's original), and
+                   testing whether folding them as an extra edge
+                   produces `idStr`.
+
+                   Only memoise the result — do NOT mutate `cidasksWalk`.
+                   Permanent mutation shifts subject_at_k for later
+                   resolves and breaks tests where the walker relies on
+                   writer-aligned walk position (e.g. cb-sibling
+                   discrimination). */
+                if (!ctx.inCrossQPull) {
+                    ctx.inCrossQPull = true;
+                    bool matched = false;
+                    for (size_t k = 0; k <= cidasksWalk.size() && !matched; ++k) {
+                        auto currentId = cidasks::scopeStateIdAt(*subj, scope, cidasksWalk, k);
+                        auto currentHex = currentId.to_string(HashFormat::Base16, false);
+                        auto poolReqs = decisionGraph.getRequestsWithFrom(currentHex);
+                        std::vector<cidasks::Observation> pulled;
+                        for (auto & [reqHash, reqPayloadStr] : poolReqs) {
+                            nlohmann::json reqJson;
+                            try {
+                                reqJson = cborStringToJson(reqPayloadStr);
+                            } catch (const std::exception &) {
+                                continue;
+                            }
+                            auto respPayload = dispatchAmbientQuery(reqJson, ctx);
+                            if (!respPayload)
+                                continue;
+                            auto respHash = TracingDecisionGraph::computeResponseHash(*respPayload);
+                            auto elementHash = TracingDecisionGraph::xorFactIntoHash(
+                                Hash(HashAlgorithm::SHA256), reqHash, respHash);
+                            pulled.push_back({currentId, elementHash});
+                        }
+                        if (pulled.empty())
+                            continue;
+                        std::vector<cidasks::Edge> hypWalk = cidasksWalk;
+                        cidasks::Edge extra;
+                        extra.observations = pulled;
+                        hypWalk.push_back(std::move(extra));
+                        auto extendedId = cidasks::scopeStateIdAt(
+                            *subj, scope, hypWalk, hypWalk.size());
+                        if (extendedId.to_string(HashFormat::Base16, false) == idStr) {
+                            matched = true;
+                            tracingCacheLog(
+                                "resolve %s: cell[%d] subject=%s MATCH via cross-Q pool pull (k=%zu, %zu obs)",
+                                idStr.substr(0, 12), cellDepth,
+                                cidasks::describe(*subj), k, pulled.size());
+                            ctx.memo[idStr] = live;
+                            ctx.inCrossQPull = false;
+                            return live;
+                        }
+                    }
+                    ctx.inCrossQPull = false;
+                }
                 /* Speculative: the target may be a PositionalSeed at
                    a deeper apply-stack depth than this cell's subject.
                    Inner cb-apply args (seed(depth+1), seed(depth+2), …)

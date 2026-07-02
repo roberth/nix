@@ -53,6 +53,12 @@ class TracingReplayEvaluator : public Evaluator
             earlier-in-edge dispatches then become resolvable within
             the same edge. Null outside dispatch context. */
         const std::vector<cidasks::Observation> * pendingEdgeObservations = nullptr;
+        /** Re-entry guard for `resolveCdiId`'s cross-Q pool pull. That
+            fallback live-dispatches pool Requests via
+            `dispatchAmbientQuery`, which recursively calls `resolveCdiId`
+            for its roots — without a guard the pull ping-pongs on the
+            same subject and blows the stack. */
+        bool inCrossQPull = false;
     };
 
     /** Cumulative walk across all v13Walk calls in this session.
