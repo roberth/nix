@@ -699,7 +699,27 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
                 bool matched = false;
-                for (size_t k = 0; k <= extendedWalkForMatch.size() && !matched; ++k) {
+                /* If cold's snapshot loaded, try the structural k
+                   (snapshot.size()) first — cold stamped this
+                   subject's CDI at that specific walk-index, so if
+                   any k matches semantically it's this one. Skipping
+                   the linear iteration eliminates XOR-fold-coincidence
+                   matches at intermediate k that route to the wrong
+                   sibling's cell. */
+                std::vector<size_t> kOrder;
+                if (!ctx.snapshotWalk.empty()) {
+                    /* Snapshot.size() would be extendedWalkForMatch.size()
+                       iff walker.cidasksWalk was empty and snapshot was
+                       the only source. Snapshot's contribution to
+                       extendedWalkForMatch is deduped, so the structural
+                       k corresponds to extendedWalkForMatch.size(). */
+                    kOrder.push_back(extendedWalkForMatch.size());
+                }
+                for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k)
+                    if (kOrder.empty() || k != kOrder.front())
+                        kOrder.push_back(k);
+                for (size_t k : kOrder) {
+                    if (matched) break;
                     auto scopeStateId = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
                     auto scopeStateIdHex = scopeStateId.to_string(HashFormat::Base16, false);
                     if (scopeStateIdHex == idStr) {
