@@ -51,53 +51,63 @@ Q's whose recorded chain is rooted at a prefix.
 The depth-2 local objects (`TracingLocalObject` /
 `ReplayLocalObject`) emit queries per-arg via `stampPerArgFields`.
 
-## Test status (24/25 cb-\* pass)
+## Test status (30/30 cb-\* + builtins-cache pass)
 
 - **cb-385** deep-indep test 4: green. Walker reproduces the
   writer's evolved CDI at the right edge boundary via the
   cumulative `cidasksWalk` + try-every-edge cell-chain match.
 - **cb-local-descendants** and all other cb-\*: green.
-- **cb-sibling-discrimination-via-observation**: still red.
+- **cb-sibling-discrimination-via-observation**: green.
+- **cb-sibling-b-depends-on-a**: green as of commit
+  `9184b703e` (snapshot-padded retry in `v13Walk` — see
+  "Snapshot-padded retry" below).
 
-## What's still missing for cb-sibling
+## How cb-sibling was closed
 
 The test records two cb-applies of the same cached fn whose
 pre-apply observations match but whose apply-result observations
 diverge (`.whatever = 100` vs `1000`). Under the via-asks
 discrimination corollary (principle 8), divergent observations
 should produce distinct CDIs that lead to distinct trie
-positions. In the current implementation:
+positions. Two mechanisms carry this discrimination through:
 
-- The writer's `flushPendingAmbient` evolves the cb_arg root
-  CDI per-flush, so sibling B's `.whatever` observation's `from`
-  is the cb_arg CDI AFTER sibling A's `.whatever` observation
-  has folded in — a distinct CDI from sibling A's `from`.
-- But the *child queries on the apply-result wrapper* (= what
-  `TracingReplayObject`/`TracingObject` emit) carry `from =
-  triePos.queryHashStr`, a structural parentHash with no cidasks
-  evolution. So sibling A and sibling B's `.whatever` getType
-  queries hash to the same `queryHash`. Cold records two
-  Terminals at this same `queryHash` at different `factSetHash`
-  positions (= sibling A's cumulative cur vs sibling B's).
-- For the walker to discriminate, it must reach sibling B's
-  `factSetHash` when looking up sibling B's lookup. Currently
-  `walk()` stops at the first Terminal reachable from its
-  starting cur. Starting from `lastQFactsHash` doesn't help
-  when `lastQFactsHash` itself is upstream of both terminals
-  (= the prior hits landed at a shared-prefix cur, not at a
-  sibling-specific cur).
+1. The writer's `flushPendingAmbient` evolves the cb_arg root
+   CDI per-flush, so sibling B's `.whatever` observation's `from`
+   is the cb_arg CDI AFTER sibling A's `.whatever` observation
+   has folded in — a distinct CDI from sibling A's `from`.
+2. `TracingReplayObject::evolvedQueryFrom` reproduces the same
+   evolution on the walker side, so child queries on the apply-
+   result wrapper carry `from = applyResultCdi(...)` evolved at
+   the current `applyContext`. Sibling A's and sibling B's
+   `.whatever` getAttr queries hash to distinct `queryHash`es,
+   distinct Terminals, no discrimination-via-cur required.
 
-The principled completion of cb-sibling requires extending the
-cidasks-evolved encoding into the `TracingObject` /
-`TracingReplayObject` path: child queries on apply-result
-wrappers should carry `from = applyResultCdi(...)` evolved at
-the current `d1CidasksWalk`. Then sibling A's and sibling B's
-child queries hash to distinct `queryHash`es, distinct
-Terminals, no discrimination-via-cur required — discrimination
-falls out structurally from principle 3's apply-result formula.
+For queries whose walker `cidasksWalk` has not yet reached
+cold's flush-time state (cold/warm flush-pattern asymmetry —
+see below), the walker's dispatched-response fold at otherwise-
+identical Qs can miss cold's recorded terminal. The
+`v13Walk` snapshot-padded retry described below closes that
+gap without touching the primary walk semantics.
 
-That's the next piece of work, and it's a wider edit than
-what's currently in tree.
+## Snapshot-padded retry (committed `9184b703e`)
+
+On primary v13Walk miss, if cold's per-Q `QCidasksWalks`
+snapshot exceeds walker's current `cidasksWalk`, pad walker's
+`cidasksWalk` with the snapshot's excess edges, re-run the
+walk (both parent-anchor and ∅ backstops), then splice the
+padding out so `cidasksWalk` retains only real committed
+edges. Padded retry runs only after the unpadded walk misses,
+preserving the primary path for tests whose walks already
+succeed (cb-higher-order, cb-higher-order-nested, cb-385 —
+unconditional padding regressed these).
+
+This is a variant A implementation of the "wider edit"
+described below: walker.cidasksWalk mirrors cold's flush
+state at Q lookup time, but only reactively. The proactive
+version (grow walker.cidasksWalk in lockstep with cold's
+d1CidasksWalk at ALL points) would be strictly more
+principled but requires structural changes that go beyond
+the retry pattern.
 
 ### Encoding alignment is the obstacle
 
