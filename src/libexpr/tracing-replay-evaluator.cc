@@ -698,28 +698,50 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    cold's fold contributors, the collected version
                    reproduces cold's evolved id. */
                 if (!extendedWalkForMatch.empty()) {
-                    /* Deduplicate observations by (from, elem) pair —
-                       walker may commit the same obs across multiple
-                       edges (shared prefix reuse), which XOR-cancels
-                       under naive collection. Include crossQPulledExtensions
-                       via extendedWalkForMatch so nested resolves see
-                       the outer pool pull's fold state. */
-                    cidasks::Edge collected;
-                    std::set<std::pair<std::string, std::string>> seen;
+                    /* Iterative multi-round fold over ALL of walker's
+                       obs (across all edges of extendedWalkForMatch),
+                       deduped. Walker's cidasksWalk may contain the
+                       obs needed to evolve seed(1) past its current
+                       final state — but they sit in edges where
+                       obs.from doesn't match myId at the fold's current
+                       state, so they never contribute. Try partitioning
+                       into rounds by current myId, folding each round's
+                       matching obs, iterating until match or
+                       stabilization. Reaches multi-hop CDIs (like
+                       cb-sibling-b's 78b1d6c0d465 requiring 5-round
+                       evolution) that no single-edge fold can. */
+                    std::vector<cidasks::Observation> flat;
+                    std::set<std::pair<Hash, Hash>> seen;
                     for (const auto & edge : extendedWalkForMatch) {
                         for (const auto & obs : edge.observations) {
-                            auto key = std::make_pair(
-                                obs.fromHash.to_string(HashFormat::Base16, false),
-                                obs.elementHash.to_string(HashFormat::Base16, false));
+                            auto key = std::make_pair(obs.fromHash, obs.elementHash);
                             if (seen.insert(key).second)
-                                collected.observations.push_back(obs);
+                                flat.push_back(obs);
                         }
                     }
-                    std::vector<cidasks::Edge> hypWalk{std::move(collected)};
-                    auto collectedId = cidasks::scopeStateIdAt(*subj, scope, hypWalk, 1);
-                    if (collectedId.to_string(HashFormat::Base16, false) == idStr) {
+                    std::vector<cidasks::Edge> hypWalk;
+                    bool matched = false;
+                    for (int iter = 0; iter < 32 && !flat.empty() && !matched; ++iter) {
+                        auto currentId = cidasks::scopeStateIdAt(*subj, scope, hypWalk, hypWalk.size());
+                        cidasks::Edge partition;
+                        std::vector<cidasks::Observation> stillRemaining;
+                        for (auto & obs : flat) {
+                            if (obs.fromHash == currentId)
+                                partition.observations.push_back(obs);
+                            else
+                                stillRemaining.push_back(obs);
+                        }
+                        if (partition.observations.empty())
+                            break;
+                        hypWalk.push_back(std::move(partition));
+                        auto id = cidasks::scopeStateIdAt(*subj, scope, hypWalk, hypWalk.size());
+                        if (id.to_string(HashFormat::Base16, false) == idStr)
+                            matched = true;
+                        flat = std::move(stillRemaining);
+                    }
+                    if (matched) {
                         tracingCacheLog(
-                            "resolve %s: cell[%d] subject=%s MATCH at collected-single-edge",
+                            "resolve %s: cell[%d] subject=%s MATCH via iterative multi-round fold",
                             idStr.substr(0, 12), cellDepth,
                             cidasks::describe(*subj));
                         ctx.memo[idStr] = live;
@@ -788,26 +810,15 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         }
                         if (pulled.empty())
                             continue;
-                        /* Dedupe pulled against obs already present in
-                           `effective`: adding a duplicate obs to hypWalk
-                           XOR-cancels it (obs appears twice → self-inverse
-                           XOR-fold). For cb-sibling-b, walker's
-                           cidasksWalk already contains many pool-req
-                           obs from prior dispatches; re-adding them via
-                           the pool pull was making the extended fold
-                           regress instead of advance. */
-                        std::set<std::pair<Hash, Hash>> effectiveKeys;
-                        for (auto & e : effective)
-                            for (auto & obs : e.observations)
-                                effectiveKeys.insert({obs.fromHash, obs.elementHash});
-                        std::vector<cidasks::Observation> dedupedPulled;
-                        for (auto & obs : pulled) {
-                            auto key = std::make_pair(obs.fromHash, obs.elementHash);
-                            if (effectiveKeys.find(key) == effectiveKeys.end())
-                                dedupedPulled.push_back(obs);
-                        }
-                        if (dedupedPulled.empty())
-                            continue;
+                        /* No dedupe against effective: an obs in
+                           cidasksWalk[j] is only folded at edge j when
+                           obs.from == myId at j. If it wasn't folded
+                           there (because myId at j didn't match), it
+                           stays inert. Adding the same obs to the
+                           pulled edge at k (where myId at k == obs.from
+                           by construction) is what actually folds it.
+                           No double-count. */
+                        auto & dedupedPulled = pulled;
                         std::vector<cidasks::Edge> hypWalk = effective;
                         cidasks::Edge extra;
                         extra.observations = dedupedPulled;
