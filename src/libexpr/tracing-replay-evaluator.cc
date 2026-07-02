@@ -593,10 +593,13 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
     tracingCacheStats().hits++;
     /* Cold/warm cidasksWalk-size alignment. Cold's writer pushes to
        `d1CidasksWalk` at two per-logResult points:
-       (1) inside `flushPendingAmbient(finalize=true)` at line 182
-           of tracing-writer.cc when `!pendingNewRequests.empty()`,
+       (1) inside `flushPendingAmbient(finalize=true)` in
+           tracing-writer.cc, at the trailing
+           `d1CidasksWalk.push_back(pendingD1Edge)` when
+           `!pendingNewRequests.empty()`,
        (2) at the trailing `splitFlush` in the writer's logResult
-           path (line 454) when again `!pendingNewRequests.empty()`.
+           path — the second `d1CidasksWalk.push_back(pendingD1Edge)`
+           when again `!pendingNewRequests.empty()`.
        So cold's per-logResult push count is 2 IFF pendingNewRequests
        was non-empty at both points. Walker's per-Asks-edge
        `commitEdge` only mirrors point (2). Push a second synthetic
