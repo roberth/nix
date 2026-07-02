@@ -437,13 +437,12 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             });
     }
     if (!walkHit) {
-        /* Walker missed. Commit rejected-edge obs to cidasksWalk so
-           future resolves benefit. Dedup by fingerprint keeps this
-           safe against re-attempts of the same edge. */
-        if (!rejectedObs.empty()) {
-            pendingEdgeObservations = std::move(rejectedObs);
-            commitEdge();
-        }
+        /* Walker missed. Rejected-edge obs are NOT committed to
+           cidasksWalk: they represent wrong paths whose responses
+           cold never recorded, so folding them into seed CDIs shifts
+           subject_at_k to values cold never stamped. Per Asks-paradigm
+           navigation invariant, CDIs are pure functions of the
+           committed factset; rejected paths are not in that factset. */
         tracingCacheStats().misses++;
         return std::nullopt;
     }
