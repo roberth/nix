@@ -10,8 +10,9 @@ re-run the inner cached body fresh.
 
 Companion to
 [`tracing-eval-cache-higher-order-replay.md`](./tracing-eval-cache-higher-order-replay.md)
-which handled warm replay (= step-2 of cb-higher-order). That fix
-landed; the open work is the outer-change variant.
+which handled warm replay (= step-2 of cb-higher-order). Both
+that fix and the outer-change variant this memo describes have
+landed; see the Status section at the bottom.
 
 ## The failure mode
 
