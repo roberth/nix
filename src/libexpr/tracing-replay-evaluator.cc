@@ -97,6 +97,12 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         {},
         nullptr,
     };
+    /* Preload cross-Q pulls from prior walks so early walks (running
+       before `cidasksWalk` has grown enough via later Asks-edge commits)
+       can resolve CDIs that later walks succeed on. See
+       `persistentCrossQPulls` doc for the discrimination-preserving
+       rationale (kept SEPARATE from `cidasksWalk`). */
+    ctx.crossQPulledExtensions = persistentCrossQPulls;
 
     /* Per-edge buffer: dispatch() appends ambient facts here; the
        walk-loop promotes the buffer to a cumulative cidasksWalk
@@ -697,6 +703,15 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                                 cidasks::describe(*subj), k, pulled.size());
                             cidasks::Edge landing;
                             landing.observations = pulled;
+                            /* Also persist across walks so a subsequent
+                               v13Walk starting fresh gets the same fold
+                               state pre-loaded — cb-sibling-b's chain
+                               has multiple walks each depending on
+                               observations accumulated by other walks;
+                               without cross-walk persistence the FIRST
+                               walk fails before later walks' pulls
+                               benefit it. */
+                            persistentCrossQPulls.push_back(landing);
                             ctx.crossQPulledExtensions.push_back(std::move(landing));
                             ctx.memo[idStr] = live;
                             ctx.inCrossQPull = false;

@@ -87,6 +87,18 @@ class TracingReplayEvaluator : public Evaluator
         cidasksWalk (= shared prefix), commitEdge is a no-op. */
     std::unordered_set<Hash> committedEdgeFingerprints;
 
+    /** Successful cross-Q pool pulls accumulated across ALL v13Walks
+        in this evaluator. Each new walk copies these into its
+        ResolutionContext's `crossQPulledExtensions` so early walks
+        (which run before `cidasksWalk` has grown enough) can still
+        resolve CDIs that later walks succeed on. Kept SEPARATE from
+        `cidasksWalk` — mixing would shift subject_at_k for later
+        resolves and regress cb-sibling-discrimination-via-observation.
+        Dedup by the edge's elementHash set is not needed here because
+        each pull's landing edge represents a distinct fold-state
+        contribution keyed by its target subject id. */
+    std::vector<cidasks::Edge> persistentCrossQPulls;
+
     /* Walks across the same process invocation re-dispatch the same
        Requests many times (each top-level lookup re-walks the shared
        prefix). Memoize requestHash -> responseHash so the file read +
