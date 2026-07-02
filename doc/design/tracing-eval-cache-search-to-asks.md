@@ -131,62 +131,74 @@ moment *this* observation is recorded / consulted, use the K value
 that is one less than what it will become." Different observations
 in a walk have different K values.
 
-## Reentrancy is downstream
+## Reentrancy — hypothesis, not prediction
 
 `cb-repeated-cb-apply-diff-args` (the test committed as `debb52e83`)
 exercises `(cb 10) + (cb 20)` — multiple cb-applies of the same
-callback with different arguments in a single cached body. This
-pattern is closely related to but distinct from the resolveCdiId
-search:
+callback with different arguments in a single cached body.
 
-- The search→Asks fix ensures walker computes fact-`from` fields at
-  the correct K without iteration.
-- Reentrancy specifically exercises **cb-apply reqhash** construction,
-  where the `from` field's K value must match cold's at each of
-  multiple applies within a single Q walk.
+Our current hypothesis is that this pattern needs work at the
+cb-apply reqhash construction site (writer-side `logAmbientApply` or
+walker-side dispatch equivalent) beyond just removing the search,
+because the `from` field's K value must match cold's at each of
+multiple applies within a single Q walk. But we don't actually
+know:
 
-If alignment is correct throughout, multi-cb-apply-different-args
-should follow. But it may need additional work at the cb-apply
-reqhash construction site (writer-side `logAmbientApply` or the
-walker-side dispatch equivalent) that is beyond the scope of just
-removing the search. That work is tracked as a separate follow-up
-once the alignment mechanism is in place.
+- **It could turn green** as a side effect of the alignment work,
+  if the same K-precision that removes the search also happens to
+  cover cb-apply's `from` field. That would be a happy accident
+  worth investigating.
+- **It could stay red**, in which case the cb-apply reqhash path
+  specifically still uses post-observation indexing and needs its
+  own alignment fix. That's the follow-up phase.
+- **It could partially go green** — some variants pass, others
+  don't. Each partial pattern is a data point about what alignment
+  covers and what it doesn't.
 
-If after the search→Asks work lands the reentrancy test is still
-red, that is the signal that the cb-apply reqhash path specifically
-still uses post-observation indexing and needs its own alignment fix.
+The red test is data. Whichever outcome, we've learned something
+about the shape of the alignment mechanism.
 
-## Anticipated simplifications
+## Anticipated simplifications — expectations to investigate
 
-After alignment is correct, several existing mechanisms may become
-unnecessary:
+Each of the following mechanisms was added to compensate for the
+walker-writer alignment mismatch that the search→Asks work targets.
+For each, our expectation is that it becomes unnecessary — but each
+is a separate hypothesis worth checking, not a guarantee. If some
+remain load-bearing after the search is removed, that's a data
+point about what edge cases the alignment mechanism doesn't cover.
 
-- **Snapshot-padded retry** in v13Walk. The retry aligns walker's
-  cidasksWalk to cold's snapshot on primary miss. If primary walks
-  succeed by construction (because K values match), the retry is
-  dead code.
-- **XOR-coincidence guard** in resolveCdiId. The guard rejects
-  matches whose k happens to coincide by XOR-fold-coincidence
-  rather than by semantic k-alignment. Once search is eliminated,
-  there is no k-iteration and hence no coincidence to guard against.
-- **QCidasksWalks snapshot table**. Cold serialises d1CidasksWalk at
-  each logResult so the walker can align to cold's flush-time state.
-  If growth is lockstep, this table is redundant.
+- **Snapshot-padded retry** (`9184b703e`) in v13Walk. **Expectation**:
+  primary walks succeed by construction (matching K values) →
+  retry becomes dead code. **Alternative outcome**: primary walks
+  still miss on some class of query (e.g. cb-apply reqhash within
+  a walk where writer's K doesn't correspond cleanly to walker's) →
+  retry stays as a targeted fallback.
+- **XOR-coincidence guard** in resolveCdiId. **Expectation**: no
+  k-iteration means no coincidence to guard against → deleted.
+  **Alternative**: some coincidence source we haven't diagnosed
+  survives, guard keeps rejecting.
+- **QCidasksWalks snapshot table**. **Expectation**: with lockstep
+  growth, cold's snapshot is reconstructible from walker's own
+  cidasksWalk, table redundant → schema entry deleted.
+  **Alternative**: walker growth doesn't fully match writer growth
+  in some corner (e.g. suppressed-boundary hooks not firing
+  symmetrically), snapshot stays as ground truth.
 - **Iterative pending-edge extension** and **iterative multi-round
-  fold** in resolveCdiId. Both are alternative-k search variants
-  layered on top of the base linear iteration. Removing the base
-  search removes their reason to exist.
-- **Progressive cross-Q pool pull**. Compensates for missing
-  observations in walker.cidasksWalk at the moment of resolveCdiId
-  by pulling observations from other Q chains. If alignment is
-  correct, walker.cidasksWalk should have the needed observations
-  at the right K without cross-Q pulling.
+  fold** in resolveCdiId. **Expectation**: alternative-k search
+  variants have no reason to exist once k-iteration is removed →
+  deleted. **Alternative**: they cover a real case (intra-edge
+  ordering, e.g.) that isn't reducible to a single K.
+- **Progressive cross-Q pool pull**. **Expectation**: walker's own
+  cidasksWalk carries what's needed at the right K, no need to
+  pull from other Q chains → deleted. **Alternative**: cross-Q
+  observation sharing is genuinely needed for some pattern (cb-*
+  interactions across siblings, e.g.) that pool-pull is the current
+  answer to.
 
-These simplifications are conditional on the alignment mechanism
-being genuinely correct — not just "correct enough to pass the
-existing tests." If some are still needed after search removal,
-that's a data point about what edge cases the alignment mechanism
-still misses.
+Each simplification lands as its own commit after the base
+search→Asks change, verified against the same test-bounds table.
+Any that resist deletion becomes a subsection in follow-up notes
+explaining what it actually covers.
 
 ## Non-goals for this phase
 
@@ -222,13 +234,32 @@ still misses.
    longer load-bearing.
 6. **Run `--repeat=3` sweep** to catch flakes.
 
-## Success looks like
+## What "success" means at each phase
 
-- `resolveCdiId` down from ~200 lines of k-iteration + fallbacks
-  to a handful of lines with a single `scopeStateIdAt` call.
-- Snapshot-padded retry deleted.
-- XOR-coincidence guard deleted.
-- Progressive cross-Q pool pull evaluated for deletion.
-- 30/1 baseline preserved (reentrancy still red).
-- Compile-clean, no compiler warnings.
-- Full meson suite at 324/N (where N is the pre-existing skip count).
+The primary success criterion is narrow and firm:
+
+- **`resolveCdiId`'s linear k-iteration is deleted** and replaced
+  with a single `scopeStateIdAt` call at a known K.
+- **Previously-green tests stay green.** (The bounds table above
+  defines the surface that must be preserved.)
+- **`cb-repeated-cb-apply-diff-args` outcome is measured**, whichever
+  direction it goes. Red is acceptable, green is a bonus, partial
+  colour tells us something about coverage.
+
+Beyond that, everything is an investigation:
+
+- Each mechanism in "Anticipated simplifications" is a hypothesis to
+  check by attempting deletion and observing what regresses. Some
+  will delete cleanly. Some may resist — and that resistance is a
+  finding, not a failure of the project.
+- Performance is expected to improve (the search removal is
+  algorithmic), but by how much is a measurement, not a design
+  parameter.
+- Compile-cleanliness and full-suite green are hygiene, not scope.
+
+The project delivers whatever combination of these turns out to be
+achievable. A partial simplification with `resolveCdiId` cleaned up
+and one or two mechanisms still load-bearing is still valuable if
+the alignment story is clearer. Same if every simplification lands
+except reentrancy. What we don't want is claiming closure on things
+we haven't actually investigated.
