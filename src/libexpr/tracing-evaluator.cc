@@ -463,8 +463,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
                v13FactSet_A) and sibling B (applying at v13FactSet_B >
                v13FactSet_A) get distinct siblingScopes → distinct
                inner-ambient-object inheritedScopes → distinct
-               reqhashes for observations they emit. Walker mirrors
-               this in TracingReplayEvaluator::apply. */
+               reqhashes for observations they emit. */
             auto siblingScope = TracingDecisionGraph::xorHashes(
                 TracingDecisionGraph::xorHashes(guard.oldScope, applyScopeStateId),
                 writer.getV13FactSetHash());

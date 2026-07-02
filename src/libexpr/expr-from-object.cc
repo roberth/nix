@@ -291,8 +291,16 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        same way through their args reach the same trie position
        regardless of where the arg's source came from. */
     cidasks::Subject argSubject{cidasks::PositionalSeed{localCell->depth}};
+    /* Sample resolver->callScope at fire time. TracingEvaluator::apply
+       leaves callScope at the current sibling's siblingScope (no
+       restore), so this sample reflects the CURRENT sibling context
+       walker is operating under. Do not freeze at closure-creation
+       time — the scope evolves, and freezing would emit stale hashes. */
     Hash argScope = resolverHandle->callScope;
     auto argId = cidasks::scopeStateIdAfter(argSubject, argScope, {});
+    tracingCacheLog("AmbientApply::run: argScope=%s argId=%s",
+                    argScope.to_string(HashFormat::Base16, false).substr(0, 12),
+                    argId.to_string(HashFormat::Base16, false).substr(0, 12));
 
     /* Compute the resultId early so we can pass it to the
        TracingLocalObject as depth2ApplyId — groups all depth-2 facts
