@@ -618,8 +618,12 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                        states (fold @k1 depends on fold @k0 first). Add
                        pending obs one edge at a time, partitioning by
                        obs.from matching the current fold state, until
-                       either match or no more progress. */
-                    std::vector<cidasks::Edge> extendedWalk = cidasksWalk;
+                       either match or no more progress.
+
+                       Base = extendedWalkForMatch (cidasksWalk +
+                       crossQPulledExtensions) so we start from the
+                       fold state the outer pool pull operates at. */
+                    std::vector<cidasks::Edge> extendedWalk = extendedWalkForMatch;
                     std::vector<cidasks::Observation> remaining = *ctx.pendingEdgeObservations;
                     bool matched = false;
                     for (int iter = 0; iter < 8 && !remaining.empty() && !matched; ++iter) {
@@ -675,14 +679,16 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    XOR-fold is commutative, so if walker's obs contain
                    cold's fold contributors, the collected version
                    reproduces cold's evolved id. */
-                if (!cidasksWalk.empty()) {
+                if (!extendedWalkForMatch.empty()) {
                     /* Deduplicate observations by (from, elem) pair —
                        walker may commit the same obs across multiple
                        edges (shared prefix reuse), which XOR-cancels
-                       under naive collection. */
+                       under naive collection. Include crossQPulledExtensions
+                       via extendedWalkForMatch so nested resolves see
+                       the outer pool pull's fold state. */
                     cidasks::Edge collected;
                     std::set<std::pair<std::string, std::string>> seen;
-                    for (const auto & edge : cidasksWalk) {
+                    for (const auto & edge : extendedWalkForMatch) {
                         for (const auto & obs : edge.observations) {
                             auto key = std::make_pair(
                                 obs.fromHash.to_string(HashFormat::Base16, false),
