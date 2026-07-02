@@ -117,48 +117,78 @@ Root cause of regression: other cb tests rely on callScope being
 restored to a specific value at nested/curried cb-applies. Persist-
 ing siblingScope across boundaries broke that assumption.
 
-### Direction C (recommended for next session) — Discriminate in the sidecar payload key
+### Direction C (recommended) — Sample fnObj's inheritedScope at fire time
 
 The sidecar's reqhash IS the argIdStr (`argId.to_string(hex)`).
 argId = `scopeStateIdAfter(seed(depth), argScope, {})`. If argScope
-(= resolver.callScope at run time) reflects sibling identity, argId
-differs and sidecar lands under distinct keys.
+reflects sibling identity, argId differs across siblings → distinct
+sidecar entries in LRM → walker's warm dispatch retrieves the
+correct sibling's response.
 
-The blocker (found this session): `resolver.callScope` at
-AmbientApply::run time is restored, not siblingScope.
+**Correct source for argScope**: fnObj's `inheritedScope`,
+NOT `resolverHandle->callScope`.
 
-**Creative fix**: TracingEvaluator::apply's guard is the wrong shape
-for cb-apply. Cb-applies aren't nested (they're serialized: sibling
-A completes fully, then sibling B). So the guard doesn't need to
-restore. But other cb-* tests rely on RESTORE behavior for their
-own reasons (probably nested/curried).
+Why this is principled:
 
-Approach:
-1. Introduce a **per-outer-arg callScope override** attached to the
-   AmbientObject at construction time. `AmbientObject::inheritedScope`
-   is already such a field; consider adding a separate
-   `applyOverrideScope` field.
-2. In `AmbientApply::runOn`, when reading argScope, check if the
-   fnObj (or something reachable from it) carries an override. If
-   yes, use it instead of `resolverHandle->callScope`.
+1. `AmbientObject::inheritedScope` is set exactly once at each
+   object's construction (line 60 for navigation children;
+   line 262 for apply-result wrappers; line 581 of `expr-from-object.cc`
+   for the seed AmbientObject). At that moment, `resolver->callScope
+   = siblingScope` (guard active during makeCachedFnPrimOp's impl
+   running inside TracingEvaluator::apply's inner->apply).
+2. AmbientObjects are **per-sibling** — sibling A's cb-arg is one
+   AmbientObject; sibling B's is a different AmbientObject. Their
+   inheritedScopes were populated at their respective apply times
+   (with their respective siblingScopes).
+3. Reading `fnObj->getInheritedScope()` at fire time IS sampling —
+   we're reading a stable per-object field, not a snapshot we
+   ourselves stored. The AmbientObject IS the sibling; its scope IS
+   the sibling's identity.
+4. No new closures, no new fields, no captured shared_ptrs, no
+   guard changes. Existing paradigm.
 
-Where fnObj comes from in AmbientApply::runOn: `registry.resolveOuter(fnId)`
-(line 268 of `expr-from-object.cc`). Look at `AmbientRegistry` to
-understand what `resolveOuter` returns and whether it could carry
-a scope.
+**Concrete implementation:**
 
-Alternative: **thread siblingScope through the AmbientObject's
-applyFn closure**. Currently applyFn signature is
-`(AmbientId fnId, argObj, callerScope) → resultId`. Extend it to
-carry a scope override. The closure is created in
-`makeCachedFnPrimOp` (line 466+). At that point, the applyFn can be
-constructed with a scope-reference that gets updated when the
-outer's TracingEvaluator::apply fires. Not a freeze — a live ref.
+In `AmbientApply::runOn` (line 274 of `expr-from-object.cc`),
+replace:
+```cpp
+Hash argScope = resolverHandle->callScope;
+```
+with:
+```cpp
+Hash argScope = fnObj->getInheritedScope();
+// Fallback to resolver->callScope if fnObj is not an AmbientObject
+// or its inherited scope is default-zero (non-cb-apply paths).
+if (argScope == Hash(HashAlgorithm::SHA256))
+    argScope = resolverHandle->callScope;
+```
 
-Concrete: instead of freezing `capturedCallScope = resolver->callScope`,
-capture a `std::shared_ptr<Hash>` that TracingEvaluator::apply can
-update. The closure reads `*callScopePtr` at fire time, getting the
-freshly-updated value.
+`Object::getInheritedScope()` is a virtual method with a default
+returning zero-hash; `AmbientObject` overrides it (see
+`ambient-object.hh` line 122's TracingObject override for the
+pattern). Verify AmbientObject has the override, add if not.
+
+Walker mirror: same change in `AmbientApply::runOn`'s walker path
+(if there's a separate one). The walker's warm-time AmbientObject
+is constructed by `dispatchApplyLive`'s ReplayLocalObject path,
+which propagates the sidecar's `scope` field into the RLO — so at
+warm, `fnObj->getInheritedScope()` returns the recorded sibling's
+scope. Verify this — it may already work by construction.
+
+### Why NOT these other directions
+
+- **Freezing at closure creation** (my earlier Direction A):
+  captures at BEFORE-guard time, so captures oldScope not
+  siblingScope. Also violates the "don't freeze scopes that
+  evolve" principle.
+- **shared_ptr<Hash> for live sampling**: this IS "storing
+  intermediate hashes for later emission" (something writes the
+  hash; the closure dereferences later). Same paradigm violation.
+- **Adding an `applyOverride` field to AmbientObject**: redundant
+  with the existing `inheritedScope` field, which is already the
+  right value at the right moment.
+- **No-restore in the guard**: regressed 18 cb-* tests this
+  session. Breaks callScope-restore assumptions elsewhere.
 
 ## Step 5 — Test scope
 
