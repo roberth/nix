@@ -558,6 +558,35 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
         if (!dedupedEdge.observations.empty())
             extendedWalkForMatch.push_back(std::move(dedupedEdge));
     }
+    /* XOR-coincidence guard shared across all match paths. Returns
+       true = REJECT (the cell's live proxy is not the recorded
+       owner of idStr); returns false = ACCEPT. Skips verification
+       inside cross-Q pool pull (where the guard would recurse) and
+       when no pool request exists at from=idStr. */
+    auto xorCoincidenceReject = [&](const std::string & id) -> bool {
+        if (ctx.inCrossQPull) return false;
+        auto poolReqs = decisionGraph.getRequestsWithFrom(id);
+        bool anyMismatch = false;
+        bool anyDispatched = false;
+        for (auto & [poolReqHash, poolReqPayload] : poolReqs) {
+            auto storedResp = decisionGraph.getLocalResponsePayload(poolReqHash);
+            if (!storedResp) continue;
+            nlohmann::json probeReq;
+            try {
+                probeReq = cborStringToJson(poolReqPayload);
+            } catch (...) { continue; }
+            ctx.inCrossQPull = true;
+            auto liveResp = dispatchAmbientQuery(probeReq, ctx);
+            ctx.inCrossQPull = false;
+            if (!liveResp) continue;
+            anyDispatched = true;
+            if (*liveResp != *storedResp) {
+                anyMismatch = true;
+                break;
+            }
+        }
+        return anyDispatched && anyMismatch;
+    };
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
@@ -574,43 +603,18 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                     if (scopeStateIdHex == idStr) {
                         /* XOR-coincidence guard: verify this cell's live
                            proxy is semantically the recorded owner of
-                           this CDI by dispatching a canonical pool
-                           request at from=idStr through it, comparing
-                           result to LRM. A mismatch means the fold-hash
-                           collision matched the wrong sibling's proxy
-                           (cb-sibling-b: sibling B's cell chain reaches
-                           sibling A's evolved CDI by coincidence).
-                           Use as SELECTOR only — final response still
-                           comes from live dispatch downstream. Skip
-                           verification when no pool request exists at
-                           this from (nothing to verify against). */
-                        if (!ctx.inCrossQPull) {
-                            auto poolReqs = decisionGraph.getRequestsWithFrom(idStr);
-                            bool anyMismatch = false;
-                            bool anyDispatched = false;
-                            for (auto & [poolReqHash, poolReqPayload] : poolReqs) {
-                                auto storedResp = decisionGraph.getLocalResponsePayload(poolReqHash);
-                                if (!storedResp) continue;
-                                nlohmann::json probeReq;
-                                try {
-                                    probeReq = cborStringToJson(poolReqPayload);
-                                } catch (...) { continue; }
-                                ctx.inCrossQPull = true;
-                                auto liveResp = dispatchAmbientQuery(probeReq, ctx);
-                                ctx.inCrossQPull = false;
-                                if (!liveResp) continue;
-                                anyDispatched = true;
-                                if (*liveResp != *storedResp) {
-                                    anyMismatch = true;
-                                    break;
-                                }
-                            }
-                            if (anyDispatched && anyMismatch) {
-                                tracingCacheLog(
-                                    "resolve %s: cell[%d] MATCH REJECTED at edge=%zu (LRM/live mismatch on canonical probe — XOR-coincidence)",
-                                    idStr.substr(0, 12), cellDepth, k);
-                                continue;
-                            }
+                           this CDI. See `xorCoincidenceReject` lambda's
+                           docstring. Same guard applied to all match
+                           paths below (iterative pending-edge,
+                           iterative multi-round fold, progressive
+                           cross-Q pool pull) — otherwise a rejected
+                           base match falls into an unguarded fallback
+                           that returns the same wrong cell. */
+                        if (xorCoincidenceReject(idStr)) {
+                            tracingCacheLog(
+                                "resolve %s: cell[%d] MATCH REJECTED at edge=%zu (LRM/live mismatch on canonical probe — XOR-coincidence)",
+                                idStr.substr(0, 12), cellDepth, k);
+                            continue;
                         }
                         tracingCacheLog(
                             "resolve %s: cell[%d] subject=%s MATCH at edge=%zu currentProxy=%p live=%p liveScope=%s",
@@ -680,12 +684,18 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         remaining = std::move(stillRemaining);
                     }
                     if (matched) {
-                        tracingCacheLog(
-                            "resolve %s: cell[%d] subject=%s MATCH via iterative pending-edge extension",
-                            idStr.substr(0, 12), cellDepth,
-                            cidasks::describe(*subj));
-                        ctx.memo[idStr] = live;
-                        return live;
+                        if (xorCoincidenceReject(idStr)) {
+                            tracingCacheLog(
+                                "resolve %s: cell[%d] MATCH REJECTED (iterative pending-edge extension — XOR-coincidence)",
+                                idStr.substr(0, 12), cellDepth);
+                        } else {
+                            tracingCacheLog(
+                                "resolve %s: cell[%d] subject=%s MATCH via iterative pending-edge extension",
+                                idStr.substr(0, 12), cellDepth,
+                                cidasks::describe(*subj));
+                            ctx.memo[idStr] = live;
+                            return live;
+                        }
                     }
                 }
                 /* Speculative: cold's writer may have folded many
@@ -742,12 +752,18 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         flat = std::move(stillRemaining);
                     }
                     if (matched) {
-                        tracingCacheLog(
-                            "resolve %s: cell[%d] subject=%s MATCH via iterative multi-round fold",
-                            idStr.substr(0, 12), cellDepth,
-                            cidasks::describe(*subj));
-                        ctx.memo[idStr] = live;
-                        return live;
+                        if (xorCoincidenceReject(idStr)) {
+                            tracingCacheLog(
+                                "resolve %s: cell[%d] MATCH REJECTED (iterative multi-round fold — XOR-coincidence)",
+                                idStr.substr(0, 12), cellDepth);
+                        } else {
+                            tracingCacheLog(
+                                "resolve %s: cell[%d] subject=%s MATCH via iterative multi-round fold",
+                                idStr.substr(0, 12), cellDepth,
+                                cidasks::describe(*subj));
+                            ctx.memo[idStr] = live;
+                            return live;
+                        }
                     }
                 }
                 /* Cross-Q pool pull (LOCAL-ONLY, no cidasksWalk
@@ -830,6 +846,20 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         auto extendedId = cidasks::scopeStateIdAt(
                             *subj, scope, walkAccum, walkAccum.size());
                         if (extendedId.to_string(HashFormat::Base16, false) == idStr) {
+                            /* Restore inCrossQPull BEFORE the guard so
+                               its recursive dispatchAmbientQuery can
+                               actually verify (otherwise the guard
+                               short-circuits under `if (!ctx.inCrossQPull)`
+                               and returns false regardless). Re-set on
+                               reject. */
+                            ctx.inCrossQPull = prevInCrossQPull;
+                            if (xorCoincidenceReject(idStr)) {
+                                tracingCacheLog(
+                                    "resolve %s: cell[%d] MATCH REJECTED (progressive cross-Q pool pull — XOR-coincidence)",
+                                    idStr.substr(0, 12), cellDepth);
+                                ctx.inCrossQPull = true;
+                                continue;
+                            }
                             matched = true;
                             tracingCacheLog(
                                 "resolve %s: cell[%d] subject=%s MATCH via progressive cross-Q pool pull (k=%zu, %zu pulled-edges) currentProxy=%p live=%p liveScope=%s",
@@ -842,7 +872,6 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                                 ctx.crossQPulledExtensions.push_back(pe);
                             }
                             ctx.memo[idStr] = live;
-                            ctx.inCrossQPull = prevInCrossQPull;
                             ctx.activePullTargets.erase(idStr);
                             return live;
                         }
