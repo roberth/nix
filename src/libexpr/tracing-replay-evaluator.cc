@@ -537,9 +537,27 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
        nested resolve for `from=5738ea301d04` only saw cidasksWalk
        (missing the persisted 5738ea301d04-producing extension) →
        dispatch failed → extended fold didn't reach 78b1d6c0d465. */
+    /* Build extendedWalkForMatch = cidasksWalk + dedup(crossQPulled).
+       Dedup because a persistent pool pull's obs might have been
+       committed to cidasksWalk in a later walk (walker dispatched the
+       same pool reqs itself). Duplicates XOR-cancel under fold. Only
+       add pull obs walker hasn't already committed. */
+    std::set<std::pair<Hash, Hash>> cidasksWalkObs;
+    for (auto & e : cidasksWalk)
+        for (auto & obs : e.observations)
+            cidasksWalkObs.insert({obs.fromHash, obs.elementHash});
     std::vector<cidasks::Edge> extendedWalkForMatch = cidasksWalk;
-    for (auto & e : ctx.crossQPulledExtensions)
-        extendedWalkForMatch.push_back(e);
+    for (auto & e : ctx.crossQPulledExtensions) {
+        cidasks::Edge dedupedEdge;
+        for (auto & obs : e.observations) {
+            if (cidasksWalkObs.find({obs.fromHash, obs.elementHash}) == cidasksWalkObs.end()) {
+                dedupedEdge.observations.push_back(obs);
+                cidasksWalkObs.insert({obs.fromHash, obs.elementHash});
+            }
+        }
+        if (!dedupedEdge.observations.empty())
+            extendedWalkForMatch.push_back(std::move(dedupedEdge));
+    }
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
