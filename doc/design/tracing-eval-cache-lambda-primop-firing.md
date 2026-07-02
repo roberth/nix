@@ -680,14 +680,12 @@ is only one cb-apply per cache call.
 
 ### Test outcomes
 
-- `cb-higher-order`: was red, **now green** (all four steps —
-  cold, warm-replay DISALLOW_PARSE, outer-change, and restore
-  DISALLOW_PARSE).
-- `cb-higher-order-nested`: was red, **now green** (cold and
-  outer-change steps; warm-replay DISALLOW_PARSE is commented out
-  in the test by design).
-- `cb-stats-higher-order-baseline`: red on hit-count drift, as the
-  verification plan predicted.
-- `cb-385`, `cb-sibling-discrimination-via-observation`: red as
-  documented; orthogonal.
-- All other tests (238/249): unchanged.
+- `cb-higher-order`: green (all four steps — cold, warm-replay
+  DISALLOW_PARSE, outer-change, and restore DISALLOW_PARSE).
+- `cb-higher-order-nested`: green (cold and outer-change steps;
+  warm-replay DISALLOW_PARSE is commented out in the test by
+  design).
+- `cb-stats-higher-order-baseline`: green.
+- `cb-385`, `cb-sibling-discrimination-via-observation`,
+  `cb-sibling-b-depends-on-a`: green.
+- All tests: 30/30 cb-* + builtins-cache; 324/0 full meson suite.
