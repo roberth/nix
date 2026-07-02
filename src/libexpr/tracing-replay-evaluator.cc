@@ -744,9 +744,29 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         }
                         if (pulled.empty())
                             continue;
+                        /* Dedupe pulled against obs already present in
+                           `effective`: adding a duplicate obs to hypWalk
+                           XOR-cancels it (obs appears twice → self-inverse
+                           XOR-fold). For cb-sibling-b, walker's
+                           cidasksWalk already contains many pool-req
+                           obs from prior dispatches; re-adding them via
+                           the pool pull was making the extended fold
+                           regress instead of advance. */
+                        std::set<std::pair<Hash, Hash>> effectiveKeys;
+                        for (auto & e : effective)
+                            for (auto & obs : e.observations)
+                                effectiveKeys.insert({obs.fromHash, obs.elementHash});
+                        std::vector<cidasks::Observation> dedupedPulled;
+                        for (auto & obs : pulled) {
+                            auto key = std::make_pair(obs.fromHash, obs.elementHash);
+                            if (effectiveKeys.find(key) == effectiveKeys.end())
+                                dedupedPulled.push_back(obs);
+                        }
+                        if (dedupedPulled.empty())
+                            continue;
                         std::vector<cidasks::Edge> hypWalk = effective;
                         cidasks::Edge extra;
-                        extra.observations = pulled;
+                        extra.observations = dedupedPulled;
                         hypWalk.push_back(std::move(extra));
                         auto extendedId = cidasks::scopeStateIdAt(
                             *subj, scope, hypWalk, hypWalk.size());
@@ -766,6 +786,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                                without cross-walk persistence the FIRST
                                walk fails before later walks' pulls
                                benefit it. */
+                            landing.observations = dedupedPulled;
                             persistentCrossQPulls.push_back(landing);
                             ctx.crossQPulledExtensions.push_back(std::move(landing));
                             ctx.memo[idStr] = live;
