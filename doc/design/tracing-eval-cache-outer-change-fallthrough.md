@@ -167,14 +167,19 @@ inner.evalFile` cleanly to re-parse the cached body.
 
 ## Status
 
-cb-higher-order step 3 (outer change) and cb-higher-order-nested
-step 2 (outer change) are both **red at HEAD**. The principled
-fix is downstream of the warm-replay bypass fix (= a separate
-memo, separate work, sketched there). Once warm-replay works
-principlefully, this outer-change failure should resolve
-without additional work. If it doesn't, this memo's diagnostic
-content (= the cascade trace, the cascade-termination analysis)
-is the starting point for follow-up.
+**Both green.** cb-higher-order step 3 (outer change) and
+cb-higher-order-nested step 2 (outer change) pass at HEAD. The
+principled fix landed downstream of the warm-replay bypass fix
+per the prediction in the previous status: once warm-replay
+worked principlefully, outer-change fall-through resolved
+without a targeted patch to the cascade sites.
+
+This memo's diagnostic content (= the cascade trace, the
+cascade-termination analysis) is retained for historical
+context — it explains the shape of the bug that turned green
+via the warm-replay work, and would be the starting point if
+similar cascade-through-fall-through patterns surface in other
+tests.
 
 ## What I am NOT proposing
 
