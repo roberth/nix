@@ -237,6 +237,13 @@ public:
     /* Look up the outgoing RequestSet edges at (Q, factSet). */
     std::vector<SetHash> getAsks(const QueryHash & q, const SetHash & factSet);
 
+    /** Enumerate ALL Asks rows for a given queryHash across all
+        fromFactSetHashes. Used by `TracingWriter::logResult` to
+        populate `EdgeResponses` for edges that `record()` inserted
+        via Patricia split beyond the writer's own `perQAsksEdges`.
+        Returns pairs of (fromFactSetHash, requestSetHash). */
+    std::vector<std::pair<SetHash, SetHash>> getAllAsksForQ(const QueryHash & q);
+
     /* Remove a specific Asks edge. Used by Patricia split to
        re-point an existing edge. */
     void removeAsks(const QueryHash & q, const SetHash & factSet, const SetHash & requestSet);

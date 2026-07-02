@@ -730,26 +730,6 @@ public:
         for (const auto & edge : perQAsksEdges)
             decisionGraph->insertAsks(*qh.queryHash, edge.fromFactSetHash, edge.requestSetHash);
 
-        /* Populate per-edge response table: for each Asks edge, for each
-           reqhash in its requestSet, insert the response payload cold
-           observed for that request. This gives walker per-edge-context
-           lookup at dispatch time. */
-        for (const auto & edge : perQAsksEdges) {
-            auto rsMembers = decisionGraph->getRequestSet(edge.requestSetHash);
-            if (!rsMembers)
-                continue;
-            for (const auto & reqHash : *rsMembers) {
-                auto it = responseFor.find(reqHash);
-                if (it == responseFor.end())
-                    continue;
-                auto respPayload = decisionGraph->getLocalResponsePayload(reqHash);
-                if (!respPayload)
-                    continue;
-                decisionGraph->insertEdgeResponse(
-                    *qh.queryHash, edge.fromFactSetHash, reqHash, *respPayload);
-            }
-        }
-
         /* If we have per-Q edges, skip the whole-remaining shortcut
            so the walker walks them one by one (= each commit advances
            ctx.edgeIndex). Pass `allRequestHashes` (= query hashes),
@@ -761,6 +741,29 @@ public:
         else
             decisionGraph->record(*qh.queryHash, v13FactSetHash, resultNodeHash,
                 responseFor, allRequestHashes);
+
+        /* Populate per-edge response table AFTER `record()` so
+           Patricia-split-added Asks rows are covered too. Enumerate
+           ALL Asks rows for Q (not just `perQAsksEdges`), and use
+           LRM (`getLocalResponsePayload`) as the source of truth so
+           coordinates whose reqhashes came from a prior sibling's
+           dispatch (cumulative-dependency principle) also get
+           covered. Without this, walker's `dispatch()`-time
+           EdgeResponses lookup misses at the shared-Patricia-node
+           coordinates, causing cross-sibling routing to fold to
+           unrecorded curs (cb-sibling-b failure). */
+        for (const auto & [fromCur, rsHash] : decisionGraph->getAllAsksForQ(*qh.queryHash)) {
+            auto rsMembers = decisionGraph->getRequestSet(rsHash);
+            if (!rsMembers)
+                continue;
+            for (const auto & reqHash : *rsMembers) {
+                auto respPayload = decisionGraph->getLocalResponsePayload(reqHash);
+                if (!respPayload)
+                    continue;
+                decisionGraph->insertEdgeResponse(
+                    *qh.queryHash, fromCur, reqHash, *respPayload);
+            }
+        }
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,

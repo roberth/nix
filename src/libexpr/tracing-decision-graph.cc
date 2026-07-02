@@ -174,7 +174,7 @@ struct TracingDecisionGraph::State
     SQLiteStmt countAsks, countTerminals;
 
     /* Decision graph layer */
-    SQLiteStmt insertAsks, selectAsks, deleteAsks;
+    SQLiteStmt insertAsks, selectAsks, selectAllAsksForQ, deleteAsks;
     SQLiteStmt insertTerminal, selectTerminal;
 
     /* Depth-2 decision graph layer */
@@ -470,6 +470,8 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO Asks(queryHash, factSetHash, requestSetHash) VALUES (?, ?, ?)");
     state->selectAsks.create(state->db,
         "SELECT requestSetHash FROM Asks WHERE queryHash = ? AND factSetHash = ?");
+    state->selectAllAsksForQ.create(state->db,
+        "SELECT factSetHash, requestSetHash FROM Asks WHERE queryHash = ?");
     state->deleteAsks.create(state->db,
         "DELETE FROM Asks WHERE queryHash = ? AND factSetHash = ? AND requestSetHash = ?");
     state->insertTerminal.create(state->db,
@@ -1206,6 +1208,18 @@ TracingDecisionGraph::getAsks(const QueryHash & q, const SetHash & factSet)
     return out;
 }
 
+std::vector<std::pair<TracingDecisionGraph::SetHash, TracingDecisionGraph::SetHash>>
+TracingDecisionGraph::getAllAsksForQ(const QueryHash & q)
+{
+    auto state(_state->lock());
+    auto query = state->selectAllAsksForQ.use();
+    dg_bindBlob(query, dg_hashToBlob(q));
+    std::vector<std::pair<SetHash, SetHash>> out;
+    while (query.next())
+        out.emplace_back(dg_blobToHash(query.getBlob(0)), dg_blobToHash(query.getBlob(1)));
+    return out;
+}
+
 void TracingDecisionGraph::removeAsks(
     const QueryHash & q, const SetHash & factSet, const SetHash & requestSet)
 {
@@ -1332,6 +1346,15 @@ static void dg_recordImpl(
             g.insertAsks(q, cur, sharedRsHash);
             g.insertAsks(q, intermediate, rsHash);
             g.removeAsks(q, cur, rsHash);
+            tracingCacheLog(
+                "record Q=%s Patricia split at cur=%s: shared=%zu of useful=%zu "
+                "(intermediate=%s, sharedRS=%s, tailRS=%s)",
+                q.to_string(HashFormat::Base16, false).substr(0, 12),
+                cur.to_string(HashFormat::Base16, false).substr(0, 12),
+                shared.size(), useful.size(),
+                intermediate.to_string(HashFormat::Base16, false).substr(0, 12),
+                sharedRsHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                rsHash.to_string(HashFormat::Base16, false).substr(0, 12));
         }
 
         std::optional<std::vector<Hash>> followUseful;
