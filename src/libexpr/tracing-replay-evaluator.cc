@@ -649,8 +649,20 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                 if (!ctx.inCrossQPull) {
                     ctx.inCrossQPull = true;
                     bool matched = false;
-                    for (size_t k = 0; k <= cidasksWalk.size() && !matched; ++k) {
-                        auto currentId = cidasks::scopeStateIdAt(*subj, scope, cidasksWalk, k);
+                    /* Effective walk = cidasksWalk + prior pulls in
+                       this ctx. Successive pulls in the same walk build
+                       on each other's fold states — needed for chains
+                       where multiple CDIs each require a fold that
+                       accumulates across k positions. */
+                    auto buildEffective = [&]() {
+                        std::vector<cidasks::Edge> w = cidasksWalk;
+                        for (auto & e : ctx.crossQPulledExtensions)
+                            w.push_back(e);
+                        return w;
+                    };
+                    auto effective = buildEffective();
+                    for (size_t k = 0; k <= effective.size() && !matched; ++k) {
+                        auto currentId = cidasks::scopeStateIdAt(*subj, scope, effective, k);
                         auto currentHex = currentId.to_string(HashFormat::Base16, false);
                         auto poolReqs = decisionGraph.getRequestsWithFrom(currentHex);
                         std::vector<cidasks::Observation> pulled;
@@ -671,7 +683,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         }
                         if (pulled.empty())
                             continue;
-                        std::vector<cidasks::Edge> hypWalk = cidasksWalk;
+                        std::vector<cidasks::Edge> hypWalk = effective;
                         cidasks::Edge extra;
                         extra.observations = pulled;
                         hypWalk.push_back(std::move(extra));
@@ -683,6 +695,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                                 "resolve %s: cell[%d] subject=%s MATCH via cross-Q pool pull (k=%zu, %zu obs)",
                                 idStr.substr(0, 12), cellDepth,
                                 cidasks::describe(*subj), k, pulled.size());
+                            cidasks::Edge landing;
+                            landing.observations = pulled;
+                            ctx.crossQPulledExtensions.push_back(std::move(landing));
                             ctx.memo[idStr] = live;
                             ctx.inCrossQPull = false;
                             return live;

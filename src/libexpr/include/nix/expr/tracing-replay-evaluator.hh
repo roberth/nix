@@ -59,6 +59,14 @@ class TracingReplayEvaluator : public Evaluator
             for its roots — without a guard the pull ping-pongs on the
             same subject and blows the stack. */
         bool inCrossQPull = false;
+        /** Observations accumulated from successful cross-Q pool pulls
+            within this walk. Extends `cidasksWalk` locally for
+            subsequent resolves in the same walk to build on prior
+            pulls' fold states. Discarded when the ResolutionContext
+            goes out of scope — no cross-walk leakage that would
+            confuse tests (e.g. cb-sibling-discrimination-via-observation)
+            relying on writer-aligned walk position. */
+        std::vector<cidasks::Edge> crossQPulledExtensions;
     };
 
     /** Cumulative walk across all v13Walk calls in this session.
