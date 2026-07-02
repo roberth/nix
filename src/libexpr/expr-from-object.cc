@@ -584,7 +584,12 @@ static PrimOp * makeCachedFnPrimOp(
                         contraArg->withScope(seedCell);
                         contraArg->withInheritedScope(callScope);
                         contraArg->withApplyContext(applyContext);
+                        tracingCacheLog("makeCachedFnPrimOp.impl: contraArg=%p seedCell=%p callScope=%s outerArg=%p",
+                                        (void*)contraArg.get_ptr().get(), (void*)seedCell.get(),
+                                        callScope.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                                        (void*)outerArgObj.get());
                         auto result = innerEval->apply(ref<Object>(fnObj), contraArg);
+                        tracingCacheLog("makeCachedFnPrimOp.impl: apply result=%p", (void*)result.get_ptr().get());
                         ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
                     },
                 .getFunctionInfo = [fnObj]() -> std::optional<FunctionInfo> { return fnObj->getFunctionInfo(); },

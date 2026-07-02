@@ -613,9 +613,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                             }
                         }
                         tracingCacheLog(
-                            "resolve %s: cell[%d] subject=%s MATCH at edge=%zu",
+                            "resolve %s: cell[%d] subject=%s MATCH at edge=%zu currentProxy=%p live=%p liveScope=%s",
                             idStr.substr(0, 12), cellDepth,
-                            cidasks::describe(*subj), k);
+                            cidasks::describe(*subj), k,
+                            (void*)ctx.currentProxy.get(), (void*)live.get(),
+                            scope.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
                         ctx.memo[idStr] = live;
                         return live;
                     }
@@ -830,9 +832,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         if (extendedId.to_string(HashFormat::Base16, false) == idStr) {
                             matched = true;
                             tracingCacheLog(
-                                "resolve %s: cell[%d] subject=%s MATCH via progressive cross-Q pool pull (k=%zu, %zu pulled-edges)",
+                                "resolve %s: cell[%d] subject=%s MATCH via progressive cross-Q pool pull (k=%zu, %zu pulled-edges) currentProxy=%p live=%p liveScope=%s",
                                 idStr.substr(0, 12), cellDepth,
-                                cidasks::describe(*subj), k, pulledEdges.size());
+                                cidasks::describe(*subj), k, pulledEdges.size(),
+                                (void*)ctx.currentProxy.get(), (void*)live.get(),
+                                scope.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
                             for (auto & pe : pulledEdges) {
                                 persistentCrossQPulls.push_back(pe);
                                 ctx.crossQPulledExtensions.push_back(pe);
