@@ -468,6 +468,24 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         return std::nullopt;
     }
     tracingCacheStats().hits++;
+    /* Cold/warm cidasksWalk-size alignment. Cold's writer pushes to
+       `d1CidasksWalk` at two per-logResult points:
+       (1) inside `flushPendingAmbient(finalize=true)` at line 182
+           of tracing-writer.cc when `!pendingNewRequests.empty()`,
+       (2) at the trailing `splitFlush` in the writer's logResult
+           path (line 454) when again `!pendingNewRequests.empty()`.
+       So cold's per-logResult push count is 2 IFF pendingNewRequests
+       was non-empty at both points. Walker's per-Asks-edge
+       `commitEdge` only mirrors point (2). Push a second synthetic
+       edge here to mirror point (1) so walker.cidasksWalk grows in
+       lockstep. Empty edges are load-bearing for index alignment;
+       subsequent `scopeStateIdAt(...,cidasksWalk,K)` computations
+       need matching K to resolve CDIs by structural k rather than
+       fold-coincidence linear search across sibling cells. */
+    cidasks::Edge synthetic1;
+    cidasksWalk.push_back(std::move(synthetic1));
+    tracingCacheLog("v13Walk success synthetic push: cidasksWalk=%zu",
+                    cidasksWalk.size());
     return V13WalkResult{std::move(*payload), walkHit->resultHash, walkHit->terminalCur};
 }
 
