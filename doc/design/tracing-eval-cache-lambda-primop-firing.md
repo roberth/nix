@@ -590,8 +590,8 @@ regression. Revert the step that introduced it and diagnose.
 ## What this proposal does NOT include
 
 - **cb-sibling discrimination via observation**: separate fix
-  per [`tracing-eval-cache-per-arg-completion.md`](./tracing-eval-cache-per-arg-completion.md#whats-still-missing-for-cb-sibling).
-  Orthogonal; the two fixes should compose.
+  per [`tracing-eval-cache-per-arg-completion.md`](./tracing-eval-cache-per-arg-completion.md#how-cb-sibling-was-closed).
+  Landed and orthogonal.
 - **cb-385 regression**: separate work; root cause may or may
   not interact with these changes.
 - **cb-stats hit-count updates**: mechanical follow-up.
@@ -672,11 +672,11 @@ Plumbing required:
 Boundary-trace-only discipline still applies for SIBLING cb-applies
 sharing the same cb_arg seed: the registration is last-write-wins,
 so cb-sibling tests (which exercise multiple cb-applies in the
-same cache call against the same seed) aren't necessarily helped by
-this; they remain red, in line with the
-[`per-arg-completion`](./tracing-eval-cache-per-arg-completion.md#whats-still-missing-for-cb-sibling)
-plan. The narrow fix is sound for cb-higher-order because there
-is only one cb-apply per cache call.
+same cache call against the same seed) aren't helped by this fix
+alone. They were closed via separate work — see
+[`per-arg-completion`](./tracing-eval-cache-per-arg-completion.md#how-cb-sibling-was-closed).
+The narrow fix in this proposal is sound for cb-higher-order because
+there is only one cb-apply per cache call.
 
 ### Test outcomes
 
