@@ -1204,9 +1204,30 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         sidecarJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
 
     cidasks::Subject rootSubject{cidasks::PositionalSeed{sidecarDepth}};
+    /* Sibling-discriminating walkFacts seed: inject walker's
+       currentProxy's applyContext observations into the RLO's initial
+       walk. Without this, RLO's per-arg fields are computed against
+       an empty walk — so sibling A's RLO and sibling B's RLO have
+       identical CDIs at their initial `.x` / `.f` probes, and LRM's
+       first-writer-wins returns whichever sibling recorded first,
+       yielding cross-sibling data mixing (cb-sibling-b's int-1000
+       result = sibling A's x=1 folded with sibling B's f×1000).
+       Injecting the current sibling's applyContext obs makes the
+       RLO's CDIs reflect the SPECIFIC sibling context walker is
+       operating under. */
+    auto seededWalkFacts = std::make_shared<std::vector<cidasks::Edge>>();
+    if (auto * proxyTR = dynamic_cast<TracingReplayObject *>(ctx.currentProxy.get())) {
+        if (auto proxyCtx = proxyTR->getApplyContext()) {
+            for (auto & obs : proxyCtx->observations) {
+                cidasks::Edge edge;
+                edge.observations.push_back(obs);
+                seededWalkFacts->push_back(std::move(edge));
+            }
+        }
+    }
     auto replayLocal = std::make_shared<ReplayLocalObject>(
         std::move(rootSubject), sidecarScope,
-        std::make_shared<std::vector<cidasks::Edge>>(),
+        seededWalkFacts,
         std::make_shared<Hash>(HashAlgorithm::SHA256),
         decisionGraph, inner->getEvalState().rootFSRoot,
         &inner->getEvalState());

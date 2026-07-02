@@ -139,6 +139,8 @@ public:
         return *this;
     }
 
+    std::shared_ptr<cidasks::ApplyContext> getApplyContext() const { return applyContext; }
+
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
     /** Symmetric to `TracingObject::getSubject()`: surface the apply-
