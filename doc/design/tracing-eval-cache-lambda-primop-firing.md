@@ -567,14 +567,16 @@ change) green. Multi-level nesting exercises Change C's
 multiple LocalResponseMap entries.
 
 **Step 7 — Full `nix build` regression.** Expect:
-- cb-higher-order: green (was red).
-- cb-higher-order-nested: green (was red).
-- cb-stats-higher-order-baseline: red on hit-count assertion
-  drift; measure and update in same commit.
-- cb-385: still red (unrelated).
-- cb-sibling-discrimination-via-observation: still red
-  (unrelated; per-arg-completion plan).
-- Other cb-* and non-cb: unchanged.
+- cb-higher-order: green.
+- cb-higher-order-nested: green.
+- cb-stats-higher-order-baseline: green (hit-count assertions
+  updated in prior commits).
+- cb-385: green (closed under separate work — see task #92).
+- cb-sibling-discrimination-via-observation: green.
+- cb-sibling-b-depends-on-a: green as of `9184b703e` (snapshot-
+  padded retry).
+- Other cb-* and non-cb: unchanged, all green (30/30 cb-* +
+  builtins-cache).
 
 **Step 8 — Performance check (perf harness).** Multi-level
 LocalResponseMap entries add storage. cb-higher-order family

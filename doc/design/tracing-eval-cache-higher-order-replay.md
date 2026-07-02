@@ -307,8 +307,8 @@ are what to NOT re-implement.
 
 ## Status
 
-cb-higher-order step 2 (warm replay) is **red at HEAD**. The
-principled fix requires the architectural change above. The
-diagnostic content of this memo (= what the writer records, where
-the walker reaches, why the chains diverge) stands; the proposed
-direction belongs to the next session.
+**Green.** cb-higher-order step 2 (warm replay) passes at HEAD.
+The architectural change described above landed. The diagnostic
+content of this memo (= what the writer records, where the walker
+reaches, why the chains diverge) is retained as reference for
+similar patterns that may surface in future work.
