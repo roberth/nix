@@ -525,6 +525,46 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                     auto scopeStateId = cidasks::scopeStateIdAt(*subj, scope, cidasksWalk, k);
                     auto scopeStateIdHex = scopeStateId.to_string(HashFormat::Base16, false);
                     if (scopeStateIdHex == idStr) {
+                        /* XOR-coincidence guard: verify this cell's live
+                           proxy is semantically the recorded owner of
+                           this CDI by dispatching a canonical pool
+                           request at from=idStr through it, comparing
+                           result to LRM. A mismatch means the fold-hash
+                           collision matched the wrong sibling's proxy
+                           (cb-sibling-b: sibling B's cell chain reaches
+                           sibling A's evolved CDI by coincidence).
+                           Use as SELECTOR only — final response still
+                           comes from live dispatch downstream. Skip
+                           verification when no pool request exists at
+                           this from (nothing to verify against). */
+                        if (!ctx.inCrossQPull) {
+                            auto poolReqs = decisionGraph.getRequestsWithFrom(idStr);
+                            bool anyMismatch = false;
+                            bool anyDispatched = false;
+                            for (auto & [poolReqHash, poolReqPayload] : poolReqs) {
+                                auto storedResp = decisionGraph.getLocalResponsePayload(poolReqHash);
+                                if (!storedResp) continue;
+                                nlohmann::json probeReq;
+                                try {
+                                    probeReq = cborStringToJson(poolReqPayload);
+                                } catch (...) { continue; }
+                                ctx.inCrossQPull = true;
+                                auto liveResp = dispatchAmbientQuery(probeReq, ctx);
+                                ctx.inCrossQPull = false;
+                                if (!liveResp) continue;
+                                anyDispatched = true;
+                                if (*liveResp != *storedResp) {
+                                    anyMismatch = true;
+                                    break;
+                                }
+                            }
+                            if (anyDispatched && anyMismatch) {
+                                tracingCacheLog(
+                                    "resolve %s: cell[%d] MATCH REJECTED at edge=%zu (LRM/live mismatch on canonical probe — XOR-coincidence)",
+                                    idStr.substr(0, 12), cellDepth, k);
+                                continue;
+                            }
+                        }
                         tracingCacheLog(
                             "resolve %s: cell[%d] subject=%s MATCH at edge=%zu",
                             idStr.substr(0, 12), cellDepth,
