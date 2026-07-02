@@ -405,9 +405,16 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
           exists (top-level Q like evalFile/evalExpr, no TracingReplayObject) and as
           a backstop when the parent-anchored attempt finds no
           matching Asks chain. */
+    /* Use `ctx.currentProxy` (not `currentProxy`) — the local was
+       moved into ctx above, so it's now empty. cb-sibling-b's chain
+       traversal was blocked by this bug: child Q walks were starting
+       from ∅ instead of the parent's terminalCur, forcing walker to
+       re-walk sibling B's chain from the top under the wrong
+       currentProxy context. */
     Hash parentAnchor = TracingDecisionGraph::emptySetHash();
-    if (auto * parentTR = dynamic_cast<TracingReplayObject *>(currentProxy.get()))
+    if (auto * parentTR = dynamic_cast<TracingReplayObject *>(ctx.currentProxy.get())) {
         parentAnchor = parentTR->getTriePos().factSetHash;
+    }
     /* Track rejected-edge obs across all attempts. Committed on walk
        MISS so subsequent v13Walk calls' resolveCdiId sees the obs
        walker produced during the failed traversal — those obs carry
