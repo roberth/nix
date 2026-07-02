@@ -526,6 +526,20 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
        lookup runs, since writer's flush K only stamps facts that
        reference scopeStateIds from flushes 0..K-1 (= already in walker's
        cidasksWalk by the time Q_K's dispatch reaches them). */
+    /* Extended walk for cell-chain match: walker's cidasksWalk PLUS
+       any cross-Q pool pull extensions accumulated in this ctx.
+       Without this, a nested resolveCdiId inside a cross-Q pool pull
+       can't see the persisted extensions from prior successful pulls
+       — so it misses on CDIs that would resolve fine in the outer
+       pool pull's view. cb-sibling-b's a5a326a4f6b9 dispatch under
+       the 78b1d6c0d465 pull was failing here: the outer pull's
+       effective had enough to compute seed(1)=5738ea301d04, but the
+       nested resolve for `from=5738ea301d04` only saw cidasksWalk
+       (missing the persisted 5738ea301d04-producing extension) →
+       dispatch failed → extended fold didn't reach 78b1d6c0d465. */
+    std::vector<cidasks::Edge> extendedWalkForMatch = cidasksWalk;
+    for (auto & e : ctx.crossQPulledExtensions)
+        extendedWalkForMatch.push_back(e);
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
@@ -536,8 +550,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
                 bool matched = false;
-                for (size_t k = 0; k <= cidasksWalk.size() && !matched; ++k) {
-                    auto scopeStateId = cidasks::scopeStateIdAt(*subj, scope, cidasksWalk, k);
+                for (size_t k = 0; k <= extendedWalkForMatch.size() && !matched; ++k) {
+                    auto scopeStateId = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
                     auto scopeStateIdHex = scopeStateId.to_string(HashFormat::Base16, false);
                     if (scopeStateIdHex == idStr) {
                         /* XOR-coincidence guard: verify this cell's live
