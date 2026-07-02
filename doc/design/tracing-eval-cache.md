@@ -371,23 +371,31 @@ key that has no recorded content, and the miss is a graceful
 fall-back. There is no "which state matches this hash?" step
 because that question would treat IDs as outputs of lookups.
 
-> **Recording and replay must index queries by the** ***old*** **hash
-> — the walker's state** ***before*** **making the observation, not
-> after.** The whole point of the walk is that walker starts with
-> some `cur` (produced by prior hashing) and uses it to look up what
-> to do next. If a query were indexed by the *post-observation* hash
-> — the state you get *after* folding in the query's own response —
-> the walker couldn't look anything up without first knowing the
-> response, which is exactly what it's asking for. That's
-> chicken-and-egg. The old hash is what makes replay possible;
-> observations turn it into the new hash, which becomes the old hash
-> for the next query. This applies to every table (`Asks`, `Terminals`,
-> `AmbientAsks`) and every reqhash construction (d=1 request payloads,
-> d=2 chain-advance keys, and cb-apply's `from` field alike): if you
-> ever find yourself writing `scopeStateIdAt(subject, scope, walk,
-> walk.size())` at query-key time, you're using the new hash —
-> reverse it to `walk[0..K)` where `K` is the state **before** this
-> query's own observation folds in.
+> **Every query in the chain must be indexed by the** ***old*** **hash
+> — the walker's state** ***before*** **making that query's own
+> observation, not after.** The walker starts each step at some `cur`
+> (produced by prior hashing) and uses it to look up what to do next.
+> If a query were indexed by the *post-observation* hash — the state
+> you get *after* folding in this query's own response — the walker
+> couldn't look anything up without first knowing the response,
+> which is exactly what it's asking for. That's chicken-and-egg. The
+> old hash is what makes replay possible; the observation turns it
+> into the new hash, which then becomes the old hash for the *next*
+> query.
+>
+> This applies to every table that produces a next observation from
+> a lookup: `Asks` (edge from cur), `AmbientAsks` (d=2 chain-advance
+> from fromFactSet), and every reqhash construction whose `from` field
+> is the walker's pre-observation state (d=1 request payloads and
+> cb-apply `from` fields alike). `Terminals` doesn't fit this pattern
+> — a Terminal is the *end* of the chain and produces a result, not a
+> next observation, so it's queried at the cur the walker *lands* at
+> after all observations for that Q with no ambiguity about "which K".
+>
+> Practical check for every call-site: if you're writing
+> `scopeStateIdAt(subject, scope, walk, walk.size())` at query-key
+> time, you're using the new hash — reverse it to `walk[0..K)` where
+> `K` is the state **before** this query's own observation folds in.
 
 ### Slow path: `decisionGraph.walk(Q, dispatch)`
 
