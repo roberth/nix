@@ -159,14 +159,18 @@ What is missing or wrong, and so must change:
    `NullTraceSink`. Removing this is the planned `TeeTracingWriter`
    work.
 
-5. `ExprFromObject::eval`'s `nFunction` arm
-   (`src/libexpr/expr-from-object.cc:289–298`) picks between
-   `makeCachedFnPrimOp` and `makeAmbientFnPrimOp` based on whether
-   `innerEvaluator` is set, not on `obj`'s dynamic type. The bridge
-   propagates `innerEvaluator` through `ExprFromObjectAttr`, so when
-   an inner evaluation forces `arg.f` and gets back an
-   `AmbientObject` of `nFunction` type (the outer lambda), the code
-   builds a `<cached-fn>` PrimOp wrapping that AmbientObject. Its
+5. `ExprFromObject::eval`'s `nFunction` arm (see the `nFunction`
+   case in `src/libexpr/expr-from-object.cc`) dispatches on the
+   dynamic type of `obj` AND whether `innerEvaluator` is set. An
+   `AmbientObject` goes through `makeAmbientFnPrimOp` (apply routes
+   via `queryApply`); a concrete fn with an inner evaluator goes
+   through `makeCachedFnPrimOp` (apply routes via
+   `innerEval->apply`); a concrete fn without an inner evaluator
+   falls back to `makeAmbientFnPrimOp`. The bridge propagates
+   `innerEvaluator` through `ExprFromObjectAttr`, so when an inner
+   evaluation forces `arg.f` and gets back an `AmbientObject` of
+   `nFunction` type (the outer lambda), the code builds a
+   `<cached-fn>` PrimOp wrapping that AmbientObject. Its
    impl then calls `innerEval->apply(fnObj, …)`, which routes to
    `Interpreter::apply` and tries `fnObj->defeatCache()` — which
    throws on `AmbientObject`. Intended design: dispatch on `obj`'s
@@ -517,8 +521,9 @@ The shape from v12 holds. Inside `prim_cache`:
      state.systemEnvironment, state.getSymbolTable())`. The shared
      `SymbolTable` is required so symbols interned during inner
      parse / `AttrPath::parse` compare equal to outer state's
-     symbols. This is the existing v13 constructor
-     (`eval.hh:778`).
+     symbols. This is the legacy `EvalState` constructor exposed
+     for the same purpose (see the "Helper to support the legacy
+     EvalState constructor" comment in `include/nix/expr/eval.hh`).
    - `auto interpreter = make_ref<Interpreter>(innerState);`
    - `auto recordingEval = make_ref<TracingEvaluator>(*writer,
      interpreter);`
@@ -1122,11 +1127,13 @@ prerequisite of all the rest.
       pass `hashString("seed:" + std::to_string(counter))`;
       `registerLocal(argObj)` calls inside `resolver.apply` pass
       `hashString("local:" + std::to_string(counter))`.
-- [x] `src/libexpr/expr-from-object.cc:289`: change the
-      `nFunction` arm to dispatch on `obj`'s dynamic type —
-      `AmbientObject` → `makeAmbientFnPrimOp`, anything else →
-      `makeCachedFnPrimOp`. Without this, ambient lambdas reached
-      via `arg.f` crash at apply time (§Status item 5).
+- [x] `src/libexpr/expr-from-object.cc` (`nFunction` arm of
+      `ExprFromObject::eval`): dispatch on `obj`'s dynamic type —
+      `AmbientObject` → `makeAmbientFnPrimOp`, concrete fn with
+      inner evaluator → `makeCachedFnPrimOp`, concrete fn without
+      inner evaluator → `makeAmbientFnPrimOp` (will throw at apply
+      time). Without this, ambient lambdas reached via `arg.f`
+      crash at apply time (§Status item 5).
 - [x] `src/libexpr/ambient-object.cc`: `AmbientObject::id` stores a
       `Hash`; methods emit it in the `from` string slot using
       `.to_string(HashFormat::Base16, false)`.
@@ -1144,7 +1151,7 @@ prerequisite of all the rest.
 
 **Step D — fix `QueryApply.arg` and add apply-Request replay dispatcher** (~50 lines)
 
-- [x] `src/libexpr/expr-from-object.cc:178`: change `applyFn`'s
+- [x] `src/libexpr/expr-from-object.cc`, `applyFn`: change the
       recorded `QueryApply.arg` from `std::to_string(resultId.value())`
       to `std::to_string(argId.value())` (or the producer queryHash
       under Step C's id scheme). Downstream queries against the
