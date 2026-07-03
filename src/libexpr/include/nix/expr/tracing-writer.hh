@@ -139,12 +139,7 @@ class TracingWriter
        flushPendingAmbient, drained at logResult with the current Q.
        Underlies SubjectStampSites index — replaces resolveCdiId's
        k-iteration with a direct (idStr, scope) → (Q, K) lookup. */
-    struct PendingStampSite {
-        Hash cidHash;
-        size_t edgeIndex;
-        Hash scope;
-    };
-    std::vector<PendingStampSite> pendingStampSites;
+    std::vector<Hash> pendingStampSites;
 
     /* apply-result CDI → (fnId, argId) pairs pending flush at next
        logResult, feeding ApplyResultProducers. */
@@ -291,10 +286,9 @@ public:
     /* External stamp-site buffering for from-CDI computed OUTSIDE
        the writer (e.g. TracingObject::evolvedQueryFrom).
        Drained at logResult along with pendingStampSites. */
-    void bufferStampSite(const Hash & cidHash, size_t edgeIndex,
-                         const Hash & scope)
+    void bufferStampSite(const Hash & cidHash)
     {
-        pendingStampSites.push_back({cidHash, edgeIndex, scope});
+        pendingStampSites.push_back(cidHash);
     }
 
     void bufferApplyProducer(const Hash & cidHash,
@@ -805,9 +799,8 @@ public:
 
         /* Drain pending SubjectStampSites: associate each buffered
            (cidHash, edgeIndex, scope) with this Q. */
-        for (auto & site : pendingStampSites) {
-            decisionGraph->insertSubjectStampSite(
-                site.cidHash, *qh.queryHash, site.edgeIndex, site.scope);
+        for (auto & cidHash : pendingStampSites) {
+            decisionGraph->insertSubjectStampSite(cidHash);
         }
         pendingStampSites.clear();
 

@@ -87,7 +87,7 @@ std::string TracingObject::evolvedQueryFrom() const
         auto hex = evolved.to_string(HashFormat::Base16, false);
         /* Buffer as a SubjectStampSite so warm walker's
            hasSubjectStampSite gate hits for this evolved CID. */
-        writer.bufferStampSite(evolved, walk.size(), applyScope);
+        writer.bufferStampSite(evolved);
         if (!applyFnIdHex.empty() && !applyArgIdHex.empty()) {
             try {
                 auto fnH = Hash::parseNonSRIUnprefixed(applyFnIdHex, HashAlgorithm::SHA256);
@@ -358,7 +358,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto applyScopeStateId = cidasks::scopeStateIdAfter(resultSubject, applyScopeLocal, {});
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
     {
-        writer.bufferStampSite(applyScopeStateId, 0, applyScopeLocal);
+        writer.bufferStampSite(applyScopeStateId);
         writer.bufferApplyProducer(applyScopeStateId,
             Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256),
             Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256));

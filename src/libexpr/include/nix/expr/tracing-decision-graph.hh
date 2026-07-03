@@ -152,13 +152,10 @@ public:
         const SetHash & fromFactSetHash,
         const RequestHash & requestHash);
 
-    /* Subject-CDI stamp index: cold writes (cidHash, Q, edgeIndex, scope);
-       walker uses hasSubjectStampSite as an "is this CID recorded?" gate. */
-    void insertSubjectStampSite(
-        const Hash & cidHash, const QueryHash & queryHash, size_t edgeIndex,
-        const Hash & scope);
-
-    /* True if cold stamped any row for this cidHash. */
+    /* Set-membership: cold registers cidHash iff it stamped this CID.
+       Walker uses hasSubjectStampSite as the "is this CID recorded?"
+       gate on its resolveCdiId k-iter fallback. */
+    void insertSubjectStampSite(const Hash & cidHash);
     bool hasSubjectStampSite(const Hash & cidHash);
 
     /* Apply-result producer index: cold records `applyResultCid → (fnId, argId)`

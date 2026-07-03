@@ -157,14 +157,10 @@ CREATE TABLE IF NOT EXISTS AmbientAsks (
 ) WITHOUT ROWID;
 
 -- Subject-CDI stamp index: cold writes one row per fact-stamp
--- (cidHash, queryHash, edgeIndex, scope). Walker gates its
--- k-iteration on presence of any row for cidHash (hasSubjectStampSite).
+-- Set-membership index: presence of a row for cidHash means cold
+-- stamped this CID. Used by walker's hasSubjectStampSite gate.
 CREATE TABLE IF NOT EXISTS SubjectStampSites (
-    cidHash     BLOB NOT NULL,
-    queryHash   BLOB NOT NULL,
-    edgeIndex   INTEGER NOT NULL,
-    scope       BLOB NOT NULL,
-    PRIMARY KEY (cidHash, queryHash, edgeIndex, scope)
+    cidHash BLOB PRIMARY KEY
 ) WITHOUT ROWID;
 
 -- Apply-result producer index: cold records `applyResultCid → (fnId, argId)`
@@ -416,7 +412,7 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     state->insertEdgeResponse.create(state->db,
         "INSERT OR IGNORE INTO EdgeResponses(queryHash, fromFactSetHash, requestHash, payload) VALUES (?, ?, ?, ?)");
     state->insertSubjectStampSite.create(state->db,
-        "INSERT OR IGNORE INTO SubjectStampSites(cidHash, queryHash, edgeIndex, scope) VALUES (?, ?, ?, ?)");
+        "INSERT OR IGNORE INTO SubjectStampSites(cidHash) VALUES (?)");
     state->selectSubjectStampSiteByCid.create(state->db,
         "SELECT 1 FROM SubjectStampSites WHERE cidHash = ? LIMIT 1");
     state->insertApplyResultProducer.create(state->db,
@@ -540,15 +536,11 @@ std::optional<std::string> TracingDecisionGraph::getEdgeResponsePayload(
 }
 
 void TracingDecisionGraph::insertSubjectStampSite(
-    const Hash & cidHash, const QueryHash & queryHash, size_t edgeIndex,
-    const Hash & scope)
+    const Hash & cidHash)
 {
     auto state(_state->lock());
     auto use = state->insertSubjectStampSite.use();
     dg_bindBlob(use, dg_hashToBlob(cidHash));
-    dg_bindBlob(use, dg_hashToBlob(queryHash));
-    use(static_cast<int64_t>(edgeIndex));
-    dg_bindBlob(use, dg_hashToBlob(scope));
     use.exec();
 }
 

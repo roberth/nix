@@ -76,7 +76,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
             /* Buffer stamp site for SubjectStampSites — drained at
                logResult with the current Q. */
-            pendingStampSites.push_back({cid, d1EdgeIndex, pf.inheritedScope});
+            pendingStampSites.push_back(cid);
         }
         std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
         auto fromCdi = fromCIDs.empty()
@@ -272,7 +272,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                 auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, walk, /*edgeIndex=*/ i);
                 fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
                 /* SubjectStampSites: d=2 site. */
-                pendingStampSites.push_back({cid, i, pf.inheritedScope});
+                pendingStampSites.push_back(cid);
             }
             std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
             auto fromCdi = fromCIDs.empty()
@@ -361,13 +361,8 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             perQAsksEdges.insert(perQAsksEdges.begin() + pos,
                 {epsilonFromHash, epsilonReqSet});
             d1CidasksWalk.insert(d1CidasksWalk.begin() + pos, std::move(applyEdge));
-            /* Shift pending SubjectStampSites entries whose K >= pos.
-               Mid-insertion into d1CidasksWalk invalidates stamped K
-               for all subsequent positions; without this, warm walker
-               reproduces cold's stamp with stale K. */
-            for (auto & site : pendingStampSites)
-                if (site.edgeIndex >= pos)
-                    site.edgeIndex++;
+            /* F12 finalize-shift no longer needed: SubjectStampSites
+               is now set-membership only, no K to shift. */
             tracingCacheLog("finalize: ε Asks edge inserted at pos=%zu from=%s (insertionIndex=%zu shift=%zu perQ=%zu)",
                             pos,
                             epsilonFromHash.to_string(HashFormat::Base16, false).substr(0, 12),
