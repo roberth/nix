@@ -79,6 +79,47 @@ Alignment is the load-bearing property. If walker.cidasksWalk grows in
 lockstep with cold's d1CidasksWalk at the same observation events,
 the K values match by construction and no search is ever needed.
 
+## Finding F1a (2026-07-03): writer is already correct
+
+Static analysis + empirical trace (see the search→asks research log
+memory note, Finding F1a) confirmed that **all four writer-side
+`scopeStateIdAt(subject, scope, walk, K)` sites at fact-`from`
+construction already use pre-observation K**:
+
+- `tracing-object.cc:86` — `walk.size()` read before
+  `pushObservation` fires; pre-obs for the current query.
+- `tracing-writer.cc:75` — `d1EdgeIndex` fixed at flush entry;
+  pre-obs for the entire flush batch.
+- `tracing-writer.cc:269` — `edgeIndex = i` (loop var); pre-obs
+  per fact.
+- `tracing-evaluator.cc:421` — `d1Walk.size()` read before this
+  apply's own ε edge is pushed (markApplyBoundary buffers into
+  `pendingApplyBoundaries` rather than pushing directly); pre-obs
+  for this apply.
+
+Empirical: 71/81 `scopeStateIdAt` calls in cb-xor-evolution's cold
+trace at `edgeIndex == walk.size` (sites 1/2/4); 10/81 at
+`edgeIndex < walk.size` matching site 3's `edgeIndex = i` loop
+pattern with pre-populated walk. All consistent with pre-obs K.
+
+**Implication:** the "Direction" section's plan step to "demote
+`walk.size()` to `walk.size()-1` at each writer site" is wrong —
+the writer is not the problem. `resolveCdiId`'s k-iteration exists
+not because cold recorded at post-obs K, but because walker's
+`cidasksWalk` at replay time contains a walk that differs from
+cold's `d1CidasksWalk` at the corresponding K.
+
+The remaining project work is entirely walker-side alignment.
+Sub-hypotheses to investigate (see research log Angle 9):
+- H9.1 (growth pattern): walker's walk length at Q lookup ≠ cold's
+  walk length at Q flush.
+- H9.3 (content): sizes match but observation contents differ.
+
+The Anticipated simplifications and Success criteria below still
+apply — the target `resolveCdiId` cleanup and mechanism-deletion
+attempts remain the same. Only the writer-side audit item is
+retired.
+
 ## Success criteria
 
 **Primary**: all currently-green cb-* + builtins-cache tests stay
