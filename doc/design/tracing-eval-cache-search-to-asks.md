@@ -532,6 +532,36 @@ over all Requests with substring filter — became dead code after
 the cross-Q pool pull and XOR guard deletions. Deleted. -~70 lines.
 One documented linear-search-with-follow-up-index eliminated.
 
+**Progress + remaining work (iterations 26-28, 2026-07-03 session):**
+
+Linear-search reduction:
+
+- `getRequestsWithFrom` deleted (`2b4cb0db5`): dead linear scan.
+- `tryResolveAmbientResolverProxy` given SubjectStampSites fast
+  path (`d3b1c2f77`): tries indexed lookup first, falls through to
+  linear on miss.
+- `resolveCdiId` given SubjectStampSites primary path (`6f79c4215`,
+  `439e51fbf`, `d6ccd9ab5`) with 4 stamp sites (d=1 flush, d=2
+  stampAndEmit, evolvedQueryFrom, writer apply) populating the
+  index. K-iter retained as fallback for un-stamped cases.
+
+Remaining gaps:
+
+- k-iter in `resolveCdiId` is still load-bearing. Deleting it drops
+  the suite to 7/24 — some idStrs (e.g. `29b9df5843a1`,
+  `ef4e638bd811` in cb-higher-order) are computed via `scopeStateIdAt`
+  paths not yet covered by any stamp site. Follow-up: instrument
+  cold-side computation of these specific idStrs; extend stamping
+  to their production sites.
+- cb-repeated red baseline. Not fixable by SubjectStampSites work
+  alone. Root cause is walker.walk() navigation gap for multi-cb-
+  apply-different-args: at cur=7d91c5c836ca the walker has 2
+  outgoing Ask edges, one leads to no-recorded-edge, the other is
+  degenerate (all its requests already in the cross-walk-
+  `dispatchedRequestSet`). Follow-up: revisit cross-walk request-set
+  propagation for cb-apply v13Walks (they may need isolated
+  startCurRequests rather than the evaluator-wide dispatchedRequestSet).
+
 **SubjectStampSites reinstated as primary Asks-strategy lookup
 (iteration 27, commits `6f79c4215` + `439e51fbf`):**
 
