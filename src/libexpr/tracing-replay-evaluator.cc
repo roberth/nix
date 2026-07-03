@@ -510,6 +510,18 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
                 commitRejected(useful);
         });
     }
+    /* Reverse-outgoing fallback: try walking with alternative rs
+       ordering at each cur. Handles multi-cb-apply patterns where
+       default outgoing order causes walker.curRequests to include a
+       later Ask edge's request, rendering it degenerate. */
+    if (!walkHit) {
+        walkHit = decisionGraph.walkImpl(queryHash, dispatch,
+            [&](bool committed, const std::vector<Hash> & useful) {
+                if (committed) commitEdge();
+                else commitRejected(useful);
+            },
+            TracingDecisionGraph::emptySetHash(), {}, /*reverseOutgoing=*/true);
+    }
     /* Snapshot-padding retry on miss. When cold's snapshot for this Q
        exceeds walker's current cidasksWalk (cold/warm flush-pattern
        asymmetry per per-arg-completion.md), scopeStateIdAt-driven
