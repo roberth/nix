@@ -630,7 +630,34 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
                 bool found = false;
-                for (size_t k = 0; k <= extendedWalkForMatch.size() && !found; ++k) {
+                /* K=0 fast path — Asks-style initial-CDI lookup:
+                   subject's initial content-defined identifier
+                   (before any observation folds in) is a pure
+                   function of (subject, scope). Walker computes it
+                   as a key and checks equality against the target
+                   — no iteration over K, no scanning for "which
+                   walker-state produces target". F19 (2026-07-04)
+                   empirical: 55% of cell-chain matches in the
+                   cb-* + builtins-cache bounds land at K=0.
+                   Structurally an Asks-style navigation: walker's
+                   own hashed state (initial CDI) IS the lookup
+                   key. */
+                {
+                    auto initialCdi = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, 0);
+                    if (initialCdi.to_string(HashFormat::Base16, false) == idStr) {
+                        found = true;
+                    }
+                }
+                /* K > 0 fallback: walk-order-preserving fold. For
+                   the ~45% of matches at K > 0, walker's subject
+                   state at some K > 0 in the walk matches target.
+                   Kept as a linear iteration pending Path 3
+                   (per-subject observation trie navigation, cold-
+                   recorded) — the only architectural route that
+                   satisfies both walk-order preservation (F17)
+                   and freshness-per-query semantics (F18) without
+                   iteration. */
+                for (size_t k = 1; k <= extendedWalkForMatch.size() && !found; ++k) {
                     auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
                     if (s.to_string(HashFormat::Base16, false) == idStr) {
                         found = true;
