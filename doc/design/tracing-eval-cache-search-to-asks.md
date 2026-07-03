@@ -690,6 +690,90 @@ multi-round fold → miss. Baseline 30/1 preserved throughout.
 The project reshaped itself: it started as "delete the linear
 search", ended as "delete everything AROUND the linear search".
 Both improve the code; only the second was possible.
+
+## Iterations 32-42, 2026-07-03: SubjectStampSites reinstated + hasSubjectStampSite gate
+
+The next session revisited the primary criterion. Findings:
+
+- **SubjectStampSites reinstated** as the fast path in
+  `resolveCdiId` (commits `d3b1c2f77`, `804be0ffa`, `73b394f67`,
+  etc.). Cold populates 7 stamp sites (d=1 flush, d=2 stampAndEmit,
+  evolvedQueryFrom, writer apply, logDepth2ApplyFact fn/arg,
+  queryApply). Walker consults `getSubjectStampSite(cidHash, scope,
+  subjectHash)` with a `base-agrees` gate.
+
+- **ApplyResultProducers table + producer-first routing**
+  (commit `daf5e6239`): cold buffers `applyResultCid → (fn, arg)`
+  so warm walker can route apply-result CDIs through
+  `resolveApplyId` instead of matching cell[0] via subjectHash
+  Merkle collisions.
+
+- **`hasSubjectStampSite` primitive** (commit `3c65964df`): cheap
+  "is this CID stamped anywhere?" test on the SubjectStampSites
+  `cidHash`-leading index.
+
+- **`resolveCdiId` fallbacks gated on `hasSubjectStampSite`**
+  (commit `779cd7c34`): the k-iter and iterative multi-round fold
+  now fire ONLY when cold has stamped the CID. Unstamped CIDs
+  return null immediately — a real narrowing of walker's search
+  space.
+
+**Full deletion of the fallbacks (attempted iteration 42):**
+regresses cb-385, cb-higher-order, cb-higher-order-nested,
+builtins-cache. The fallbacks under the stamp gate are the maximum
+reachable simplification. The k-iter's for-loop remains as a
+subject/scope VERIFICATION step for the F14 case (walker's own
+extended walk reaches cold's stamped CID at a K the indexed
+`(subjectHash, scope)` lookup can't predict). The iterative
+multi-round fold remains for cb-385's 5-round evolution.
+
+**Reframed criterion (from the empirical evidence):** "linear
+searches replaced by Asks strategy" is best understood as the
+DIRECTION of the resolution path, not the wholesale deletion of
+walker-side verification. Walker's primary lookup IS the indexed
+stamp query; walker's fallback verification runs ONLY for stamped
+CIDs. That's the strongest form of the criterion the current
+storage schema supports.
+
+**cb-repeated-cb-apply-diff-args (iterations 32-41):**
+
+Ten tactical fixes attempted, all refuted with documented reasons:
+1. Producer-first routing helps most apply-result cases but doesn't
+   distinguish sibling apply-results with distinct literal args.
+2. `argScope` literal-XOR breaks cross-sibling collapse (20/11).
+3. Narrow LRM substitution on apply-result d=1 mismatch breaks
+   cb-sibling-discrimination (26/5).
+4. Repeat-apply seq-XOR discrimination breaks cb-xor-evolution and
+   cb-sibling variants (27/4).
+5. `hasSubjectStampSite`-gated LRM substitution breaks 14 tests
+   (17/14).
+6. `argIdStr`-only literal-XOR breaks cb-xor-evolution (20/11).
+7. `InterpreterObject` atomic-content XOR crashes cold via
+   downstream registry inconsistency.
+8. Widening `AmbientAsks` PK alone regresses cb-higher-order (28/3).
+
+**Root cause pinned via direct DB inspection (iteration 40):**
+
+- `AmbientAsks` `PRIMARY KEY (fromFactSetHash, requestSetHash)`
+  with INSERT OR IGNORE discards cb-repeated's second cb-apply's
+  distinct chain. Cold's discriminating computation (distinct
+  `AmbientResult`s at flush time) is correct; cold's persistence
+  discards it.
+- `LocalResponseMap` first-writer-wins on the standin's getInt
+  reqHash discards the second literal's response.
+
+**Fix requires a coordinated two-part redesign OUTSIDE this
+project's charter:**
+
+1. Storage schema: `AmbientAsks` PK → `(from, requestSet, to)`;
+   `LocalResponseMap` PK → `(requestHash, responseHash)`.
+2. Walker: speculative multi-edge navigation with backtracking on
+   `dispatchApplyLive`. Enumerate outgoing `to`s, tentatively
+   continue outer walker with each candidate, pick the branch whose
+   subsequent fact-fold stays in-graph.
+
+Filed as a follow-up project: "multi-payload storage + walker
+speculation for cb-repeated". Baseline 30/1 preserved throughout.
 - Compile-cleanliness and full-suite green are hygiene, not scope.
 
 The project delivers whatever combination of these turns out to be
