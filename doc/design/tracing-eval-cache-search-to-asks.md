@@ -532,6 +532,34 @@ over all Requests with substring filter — became dead code after
 the cross-Q pool pull and XOR guard deletions. Deleted. -~70 lines.
 One documented linear-search-with-follow-up-index eliminated.
 
+**Fundamental architectural finding (iteration 30, 2026-07-03):**
+
+After extending SubjectStampSites to 7 writer-side stamp sites (all
+`scopeStateIdAt` calls that produce from-CDIs written into Request
+payloads on the recording side), removing the k-iter fallback STILL
+drops 30/1 → 7/24.
+
+Root cause characterized: the k-iter's match at some K in walker's
+`extendedWalkForMatch` is a **fold-XOR coincidence**. Walker's cell
+at that K produces the target CDI by XOR-fold accident. Cold NEVER
+computed that specific `(subject, K, walk)` combination as a from-CDI
+— because those are walker-only intermediate states. Therefore no
+SubjectStampSites row exists.
+
+**SubjectStampSites is fundamentally an index of *what cold stamped*.
+K-iter is fundamentally a mechanism to catch *what cold didn't stamp
+but walker's fold accidentally reaches.*** No pure SubjectStampSites
+replacement can eliminate k-iter without either:
+
+1. Redesigning CDI generation so no fold-coincidences are semantically
+   meaningful (major change to `scopeStateIdAt` semantics)
+2. Or accepting that some idStrs resolve via fold-coincidence and
+   keeping the k-iteration path (current state)
+
+The doc's original goal of "delete linear k-iteration" is
+architecturally blocked by this — it isn't a missing implementation,
+it's a semantic-space property.
+
 **Progress + remaining work (iterations 26-28, 2026-07-03 session):**
 
 Linear-search reduction:
