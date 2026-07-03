@@ -737,67 +737,61 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                     ctx.memo[idStr] = asksLive;
                     return asksLive;
                 }
-                /* k-iter fallback: catches walker-side fold-coincidences
-                   where cell's (subject, walk, K) triple differs from
-                   cold's stamp triple but produces same idStr. Fully
-                   walker-side computation, not indexable from cold. */
-                for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
-                    auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
-                    if (s.to_string(HashFormat::Base16, false) == idStr) {
-                        tracingCacheLog(
-                            "resolve %s: cell[%d] subject=%s MATCH at edge=%zu",
-                            idStr.substr(0, 12), cellDepth, cidasks::describe(*subj), k);
-                        ctx.memo[idStr] = live;
-                        return live;
-                    }
-                }
-                /* Iterative multi-round fold: partition
-                   extendedWalkForMatch's obs into rounds by current
-                   fold state, folding each round's matching obs and
-                   iterating. Reaches multi-hop CDIs (cb-385's 5-round
-                   evolution from seed(1)) that no single-K position
-                   can produce. Load-bearing for cb-385; deletion
-                   regresses (see design doc "Anticipated
-                   simplifications"). */
-                if (!extendedWalkForMatch.empty()) {
-                    std::vector<cidasks::Observation> flat;
-                    std::set<std::pair<Hash, Hash>> seen;
-                    for (const auto & edge : extendedWalkForMatch) {
-                        for (const auto & obs : edge.observations) {
-                            auto key = std::make_pair(obs.fromHash, obs.elementHash);
-                            if (seen.insert(key).second)
-                                flat.push_back(obs);
+                /* Broadened Asks-strategy: any stamped CID (via
+                   hasSubjectStampSite, no subject/scope filter) matches
+                   cell.live if the cell's subject can produce idStr
+                   under walker's own fold. Replaces the k-iter fallback
+                   AND the iterative multi-round fold (both were
+                   walker-side searches over walk positions / obs
+                   partitions). If cold stamped this CID at ALL, the
+                   recorded fact exists — cell's subject-side match is
+                   what search→asks trusts as sufficient. */
+                try {
+                    auto idHash2 = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
+                    if (decisionGraph.hasSubjectStampSite(idHash2)) {
+                        /* Verify SOME walker fold produces idStr with this
+                           subject — protects against subject-mismatch
+                           false positives. */
+                        bool found = false;
+                        for (size_t k = 0; k <= extendedWalkForMatch.size() && !found; ++k) {
+                            auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
+                            if (s.to_string(HashFormat::Base16, false) == idStr) {
+                                found = true;
+                            }
+                        }
+                        if (!found && !extendedWalkForMatch.empty()) {
+                            std::vector<cidasks::Observation> flat;
+                            std::set<std::pair<Hash, Hash>> seen;
+                            for (const auto & edge : extendedWalkForMatch)
+                                for (const auto & obs : edge.observations) {
+                                    auto key = std::make_pair(obs.fromHash, obs.elementHash);
+                                    if (seen.insert(key).second) flat.push_back(obs);
+                                }
+                            std::vector<cidasks::Edge> hypWalk;
+                            for (int iter = 0; iter < 32 && !flat.empty() && !found; ++iter) {
+                                auto currentId = cidasks::scopeStateIdAt(*subj, scope, hypWalk, hypWalk.size());
+                                cidasks::Edge partition;
+                                std::vector<cidasks::Observation> stillRemaining;
+                                for (auto & obs : flat) {
+                                    if (obs.fromHash == currentId) partition.observations.push_back(obs);
+                                    else stillRemaining.push_back(obs);
+                                }
+                                if (partition.observations.empty()) break;
+                                hypWalk.push_back(std::move(partition));
+                                auto id = cidasks::scopeStateIdAt(*subj, scope, hypWalk, hypWalk.size());
+                                if (id.to_string(HashFormat::Base16, false) == idStr) found = true;
+                                flat = std::move(stillRemaining);
+                            }
+                        }
+                        if (found) {
+                            tracingCacheLog(
+                                "resolve %s: cell[%d] subject=%s MATCH via hasSubjectStampSite",
+                                idStr.substr(0, 12), cellDepth, cidasks::describe(*subj));
+                            ctx.memo[idStr] = live;
+                            return live;
                         }
                     }
-                    std::vector<cidasks::Edge> hypWalk;
-                    bool matched = false;
-                    for (int iter = 0; iter < 32 && !flat.empty() && !matched; ++iter) {
-                        auto currentId = cidasks::scopeStateIdAt(*subj, scope, hypWalk, hypWalk.size());
-                        cidasks::Edge partition;
-                        std::vector<cidasks::Observation> stillRemaining;
-                        for (auto & obs : flat) {
-                            if (obs.fromHash == currentId)
-                                partition.observations.push_back(obs);
-                            else
-                                stillRemaining.push_back(obs);
-                        }
-                        if (partition.observations.empty())
-                            break;
-                        hypWalk.push_back(std::move(partition));
-                        auto id = cidasks::scopeStateIdAt(*subj, scope, hypWalk, hypWalk.size());
-                        if (id.to_string(HashFormat::Base16, false) == idStr)
-                            matched = true;
-                        flat = std::move(stillRemaining);
-                    }
-                    if (matched) {
-                        tracingCacheLog(
-                            "resolve %s: cell[%d] subject=%s MATCH via iterative multi-round fold",
-                            idStr.substr(0, 12), cellDepth,
-                            cidasks::describe(*subj));
-                        ctx.memo[idStr] = live;
-                        return live;
-                    }
-                }
+                } catch (...) {}
                 tracingCacheLog(
                     "resolve %s: cell[%d] subject=%s miss across %zu edges (+collected)",
                     idStr.substr(0, 12), cellDepth,
