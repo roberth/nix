@@ -373,6 +373,79 @@ explaining what it actually covers.
   bump is acceptable and existing caches on developer machines can
   be invalidated as part of landing this work.
 
+## Working style — how to iterate on this project
+
+Each work turn should pick one of these action tiers, whichever fits
+the state, and land it as a revertible commit citing tier + principle
++ empirical evidence:
+
+1. **Reconstruct.** Read the last commit, current test state
+   (cb-* + builtins-cache + reentrancy), the checklist below.
+   Identify where the project is in the plan.
+2. **Advance the plan.** Pick a checklist item the current state
+   is ready for. Apply. Run bounds tests. Commit.
+3. **Attempt a deletion.** From "Anticipated simplifications".
+   Remove; if it stays green, commit and record which "Expectation"
+   or "Alternative" prediction matched. If it resists, that's a
+   hypothesis generator → tier 5.
+4. **Instrument.** Add tracing at a code path whose behavior is
+   unclear from static reading. Capture cold + warm logs. Compare.
+5. **Form and test a hypothesis.** When something doesn't fit —
+   state the puzzle, enumerate hypotheses, design minimum
+   experiments, run them. Probes land as revertible commits.
+6. **Refine the puzzle.** If a probe's result is ambiguous, split
+   into sub-hypotheses. If a probe reveals the puzzle was
+   mis-stated, restate it.
+7. **Investigate the design doc.** If findings suggest a
+   principle-level implication the doc didn't anticipate, update
+   the doc. Preserved mechanisms go into "Alternative outcome"
+   columns.
+8. **Consult related territory.** Adjacent mechanisms, prior
+   memory notes for similar-shaped puzzles, doc sections not
+   touched recently in light of current findings.
+9. **Record and stage.** Every commit says which action tier it
+   belongs to, cites the principle it serves (or the hypothesis
+   it tests), and points to specific empirical evidence — test
+   names, log excerpts, pass/fail counts, timing measurements.
+
+**Signals to watch** — each is a hypothesis generator, not a
+completion:
+
+- Test regresses → what specifically diverged? Instrument, form
+  hypothesis, test.
+- Mechanism resists deletion → what does it actually cover? Read
+  its use sites, form hypothesis, design a test that would expose
+  it.
+- Design doc's prediction doesn't match reality → which
+  prediction? What did the doc assume that turned out false?
+  Update the doc.
+- Puzzle feels intractable → state what specifically is unclear.
+  What data would clarify it? Gather that data.
+
+**Never proceed on the basis of:**
+
+- "The loop is firing, so find something to do." Wrong framing —
+  the plan and evidence direct the work, not the schedule.
+- "This might work." Test it. Being wrong is data.
+- "I could tweak X." Only if the tweak serves a stated principle
+  and empirical evidence supports it.
+
+**Always proceed on the basis of:**
+
+- The plan lists work the current state supports.
+- A puzzle has an experiment that would produce evidence.
+- A finding suggests updating the doc or splitting a hypothesis.
+- The current state has adjacent mechanisms whose behavior would
+  clarify the puzzle.
+
+**Scope reminder — do not shrink the working scope.** "This
+specific sub-mechanism converged" is not "the project converged."
+When a narrow angle runs out of moves, tier 8 (consult related
+territory: other design docs in the required-reading list, other
+memory notes, doc sections not touched recently) is available.
+The project ends when the § "Definition of success" criteria are
+satisfied, not when the current narrow angle is out of ideas.
+
 ## Implementation checklist
 
 1. **Audit writer call sites.** Every `scopeStateIdAt(subject, scope,
