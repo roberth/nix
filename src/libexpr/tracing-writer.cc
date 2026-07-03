@@ -75,8 +75,9 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, d1CidasksWalk, d1EdgeIndex);
             fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
             /* F7: buffer stamp site for SubjectStampSites — drained
-               at logResult with the current Q. */
-            pendingStampSites.emplace_back(cid, d1EdgeIndex);
+               at logResult with the current Q. Includes the flush-time
+               inheritedScope so walker can filter (F8). */
+            pendingStampSites.push_back({cid, d1EdgeIndex, pf.inheritedScope});
         }
         std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
         auto fromCdi = fromCIDs.empty()

@@ -757,18 +757,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
                 bool matched = false;
-                /* F7 (2026-07-03): passive instrumentation — cold
-                   recorded `(cidHash, Q, edgeIndex)` at each fact-stamp
-                   site. For this target `idStr`, look up any (Q, K)
-                   pair, compute `scopeStateIdAt(subject, scope,
-                   thatSnapshot, K)`, log the outcome. Does NOT return
-                   early — the historical k-iteration below still
-                   drives resolution. Purpose: validate that stamps
-                   agree with k-iteration results before turning this
-                   into the primary resolution path. */
+                /* F7 (2026-07-03): passive instrumentation. Log stamp
+                   eq state alongside base k-iter for correlation. */
                 try {
                     auto idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
-                    if (auto stamp = decisionGraph.getSubjectStampSite(idHash)) {
+                    if (auto stamp = decisionGraph.getSubjectStampSite(idHash, scope)) {
                         auto & [stampQ, stampK] = *stamp;
                         std::vector<cidasks::Edge> stampWalk;
                         if (stampQ == ctx.currentQueryHash)
