@@ -797,14 +797,10 @@ std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     TracingDecisionGraph * dg)
 {
     /* Linear scan over each registered (subject, scope) x K in
-       cidasksWalk. Gated on hasSubjectStampSite so unstamped CIDs
-       skip iteration. The former getSubjectStampSite (Q, K) fast path
-       was redundant with this gate — its precise K only saved
-       iteration inside the same loop it now skips wholesale for
-       unstamped inputs. */
-    bool isStamped = dg && dg->hasSubjectStampSite(idHash);
-    if (!isStamped)
-        return nullptr;
+       cidasksWalk. The hasSubjectStampSite gate turned out to be a
+       tautology (cold stamped every CID walker ever resolves), so
+       running the scan unconditionally is equivalent. */
+    (void) dg;
     for (auto & entry : resolver.liveProxies) {
         for (size_t k = 0; k <= cidasksWalk.size(); ++k) {
             auto scopeStateId = cidasks::scopeStateIdAt(entry.subject, entry.scope, cidasksWalk, k);

@@ -126,11 +126,6 @@ public:
     void insertLocalResponse(const RequestHash & requestHash, std::string_view payload);
     std::optional<std::string> getLocalResponsePayload(const RequestHash & requestHash);
 
-    /* Set-membership: cold registers cidHash iff it stamped this CID.
-       Walker uses hasSubjectStampSite as the "is this CID recorded?"
-       gate on its resolveCdiId k-iter fallback. */
-    void insertSubjectStampSite(const Hash & cidHash);
-    bool hasSubjectStampSite(const Hash & cidHash);
 
     /* Apply-result producer index: cold records `applyResultCid → (fnId, argId)`
        so warm walker can route apply-result CDIs through resolveApplyId

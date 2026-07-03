@@ -131,13 +131,6 @@ CREATE TABLE IF NOT EXISTS AmbientAsks (
     PRIMARY KEY (fromFactSetHash, requestSetHash)
 ) WITHOUT ROWID;
 
--- Subject-CDI stamp index: cold writes one row per fact-stamp
--- Set-membership index: presence of a row for cidHash means cold
--- stamped this CID. Used by walker's hasSubjectStampSite gate.
-CREATE TABLE IF NOT EXISTS SubjectStampSites (
-    cidHash BLOB PRIMARY KEY
-) WITHOUT ROWID;
-
 -- Apply-result producer index: cold records `applyResultCid → (fnId, argId)`
 -- so warm walker can route apply-result CDIs through resolveApplyId
 -- (which reconstructs the correct live proxy per (fn, arg)) instead of
@@ -162,8 +155,6 @@ struct TracingDecisionGraph::State
     /* Storage layer */
     SQLiteStmt insertRequest, insertQuery, insertResult, insertLocalResponse;
     SQLiteStmt selectRequest, selectQuery, selectResult, selectLocalResponse;
-    SQLiteStmt insertSubjectStampSite;
-    SQLiteStmt selectSubjectStampSiteByCid;
     SQLiteStmt insertApplyResultProducer, selectApplyResultProducer;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
@@ -383,10 +374,6 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO Results(resultHash, payload) VALUES (?, ?)");
     state->insertLocalResponse.create(state->db,
         "INSERT OR IGNORE INTO LocalResponseMap(requestHash, payload) VALUES (?, ?)");
-    state->insertSubjectStampSite.create(state->db,
-        "INSERT OR IGNORE INTO SubjectStampSites(cidHash) VALUES (?)");
-    state->selectSubjectStampSiteByCid.create(state->db,
-        "SELECT 1 FROM SubjectStampSites WHERE cidHash = ? LIMIT 1");
     state->insertApplyResultProducer.create(state->db,
         "INSERT OR IGNORE INTO ApplyResultProducers(cidHash, fnIdHash, argIdHash) VALUES (?, ?, ?)");
     state->selectApplyResultProducer.create(state->db,
@@ -403,6 +390,7 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     /* Drop obsolete tables from earlier schema versions. */
     state->db.exec("DROP TABLE IF EXISTS FactSets;");
     state->db.exec("DROP TABLE IF EXISTS EdgeResponses;");
+    state->db.exec("DROP TABLE IF EXISTS SubjectStampSites;");
 
     state->insertRequestSetNode.create(state->db,
         "INSERT OR IGNORE INTO RequestSetNodes(nodeHash, payload) VALUES (?, ?)");
@@ -472,23 +460,6 @@ ATOM_INSERT_CACHED(Result, resultPayloadCache)
 ATOM_INSERT_CACHED(LocalResponse, localResponsePayloadCache)
 #undef ATOM_INSERT_CACHED
 #undef ATOM_INSERT_PLAIN
-
-void TracingDecisionGraph::insertSubjectStampSite(
-    const Hash & cidHash)
-{
-    auto state(_state->lock());
-    auto use = state->insertSubjectStampSite.use();
-    dg_bindBlob(use, dg_hashToBlob(cidHash));
-    use.exec();
-}
-
-bool TracingDecisionGraph::hasSubjectStampSite(const Hash & cidHash)
-{
-    auto state(_state->lock());
-    auto query = state->selectSubjectStampSiteByCid.use();
-    dg_bindBlob(query, dg_hashToBlob(cidHash));
-    return query.next();
-}
 
 void TracingDecisionGraph::insertApplyResultProducer(
     const Hash & cidHash, const Hash & fnIdHash, const Hash & argIdHash)

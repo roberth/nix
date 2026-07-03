@@ -74,9 +74,6 @@ void TracingWriter::flushPendingAmbient(bool finalize)
         for (auto & root : roots) {
             auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, d1CidasksWalk, d1EdgeIndex);
             fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
-            /* Buffer stamp site for SubjectStampSites — drained at
-               logResult with the current Q. */
-            pendingStampSites.push_back(cid);
         }
         std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
         auto fromCdi = fromCIDs.empty()
@@ -271,8 +268,6 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             for (auto & root : roots) {
                 auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, walk, /*edgeIndex=*/ i);
                 fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
-                /* SubjectStampSites: d=2 site. */
-                pendingStampSites.push_back(cid);
             }
             std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
             auto fromCdi = fromCIDs.empty()
@@ -361,8 +356,6 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             perQAsksEdges.insert(perQAsksEdges.begin() + pos,
                 {epsilonFromHash, epsilonReqSet});
             d1CidasksWalk.insert(d1CidasksWalk.begin() + pos, std::move(applyEdge));
-            /* F12 finalize-shift no longer needed: SubjectStampSites
-               is now set-membership only, no K to shift. */
             tracingCacheLog("finalize: ε Asks edge inserted at pos=%zu from=%s (insertionIndex=%zu shift=%zu perQ=%zu)",
                             pos,
                             epsilonFromHash.to_string(HashFormat::Base16, false).substr(0, 12),

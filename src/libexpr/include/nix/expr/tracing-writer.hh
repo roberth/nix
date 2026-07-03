@@ -135,12 +135,6 @@ class TracingWriter
        d1CidasksWalk.size() == perQAsksEdges.size() always holds. */
     cidasks::Edge pendingD1Edge;
 
-    /* Buffered (cidHash, edgeIndex, scope) triples accumulated during
-       flushPendingAmbient, drained at logResult with the current Q.
-       Underlies SubjectStampSites index — replaces resolveCdiId's
-       k-iteration with a direct (idStr, scope) → (Q, K) lookup. */
-    std::vector<Hash> pendingStampSites;
-
     /* apply-result CDI → (fnId, argId) pairs pending flush at next
        logResult, feeding ApplyResultProducers. */
     struct PendingApplyProducer {
@@ -283,14 +277,6 @@ private:
     std::unordered_set<Hash> recordedQHashes;
 
 public:
-    /* External stamp-site buffering for from-CDI computed OUTSIDE
-       the writer (e.g. TracingObject::evolvedQueryFrom).
-       Drained at logResult along with pendingStampSites. */
-    void bufferStampSite(const Hash & cidHash)
-    {
-        pendingStampSites.push_back(cidHash);
-    }
-
     void bufferApplyProducer(const Hash & cidHash,
                              const Hash & fnIdHash, const Hash & argIdHash)
     {
@@ -783,13 +769,6 @@ public:
 
         /* QCidasksWalks snapshot serialization: DELETED. Walker's own
            cidasksWalk carries what's needed under lockstep growth. */
-
-        /* Drain pending SubjectStampSites: associate each buffered
-           (cidHash, edgeIndex, scope) with this Q. */
-        for (auto & cidHash : pendingStampSites) {
-            decisionGraph->insertSubjectStampSite(cidHash);
-        }
-        pendingStampSites.clear();
 
         /* Drain pending ApplyResultProducers: apply-result CDIs are
            made queryable by their (fn, arg) producer pair so warm

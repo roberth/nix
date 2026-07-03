@@ -85,9 +85,6 @@ std::string TracingObject::evolvedQueryFrom() const
         }
         auto evolved = cidasks::scopeStateIdAt(*applyResultSubject, applyScope, walk, walk.size());
         auto hex = evolved.to_string(HashFormat::Base16, false);
-        /* Buffer as a SubjectStampSite so warm walker's
-           hasSubjectStampSite gate hits for this evolved CID. */
-        writer.bufferStampSite(evolved);
         if (!applyFnIdHex.empty() && !applyArgIdHex.empty()) {
             try {
                 auto fnH = Hash::parseNonSRIUnprefixed(applyFnIdHex, HashAlgorithm::SHA256);
@@ -357,12 +354,9 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
        TracingEvaluator::apply. */
     auto applyScopeStateId = cidasks::scopeStateIdAfter(resultSubject, applyScopeLocal, {});
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
-    {
-        writer.bufferStampSite(applyScopeStateId);
-        writer.bufferApplyProducer(applyScopeStateId,
-            Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256),
-            Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256));
-    }
+    writer.bufferApplyProducer(applyScopeStateId,
+        Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256),
+        Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256));
 
     /* Record the apply Request payload at the cidasks hash so dispatch
        and the legacy QueryApply{fn, arg} payload coincide. The legacy
