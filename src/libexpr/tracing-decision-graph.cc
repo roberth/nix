@@ -201,6 +201,7 @@ struct TracingDecisionGraph::State
     SQLiteStmt insertEdgeResponse, selectEdgeResponse;
     SQLiteStmt insertQCidasksWalk, selectQCidasksWalk;
     SQLiteStmt insertSubjectStampSite, selectSubjectStampSite;
+    SQLiteStmt selectSubjectStampSiteByCid;
     SQLiteStmt insertApplyResultProducer, selectApplyResultProducer;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
@@ -430,6 +431,8 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO SubjectStampSites(cidHash, queryHash, edgeIndex, scope, subjectHash) VALUES (?, ?, ?, ?, ?)");
     state->selectSubjectStampSite.create(state->db,
         "SELECT queryHash, edgeIndex FROM SubjectStampSites WHERE cidHash = ? AND scope = ? AND subjectHash = ? LIMIT 1");
+    state->selectSubjectStampSiteByCid.create(state->db,
+        "SELECT 1 FROM SubjectStampSites WHERE cidHash = ? LIMIT 1");
     state->insertApplyResultProducer.create(state->db,
         "INSERT OR IGNORE INTO ApplyResultProducers(cidHash, fnIdHash, argIdHash) VALUES (?, ?, ?)");
     state->selectApplyResultProducer.create(state->db,
@@ -601,6 +604,14 @@ TracingDecisionGraph::getSubjectStampSite(
     auto qh = dg_blobToHash(qhBlob);
     auto k = static_cast<size_t>(query.getInt(1));
     return std::make_pair(qh, k);
+}
+
+bool TracingDecisionGraph::hasSubjectStampSite(const Hash & cidHash)
+{
+    auto state(_state->lock());
+    auto query = state->selectSubjectStampSiteByCid.use();
+    dg_bindBlob(query, dg_hashToBlob(cidHash));
+    return query.next();
 }
 
 void TracingDecisionGraph::insertApplyResultProducer(

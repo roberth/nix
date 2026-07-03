@@ -174,6 +174,10 @@ public:
     std::optional<std::pair<QueryHash, size_t>> getSubjectStampSite(
         const Hash & cidHash, const Hash & scope, const Hash & subjectHash);
 
+    /* True if cold stamped any (scope, subjectHash) row for this cidHash.
+       Used by walker's LRM substitution as a "recorded CDI" gate. */
+    bool hasSubjectStampSite(const Hash & cidHash);
+
     /* Apply-result producer index: cold records `applyResultCid → (fnId, argId)`
        so warm walker can route apply-result CDIs through resolveApplyId
        (proper per-apply live reconstruction) instead of cell iteration
