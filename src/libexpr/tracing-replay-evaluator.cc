@@ -97,13 +97,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         {},
         nullptr,
     };
-    /* Preload cross-Q pulls from prior walks so early walks (running
-       before `cidasksWalk` has grown enough via later Asks-edge commits)
-       can resolve CDIs that later walks succeed on. See
-       `persistentCrossQPulls` doc for the discrimination-preserving
-       rationale (kept SEPARATE from `cidasksWalk`). */
-    ctx.crossQPulledExtensions = persistentCrossQPulls;
-
     /* Load cold's per-Q d1CidasksWalk snapshot (if any). Used as an
        ADDITIONAL source of observations in resolveCdiId's
        extended-walk match — provides bit-for-bit alignment with
@@ -649,17 +642,6 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
         for (auto & obs : e.observations)
             cidasksWalkObs.insert({obs.fromHash, obs.elementHash});
     std::vector<cidasks::Edge> extendedWalkForMatch = cidasksWalk;
-    for (auto & e : ctx.crossQPulledExtensions) {
-        cidasks::Edge dedupedEdge;
-        for (auto & obs : e.observations) {
-            if (cidasksWalkObs.find({obs.fromHash, obs.elementHash}) == cidasksWalkObs.end()) {
-                dedupedEdge.observations.push_back(obs);
-                cidasksWalkObs.insert({obs.fromHash, obs.elementHash});
-            }
-        }
-        if (!dedupedEdge.observations.empty())
-            extendedWalkForMatch.push_back(std::move(dedupedEdge));
-    }
     /* Include cold's Q-specific snapshot in the extended walk — its
        obs are canonical writer-side observations that walker's own
        cidasksWalk may not have accumulated. Dedup against

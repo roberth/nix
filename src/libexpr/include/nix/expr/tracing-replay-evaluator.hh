@@ -53,26 +53,6 @@ class TracingReplayEvaluator : public Evaluator
             earlier-in-edge dispatches then become resolvable within
             the same edge. Null outside dispatch context. */
         const std::vector<cidasks::Observation> * pendingEdgeObservations = nullptr;
-        /** Re-entry guard for `resolveCdiId`'s cross-Q pool pull. That
-            fallback live-dispatches pool Requests via
-            `dispatchAmbientQuery`, which recursively calls `resolveCdiId`
-            for its roots — without a guard the pull ping-pongs on the
-            same subject and blows the stack. */
-        bool inCrossQPull = false;
-        /** Set of CDI targets whose pull is currently on the stack.
-            Nested pulls for DIFFERENT targets can safely fire without
-            re-entering the same pull. Prevents infinite recursion
-            on the same target while allowing productive nesting. */
-        std::set<std::string> activePullTargets;
-        /** Observations accumulated from successful cross-Q pool pulls
-            within this walk. Extends `cidasksWalk` locally for
-            subsequent resolves in the same walk to build on prior
-            pulls' fold states. Discarded when the ResolutionContext
-            goes out of scope — no cross-walk leakage that would
-            confuse tests (e.g. cb-sibling-discrimination-via-observation)
-            relying on writer-aligned walk position. */
-        std::vector<cidasks::Edge> crossQPulledExtensions;
-
         /** Cold's per-Q d1CidasksWalk snapshot loaded at v13Walk
             startup. Used as an ADDITIONAL source of observations for
             `resolveCdiId`'s extended-walk match, without overwriting
@@ -101,18 +81,6 @@ class TracingReplayEvaluator : public Evaluator
         a later v13Walk re-traverses an Asks edge already in
         cidasksWalk (= shared prefix), commitEdge is a no-op. */
     std::unordered_set<Hash> committedEdgeFingerprints;
-
-    /** Successful cross-Q pool pulls accumulated across ALL v13Walks
-        in this evaluator. Each new walk copies these into its
-        ResolutionContext's `crossQPulledExtensions` so early walks
-        (which run before `cidasksWalk` has grown enough) can still
-        resolve CDIs that later walks succeed on. Kept SEPARATE from
-        `cidasksWalk` — mixing would shift subject_at_k for later
-        resolves and regress cb-sibling-discrimination-via-observation.
-        Dedup by the edge's elementHash set is not needed here because
-        each pull's landing edge represents a distinct fold-state
-        contribution keyed by its target subject id. */
-    std::vector<cidasks::Edge> persistentCrossQPulls;
 
     /* Walks across the same process invocation re-dispatch the same
        Requests many times (each top-level lookup re-walks the shared
