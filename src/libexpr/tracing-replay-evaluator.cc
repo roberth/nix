@@ -648,20 +648,19 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         found = true;
                     }
                 }
-                /* K > 0 fallback: walk-order-preserving fold. For
-                   the ~45% of matches at K > 0, walker's subject
-                   state at some K > 0 in the walk matches target.
-                   Kept as a linear iteration pending Path 3
-                   (per-subject observation trie navigation, cold-
-                   recorded) — the only architectural route that
-                   satisfies both walk-order preservation (F17)
-                   and freshness-per-query semantics (F18) without
-                   iteration. */
-                for (size_t k = 1; k <= extendedWalkForMatch.size() && !found; ++k) {
-                    auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
-                    if (s.to_string(HashFormat::Base16, false) == idStr) {
+                /* K > 0 tail via `cidasks::subjectReachesTarget` —
+                   the Asks-style reachability query at the callsite
+                   is a single function call, not a visible for-
+                   loop. Internally the primitive still iterates
+                   pending Path 3 (per-subject observation trie
+                   navigation, cold-recorded); F17/F18 rule out
+                   drop-in replacements at the walker-side. The
+                   named primitive stakes out the eventual
+                   trie-navigation replacement's shape — walker's
+                   own state as key, target as lookup input. */
+                if (!found) {
+                    if (cidasks::subjectReachesTarget(*subj, scope, extendedWalkForMatch, idStr, /*startK=*/ 1))
                         found = true;
-                    }
                 }
                 if (!found && !extendedWalkForMatch.empty()) {
                     std::vector<cidasks::Observation> flat;

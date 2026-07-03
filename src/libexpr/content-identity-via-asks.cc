@@ -305,6 +305,34 @@ Hash scopeStateIdAfter(const Subject & subject, const Hash & scope, const std::v
     return scopeStateIdAt(subject, scope, walk, walk.size());
 }
 
+bool subjectReachesTarget(
+    const Subject & subject,
+    const Hash & scope,
+    const std::vector<Edge> & walk,
+    const std::string & targetHex,
+    size_t startK)
+{
+    /* Walk-order-preserving reachability check. Returns true iff
+       subject's scopeStateId at any K in [startK, walk.size()]
+       equals targetHex. See header for the search→asks framing.
+
+       Implementation: iterate K, compute scopeStateIdAt at each K,
+       compare hex against target. This is walk-order-preserving
+       (matches the k-iter's semantics F17 requires) but retains
+       an internal linear scan pending Path 3 (per-subject
+       observation trie navigation, cold-recorded — out of
+       search→asks scope per design doc §Non-goals). Call-sites
+       see a single function call rather than a for-loop; the
+       Path-3-shaped signature stakes out the eventual
+       trie-navigation replacement. */
+    for (size_t k = startK; k <= walk.size(); ++k) {
+        auto s = scopeStateIdAt(subject, scope, walk, k);
+        if (s.to_string(HashFormat::Base16, false) == targetHex)
+            return true;
+    }
+    return false;
+}
+
 Hash structuralAddress(
     const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
 {
