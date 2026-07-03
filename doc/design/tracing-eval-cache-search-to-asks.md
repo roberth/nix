@@ -532,6 +532,33 @@ over all Requests with substring filter — became dead code after
 the cross-Q pool pull and XOR guard deletions. Deleted. -~70 lines.
 One documented linear-search-with-follow-up-index eliminated.
 
+**SubjectStampSites reinstated as primary Asks-strategy lookup
+(iteration 27, commits `6f79c4215` + `439e51fbf`):**
+
+- Reinstated the SubjectStampSites schema, writer populate (both
+  d=1 flushPendingAmbient site and d=2 stampAndEmit site), F12
+  finalize-shift correction.
+- Walker's `resolveCdiId` now consults SubjectStampSites as its
+  PRIMARY lookup path, with a `base-agrees` gate (returns the
+  stamped (Q, K)-derived match only if the k-iter would ALSO have
+  found a match).
+- k-iter kept as fallback for cases where stamp lookup misses or
+  gate fails; multi-round fold remains as final fallback for
+  cb-385 5-round-evolution case.
+
+Empirical (cb-sibling-b warm): 22/22 real matches route through
+SubjectStampSites. k-iter and multi-round fold fire 0 times.
+
+Structural outcome: the Asks-strategy lookup IS the primary
+resolution path. k-iter exists in code as a correctness fallback
+for cases (cb-higher-order restore, cb-higher-order-nested,
+builtins-cache) where the stamp-based path misses under current
+implementation. Follow-up: characterize what those cases need
+that stamp lookup doesn't currently provide; extend stamps or
+refine gate accordingly.
+
+Baseline 30/1 preserved.
+
 ## Actual outcome (iterations 12-23, 2026-07-03)
 
 The primary criterion — deleting the k-iteration — was **not
