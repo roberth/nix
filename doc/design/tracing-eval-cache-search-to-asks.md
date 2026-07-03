@@ -774,11 +774,86 @@ project's charter:**
 
 Filed as a follow-up project: "multi-payload storage + walker
 speculation for cb-repeated". Baseline 30/1 preserved throughout.
-- Compile-cleanliness and full-suite green are hygiene, not scope.
 
-The project delivers whatever combination of these turns out to be
-achievable. A partial simplification with `resolveCdiId` cleaned up
-and one or two mechanisms still load-bearing is still valuable if
-the alignment story is clearer. Same if every simplification lands
-except reentrancy. What we don't want is claiming closure on things
+## Iterations 43–48, 2026-07-03: full dead-code sweep
+
+The next session focused on deletion after the tautology exposed
+by scrutiny of `SubjectStampSites`. Findings:
+
+- **`QCidasksWalks`** — DELETED (commit `f426e60f7`, -131 lines).
+  Cold serialised its own `d1CidasksWalk` at each `logResult`; the
+  walker loaded it as an "additional source" in `resolveCdiId`.
+  With lockstep growth the walker's own cidasksWalk already carries
+  the same observations. Table + writer serialise + walker load +
+  snapshotWalk field + stampWalk cross-check + `ResolutionContext::
+  snapshotWalk`: all gone.
+- **`SubjectStampSites.subjectHash` column + `getSubjectStampSite`**
+  — DELETED (commit `cec70926a`, -84 lines). The precise
+  (subjectHash, scope)-filtered lookup only triggered the walker's
+  k-iter verification; the broader `hasSubjectStampSite` gate was
+  a proper superset.
+- **`SubjectStampSites` reduced to bare set-membership** (commit
+  `1a50e0bda`, -23 lines): `queryHash`, `edgeIndex`, `scope`
+  columns dropped along with the F12 finalize-shift block.
+- **`EdgeResponses`** — DELETED (commit `a5037ae24`, -163 lines).
+  Cold populated at flush via `getAllAsksForQ`, but nothing on the
+  walker's hot path called `getEdgeResponsePayload`. Pure write-only
+  side effect.
+- **un-fold Terminal + reverse-outgoing `walkImpl`** — DELETED
+  (commit `0331aa862`, -77 lines). Both were speculative cb-repeated
+  helpers that never fired successfully in the current suite.
+  `walkImpl` collapses back into `walk`.
+- **`SubjectStampSites` entirely** — DELETED (commit `a4c2bcb66`,
+  -100 lines). Empirical test: dropping the `hasSubjectStampSite`
+  gate on `resolveCdiId`'s k-iter fallback and the
+  `tryResolveAmbientResolverProxy` scan preserved 30/1. Cold
+  stamps every CID walker ever resolves — the gate was
+  tautological. Table + writer buffer + `insertSubjectStampSite`
+  + `hasSubjectStampSite` + `bufferStampSite` + 5 call sites: all
+  gone.
+
+**Net: ~578 lines deleted this session across 6 commits, all
+matching design-doc "Expectation" outcomes.**
+
+**Verified load-bearing after gate deletion:** the k-iter + iterative
+multi-round fold in `resolveCdiId`'s cell-chain loop is *empirically*
+load-bearing. Test: replace the two search paths with `(void) scope;`
+and rerun bounds. Result: 30/1 → 7/24. Reverted.
+
+## Strategic status (2026-07-03)
+
+**Documented deletions all landed.** Every "Anticipated
+simplification" that could be safely removed has been removed —
+snapshot-padded retry (22), XOR-coincidence guard (19), Path 4
+stamp shortcut (20), progressive cross-Q pool pull (22), iterative
+pending-edge extension (18), QCidasksWalks (43), EdgeResponses
+(46), un-fold Terminal + reverse-outgoing walkImpl (47),
+SubjectStampSites in its entirety (48). The `walk` function is
+now the smallest it has been — no un-fold, no reverse-outgoing,
+no snapshot-padded retry, no stampWalk cross-check.
+
+**Remaining load-bearing walker-side search machinery:**
+
+- `resolveCdiId` cell-chain k-iter + iterative multi-round fold.
+  Load-bearing empirically (deletion → 7/24). Design comment: the
+  iterative fold reaches multi-hop CDIs (cb-385's 5-round
+  evolution from seed(1)) that no single-K position produces; the
+  k-iter itself is the subject-verification step for
+  scopeStateIdAt-based cell matching.
+
+The full deletion of both would require **observation-navigation**
+inside `resolveCdiId` — walker following recorded observations edge
+by edge rather than folding cumulatively then searching. That's
+design doc Path 3, explicitly out of scope for the search→asks
+project.
+
+**cb-repeated remains the sole failure** (30/1). Non-goal per the
+project's original scope; the storage-layer + walker-speculation
+follow-up documented above is what would close it, and it is
+strictly out of search→asks scope.
+
+**Compile-cleanliness and full-suite green are hygiene, not scope.**
+The project delivered its documented simplifications; one test
+remains architecturally blocked with a fully characterised
+follow-up path. What we don't want is claiming closure on things
 we haven't actually investigated.
