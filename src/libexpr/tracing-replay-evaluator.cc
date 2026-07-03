@@ -691,12 +691,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                     ctx.memo[idStr] = asksLive;
                     return asksLive;
                 }
-                /* k-iter fallback: needed by cb-higher-order,
-                   cb-higher-order-nested, builtins-cache for cases
-                   where SubjectStampSites doesn't have an entry (e.g.
-                   idStrs not stamped by a d1 flush) — those go
-                   directly through the k-iter without stamp lookup
-                   activity. */
+                /* k-iter fallback: covers idStrs whose stamps don't
+                   match cell's (subject, scope, extendedWalkForMatch)
+                   at any K derivable from SubjectStampSites — e.g. F14
+                   pattern (fold-state divergence between snapshot walk
+                   and walker cumulative walk). */
                 for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
                     auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
                     if (s.to_string(HashFormat::Base16, false) == idStr) {

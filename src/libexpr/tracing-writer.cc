@@ -272,6 +272,9 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             for (auto & root : roots) {
                 auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, walk, /*edgeIndex=*/ i);
                 fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
+                /* SubjectStampSites: d=2 site. edgeIndex = i (position
+                   within group's walk); scope = pf.inheritedScope. */
+                pendingStampSites.push_back({cid, i, pf.inheritedScope});
             }
             std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
             auto fromCdi = fromCIDs.empty()
