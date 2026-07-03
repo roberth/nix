@@ -417,6 +417,46 @@ Beyond that, everything is an investigation:
 - Performance is expected to improve (the search removal is
   algorithmic), but by how much is a measurement, not a design
   parameter.
+
+## Actual outcome (iterations 12-23, 2026-07-03)
+
+The primary criterion — deleting the k-iteration — was **not
+achieved**. F5/F6 findings and the F14 case established that the
+iteration is semantically load-bearing without a walker
+observation-navigation mechanism (design doc's Path 3), which
+was out of scope for this phase.
+
+The SubjectStampSites index was built and refined (F7 schema,
+F8 scope column, F12 finalize shift), then removed (iteration 21)
+after the Path 4 gated shortcut proved redundant with base k-iter
+once entangled mechanisms were cleared. Restore path documented
+in commit history if a future phase reconsiders navigation-based
+resolution.
+
+**What DID happen** — the "Anticipated simplifications" list
+became the productive core of the project. With XOR-coincidence
+guard deletion (iteration 19) as the catalyst, most surrounding
+fallback paths collapsed:
+
+- Iterative pending-edge extension: DELETED (iteration 18)
+- XOR-coincidence guard: DELETED (iteration 19)
+- Path 4 stamp shortcut + kOrder + matched flag: DELETED (20)
+- SubjectStampSites schema+writer+F12 shift: DELETED (21)
+- Snapshot-padded retry: DELETED (iteration 22)
+- Progressive cross-Q pool pull + supporting ctx fields: DELETED (22)
+- Dead comments + ctx.pendingEdgeObservations: DELETED (23)
+
+**Iterative multi-round fold** remains as the only genuinely
+load-bearing extension path (regresses cb-385 on deletion — a
+5-round evolution the k-iteration alone can't produce).
+
+Net removal: ~500 lines across iterations 18-23. resolveCdiId is
+now compact: memo → extendedWalkForMatch build → k-iteration →
+multi-round fold → miss. Baseline 30/1 preserved throughout.
+
+The project reshaped itself: it started as "delete the linear
+search", ended as "delete everything AROUND the linear search".
+Both improve the code; only the second was possible.
 - Compile-cleanliness and full-suite green are hygiene, not scope.
 
 The project delivers whatever combination of these turns out to be
