@@ -309,6 +309,13 @@ point about what edge cases the alignment mechanism doesn't cover.
   k-iteration means no coincidence to guard against → deleted.
   **Alternative**: some coincidence source we haven't diagnosed
   survives, guard keeps rejecting.
+
+  **2026-07-03 deletion (iteration 19):** DELETED (commit `570a50c8f`).
+  Two-step verification — disabled first (returned false always,
+  30/1 preserved) then removed all 5 call sites and the lambda body
+  (-61 lines net, 30/1 preserved). Matches "Expectation": guard was
+  dead code in the current suite. K-iteration still exists but the
+  guarded coincidences don't materialise in cb-* / builtins-cache.
 - **QCidasksWalks snapshot table**. **Expectation**: with lockstep
   growth, cold's snapshot is reconstructible from walker's own
   cidasksWalk, table redundant → schema entry deleted.
