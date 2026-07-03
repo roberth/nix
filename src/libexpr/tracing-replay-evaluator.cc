@@ -737,35 +737,14 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    walker's scope state id matches what the recorder
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
-                bool matched = false;
-                /* Path 4 stamp shortcut DELETED (iteration 20).
-                   Without the XOR guard the shortcut collapsed into
-                   an equivalent-but-redundant scan against base
-                   k-iter. Base k-iter below handles the same cases. */
-                /* If cold's snapshot loaded, try the structural k
-                   (snapshot.size()) first — cold stamped this
-                   subject's CDI at that specific walk-index, so if
-                   any k matches semantically it's this one. Skipping
-                   the linear iteration eliminates XOR-fold-coincidence
-                   matches at intermediate k that route to the wrong
-                   sibling's cell. */
-                std::vector<size_t> kOrder;
-                if (!ctx.snapshotWalk.empty()) {
-                    /* Snapshot.size() would be extendedWalkForMatch.size()
-                       iff walker.cidasksWalk was empty and snapshot was
-                       the only source. Snapshot's contribution to
-                       extendedWalkForMatch is deduped, so the structural
-                       k corresponds to extendedWalkForMatch.size(). */
-                    kOrder.push_back(extendedWalkForMatch.size());
-                }
-                for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k)
-                    if (kOrder.empty() || k != kOrder.front())
-                        kOrder.push_back(k);
-                for (size_t k : kOrder) {
-                    if (matched) break;
+                /* k-iteration: try scopeStateIdAt against each edge
+                   boundary 0..N in extendedWalkForMatch until a match.
+                   kOrder-with-structural-K-first preference removed
+                   in iteration 20 — was a XOR-coincidence workaround
+                   with no correctness role now that the guard is gone. */
+                for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
                     auto scopeStateId = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
-                    auto scopeStateIdHex = scopeStateId.to_string(HashFormat::Base16, false);
-                    if (scopeStateIdHex == idStr) {
+                    if (scopeStateId.to_string(HashFormat::Base16, false) == idStr) {
                         tracingCacheLog(
                             "resolve %s: cell[%d] subject=%s MATCH at edge=%zu currentProxy=%p live=%p liveScope=%s",
                             idStr.substr(0, 12), cellDepth,
