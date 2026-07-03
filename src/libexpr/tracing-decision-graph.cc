@@ -572,55 +572,6 @@ ATOM_GET_CACHED(LocalResponse, localResponsePayloadCache)
 #undef ATOM_GET_CACHED
 #undef ATOM_GET_PLAIN
 
-std::vector<std::pair<TracingDecisionGraph::RequestHash, std::string>>
-TracingDecisionGraph::getRequestsWithFrom(const std::string & fromHex)
-{
-    /* Linear scan over Requests filtering by `params.from` field
-       (post-JSON-decode). The substring filter on the CBOR-encoded
-       payload narrows the candidate set; the JSON parse then
-       verifies the field. We could maintain a (from-hex → reqHash)
-       index column for an O(log N) lookup — deferred until profile
-       data shows this is hot. */
-    auto state(_state->lock());
-    /* Use a fresh statement here to avoid contention with the
-       cached selectRequest's prepared-statement reuse pattern. */
-    sqlite3_stmt * stmt = nullptr;
-    if (sqlite3_prepare_v2(state->db, "SELECT requestHash, payload FROM Requests", -1, &stmt, nullptr) != SQLITE_OK)
-        throw Error("getRequestsWithFrom: failed to prepare statement: %s", sqlite3_errmsg(state->db));
-    std::vector<std::pair<RequestHash, std::string>> result;
-    while (sqlite3_step(stmt) == SQLITE_ROW) {
-        auto * hashBlob = reinterpret_cast<const uint8_t *>(sqlite3_column_blob(stmt, 0));
-        int hashLen = sqlite3_column_bytes(stmt, 0);
-        auto * payloadBlob = reinterpret_cast<const char *>(sqlite3_column_blob(stmt, 1));
-        int payloadLen = sqlite3_column_bytes(stmt, 1);
-        std::string payload(payloadBlob, payloadLen);
-        /* CBOR substring filter: bail if the hex string isn't even
-           present in the payload bytes. The hex string would be CBOR-
-           encoded as a text string, so its raw bytes appear inline. */
-        if (payload.find(fromHex) == std::string::npos)
-            continue;
-        /* Parse the JSON to confirm `params.from == fromHex`. */
-        try {
-            auto j = nlohmann::json::from_cbor(
-                reinterpret_cast<const uint8_t *>(payload.data()),
-                reinterpret_cast<const uint8_t *>(payload.data() + payloadLen));
-            if (!j.is_object() || !j.contains("params") || !j["params"].is_object()
-                || !j["params"].contains("from"))
-                continue;
-            if (j["params"]["from"].get<std::string>() != fromHex)
-                continue;
-            Hash h(HashAlgorithm::SHA256);
-            assert(hashLen == (int) h.hashSize);
-            std::memcpy(h.hash, hashBlob, hashLen);
-            result.emplace_back(h, std::move(payload));
-        } catch (const std::exception &) {
-            continue;
-        }
-    }
-    sqlite3_finalize(stmt);
-    return result;
-}
-
 /* ─────────────────────────────────────────────────────────────────────
    Storage layer: sets
    ───────────────────────────────────────────────────────────────────── */
