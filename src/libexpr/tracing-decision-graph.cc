@@ -1560,6 +1560,37 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
         }
 
         if (!advanced) {
+            /* No outgoing Ask edge succeeded. Before giving up, try
+               "un-fold" hypothesis: cold's Terminal might be at
+               cur XOR some already-dispatched fact. For each outgoing
+               degenerate rs (useful.empty because its requests are
+               already in curRequests), compute cur' = cur XOR
+               fact_hash(req, resp) for each req, and check Terminal
+               at cur'. This handles multi-cb-apply cases where
+               walker's dispatch order includes a fact cold recorded
+               as still-to-dispatch at Terminal time. */
+            for (const auto & requestSetHash : outgoing) {
+                auto requestSetOpt = getRequestSet(requestSetHash);
+                if (!requestSetOpt) continue;
+                auto useful = usefulDispatch(*requestSetOpt, curRequests);
+                if (!useful.empty()) continue; // not a degenerate edge
+                Hash unfoldedCur = cur;
+                EdgeContext ec{q, cur, requestSetHash};
+                for (const auto & req : *requestSetOpt) {
+                    auto resp = dispatch(req, ec);
+                    if (resp == Hash(HashAlgorithm::SHA256)) { unfoldedCur = cur; break; }
+                    unfoldedCur = dg_xorHash(unfoldedCur, dg_factElementHash(req, resp));
+                }
+                if (unfoldedCur == cur) continue;
+                if (auto term = getTerminal(q, unfoldedCur)) {
+                    tracingCacheLog("walk Q=%s UNFOLD-TERMINAL at cur=%s (from cur=%s via rs=%s)",
+                                    q.to_string(HashFormat::Base16, false).substr(0, 12),
+                                    unfoldedCur.to_string(HashFormat::Base16, false).substr(0, 12),
+                                    cur.to_string(HashFormat::Base16, false).substr(0, 12),
+                                    requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12));
+                    return WalkHit{*term, unfoldedCur};
+                }
+            }
             tracingCacheLog("walk Q=%s NO EDGE COMMITTED at cur=%s -> miss",
                             q.to_string(HashFormat::Base16, false).substr(0, 12),
                             cur.to_string(HashFormat::Base16, false).substr(0, 12));
