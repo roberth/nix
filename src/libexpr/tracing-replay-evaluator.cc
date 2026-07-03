@@ -693,11 +693,12 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                     ctx.memo[idStr] = asksLive;
                     return asksLive;
                 }
-                /* k-iter fallback: SubjectStampSites doesn't cover all
-                   idStrs (e.g. those not stamped by d1 flush or d2
-                   stampAndEmit) — k-iter finds those. Bounded by
-                   extendedWalkForMatch size; typical match at k <= 5. */
-                /* k-iter fallback. */
+                /* k-iter fallback for fold-coincidence discovery:
+                   walker's cell may reach idStr at some K in
+                   extendedWalkForMatch via XOR-fold accident where no
+                   SubjectStampSites row exists (cold's writer never
+                   computed this exact fold state as a from-CDI, so no
+                   stamp). Bounded by extendedWalkForMatch size. */
                 for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
                     auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
                     if (s.to_string(HashFormat::Base16, false) == idStr) {
