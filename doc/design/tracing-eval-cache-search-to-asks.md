@@ -366,11 +366,6 @@ explaining what it actually covers.
 
 - **Reentrancy fix.** Multi-cb-apply-different-args stays red; the
   test file documents it as the follow-up target.
-- **Function characterization (task #87).** Content-based lambda
-  CIDs are orthogonal to walk-index alignment. Sibling discrimination
-  by observation still works as-is; sibling discrimination by
-  structurally-distinct-but-observationally-equivalent lambdas is a
-  separate design axis.
 - **Terminals reindexing.** Terminals are the chain terminus (per
   the corrected Navigation invariant blockquote) and are not part of
   the old-hash indexing pattern. No changes here.
