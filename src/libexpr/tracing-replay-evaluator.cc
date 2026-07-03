@@ -757,12 +757,19 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
                 bool matched = false;
-                /* F7+F12 (2026-07-03): passive probe. With shift-corrected
-                   stamps the eq rate on same-Q probes is 100% for
-                   cb-sibling-b-depends-on-a. Active early-return still
-                   regresses baseline — F9 (side-effect bypass) is
-                   independent of stamp accuracy. Kept passive pending
-                   F9 analysis. */
+                /* F14 (2026-07-03): passive probe. Active shortcut is
+                   incorrect even gated on extendedWalkForMatch size —
+                   the CONTENT of extendedWalkForMatch[0..K] can differ
+                   from snapshot[0..K] due to cross-Q cidasksWalk
+                   accumulation. Stamp finds match against isolated
+                   snapshot, but walker's cumulative state hasn't
+                   reached the equivalent fold. Base k-iter correctly
+                   declines and falls through to extensions/parent
+                   cell — the shortcut preempts that fall-through.
+                   Kept passive pending redesign: either walker
+                   navigates to match K via cidasksWalk observation,
+                   or the stamp records walker-cumulative K (not
+                   snapshot-relative K). */
                 try {
                     auto idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
                     if (auto stamp = decisionGraph.getSubjectStampSite(idHash, scope)) {
