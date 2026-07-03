@@ -489,6 +489,49 @@ Beyond that, everything is an investigation:
   algorithmic), but by how much is a measurement, not a design
   parameter.
 
+## Additional empirical findings (iteration 26+, 2026-07-03)
+
+Iteration 26 retested the single-K substitutes on the current (much
+cleaner) codebase. Results:
+
+- **K = extendedWalkForMatch.size() (structural K):** 7/24.
+  Same as F5. Confirmed: structural K only works for tests whose
+  matches happen at the walk's end.
+- **K = ctx.startK (walker.cidasksWalk.size at v13Walk entry):**
+  19/12. Better than structural but 12 regressions. Empirical
+  data (cb-sibling-b, 22 matches): 1 case matchK == startK, 15
+  cases matchK < startK, 6 cases matchK > startK. The Direction
+  section's alignment claim ("walker grows lockstep with cold") is
+  empirically false — walker's walk state at v13Walk entry is
+  almost never cold's stamp K for the facts consulted during that
+  Q's dispatch.
+- **K = ctx.snapshotWalk.size() using snapshotWalk (F5 rerun):**
+  7/24. Same as F5. Cold's snapshot at snapshot.size() doesn't
+  align with what walker resolves.
+
+**k-iteration overhead measurement (cb-sibling-b warm):**
+
+- 178 total resolveCdiId calls
+- 56 memo hits (fast path, no k-iter)
+- 22 k-iter matches (real k-iter work — median 2-3 iterations)
+- 25 misses across all edges
+- 0 iterative multi-round fold matches in this test
+
+The linear search is real but modest: ~50-70 scopeStateIdAt calls
+total for a warm evaluation. Perf gain from replacement bounded
+by that.
+
+**Iterative multi-round fold — load-bearing scope (iteration 26):**
+targeted regression test shows it's specifically needed for
+`cb-385 deep-indep test 4` — after mutation-then-DISALLOW-PARSE-
+replay pattern with independent args. Not exercised by other tests.
+
+**getRequestsWithFrom deletion (iteration 26, commit `2b4cb0db5`):**
+`TracingDecisionGraph::getRequestsWithFrom` — a real linear scan
+over all Requests with substring filter — became dead code after
+the cross-Q pool pull and XOR guard deletions. Deleted. -~70 lines.
+One documented linear-search-with-follow-up-index eliminated.
+
 ## Actual outcome (iterations 12-23, 2026-07-03)
 
 The primary criterion — deleting the k-iteration — was **not
