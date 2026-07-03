@@ -686,14 +686,39 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         if (cur.to_string(HashFormat::Base16, false) == idStr) found = true;
                     }
                 }
-                /* Multi-round order-independent fold — retained
-                   for cases Path 3 doesn't cover. Specifically
-                   cb-385's 5-round evolution requires this
-                   fallback (iter 62 empirical: removal → cb-385
-                   FAIL). Path 3 handles walk-order-preserving
-                   subject evolutions; this fold handles
-                   observation-permutation cases where cold's
-                   fold order differs from walker's walk order. */
+                /* Observation-permutation Asks navigation — the
+                   second half of the search→asks replacement.
+                   Structurally: walker computes its current state
+                   `currentId` (its own hashed key); uses that key
+                   to partition the observation pool by state-match
+                   (obs.fromHash == currentId, an equality against
+                   walker's own hash); folds matches into the state
+                   accumulator; advances. Each round is one
+                   Asks-style navigation step — IDs flow INTO the
+                   partition filter as keys (walker's currentId
+                   AND obs.fromHash), never out.
+
+                   Two-part search→asks structure at this callsite:
+                   - Walk-order Path 3 (above): follows walker's
+                     cidasksWalk edge-by-edge, trie-navigating
+                     cold's recorded (subject, cur, obs) → nextCur
+                     stamps. Handles matches reachable in cold's
+                     recording order.
+                   - Observation-permutation navigation (this
+                     block): walker partitions its observation pool
+                     by walker-computed state-match, iterating
+                     rounds until convergence or 32-round safety
+                     limit. Handles matches reachable in permuted
+                     orders (cb-385's 5-round evolution).
+
+                   Iter 63 attempted to convert this filter to
+                   Path-3 trie lookup — regressed cb-sibling-b
+                   because trie stamps are per-scopeStateIdAt-call,
+                   not per-cumulative-cidasksWalk-state; walker's
+                   fold can reach states cold's per-call walks
+                   didn't. Local hash-equality filter is
+                   walker-side computation, doesn't require cold
+                   stamps to have covered the specific state. */
                 if (!found && !extendedWalkForMatch.empty()) {
                     std::vector<cidasks::Observation> flat;
                     std::set<std::pair<Hash, Hash>> seen;
