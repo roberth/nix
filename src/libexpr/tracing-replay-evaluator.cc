@@ -686,6 +686,14 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         if (cur.to_string(HashFormat::Base16, false) == idStr) found = true;
                     }
                 }
+                /* Multi-round order-independent fold — retained
+                   for cases Path 3 doesn't cover. Specifically
+                   cb-385's 5-round evolution requires this
+                   fallback (iter 62 empirical: removal → cb-385
+                   FAIL). Path 3 handles walk-order-preserving
+                   subject evolutions; this fold handles
+                   observation-permutation cases where cold's
+                   fold order differs from walker's walk order. */
                 if (!found && !extendedWalkForMatch.empty()) {
                     std::vector<cidasks::Observation> flat;
                     std::set<std::pair<Hash, Hash>> seen;
