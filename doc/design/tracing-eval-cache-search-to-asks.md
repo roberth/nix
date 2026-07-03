@@ -109,16 +109,46 @@ not because cold recorded at post-obs K, but because walker's
 `cidasksWalk` at replay time contains a walk that differs from
 cold's `d1CidasksWalk` at the corresponding K.
 
-The remaining project work is entirely walker-side alignment.
-Sub-hypotheses to investigate (see research log Angle 9):
-- H9.1 (growth pattern): walker's walk length at Q lookup ≠ cold's
-  walk length at Q flush.
-- H9.3 (content): sizes match but observation contents differ.
+## Finding F2 (2026-07-03): the walker-side alignment is fundamentally impossible; use the snapshot as the walk instead
 
-The Anticipated simplifications and Success criteria below still
-apply — the target `resolveCdiId` cleanup and mechanism-deletion
-attempts remain the same. Only the writer-side audit item is
-retired.
+Empirical trace (cb-sibling-b warm run): walker.cidasksWalk.size at
+each Q lookup vs cold's per-Q QCidasksWalks snapshot.size shows:
+
+- Every Q looked up multiple times has bidirectional divergence:
+  first lookup at walker.size < snapshot.size (walker behind),
+  second lookup at walker.size > snapshot.size (walker beyond).
+- Cold's flush state for a given Q is a single fixed value;
+  walker's cumulative cidasksWalk grows across lookups.
+
+**"Grow walker in lockstep with cold" is fundamentally impossible**
+for a Q looked up at multiple walker states — cold's flush state
+for that Q is one fixed value; walker will inevitably be at
+different states at each lookup.
+
+**The correct direction is walker-side snapshot substitution.**
+Cold's per-Q `QCidasksWalks` snapshot IS the walk cold used when
+stamping that Q's facts. At Q lookup, walker should compute
+`scopeStateIdAt(subject, scope, ctx.snapshotWalk, ctx.snapshotWalk.size())`
+— cold's exact walk contents, at one K, no iteration.
+
+Revised plan:
+
+1. **Replace** the k-iteration in `resolveCdiId` with a single
+   `scopeStateIdAt` call using `ctx.snapshotWalk` (loaded per-Q
+   from QCidasksWalks) and K = `ctx.snapshotWalk.size()`.
+2. **Evaluate deletions** as before. Snapshot-padded retry
+   specifically should now become unnecessary (the primary walk
+   already reads the snapshot).
+3. **QCidasksWalks snapshot table is now load-bearing**, not
+   removable — it's the source of truth for cold's Q-flush walk
+   state. The Anticipated simplifications list should move this
+   from "candidate for deletion" to "structurally required."
+
+Sub-hypotheses that may still surface:
+- Q lookups for Qs cold didn't flush → no snapshot → walker miss
+  → fall through to inner (correct behavior).
+- Edge cases where walker.cidasksWalk carries observations the
+  snapshot doesn't (cross-Q pool pull may cover some of these).
 
 ## Success criteria
 
