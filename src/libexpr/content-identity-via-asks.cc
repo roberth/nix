@@ -191,12 +191,37 @@ Hash scopeStateIdAtWithHook(
     size_t edgeIndex,
     const std::function<void(const EvolutionStep &)> & hook)
 {
-    return scopeStateIdAt(subject, scope, walk, edgeIndex);
-    /* Real hook wiring lands in a follow-up iteration — needs
-       refactoring scopeStateIdAt's internal fold loop to emit
-       EvolutionStep tuples. Signature added now so the callsites
-       don't need to change once the emission arrives. */
-    (void) hook;
+    /* Mirrors scopeStateIdAt's fold logic, emitting one
+       EvolutionStep per matched observation. Path 3 walker will
+       navigate via a table stamped from these emissions.
+
+       Within a single walk edge, all observations are matched
+       against the edge-entry scopeStateId (not the accumulated
+       one). This means multiple observations in the same edge
+       fold into the SAME curBefore; the emitted `curAfter` is
+       curBefore XOR obs.elem (per-observation), not the
+       edge-cumulative fold. Path 3 walker will replicate this
+       edge-scoped semantics — cur updates at edge boundaries,
+       not per-observation. */
+    Hash result = scopeStateIdAt(subject, scope, walk, edgeIndex);
+    Hash subjectSelfHash = scopeStateIdAt(subject, Hash(HashAlgorithm::SHA256), {}, 0);
+    Hash selfFactFold = Hash(HashAlgorithm::SHA256);
+    for (size_t k = 0; k < edgeIndex && k < walk.size(); ++k) {
+        Hash myScopeStateIdAtK = TracingDecisionGraph::xorHashes(
+            scopeStateIdAt(subject, scope, walk, k), Hash(HashAlgorithm::SHA256));
+        /* Above is `scopeStateIdAt(subject, scope, walk, k)` —
+           subject's state at edge k's precondition. */
+        for (auto & obs : walk[k].observations) {
+            if (obs.fromHash == myScopeStateIdAtK) {
+                Hash curAfter = TracingDecisionGraph::xorHashes(myScopeStateIdAtK, obs.elementHash);
+                if (hook)
+                    hook(EvolutionStep{myScopeStateIdAtK, obs.fromHash, obs.elementHash, curAfter});
+                selfFactFold = TracingDecisionGraph::xorHashes(selfFactFold, obs.elementHash);
+            }
+        }
+    }
+    (void) subjectSelfHash;  /* Reserved for stamping the subject's Merkle key. */
+    return result;
 }
 
 Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
