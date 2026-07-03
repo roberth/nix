@@ -166,6 +166,14 @@ public:
     std::optional<std::string> getQCidasksWalkPayload(
         const QueryHash & queryHash);
 
+    /* Subject-CDI stamp index (Finding F7). Cold populates one row per
+       fact-stamp; walker's resolveCdiId looks up target CDI directly.
+       See SubjectStampSites CREATE TABLE comment for semantics. */
+    void insertSubjectStampSite(
+        const Hash & cidHash, const QueryHash & queryHash, size_t edgeIndex);
+    std::optional<std::pair<QueryHash, size_t>> getSubjectStampSite(
+        const Hash & cidHash);
+
     /* Enumerate Requests whose payload's `params.from` field equals
        `fromHex`. Used by the depth-2 walker to pre-populate an
        `ApplyContext` with observations the recorder made on a
