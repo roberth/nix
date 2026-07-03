@@ -55,6 +55,11 @@ class TracingReplayEvaluator : public Evaluator
             reproduce cold's stamped `from` values. Empty if no
             snapshot recorded. */
         std::vector<cidasks::Edge> snapshotWalk;
+
+        /** Current v13Walk's queryHash. Used by resolveCdiId's
+            SubjectStampSites lookup to reuse ctx.snapshotWalk when
+            stampQ == currentQueryHash. */
+        Hash currentQueryHash{HashAlgorithm::SHA256};
     };
 
     /** Cumulative walk across all v13Walk calls in this session.

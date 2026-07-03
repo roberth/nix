@@ -96,6 +96,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         std::move(currentProxy),
         {},
     };
+    ctx.currentQueryHash = queryHash;
     /* Load cold's per-Q d1CidasksWalk snapshot (if any). Used as an
        ADDITIONAL source of observations in resolveCdiId's
        extended-walk match — provides bit-for-bit alignment with
@@ -632,17 +633,71 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    walker's scope state id matches what the recorder
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
-                /* k-iteration: try scopeStateIdAt against each edge
-                   boundary 0..N in extendedWalkForMatch until a match. */
+                /* Asks-strategy: SubjectStampSites lookup replaces
+                   k-iteration. If stamp lookup match AND base k-iter
+                   would ALSO match at some k, return; otherwise fall
+                   through. The gate is essential for cases where the
+                   snapshot at stamp K matches but walker's cumulative
+                   fold state hasn't reached that position (F14). */
+                bool asksReturn = false;
+                std::shared_ptr<Object> asksLive;
+                try {
+                    auto idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
+                    if (auto stamp = decisionGraph.getSubjectStampSite(idHash, scope)) {
+                        auto & [stampQ, stampK] = *stamp;
+                        std::vector<cidasks::Edge> stampWalk;
+                        if (stampQ == ctx.currentQueryHash) {
+                            stampWalk = ctx.snapshotWalk;
+                        } else if (auto payload = decisionGraph.getQCidasksWalkPayload(stampQ)) {
+                            try {
+                                auto walkJson = nlohmann::json::parse(*payload);
+                                stampWalk.reserve(walkJson.size());
+                                for (const auto & edgeJson : walkJson) {
+                                    cidasks::Edge edge;
+                                    for (const auto & obsPair : edgeJson) {
+                                        auto fromHash = Hash::parseNonSRIUnprefixed(
+                                            obsPair[0].get<std::string>(), HashAlgorithm::SHA256);
+                                        auto elementHash = Hash::parseNonSRIUnprefixed(
+                                            obsPair[1].get<std::string>(), HashAlgorithm::SHA256);
+                                        edge.observations.push_back({fromHash, elementHash});
+                                    }
+                                    stampWalk.push_back(std::move(edge));
+                                }
+                            } catch (...) {}
+                        }
+                        if (!stampWalk.empty() && stampK <= stampWalk.size()) {
+                            auto ssid = cidasks::scopeStateIdAt(*subj, scope, stampWalk, stampK);
+                            if (ssid.to_string(HashFormat::Base16, false) == idStr) {
+                                /* Gate: base k-iter must also find a
+                                   match against extendedWalkForMatch. */
+                                for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
+                                    auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
+                                    if (s.to_string(HashFormat::Base16, false) == idStr) {
+                                        asksReturn = true;
+                                        asksLive = live;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (...) {
+                    /* idStr not a parseable hash — skip. */
+                }
+                if (asksReturn) {
+                    tracingCacheLog(
+                        "resolve %s: cell[%d] subject=%s MATCH via SubjectStampSites (base-agrees)",
+                        idStr.substr(0, 12), cellDepth, cidasks::describe(*subj));
+                    ctx.memo[idStr] = asksLive;
+                    return asksLive;
+                }
+                /* k-iter fallback: not stamped or gate failed. */
                 for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
-                    auto scopeStateId = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
-                    if (scopeStateId.to_string(HashFormat::Base16, false) == idStr) {
+                    auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
+                    if (s.to_string(HashFormat::Base16, false) == idStr) {
                         tracingCacheLog(
-                            "resolve %s: cell[%d] subject=%s MATCH at edge=%zu currentProxy=%p live=%p liveScope=%s",
-                            idStr.substr(0, 12), cellDepth,
-                            cidasks::describe(*subj), k,
-                            (void*)ctx.currentProxy.get(), (void*)live.get(),
-                            scope.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+                            "resolve %s: cell[%d] subject=%s MATCH at edge=%zu",
+                            idStr.substr(0, 12), cellDepth, cidasks::describe(*subj), k);
                         ctx.memo[idStr] = live;
                         return live;
                     }

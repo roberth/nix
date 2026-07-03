@@ -166,6 +166,13 @@ public:
     std::optional<std::string> getQCidasksWalkPayload(
         const QueryHash & queryHash);
 
+    /* Subject-CDI stamp index: cold writes (cidHash, Q, edgeIndex, scope);
+       walker looks up (Q, K) directly for a target idStr + scope. */
+    void insertSubjectStampSite(
+        const Hash & cidHash, const QueryHash & queryHash, size_t edgeIndex, const Hash & scope);
+    std::optional<std::pair<QueryHash, size_t>> getSubjectStampSite(
+        const Hash & cidHash, const Hash & scope);
+
     /* ─────────────────────────────────────────────────────────────────
        Storage layer: set pools (content-addressed by canonical hash)
        ───────────────────────────────────────────────────────────────── */
