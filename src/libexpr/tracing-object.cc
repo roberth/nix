@@ -352,6 +352,10 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
        TracingEvaluator::apply. */
     auto applyScopeStateId = cidasks::scopeStateIdAfter(resultSubject, applyScopeLocal, {});
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
+    {
+        auto subjectHash = cidasks::scopeStateIdAt(resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
+        writer.bufferStampSite(applyScopeStateId, 0, applyScopeLocal, subjectHash);
+    }
 
     /* Record the apply Request payload at the cidasks hash so dispatch
        and the legacy QueryApply{fn, arg} payload coincide. The legacy

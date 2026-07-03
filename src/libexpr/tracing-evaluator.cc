@@ -391,10 +391,16 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
            fn/arg use Subject-derived hex so the walker (which has
            only Subjects at primop firing time) can byte-match. */
         const auto & ars = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
-        auto fnSubjHex = cidasks::scopeStateIdAfter(*ars.fn, applyScope, {})
-            .to_string(HashFormat::Base16, false);
-        auto argSubjHex = cidasks::scopeStateIdAfter(*ars.arg, applyScope, {})
-            .to_string(HashFormat::Base16, false);
+        auto fnSubjHash = cidasks::scopeStateIdAfter(*ars.fn, applyScope, {});
+        auto argSubjHash = cidasks::scopeStateIdAfter(*ars.arg, applyScope, {});
+        auto fnSubjHex = fnSubjHash.to_string(HashFormat::Base16, false);
+        auto argSubjHex = argSubjHash.to_string(HashFormat::Base16, false);
+        {
+            auto fnMerkle = cidasks::scopeStateIdAt(*ars.fn, Hash(HashAlgorithm::SHA256), {}, 0);
+            auto argMerkle = cidasks::scopeStateIdAt(*ars.arg, Hash(HashAlgorithm::SHA256), {}, 0);
+            writer.bufferStampSite(fnSubjHash, 0, applyScope, fnMerkle);
+            writer.bufferStampSite(argSubjHash, 0, applyScope, argMerkle);
+        }
         tracingCacheLog(
             "writer logDepth2ApplyFact: fnSubj=%s argSubj=%s applyScope=%s fnHex=%s argHex=%s",
             cidasks::describe(*ars.fn),
