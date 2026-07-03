@@ -320,6 +320,16 @@ point about what edge cases the alignment mechanism doesn't cover.
   variants have no reason to exist once k-iteration is removed →
   deleted. **Alternative**: they cover a real case (intra-edge
   ordering, e.g.) that isn't reducible to a single K.
+
+  **2026-07-03 deletion attempts (iteration 18):**
+  - **Iterative pending-edge extension**: DELETED successfully
+    (commit `9d53c829d`, -63 lines). 30/1 preserved. Matches
+    "Expectation" outcome.
+  - **Iterative multi-round fold**: DELETION REGRESSES `cb-385`.
+    Load-bearing for the cb-385 sibling-shape discrimination pattern
+    (5-round evolution from seed(1) to 78b1d6c0d465 documented in
+    the code comment). Stays as "Alternative outcome": intra-edge
+    ordering / multi-hop fold not reducible to single K.
 - **Progressive cross-Q pool pull**. **Expectation**: walker's own
   cidasksWalk carries what's needed at the right K, no need to
   pull from other Q chains → deleted. **Alternative**: cross-Q
