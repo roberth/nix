@@ -254,6 +254,27 @@ public:
        list of (requestSetHash, toFactSetHash) pairs. */
     std::vector<std::pair<SetHash, SetHash>> getAmbientAsks(const SetHash & fromFactSet);
 
+    /* Path 3: insert a per-subject observation trie edge. Cold
+       records each fold step encountered during scopeStateIdAt:
+       subject S at running state `cur`, seeing observation
+       (from, elem) that matches (obs.from == cur), advances to
+       `nextCur = cur XOR obs.elem`. Walker will consume via
+       getSubjectEvolutionEdge to navigate subject's evolution
+       edge-by-edge as an Asks-style query. */
+    void insertSubjectEvolutionEdge(
+        const Hash & subjectHash, const Hash & curHash,
+        const Hash & obsFromHash, const Hash & obsElementHash,
+        const Hash & nextCurHash);
+
+    /* Path 3: look up a per-subject observation trie edge.
+       Returns nextCurHash if cold recorded a fold step matching
+       (subject, cur, obs.from, obs.elem); nullopt otherwise
+       (walker's observation didn't advance subject in cold's
+       recording — walker skips this observation). */
+    std::optional<Hash> getSubjectEvolutionEdge(
+        const Hash & subjectHash, const Hash & curHash,
+        const Hash & obsFromHash, const Hash & obsElementHash);
+
     /* ─────────────────────────────────────────────────────────────────
        Recording and replay
        ───────────────────────────────────────────────────────────────── */

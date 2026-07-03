@@ -193,6 +193,11 @@ struct TracingDecisionGraph::State
     /* Depth-2 decision graph layer */
     SQLiteStmt insertAmbientAsks, selectAmbientAsks;
 
+    /* Path 3 (subject observation trie) — populated by cold's
+       cidasks::scopeStateIdAt fold hook; consumed by walker's
+       cidasks::subjectReachesTarget navigation. */
+    SQLiteStmt insertSubjectEvolutionEdge, selectSubjectEvolutionEdge;
+
     /* In-memory caches of parsed sets and payloads. Populated lazily on
        first read or write so that subsequent operations within the same
        process avoid the SQLite round-trip and the CBOR decode.
@@ -445,6 +450,14 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO AmbientAsks(fromFactSetHash, requestSetHash, toFactSetHash) VALUES (?, ?, ?)");
     state->selectAmbientAsks.create(state->db,
         "SELECT requestSetHash, toFactSetHash FROM AmbientAsks WHERE fromFactSetHash = ?");
+    state->insertSubjectEvolutionEdge.create(state->db,
+        "INSERT OR IGNORE INTO SubjectEvolutionEdges("
+        "subjectHash, curHash, obsFromHash, obsElementHash, nextCurHash) "
+        "VALUES (?, ?, ?, ?, ?)");
+    state->selectSubjectEvolutionEdge.create(state->db,
+        "SELECT nextCurHash FROM SubjectEvolutionEdges "
+        "WHERE subjectHash = ? AND curHash = ? "
+        "AND obsFromHash = ? AND obsElementHash = ?");
 }
 
 TracingDecisionGraph::~TracingDecisionGraph() = default;
@@ -1144,6 +1157,37 @@ TracingDecisionGraph::getAmbientAsks(const SetHash & fromFactSet)
     while (query.next())
         out.emplace_back(dg_blobToHash(query.getBlob(0)), dg_blobToHash(query.getBlob(1)));
     return out;
+}
+
+void TracingDecisionGraph::insertSubjectEvolutionEdge(
+    const Hash & subjectHash, const Hash & curHash,
+    const Hash & obsFromHash, const Hash & obsElementHash,
+    const Hash & nextCurHash)
+{
+    auto state(_state->lock());
+    auto use = state->insertSubjectEvolutionEdge.use();
+    dg_bindBlob(use, dg_hashToBlob(subjectHash));
+    dg_bindBlob(use, dg_hashToBlob(curHash));
+    dg_bindBlob(use, dg_hashToBlob(obsFromHash));
+    dg_bindBlob(use, dg_hashToBlob(obsElementHash));
+    dg_bindBlob(use, dg_hashToBlob(nextCurHash));
+    use.exec();
+}
+
+std::optional<Hash>
+TracingDecisionGraph::getSubjectEvolutionEdge(
+    const Hash & subjectHash, const Hash & curHash,
+    const Hash & obsFromHash, const Hash & obsElementHash)
+{
+    auto state(_state->lock());
+    auto query = state->selectSubjectEvolutionEdge.use();
+    dg_bindBlob(query, dg_hashToBlob(subjectHash));
+    dg_bindBlob(query, dg_hashToBlob(curHash));
+    dg_bindBlob(query, dg_hashToBlob(obsFromHash));
+    dg_bindBlob(query, dg_hashToBlob(obsElementHash));
+    if (query.next())
+        return dg_blobToHash(query.getBlob(0));
+    return std::nullopt;
 }
 
 void TracingDecisionGraph::insertTerminal(
