@@ -418,7 +418,17 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        have caught up to writer.d1.size at cold sib B apply (= all
        of sib A's perQAsksEdges traversed via prior v13Walks). */
     auto & d1Walk = writer.getD1CidasksWalk();
-    auto applyScopeStateId = cidasks::scopeStateIdAt(resultSubject, applyScope, d1Walk, d1Walk.size());
+    /* Path 3: stamp SubjectEvolutionEdges via hook. */
+    Hash resultSelfHash = cidasks::scopeStateIdAt(
+        resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
+    auto applyScopeStateId = cidasks::scopeStateIdAtWithHook(
+        resultSubject, applyScope, d1Walk, d1Walk.size(),
+        [&](const cidasks::EvolutionStep & step) {
+            writer.insertSubjectEvolutionEdge(
+                resultSelfHash, step.curBefore,
+                step.obsFromHash, step.obsElementHash,
+                step.curAfter);
+        });
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
     writer.bufferApplyProducer(applyScopeStateId,
         Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256),

@@ -72,7 +72,17 @@ void TracingWriter::flushPendingAmbient(bool finalize)
         std::vector<trace::QueryLeaf> fromCIDs;
         fromCIDs.reserve(roots.size());
         for (auto & root : roots) {
-            auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, d1CidasksWalk, d1EdgeIndex);
+            /* Path 3: stamp SubjectEvolutionEdges via hook. */
+            Hash rootSelfHash = cidasks::scopeStateIdAt(
+                root, Hash(HashAlgorithm::SHA256), {}, 0);
+            auto cid = cidasks::scopeStateIdAtWithHook(
+                root, pf.inheritedScope, d1CidasksWalk, d1EdgeIndex,
+                [&](const cidasks::EvolutionStep & step) {
+                    insertSubjectEvolutionEdge(
+                        rootSelfHash, step.curBefore,
+                        step.obsFromHash, step.obsElementHash,
+                        step.curAfter);
+                });
             fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
         }
         std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
@@ -266,7 +276,17 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             std::vector<trace::QueryLeaf> fromCIDs;
             fromCIDs.reserve(roots.size());
             for (auto & root : roots) {
-                auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, walk, /*edgeIndex=*/ i);
+                /* Path 3: stamp SubjectEvolutionEdges via hook. */
+                Hash rootSelfHash = cidasks::scopeStateIdAt(
+                    root, Hash(HashAlgorithm::SHA256), {}, 0);
+                auto cid = cidasks::scopeStateIdAtWithHook(
+                    root, pf.inheritedScope, walk, /*edgeIndex=*/ i,
+                    [&](const cidasks::EvolutionStep & step) {
+                        insertSubjectEvolutionEdge(
+                            rootSelfHash, step.curBefore,
+                            step.obsFromHash, step.obsElementHash,
+                            step.curAfter);
+                    });
                 fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
             }
             std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
