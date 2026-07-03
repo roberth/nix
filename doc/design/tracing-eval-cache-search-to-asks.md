@@ -857,3 +857,45 @@ The project delivered its documented simplifications; one test
 remains architecturally blocked with a fully characterised
 follow-up path. What we don't want is claiming closure on things
 we haven't actually investigated.
+
+## Iteration 49, 2026-07-04: Finding F17 — walk-order-preservation is load-bearing
+
+Retested the narrow hypothesis "multi-round fold subsumes k-iter
+IF we add a K=0 pre-check". Full experiment: replaced the
+`for k = 0..N` k-iter with a single `scopeStateIdAt(subj, scope,
+walk, 0) == idStr` catch, kept multi-round fold unchanged.
+
+Result: single-run 246/1/7 (baseline). Repeat=6 -j1 cb-385
+introduces flake: 4/6 pass, 2/6 fail (vs 6/6 stable at HEAD).
+Reverted.
+
+**Mechanism (F17):** `scopeStateIdAt`'s internal fold respects walk
+edge order — at each K, only observations in walk[K-1] fold in,
+and only if their `from` matches the running state at K-1's
+precondition. The multi-round fold flattens all observations
+across walk edges into one pool, then partitions by state-match
+at each round — earlier-round state matches observations from
+LATER walk edges, producing subject evolutions the k-iter never
+reaches. Example: walk = [E0, E1] with (from=S0, elem=X) at E0
+and (from=S0, elem=Z) at E1. K-iter at K=1: only E0's obs is
+in-scope, state = subjectIdAt(1) XOR X. Fold round 0: both X
+and Z partition together, state = subjectIdAt(1) XOR X XOR Z.
+
+**Implication:** any principled replacement of the k-iter must
+preserve WALK-ORDER semantics. Order-independent partition-and-
+fold (which the multi-round fold is) can NEVER be a drop-in
+replacement, regardless of catch-up checks bolted on.
+Architectural options remaining:
+
+- **Path 3 (per-subject observation trie).** Cold records each
+  subject's own evolution as a Patricia trie of `(subject, cur,
+  obs) → nextCur`. Walker navigates the trie by dispatching walk
+  observations in order — respects walk order by construction,
+  no linear search over K.
+- **Explicit index (SubjectStampSites-style).** Attempted and
+  refuted with regressions (see iterations 42, 48 for empirical
+  30/1 → 7/24 or 28/3).
+
+Both routes require substantial cold-side schema addition and
+are strictly out of search→asks scope. The strategic close
+recorded in `a8570b117` remains correct.
