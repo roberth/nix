@@ -532,6 +532,40 @@ over all Requests with substring filter — became dead code after
 the cross-Q pool pull and XOR guard deletions. Deleted. -~70 lines.
 One documented linear-search-with-follow-up-index eliminated.
 
+**Session-end summary (iterations 26-31, 2026-07-03):**
+
+Attempts made toward removing the k-iter in resolveCdiId:
+
+1. Reinstated SubjectStampSites at 4 writer stamp sites (`d6ccd9ab5`)
+2. Added Merkle content-hash `subjectHash` column (`73b394f67`)
+3. Added 3 more stamp sites (7 total) covering all writer-side
+   `scopeStateIdAt` from-CDI computations (`80a706b02`)
+4. Dropped subjectHash from lookup filter (`d0c3625ba`)
+5. Pre-stamped every K in cold's walk at all sites (`fa87fd4e0`)
+
+None eliminate the k-iter. Removal drops 30/1 → 28/3 with the
+full-K stamping.
+
+Attempts toward closing cb-repeated:
+
+1. Un-fold Terminal at NO EDGE COMMITTED (`60adc25b4`)
+2. Un-fold continue to unfoldedCur if it has outgoing (`e6a9a89f1`)
+3. Reverse-outgoing walkImpl fallback (`e0884bbce`)
+
+None trigger for cb-repeated's specific pattern. The failure at
+cur=64ddeba8eda0: 2 outgoing rs, one leads to nextCur=18445b7a23bc
+(no recorded edge), one is degenerate (its request is already in
+walker's curRequests). Un-fold reaches unfoldedCur=02c4f24d7b18
+but that cur has neither Terminal nor outgoing Ask edges.
+
+Diagnosis: walker's XOR path to cur=64ddeba differs from any path
+cold would have recorded. Some XOR contribution is present in
+walker's cur that cold didn't have at any equivalent point.
+Recovery would require walker path enumeration (multi-step
+backtracking with response verification against cold's
+LocalResponseMap-like storage) — substantial rewrite of
+walker.walk().
+
 **Fundamental architectural finding (iteration 30, 2026-07-03):**
 
 After extending SubjectStampSites to 7 writer-side stamp sites (all
