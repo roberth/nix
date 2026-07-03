@@ -757,17 +757,18 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
                 bool matched = false;
-                /* F7 (2026-07-03): passive instrumentation. Log stamp
-                   eq state alongside base k-iter for correlation. */
+                /* F7+F12 (2026-07-03): passive probe. With shift-corrected
+                   stamps the eq rate on same-Q probes is 100% for
+                   cb-sibling-b-depends-on-a. Active early-return still
+                   regresses baseline — F9 (side-effect bypass) is
+                   independent of stamp accuracy. Kept passive pending
+                   F9 analysis. */
                 try {
                     auto idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
                     if (auto stamp = decisionGraph.getSubjectStampSite(idHash, scope)) {
                         auto & [stampQ, stampK] = *stamp;
-                        std::vector<cidasks::Edge> stampWalk;
-                        if (stampQ == ctx.currentQueryHash)
-                            stampWalk = ctx.snapshotWalk;
-                        if (!stampWalk.empty()) {
-                            auto ssid = cidasks::scopeStateIdAt(*subj, scope, stampWalk, stampK);
+                        if (stampQ == ctx.currentQueryHash && !ctx.snapshotWalk.empty()) {
+                            auto ssid = cidasks::scopeStateIdAt(*subj, scope, ctx.snapshotWalk, stampK);
                             bool eq = ssid.to_string(HashFormat::Base16, false) == idStr;
                             tracingCacheLog(
                                 "SubjectStampSites probe %s: stampQ=%s stampK=%zu eq=%d subject=%s",
