@@ -159,6 +159,7 @@ void registerAmbientResolverProxy(
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     AmbientResolver & resolver,
     const Hash & idHash,
-    const std::vector<cidasks::Edge> & cidasksWalk);
+    const std::vector<cidasks::Edge> & cidasksWalk,
+    TracingDecisionGraph * dg = nullptr);
 
 } // namespace nix

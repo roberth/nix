@@ -793,14 +793,28 @@ void registerAmbientResolverProxy(
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     AmbientResolver & resolver,
     const Hash & idHash,
-    const std::vector<cidasks::Edge> & cidasksWalk)
+    const std::vector<cidasks::Edge> & cidasksWalk,
+    TracingDecisionGraph * dg)
 {
-    /* For each registered (subject, scope), try every edge boundary
-       0..cidasksWalk.size() and check whether the subject's argStateId at
-       that boundary matches the queried idHash. The fact's `from`
-       at flush time uses the writer's `d1CidasksWalk` index AT
-       FLUSH; the walker doesn't know that index, so iterating all
-       prefixes is the only way to match without a side index. */
+    /* Asks-strategy first pass: for each registered (subject, scope),
+       consult SubjectStampSites via (idHash, scope). If found, compute
+       scopeStateIdAt at that K against cidasksWalk — one call instead
+       of the full 0..N iteration. Falls through to linear scan on
+       stamp miss. */
+    if (dg) {
+        for (auto & entry : resolver.liveProxies) {
+            if (auto stamp = dg->getSubjectStampSite(idHash, entry.scope)) {
+                auto & [stampQ, stampK] = *stamp;
+                (void)stampQ;
+                if (stampK <= cidasksWalk.size()) {
+                    auto scopeStateId = cidasks::scopeStateIdAt(entry.subject, entry.scope, cidasksWalk, stampK);
+                    if (scopeStateId == idHash)
+                        return entry.obj;
+                }
+            }
+        }
+    }
+    /* Linear-scan fallback for un-stamped or F14-class cases. */
     for (auto & entry : resolver.liveProxies) {
         for (size_t k = 0; k <= cidasksWalk.size(); ++k) {
             auto scopeStateId = cidasks::scopeStateIdAt(entry.subject, entry.scope, cidasksWalk, k);
