@@ -85,6 +85,10 @@ std::string TracingObject::evolvedQueryFrom() const
         }
         auto evolved = cidasks::scopeStateIdAt(*applyResultSubject, applyScope, walk, walk.size());
         auto hex = evolved.to_string(HashFormat::Base16, false);
+        /* Buffer as a SubjectStampSite so warm walker can look up
+           (idStr, applyScope) → (Q, walk.size()) directly. Same
+           drain-at-logResult mechanism as flushPendingAmbient. */
+        writer.bufferStampSite(evolved, walk.size(), applyScope);
         return hex;
     }
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());

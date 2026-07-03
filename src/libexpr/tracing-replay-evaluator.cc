@@ -668,15 +668,16 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         if (!stampWalk.empty() && stampK <= stampWalk.size()) {
                             auto ssid = cidasks::scopeStateIdAt(*subj, scope, stampWalk, stampK);
                             if (ssid.to_string(HashFormat::Base16, false) == idStr) {
-                                /* Cheap gate: fold at extendedWalkForMatch
-                                   structural K. If walker's cumulative
-                                   walk hasn't reached the fold state
-                                   cold stamped at, structural-K won't
-                                   produce idStr. F14 detector. */
-                                auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, extendedWalkForMatch.size());
-                                if (s.to_string(HashFormat::Base16, false) == idStr) {
-                                    asksReturn = true;
-                                    asksLive = live;
+                                /* Full gate: verify some K in
+                                   extendedWalkForMatch also produces
+                                   idStr. Protects against F14. */
+                                for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
+                                    auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
+                                    if (s.to_string(HashFormat::Base16, false) == idStr) {
+                                        asksReturn = true;
+                                        asksLive = live;
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -695,6 +696,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    idStrs (e.g. those not stamped by d1 flush or d2
                    stampAndEmit) — k-iter finds those. Bounded by
                    extendedWalkForMatch size; typical match at k <= 5. */
+                /* k-iter fallback: covers idStrs not stamped at any
+                   currently-instrumented site (4 stamp sites cover
+                   most but not all resolves). */
                 for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
                     auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
                     if (s.to_string(HashFormat::Base16, false) == idStr) {

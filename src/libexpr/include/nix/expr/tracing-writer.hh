@@ -279,6 +279,14 @@ private:
     std::unordered_set<Hash> recordedQHashes;
 
 public:
+    /* External stamp-site buffering for from-CDI computed OUTSIDE
+       the writer (e.g. TracingObject::evolvedQueryFrom).
+       Drained at logResult along with pendingStampSites. */
+    void bufferStampSite(const Hash & cidHash, size_t edgeIndex, const Hash & scope)
+    {
+        pendingStampSites.push_back({cidHash, edgeIndex, scope});
+    }
+
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
         : sink(sink)
         , decisionGraph(decisionGraph)

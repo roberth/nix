@@ -420,6 +420,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto & d1Walk = writer.getD1CidasksWalk();
     auto applyScopeStateId = cidasks::scopeStateIdAt(resultSubject, applyScope, d1Walk, d1Walk.size());
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
+    /* SubjectStampSites: 4th stamp site (writer's apply). */
+    writer.bufferStampSite(applyScopeStateId, d1Walk.size(), applyScope);
     {
         const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(
