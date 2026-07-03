@@ -143,6 +143,32 @@ CREATE TABLE IF NOT EXISTS ApplyResultProducers (
     argIdHash BLOB NOT NULL
 ) WITHOUT ROWID;
 
+-- Path 3 (per-subject observation trie) schema addition —
+-- foundational for eventual replacement of the internal linear
+-- iteration in cidasks::subjectReachesTarget. Cold-side stamps
+-- each fold step encountered during scopeStateIdAt so walker can
+-- navigate subject's evolution as an edge-by-edge trie rather than
+-- iterating K positions on its own walk.
+--
+-- Row semantics: `(subjectHash, curHash, obs*)` uniquely identifies
+-- a fold step at cold record time. `nextCurHash` is what subject's
+-- scopeStateId becomes after folding this observation. Walker
+-- reproduces the navigation by looking up its own current cur +
+-- observation and following the recorded nextCur.
+--
+-- Not yet consumed on the walker side — this table lands as a
+-- forward-compat schema entry so cold can begin populating and
+-- future iterations can implement navigation without a schema
+-- migration.
+CREATE TABLE IF NOT EXISTS SubjectEvolutionEdges (
+    subjectHash    BLOB NOT NULL,
+    curHash        BLOB NOT NULL,
+    obsFromHash    BLOB NOT NULL,
+    obsElementHash BLOB NOT NULL,
+    nextCurHash    BLOB NOT NULL,
+    PRIMARY KEY (subjectHash, curHash, obsFromHash, obsElementHash)
+) WITHOUT ROWID;
+
 -- Clean up indexes from earlier schema versions, if present.
 DROP INDEX IF EXISTS AsksByQF;
 DROP INDEX IF EXISTS TerminalsByQF;
