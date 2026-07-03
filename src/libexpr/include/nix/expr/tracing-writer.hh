@@ -147,6 +147,15 @@ class TracingWriter
     };
     std::vector<PendingStampSite> pendingStampSites;
 
+    /* apply-result CDI → (fnId, argId) pairs pending flush at next
+       logResult, feeding ApplyResultProducers. */
+    struct PendingApplyProducer {
+        Hash cidHash;
+        Hash fnIdHash;
+        Hash argIdHash;
+    };
+    std::vector<PendingApplyProducer> pendingApplyProducers;
+
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
        new query hash added to v13FactSet since the last logResult,
        whether from `logResponse` (= env/file), `noteEnvObservation`,
@@ -287,6 +296,12 @@ public:
                          const Hash & scope, const Hash & subjectHash)
     {
         pendingStampSites.push_back({cidHash, edgeIndex, scope, subjectHash});
+    }
+
+    void bufferApplyProducer(const Hash & cidHash,
+                             const Hash & fnIdHash, const Hash & argIdHash)
+    {
+        pendingApplyProducers.push_back({cidHash, fnIdHash, argIdHash});
     }
 
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
@@ -811,6 +826,15 @@ public:
                 site.cidHash, *qh.queryHash, site.edgeIndex, site.scope, site.subjectHash);
         }
         pendingStampSites.clear();
+
+        /* Drain pending ApplyResultProducers: apply-result CDIs are
+           made queryable by their (fn, arg) producer pair so warm
+           walker's resolveCdiId routes them to resolveApplyId. */
+        for (auto & p : pendingApplyProducers) {
+            decisionGraph->insertApplyResultProducer(
+                p.cidHash, p.fnIdHash, p.argIdHash);
+        }
+        pendingApplyProducers.clear();
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,

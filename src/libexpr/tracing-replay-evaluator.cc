@@ -615,6 +615,38 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
         return it->second;
     }
 
+    /* Producer-first check: apply-result CDIs need to route through
+       resolveApplyId (proper per-(fn, arg) live reconstruction)
+       instead of cell iteration (which conflates distinct apply-result
+       CDIs sharing cell[0]'s subject Merkle). ApplyResultProducers is
+       cold's `applyResultCid → (fn, arg)` index; any evolved state of
+       an apply hits the same producer pair. */
+    {
+        Hash idHash0{HashAlgorithm::SHA256};
+        bool haveIdHash = false;
+        try {
+            idHash0 = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
+            haveIdHash = true;
+        } catch (...) {}
+        if (haveIdHash) {
+            if (auto producer = decisionGraph.getApplyResultProducer(idHash0)) {
+                auto & [fnH, argH] = *producer;
+                tracingCacheLog("resolve %s: ApplyResultProducers route fn=%s arg=%s",
+                                idStr.substr(0, 12),
+                                fnH.to_string(HashFormat::Base16, false).substr(0, 12),
+                                argH.to_string(HashFormat::Base16, false).substr(0, 12));
+                nlohmann::json params;
+                params["fn"] = fnH.to_string(HashFormat::Base16, false);
+                params["arg"] = argH.to_string(HashFormat::Base16, false);
+                auto result = resolveApplyId(idStr, params, ctx);
+                if (result) {
+                    ctx.memo[idStr] = result;
+                    return result;
+                }
+            }
+        }
+    }
+
     /* Walk the proxy's argScope chain looking for a cell whose
        liveObject's scopeStateId matches idStr at some k. Build
        `extendedWalkForMatch = cidasksWalk + dedup(snapshotWalk)`

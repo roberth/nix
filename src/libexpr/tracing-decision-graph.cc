@@ -174,6 +174,18 @@ CREATE TABLE IF NOT EXISTS SubjectStampSites (
     PRIMARY KEY (cidHash, queryHash, edgeIndex, scope, subjectHash)
 ) WITHOUT ROWID;
 
+-- Apply-result producer index: cold records `applyResultCid → (fnId, argId)`
+-- so warm walker can route apply-result CDIs through resolveApplyId
+-- (which reconstructs the correct live proxy per (fn, arg)) instead of
+-- cell iteration (which conflates distinct apply-result CDIs sharing
+-- cell[0]'s Merkle subjectHash). Multiple evolved CIDs for the same
+-- (fn, arg) apply are all mapped to the same producer pair.
+CREATE TABLE IF NOT EXISTS ApplyResultProducers (
+    cidHash  BLOB PRIMARY KEY,
+    fnIdHash BLOB NOT NULL,
+    argIdHash BLOB NOT NULL
+) WITHOUT ROWID;
+
 -- Clean up indexes from earlier schema versions, if present.
 DROP INDEX IF EXISTS AsksByQF;
 DROP INDEX IF EXISTS TerminalsByQF;
@@ -189,6 +201,7 @@ struct TracingDecisionGraph::State
     SQLiteStmt insertEdgeResponse, selectEdgeResponse;
     SQLiteStmt insertQCidasksWalk, selectQCidasksWalk;
     SQLiteStmt insertSubjectStampSite, selectSubjectStampSite;
+    SQLiteStmt insertApplyResultProducer, selectApplyResultProducer;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
     SQLiteStmt countAsks, countTerminals;
@@ -417,6 +430,10 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO SubjectStampSites(cidHash, queryHash, edgeIndex, scope, subjectHash) VALUES (?, ?, ?, ?, ?)");
     state->selectSubjectStampSite.create(state->db,
         "SELECT queryHash, edgeIndex FROM SubjectStampSites WHERE cidHash = ? AND scope = ? AND subjectHash = ? LIMIT 1");
+    state->insertApplyResultProducer.create(state->db,
+        "INSERT OR IGNORE INTO ApplyResultProducers(cidHash, fnIdHash, argIdHash) VALUES (?, ?, ?)");
+    state->selectApplyResultProducer.create(state->db,
+        "SELECT fnIdHash, argIdHash FROM ApplyResultProducers WHERE cidHash = ?");
 
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
@@ -584,6 +601,30 @@ TracingDecisionGraph::getSubjectStampSite(
     auto qh = dg_blobToHash(qhBlob);
     auto k = static_cast<size_t>(query.getInt(1));
     return std::make_pair(qh, k);
+}
+
+void TracingDecisionGraph::insertApplyResultProducer(
+    const Hash & cidHash, const Hash & fnIdHash, const Hash & argIdHash)
+{
+    auto state(_state->lock());
+    auto use = state->insertApplyResultProducer.use();
+    dg_bindBlob(use, dg_hashToBlob(cidHash));
+    dg_bindBlob(use, dg_hashToBlob(fnIdHash));
+    dg_bindBlob(use, dg_hashToBlob(argIdHash));
+    use.exec();
+}
+
+std::optional<std::pair<Hash, Hash>>
+TracingDecisionGraph::getApplyResultProducer(const Hash & cidHash)
+{
+    auto state(_state->lock());
+    auto query = state->selectApplyResultProducer.use();
+    dg_bindBlob(query, dg_hashToBlob(cidHash));
+    if (!query.next())
+        return std::nullopt;
+    auto fn = dg_blobToHash(query.getBlob(0));
+    auto arg = dg_blobToHash(query.getBlob(1));
+    return std::make_pair(fn, arg);
 }
 
 #define ATOM_GET_CACHED(NAME, CACHE)                                            \

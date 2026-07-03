@@ -430,10 +430,9 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     {
         auto subjectHash = cidasks::scopeStateIdAt(resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
         writer.bufferStampSite(applyScopeStateId, d1Walk.size(), applyScope, subjectHash);
-        for (size_t k = 0; k < d1Walk.size(); ++k) {
-            auto cidK = cidasks::scopeStateIdAt(resultSubject, applyScope, d1Walk, k);
-            writer.bufferStampSite(cidK, k, applyScope, subjectHash);
-        }
+        writer.bufferApplyProducer(applyScopeStateId,
+            Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256),
+            Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256));
     }
     {
         const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
@@ -512,6 +511,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withScope(std::move(cell));
     obj->withApplyResultSubject(std::move(resultSubject), applyScope);
+    obj->withApplyProducerIds(fnId, argId);
     if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
         if (auto ctx = argAmb->getApplyContext())
             obj->withApplyContext(std::move(ctx));

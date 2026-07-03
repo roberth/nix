@@ -90,9 +90,12 @@ std::string TracingObject::evolvedQueryFrom() const
            drain-at-logResult mechanism as flushPendingAmbient. */
         auto subjectHash = cidasks::scopeStateIdAt(*applyResultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
         writer.bufferStampSite(evolved, walk.size(), applyScope, subjectHash);
-        for (size_t k = 0; k < walk.size(); ++k) {
-            auto cidK = cidasks::scopeStateIdAt(*applyResultSubject, applyScope, walk, k);
-            writer.bufferStampSite(cidK, k, applyScope, subjectHash);
+        if (!applyFnIdHex.empty() && !applyArgIdHex.empty()) {
+            try {
+                auto fnH = Hash::parseNonSRIUnprefixed(applyFnIdHex, HashAlgorithm::SHA256);
+                auto argH = Hash::parseNonSRIUnprefixed(applyArgIdHex, HashAlgorithm::SHA256);
+                writer.bufferApplyProducer(evolved, fnH, argH);
+            } catch (...) {}
         }
         return hex;
     }
@@ -359,6 +362,9 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     {
         auto subjectHash = cidasks::scopeStateIdAt(resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
         writer.bufferStampSite(applyScopeStateId, 0, applyScopeLocal, subjectHash);
+        writer.bufferApplyProducer(applyScopeStateId,
+            Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256),
+            Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256));
     }
 
     /* Record the apply Request payload at the cidasks hash so dispatch
@@ -377,6 +383,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto cell = ArgScopeCell::make(argScope, argObj);
     child->withScope(std::move(cell));
     child->withApplyResultSubject(std::move(resultSubject), applyScopeLocal);
+    child->withApplyProducerIds(*fnIdOpt, *argIdOpt);
     if (auto * argAmb = dynamic_cast<AmbientObject *>(argObj.get())) {
         if (auto ctx = argAmb->getApplyContext())
             child->withApplyContext(std::move(ctx));
