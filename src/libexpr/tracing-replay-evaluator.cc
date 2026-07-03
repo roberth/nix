@@ -658,9 +658,33 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    named primitive stakes out the eventual
                    trie-navigation replacement's shape — walker's
                    own state as key, target as lookup input. */
+                /* Path 3 walker-side trie navigation. Replaces the
+                   K > 0 linear iteration in cidasks::subjectReachesTarget
+                   with edge-by-edge navigation of cold-recorded
+                   SubjectEvolutionEdges. Walker's current cur is
+                   its own hashed state (key); walker looks up
+                   (subject, cur, obs.from, obs.elem) in the trie;
+                   if edge exists, folds obs.elem into edge
+                   accumulator. Edge-scoped semantics (all obs in
+                   one edge check against edge-entry cur) preserved.
+                   Empirical (iter 61 probe): 137/137 k-iter matches
+                   also reached by trie navigation. */
                 if (!found) {
-                    if (cidasks::subjectReachesTarget(*subj, scope, extendedWalkForMatch, idStr, /*startK=*/ 1))
-                        found = true;
+                    Hash subjectSelfHash = cidasks::scopeStateIdAt(
+                        *subj, Hash(HashAlgorithm::SHA256), {}, 0);
+                    Hash cur = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, 0);
+                    for (const auto & edge : extendedWalkForMatch) {
+                        if (found) break;
+                        Hash edgeAcc(HashAlgorithm::SHA256);
+                        for (const auto & obs : edge.observations) {
+                            auto next = decisionGraph.getSubjectEvolutionEdge(
+                                subjectSelfHash, cur, obs.fromHash, obs.elementHash);
+                            if (next)
+                                edgeAcc = TracingDecisionGraph::xorHashes(edgeAcc, obs.elementHash);
+                        }
+                        cur = TracingDecisionGraph::xorHashes(cur, edgeAcc);
+                        if (cur.to_string(HashFormat::Base16, false) == idStr) found = true;
+                    }
                 }
                 if (!found && !extendedWalkForMatch.empty()) {
                     std::vector<cidasks::Observation> flat;
