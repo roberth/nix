@@ -360,6 +360,15 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             perQAsksEdges.insert(perQAsksEdges.begin() + pos,
                 {epsilonFromHash, epsilonReqSet});
             d1CidasksWalk.insert(d1CidasksWalk.begin() + pos, std::move(applyEdge));
+            /* F12 (2026-07-03): shift pending SubjectStampSites entries
+               whose K >= pos to reflect the mid-insertion. Cold's stamp
+               K is walk-index-at-stamp-time; the insertion invalidates
+               that index for all subsequent positions. Without this,
+               warm walker reproduces the stamp with the wrong K position
+               (K becomes stale). */
+            for (auto & site : pendingStampSites)
+                if (site.edgeIndex >= pos)
+                    site.edgeIndex++;
             tracingCacheLog("finalize: ε Asks edge inserted at pos=%zu from=%s (insertionIndex=%zu shift=%zu perQ=%zu)",
                             pos,
                             epsilonFromHash.to_string(HashFormat::Base16, false).substr(0, 12),
