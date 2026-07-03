@@ -803,7 +803,7 @@ std::shared_ptr<Object> tryResolveAmbientResolverProxy(
        stamp miss. */
     if (dg) {
         for (auto & entry : resolver.liveProxies) {
-            auto subjectHash = hashString(HashAlgorithm::SHA256, cidasks::describe(entry.subject));
+            auto subjectHash = cidasks::scopeStateIdAt(entry.subject, Hash(HashAlgorithm::SHA256), {}, 0);
             if (auto stamp = dg->getSubjectStampSite(idHash, entry.scope, subjectHash)) {
                 auto & [stampQ, stampK] = *stamp;
                 (void)stampQ;

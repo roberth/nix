@@ -643,7 +643,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                 std::shared_ptr<Object> asksLive;
                 try {
                     auto idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
-                    auto subjectHash = hashString(HashAlgorithm::SHA256, cidasks::describe(*subj));
+                    auto subjectHash = cidasks::scopeStateIdAt(*subj, Hash(HashAlgorithm::SHA256), {}, 0);
                     if (auto stamp = decisionGraph.getSubjectStampSite(idHash, scope, subjectHash)) {
                         auto & [stampQ, stampK] = *stamp;
                         std::vector<cidasks::Edge> stampWalk;
@@ -697,16 +697,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    idStrs (e.g. those not stamped by d1 flush or d2
                    stampAndEmit) — k-iter finds those. Bounded by
                    extendedWalkForMatch size; typical match at k <= 5. */
-                /* k-iter fallback still catches cases where multiple
-                   cells share the same describe(subject) hash but
-                   evolve to different ssids at cold's stamp K. Empirical
-                   in cb-higher-order: 2 cells hit stamp shortcut, 1
-                   cell has same subjectHash but computes a different
-                   ssid at stampK (suggesting describe() collapses
-                   observationally distinct subjects into the same
-                   text). Follow-up: characterize the ambiguity and
-                   consider Merkle-hashing the Subject variant instead
-                   of describe. */
+                /* k-iter fallback: still required despite Merkle-hash
+                   subject key, because some idStrs are computed at
+                   scopeStateIdAt sites not currently instrumented
+                   as stamp sites, and some fold-state coincidences
+                   remain semantically valid. */
                 for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
                     auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
                     if (s.to_string(HashFormat::Base16, false) == idStr) {

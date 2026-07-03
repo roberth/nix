@@ -422,7 +422,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
     /* SubjectStampSites: 4th stamp site (writer's apply). */
     {
-        auto subjectHash = hashString(HashAlgorithm::SHA256, cidasks::describe(resultSubject));
+        auto subjectHash = cidasks::scopeStateIdAt(resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
         writer.bufferStampSite(applyScopeStateId, d1Walk.size(), applyScope, subjectHash);
     }
     {
