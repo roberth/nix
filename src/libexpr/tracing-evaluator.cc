@@ -396,10 +396,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         auto fnSubjHex = fnSubjHash.to_string(HashFormat::Base16, false);
         auto argSubjHex = argSubjHash.to_string(HashFormat::Base16, false);
         {
-            auto fnMerkle = cidasks::scopeStateIdAt(*ars.fn, Hash(HashAlgorithm::SHA256), {}, 0);
-            auto argMerkle = cidasks::scopeStateIdAt(*ars.arg, Hash(HashAlgorithm::SHA256), {}, 0);
-            writer.bufferStampSite(fnSubjHash, 0, applyScope, fnMerkle);
-            writer.bufferStampSite(argSubjHash, 0, applyScope, argMerkle);
+            writer.bufferStampSite(fnSubjHash, 0, applyScope);
+            writer.bufferStampSite(argSubjHash, 0, applyScope);
         }
         tracingCacheLog(
             "writer logDepth2ApplyFact: fnSubj=%s argSubj=%s applyScope=%s fnHex=%s argHex=%s",
@@ -428,8 +426,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
     /* SubjectStampSites: 4th stamp site (writer's apply). */
     {
-        auto subjectHash = cidasks::scopeStateIdAt(resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
-        writer.bufferStampSite(applyScopeStateId, d1Walk.size(), applyScope, subjectHash);
+        writer.bufferStampSite(applyScopeStateId, d1Walk.size(), applyScope);
         writer.bufferApplyProducer(applyScopeStateId,
             Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256),
             Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256));

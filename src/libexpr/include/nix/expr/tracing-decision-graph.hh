@@ -153,15 +153,12 @@ public:
         const RequestHash & requestHash);
 
     /* Subject-CDI stamp index: cold writes (cidHash, Q, edgeIndex, scope);
-       walker looks up (Q, K) directly for a target idStr + scope. */
+       walker uses hasSubjectStampSite as an "is this CID recorded?" gate. */
     void insertSubjectStampSite(
         const Hash & cidHash, const QueryHash & queryHash, size_t edgeIndex,
-        const Hash & scope, const Hash & subjectHash);
-    std::optional<std::pair<QueryHash, size_t>> getSubjectStampSite(
-        const Hash & cidHash, const Hash & scope, const Hash & subjectHash);
+        const Hash & scope);
 
-    /* True if cold stamped any (scope, subjectHash) row for this cidHash.
-       Used by walker's LRM substitution as a "recorded CDI" gate. */
+    /* True if cold stamped any row for this cidHash. */
     bool hasSubjectStampSite(const Hash & cidHash);
 
     /* Apply-result producer index: cold records `applyResultCid → (fnId, argId)`

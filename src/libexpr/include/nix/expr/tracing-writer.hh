@@ -143,7 +143,6 @@ class TracingWriter
         Hash cidHash;
         size_t edgeIndex;
         Hash scope;
-        Hash subjectHash;
     };
     std::vector<PendingStampSite> pendingStampSites;
 
@@ -293,9 +292,9 @@ public:
        the writer (e.g. TracingObject::evolvedQueryFrom).
        Drained at logResult along with pendingStampSites. */
     void bufferStampSite(const Hash & cidHash, size_t edgeIndex,
-                         const Hash & scope, const Hash & subjectHash)
+                         const Hash & scope)
     {
-        pendingStampSites.push_back({cidHash, edgeIndex, scope, subjectHash});
+        pendingStampSites.push_back({cidHash, edgeIndex, scope});
     }
 
     void bufferApplyProducer(const Hash & cidHash,
@@ -808,7 +807,7 @@ public:
            (cidHash, edgeIndex, scope) with this Q. */
         for (auto & site : pendingStampSites) {
             decisionGraph->insertSubjectStampSite(
-                site.cidHash, *qh.queryHash, site.edgeIndex, site.scope, site.subjectHash);
+                site.cidHash, *qh.queryHash, site.edgeIndex, site.scope);
         }
         pendingStampSites.clear();
 

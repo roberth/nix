@@ -75,10 +75,8 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, d1CidasksWalk, d1EdgeIndex);
             fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
             /* Buffer stamp site for SubjectStampSites — drained at
-               logResult with the current Q. Subject-content Merkle
-               hash = scopeStateIdAt(subject, 0, {}, 0). */
-            auto subjectHash = cidasks::scopeStateIdAt(root, Hash(HashAlgorithm::SHA256), {}, 0);
-            pendingStampSites.push_back({cid, d1EdgeIndex, pf.inheritedScope, subjectHash});
+               logResult with the current Q. */
+            pendingStampSites.push_back({cid, d1EdgeIndex, pf.inheritedScope});
         }
         std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
         auto fromCdi = fromCIDs.empty()
@@ -274,8 +272,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                 auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, walk, /*edgeIndex=*/ i);
                 fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
                 /* SubjectStampSites: d=2 site. */
-                auto subjectHash = cidasks::scopeStateIdAt(root, Hash(HashAlgorithm::SHA256), {}, 0);
-                pendingStampSites.push_back({cid, i, pf.inheritedScope, subjectHash});
+                pendingStampSites.push_back({cid, i, pf.inheritedScope});
             }
             std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
             auto fromCdi = fromCIDs.empty()

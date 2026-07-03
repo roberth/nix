@@ -85,11 +85,9 @@ std::string TracingObject::evolvedQueryFrom() const
         }
         auto evolved = cidasks::scopeStateIdAt(*applyResultSubject, applyScope, walk, walk.size());
         auto hex = evolved.to_string(HashFormat::Base16, false);
-        /* Buffer as a SubjectStampSite so warm walker can look up
-           (idStr, applyScope) → (Q, walk.size()) directly. Same
-           drain-at-logResult mechanism as flushPendingAmbient. */
-        auto subjectHash = cidasks::scopeStateIdAt(*applyResultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
-        writer.bufferStampSite(evolved, walk.size(), applyScope, subjectHash);
+        /* Buffer as a SubjectStampSite so warm walker's
+           hasSubjectStampSite gate hits for this evolved CID. */
+        writer.bufferStampSite(evolved, walk.size(), applyScope);
         if (!applyFnIdHex.empty() && !applyArgIdHex.empty()) {
             try {
                 auto fnH = Hash::parseNonSRIUnprefixed(applyFnIdHex, HashAlgorithm::SHA256);
@@ -360,8 +358,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto applyScopeStateId = cidasks::scopeStateIdAfter(resultSubject, applyScopeLocal, {});
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
     {
-        auto subjectHash = cidasks::scopeStateIdAt(resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
-        writer.bufferStampSite(applyScopeStateId, 0, applyScopeLocal, subjectHash);
+        writer.bufferStampSite(applyScopeStateId, 0, applyScopeLocal);
         writer.bufferApplyProducer(applyScopeStateId,
             Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256),
             Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256));

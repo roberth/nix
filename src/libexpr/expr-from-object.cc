@@ -796,26 +796,15 @@ std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     const std::vector<cidasks::Edge> & cidasksWalk,
     TracingDecisionGraph * dg)
 {
-    /* Asks-strategy first pass: for each registered (subject, scope),
-       consult SubjectStampSites via (idHash, scope). If found, compute
-       scopeStateIdAt at that K against cidasksWalk — one call instead
-       of the full 0..N iteration. Falls through to linear scan on
-       stamp miss. */
-    if (dg) {
-        for (auto & entry : resolver.liveProxies) {
-            auto subjectHash = cidasks::scopeStateIdAt(entry.subject, Hash(HashAlgorithm::SHA256), {}, 0);
-            if (auto stamp = dg->getSubjectStampSite(idHash, entry.scope, subjectHash)) {
-                auto & [stampQ, stampK] = *stamp;
-                (void)stampQ;
-                if (stampK <= cidasksWalk.size()) {
-                    auto scopeStateId = cidasks::scopeStateIdAt(entry.subject, entry.scope, cidasksWalk, stampK);
-                    if (scopeStateId == idHash)
-                        return entry.obj;
-                }
-            }
-        }
-    }
-    /* Linear-scan fallback for un-stamped or F14-class cases. */
+    /* Linear scan over each registered (subject, scope) x K in
+       cidasksWalk. Gated on hasSubjectStampSite so unstamped CIDs
+       skip iteration. The former getSubjectStampSite (Q, K) fast path
+       was redundant with this gate — its precise K only saved
+       iteration inside the same loop it now skips wholesale for
+       unstamped inputs. */
+    bool isStamped = dg && dg->hasSubjectStampSite(idHash);
+    if (!isStamped)
+        return nullptr;
     for (auto & entry : resolver.liveProxies) {
         for (size_t k = 0; k <= cidasksWalk.size(); ++k) {
             auto scopeStateId = cidasks::scopeStateIdAt(entry.subject, entry.scope, cidasksWalk, k);

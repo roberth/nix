@@ -637,56 +637,18 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    walker's scope state id matches what the recorder
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
-                /* Asks-strategy: SubjectStampSites lookup replaces
-                   k-iteration. If stamp lookup match AND base k-iter
-                   would ALSO match at some k, return; otherwise fall
-                   through. The gate is essential for cases where the
-                   snapshot at stamp K matches but walker's cumulative
-                   fold state hasn't reached that position (F14). */
-                bool asksReturn = false;
-                std::shared_ptr<Object> asksLive;
-                try {
-                    auto idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
-                    auto subjectHash = cidasks::scopeStateIdAt(*subj, Hash(HashAlgorithm::SHA256), {}, 0);
-                    if (auto stamp = decisionGraph.getSubjectStampSite(idHash, scope, subjectHash)) {
-                        /* Subject-stamped: verify walker's extended walk
-                           produces idStr at some K under (subject, scope).
-                           The stampWalk cross-check (via snapshotWalk /
-                           QCidasksWalks payload) was DELETED — walker's
-                           own extendedWalkForMatch is sufficient under
-                           lockstep growth. Precise stamp record (Q, K)
-                           unused; presence of a matching stamp row
-                           (idHash, scope, subjectHash) is what search→asks
-                           trusts. */
-                        (void) stamp;
-                        for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
-                            auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
-                            if (s.to_string(HashFormat::Base16, false) == idStr) {
-                                asksReturn = true;
-                                asksLive = live;
-                                break;
-                            }
-                        }
-                    }
-                } catch (...) {
-                    /* idStr not a parseable hash — skip. */
-                }
-                if (asksReturn) {
-                    tracingCacheLog(
-                        "resolve %s: cell[%d] subject=%s MATCH via SubjectStampSites (base-agrees)",
-                        idStr.substr(0, 12), cellDepth, cidasks::describe(*subj));
-                    ctx.memo[idStr] = asksLive;
-                    return asksLive;
-                }
-                /* Broadened Asks-strategy: any stamped CID (via
-                   hasSubjectStampSite, no subject/scope filter) matches
-                   cell.live if the cell's subject can produce idStr
-                   under walker's own fold. Replaces the k-iter fallback
-                   AND the iterative multi-round fold (both were
-                   walker-side searches over walk positions / obs
-                   partitions). If cold stamped this CID at ALL, the
-                   recorded fact exists — cell's subject-side match is
-                   what search→asks trusts as sufficient. */
+                /* Asks-strategy: gate walker-side subject/scope
+                   verification on cold's stamp existence. If cold
+                   stamped this CID at all (`hasSubjectStampSite`) AND
+                   this cell's (subject, scope, walker fold) produces
+                   idStr at some K, this cell.live is the resolution.
+                   Unstamped CIDs never traverse the verification search.
+                   The former subjectHash+scope-filtered path
+                   (`getSubjectStampSite`) is redundant with this
+                   broader gate — its precise stamp record was already
+                   only used to trigger the same walker-side
+                   verification, and hasSubjectStampSite is a proper
+                   superset. */
                 try {
                     auto idHash2 = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
                     if (decisionGraph.hasSubjectStampSite(idHash2)) {
