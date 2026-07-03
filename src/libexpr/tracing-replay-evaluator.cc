@@ -696,9 +696,14 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    idStrs (e.g. those not stamped by d1 flush or d2
                    stampAndEmit) — k-iter finds those. Bounded by
                    extendedWalkForMatch size; typical match at k <= 5. */
-                /* k-iter fallback: covers idStrs not stamped at any
-                   currently-instrumented site (4 stamp sites cover
-                   most but not all resolves). */
+                /* k-iter fallback for XOR-fold coincidences: cells
+                   with different subjects than cold's stamp subject
+                   may still produce idStr at some K in walker's walk
+                   via fold-state accident. SubjectStampSites doesn't
+                   index by subject content — only (cidHash, scope) —
+                   so it can't discriminate cell C's subject from
+                   cold's stamped subject. K-iter's fold check catches
+                   these coincidences. */
                 for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
                     auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
                     if (s.to_string(HashFormat::Base16, false) == idStr) {
