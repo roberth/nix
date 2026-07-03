@@ -103,6 +103,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        `persistentCrossQPulls` doc for the discrimination-preserving
        rationale (kept SEPARATE from `cidasksWalk`). */
     ctx.crossQPulledExtensions = persistentCrossQPulls;
+    ctx.currentQueryHash = queryHash;
 
     /* Load cold's per-Q d1CidasksWalk snapshot (if any). Used as an
        ADDITIONAL source of observations in resolveCdiId's
@@ -756,6 +757,35 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
                 bool matched = false;
+                /* F7 (2026-07-03): passive instrumentation — cold
+                   recorded `(cidHash, Q, edgeIndex)` at each fact-stamp
+                   site. For this target `idStr`, look up any (Q, K)
+                   pair, compute `scopeStateIdAt(subject, scope,
+                   thatSnapshot, K)`, log the outcome. Does NOT return
+                   early — the historical k-iteration below still
+                   drives resolution. Purpose: validate that stamps
+                   agree with k-iteration results before turning this
+                   into the primary resolution path. */
+                try {
+                    auto idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
+                    if (auto stamp = decisionGraph.getSubjectStampSite(idHash)) {
+                        auto & [stampQ, stampK] = *stamp;
+                        std::vector<cidasks::Edge> stampWalk;
+                        if (stampQ == ctx.currentQueryHash)
+                            stampWalk = ctx.snapshotWalk;
+                        if (!stampWalk.empty()) {
+                            auto ssid = cidasks::scopeStateIdAt(*subj, scope, stampWalk, stampK);
+                            bool eq = ssid.to_string(HashFormat::Base16, false) == idStr;
+                            tracingCacheLog(
+                                "SubjectStampSites probe %s: stampQ=%s stampK=%zu eq=%d subject=%s",
+                                idStr.substr(0, 12),
+                                stampQ.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                                stampK, eq, cidasks::describe(*subj));
+                        }
+                    }
+                } catch (...) {
+                    /* idStr not a parseable hash — skip probe. */
+                }
                 /* If cold's snapshot loaded, try the structural k
                    (snapshot.size()) first — cold stamped this
                    subject's CDI at that specific walk-index, so if
