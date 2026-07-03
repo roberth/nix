@@ -150,6 +150,57 @@ Sub-hypotheses that may still surface:
 - Edge cases where walker.cidasksWalk carries observations the
   snapshot doesn't (cross-Q pool pull may cover some of these).
 
+## Findings F4 / F5 / F6 (2026-07-03): naive single-K substitutes don't work; the k-search is semantically load-bearing
+
+Iterations 5-8 tested three variants of "single K substitute for
+the k-iteration":
+
+- **F2 (iteration 5):** Use `ctx.snapshotWalk` at `snapshot.size()`
+  as the walk + K. Result: 7/24 cb-\* + builtins-cache — 24
+  regressions. F3 diagnosed: the snapshot was captured POST-flush;
+  facts were stamped PRE-flush.
+- **F3+F2 (iteration 6):** Move snapshot capture to pre-flush
+  (writer-side change) + use snapshot at snapshot.size(). Result:
+  13/18 — 18 regressions. F4 diagnosed: cross-Q subject CDI
+  references live outside this Q's snapshot; the extended walk
+  (walker.cidasksWalk + cross-Q pulled + snapshot) provides the
+  observations that make cross-Q references resolvable via XOR-
+  fold-coincidence.
+- **F5's single call at `walk.size()` (iteration 8):** Under the
+  hypothesis that subject-CDI evolution flatlines. Result: 7/24
+  — 24 regressions. F6 diagnosed: subject evolution does NOT
+  flatline; it continues folding relevant obs past K_min.
+  Different K values produce different CDI values as more obs
+  match evolved subjects.
+
+**Empirical distribution of matched K values (cb-sibling-b, 48
+matches):** K=0 (13 matches), K=2 (12), K=5 (6), K=8 (4), K=9
+(1), K=10 (3), K=11 (2), K=12 (3), K=13 (2), K=14 (1), K=15 (1).
+Median iteration count before match: ~2-3.
+
+**Reframed conclusion:** the k-iteration finds a specific K_min
+where the subject's own observation chain reaches cold's stamped
+CDI. It's semantically load-bearing (not just perf overhead).
+Options remaining for the search→asks project:
+
+- **Subject-CDI index** (`SubjectStampSites(cidHash) → (Q, K)`):
+  cold populates per-fact-stamp; walker looks up by target CDI
+  → K directly, single call. Larger schema change; not currently
+  scoped.
+- **Accept the search** as O(K_min) with median ~2-3 iterations,
+  and re-focus the project on the other Anticipated simplifications
+  (snapshot-padded retry deletion, XOR-coincidence guard deletion,
+  cross-Q pool pull evaluation).
+- **Investigate alternative walk configurations** — is there a
+  smaller subset of extendedWalkForMatch that still contains
+  the needed obs at the right positions?
+
+The design doc's core premise ("delete the linear search") turned
+out to require substantial architectural change (subject-CDI
+index) rather than the K-alignment fix originally scoped. This is
+information, not a failure — the project is now smarter about
+what the search actually does and what its removal costs.
+
 ## Success criteria
 
 **Primary**: all currently-green cb-* + builtins-cache tests stay
