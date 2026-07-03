@@ -295,6 +295,16 @@ point about what edge cases the alignment mechanism doesn't cover.
   still miss on some class of query (e.g. cb-apply reqhash within
   a walk where writer's K doesn't correspond cleanly to walker's) →
   retry stays as a targeted fallback.
+
+  **2026-07-03 deletion attempt (Path 4 landed, iteration 17):**
+  removal regresses `cb-sibling-b-depends-on-a` and
+  `cb-repeated-cb-apply-diff-args` (30/1 → 29/2). The mechanism is
+  load-bearing for the F14 case: warm's `cidasksWalk` hasn't reached
+  cold's fold state at flush time, so `walk()` misses at the primary
+  attempt; padding advances the walker to cold's post-flush position
+  and the retry succeeds. Documented as active mechanism until an
+  Asks-navigation resolution advances the walker via observation
+  dispatch rather than snapshot copy.
 - **XOR-coincidence guard** in resolveCdiId. **Expectation**: no
   k-iteration means no coincidence to guard against → deleted.
   **Alternative**: some coincidence source we haven't diagnosed
