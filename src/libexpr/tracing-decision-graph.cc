@@ -416,7 +416,7 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     state->insertSubjectStampSite.create(state->db,
         "INSERT OR IGNORE INTO SubjectStampSites(cidHash, queryHash, edgeIndex, scope, subjectHash) VALUES (?, ?, ?, ?, ?)");
     state->selectSubjectStampSite.create(state->db,
-        "SELECT queryHash, edgeIndex FROM SubjectStampSites WHERE cidHash = ? AND scope = ? AND subjectHash = ? LIMIT 1");
+        "SELECT queryHash, edgeIndex FROM SubjectStampSites WHERE cidHash = ? AND scope = ? LIMIT 1");
 
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
@@ -571,13 +571,12 @@ void TracingDecisionGraph::insertSubjectStampSite(
 
 std::optional<std::pair<TracingDecisionGraph::QueryHash, size_t>>
 TracingDecisionGraph::getSubjectStampSite(
-    const Hash & cidHash, const Hash & scope, const Hash & subjectHash)
+    const Hash & cidHash, const Hash & scope, const Hash & /*subjectHash*/)
 {
     auto state(_state->lock());
     auto query = state->selectSubjectStampSite.use();
     dg_bindBlob(query, dg_hashToBlob(cidHash));
     dg_bindBlob(query, dg_hashToBlob(scope));
-    dg_bindBlob(query, dg_hashToBlob(subjectHash));
     if (!query.next())
         return std::nullopt;
     auto qhBlob = query.getBlob(0);
