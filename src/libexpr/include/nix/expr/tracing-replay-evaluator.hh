@@ -46,13 +46,6 @@ class TracingReplayEvaluator : public Evaluator
         /** Memoise id → resolved Object within this single walk so
             recursive resolveCdiId calls don't redo work. */
         std::map<std::string, std::shared_ptr<Object>> memo;
-        /** In-flight edge observations (populated by dispatch as it
-            processes each request in the current Asks edge). Passed
-            through so resolveCdiId can extend the walk with pending
-            obs at the trailing edge — subjects whose CDI advances via
-            earlier-in-edge dispatches then become resolvable within
-            the same edge. Null outside dispatch context. */
-        const std::vector<cidasks::Observation> * pendingEdgeObservations = nullptr;
         /** Cold's per-Q d1CidasksWalk snapshot loaded at v13Walk
             startup. Used as an ADDITIONAL source of observations for
             `resolveCdiId`'s extended-walk match, without overwriting

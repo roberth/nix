@@ -95,7 +95,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
     ResolutionContext ctx{
         std::move(currentProxy),
         {},
-        nullptr,
     };
     /* Load cold's per-Q d1CidasksWalk snapshot (if any). Used as an
        ADDITIONAL source of observations in resolveCdiId's
@@ -135,11 +134,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        Without the buffer, rejected-edge facts would pollute
        cidasksWalk and throw off the cell-chain scopeStateId computations. */
     std::vector<cidasks::Observation> pendingEdgeObservations;
-    /* Expose to resolveCdiId via ctx so subject-CDI lookups can extend
-       the walk with in-flight edge obs. Enables intra-edge dependency:
-       an earlier dispatch's fold pushes a subject's evolved CDI into
-       range for a later dispatch in the same edge. */
-    ctx.pendingEdgeObservations = &pendingEdgeObservations;
 
     auto commitEdge = [&]() {
         /* 1:1 alignment with writer's d1CidasksWalk: writer inserts each
