@@ -98,47 +98,8 @@ TEST_F(TracingDecisionGraphTest, LocalResponseMap_KeyedByRequestHash_FunctionAtD
     EXPECT_EQ(g.getLocalResponsePayload(reqHash).value_or(""), "first-payload");
 }
 
-TEST_F(TracingDecisionGraphTest, EdgeResponses_KeyedByQueryAndFromFactSet)
-{
-    /* `EdgeResponses` keys responses by (queryHash, fromFactSetHash,
-       requestHash) — one row per Asks edge member cold recorded.
-       Same requestHash used at DIFFERENT (queryHash, fromFactSetHash)
-       positions stores per-edge without first-writer-wins collision.
-       Offline-inspection / diagnostic surface only: d=1 walker
-       live-dispatches (see the LRM contract test above), so this
-       table is NOT a walker dispatch source — the API header spells
-       out the intent. */
-    TracingDecisionGraph g(dbPath);
-
-    auto q1 = sha("q1"), q2 = sha("q2");
-    auto from1 = sha("from1"), from2 = sha("from2");
-    auto reqHash = sha("shared-req");
-
-    g.insertEdgeResponse(q1, from1, reqHash, "resp-at-q1-from1");
-    g.insertEdgeResponse(q1, from2, reqHash, "resp-at-q1-from2");
-    g.insertEdgeResponse(q2, from1, reqHash, "resp-at-q2-from1");
-
-    EXPECT_EQ(g.getEdgeResponsePayload(q1, from1, reqHash).value_or(""), "resp-at-q1-from1");
-    EXPECT_EQ(g.getEdgeResponsePayload(q1, from2, reqHash).value_or(""), "resp-at-q1-from2");
-    EXPECT_EQ(g.getEdgeResponsePayload(q2, from1, reqHash).value_or(""), "resp-at-q2-from1");
-    /* Absent (q2, from2, req) → nullopt. */
-    EXPECT_FALSE(g.getEdgeResponsePayload(q2, from2, reqHash).has_value());
-}
-
-TEST_F(TracingDecisionGraphTest, EdgeResponses_FirstWriterWinsPerKey)
-{
-    /* INSERT OR IGNORE semantics: same (queryHash, fromFactSetHash,
-       requestHash) accepts only the first payload. Under cold's
-       replay-then-record flow the second write should be idempotent
-       (same payload), so first-wins is safe. Pinning it here. */
-    TracingDecisionGraph g(dbPath);
-
-    auto q = sha("q"), from = sha("from"), req = sha("req");
-    g.insertEdgeResponse(q, from, req, "first");
-    g.insertEdgeResponse(q, from, req, "second");
-
-    EXPECT_EQ(g.getEdgeResponsePayload(q, from, req).value_or(""), "first");
-}
+/* EdgeResponses table + its tests deleted: the table had no
+   walker-side readers and cold's write path was pure side effect. */
 
 /* ─────────────────────────────────────────────────────────────────────
    Set pools: canonical hashing

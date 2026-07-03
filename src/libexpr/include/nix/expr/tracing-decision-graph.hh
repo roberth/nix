@@ -126,32 +126,6 @@ public:
     void insertLocalResponse(const RequestHash & requestHash, std::string_view payload);
     std::optional<std::string> getLocalResponsePayload(const RequestHash & requestHash);
 
-    /* Edge-context-keyed response storage. Cold records
-       (queryHash, fromFactSetHash, requestHash) → payload for each
-       fact in each Q's per-edge requestSet.
-
-       NOT a d=1 dispatch source. Same rule as LocalResponseMap: d=1
-       walker live-dispatches; serving from storage bypasses the
-       structural-validation contract even when the per-edge triple
-       is more specific than LRM's reqhash-only key. See
-       `cross-session-seed-collision` memory for why per-edge-context
-       lookup isn't a safe workaround — if walker's live navigation
-       fails, that is the walker's miss signal, not a licence to
-       consult storage.
-
-       Kept as an offline-inspection / diagnostic surface. If a
-       future use lands, name it explicitly and document why the
-       lookup is safe at that layer. */
-    void insertEdgeResponse(
-        const QueryHash & queryHash,
-        const SetHash & fromFactSetHash,
-        const RequestHash & requestHash,
-        std::string_view payload);
-    std::optional<std::string> getEdgeResponsePayload(
-        const QueryHash & queryHash,
-        const SetHash & fromFactSetHash,
-        const RequestHash & requestHash);
-
     /* Set-membership: cold registers cidHash iff it stamped this CID.
        Walker uses hasSubjectStampSite as the "is this CID recorded?"
        gate on its resolveCdiId k-iter fallback. */
@@ -239,12 +213,6 @@ public:
     /* Look up the outgoing RequestSet edges at (Q, factSet). */
     std::vector<SetHash> getAsks(const QueryHash & q, const SetHash & factSet);
 
-    /** Enumerate ALL Asks rows for a given queryHash across all
-        fromFactSetHashes. Used by `TracingWriter::logResult` to
-        populate `EdgeResponses` for edges that `record()` inserted
-        via Patricia split beyond the writer's own `perQAsksEdges`.
-        Returns pairs of (fromFactSetHash, requestSetHash). */
-    std::vector<std::pair<SetHash, SetHash>> getAllAsksForQ(const QueryHash & q);
 
     /* Remove a specific Asks edge. Used by Patricia split to
        re-point an existing edge. */
@@ -352,12 +320,7 @@ public:
        starts from its parent's structural anchor. */
     struct WalkHit { ResultHash resultHash; SetHash terminalCur; };
     /* Edge context passed to dispatch: identifies the specific Asks
-       edge whose requests are being dispatched. Walker uses this to
-       key EdgeResponses lookups so it can distinguish cross-sibling
-       contamination (walker's context corresponds to a Q whose
-       cumulative factSet inherited a fact from a prior sibling)
-       from outer-value change (live truly differs from what cold
-       recorded at this edge). */
+       edge whose requests are being dispatched. */
     struct EdgeContext
     {
         QueryHash queryHash;

@@ -777,22 +777,9 @@ public:
            LRM (`getLocalResponsePayload`) as the source of truth so
            coordinates whose reqhashes came from a prior sibling's
            dispatch (cumulative-dependency principle) also get
-           covered. Without this, walker's `dispatch()`-time
-           EdgeResponses lookup misses at the shared-Patricia-node
-           coordinates, causing cross-sibling routing to fold to
-           unrecorded curs (cb-sibling-b failure). */
-        for (const auto & [fromCur, rsHash] : decisionGraph->getAllAsksForQ(*qh.queryHash)) {
-            auto rsMembers = decisionGraph->getRequestSet(rsHash);
-            if (!rsMembers)
-                continue;
-            for (const auto & reqHash : *rsMembers) {
-                auto respPayload = decisionGraph->getLocalResponsePayload(reqHash);
-                if (!respPayload)
-                    continue;
-                decisionGraph->insertEdgeResponse(
-                    *qh.queryHash, fromCur, reqHash, *respPayload);
-            }
-        }
+           covered. */
+        /* EdgeResponses population: DELETED. The table has no readers
+           on the walker's hot path; write-only side effect. */
 
         /* QCidasksWalks snapshot serialization: DELETED. Walker's own
            cidasksWalk carries what's needed under lockstep growth. */
