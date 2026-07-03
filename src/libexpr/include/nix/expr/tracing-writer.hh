@@ -143,6 +143,7 @@ class TracingWriter
         Hash cidHash;
         size_t edgeIndex;
         Hash scope;
+        Hash subjectHash;
     };
     std::vector<PendingStampSite> pendingStampSites;
 
@@ -282,9 +283,10 @@ public:
     /* External stamp-site buffering for from-CDI computed OUTSIDE
        the writer (e.g. TracingObject::evolvedQueryFrom).
        Drained at logResult along with pendingStampSites. */
-    void bufferStampSite(const Hash & cidHash, size_t edgeIndex, const Hash & scope)
+    void bufferStampSite(const Hash & cidHash, size_t edgeIndex,
+                         const Hash & scope, const Hash & subjectHash)
     {
-        pendingStampSites.push_back({cidHash, edgeIndex, scope});
+        pendingStampSites.push_back({cidHash, edgeIndex, scope, subjectHash});
     }
 
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
@@ -806,7 +808,7 @@ public:
            (cidHash, edgeIndex, scope) with this Q. */
         for (auto & site : pendingStampSites) {
             decisionGraph->insertSubjectStampSite(
-                site.cidHash, *qh.queryHash, site.edgeIndex, site.scope);
+                site.cidHash, *qh.queryHash, site.edgeIndex, site.scope, site.subjectHash);
         }
         pendingStampSites.clear();
 

@@ -88,7 +88,8 @@ std::string TracingObject::evolvedQueryFrom() const
         /* Buffer as a SubjectStampSite so warm walker can look up
            (idStr, applyScope) → (Q, walk.size()) directly. Same
            drain-at-logResult mechanism as flushPendingAmbient. */
-        writer.bufferStampSite(evolved, walk.size(), applyScope);
+        auto subjectHash = hashString(HashAlgorithm::SHA256, cidasks::describe(*applyResultSubject));
+        writer.bufferStampSite(evolved, walk.size(), applyScope, subjectHash);
         return hex;
     }
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());

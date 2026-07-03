@@ -166,11 +166,12 @@ CREATE TABLE IF NOT EXISTS AmbientAsks (
 -- uses target idStr + walker cell scope to look up the (Q, K)
 -- stamped position directly, replacing k-iteration linear search.
 CREATE TABLE IF NOT EXISTS SubjectStampSites (
-    cidHash    BLOB NOT NULL,
-    queryHash  BLOB NOT NULL,
-    edgeIndex  INTEGER NOT NULL,
-    scope      BLOB NOT NULL,
-    PRIMARY KEY (cidHash, queryHash, edgeIndex, scope)
+    cidHash     BLOB NOT NULL,
+    queryHash   BLOB NOT NULL,
+    edgeIndex   INTEGER NOT NULL,
+    scope       BLOB NOT NULL,
+    subjectHash BLOB NOT NULL,
+    PRIMARY KEY (cidHash, queryHash, edgeIndex, scope, subjectHash)
 ) WITHOUT ROWID;
 
 -- Clean up indexes from earlier schema versions, if present.
@@ -413,9 +414,9 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     state->selectQCidasksWalk.create(state->db,
         "SELECT payload FROM QCidasksWalks WHERE queryHash = ?");
     state->insertSubjectStampSite.create(state->db,
-        "INSERT OR IGNORE INTO SubjectStampSites(cidHash, queryHash, edgeIndex, scope) VALUES (?, ?, ?, ?)");
+        "INSERT OR IGNORE INTO SubjectStampSites(cidHash, queryHash, edgeIndex, scope, subjectHash) VALUES (?, ?, ?, ?, ?)");
     state->selectSubjectStampSite.create(state->db,
-        "SELECT queryHash, edgeIndex FROM SubjectStampSites WHERE cidHash = ? AND scope = ? LIMIT 1");
+        "SELECT queryHash, edgeIndex FROM SubjectStampSites WHERE cidHash = ? AND scope = ? AND subjectHash = ? LIMIT 1");
 
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
@@ -555,7 +556,8 @@ std::optional<std::string> TracingDecisionGraph::getQCidasksWalkPayload(
 }
 
 void TracingDecisionGraph::insertSubjectStampSite(
-    const Hash & cidHash, const QueryHash & queryHash, size_t edgeIndex, const Hash & scope)
+    const Hash & cidHash, const QueryHash & queryHash, size_t edgeIndex,
+    const Hash & scope, const Hash & subjectHash)
 {
     auto state(_state->lock());
     auto use = state->insertSubjectStampSite.use();
@@ -563,16 +565,19 @@ void TracingDecisionGraph::insertSubjectStampSite(
     dg_bindBlob(use, dg_hashToBlob(queryHash));
     use(static_cast<int64_t>(edgeIndex));
     dg_bindBlob(use, dg_hashToBlob(scope));
+    dg_bindBlob(use, dg_hashToBlob(subjectHash));
     use.exec();
 }
 
 std::optional<std::pair<TracingDecisionGraph::QueryHash, size_t>>
-TracingDecisionGraph::getSubjectStampSite(const Hash & cidHash, const Hash & scope)
+TracingDecisionGraph::getSubjectStampSite(
+    const Hash & cidHash, const Hash & scope, const Hash & subjectHash)
 {
     auto state(_state->lock());
     auto query = state->selectSubjectStampSite.use();
     dg_bindBlob(query, dg_hashToBlob(cidHash));
     dg_bindBlob(query, dg_hashToBlob(scope));
+    dg_bindBlob(query, dg_hashToBlob(subjectHash));
     if (!query.next())
         return std::nullopt;
     auto qhBlob = query.getBlob(0);

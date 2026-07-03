@@ -643,7 +643,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                 std::shared_ptr<Object> asksLive;
                 try {
                     auto idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
-                    if (auto stamp = decisionGraph.getSubjectStampSite(idHash, scope)) {
+                    auto subjectHash = hashString(HashAlgorithm::SHA256, cidasks::describe(*subj));
+                    if (auto stamp = decisionGraph.getSubjectStampSite(idHash, scope, subjectHash)) {
                         auto & [stampQ, stampK] = *stamp;
                         std::vector<cidasks::Edge> stampWalk;
                         if (stampQ == ctx.currentQueryHash) {
@@ -696,14 +697,16 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    idStrs (e.g. those not stamped by d1 flush or d2
                    stampAndEmit) — k-iter finds those. Bounded by
                    extendedWalkForMatch size; typical match at k <= 5. */
-                /* k-iter fallback for XOR-fold coincidences: cells
-                   with different subjects than cold's stamp subject
-                   may still produce idStr at some K in walker's walk
-                   via fold-state accident. SubjectStampSites doesn't
-                   index by subject content — only (cidHash, scope) —
-                   so it can't discriminate cell C's subject from
-                   cold's stamped subject. K-iter's fold check catches
-                   these coincidences. */
+                /* k-iter fallback still catches cases where multiple
+                   cells share the same describe(subject) hash but
+                   evolve to different ssids at cold's stamp K. Empirical
+                   in cb-higher-order: 2 cells hit stamp shortcut, 1
+                   cell has same subjectHash but computes a different
+                   ssid at stampK (suggesting describe() collapses
+                   observationally distinct subjects into the same
+                   text). Follow-up: characterize the ambiguity and
+                   consider Merkle-hashing the Subject variant instead
+                   of describe. */
                 for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
                     auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
                     if (s.to_string(HashFormat::Base16, false) == idStr) {

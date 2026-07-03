@@ -75,9 +75,10 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, d1CidasksWalk, d1EdgeIndex);
             fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
             /* Buffer stamp site for SubjectStampSites — drained at
-               logResult with the current Q. Scope disambiguates
-               cold flushes with same cidHash under different scope. */
-            pendingStampSites.push_back({cid, d1EdgeIndex, pf.inheritedScope});
+               logResult with the current Q. (cidHash, scope, subjectHash)
+               triple discriminates cells whose subject differs. */
+            auto subjectHash = hashString(HashAlgorithm::SHA256, cidasks::describe(root));
+            pendingStampSites.push_back({cid, d1EdgeIndex, pf.inheritedScope, subjectHash});
         }
         std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
         auto fromCdi = fromCIDs.empty()
@@ -272,9 +273,9 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             for (auto & root : roots) {
                 auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, walk, /*edgeIndex=*/ i);
                 fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
-                /* SubjectStampSites: d=2 site. edgeIndex = i (position
-                   within group's walk); scope = pf.inheritedScope. */
-                pendingStampSites.push_back({cid, i, pf.inheritedScope});
+                /* SubjectStampSites: d=2 site. */
+                auto subjectHash = hashString(HashAlgorithm::SHA256, cidasks::describe(root));
+                pendingStampSites.push_back({cid, i, pf.inheritedScope, subjectHash});
             }
             std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
             auto fromCdi = fromCIDs.empty()
