@@ -83,7 +83,20 @@ std::string TracingObject::evolvedQueryFrom() const
             edge.observations.push_back(obs);
             walk.push_back(std::move(edge));
         }
-        auto evolved = cidasks::scopeStateIdAt(*applyResultSubject, applyScope, walk, walk.size());
+        /* Path 3: emit fold-step stamps into SubjectEvolutionEdges
+           so walker can navigate subject's evolution edge-by-edge
+           rather than iterating K. Uses the subject's Merkle
+           content hash as the trie root key. */
+        Hash subjectSelfHash = cidasks::scopeStateIdAt(
+            *applyResultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
+        auto evolved = cidasks::scopeStateIdAtWithHook(
+            *applyResultSubject, applyScope, walk, walk.size(),
+            [&](const cidasks::EvolutionStep & step) {
+                writer.insertSubjectEvolutionEdge(
+                    subjectSelfHash, step.curBefore,
+                    step.obsFromHash, step.obsElementHash,
+                    step.curAfter);
+            });
         auto hex = evolved.to_string(HashFormat::Base16, false);
         if (!applyFnIdHex.empty() && !applyArgIdHex.empty()) {
             try {

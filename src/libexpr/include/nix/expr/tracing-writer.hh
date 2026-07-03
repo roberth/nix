@@ -283,6 +283,23 @@ public:
         pendingApplyProducers.push_back({cidHash, fnIdHash, argIdHash});
     }
 
+    /* Path 3 stamp: insert one SubjectEvolutionEdges row. Called
+       from cold's scopeStateIdAtWithHook hook callback at
+       fact-`from` construction sites. Immediate write (not
+       buffered) — Path 3 emissions per scopeStateIdAt call are
+       bounded by the walk length × observations per edge and are
+       infrequent enough that buffering isn't necessary. */
+    void insertSubjectEvolutionEdge(
+        const Hash & subjectHash, const Hash & curHash,
+        const Hash & obsFromHash, const Hash & obsElementHash,
+        const Hash & nextCurHash)
+    {
+        if (!decisionGraph)
+            return;
+        decisionGraph->insertSubjectEvolutionEdge(
+            subjectHash, curHash, obsFromHash, obsElementHash, nextCurHash);
+    }
+
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
         : sink(sink)
         , decisionGraph(decisionGraph)
