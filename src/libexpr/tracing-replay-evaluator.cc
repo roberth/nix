@@ -757,31 +757,52 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
                 bool matched = false;
-                /* F14 (2026-07-03): passive probe. Active shortcut is
-                   incorrect even gated on extendedWalkForMatch size —
-                   the CONTENT of extendedWalkForMatch[0..K] can differ
-                   from snapshot[0..K] due to cross-Q cidasksWalk
-                   accumulation. Stamp finds match against isolated
-                   snapshot, but walker's cumulative state hasn't
-                   reached the equivalent fold. Base k-iter correctly
-                   declines and falls through to extensions/parent
-                   cell — the shortcut preempts that fall-through.
-                   Kept passive pending redesign: either walker
-                   navigates to match K via cidasksWalk observation,
-                   or the stamp records walker-cumulative K (not
-                   snapshot-relative K). */
+                /* F7+F12+F14 (2026-07-03): direct lookup gated on
+                   `base-would-match`. Only shortcut when there exists
+                   a k in extendedWalkForMatch such that
+                   `scopeStateIdAt(subject, scope, extendedWalkForMatch, k) == idStr`.
+                   This is base k-iter's exact match criterion — the
+                   shortcut is safe iff base k-iter would agree.
+                   Correctness proof-of-concept: not a perf win over
+                   base (we run the same scan), but validates the
+                   stamp-driven return-early against base's decision
+                   before any redesign. */
                 try {
                     auto idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
                     if (auto stamp = decisionGraph.getSubjectStampSite(idHash, scope)) {
                         auto & [stampQ, stampK] = *stamp;
                         if (stampQ == ctx.currentQueryHash && !ctx.snapshotWalk.empty()) {
                             auto ssid = cidasks::scopeStateIdAt(*subj, scope, ctx.snapshotWalk, stampK);
-                            bool eq = ssid.to_string(HashFormat::Base16, false) == idStr;
-                            tracingCacheLog(
-                                "SubjectStampSites probe %s: stampQ=%s stampK=%zu eq=%d subject=%s",
-                                idStr.substr(0, 12),
-                                stampQ.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                                stampK, eq, cidasks::describe(*subj));
+                            if (ssid.to_string(HashFormat::Base16, false) == idStr) {
+                                /* Verify base would also match at some k. */
+                                bool baseWouldMatch = false;
+                                for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
+                                    auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
+                                    if (s.to_string(HashFormat::Base16, false) == idStr) {
+                                        baseWouldMatch = true;
+                                        break;
+                                    }
+                                }
+                                if (baseWouldMatch) {
+                                    if (xorCoincidenceReject(idStr)) {
+                                        tracingCacheLog(
+                                            "resolve %s: cell[%d] MATCH REJECTED via SubjectStampSites Q=%s K=%zu (XOR-coincidence)",
+                                            idStr.substr(0, 12), cellDepth,
+                                            stampQ.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                                            stampK);
+                                    } else {
+                                        tracingCacheLog(
+                                            "resolve %s: cell[%d] subject=%s MATCH via SubjectStampSites Q=%s K=%zu (base-agrees) currentProxy=%p live=%p",
+                                            idStr.substr(0, 12), cellDepth,
+                                            cidasks::describe(*subj),
+                                            stampQ.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                                            stampK,
+                                            (void*)ctx.currentProxy.get(), (void*)live.get());
+                                        ctx.memo[idStr] = live;
+                                        return live;
+                                    }
+                                }
+                            }
                         }
                     }
                 } catch (...) {
