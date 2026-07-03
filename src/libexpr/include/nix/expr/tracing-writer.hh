@@ -801,23 +801,8 @@ public:
             }
         }
 
-        /* Serialise current d1CidasksWalk snapshot for warm walker
-           alignment. Walker uses this as an EXTRA source for CDI
-           resolution — not a replacement for its own cidasksWalk. */
-        {
-            nlohmann::json walkJson = nlohmann::json::array();
-            for (const auto & edge : d1CidasksWalk) {
-                nlohmann::json edgeJson = nlohmann::json::array();
-                for (const auto & obs : edge.observations) {
-                    edgeJson.push_back({
-                        obs.fromHash.to_string(HashFormat::Base16, false),
-                        obs.elementHash.to_string(HashFormat::Base16, false),
-                    });
-                }
-                walkJson.push_back(std::move(edgeJson));
-            }
-            decisionGraph->insertQCidasksWalk(*qh.queryHash, walkJson.dump());
-        }
+        /* QCidasksWalks snapshot serialization: DELETED. Walker's own
+           cidasksWalk carries what's needed under lockstep growth. */
 
         /* Drain pending SubjectStampSites: associate each buffered
            (cidHash, edgeIndex, scope) with this Q. */

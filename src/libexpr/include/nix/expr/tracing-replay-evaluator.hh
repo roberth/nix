@@ -46,19 +46,8 @@ class TracingReplayEvaluator : public Evaluator
         /** Memoise id → resolved Object within this single walk so
             recursive resolveCdiId calls don't redo work. */
         std::map<std::string, std::shared_ptr<Object>> memo;
-        /** Cold's per-Q d1CidasksWalk snapshot loaded at v13Walk
-            startup. Used as an ADDITIONAL source of observations for
-            `resolveCdiId`'s extended-walk match, without overwriting
-            walker.cidasksWalk. Provides bit-for-bit alignment with
-            cold's writer flush state for CDI resolution, letting
-            `scopeStateIdAt(subject, scope, walk, K)` computations
-            reproduce cold's stamped `from` values. Empty if no
-            snapshot recorded. */
-        std::vector<cidasks::Edge> snapshotWalk;
 
-        /** Current v13Walk's queryHash. Used by resolveCdiId's
-            SubjectStampSites lookup to reuse ctx.snapshotWalk when
-            stampQ == currentQueryHash. */
+        /** Current v13Walk's queryHash. */
         Hash currentQueryHash{HashAlgorithm::SHA256};
     };
 

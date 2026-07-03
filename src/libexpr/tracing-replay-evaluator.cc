@@ -97,37 +97,11 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         {},
     };
     ctx.currentQueryHash = queryHash;
-    /* Load cold's per-Q d1CidasksWalk snapshot (if any). Used as an
-       ADDITIONAL source of observations in resolveCdiId's
-       extended-walk match — provides bit-for-bit alignment with
-       cold's writer state at Q's flush moment so
-       scopeStateIdAt-based cell matching finds the recorded k
-       structurally rather than via XOR-fold-coincidence. */
-    if (auto snapshotPayload = decisionGraph.getQCidasksWalkPayload(queryHash)) {
-        try {
-            auto snapshotJson = nlohmann::json::parse(*snapshotPayload);
-            ctx.snapshotWalk.reserve(snapshotJson.size());
-            for (const auto & edgeJson : snapshotJson) {
-                cidasks::Edge edge;
-                for (const auto & obsPair : edgeJson) {
-                    auto fromHash = Hash::parseNonSRIUnprefixed(
-                        obsPair[0].get<std::string>(), HashAlgorithm::SHA256);
-                    auto elementHash = Hash::parseNonSRIUnprefixed(
-                        obsPair[1].get<std::string>(), HashAlgorithm::SHA256);
-                    edge.observations.push_back({fromHash, elementHash});
-                }
-                ctx.snapshotWalk.push_back(std::move(edge));
-            }
-            tracingCacheLog(
-                "v13Walk Q=%s: loaded snapshot with %zu edges (walker.cidasksWalk=%zu)",
-                queryHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                ctx.snapshotWalk.size(), cidasksWalk.size());
-        } catch (const std::exception & e) {
-            tracingCacheLog("v13Walk Q=%s: snapshot load failed: %s",
-                            queryHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                            e.what());
-        }
-    }
+    /* QCidasksWalks snapshot load: DELETED. Under lockstep
+       walker/writer growth, walker's own cidasksWalk carries what's
+       needed at each Q's flush moment; the per-Q snapshot table is
+       redundant. Preserves the ctx.snapshotWalk vector empty so
+       downstream extendedWalkForMatch reduces to walker's cidasksWalk. */
 
     /* Per-edge buffer: dispatch() appends ambient facts here; the
        walk-loop promotes the buffer to a cumulative cidasksWalk
@@ -648,26 +622,12 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
     }
 
     /* Walk the proxy's argScope chain looking for a cell whose
-       liveObject's scopeStateId matches idStr at some k. Build
-       `extendedWalkForMatch = cidasksWalk + dedup(snapshotWalk)`
-       so cold's Q-specific snapshot observations extend the walker's
-       cumulative walk when the walker hasn't accumulated them yet. */
-    std::set<std::pair<Hash, Hash>> cidasksWalkObs;
-    for (auto & e : cidasksWalk)
-        for (auto & obs : e.observations)
-            cidasksWalkObs.insert({obs.fromHash, obs.elementHash});
+       liveObject's scopeStateId matches idStr at some k under
+       walker's own cidasksWalk. The former snapshot-extension pass
+       (dedup(ctx.snapshotWalk) onto extendedWalkForMatch) was
+       DELETED when QCidasksWalks was removed; walker's cidasksWalk
+       is sufficient under lockstep growth. */
     std::vector<cidasks::Edge> extendedWalkForMatch = cidasksWalk;
-    for (auto & e : ctx.snapshotWalk) {
-        cidasks::Edge dedupedEdge;
-        for (auto & obs : e.observations) {
-            if (cidasksWalkObs.find({obs.fromHash, obs.elementHash}) == cidasksWalkObs.end()) {
-                dedupedEdge.observations.push_back(obs);
-                cidasksWalkObs.insert({obs.fromHash, obs.elementHash});
-            }
-        }
-        if (!dedupedEdge.observations.empty())
-            extendedWalkForMatch.push_back(std::move(dedupedEdge));
-    }
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
@@ -689,41 +649,22 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                     auto idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
                     auto subjectHash = cidasks::scopeStateIdAt(*subj, Hash(HashAlgorithm::SHA256), {}, 0);
                     if (auto stamp = decisionGraph.getSubjectStampSite(idHash, scope, subjectHash)) {
-                        auto & [stampQ, stampK] = *stamp;
-                        std::vector<cidasks::Edge> stampWalk;
-                        if (stampQ == ctx.currentQueryHash) {
-                            stampWalk = ctx.snapshotWalk;
-                        } else if (auto payload = decisionGraph.getQCidasksWalkPayload(stampQ)) {
-                            try {
-                                auto walkJson = nlohmann::json::parse(*payload);
-                                stampWalk.reserve(walkJson.size());
-                                for (const auto & edgeJson : walkJson) {
-                                    cidasks::Edge edge;
-                                    for (const auto & obsPair : edgeJson) {
-                                        auto fromHash = Hash::parseNonSRIUnprefixed(
-                                            obsPair[0].get<std::string>(), HashAlgorithm::SHA256);
-                                        auto elementHash = Hash::parseNonSRIUnprefixed(
-                                            obsPair[1].get<std::string>(), HashAlgorithm::SHA256);
-                                        edge.observations.push_back({fromHash, elementHash});
-                                    }
-                                    stampWalk.push_back(std::move(edge));
-                                }
-                            } catch (...) {}
-                        }
-                        if (!stampWalk.empty() && stampK <= stampWalk.size()) {
-                            auto ssid = cidasks::scopeStateIdAt(*subj, scope, stampWalk, stampK);
-                            if (ssid.to_string(HashFormat::Base16, false) == idStr) {
-                                /* Full gate: verify some K in
-                                   extendedWalkForMatch also produces
-                                   idStr. */
-                                for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
-                                    auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
-                                    if (s.to_string(HashFormat::Base16, false) == idStr) {
-                                        asksReturn = true;
-                                        asksLive = live;
-                                        break;
-                                    }
-                                }
+                        /* Subject-stamped: verify walker's extended walk
+                           produces idStr at some K under (subject, scope).
+                           The stampWalk cross-check (via snapshotWalk /
+                           QCidasksWalks payload) was DELETED — walker's
+                           own extendedWalkForMatch is sufficient under
+                           lockstep growth. Precise stamp record (Q, K)
+                           unused; presence of a matching stamp row
+                           (idHash, scope, subjectHash) is what search→asks
+                           trusts. */
+                        (void) stamp;
+                        for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
+                            auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
+                            if (s.to_string(HashFormat::Base16, false) == idStr) {
+                                asksReturn = true;
+                                asksLive = live;
+                                break;
                             }
                         }
                     }
