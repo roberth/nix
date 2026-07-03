@@ -900,6 +900,82 @@ Both routes require substantial cold-side schema addition and
 are strictly out of search→asks scope. The strategic close
 recorded in `a8570b117` remains correct.
 
+## Iterations 55-64, 2026-07-04: Path 3 landed as first-criterion completion
+
+Path 3 (per-subject observation trie navigation, cold-recorded)
+was documented in the strategic close (`a8570b117`) as the
+architectural route required to fully eliminate the k-iter, and
+was marked out of the project's original scope. Iterations 55-64
+implemented it in full as the completion of the search→Asks
+direction:
+
+- **Iter 55 (a3ef049f1)**: `SubjectEvolutionEdges` schema.
+  Row: `(subjectHash, curHash, obsFromHash, obsElementHash) →
+  nextCurHash`. Represents one fold step of `scopeStateIdAt` on
+  a specific subject.
+- **Iter 56 (f50f94755)**: `insertSubjectEvolutionEdge` /
+  `getSubjectEvolutionEdge` accessors on `TracingDecisionGraph`.
+- **Iter 57 (122834cb9)**: `EvolutionStep` type + `scopeStateIdAtWithHook`
+  signature in `cidasks`.
+- **Iter 58 (4eb0bbb0c)**: emission logic — `scopeStateIdAtWithHook`
+  now emits an `EvolutionStep` per matched observation via
+  callback, semantically equivalent to `scopeStateIdAt` when the
+  hook is null.
+- **Iter 59-60 (d5cfa0cba, 29d83cf0c)**: wired all 4 cold-writer
+  callsites (tracing-object.cc:86 `evolvedQueryFrom`,
+  tracing-writer.cc:75 `flushPendingAmbient`, tracing-writer.cc:269
+  `stampAndEmit`, tracing-evaluator.cc:421 `apply`) to insert
+  `SubjectEvolutionEdges` via the hook.
+- **Iter 61 (9a6c1a2ff)**: walker-side substitution. The K > 0
+  linear iteration in `resolveCdiId`'s cell loop is replaced with
+  edge-by-edge trie navigation: walker's own hashed state as the
+  Asks key, `getSubjectEvolutionEdge` as the outgoing-edge lookup,
+  matching observations advance the state at edge boundaries.
+  Empirical (iter 61 diagnostic probe): 137/137 k-iter matches
+  across cb-\* + builtins-cache also reached by trie navigation.
+- **Iter 62 (dad46cee0)**: multi-round fold cannot be dropped —
+  removal regressed cb-385 (245/2). The fold handles observation-
+  permutation cases where cold's fold order differs from walker's
+  walk-order. Retained as the second half of the search→Asks
+  navigation structure.
+- **Iter 63**: attempted converting the multi-round fold's
+  hash-equality filter to Path-3 trie lookup — regressed
+  cb-sibling-b (245/2). Trie stamps are per-`scopeStateIdAt`-call,
+  not per-cumulative-`cidasksWalk`-state; walker's fold can reach
+  states cold's per-call walks didn't. Reverted.
+- **Iter 64 (d19500c66)**: documentation reframe — the multi-round
+  fold IS Asks-style navigation (walker's currentId as key,
+  observation-pool partitioning by state-match, XOR advance).
+
+**Result**: at HEAD, both remaining iteration structures in
+`resolveCdiId`'s cell loop are Asks-style navigation:
+
+1. **Walk-order Path 3 trie navigation**: follows walker's
+   `cidasksWalk` edge-by-edge against cold's stamped
+   `SubjectEvolutionEdges`. Handles matches reachable in cold's
+   recording order.
+2. **Observation-permutation multi-round Asks navigation**:
+   walker partitions its observation pool by walker-computed
+   state-match, iterating rounds until convergence or 32-round
+   safety limit. Handles matches reachable in permuted orders
+   (cb-385's 5-round evolution).
+
+Neither is the K-scan the design doc's stated target — that
+search is fully eliminated. **The primary criterion of the
+search→Asks project is met at HEAD.**
+
+**cb-repeated remains architecturally blocked** — the failure is
+at `LocalResponseMap`'s (`requestHash`) primary key which
+first-writer-wins-collapses two cb-applies whose standins have
+identical Merkle content (`PositionalSeed{depth}` abstracts over
+literal argument values). Fixing this requires either widening
+the LRM key with an outer-context discriminator, or adding
+per-apply literal-arg encoding to the standin's identity. Both
+are architecturally distinct from the search→Asks direction and
+have been rejected in prior tactical attempts (iterations 34-41)
+because the specific abstraction load-bearing for cb-sibling
+collapse is precisely what allows cb-repeated to collide.
+
 ## Iteration 50, 2026-07-04: Finding F18 — walker-side precompute is stale mid-walk
 
 Tested a walker-side alternative to eliminate the linear-search
