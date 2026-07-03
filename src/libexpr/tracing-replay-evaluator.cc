@@ -705,12 +705,10 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                     ctx.memo[idStr] = asksLive;
                     return asksLive;
                 }
-                /* k-iter fallback for fold-coincidence discovery:
-                   walker's cell may reach idStr at some K in
-                   extendedWalkForMatch via XOR-fold accident where no
-                   SubjectStampSites row exists (cold's writer never
-                   computed this exact fold state as a from-CDI, so no
-                   stamp). Bounded by extendedWalkForMatch size. */
+                /* k-iter fallback: catches walker-side fold-coincidences
+                   where cell's (subject, walk, K) triple differs from
+                   cold's stamp triple but produces same idStr. Fully
+                   walker-side computation, not indexable from cold. */
                 for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
                     auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
                     if (s.to_string(HashFormat::Base16, false) == idStr) {

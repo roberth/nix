@@ -90,6 +90,10 @@ std::string TracingObject::evolvedQueryFrom() const
            drain-at-logResult mechanism as flushPendingAmbient. */
         auto subjectHash = cidasks::scopeStateIdAt(*applyResultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
         writer.bufferStampSite(evolved, walk.size(), applyScope, subjectHash);
+        for (size_t k = 0; k < walk.size(); ++k) {
+            auto cidK = cidasks::scopeStateIdAt(*applyResultSubject, applyScope, walk, k);
+            writer.bufferStampSite(cidK, k, applyScope, subjectHash);
+        }
         return hex;
     }
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());

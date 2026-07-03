@@ -79,6 +79,13 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                hash = scopeStateIdAt(subject, 0, {}, 0). */
             auto subjectHash = cidasks::scopeStateIdAt(root, Hash(HashAlgorithm::SHA256), {}, 0);
             pendingStampSites.push_back({cid, d1EdgeIndex, pf.inheritedScope, subjectHash});
+            /* Also stamp at every earlier K position (0..d1EdgeIndex-1)
+               so walker's k-iter matches at intermediate K are covered
+               by SubjectStampSites lookup. */
+            for (size_t k = 0; k < d1EdgeIndex; ++k) {
+                auto cidK = cidasks::scopeStateIdAt(root, pf.inheritedScope, d1CidasksWalk, k);
+                pendingStampSites.push_back({cidK, k, pf.inheritedScope, subjectHash});
+            }
         }
         std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
         auto fromCdi = fromCIDs.empty()
@@ -273,9 +280,13 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             for (auto & root : roots) {
                 auto cid = cidasks::scopeStateIdAt(root, pf.inheritedScope, walk, /*edgeIndex=*/ i);
                 fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
-                /* SubjectStampSites: d=2 site. */
+                /* SubjectStampSites: d=2 site. Also stamp at earlier K. */
                 auto subjectHash = cidasks::scopeStateIdAt(root, Hash(HashAlgorithm::SHA256), {}, 0);
                 pendingStampSites.push_back({cid, i, pf.inheritedScope, subjectHash});
+                for (size_t k = 0; k < i; ++k) {
+                    auto cidK = cidasks::scopeStateIdAt(root, pf.inheritedScope, walk, k);
+                    pendingStampSites.push_back({cidK, k, pf.inheritedScope, subjectHash});
+                }
             }
             std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
             auto fromCdi = fromCIDs.empty()

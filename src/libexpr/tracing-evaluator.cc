@@ -430,6 +430,10 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     {
         auto subjectHash = cidasks::scopeStateIdAt(resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
         writer.bufferStampSite(applyScopeStateId, d1Walk.size(), applyScope, subjectHash);
+        for (size_t k = 0; k < d1Walk.size(); ++k) {
+            auto cidK = cidasks::scopeStateIdAt(resultSubject, applyScope, d1Walk, k);
+            writer.bufferStampSite(cidK, k, applyScope, subjectHash);
+        }
     }
     {
         const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
