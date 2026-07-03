@@ -866,69 +866,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    emitted them together in one edge), the extended walk
                    at k=cidasksWalk.size()+1 reproduces the same evolved
                    subject id. */
-                if (ctx.pendingEdgeObservations && !ctx.pendingEdgeObservations->empty()) {
-                    /* Iterative pending-edge extension: cold's flush emits
-                       obs at a single walk index, but obs.from values may
-                       reference the subject at multiple successive fold
-                       states (fold @k1 depends on fold @k0 first). Add
-                       pending obs one edge at a time, partitioning by
-                       obs.from matching the current fold state, until
-                       either match or no more progress.
-
-                       Base = extendedWalkForMatch (cidasksWalk +
-                       crossQPulledExtensions) so we start from the
-                       fold state the outer pool pull operates at. */
-                    std::vector<cidasks::Edge> extendedWalk = extendedWalkForMatch;
-                    std::vector<cidasks::Observation> remaining = *ctx.pendingEdgeObservations;
-                    bool matched = false;
-                    for (int iter = 0; iter < 8 && !remaining.empty() && !matched; ++iter) {
-                        auto currentId = cidasks::scopeStateIdAt(*subj, scope, extendedWalk, extendedWalk.size());
-                        auto currentHex = currentId.to_string(HashFormat::Base16, false);
-                        cidasks::Edge partition;
-                        std::vector<cidasks::Observation> stillRemaining;
-                        for (auto & obs : remaining) {
-                            auto obsFromHex = obs.fromHash.to_string(HashFormat::Base16, false);
-                            if (obsFromHex == currentHex)
-                                partition.observations.push_back(obs);
-                            else
-                                stillRemaining.push_back(obs);
-                        }
-                        if (partition.observations.empty()) {
-                            /* No obs match the current fold state; try
-                               folding ALL remaining as one edge as a last
-                               resort (mirrors the pre-existing single-edge
-                               extension). */
-                            cidasks::Edge fallback;
-                            fallback.observations = remaining;
-                            extendedWalk.push_back(std::move(fallback));
-                            auto id = cidasks::scopeStateIdAt(*subj, scope, extendedWalk, extendedWalk.size());
-                            if (id.to_string(HashFormat::Base16, false) == idStr)
-                                matched = true;
-                            break;
-                        }
-                        extendedWalk.push_back(std::move(partition));
-                        auto id = cidasks::scopeStateIdAt(*subj, scope, extendedWalk, extendedWalk.size());
-                        if (id.to_string(HashFormat::Base16, false) == idStr) {
-                            matched = true;
-                            break;
-                        }
-                        remaining = std::move(stillRemaining);
-                    }
-                    if (matched) {
-                        if (xorCoincidenceReject(idStr)) {
-                            tracingCacheLog(
-                                "resolve %s: cell[%d] MATCH REJECTED (iterative pending-edge extension — XOR-coincidence)",
-                                idStr.substr(0, 12), cellDepth);
-                        } else {
-                            tracingCacheLog(
-                                "resolve %s: cell[%d] subject=%s MATCH via iterative pending-edge extension",
-                                idStr.substr(0, 12), cellDepth,
-                                cidasks::describe(*subj));
-                            ctx.memo[idStr] = live;
-                            return live;
-                        }
-                    }
-                }
+                /* Iterative pending-edge extension DELETED (iteration 18).
+                   If regressions surface, restore per the design doc's
+                   "Alternative outcome" column. */
                 /* Speculative: cold's writer may have folded many
                    observations at a single edge (e.g. logResult's
                    flushPendingAmbient dumps N ambient facts into
