@@ -899,3 +899,47 @@ Architectural options remaining:
 Both routes require substantial cold-side schema addition and
 are strictly out of search→asks scope. The strategic close
 recorded in `a8570b117` remains correct.
+
+## Iteration 50, 2026-07-04: Finding F18 — walker-side precompute is stale mid-walk
+
+Tested a walker-side alternative to eliminate the linear-search
+structure: at first cell visit in a v13Walk, precompute the set
+of scopeStateIds reachable via k-iter + fold; cache in
+`ctx.cellReachable[cell]`; subsequent lookups become O(1)
+`set.count(idStr)` — Asks-style navigation table with walker's
+own state as keys.
+
+Result: 246/1 → 235/12 (11 regressions). Reverted.
+
+**Mechanism (F18):** `cidasksWalk` (= `extendedWalkForMatch`)
+grows during v13Walk. Each response fold commits a new edge via
+`commitEdge`. Precomputed sets from an earlier resolveCdiId call
+don't include observations from edges committed later — cache
+misses cause walker misses.
+
+The k-iter's per-call recompute against CURRENT `cidasksWalk` is
+load-bearing for CORRECTNESS, not just naive perf. Any precompute-
+and-cache scheme would need invalidation on every `commitEdge`,
+which happens per response fold — invalidation would be near-total.
+
+**Combined with F17:** any structural replacement of the k-iter
+must both (a) preserve walk-order semantics (F17) AND (b) recompute
+against the current `cidasksWalk` on each query (F18). Two
+architectures satisfying both:
+
+- **Path 3 (per-subject observation trie navigation)**: cold-side
+  recording change; walker processes observations edge-by-edge as
+  they arrive rather than precomputing terminal states. Strictly
+  out of search→asks scope.
+- **Direct index by (subject, cur, walk-length)**: attempted as
+  full-K SubjectStampSites stamping (`fa87fd4e0`, iteration 30);
+  regresses cb-higher-order + cb-higher-order-nested because those
+  tests exercise walker-only fold-XOR-coincidences at K positions
+  cold's walk never reaches. Documented at that commit as
+  "fundamentally walker-only computation; can't index from cold".
+
+**Strategic close remains correct.** F17 and F18 together
+narrow the architectural options to Path 3 (out of scope) or a
+walker-side recording of intermediate states (out of scope,
+requires structural change to `scopeStateIdAt`'s implementation
+to expose fold-step observations).
