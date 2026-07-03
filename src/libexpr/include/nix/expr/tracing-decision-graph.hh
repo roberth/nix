@@ -338,17 +338,6 @@ public:
         const SetHash & startCur = SetHash(HashAlgorithm::SHA256),
         const std::unordered_set<RequestHash> & startCurRequests = {});
 
-    /* Full-featured walk with `reverseOutgoing` control — reversing
-       tries alternate rs orderings at each cur, useful as a
-       backtracking probe when the default order leads to a dead end. */
-    std::optional<WalkHit> walkImpl(
-        const QueryHash & q,
-        const std::function<ResponseHash(const RequestHash &, const EdgeContext &)> & dispatch,
-        const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt,
-        const SetHash & startCur,
-        const std::unordered_set<RequestHash> & startCurRequests,
-        bool reverseOutgoing);
-
     /* Backward-compat overload: dispatch takes only the request. Used
        by unit tests that don't need edge context. */
     std::optional<WalkHit> walk(
