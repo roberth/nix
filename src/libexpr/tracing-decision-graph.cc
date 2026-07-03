@@ -1590,6 +1590,21 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                                     requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12));
                     return WalkHit{*term, unfoldedCur};
                 }
+                /* Try continuing walk from unfoldedCur — it may have
+                   outgoing Ask edges walker can traverse to Terminal. */
+                if (!getAsks(q, unfoldedCur).empty()) {
+                    tracingCacheLog("walk Q=%s UNFOLD-CONTINUE at cur=%s (from cur=%s)",
+                                    q.to_string(HashFormat::Base16, false).substr(0, 12),
+                                    unfoldedCur.to_string(HashFormat::Base16, false).substr(0, 12),
+                                    cur.to_string(HashFormat::Base16, false).substr(0, 12));
+                    cur = unfoldedCur;
+                    /* Un-fold means the degenerate rs's requests are removed
+                       from cur's contribution. Remove them from curRequests too. */
+                    for (const auto & req : *requestSetOpt)
+                        curRequests.erase(req);
+                    advanced = true;
+                    break;
+                }
             }
             tracingCacheLog("walk Q=%s NO EDGE COMMITTED at cur=%s -> miss",
                             q.to_string(HashFormat::Base16, false).substr(0, 12),
