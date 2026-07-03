@@ -135,18 +135,6 @@ class TracingWriter
        d1CidasksWalk.size() == perQAsksEdges.size() always holds. */
     cidasks::Edge pendingD1Edge;
 
-    /* Buffered (cidHash, edgeIndex, scope) triples accumulated during
-       `flushPendingAmbient` / `stampAndEmit`, drained at logResult
-       time when the current Q is known. See SubjectStampSites schema
-       (F7, F8: scope disambiguates cold flushes with same cidHash
-       under different inheritedScope). */
-    struct PendingStampSite {
-        Hash cidHash;
-        size_t edgeIndex;
-        Hash scope;
-    };
-    std::vector<PendingStampSite> pendingStampSites;
-
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
        new query hash added to v13FactSet since the last logResult,
        whether from `logResponse` (= env/file), `noteEnvObservation`,
@@ -794,14 +782,6 @@ public:
             }
             decisionGraph->insertQCidasksWalk(*qh.queryHash, walkJson.dump());
         }
-
-        /* F7: drain pending SubjectStampSites into the index table,
-           associating each (cidHash, edgeIndex, scope) with this Q. */
-        for (auto & site : pendingStampSites) {
-            decisionGraph->insertSubjectStampSite(
-                site.cidHash, *qh.queryHash, site.edgeIndex, site.scope);
-        }
-        pendingStampSites.clear();
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,

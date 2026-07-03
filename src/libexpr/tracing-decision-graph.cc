@@ -161,30 +161,6 @@ CREATE TABLE IF NOT EXISTS AmbientAsks (
     PRIMARY KEY (fromFactSetHash, requestSetHash)
 ) WITHOUT ROWID;
 
--- Subject-CDI stamp index (Finding F7, 2026-07-03). Cold writes one row
--- per fact-stamp: (cidHash, queryHash, edgeIndex) records that a
--- subject CDI value `cidHash` was stamped during Q's flush at
--- walk-index `edgeIndex`. Walker's resolveCdiId looks up target
--- idStr → (queryHash, edgeIndex) directly, replacing the linear
--- k-iteration with a single indexed lookup.
---
--- Duplicates are allowed: the same cidHash may be stamped at
--- multiple (Q, edgeIndex) sites (F7 empirical: ~22 facts per unique
--- cidHash in cb-sibling-b). Walker takes any matching row; all
--- entries for the same cidHash produce equal target CDI by
--- construction.
--- scope column added F8-2026-07-03: walker needs to filter by
--- cold's flush-time scope to eliminate eq=0 misses from (subject, scope)
--- divergence between cold flush and warm probe. Multi-row per cidHash
--- is preserved; scope disambiguates.
-CREATE TABLE IF NOT EXISTS SubjectStampSites (
-    cidHash    BLOB NOT NULL,
-    queryHash  BLOB NOT NULL,
-    edgeIndex  INTEGER NOT NULL,
-    scope      BLOB NOT NULL,
-    PRIMARY KEY (cidHash, queryHash, edgeIndex, scope)
-) WITHOUT ROWID;
-
 -- Clean up indexes from earlier schema versions, if present.
 DROP INDEX IF EXISTS AsksByQF;
 DROP INDEX IF EXISTS TerminalsByQF;
@@ -199,7 +175,6 @@ struct TracingDecisionGraph::State
     SQLiteStmt selectRequest, selectQuery, selectResult, selectLocalResponse;
     SQLiteStmt insertEdgeResponse, selectEdgeResponse;
     SQLiteStmt insertQCidasksWalk, selectQCidasksWalk;
-    SQLiteStmt insertSubjectStampSite, selectSubjectStampSite;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
     SQLiteStmt countAsks, countTerminals;
@@ -424,10 +399,6 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR REPLACE INTO QCidasksWalks(queryHash, payload) VALUES (?, ?)");
     state->selectQCidasksWalk.create(state->db,
         "SELECT payload FROM QCidasksWalks WHERE queryHash = ?");
-    state->insertSubjectStampSite.create(state->db,
-        "INSERT OR IGNORE INTO SubjectStampSites(cidHash, queryHash, edgeIndex, scope) VALUES (?, ?, ?, ?)");
-    state->selectSubjectStampSite.create(state->db,
-        "SELECT queryHash, edgeIndex FROM SubjectStampSites WHERE cidHash = ? AND scope = ? LIMIT 1");
 
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
@@ -564,33 +535,6 @@ std::optional<std::string> TracingDecisionGraph::getQCidasksWalkPayload(
     if (!query.next())
         return std::nullopt;
     return query.getBlob(0);
-}
-
-void TracingDecisionGraph::insertSubjectStampSite(
-    const Hash & cidHash, const QueryHash & queryHash, size_t edgeIndex, const Hash & scope)
-{
-    auto state(_state->lock());
-    auto use = state->insertSubjectStampSite.use();
-    dg_bindBlob(use, dg_hashToBlob(cidHash));
-    dg_bindBlob(use, dg_hashToBlob(queryHash));
-    use(static_cast<int64_t>(edgeIndex));
-    dg_bindBlob(use, dg_hashToBlob(scope));
-    use.exec();
-}
-
-std::optional<std::pair<TracingDecisionGraph::QueryHash, size_t>>
-TracingDecisionGraph::getSubjectStampSite(const Hash & cidHash, const Hash & scope)
-{
-    auto state(_state->lock());
-    auto query = state->selectSubjectStampSite.use();
-    dg_bindBlob(query, dg_hashToBlob(cidHash));
-    dg_bindBlob(query, dg_hashToBlob(scope));
-    if (!query.next())
-        return std::nullopt;
-    auto qhBlob = query.getBlob(0);
-    auto qh = dg_blobToHash(qhBlob);
-    auto k = static_cast<size_t>(query.getInt(1));
-    return std::make_pair(qh, k);
 }
 
 #define ATOM_GET_CACHED(NAME, CACHE)                                            \

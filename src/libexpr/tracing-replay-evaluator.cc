@@ -103,7 +103,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        `persistentCrossQPulls` doc for the discrimination-preserving
        rationale (kept SEPARATE from `cidasksWalk`). */
     ctx.crossQPulledExtensions = persistentCrossQPulls;
-    ctx.currentQueryHash = queryHash;
 
     /* Load cold's per-Q d1CidasksWalk snapshot (if any). Used as an
        ADDITIONAL source of observations in resolveCdiId's
