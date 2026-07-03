@@ -609,43 +609,15 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
     }
 
     /* Walk the proxy's argScope chain looking for a cell whose
-       liveObject's scope state id matches idStr. The id was stamped
-       at some writer-side `d1CidasksWalk` index N at flush time,
-       but the lookup carries only the scopeStateId value — not the index.
-       So try every edge boundary 0..cidasksWalk.size() against
-       this subject's scopeStateIdAt and accept the first match.
-       cidasksWalk is cumulative across v13Walk calls (= mirror of
-       writer's d1CidasksWalk), so the matching index always falls
-       within range provided the walker has processed at least N
-       prior Asks-edge commits — which it has by the time this
-       lookup runs, since writer's flush K only stamps facts that
-       reference scopeStateIds from flushes 0..K-1 (= already in walker's
-       cidasksWalk by the time Q_K's dispatch reaches them). */
-    /* Extended walk for cell-chain match: walker's cidasksWalk PLUS
-       any cross-Q pool pull extensions accumulated in this ctx.
-       Without this, a nested resolveCdiId inside a cross-Q pool pull
-       can't see the persisted extensions from prior successful pulls
-       — so it misses on CDIs that would resolve fine in the outer
-       pool pull's view. cb-sibling-b's a5a326a4f6b9 dispatch under
-       the 78b1d6c0d465 pull was failing here: the outer pull's
-       effective had enough to compute seed(1)=5738ea301d04, but the
-       nested resolve for `from=5738ea301d04` only saw cidasksWalk
-       (missing the persisted 5738ea301d04-producing extension) →
-       dispatch failed → extended fold didn't reach 78b1d6c0d465. */
-    /* Build extendedWalkForMatch = cidasksWalk + dedup(crossQPulled).
-       Dedup because a persistent pool pull's obs might have been
-       committed to cidasksWalk in a later walk (walker dispatched the
-       same pool reqs itself). Duplicates XOR-cancel under fold. Only
-       add pull obs walker hasn't already committed. */
+       liveObject's scopeStateId matches idStr at some k. Build
+       `extendedWalkForMatch = cidasksWalk + dedup(snapshotWalk)`
+       so cold's Q-specific snapshot observations extend the walker's
+       cumulative walk when the walker hasn't accumulated them yet. */
     std::set<std::pair<Hash, Hash>> cidasksWalkObs;
     for (auto & e : cidasksWalk)
         for (auto & obs : e.observations)
             cidasksWalkObs.insert({obs.fromHash, obs.elementHash});
     std::vector<cidasks::Edge> extendedWalkForMatch = cidasksWalk;
-    /* Include cold's Q-specific snapshot in the extended walk — its
-       obs are canonical writer-side observations that walker's own
-       cidasksWalk may not have accumulated. Dedup against
-       cidasksWalkObs (XOR-cancel avoidance). */
     for (auto & e : ctx.snapshotWalk) {
         cidasks::Edge dedupedEdge;
         for (auto & obs : e.observations) {
@@ -657,16 +629,6 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
         if (!dedupedEdge.observations.empty())
             extendedWalkForMatch.push_back(std::move(dedupedEdge));
     }
-    /* XOR-coincidence guard shared across all match paths. Returns
-       true = REJECT (the cell's live proxy is not the recorded
-       owner of idStr); returns false = ACCEPT. Skips verification
-       inside cross-Q pool pull (where the guard would recurse) and
-       when no pool request exists at from=idStr. */
-    /* XOR-coincidence guard DELETED (iteration 19).
-       Disabled → all bounds green → all call sites simplified →
-       lambda removed. Guard was dead code in the current test
-       suite; if a future test exposes real cell/CDI-owner
-       mismatch, restore per commit history. */
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
@@ -677,10 +639,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
                 /* k-iteration: try scopeStateIdAt against each edge
-                   boundary 0..N in extendedWalkForMatch until a match.
-                   kOrder-with-structural-K-first preference removed
-                   in iteration 20 — was a XOR-coincidence workaround
-                   with no correctness role now that the guard is gone. */
+                   boundary 0..N in extendedWalkForMatch until a match. */
                 for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
                     auto scopeStateId = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
                     if (scopeStateId.to_string(HashFormat::Base16, false) == idStr) {
@@ -694,42 +653,15 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         return live;
                     }
                 }
-                /* Intra-edge extension: try scopeStateIdAt against a
-                   hypothetical walk = cidasksWalk + [pendingEdgeObservations].
-                   The dispatched-so-far obs for the current edge fold in
-                   at index cidasksWalk.size(); if the failing cid was
-                   stamped by cold at the writer's edgeIndex AFTER these
-                   obs would have folded (which happens when the cold flush
-                   emitted them together in one edge), the extended walk
-                   at k=cidasksWalk.size()+1 reproduces the same evolved
-                   subject id. */
-                /* Iterative pending-edge extension DELETED (iteration 18).
-                   If regressions surface, restore per the design doc's
-                   "Alternative outcome" column. */
-                /* Speculative: cold's writer may have folded many
-                   observations at a single edge (e.g. logResult's
-                   flushPendingAmbient dumps N ambient facts into
-                   walk[K].observations at once). Walker's cidasksWalk
-                   distributes the same obs across multiple v13Walk
-                   edges — so any single-edge fold produces only a
-                   subset. Try a hypothetical single-edge walk that
-                   collects ALL of walker's cidasksWalk observations —
-                   XOR-fold is commutative, so if walker's obs contain
-                   cold's fold contributors, the collected version
-                   reproduces cold's evolved id. */
+                /* Iterative multi-round fold: partition
+                   extendedWalkForMatch's obs into rounds by current
+                   fold state, folding each round's matching obs and
+                   iterating. Reaches multi-hop CDIs (cb-385's 5-round
+                   evolution from seed(1)) that no single-K position
+                   can produce. Load-bearing for cb-385; deletion
+                   regresses (see design doc "Anticipated
+                   simplifications"). */
                 if (!extendedWalkForMatch.empty()) {
-                    /* Iterative multi-round fold over ALL of walker's
-                       obs (across all edges of extendedWalkForMatch),
-                       deduped. Walker's cidasksWalk may contain the
-                       obs needed to evolve seed(1) past its current
-                       final state — but they sit in edges where
-                       obs.from doesn't match myId at the fold's current
-                       state, so they never contribute. Try partitioning
-                       into rounds by current myId, folding each round's
-                       matching obs, iterating until match or
-                       stabilization. Reaches multi-hop CDIs (like
-                       cb-sibling-b's 78b1d6c0d465 requiring 5-round
-                       evolution) that no single-edge fold can. */
                     std::vector<cidasks::Observation> flat;
                     std::set<std::pair<Hash, Hash>> seen;
                     for (const auto & edge : extendedWalkForMatch) {
@@ -768,8 +700,6 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         return live;
                     }
                 }
-                /* Progressive cross-Q pool pull DELETED (iteration 22
-                   re-attempt). */
                 tracingCacheLog(
                     "resolve %s: cell[%d] subject=%s miss across %zu edges (+collected)",
                     idStr.substr(0, 12), cellDepth,
