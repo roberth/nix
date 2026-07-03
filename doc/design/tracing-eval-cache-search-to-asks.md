@@ -305,6 +305,12 @@ point about what edge cases the alignment mechanism doesn't cover.
   and the retry succeeds. Documented as active mechanism until an
   Asks-navigation resolution advances the walker via observation
   dispatch rather than snapshot copy.
+
+  **2026-07-03 re-attempt (iteration 22): DELETED (commit
+  `49a837c3b`).** After XOR guard + Path 4 + SubjectStampSites
+  cleanup, snapshot-padded retry no longer needed for
+  cb-sibling-b. The retry was compensating for state disturbances
+  from the removed mechanisms.
 - **XOR-coincidence guard** in resolveCdiId. **Expectation**: no
   k-iteration means no coincidence to guard against → deleted.
   **Alternative**: some coincidence source we haven't diagnosed
@@ -343,6 +349,13 @@ point about what edge cases the alignment mechanism doesn't cover.
   observation sharing is genuinely needed for some pattern (cb-*
   interactions across siblings, e.g.) that pool-pull is the current
   answer to.
+
+  **2026-07-03 deletion (iteration 22): DELETED (commits `1a02a7f1e`
+  + `d22205d0e`).** Pool pull + all supporting ctx fields
+  (`inCrossQPull`, `activePullTargets`, `crossQPulledExtensions`,
+  `persistentCrossQPulls`) removed after the XOR guard / Path 4 /
+  SubjectStampSites cleanup unblocked the primary walks. Matches
+  "Expectation" — walker's cidasksWalk is now sufficient.
 
 Each simplification lands as its own commit after the base
 search→Asks change, verified against the same test-bounds table.
