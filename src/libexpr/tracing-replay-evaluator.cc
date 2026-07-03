@@ -738,49 +738,10 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    computed at this proxy at flush. */
                 auto scope = live->getInheritedScope();
                 bool matched = false;
-                /* F7+F12+F14 (2026-07-03): direct lookup gated on
-                   `base-would-match`. Only shortcut when there exists
-                   a k in extendedWalkForMatch such that
-                   `scopeStateIdAt(subject, scope, extendedWalkForMatch, k) == idStr`.
-                   This is base k-iter's exact match criterion — the
-                   shortcut is safe iff base k-iter would agree.
-                   Correctness proof-of-concept: not a perf win over
-                   base (we run the same scan), but validates the
-                   stamp-driven return-early against base's decision
-                   before any redesign. */
-                try {
-                    auto idHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
-                    if (auto stamp = decisionGraph.getSubjectStampSite(idHash, scope)) {
-                        auto & [stampQ, stampK] = *stamp;
-                        if (stampQ == ctx.currentQueryHash && !ctx.snapshotWalk.empty()) {
-                            auto ssid = cidasks::scopeStateIdAt(*subj, scope, ctx.snapshotWalk, stampK);
-                            if (ssid.to_string(HashFormat::Base16, false) == idStr) {
-                                /* Verify base would also match at some k. */
-                                bool baseWouldMatch = false;
-                                for (size_t k = 0; k <= extendedWalkForMatch.size(); ++k) {
-                                    auto s = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, k);
-                                    if (s.to_string(HashFormat::Base16, false) == idStr) {
-                                        baseWouldMatch = true;
-                                        break;
-                                    }
-                                }
-                                if (baseWouldMatch) {
-                                    tracingCacheLog(
-                                        "resolve %s: cell[%d] subject=%s MATCH via SubjectStampSites Q=%s K=%zu (base-agrees) currentProxy=%p live=%p",
-                                        idStr.substr(0, 12), cellDepth,
-                                        cidasks::describe(*subj),
-                                        stampQ.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                                        stampK,
-                                        (void*)ctx.currentProxy.get(), (void*)live.get());
-                                    ctx.memo[idStr] = live;
-                                    return live;
-                                }
-                            }
-                        }
-                    }
-                } catch (...) {
-                    /* idStr not a parseable hash — skip probe. */
-                }
+                /* Path 4 stamp shortcut DELETED (iteration 20).
+                   Without the XOR guard the shortcut collapsed into
+                   an equivalent-but-redundant scan against base
+                   k-iter. Base k-iter below handles the same cases. */
                 /* If cold's snapshot loaded, try the structural k
                    (snapshot.size()) first — cold stamped this
                    subject's CDI at that specific walk-index, so if
