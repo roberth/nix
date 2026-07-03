@@ -532,49 +532,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        walk succeeds (cb-higher-order, cb-higher-order-nested, cb-385)
        stay on the unpadded path. Padding is spliced out post-walk so
        walker's persistent cidasksWalk retains only real committed edges. */
-    if (!walkHit && ctx.snapshotWalk.size() > cidasksWalk.size()) {
-        size_t origSize = cidasksWalk.size();
-        size_t paddingCount = 0;
-        for (size_t i = cidasksWalk.size(); i < ctx.snapshotWalk.size(); ++i) {
-            cidasksWalk.push_back(ctx.snapshotWalk[i]);
-            ++paddingCount;
-        }
-        tracingCacheLog(
-            "v13Walk Q=%s: snapshot-padded retry (cidasksWalk %zu -> %zu)",
-            queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
-            origSize,
-            cidasksWalk.size());
-        walkHit = decisionGraph.walk(
-            queryHash,
-            dispatch,
-            [&](bool committed, const std::vector<Hash> & useful) {
-                if (committed)
-                    commitEdge();
-                else
-                    commitRejected(useful);
-            },
-            parentAnchor,
-            parentAnchorCurRequests);
-        if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
-            walkHit = decisionGraph.walk(queryHash, dispatch, [&](bool committed, const std::vector<Hash> & useful) {
-                if (committed)
-                    commitEdge();
-                else
-                    commitRejected(useful);
-            });
-        }
-        /* Splice out padding: keep original prefix + newly-committed suffix. */
-        size_t paddingEnd = origSize + paddingCount;
-        if (cidasksWalk.size() > paddingEnd) {
-            std::vector<cidasks::Edge> committed(
-                std::make_move_iterator(cidasksWalk.begin() + paddingEnd), std::make_move_iterator(cidasksWalk.end()));
-            cidasksWalk.resize(origSize);
-            for (auto & e : committed)
-                cidasksWalk.push_back(std::move(e));
-        } else {
-            cidasksWalk.resize(origSize);
-        }
-    }
+    /* Snapshot-padded retry DELETED (iteration 22 re-attempt). */
     if (!walkHit) {
         /* Walker missed. Rejected-edge obs are NOT committed to
            cidasksWalk: they represent wrong paths whose responses
