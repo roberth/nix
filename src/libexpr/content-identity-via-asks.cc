@@ -184,6 +184,21 @@ trace::QueryApply makeApplyResultQuery(
     return q;
 }
 
+Hash scopeStateIdAtWithHook(
+    const Subject & subject,
+    const Hash & scope,
+    const std::vector<Edge> & walk,
+    size_t edgeIndex,
+    const std::function<void(const EvolutionStep &)> & hook)
+{
+    return scopeStateIdAt(subject, scope, walk, edgeIndex);
+    /* Real hook wiring lands in a follow-up iteration — needs
+       refactoring scopeStateIdAt's internal fold loop to emit
+       EvolutionStep tuples. Signature added now so the callsites
+       don't need to change once the emission arrives. */
+    (void) hook;
+}
+
 Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
 {
     /* Compute subject's scope state id at the precondition of the

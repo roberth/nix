@@ -17,6 +17,7 @@
 #include "nix/expr/trace-types.hh"
 #include "nix/util/hash.hh"
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <variant>
@@ -179,6 +180,31 @@ Hash structuralAddress(const Subject & subject, const Hash & scope, const std::v
     = walk.size()). Mirrors `scopeStateIdAfter` but defined for all
     subject forms. */
 Hash structuralAddressAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk);
+
+/** Per-subject observation trie fold step, as consumed by Path 3
+    stamping / navigation. Emitted by `scopeStateIdAtWithHook`
+    whenever an observation matches the subject's running state
+    and folds into it. The tuple `(curBefore, obsFromHash,
+    obsElementHash) → curAfter` is uniquely identifying — cold
+    stamps insert exactly the rows walker's navigation looks up. */
+struct EvolutionStep {
+    Hash curBefore;
+    Hash obsFromHash;
+    Hash obsElementHash;
+    Hash curAfter;
+};
+
+/** Variant of `scopeStateIdAt` that emits a callback per fold
+    step. `scopeStateIdAt` delegates to this with a no-op hook.
+    Cold's writer passes a callback that inserts each step into
+    `SubjectEvolutionEdges` (Path 3 stamping). Used only at cold
+    record time — walker doesn't call this variant. */
+Hash scopeStateIdAtWithHook(
+    const Subject & subject,
+    const Hash & scope,
+    const std::vector<Edge> & walk,
+    size_t edgeIndex,
+    const std::function<void(const EvolutionStep &)> & hook);
 
 /** Walk-order-preserving Asks-style reachability check: returns
     true iff `subject`'s scopeStateId at some K in
