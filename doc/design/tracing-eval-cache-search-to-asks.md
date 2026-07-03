@@ -395,6 +395,9 @@ explaining what it actually covers.
 5. **Evaluate simplifications** listed above. Remove the ones no
    longer load-bearing.
 6. **Run `--repeat=3` sweep** to catch flakes.
+   **2026-07-03 (iteration 24): DONE.** 90/90 passes across
+   3× 30 green cb-* + builtins-cache tests. No flakes at
+   the current state (commit `647484301`).
 
 ## What "success" means at each phase
 
