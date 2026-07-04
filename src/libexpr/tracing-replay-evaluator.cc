@@ -818,55 +818,6 @@ std::shared_ptr<Object> TracingReplayEvaluator::chaseLocalArgSidecar(
     resolveCdiId(applyResultIdHex, ctx);
     if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
         return it->second;
-    /* Direct construction fallback: the recursive resolve may not
-       have gone through resolveApplyId (which memoizes at argIdStr).
-       If the sidecar carries depth+scope, construct the standin
-       ourselves — this is what resolveApplyId does for the isLocalArgId
-       case at its arg parameter, but here we're the target of the
-       resolve and the resolveApplyId path may not have been reached. */
-    if (reqJson.contains("depth") && reqJson.contains("scope")) {
-        try {
-            auto sidecarDepth = reqJson["depth"].get<int>();
-            auto sidecarScope = Hash::parseNonSRIUnprefixed(
-                reqJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
-            cidasks::Subject rootSubject{cidasks::PositionalSeed{sidecarDepth}};
-            /* Fall-through path outerContext: compute seqCtx from
-               idStr (which is the apply's chain root = applyReqHash).
-               Use seq = perApplyReqDispatchCount[applyReqHash] - 1
-               if it was pre-incremented by an in-flight
-               dispatchApplyLive, otherwise seq = 0. */
-            Hash fallthroughApplyReqHash{HashAlgorithm::SHA256};
-            try {
-                fallthroughApplyReqHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
-            } catch (...) {}
-            size_t fallthroughSeq = 0;
-            if (auto it = ctx.perApplyReqDispatchCount.find(fallthroughApplyReqHash);
-                it != ctx.perApplyReqDispatchCount.end() && it->second > 0) {
-                fallthroughSeq = it->second - 1;
-            }
-            Hash fallthroughSeqCtx = hashString(HashAlgorithm::SHA256,
-                fallthroughApplyReqHash.to_string(HashFormat::Base16, false)
-                + "|" + std::to_string(fallthroughSeq));
-            auto rlo = std::make_shared<ReplayLocalObject>(
-                std::move(rootSubject), sidecarScope,
-                std::make_shared<std::vector<cidasks::Edge>>(),
-                std::make_shared<Hash>(HashAlgorithm::SHA256),
-                fallthroughSeqCtx, decisionGraph, inner->getEvalState().rootFSRoot,
-                &inner->getEvalState());
-            rlo->withAmbientAsksValidation();
-            try {
-                rlo->withChainStart(
-                    Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256));
-            } catch (const std::exception &) {}
-            rlo->withApplyContext(sidecarDepth, sidecarScope);
-            tracingCacheLog(
-                "resolve %s: chaseLocalArgSidecar direct-standin depth=%d",
-                idStr.substr(0, 12), sidecarDepth);
-            std::shared_ptr<Object> standin = rlo;
-            ctx.memo[idStr] = standin;
-            return standin;
-        } catch (const std::exception &) {}
-    }
     return nullptr;
 }
 
