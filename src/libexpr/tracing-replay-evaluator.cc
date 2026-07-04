@@ -480,11 +480,11 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         parentAnchorCurRequests = dispatchedRequestSet;
     /* applySeq-bump retry loop for cb-repeated-style variants where the
        same applyReqHash's boundaries need distinct AmbientResults across
-       sibling Qs. Session-persistent `perApplyReqSessionCount` supplies
-       the base seq; miss-with-cb-apply-dispatched bumps it and retries.
-       Bounded to 4 retries (max cb-apply boundaries in current bounds). */
+       sibling Qs. Per-ctx `applySeqRetryOffset` starts at 0; miss-with-
+       cb-apply-dispatched bumps it. Bounded to 8 retries (accommodates
+       variant 4's map over 5-element list = 5 boundaries + slack). */
     std::optional<TracingDecisionGraph::WalkHit> walkHit;
-    for (int retry = 0; retry < 4; ++retry) {
+    for (int retry = 0; retry < 8; ++retry) {
         if (retry > 0) {
             ctx.assignedApplySeq.clear();
             ctx.perApplyReqDispatchCount.clear();
