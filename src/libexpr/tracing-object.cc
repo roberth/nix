@@ -377,7 +377,6 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto cell = ArgScopeCell::make(argScope, argObj);
     child->withScope(std::move(cell));
     child->withApplyResultSubject(std::move(resultSubject), applyScopeLocal);
-    child->withApplyProducerIds(*fnIdOpt, *argIdOpt);
     if (auto * argAmb = dynamic_cast<AmbientObject *>(argObj.get())) {
         if (auto ctx = argAmb->getApplyContext())
             child->withApplyContext(std::move(ctx));

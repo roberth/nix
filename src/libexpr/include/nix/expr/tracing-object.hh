@@ -47,14 +47,6 @@ class TracingObject : public Object
     std::optional<cidasks::Subject> applyResultSubject;
     Hash applyScope{HashAlgorithm::SHA256};
 
-    /* fn/arg idHex captured at apply time. Preserved on the wrapper so
-       evolvedQueryFrom can record the (evolved cid, fn, arg) mapping
-       for warm walker to route apply-result CDIs through
-       resolveApplyId rather than cell iteration (which conflates
-       distinct apply-result CDIs that share cell[0]). */
-    std::string applyFnIdHex;
-    std::string applyArgIdHex;
-
     /* Per-invocation observation context shared with the cb-arg
        AmbientObject's queryFn and propagated to derived children
        via shared_ptr. */
@@ -97,13 +89,6 @@ public:
     {
         applyResultSubject = std::move(subject);
         applyScope = std::move(scope);
-        return *this;
-    }
-
-    TracingObject & withApplyProducerIds(std::string fnIdHex, std::string argIdHex)
-    {
-        applyFnIdHex = std::move(fnIdHex);
-        applyArgIdHex = std::move(argIdHex);
         return *this;
     }
 

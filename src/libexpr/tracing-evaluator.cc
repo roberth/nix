@@ -507,7 +507,6 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withScope(std::move(cell));
     obj->withApplyResultSubject(std::move(resultSubject), applyScope);
-    obj->withApplyProducerIds(fnId, argId);
     if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
         if (auto ctx = argAmb->getApplyContext())
             obj->withApplyContext(std::move(ctx));
