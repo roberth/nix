@@ -1258,15 +1258,14 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
     const QueryHash & q,
     const std::function<ResponseHash(const RequestHash &, const EdgeContext &)> & dispatch,
     const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt,
-    const SetHash & startCur,
-    const std::unordered_set<RequestHash> & startCurRequests)
+    const SetHash & startCur)
 {
     auto cur = startCur;
     /* curRequests speeds up the "is this request already in cur?"
        filter on each edge, and (since dispatch filters them out
        too) guarantees the XOR-extension below isn't fed a fact
        that's already folded into cur. */
-    std::unordered_set<RequestHash> curRequests = startCurRequests;
+    std::unordered_set<RequestHash> curRequests;
     tracingCacheLog("walk Q=%s startCur=%s",
                     q.to_string(HashFormat::Base16, false).substr(0, 12),
                     cur.to_string(HashFormat::Base16, false).substr(0, 12));

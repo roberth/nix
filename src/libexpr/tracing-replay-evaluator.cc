@@ -365,13 +365,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             rejectedObs.push_back(std::move(obs));
         pendingEdgeObservations.clear();
     };
-    /* Pass dispatchedRequestSet as startCurRequests so walker at
-       parentAnchor knows which requests have already been dispatched
-       in prior walks reaching this cur. Without this, walker's
-       `useful = rs \ curRequests` computes wrongly, potentially
-       re-dispatching already-observed requests and diverging the cur.
-       Empty when starting from ∅ (nothing dispatched yet). */
-    std::unordered_set<Hash> parentAnchorCurRequests;
     /* applySeq-bump retry loop for cb-repeated-style variants where the
        same applyReqHash's boundaries need distinct AmbientResults across
        sibling Qs. Per-ctx `applySeqRetryOffset` starts at 0; miss-with-
@@ -392,8 +385,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
                 if (committed) commitEdge();
                 else commitRejected(useful);
             },
-            parentAnchor,
-            parentAnchorCurRequests);
+            parentAnchor);
         if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
             walkHit = decisionGraph.walk(queryHash, dispatch,
                 [&](bool committed, const std::vector<Hash> & useful) {

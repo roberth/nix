@@ -364,8 +364,7 @@ public:
         /* Starting cur for the walk. Defaults to ∅. Callers that
            have a structural anchor (= parent TracingReplayObject's terminalCur) can
            hand it in so the walk starts at that lookup position. */
-        const SetHash & startCur = SetHash(HashAlgorithm::SHA256),
-        const std::unordered_set<RequestHash> & startCurRequests = {});
+        const SetHash & startCur = SetHash(HashAlgorithm::SHA256));
 
     /* Backward-compat overload: dispatch takes only the request. Used
        by unit tests that don't need edge context. */
@@ -373,12 +372,11 @@ public:
         const QueryHash & q,
         const std::function<ResponseHash(const RequestHash &)> & dispatch,
         const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt = {},
-        const SetHash & startCur = SetHash(HashAlgorithm::SHA256),
-        const std::unordered_set<RequestHash> & startCurRequests = {})
+        const SetHash & startCur = SetHash(HashAlgorithm::SHA256))
     {
         return walk(q,
             [&](const RequestHash & req, const EdgeContext &) { return dispatch(req); },
-            onEdgeAttempt, startCur, startCurRequests);
+            onEdgeAttempt, startCur);
     }
 
     /* Persist one trie node by hash. Idempotent (INSERT OR IGNORE +
