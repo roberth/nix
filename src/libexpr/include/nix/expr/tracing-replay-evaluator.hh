@@ -87,22 +87,6 @@ class TracingReplayEvaluator : public Evaluator
             per v13Walk without leaking into sibling Q's fresh contexts. */
         size_t applySeqRetryOffset = 0;
 
-        /** Pointer to walk()'s pendingEdgeObservations vector, or
-            nullptr if resolveCdiId is called outside a walk. When set,
-            resolveCdiId's extendedWalkForMatch includes these
-            not-yet-committed observations as a virtual final edge.
-            Rationale: cold's writer accumulates observations
-            in-order during its flush chain — seed(1) evolved via
-            (getAttr cb, getWHNF cb) before Q's applyResult-CID request
-            was recorded. Warm's walker dispatches these facts during
-            walk() but stores them in pendingEdgeObservations until
-            commit; if resolveCdiId is invoked mid-walk (which it is
-            for `from`-CID resolution of subsequent dispatches within
-            the same Asks edge), reading only committed cidasksWalk
-            misses these in-flight folds and can't resolve cold's
-            evolved-state CIDs. Threading pending obs through
-            extendedWalkForMatch closes that gap. */
-        const std::vector<cidasks::Observation> * pendingEdgeObservations = nullptr;
     };
 
     /** Cumulative walk across all v13Walk calls in this session.

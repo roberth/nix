@@ -109,15 +109,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        Without the buffer, rejected-edge facts would pollute
        cidasksWalk and throw off the cell-chain scopeStateId computations. */
     std::vector<cidasks::Observation> pendingEdgeObservations;
-    /* Expose the pending-edge buffer to resolveCdiId so mid-walk
-       CID resolutions (of `from` fields in subsequent dispatches
-       within the same Asks edge) see the observations already
-       dispatched this edge as an implicit virtual final walk edge.
-       Without this, cold's evolved-seed CIDs (e.g. 39523dbe6282 =
-       seed(1) at walk-state that includes getAttr+getWHNF cb folds)
-       are unresolvable until edge commit — but resolution is needed
-       during the same edge's dispatch loop. */
-    ctx.pendingEdgeObservations = &pendingEdgeObservations;
 
     auto commitEdge = [&]() {
         /* 1:1 alignment with writer's d1CidasksWalk: writer inserts each
@@ -650,17 +641,6 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
        DELETED when QCidasksWalks was removed; walker's cidasksWalk
        is sufficient under lockstep growth. */
     std::vector<cidasks::Edge> extendedWalkForMatch = cidasksWalk;
-    /* Include walk()'s pending-edge observations as an implicit
-       virtual final edge. See comment on
-       ResolutionContext::pendingEdgeObservations. This makes
-       cold's evolved-seed CIDs (recorded after mid-edge dispatches
-       fold observations) resolvable during the same Asks edge's
-       dispatch loop, closing the variant-2 walk-state divergence. */
-    if (ctx.pendingEdgeObservations && !ctx.pendingEdgeObservations->empty()) {
-        cidasks::Edge virtualEdge;
-        virtualEdge.observations = *ctx.pendingEdgeObservations;
-        extendedWalkForMatch.push_back(std::move(virtualEdge));
-    }
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
