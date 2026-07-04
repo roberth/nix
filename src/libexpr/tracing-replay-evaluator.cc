@@ -328,25 +328,17 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
 
     /* Fast path (trie-diff optimization) — DELETION PROBE iter 98. */
 
-    /* Fall back to walk(). Two anchor candidates in order:
-       1. Parent TracingReplayObject's terminalCur — the structural-anchor lookup
-          position. Child Q's recording was made starting from
-          parent's reached factSet (= where the parent walk landed),
-          so anchoring the child walk there matches the recording's
-          frame. This isolates each child Q from sibling Q's
-          accumulated state: the prior session-leaky `lastQFactsHash`
-          would carry a sibling's terminal into this Q's startCur,
-          dragging in observations the recording doesn't expect.
-       2. From ∅ — original behavior. Needed when no parent anchor
-          exists (top-level Q like evalFile/evalExpr, no TracingReplayObject) and as
-          a backstop when the parent-anchored attempt finds no
-          matching Asks chain. */
-    /* Use `ctx.currentProxy` (not `currentProxy`) — the local was
-       moved into ctx above, so it's now empty. cb-sibling-b's chain
-       traversal was blocked by this bug: child Q walks were starting
-       from ∅ instead of the parent's terminalCur, forcing walker to
-       re-walk sibling B's chain from the top under the wrong
-       currentProxy context. */
+    /* Walk with two anchor candidates in order:
+       1. Parent TracingReplayObject's terminalCur — the structural-anchor
+          lookup position. Child Q's recording was made starting from
+          parent's reached factSet, so anchoring the child walk there
+          matches the recording's frame.
+       2. From ∅ — needed when no parent anchor exists (top-level Q
+          like evalFile/evalExpr, no TracingReplayObject) and as a backstop
+          when the parent-anchored attempt finds no matching Asks chain.
+
+       Use `ctx.currentProxy` (not `currentProxy`) — the local was
+       moved into ctx above, so it's now empty. */
     Hash parentAnchor = TracingDecisionGraph::emptySetHash();
     if (auto * parentTR = dynamic_cast<TracingReplayObject *>(ctx.currentProxy.get())) {
         parentAnchor = parentTR->getTriePos().factSetHash;
