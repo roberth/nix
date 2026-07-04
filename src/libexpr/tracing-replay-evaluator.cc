@@ -31,7 +31,6 @@ TracingReplayEvaluator::TracingReplayEvaluator(
     , decisionGraph(decisionGraph)
     , writer(writer)
     , validationEnv(validationEnv)
-    , lastQFactsHash(TracingDecisionGraph::emptySetHash())
 {
 }
 
@@ -333,66 +332,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         return h;
     };
 
-    /* Fast path: leverage the trie's structural sharing.
-
-       For sequential mapAttrs-style replays the next Q's recorded
-       factSet is almost always a strict superset of the last Q's.
-       Instead of walking from (Q, ∅) and re-dispatching the whole
-       chain, ask the RequestSet trie: which Requests does this Q's
-       RS contain that we haven't already dispatched, and vice
-       versa? That's a trie-diff in O(|delta|·branching) — the
-       hash-equal shared subtrees short-circuit instantly.
-
-       Then XOR-extend lastQFactsHash by the fact-element hashes
-       for the delta-add (using live dispatch) and undo the
-       delta-rm (using cached responses), giving the cur Q's
-       recorded chain would have landed at. If Terminals has an
-       entry there for Q, hit; otherwise fall back to walk(). */
-    auto outgoing = decisionGraph.getAsks(queryHash, TracingDecisionGraph::emptySetHash());
-    if (outgoing.size() == 1) {
-        const Hash & edgeRsHash = outgoing[0];
-        std::vector<Hash> onlyInDispatched;
-        std::vector<Hash> onlyInEdge;
-        dispatchedTrie.diff(decisionGraph, edgeRsHash, onlyInDispatched, onlyInEdge);
-
-        Hash candidateCur = lastQFactsHash;
-        bool dispatchFailed = false;
-        TracingDecisionGraph::EdgeContext fastPathCtx{queryHash, lastQFactsHash, edgeRsHash};
-        for (const auto & req : onlyInEdge) {
-            auto resp = dispatch(req, fastPathCtx);
-            if (resp == Hash(HashAlgorithm::SHA256)) {
-                dispatchFailed = true;
-                break;
-            }
-            candidateCur = TracingDecisionGraph::xorFactIntoHash(candidateCur, req, resp);
-        }
-        if (!dispatchFailed) {
-            for (const auto & req : onlyInDispatched) {
-                auto it = dispatchCache.find(req);
-                if (it == dispatchCache.end()) { dispatchFailed = true; break; }
-                /* XOR is self-inverse: same op undoes the previous fold-in. */
-                candidateCur = TracingDecisionGraph::xorFactIntoHash(candidateCur, req, it->second);
-            }
-        }
-        if (!dispatchFailed) {
-            if (auto term = decisionGraph.getTerminal(queryHash, candidateCur)) {
-                auto payload = decisionGraph.getResultPayload(*term);
-                if (payload) {
-                    for (const auto & req : onlyInEdge) {
-                        dispatchedTrie.insert(req);
-                        dispatchedRequestSet.insert(req);
-                    }
-                    lastQFactsHash = candidateCur;
-                    tracingCacheStats().hits++;
-                    commitEdge();
-                    return V13WalkResult{std::move(*payload), *term, candidateCur};
-                }
-            }
-        }
-        /* Fast-path didn't reach a terminal: drop the buffered facts;
-           the full walk below starts fresh. */
-        discardEdge();
-    }
+    /* Fast path (trie-diff optimization) — DELETION PROBE iter 98. */
 
     /* Fall back to walk(). Two anchor candidates in order:
        1. Parent TracingReplayObject's terminalCur — the structural-anchor lookup
@@ -438,8 +378,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        re-dispatching already-observed requests and diverging the cur.
        Empty when starting from ∅ (nothing dispatched yet). */
     std::unordered_set<Hash> parentAnchorCurRequests;
-    if (parentAnchor != TracingDecisionGraph::emptySetHash())
-        parentAnchorCurRequests = dispatchedRequestSet;
     /* applySeq-bump retry loop for cb-repeated-style variants where the
        same applyReqHash's boundaries need distinct AmbientResults across
        sibling Qs. Per-ctx `applySeqRetryOffset` starts at 0; miss-with-
