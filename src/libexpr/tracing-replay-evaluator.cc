@@ -531,9 +531,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    - Observation-permutation navigation (this
                      block): walker partitions its observation pool
                      by walker-computed state-match, iterating
-                     rounds until convergence or 32-round safety
+                     rounds until convergence or 8-round safety
                      limit. Handles matches reachable in permuted
-                     orders (cb-385's 5-round evolution).
+                     orders (cb-385's 5-round evolution). Cap
+                     empirically measured: max 6 rounds seen across
+                     the main test suite (2026-07-05 iter 107).
 
                    Iter 63 attempted to convert this filter to
                    Path-3 trie lookup — regressed cb-sibling-b
@@ -552,7 +554,12 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                             if (seen.insert(key).second) flat.push_back(obs);
                         }
                     std::vector<cidasks::Edge> hypWalk;
-                    for (int iter = 0; iter < 32 && !flat.empty() && !found; ++iter) {
+                    /* Iteration cap: empirically max 6 rounds seen across
+                       the entire main test suite (probed 2026-07-05); 8
+                       leaves headroom above the observed max. Tightened
+                       from 32 after measurement showed the previous cap
+                       was ~5x overshoot. */
+                    for (int iter = 0; iter < 8 && !flat.empty() && !found; ++iter) {
                         auto currentId = cidasks::scopeStateIdAt(*subj, scope, hypWalk, hypWalk.size());
                         cidasks::Edge partition;
                         std::vector<cidasks::Observation> stillRemaining;
