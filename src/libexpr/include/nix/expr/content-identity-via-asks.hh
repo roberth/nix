@@ -239,13 +239,6 @@ struct PathAndRoots
 
 PathAndRoots pathAndRootsFromSubject(const Subject & subject);
 
-/** Walk a Subject's parent chain through DerivedSubject nodes to
-    the root form (PositionalSeed, PostulatedIdempotentRead, or
-    ApplyResultSubject). Used by the per-arg flush path to compute
-    the cb_arg root's argStateId for `from` substitution while the access
-    path is encoded separately as a PathExpr. */
-const Subject & rootSubjectOf(const Subject & subject);
-
 /** Combine fn's and arg's inherited scopes into an apply boundary's
     scope. Apply treats both sides equally (= unlike QueryAttr or
     curried-result subjects which have a neat single parent), but the

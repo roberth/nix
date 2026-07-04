@@ -29,19 +29,6 @@ Hash extractFrom(const trace::QueryVariant & query)
         query);
 }
 
-const Subject & rootSubjectOf(const Subject & subject)
-{
-    if (auto * d = std::get_if<DerivedSubject>(&subject.data))
-        return rootSubjectOf(*d->parent);
-    if (auto * a = std::get_if<ApplyResultSubject>(&subject.data))
-        /* Single-root assumption (= same cb_arg supplies fn and arg)
-           lets us pick either side. Multi-root applies would need
-           fromCIDs[] entries for both fn-root and arg-root; follow-up
-           work once the simple case lands. */
-        return rootSubjectOf(*a->fn);
-    return subject;
-}
-
 /* Subject leaf equality — used by the path builder to dedupe roots
    (= two derivation chains rooted at the same PositionalSeed or
    PostulatedIdempotentRead share one entry in fromCIDs). Only meaningful
