@@ -648,25 +648,13 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         found = true;
                     }
                 }
-                /* K > 0 tail via `cidasks::subjectReachesTarget` —
-                   the Asks-style reachability query at the callsite
-                   is a single function call, not a visible for-
-                   loop. Internally the primitive still iterates
-                   pending Path 3 (per-subject observation trie
-                   navigation, cold-recorded); F17/F18 rule out
-                   drop-in replacements at the walker-side. The
-                   named primitive stakes out the eventual
-                   trie-navigation replacement's shape — walker's
-                   own state as key, target as lookup input. */
-                /* Path 3 walker-side trie navigation. Replaces the
-                   K > 0 linear iteration in cidasks::subjectReachesTarget
-                   with edge-by-edge navigation of cold-recorded
-                   SubjectEvolutionEdges. Walker's current cur is
-                   its own hashed state (key); walker looks up
-                   (subject, cur, obs.from, obs.elem) in the trie;
-                   if edge exists, folds obs.elem into edge
-                   accumulator. Edge-scoped semantics (all obs in
-                   one edge check against edge-entry cur) preserved.
+                /* Path 3 walker-side trie navigation for K > 0.
+                   Walker's current cur is its own hashed state (key);
+                   walker looks up (subject, cur, obs.from, obs.elem)
+                   in cold-recorded SubjectEvolutionEdges; if edge
+                   exists, folds obs.elem into edge accumulator.
+                   Edge-scoped semantics (all obs in one edge check
+                   against edge-entry cur) preserved.
                    Empirical (iter 61 probe): 137/137 k-iter matches
                    also reached by trie navigation. */
                 if (!found) {

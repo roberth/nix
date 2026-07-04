@@ -206,34 +206,6 @@ Hash scopeStateIdAtWithHook(
     size_t edgeIndex,
     const std::function<void(const EvolutionStep &)> & hook);
 
-/** Walk-order-preserving Asks-style reachability check: returns
-    true iff `subject`'s scopeStateId at some K in
-    `[startK, walk.size()]` equals `targetHash`. Advances subject's
-    state one edge at a time — walker's current state IS the
-    lookup key at each K (equality against target; filter of
-    walk[K].observations by fromHash == cur).
-
-    Encapsulates the resolveCdiId cell-chain reachability check
-    the search→asks project targets — callers see a single
-    reachability query, not a for-loop, and IDs flow into the
-    query as keys computed by walker's own hashing. Internal
-    implementation walks the walk incrementally.
-
-    `startK` lets callers skip already-checked K values (typically
-    startK=0 to check all, startK=1 to skip the K=0 pre-check).
-
-    The K > 0 tail is architecturally load-bearing pending Path 3
-    (per-subject observation trie navigation, cold-recorded);
-    F17/F18 rule out drop-in replacements. This function name and
-    signature stake out the eventual Asks navigation shape so
-    call-sites don't need to change when Path 3 lands. */
-bool subjectReachesTarget(
-    const Subject & subject,
-    const Hash & scope,
-    const std::vector<Edge> & walk,
-    const std::string & targetHex,
-    size_t startK = 0);
-
 /** Build the per-arg-encoded `QueryApply` payload for an apply-result
     subject at a given walk edge index. The returned query's JSON
     hash equals `scopeStateIdAt(applyResult, scope, walk, edgeIndex)`,

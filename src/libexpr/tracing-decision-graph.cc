@@ -143,12 +143,11 @@ CREATE TABLE IF NOT EXISTS ApplyResultProducers (
     argIdHash BLOB NOT NULL
 ) WITHOUT ROWID;
 
--- Path 3 (per-subject observation trie) schema addition —
--- foundational for eventual replacement of the internal linear
--- iteration in cidasks::subjectReachesTarget. Cold-side stamps
--- each fold step encountered during scopeStateIdAt so walker can
+-- Path 3 (per-subject observation trie). Cold-side stamps each
+-- fold step encountered during scopeStateIdAt so walker can
 -- navigate subject's evolution as an edge-by-edge trie rather than
--- iterating K positions on its own walk.
+-- iterating K positions on its own walk. Consumed by walker at
+-- resolveCdiId's cell-loop K > 0 navigation.
 --
 -- Row semantics: `(subjectHash, curHash, obs*)` uniquely identifies
 -- a fold step at cold record time. `nextCurHash` is what subject's
@@ -194,8 +193,8 @@ struct TracingDecisionGraph::State
     SQLiteStmt insertAmbientAsks, selectAmbientAsks;
 
     /* Path 3 (subject observation trie) — populated by cold's
-       cidasks::scopeStateIdAt fold hook; consumed by walker's
-       cidasks::subjectReachesTarget navigation. */
+       cidasks::scopeStateIdAtWithHook fold callback; consumed by
+       walker's inline trie navigation in resolveCdiId. */
     SQLiteStmt insertSubjectEvolutionEdge, selectSubjectEvolutionEdge;
 
     /* In-memory caches of parsed sets and payloads. Populated lazily on
