@@ -326,8 +326,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         return h;
     };
 
-    /* Fast path (trie-diff optimization) — DELETION PROBE iter 98. */
-
     /* Walk with two anchor candidates in order:
        1. Parent TracingReplayObject's terminalCur — the structural-anchor
           lookup position. Child Q's recording was made starting from
