@@ -478,20 +478,44 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
     std::unordered_set<Hash> parentAnchorCurRequests;
     if (parentAnchor != TracingDecisionGraph::emptySetHash())
         parentAnchorCurRequests = dispatchedRequestSet;
-    auto walkHit = decisionGraph.walk(queryHash, dispatch,
-        [&](bool committed, const std::vector<Hash> & useful) {
-            if (committed) commitEdge();
-            else commitRejected(useful);
-        },
-        parentAnchor,
-        parentAnchorCurRequests);
-    if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
-        walkHit = decisionGraph.walk(queryHash, dispatch, [&](bool committed, const std::vector<Hash> & useful) {
-            if (committed)
-                commitEdge();
-            else
-                commitRejected(useful);
-        });
+    /* applySeq-bump retry loop for cb-repeated-style variants where the
+       same applyReqHash's boundaries need distinct AmbientResults across
+       sibling Qs. Session-persistent `perApplyReqSessionCount` supplies
+       the base seq; miss-with-cb-apply-dispatched bumps it and retries.
+       Bounded to 4 retries (max cb-apply boundaries in current bounds). */
+    std::optional<TracingDecisionGraph::WalkHit> walkHit;
+    for (int retry = 0; retry < 4; ++retry) {
+        if (retry > 0) {
+            ctx.assignedApplySeq.clear();
+            ctx.perApplyReqDispatchCount.clear();
+            ctx.dispatchedApplyReqsThisWalk.clear();
+            ctx.memo.clear();
+            pendingEdgeObservations.clear();
+            rejectedObs.clear();
+        }
+        walkHit = decisionGraph.walk(queryHash, dispatch,
+            [&](bool committed, const std::vector<Hash> & useful) {
+                if (committed) commitEdge();
+                else commitRejected(useful);
+            },
+            parentAnchor,
+            parentAnchorCurRequests);
+        if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
+            walkHit = decisionGraph.walk(queryHash, dispatch,
+                [&](bool committed, const std::vector<Hash> & useful) {
+                    if (committed) commitEdge();
+                    else commitRejected(useful);
+                });
+        }
+        if (walkHit) break;
+        if (ctx.dispatchedApplyReqsThisWalk.empty()) break;
+        for (auto & req : ctx.dispatchedApplyReqsThisWalk) {
+            perApplyReqSessionCount[req]++;
+            tracingCacheLog(
+                "v13Walk retry: bumping perApplyReqSessionCount[%s] -> %zu",
+                req.to_string(HashFormat::Base16, false).substr(0, 12),
+                perApplyReqSessionCount[req]);
+        }
     }
     /* reverse-outgoing walkImpl fallback: DELETED. Was a targeted
        cb-repeated helper via alternative rs ordering; the un-fold
@@ -1095,12 +1119,14 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     std::string curKey =
         applyReqHash.to_string(HashFormat::Base16, false)
         + "|" + walkerCur.to_string(HashFormat::Base16, false);
+    ctx.dispatchedApplyReqsThisWalk.insert(applyReqHash);
     size_t applySeq;
     if (auto it = ctx.assignedApplySeq.find(curKey);
         it != ctx.assignedApplySeq.end()) {
         applySeq = it->second;
     } else {
-        applySeq = ctx.perApplyReqDispatchCount[applyReqHash]++;
+        applySeq = perApplyReqSessionCount[applyReqHash]
+                 + ctx.perApplyReqDispatchCount[applyReqHash]++;
         ctx.assignedApplySeq[curKey] = applySeq;
     }
     Hash seqCtx = hashString(HashAlgorithm::SHA256,

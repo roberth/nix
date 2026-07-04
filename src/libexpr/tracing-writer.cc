@@ -474,6 +474,16 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                 perQAsksEdges[i].fromFactSetHash = TracingDecisionGraph::xorHashes(
                     perQAsksEdges[i].fromFactSetHash, factHash);
             priorEpsilonAccum = TracingDecisionGraph::xorHashes(priorEpsilonAccum, factHash);
+            /* Keep prevQFactSetHash aligned with v13FactSetHash after
+               the boundary XOR-fold. Without this, subsequent Q's
+               `markApplyBoundary` captures a stale (pre-boundary)
+               fromFactSetHashAtBoundary, and subsequent `finalize`
+               pushes edges indexed at a pre-boundary state that walker
+               can't reach from its post-boundary cur. cb-repeated
+               variant 2's Q=6063a6243f6c walk misses at cur=99566783ffd7
+               because cold indexed its edges at pre-boundary state
+               3dc1fe6c5b76 = 99566783ffd7 XOR factHash_boundary0. */
+            prevQFactSetHash = v13FactSetHash;
 
             /* Stash state on the boundary so subsequent re-processing
                passes (= late d2 obs) can pick up where this finalize

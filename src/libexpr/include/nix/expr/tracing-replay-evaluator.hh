@@ -72,6 +72,14 @@ class TracingReplayEvaluator : public Evaluator
             hashing. */
         std::unordered_map<std::string, size_t> assignedApplySeq;
 
+        /** Set of applyReqHashes dispatched via `dispatchApplyLive`
+            during THIS v13Walk attempt. On miss, walker uses this to
+            decide whether to bump `perApplyReqSessionCount` and retry
+            with a different applySeq. cb-repeated variant 2's .b/.c
+            WHNF Qs need boundary 1/2's respHash while their walker cur
+            equals .a's — retry-with-bumped-seq is the disambiguator. */
+        std::unordered_set<Hash> dispatchedApplyReqsThisWalk;
+
         /** Pointer to walk()'s pendingEdgeObservations vector, or
             nullptr if resolveCdiId is called outside a walk. When set,
             resolveCdiId's extendedWalkForMatch includes these
@@ -128,6 +136,14 @@ class TracingReplayEvaluator : public Evaluator
         walk() fallback so it doesn't re-dispatch already-folded
         reqs (= which would XOR-cancel them out of cur). */
     std::unordered_set<TracingDecisionGraph::RequestHash> dispatchedRequestSet;
+
+    /** Persistent across v13Walks: base applySeq offset per applyReqHash.
+        Starts at 0. Walker bumps on v13Walk miss (retry loop) so
+        subsequent walks folding the same cb-apply see a distinct
+        AmbientResult — closes variant 2's .b/.c per-Q boundary
+        disambiguation with the writer-side prev-post-boundary
+        alignment. */
+    std::unordered_map<Hash, size_t> perApplyReqSessionCount;
 
     /** applyReqHashes currently being driven by `dispatchApplyLive`.
         Short-circuits walker re-entry while outer's-f-invocation is
