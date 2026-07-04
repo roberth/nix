@@ -109,6 +109,18 @@ public:
 
     /* Atom payload lookup by hash. Returns nullopt if not present. */
     std::optional<std::string> getRequestPayload(const RequestHash & h);
+
+    /* True if the request payload names a cb-apply
+       (`"query":"apply"`). cb-apply is special in walker's dispatch
+       loop: `dispatchApplyLive` fires the fn fresh each invocation via
+       a per-request seq counter, so the same reqHash returns distinct
+       AmbientResults across dispatches. `walk()` uses this signal to
+       BYPASS the `curRequests` set-membership filter when otherwise
+       useful is empty, allowing multiple cb-apply invocations of the
+       same reqHash (cb-repeated's `(cb 10) + (cb 20)` PositionalSeed
+       collision) to advance through cold's recorded Asks graph via
+       distinct nextCurs. */
+    bool isApplyRequest(const RequestHash & h);
     std::optional<std::string> getQueryPayload(const QueryHash & h);
     std::optional<std::string> getResultPayload(const ResultHash & h);
 

@@ -666,6 +666,21 @@ TracingDecisionGraph::usefulDispatch(
     return out;
 }
 
+bool TracingDecisionGraph::isApplyRequest(const RequestHash & h)
+{
+    auto payload = getRequestPayload(h);
+    if (!payload)
+        return false;
+    try {
+        auto bytes = reinterpret_cast<const uint8_t *>(payload->data());
+        auto js = nlohmann::json::from_cbor(bytes, bytes + payload->size());
+        return js.contains("query") && js["query"].is_string()
+            && js["query"].get<std::string>() == "apply";
+    } catch (...) {
+        return false;
+    }
+}
+
 /* Recursively build the trie and INSERT each visited node, returning
    the root node's hash. Same shape as dg_trieRootHash but with the
    side effect of persisting nodes (idempotent via INSERT OR IGNORE
@@ -1459,16 +1474,33 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                         outgoing.size());
 
         bool advanced = false;
+        /* Direction (2) cb-repeated: two-pass edge iteration. Primary
+           pass uses the standard `useful` set (filtered by curRequests).
+           If all primary-pass edges either skip (empty useful) or fail
+           the `hasAnyEdge` validation, a fallback pass tries the
+           apply-request bypass — allowing an already-in-curRequests
+           cb-apply to re-dispatch via `dispatchApplyLive`'s per-request
+           seq counter, which returns distinct AmbientResults per
+           invocation. cb-repeated's `(cb 10) + (cb 20)` PositionalSeed
+           collision needs the bypass to reach cold's second boundary;
+           cb-xor-evolution-repeated-cb-apply's primary-pass edge works,
+           so the fallback doesn't fire there. */
+        for (int pass = 0; pass < 2 && !advanced; ++pass) {
         for (const auto & requestSetHash : outgoing) {
             auto requestSetOpt = getRequestSet(requestSetHash);
             if (!requestSetOpt)
                 continue;
 
-            /* Dispatch only the useful part of the edge — the requests
-               not already in cur's facts. The dispatched (req, resp)
-               pairs are by construction disjoint from cur, so XOR-fold
-               is a safe set extension. */
+            /* Primary pass: standard useful set (curRequests-filtered).
+               Fallback pass: augment with in-curRequests apply reqs. */
             auto useful = usefulDispatch(*requestSetOpt, curRequests);
+            if (pass == 1 && useful.empty()) {
+                for (const auto & req : *requestSetOpt) {
+                    if (curRequests.count(req) && isApplyRequest(req)) {
+                        useful.push_back(req);
+                    }
+                }
+            }
             if (useful.empty())
                 continue; // degenerate edge — all its requests already in cur
 
@@ -1516,6 +1548,51 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                (Q, nextCur) — i.e., the dispatched responses lead to
                a position where the recording continues or terminates. */
             if (!hasAnyEdge(q, nextCur)) {
+                /* Direction (2) LRM fallback (fallback-pass only): if
+                   live's XOR-fold gave a nextCur with no recorded edge,
+                   check whether cold's LRM stored a response at
+                   (req, cur) for any useful request. If substitution
+                   yields a valid nextCur, use it. Gated to pass==1 so
+                   normal cache invalidation (live's diverged response
+                   leads walker to miss and fall through) stays live-first
+                   in the primary pass; only when NO primary edge worked
+                   do we speculate via LRM. This closes cb-repeated's
+                   walker-bug case (CDI collision on apply-result
+                   subjects) without masking outer-body-change misses on
+                   the primary pass. */
+                if (pass == 1) {
+                    Hash altNextCur = cur;
+                    std::vector<std::pair<RequestHash, ResponseHash>> altResults;
+                    altResults.reserve(useful.size());
+                    bool anySubstituted = false;
+                    for (const auto & pr : results) {
+                        auto stored = getLocalResponsePayload(pr.first, cur);
+                        if (stored) {
+                            auto storedH = computeResponseHash(*stored);
+                            if (storedH != pr.second) {
+                                altResults.push_back({pr.first, storedH});
+                                anySubstituted = true;
+                                continue;
+                            }
+                        }
+                        altResults.push_back(pr);
+                    }
+                    if (anySubstituted) {
+                        for (const auto & pr : altResults)
+                            altNextCur = dg_xorHash(altNextCur, dg_factElementHash(pr.first, pr.second));
+                        if (hasAnyEdge(q, altNextCur)) {
+                            tracingCacheLog(
+                                "walk Q=%s rs=%s LRM-fallback: live→%s alt→%s",
+                                q.to_string(HashFormat::Base16, false).substr(0, 12),
+                                requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                                nextCur.to_string(HashFormat::Base16, false).substr(0, 12),
+                                altNextCur.to_string(HashFormat::Base16, false).substr(0, 12));
+                            nextCur = altNextCur;
+                            results = std::move(altResults);
+                            goto committed;
+                        }
+                    }
+                }
                 tracingCacheLog("walk Q=%s rs=%s useful=%zu nextCur=%s NO RECORDED EDGE -> try next",
                                 q.to_string(HashFormat::Base16, false).substr(0, 12),
                                 requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -1525,6 +1602,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                     onEdgeAttempt(/*committed=*/ false, useful);
                 continue; // wrong branch
             }
+committed:;
 
             tracingCacheLog("walk Q=%s rs=%s useful=%zu cur=%s -> nextCur=%s",
                             q.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -1540,6 +1618,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
             advanced = true;
             break;
         }
+        } /* end two-pass loop */
 
         if (!advanced) {
             tracingCacheLog("walk Q=%s NO EDGE COMMITTED at cur=%s -> miss",
