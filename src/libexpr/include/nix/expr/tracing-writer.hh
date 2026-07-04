@@ -155,14 +155,6 @@ class TracingWriter
        INSERT OR IGNORE (= idempotent). */
     std::vector<Hash> pendingNewRequests;
 
-    /* Per-fact d=1 responses buffered during flushPendingAmbient,
-       drained at logResult after `record()` populates perQAsksEdges.
-       Correctness-first LRM PK widening: cold inserts LRM at
-       (reqHash, edge.fromFactSetHash) using THIS fact's actual
-       responsePayload — never copies stale empty-hash-context
-       entries. Cleared at logResult time. */
-    std::unordered_map<Hash, std::string> pendingD1LrmInserts;
-
     TracingDecisionGraph::SetHash prevQFactSetHash{TracingDecisionGraph::emptySetHash()};
     struct PerQAsksEdge
     {
@@ -776,33 +768,6 @@ public:
         /* EdgeResponses population: DELETED. The table has no readers
            on the walker's hot path; write-only side effect. */
 
-        /* Correctness-first LRM PK widening. For each perQAsksEdge,
-           insert LRM(req, edge.fromFactSetHash, payload) where
-           `payload` is THIS record's actual response for `req`,
-           captured in `pendingD1LrmInserts` during flushPendingAmbient.
-           Copying pre-existing empty-hash-context payloads is UNSOUND:
-           the first-writer-wins entry at empty-hash may be stale for
-           this record's context. Recording the fresh per-fact payload
-           ensures walker's cur-keyed lookup returns the response cold
-           actually observed at this cur — no first-writer collapse.
-
-           Sound scope: only ambient observations with a subject `from`
-           field are keyed by cur — file/env reads and cb-apply
-           requests themselves have deterministic-per-session
-           semantics; their existing empty-hash row is untouched. */
-        for (const auto & edge : perQAsksEdges) {
-            auto rsMembers = decisionGraph->getRequestSet(edge.requestSetHash);
-            if (!rsMembers)
-                continue;
-            for (const auto & req : *rsMembers) {
-                auto it = pendingD1LrmInserts.find(req);
-                if (it == pendingD1LrmInserts.end())
-                    continue;
-                decisionGraph->insertLocalResponse(
-                    req, edge.fromFactSetHash, it->second);
-            }
-        }
-        pendingD1LrmInserts.clear();
 
         /* QCidasksWalks snapshot serialization: DELETED. Walker's own
            cidasksWalk carries what's needed under lockstep growth. */

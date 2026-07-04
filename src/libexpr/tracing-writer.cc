@@ -173,14 +173,6 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             }
         }
 
-        /* Correctness-first LRM widening buffer: record THIS fact's
-           actual response for cur-keyed LRM insert at logResult after
-           perQAsksEdges are finalized (post-boundary-shift). Keying
-           at (req, edge.fromFactSetHash) with THIS record's payload
-           makes walker's cur-matched lookup deterministic — no
-           first-writer-wins collision, no stale-payload copy. */
-        pendingD1LrmInserts[queryHash] = responsePayload;
-
         /* Append the substituted fact to the new d1 cidasks edge so
            later logResults' scopeStateIdAt sees it in the own-loop.
 
