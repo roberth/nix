@@ -408,34 +408,4 @@ std::string describe(const Subject & subject)
         subject.data);
 }
 
-std::string serialiseEdge(const Edge & edge)
-{
-    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
-    std::string out;
-    out.reserve(edge.observations.size() * hs * 2);
-    for (const auto & obs : edge.observations) {
-        out.append(reinterpret_cast<const char *>(obs.fromHash.hash), hs);
-        out.append(reinterpret_cast<const char *>(obs.elementHash.hash), hs);
-    }
-    return out;
-}
-
-Edge deserialiseEdge(std::string_view blob)
-{
-    const size_t hs = Hash(HashAlgorithm::SHA256).hashSize;
-    const size_t obsSize = hs * 2;
-    if (blob.size() % obsSize != 0)
-        throw Error("cidasks::deserialiseEdge: malformed blob size %d", blob.size());
-    Edge edge;
-    edge.observations.reserve(blob.size() / obsSize);
-    for (size_t i = 0; i < blob.size(); i += obsSize) {
-        Hash fromHash(HashAlgorithm::SHA256);
-        Hash elementHash(HashAlgorithm::SHA256);
-        std::memcpy(fromHash.hash, blob.data() + i, hs);
-        std::memcpy(elementHash.hash, blob.data() + i + hs, hs);
-        edge.observations.push_back({fromHash, elementHash});
-    }
-    return edge;
-}
-
 } // namespace nix::cidasks
