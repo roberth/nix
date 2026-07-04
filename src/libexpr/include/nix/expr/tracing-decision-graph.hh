@@ -450,8 +450,8 @@ private:
     Hash insertTrieRecursive(std::vector<Hash> sortedMembers, int depth);
     bool collectTrieMembers(const Hash & nodeHash, std::vector<RequestHash> & out);
 public:
-    /* Public so TrieBuilder::diff (defined in the .cc) can fetch
-       stored node payloads. Not intended for general use. */
+    /* Public so `collectTrieMembers` and other in-file helpers can
+       fetch stored node payloads. Not intended for general use. */
     std::optional<std::string> getRequestSetNodePayload(const Hash & nodeHash);
 };
 
