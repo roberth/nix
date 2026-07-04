@@ -368,6 +368,53 @@ search→Asks change, verified against the same test-bounds table.
 Any that resist deletion becomes a subsection in follow-up notes
 explaining what it actually covers.
 
+**Post-alignment cleanup wave (iter 91-104, 2026-07-04/05).** After
+iter 89-90's writer prev-post-boundary alignment + walker
+`applySeqRetryOffset` retry loop landed and closed
+`cb-repeated-cb-apply-diff-args`, a large batch of workaround
+scaffolding became redundant. Removed across iter 91-104 (net
+~725 lines):
+
+- **iter 85's `pendingEdgeObservations` threading** into
+  `resolveCdiId` (mid-walk CID resolution workaround for variant 2).
+  Subsumed by iter 89's writer alignment.
+- **v13Walk synthetic empty-edge push** after each successful walk.
+  Subsumed by walker's retry loop + real-observation commits.
+- **`suppressedBoundaryHook`** mechanism (walker phantom ε obs on
+  suppressed markApplyBoundary). Kept the pool insert; removed the
+  hook + supporting fields.
+- **`walkerAppendBoundaryEdge`** synthetic push in `apply()`.
+- **`pendingD1LrmInserts` + cur-keyed LRM insert loop** at logResult.
+  Was iter 80's correctness-first widening; walker no longer needs
+  cur-keyed LRM reads since the retry loop discovers the correct
+  boundary respHash per Q.
+- **`ApplyResultProducers`** read path in `resolveCdiId` + full write
+  path + SQL schema + `applyFnIdHex`/`applyArgIdHex` fields +
+  `withApplyProducerIds` setter.
+- **trie-diff fast-path** in v13Walk + `lastQFactsHash`,
+  `dispatchedTrie`, `dispatchedRequestSet` fields +
+  `startCurRequests` walk() param + `TrieBuilder::diff` +
+  `dg_diffTries`/`dg_sortedSymDiff`/`dg_collectStoredMembers`
+  helpers.
+- **direct-construction fallback** in `chaseLocalArgSidecar`
+  (inlined the now-trivial function into resolveCdiId).
+- **dead cidasks helpers**: `serialiseEdge`/`deserialiseEdge` (part
+  of removed SessionD1Edges/QCidasksWalks persistence),
+  `rootSubjectOf` (recursive-only, no external callers).
+
+Deletions refuted (mechanisms genuinely load-bearing):
+- Observation-permutation navigation in `resolveCdiId` (cb-385).
+- DISALLOW-mode LRM fallback + empty-hash-context LRM insert
+  (cb-sibling-discrimination-via-observation, cb-sibling-b-depends-on-a).
+- `tag == "apply"` branch in resolveCdiId (cb-sibling-discrimination).
+- Two-pass apply-bypass fallback in walkImpl
+  (cb-repeated-cb-apply-diff-args).
+- TRO speculative deeper lookup in `maybeGetAttr` (cb-sibling-
+  discrimination-via-observation, cb-sibling-b-depends-on-a, cb-385).
+
+Full-suite state after cleanup wave: **159 Ok / 0 Fail / 5 Skipped**,
+stable across `--repeat=3` (477/0/15 no flakes).
+
 ## Non-goals for this phase
 
 - **Reentrancy fix.** Multi-cb-apply-different-args stays red; the
