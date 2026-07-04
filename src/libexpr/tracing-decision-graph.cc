@@ -62,8 +62,10 @@ CREATE TABLE IF NOT EXISTS Results (
 -- a function. First-writer-wins is sound, and the walker can look
 -- the payload up by reqHash directly.
 CREATE TABLE IF NOT EXISTS LocalResponseMap (
-    requestHash BLOB PRIMARY KEY,
-    payload     BLOB NOT NULL
+    requestHash BLOB NOT NULL,
+    contextHash BLOB NOT NULL,
+    payload     BLOB NOT NULL,
+    PRIMARY KEY (requestHash, contextHash)
 );
 
 -- Storage layer: set pools.
@@ -206,7 +208,10 @@ struct TracingDecisionGraph::State
     std::unordered_map<Hash, std::optional<std::vector<TracingDecisionGraph::Fact>>> factSetCache;
     std::unordered_map<Hash, std::optional<std::string>> requestPayloadCache;
     std::unordered_map<Hash, std::optional<std::string>> resultPayloadCache;
-    std::unordered_map<Hash, std::optional<std::string>> localResponsePayloadCache;
+    /* LocalResponse uses (requestHash, contextHash) key; explicit
+       implementation bypasses the ATOM_CACHED macro. No in-memory
+       cache — SQLite indexed lookup is fast enough for the walker's
+       hot path here (measured hit rate is low per query). */
     /* RequestSet trie *node* cache. Different RequestSets that share
        subtrees (via content addressing) hit the same node hashes;
        caching per-node lets second-and-later getRequestSet calls reuse
@@ -403,7 +408,7 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     state->insertResult.create(state->db,
         "INSERT OR IGNORE INTO Results(resultHash, payload) VALUES (?, ?)");
     state->insertLocalResponse.create(state->db,
-        "INSERT OR IGNORE INTO LocalResponseMap(requestHash, payload) VALUES (?, ?)");
+        "INSERT OR IGNORE INTO LocalResponseMap(requestHash, contextHash, payload) VALUES (?, ?, ?)");
     state->insertApplyResultProducer.create(state->db,
         "INSERT OR IGNORE INTO ApplyResultProducers(cidHash, fnIdHash, argIdHash) VALUES (?, ?, ?)");
     state->selectApplyResultProducer.create(state->db,
@@ -416,7 +421,7 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     state->selectResult.create(state->db,
         "SELECT payload FROM Results WHERE resultHash = ?");
     state->selectLocalResponse.create(state->db,
-        "SELECT payload FROM LocalResponseMap WHERE requestHash = ?");
+        "SELECT payload FROM LocalResponseMap WHERE requestHash = ? AND contextHash = ?");
     /* Drop obsolete tables from earlier schema versions. */
     state->db.exec("DROP TABLE IF EXISTS FactSets;");
     state->db.exec("DROP TABLE IF EXISTS EdgeResponses;");
@@ -495,9 +500,19 @@ void TracingDecisionGraph::waitForWrites()
 ATOM_INSERT_CACHED(Request, requestPayloadCache)
 ATOM_INSERT_PLAIN(Query)
 ATOM_INSERT_CACHED(Result, resultPayloadCache)
-ATOM_INSERT_CACHED(LocalResponse, localResponsePayloadCache)
 #undef ATOM_INSERT_CACHED
 #undef ATOM_INSERT_PLAIN
+
+void TracingDecisionGraph::insertLocalResponse(
+    const Hash & requestHash, const Hash & contextHash, std::string_view payload)
+{
+    auto state(_state->lock());
+    auto use = state->insertLocalResponse.use();
+    dg_bindBlob(use, dg_hashToBlob(requestHash));
+    dg_bindBlob(use, dg_hashToBlob(contextHash));
+    dg_bindBlob(use, payload);
+    use.exec();
+}
 
 void TracingDecisionGraph::insertApplyResultProducer(
     const Hash & cidHash, const Hash & fnIdHash, const Hash & argIdHash)
@@ -554,9 +569,20 @@ TracingDecisionGraph::getApplyResultProducer(const Hash & cidHash)
 ATOM_GET_CACHED(Request, requestPayloadCache)
 ATOM_GET_PLAIN(Query)
 ATOM_GET_CACHED(Result, resultPayloadCache)
-ATOM_GET_CACHED(LocalResponse, localResponsePayloadCache)
 #undef ATOM_GET_CACHED
 #undef ATOM_GET_PLAIN
+
+std::optional<std::string> TracingDecisionGraph::getLocalResponsePayload(
+    const Hash & requestHash, const Hash & contextHash)
+{
+    auto state(_state->lock());
+    auto query = state->selectLocalResponse.use();
+    dg_bindBlob(query, dg_hashToBlob(requestHash));
+    dg_bindBlob(query, dg_hashToBlob(contextHash));
+    if (!query.next())
+        return std::nullopt;
+    return query.getBlob(0);
+}
 
 /* ─────────────────────────────────────────────────────────────────────
    Storage layer: sets

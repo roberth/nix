@@ -123,8 +123,17 @@ public:
        (same seed(N) pre-observation CDI → same reqhash → different
        responses from arg-dependent env), so d=1 dispatch MUST NOT
        read this map. See `cross-session-seed-collision` memory. */
-    void insertLocalResponse(const RequestHash & requestHash, std::string_view payload);
-    std::optional<std::string> getLocalResponsePayload(const RequestHash & requestHash);
+    /* Context-widened LocalResponseMap: PK is (requestHash, contextHash).
+       contextHash is walker's/writer's outer d1 fact-set state at the
+       moment the response was recorded / is being consulted. Same
+       request under different outer contexts stores/retrieves distinct
+       payloads — deterministic lookup, no speculation needed. Fixes
+       cb-repeated-cb-apply-diff-args's abstract-arg reqHash collision
+       by discriminating on outer chain state (which differs between
+       two cb-applies within the same body: post-first-apply-boundary
+       vs before). */
+    void insertLocalResponse(const RequestHash & requestHash, const Hash & contextHash, std::string_view payload);
+    std::optional<std::string> getLocalResponsePayload(const RequestHash & requestHash, const Hash & contextHash);
 
 
     /* Apply-result producer index: cold records `applyResultCid → (fnId, argId)`

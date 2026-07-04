@@ -74,6 +74,17 @@ class ReplayLocalObject : public Object
        validated probe advances `*chainCursor` to the matched edge's
        toFactSet. */
     std::shared_ptr<Hash> chainCursor;
+    /* Walker's outer d1 fact-set state at the moment this standin
+       was constructed (= walker's cur before entering this cb-apply
+       boundary). Used as the LocalResponseMap lookup context so two
+       cb-applies of the same abstract fn+arg within one cached body
+       resolve to their respective recorded responses (cb-repeated-
+       cb-apply-diff-args's fix). Cold's insertLocalResponse writes
+       with writer.v13FactSetHash at the matching moment; walker at
+       ReplayLocalObject construction time receives its own outer
+       cur which — by lockstep growth of walker.cidasksWalk with
+       writer.d1CidasksWalk under Path 3 — equals cold's writer cur. */
+    Hash outerContext;
     TracingDecisionGraph & decisionGraph;
     ref<SourceRoot> rootFSRoot;
     /* EvalState used for primop construction in `defeatCache`. The
@@ -138,6 +149,7 @@ public:
         Hash scope_,
         std::shared_ptr<std::vector<cidasks::Edge>> walkFacts_,
         std::shared_ptr<Hash> chainCursor_,
+        Hash outerContext_,
         TracingDecisionGraph & dg,
         ref<SourceRoot> rootFSRoot,
         EvalState * state = nullptr)
@@ -146,6 +158,7 @@ public:
         , localId(cidasks::structuralAddress(subject, scope, *walkFacts_, 0))
         , walkFacts(std::move(walkFacts_))
         , chainCursor(std::move(chainCursor_))
+        , outerContext(std::move(outerContext_))
         , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
 
     /** Set the proxy's argScope. Returns *this for chaining. */

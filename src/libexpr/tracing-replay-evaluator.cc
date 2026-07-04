@@ -238,7 +238,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
                 if (!reqJson.contains("params") || !reqJson["params"].is_object())
                     return Hash(HashAlgorithm::SHA256);
                 auto maybeAmbientResult = dispatchApplyLive(
-                    requestHash, reqJson["params"], ctx);
+                    requestHash, reqJson["params"], edgeCtx.fromFactSetHash, ctx);
                 if (!maybeAmbientResult)
                     return Hash(HashAlgorithm::SHA256);
                 applyRespHash = *maybeAmbientResult;
@@ -268,7 +268,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             static const bool disallowInner =
                 getEnv("_NIX_DISALLOW_CACHE_INTERPRET_INNER").value_or("") == "1";
             if (disallowInner && isAmbient) {
-                if (auto storedResp = decisionGraph.getLocalResponsePayload(requestHash)) {
+                if (auto storedResp = decisionGraph.getLocalResponsePayload(requestHash, Hash(HashAlgorithm::SHA256))) {
                     auto storedH = TracingDecisionGraph::computeResponseHash(*storedResp);
                     tracingCacheLog(
                         "dispatch DISALLOW-mode LRM fallback req=%s -> resp=%s (%s)",
@@ -890,11 +890,28 @@ std::shared_ptr<Object> TracingReplayEvaluator::chaseLocalArgSidecar(
             auto sidecarScope = Hash::parseNonSRIUnprefixed(
                 reqJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
             cidasks::Subject rootSubject{cidasks::PositionalSeed{sidecarDepth}};
+            /* Fall-through path outerContext: compute seqCtx from
+               idStr (which is the apply's chain root = applyReqHash).
+               Use seq = perApplyReqDispatchCount[applyReqHash] - 1
+               if it was pre-incremented by an in-flight
+               dispatchApplyLive, otherwise seq = 0. */
+            Hash fallthroughApplyReqHash{HashAlgorithm::SHA256};
+            try {
+                fallthroughApplyReqHash = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
+            } catch (...) {}
+            size_t fallthroughSeq = 0;
+            if (auto it = ctx.perApplyReqDispatchCount.find(fallthroughApplyReqHash);
+                it != ctx.perApplyReqDispatchCount.end() && it->second > 0) {
+                fallthroughSeq = it->second - 1;
+            }
+            Hash fallthroughSeqCtx = hashString(HashAlgorithm::SHA256,
+                fallthroughApplyReqHash.to_string(HashFormat::Base16, false)
+                + "|" + std::to_string(fallthroughSeq));
             auto rlo = std::make_shared<ReplayLocalObject>(
                 std::move(rootSubject), sidecarScope,
                 std::make_shared<std::vector<cidasks::Edge>>(),
                 std::make_shared<Hash>(HashAlgorithm::SHA256),
-                decisionGraph, inner->getEvalState().rootFSRoot,
+                fallthroughSeqCtx, decisionGraph, inner->getEvalState().rootFSRoot,
                 &inner->getEvalState());
             rlo->withAmbientAsksValidation();
             try {
@@ -975,11 +992,23 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                     auto sidecarScope = Hash::parseNonSRIUnprefixed(
                         sidecarJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
                     cidasks::Subject rootSubject{cidasks::PositionalSeed{sidecarDepth}};
+                    Hash fallthroughApplyReqHash2{HashAlgorithm::SHA256};
+                    try {
+                        fallthroughApplyReqHash2 = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
+                    } catch (...) {}
+                    size_t fallthroughSeq2 = 0;
+                    if (auto it2 = ctx.perApplyReqDispatchCount.find(fallthroughApplyReqHash2);
+                        it2 != ctx.perApplyReqDispatchCount.end() && it2->second > 0) {
+                        fallthroughSeq2 = it2->second - 1;
+                    }
+                    Hash fallthroughSeqCtx2 = hashString(HashAlgorithm::SHA256,
+                        fallthroughApplyReqHash2.to_string(HashFormat::Base16, false)
+                        + "|" + std::to_string(fallthroughSeq2));
                     auto rlo = std::make_shared<ReplayLocalObject>(
                         std::move(rootSubject), sidecarScope,
                         std::make_shared<std::vector<cidasks::Edge>>(),
                         std::make_shared<Hash>(HashAlgorithm::SHA256),
-                        decisionGraph, inner->getEvalState().rootFSRoot,
+                        fallthroughSeqCtx2, decisionGraph, inner->getEvalState().rootFSRoot,
                         &inner->getEvalState());
                     rlo->withAmbientAsksValidation();
                     try {
@@ -1028,8 +1057,16 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
 std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     const Hash & applyReqHash,
     const nlohmann::json & params,
+    const Hash & walkerCur,
     ResolutionContext & ctx)
 {
+    /* LRM context symmetric with cold's finalize:
+       hash(applyReqHash || per-applyReqHash sequence). */
+    size_t applySeq = ctx.perApplyReqDispatchCount[applyReqHash]++;
+    Hash seqCtx = hashString(HashAlgorithm::SHA256,
+        applyReqHash.to_string(HashFormat::Base16, false)
+        + "|" + std::to_string(applySeq));
+    (void) walkerCur;
     auto fnIdStr = params["fn"].get<std::string>();
     auto fnObj = resolveCdiId(fnIdStr, ctx);
     if (!fnObj) {
@@ -1121,7 +1158,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         std::move(rootSubject), sidecarScope,
         seededWalkFacts,
         std::make_shared<Hash>(HashAlgorithm::SHA256),
-        decisionGraph, inner->getEvalState().rootFSRoot,
+        seqCtx, decisionGraph, inner->getEvalState().rootFSRoot,
         &inner->getEvalState());
     replayLocal->withApplyContext(sidecarDepth, sidecarScope);
     replayLocal->withAmbientAsksValidation().withChainStart(applyReqHash);

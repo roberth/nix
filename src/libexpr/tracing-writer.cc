@@ -125,7 +125,14 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             resultJson.dump());
 
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-        decisionGraph->insertLocalResponse(queryHash, responsePayload);
+        /* d=1 fact LRM insert: context = empty hash. d=1 dispatch
+           doesn't consume from LRM under normal mode (walker uses
+           live dispatch). The DISALLOW-mode fallback at
+           tracing-replay-evaluator.cc reads with edgeCtx.
+           fromFactSetHash — different key, deliberately mismatches
+           so DISALLOW mode doesn't accidentally serve stored d=1
+           payloads that live-dispatch should govern. */
+        decisionGraph->insertLocalResponse(queryHash, Hash(HashAlgorithm::SHA256), responsePayload);
 
         /* Append the substituted fact to the new d1 cidasks edge so
            later logResults' scopeStateIdAt sees it in the own-loop.
@@ -258,8 +265,20 @@ void TracingWriter::flushPendingAmbient(bool finalize)
        all prior ε contributions to its left. */
     size_t shift = 0;
     Hash priorEpsilonAccum(HashAlgorithm::SHA256);
+    /* Per-applyReqHash sequence counter within THIS finalize pass.
+       cb-repeated's two `(cb X) + (cb Y)` produce boundaries that
+       share the same applyReqHash (PositionalSeed abstracts over
+       literal arg). Each boundary's LRM inserts use the pair
+       (applyReqHash, seq) as the context — the sequence
+       discriminates the two applies. Walker's dispatchApplyLive
+       tracks the same counter symmetrically. */
+    std::unordered_map<Hash, size_t> perApplySeqCounter;
     for (auto & boundary : pendingApplyBoundaries) {
         auto & group = boundary.facts;
+        size_t applySeq = perApplySeqCounter[boundary.applyRequestHash]++;
+        Hash seqCtx = hashString(HashAlgorithm::SHA256,
+            boundary.applyRequestHash.to_string(HashFormat::Base16, false)
+            + "|" + std::to_string(applySeq));
 
         /* Helper: stamp the i-th fact and emit Request/LocalResponse
            into the pool. AmbientAsks is inserted iff `withAmbientAsks`
@@ -268,7 +287,8 @@ void TracingWriter::flushPendingAmbient(bool finalize)
            and for late-d2-obs re-processing (without AmbientAsks —
            see commentary at the "late probe" branch below). */
         auto stampAndEmit = [&](size_t i, const std::vector<cidasks::Edge> & walk,
-                                Hash cumulativeFactSet, bool withAmbientAsks)
+                                Hash cumulativeFactSet, bool withAmbientAsks,
+                                Hash boundaryOuterCtx = Hash(HashAlgorithm::SHA256))
             -> std::pair<Hash, cidasks::Edge>
         {
             auto & pf = group[i];
@@ -317,7 +337,12 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
 
             decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-            decisionGraph->insertLocalResponse(queryHash, responsePayload);
+            /* Context = hash(applyReqHash || per-applyReqHash sequence)
+               so multiple applies sharing an applyReqHash (via
+               PositionalSeed abstraction — cb-repeated's `(cb 10) +
+               (cb 20)`) get distinct LRM rows. Walker's dispatchApplyLive
+               tracks the symmetric counter in ctx.perApplyReqDispatchCount. */
+            decisionGraph->insertLocalResponse(queryHash, seqCtx, responsePayload);
 
             auto toFactSet = TracingDecisionGraph::xorFactIntoHash(
                 cumulativeFactSet, queryHash, responseHash);
@@ -336,12 +361,26 @@ void TracingWriter::flushPendingAmbient(bool finalize)
         if (!boundary.finalized) {
             /* First finalize for this boundary. Process all facts
                accumulated so far, insert d=1 apply Fact, ε edge, and
-               propagate the factHash to downstream perQAsksEdges. */
+               propagate the factHash to downstream perQAsksEdges.
+
+               `boundaryOuterCtx` = the walker's outer d1 cur at the
+               moment this boundary's cb-apply Request will be
+               dispatched at warm. Equals
+               `boundary.fromFactSetHashAtBoundary XOR priorEpsilonAccum`
+               (= state at markApplyBoundary time + all prior ε
+               contributions). Used as the LocalResponseMap key
+               discriminator so d=2 chain facts within different
+               apply boundaries store under distinct rows, letting
+               cb-repeated's two applies with the same abstract
+               reqHash resolve to their respective responses. */
+            Hash boundaryOuterCtx = TracingDecisionGraph::xorHashes(
+                boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
+            boundary.boundaryOuterCtx = boundaryOuterCtx;
             std::vector<cidasks::Edge> walk;
             walk.reserve(group.size());
             Hash cumulativeFactSet = boundary.applyRequestHash;
             for (size_t i = 0; i < group.size(); ++i) {
-                auto [nextCfs, edge] = stampAndEmit(i, walk, cumulativeFactSet, /*withAmbientAsks=*/ true);
+                auto [nextCfs, edge] = stampAndEmit(i, walk, cumulativeFactSet, /*withAmbientAsks=*/ true, boundaryOuterCtx);
                 cumulativeFactSet = nextCfs;
                 walk.push_back(std::move(edge));
             }
@@ -423,12 +462,12 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                 /* Re-stamp prior facts to rebuild walk; inserts are
                    idempotent (INSERT OR IGNORE) so the duplicate
                    Request/LocalResponse calls are harmless. */
-                auto [nextCfs, edge] = stampAndEmit(i, walk, cumulativeFactSet, /*withAmbientAsks=*/ false);
+                auto [nextCfs, edge] = stampAndEmit(i, walk, cumulativeFactSet, /*withAmbientAsks=*/ false, boundary.boundaryOuterCtx);
                 cumulativeFactSet = nextCfs;
                 walk.push_back(std::move(edge));
             }
             for (size_t i = boundary.lastProcessedCount; i < group.size(); ++i) {
-                auto [nextCfs, edge] = stampAndEmit(i, walk, cumulativeFactSet, /*withAmbientAsks=*/ false);
+                auto [nextCfs, edge] = stampAndEmit(i, walk, cumulativeFactSet, /*withAmbientAsks=*/ false, boundary.boundaryOuterCtx);
                 cumulativeFactSet = nextCfs;
                 walk.push_back(std::move(edge));
             }
@@ -536,7 +575,8 @@ void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
         applyReqHash,
         {},
         perQAsksEdges.size(),  // insertionIndex AFTER pre-boundary chunk
-        prevQFactSetHash       // fromFactSetHashAtBoundary
+        prevQFactSetHash,      // fromFactSetHashAtBoundary
+        Hash(HashAlgorithm::SHA256)  // boundaryOuterCtx (populated at first finalize)
     });
     tracingCacheLog("markApplyBoundary: buffered (applyReqHash=%s, pendingBoundaries=%zu, insertionIndex=%zu)",
                     applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),

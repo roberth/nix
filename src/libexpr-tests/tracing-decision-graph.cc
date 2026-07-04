@@ -92,10 +92,11 @@ TEST_F(TracingDecisionGraphTest, LocalResponseMap_KeyedByRequestHash_FunctionAtD
     TracingDecisionGraph g(dbPath);
 
     auto reqHash = sha("shared-request");
-    g.insertLocalResponse(reqHash, "first-payload");
-    g.insertLocalResponse(reqHash, "second-payload");
+    auto ctxHash = sha("shared-context");
+    g.insertLocalResponse(reqHash, ctxHash, "first-payload");
+    g.insertLocalResponse(reqHash, ctxHash, "second-payload");
 
-    EXPECT_EQ(g.getLocalResponsePayload(reqHash).value_or(""), "first-payload");
+    EXPECT_EQ(g.getLocalResponsePayload(reqHash, ctxHash).value_or(""), "first-payload");
 }
 
 /* EdgeResponses table + its tests deleted: the table had no

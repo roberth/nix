@@ -49,6 +49,14 @@ class TracingReplayEvaluator : public Evaluator
 
         /** Current v13Walk's queryHash. */
         Hash currentQueryHash{HashAlgorithm::SHA256};
+
+        /** Per-applyReqHash dispatch counter within this walk. Used
+            to compute the LocalResponseMap context: same applyReqHash
+            dispatched multiple times (cb-repeated's PositionalSeed-
+            abstracted (cb 10)/(cb 20) sharing one applyReqHash) gets
+            distinct LRM lookup keys via seq=0, seq=1, ... Symmetric
+            with cold's per-boundary counter in the finalize pass. */
+        std::unordered_map<Hash, size_t> perApplyReqDispatchCount;
     };
 
     /** Cumulative walk across all v13Walk calls in this session.
@@ -149,6 +157,7 @@ class TracingReplayEvaluator : public Evaluator
     std::optional<Hash> dispatchApplyLive(
         const Hash & applyReqHash,
         const nlohmann::json & params,
+        const Hash & walkerCur,
         ResolutionContext & ctx);
 
     std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx);

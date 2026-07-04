@@ -65,14 +65,15 @@ static Hash stampPerArgFields(
    response, so first-writer-wins in the map can't return the
    wrong payload. */
 template<typename Q>
-static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query)
+static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, const Hash & outerContext)
 {
     auto reqHash = TracingDecisionGraph::computeQueryHash(query);
     tracingCacheLog(
-        "rlo: read %s from=%s reqHash=%s",
+        "rlo: read %s from=%s reqHash=%s outerCtx=%s",
         Q::tag, query.from.isContent() ? query.from.contentHash().substr(0, 12) : "<?>",
-        reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
-    auto payload = dg.getLocalResponsePayload(reqHash);
+        reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        outerContext.to_string(HashFormat::Base16, false).substr(0, 12));
+    auto payload = dg.getLocalResponsePayload(reqHash, outerContext);
     if (!payload)
         throw Error("ReplayLocalObject: no recorded response for %s on local %s",
             Q::tag, query.from.isContent() ? query.from.contentHash() : "<ambient>");
@@ -147,7 +148,7 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
 {
     trace::QueryGetAttr query{name, std::string{}};
     auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query, outerContext);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     else
@@ -166,7 +167,7 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
     }};
     auto child = std::make_shared<ReplayLocalObject>(
         std::move(childSubject), scope, walkFacts, chainCursor,
-        decisionGraph, rootFSRoot, state);
+        outerContext, decisionGraph, rootFSRoot, state);
     /* Children inherit per-probe validation if the parent has it —
        they're observed within the same cb apply's recorded chain. */
     if (validateAgainstAmbientAsks)
@@ -188,7 +189,7 @@ const trace::ResultWHNF & ReplayLocalObject::whnf()
         return *cachedWHNF;
     trace::QueryGetWHNF query{std::string{}};
     auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query, outerContext);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     else
@@ -281,7 +282,7 @@ std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
 {
     trace::QueryGetListElem query{std::string{}, index};
     auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query, outerContext);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     else
@@ -293,7 +294,7 @@ std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
     }};
     auto child = std::make_shared<ReplayLocalObject>(
         std::move(childSubject), scope, walkFacts, chainCursor,
-        decisionGraph, rootFSRoot, state);
+        outerContext, decisionGraph, rootFSRoot, state);
     if (validateAgainstAmbientAsks)
         child->withAmbientAsksValidation();
     child->withScope(argScope);
@@ -358,6 +359,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
     auto chainCursorSaved = chainCursor;
     auto applyDepthSaved = applyDepth;
     auto applyScopeSaved = applyScope;
+    auto outerContextSaved = outerContext;
     /* Capture the resolver so the primop can register the live arg
        it receives (args[0]) as an outer-direction proxy. The OUTER
        walker dispatches d=1 facts whose `from` references the cb-arg
@@ -393,6 +395,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                      walkFactsSaved, chainCursorSaved,
                      initialChainCursor, initialWalkFactsSize,
                      applyDepthSaved, applyScopeSaved,
+                     outerContextSaved,
                      resolverSaved](
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
                 /* Publish the live arg under the cb-arg seed's
@@ -561,7 +564,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                 auto synthetic = std::make_shared<ReplayLocalObject>(
                     std::move(syntheticSubject), mergedApplyScope,
                     localWalkFacts, localChainCursor,
-                    *dg, rootFSRootSaved, &state);
+                    outerContextSaved, *dg, rootFSRootSaved, &state);
                 /* Enable per-probe AmbientAsks validation. After the
                    `LambdaApplyResultObject` writer change, the
                    apply-result observations live in the d=2 chain
@@ -608,7 +611,7 @@ std::optional<FunctionInfo> ReplayLocalObject::getFunctionInfo()
 {
     trace::QueryGetFunctionInfo query{std::string{}};
     auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query);
+    auto rJson = readResponse(decisionGraph, query, outerContext);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     else

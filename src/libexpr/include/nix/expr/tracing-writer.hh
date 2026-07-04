@@ -203,6 +203,13 @@ class TracingWriter
            finalize, this gets XOR-propagated by prior ε's element
            hashes. */
         Hash fromFactSetHashAtBoundary;
+        /* Walker's outer d1 cur at THIS apply-boundary's dispatch
+           moment (= fromFactSetHashAtBoundary XOR priorEpsilonAccum
+           at first-finalize time). Stored for late-obs re-processing
+           so re-emitted LocalResponseMap inserts use the same
+           context as the first-finalize inserts. Zero (empty hash)
+           until first finalize populates it. */
+        Hash boundaryOuterCtx;
         /* Option (b) — late d2 obs support. Once a boundary's first
            finalize pass runs, it stays in `pendingApplyBoundaries`
            with `finalized=true` so a later `logDepth2Observation`
@@ -418,7 +425,7 @@ public:
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
         decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
         if (storeAllResponsePayloads)
-            decisionGraph->insertLocalResponse(queryHash, responsePayload);
+            decisionGraph->insertLocalResponse(queryHash, Hash(HashAlgorithm::SHA256), responsePayload);
         /* Dedupe by (request, response) pair, not request alone.
            Idempotent observations (same request, same response —
            e.g. file reads, env reads) collapse to one entry; sibling
