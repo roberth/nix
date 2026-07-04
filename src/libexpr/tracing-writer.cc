@@ -125,14 +125,17 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             resultJson.dump());
 
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-        /* d=1 fact LRM insert: context = empty hash. d=1 dispatch
-           doesn't consume from LRM under normal mode (walker uses
-           live dispatch). The DISALLOW-mode fallback at
-           tracing-replay-evaluator.cc reads with edgeCtx.
-           fromFactSetHash — different key, deliberately mismatches
-           so DISALLOW mode doesn't accidentally serve stored d=1
-           payloads that live-dispatch should govern. */
+        /* d=1 fact LRM insert at empty-hash context: kept for
+           DISALLOW-mode fallback lookups. */
         decisionGraph->insertLocalResponse(queryHash, Hash(HashAlgorithm::SHA256), responsePayload);
+
+        /* Correctness-first LRM widening buffer: record THIS fact's
+           actual response for cur-keyed LRM insert at logResult after
+           perQAsksEdges are finalized (post-boundary-shift). Keying
+           at (req, edge.fromFactSetHash) with THIS record's payload
+           makes walker's cur-matched lookup deterministic — no
+           first-writer-wins collision, no stale-payload copy. */
+        pendingD1LrmInserts[queryHash] = responsePayload;
 
         /* Append the substituted fact to the new d1 cidasks edge so
            later logResults' scopeStateIdAt sees it in the own-loop.

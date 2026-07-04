@@ -1560,39 +1560,17 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                    walker-bug case (CDI collision on apply-result
                    subjects) without masking outer-body-change misses on
                    the primary pass. */
-                if (pass == 1) {
-                    Hash altNextCur = cur;
-                    std::vector<std::pair<RequestHash, ResponseHash>> altResults;
-                    altResults.reserve(useful.size());
-                    bool anySubstituted = false;
-                    for (const auto & pr : results) {
-                        auto stored = getLocalResponsePayload(pr.first, cur);
-                        if (stored) {
-                            auto storedH = computeResponseHash(*stored);
-                            if (storedH != pr.second) {
-                                altResults.push_back({pr.first, storedH});
-                                anySubstituted = true;
-                                continue;
-                            }
-                        }
-                        altResults.push_back(pr);
-                    }
-                    if (anySubstituted) {
-                        for (const auto & pr : altResults)
-                            altNextCur = dg_xorHash(altNextCur, dg_factElementHash(pr.first, pr.second));
-                        if (hasAnyEdge(q, altNextCur)) {
-                            tracingCacheLog(
-                                "walk Q=%s rs=%s LRM-fallback: live→%s alt→%s",
-                                q.to_string(HashFormat::Base16, false).substr(0, 12),
-                                requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                                nextCur.to_string(HashFormat::Base16, false).substr(0, 12),
-                                altNextCur.to_string(HashFormat::Base16, false).substr(0, 12));
-                            nextCur = altNextCur;
-                            results = std::move(altResults);
-                            goto committed;
-                        }
-                    }
-                }
+                /* No LRM substitution here — correctness principle:
+                   substituting cold's stored response for walker's
+                   live response would mask env-change invalidation,
+                   which cb-with-scope-and-tryeval and cb-list-args
+                   depend on for their DISALLOW-mode expected-error
+                   semantics. Walker's diverging live is either:
+                   (a) genuinely reflecting an env change → MISS is
+                       correct (interpreter re-eval or DISALLOW error)
+                   (b) walker-side compute bug (cb-repeated's
+                       CDI-collapse) → fix the walker, not paper over
+                       with LRM substitution. */
                 tracingCacheLog("walk Q=%s rs=%s useful=%zu nextCur=%s NO RECORDED EDGE -> try next",
                                 q.to_string(HashFormat::Base16, false).substr(0, 12),
                                 requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
