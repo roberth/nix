@@ -472,6 +472,9 @@ satisfied, not when the current narrow angle is out of ideas.
    **2026-07-03 (iteration 24): DONE.** 90/90 passes across
    3× 30 green cb-* + builtins-cache tests. No flakes at
    the current state (commit `647484301`).
+   **2026-07-05 (iteration 95): repeated at full-suite scale.**
+   477/0/15 = 3×159 passes; no flakes across the whole main suite
+   including all cb-repeated variants (green since iter 90).
 
 ## What "success" means at each phase
 
