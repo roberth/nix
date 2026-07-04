@@ -1061,12 +1061,31 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     ResolutionContext & ctx)
 {
     /* LRM context symmetric with cold's finalize:
-       hash(applyReqHash || per-applyReqHash sequence). */
-    size_t applySeq = ctx.perApplyReqDispatchCount[applyReqHash]++;
+       hash(applyReqHash || per-applyReqHash sequence).
+
+       Speculative-retry safe: assign seq PER UNIQUE walkerCur, not
+       per bare dispatch call. Walker's walk() can dispatch the same
+       apply Request multiple times at the SAME cur (via apply-bypass
+       retry for alternate branches). Under bare `++`, retries inflate
+       seq beyond cold's per-boundary count. Keying on walkerCur
+       aligns walker's seq with cold's: distinct cold boundaries fire
+       at distinct outer curs, so walker's dispatch at each cold-
+       boundary's cur gets the matching seq, and retries at that same
+       cur reuse the assigned seq. */
+    std::string curKey =
+        applyReqHash.to_string(HashFormat::Base16, false)
+        + "|" + walkerCur.to_string(HashFormat::Base16, false);
+    size_t applySeq;
+    if (auto it = ctx.assignedApplySeq.find(curKey);
+        it != ctx.assignedApplySeq.end()) {
+        applySeq = it->second;
+    } else {
+        applySeq = ctx.perApplyReqDispatchCount[applyReqHash]++;
+        ctx.assignedApplySeq[curKey] = applySeq;
+    }
     Hash seqCtx = hashString(HashAlgorithm::SHA256,
         applyReqHash.to_string(HashFormat::Base16, false)
         + "|" + std::to_string(applySeq));
-    (void) walkerCur;
     auto fnIdStr = params["fn"].get<std::string>();
     auto fnObj = resolveCdiId(fnIdStr, ctx);
     if (!fnObj) {

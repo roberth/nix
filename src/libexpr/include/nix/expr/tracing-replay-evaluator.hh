@@ -57,6 +57,20 @@ class TracingReplayEvaluator : public Evaluator
             distinct LRM lookup keys via seq=0, seq=1, ... Symmetric
             with cold's per-boundary counter in the finalize pass. */
         std::unordered_map<Hash, size_t> perApplyReqDispatchCount;
+
+        /** Per-(applyReqHash, walkerCur) → assigned seq. Fixes
+            speculative-retry-inflation: walker's walk() can dispatch
+            the same apply Request MULTIPLE times at the SAME cur
+            (via apply-bypass fallback trying alternate branches).
+            Under bare `perApplyReqDispatchCount++`, each retry gets
+            a new seq, blowing past cold's actual per-boundary count.
+            Assigning seq based on the UNIQUE walkerCur observed keeps
+            walker's seq aligned with cold's per-boundary count:
+            first unique cur → seq 0 (matches cold's boundary 0), etc.
+            Retries at the same cur reuse the previously-assigned seq.
+            Keyed as hex-concatenation of the two hashes for stable
+            hashing. */
+        std::unordered_map<std::string, size_t> assignedApplySeq;
     };
 
     /** Cumulative walk across all v13Walk calls in this session.
