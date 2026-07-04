@@ -129,6 +129,50 @@ void TracingWriter::flushPendingAmbient(bool finalize)
            DISALLOW-mode fallback lookups. */
         decisionGraph->insertLocalResponse(queryHash, Hash(HashAlgorithm::SHA256), responsePayload);
 
+        /* Secondary index for producer queries (getAttr / getListElem):
+           insert the SAME query payload under the initial-walk reqHash
+           (from = parent root's CID at walk={}, K=0). AmbientApply
+           computes fn CIDs as `structuralAddressAfter(DerivedSubject, scope,
+           {})` — always at empty walk — so the fn CID equals the reqHash
+           of the getAttr/getListElem query IF the from field is at
+           initial state. The primary insert above uses the evolved
+           `d1CidasksWalk` state, so when any observations have
+           accumulated before this flush, the primary reqHash diverges
+           from the fn CID and walker's `resolveCdiId` pool lookup
+           misses. The secondary insert closes that gap: walker looks up
+           fn CID → hits payload → `resolveProducerChild` navigates
+           `parent.maybeGetAttr(name)` live. Variant 1 has empty walk at
+           flush so primary == secondary (idempotent no-op); variant 2
+           has evolved walk so this is the ONLY reqHash under which
+           walker finds the fn's producer. */
+        if ((queryTag == "getAttr" || queryTag == "getListElem") && !roots.empty()) {
+            std::vector<trace::QueryLeaf> initialFromCIDs;
+            initialFromCIDs.reserve(roots.size());
+            for (auto & root : roots) {
+                auto initCid = cidasks::scopeStateIdAt(
+                    root, pf.inheritedScope, {}, 0);
+                initialFromCIDs.emplace_back(
+                    initCid.to_string(HashFormat::Base16, false));
+            }
+            std::string initialFromHex = initialFromCIDs[0].contentHash();
+            nlohmann::json initialQueryJson;
+            std::visit([&](const auto & q) { initialQueryJson = q; }, pf.query);
+            rewriteFromInQuery(initialQueryJson, initialFromHex);
+            if (!path.steps.empty())
+                initialQueryJson["params"]["path"] = path;
+            initialQueryJson["params"]["fromCIDs"] = initialFromCIDs;
+            auto initialReqHash = hashString(
+                HashAlgorithm::SHA256, initialQueryJson.dump());
+            if (initialReqHash != queryHash) {
+                tracingCacheLog(
+                    "  secondary insert at initial-walk reqHash=%s from=%s",
+                    initialReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                    initialFromHex.substr(0, 12));
+                decisionGraph->insertRequest(
+                    initialReqHash, jsonToCborString(initialQueryJson));
+            }
+        }
+
         /* Correctness-first LRM widening buffer: record THIS fact's
            actual response for cur-keyed LRM insert at logResult after
            perQAsksEdges are finalized (post-boundary-shift). Keying
