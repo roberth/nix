@@ -136,11 +136,6 @@ class TracingReplayEvaluator : public Evaluator
         reconstructed value tree). */
     std::unordered_set<TracingDecisionGraph::RequestHash> inFlightApplyReqs;
 
-    /** Dedup set for the writer.suppressedBoundaryHook. Cold's inner
-        emits ONE ε obs per unique cb-apply boundary; walker's
-        dispatchApplyLive fires cb-fn multiple times per session, so
-        the hook may see the same applyReqHash repeatedly. */
-    std::unordered_set<Hash> suppressedBoundaryEpsilonsSeen;
 
     std::optional<std::string> dispatchAmbientQuery(const nlohmann::json & reqJson, ResolutionContext & ctx);
 

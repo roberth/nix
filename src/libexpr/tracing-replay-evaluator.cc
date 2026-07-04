@@ -58,34 +58,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        edges into d1CidasksWalk; without this walker's walk-index
        falls short of cold's edgeIndex for later flushes referencing
        seed(1) at post-inner-apply positions. */
-    auto prevHook = writer.suppressedBoundaryHook;
-    writer.suppressedBoundaryHook = [this](const Hash & applyReqHash) {
-        /* Dedup by applyReqHash — cold's inner emits ONE ε obs per
-           unique cb-apply boundary. Walker's dispatchApplyLive fires
-           cb-fn LIVE multiple times (once per outer probe that
-           references the apply's chain), which re-triggers the same
-           inner markApplyBoundary each firing. Only push ε obs the
-           first time per applyReqHash. */
-        if (!suppressedBoundaryEpsilonsSeen.insert(applyReqHash).second)
-            return;
-        /* ε obs = {fromHash=0, elementHash=factHash} where factHash =
-           XOR(applyReqHash, AmbientResult). Use applyReqHash as
-           placeholder AmbientResult (matches cold's
-           "empty-d=2-group" convention). */
-        auto factHash = TracingDecisionGraph::xorFactIntoHash(
-            Hash(HashAlgorithm::SHA256), applyReqHash, applyReqHash);
-        cidasks::Edge edge;
-        edge.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
-        cidasksWalk.push_back(std::move(edge));
-        tracingCacheLog(
-            "walker: suppressed-boundary ε obs pushed, cidasksWalk=%zu",
-            cidasksWalk.size());
-    };
-    struct HookGuard {
-        TracingWriter & w;
-        std::function<void(const Hash &)> prev;
-        ~HookGuard() { w.suppressedBoundaryHook = prev; }
-    } hookGuard{writer, prevHook};
 
     /* Per-walk resolution context. The cumulative cidasks walk
        (= `this->cidasksWalk`) lives on the evaluator so it
