@@ -259,26 +259,32 @@ in a walk have different K values.
 exercises `(cb 10) + (cb 20)` — multiple cb-applies of the same
 callback with different arguments in a single cached body.
 
-Our current hypothesis is that this pattern needs work at the
-cb-apply reqhash construction site (writer-side `logAmbientApply` or
-walker-side dispatch equivalent) beyond just removing the search,
-because the `from` field's K value must match cold's at each of
-multiple applies within a single Q walk. But we don't actually
-know:
+**2026-07-04 outcome (iterations 84-90): ALL FOUR VARIANTS GREEN.**
+The "happy accident" hypothesis prevailed: the same alignment work
+that removes the search covers cb-apply's `from` field too, once
+three mechanisms landed:
 
-- **It could turn green** as a side effect of the alignment work,
-  if the same K-precision that removes the search also happens to
-  cover cb-apply's `from` field. That would be a happy accident
-  worth investigating.
-- **It could stay red**, in which case the cb-apply reqhash path
-  specifically still uses post-observation indexing and needs its
-  own alignment fix. That's the follow-up phase.
-- **It could partially go green** — some variants pass, others
-  don't. Each partial pattern is a data point about what alignment
-  covers and what it doesn't.
+1. **Secondary Request insert at initial-walk reqHash** (iter 84,
+   `52e64f94b`). AmbientApply computes fn CIDs at empty walk;
+   writer's producer flushes use current walk; primary reqHash
+   diverges from fn CID whenever observations accumulate before
+   flush. Secondary insert closes the gap for fn CID pool lookups.
+2. **Writer prev-post-boundary alignment** (iter 89, `a5180ede8`).
+   `prevQFactSetHash` updated after each boundary XOR, so
+   subsequent Q's edges get indexed at walker-reachable curs.
+3. **Walker per-ctx applySeqRetryOffset** (iter 90, `d65e91a86`).
+   Fresh v13Walk starts at offset=0; miss-with-cb-apply-dispatched
+   bumps offset and retries, disambiguating sibling Qs' boundary
+   choice. Bounded to 8 retries (accommodates variant 4's map
+   over 5-element list).
 
-The red test is data. Whichever outcome, we've learned something
-about the shape of the alignment mechanism.
+All four variants pass:
+- Variant 1: `(cb 10) + (cb 20)` → 32
+- Variant 2: `{ a = cb 10; b = cb 20; c = cb 30; }` → `{a=11;b=21;c=31}`
+- Variant 3: reentrant chain `cb 10 → cb a → cb b` → `{a=11;b=12;c=13}`
+- Variant 4: `map cb [1..5]` → `[2 3 4 5 6]`
+
+Overall test suite: 159 Ok / 0 Fail / 5 Skipped after iter 90.
 
 ## Anticipated simplifications — expectations to investigate
 
