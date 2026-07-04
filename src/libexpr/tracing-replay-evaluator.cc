@@ -1230,21 +1230,23 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
         ambientResult.to_string(HashFormat::Base16, false).substr(0, 12));
 
-    /* Correctness-first cb-repeated fix: memoise the standin at the
-       leaf's THIS-invocation evolved CID. Cold recorded the outer's
-       fact `from = fromCIDs[0].contentHash` where fromCIDs[0] =
-       scopeStateIdAt(seed(depth), scope, d1CidasksWalk, d1EdgeIndex)
-       at cold's flush time. Under lockstep growth, walker's
-       cidasksWalk state at dispatchApplyLive matches cold's walk
-       state at the corresponding boundary — so walker computing
-       scopeStateIdAt(seed(depth), scope, walker.cidasksWalk,
-       walker.cidasksWalk.size()) yields the SAME cid cold recorded.
+    /* Correctness-first cb-repeated fix: memoise the standin at
+       BOTH the arg leaf's evolved CID (invariant across invocations
+       in the outer walk — kept for chaseLocalArgSidecar-alignment)
+       AND at the fn leaf's evolved CID at THIS invocation (which
+       DOES differ per invocation because seed(1)_evolved captures
+       the outer walk's per-boundary ε folds). Cold's outer probe
+       recorded `from = fromCIDs[0]` which is the FIRST root's cid;
+       for `applyResult(getAttr(seed(1), "cb"), seed(N))` that first
+       root is seed(1). So walker's dispatch of `getWHNF from=X`
+       calls resolveCdiId(X = seed(1)_evolved) — memoising a
+       correction here would break other seed(1) resolutions.
 
-       Memoising this fresh RLO at that cid ensures the outer's
-       later dispatch of `getWHNF from=X` (where X is that specific
-       invocation's evolved leaf cid) resolveCdiId hits the
-       invocation-specific RLO instead of cell iteration's collapse
-       to the shared cell[0].live across distinct invocations. */
+       Instead memoise at BOTH the LEAF (arg root) and at the
+       applyResult subject's evolved cid, so any downstream lookup
+       via those cids finds THIS invocation's standin. Compute the
+       applyResult subject's evolved cid using fnObj's subject +
+       PositionalSeed{sidecarDepth} as arg. */
     {
         cidasks::Subject seedSubject{cidasks::PositionalSeed{sidecarDepth}};
         Hash evolvedLeafCid = cidasks::scopeStateIdAt(
@@ -1255,6 +1257,22 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
             "dispatchApplyLive: memoised RLO at leaf cid %s (walk.size=%zu, seqCtx=%s)",
             evolvedLeafCidHex.substr(0, 12), cidasksWalk.size(),
             seqCtx.to_string(HashFormat::Base16, false).substr(0, 12));
+
+        if (auto * fnSubj = fnObj->getSubject()) {
+            cidasks::Subject applyResultSubj{cidasks::ApplyResultSubject{
+                .fn = std::make_shared<const cidasks::Subject>(*fnSubj),
+                .arg = std::make_shared<const cidasks::Subject>(std::move(seedSubject)),
+            }};
+            Hash applyScopeForCid = fnObj->getInheritedScope();
+            Hash evolvedApplyResultCid = cidasks::scopeStateIdAt(
+                applyResultSubj, applyScopeForCid, cidasksWalk, cidasksWalk.size());
+            auto evolvedApplyResultCidHex =
+                evolvedApplyResultCid.to_string(HashFormat::Base16, false);
+            ctx.memo[evolvedApplyResultCidHex] = replayLocal;
+            tracingCacheLog(
+                "dispatchApplyLive: memoised RLO at applyResult cid %s (walk.size=%zu)",
+                evolvedApplyResultCidHex.substr(0, 12), cidasksWalk.size());
+        }
     }
     return ambientResult;
 }
