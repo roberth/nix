@@ -1611,18 +1611,6 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        under the 1:1 alignment restructure matches writer.d1CidasksWalk
        edge-for-edge once all prior cb-applies' chains have been
        dispatched. */
-    /* Cold-side mirror: writer's d1CidasksWalk grows by one edge at
-       markApplyBoundary before applyScopeStateId is computed. Walker
-       matches this via a bare synthetic edge (no markApplyBoundary
-       side-effects) so its applyScopeStateId lands at the same
-       walk-index cold's does. Skip for TLO fn to match cold's
-       `!fnIsTlo` condition. */
-    bool fnIsTloReplay = dynamic_cast<TracingLocalObject *>(fn.get_ptr().get()) != nullptr;
-    if (!fnIsTloReplay) {
-        nlohmann::json applyQBoundary = trace::QueryApply{fnId, argId};
-        auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQBoundary.dump());
-        writer.walkerAppendBoundaryEdge(applyReqHash);
-    }
     auto & walk = writer.getD1CidasksWalk();
     auto applyScopeStateId = cidasks::scopeStateIdAt(resultSubject, applyScope, walk, walk.size());
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
