@@ -1210,6 +1210,33 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         "dispatchApplyLive: applyReqHash=%s AmbientResult=%s",
         applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
         ambientResult.to_string(HashFormat::Base16, false).substr(0, 12));
+
+    /* Correctness-first cb-repeated fix: memoise the standin at the
+       leaf's THIS-invocation evolved CID. Cold recorded the outer's
+       fact `from = fromCIDs[0].contentHash` where fromCIDs[0] =
+       scopeStateIdAt(seed(depth), scope, d1CidasksWalk, d1EdgeIndex)
+       at cold's flush time. Under lockstep growth, walker's
+       cidasksWalk state at dispatchApplyLive matches cold's walk
+       state at the corresponding boundary — so walker computing
+       scopeStateIdAt(seed(depth), scope, walker.cidasksWalk,
+       walker.cidasksWalk.size()) yields the SAME cid cold recorded.
+
+       Memoising this fresh RLO at that cid ensures the outer's
+       later dispatch of `getWHNF from=X` (where X is that specific
+       invocation's evolved leaf cid) resolveCdiId hits the
+       invocation-specific RLO instead of cell iteration's collapse
+       to the shared cell[0].live across distinct invocations. */
+    {
+        cidasks::Subject seedSubject{cidasks::PositionalSeed{sidecarDepth}};
+        Hash evolvedLeafCid = cidasks::scopeStateIdAt(
+            seedSubject, sidecarScope, cidasksWalk, cidasksWalk.size());
+        auto evolvedLeafCidHex = evolvedLeafCid.to_string(HashFormat::Base16, false);
+        ctx.memo[evolvedLeafCidHex] = replayLocal;
+        tracingCacheLog(
+            "dispatchApplyLive: memoised RLO at leaf cid %s (walk.size=%zu, seqCtx=%s)",
+            evolvedLeafCidHex.substr(0, 12), cidasksWalk.size(),
+            seqCtx.to_string(HashFormat::Base16, false).substr(0, 12));
+    }
     return ambientResult;
 }
 
