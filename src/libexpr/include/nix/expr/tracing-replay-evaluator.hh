@@ -74,11 +74,18 @@ class TracingReplayEvaluator : public Evaluator
 
         /** Set of applyReqHashes dispatched via `dispatchApplyLive`
             during THIS v13Walk attempt. On miss, walker uses this to
-            decide whether to bump `perApplyReqSessionCount` and retry
-            with a different applySeq. cb-repeated variant 2's .b/.c
-            WHNF Qs need boundary 1/2's respHash while their walker cur
-            equals .a's — retry-with-bumped-seq is the disambiguator. */
+            decide whether to increment `applySeqRetryOffset` and retry
+            with a different applySeq. */
         std::unordered_set<Hash> dispatchedApplyReqsThisWalk;
+
+        /** Retry-driven applySeq offset. Fresh v13Walk starts at 0
+            (matches cold's first-boundary seq). Walk miss with cb-apply
+            dispatched bumps this and retries: fresh ctx state re-runs
+            walk with next boundary's respHash. Bounded by v13Walk's
+            retry-count max. cb-repeated variant 2 pattern: .b's WHNF
+            needs offset=1, .c's WHNF needs offset=2 — each rediscovered
+            per v13Walk without leaking into sibling Q's fresh contexts. */
+        size_t applySeqRetryOffset = 0;
 
         /** Pointer to walk()'s pendingEdgeObservations vector, or
             nullptr if resolveCdiId is called outside a walk. When set,
@@ -136,14 +143,6 @@ class TracingReplayEvaluator : public Evaluator
         walk() fallback so it doesn't re-dispatch already-folded
         reqs (= which would XOR-cancel them out of cur). */
     std::unordered_set<TracingDecisionGraph::RequestHash> dispatchedRequestSet;
-
-    /** Persistent across v13Walks: base applySeq offset per applyReqHash.
-        Starts at 0. Walker bumps on v13Walk miss (retry loop) so
-        subsequent walks folding the same cb-apply see a distinct
-        AmbientResult — closes variant 2's .b/.c per-Q boundary
-        disambiguation with the writer-side prev-post-boundary
-        alignment. */
-    std::unordered_map<Hash, size_t> perApplyReqSessionCount;
 
     /** applyReqHashes currently being driven by `dispatchApplyLive`.
         Short-circuits walker re-entry while outer's-f-invocation is

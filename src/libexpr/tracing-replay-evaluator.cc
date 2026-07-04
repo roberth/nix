@@ -509,13 +509,10 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         }
         if (walkHit) break;
         if (ctx.dispatchedApplyReqsThisWalk.empty()) break;
-        for (auto & req : ctx.dispatchedApplyReqsThisWalk) {
-            perApplyReqSessionCount[req]++;
-            tracingCacheLog(
-                "v13Walk retry: bumping perApplyReqSessionCount[%s] -> %zu",
-                req.to_string(HashFormat::Base16, false).substr(0, 12),
-                perApplyReqSessionCount[req]);
-        }
+        ctx.applySeqRetryOffset++;
+        tracingCacheLog(
+            "v13Walk retry: bumping applySeqRetryOffset -> %zu",
+            ctx.applySeqRetryOffset);
     }
     /* reverse-outgoing walkImpl fallback: DELETED. Was a targeted
        cb-repeated helper via alternative rs ordering; the un-fold
@@ -1125,7 +1122,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         it != ctx.assignedApplySeq.end()) {
         applySeq = it->second;
     } else {
-        applySeq = perApplyReqSessionCount[applyReqHash]
+        applySeq = ctx.applySeqRetryOffset
                  + ctx.perApplyReqDispatchCount[applyReqHash]++;
         ctx.assignedApplySeq[curKey] = applySeq;
     }
