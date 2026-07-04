@@ -408,6 +408,7 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     state->db.exec("DROP TABLE IF EXISTS FactSets;");
     state->db.exec("DROP TABLE IF EXISTS EdgeResponses;");
     state->db.exec("DROP TABLE IF EXISTS SubjectStampSites;");
+    state->db.exec("DROP TABLE IF EXISTS ApplyResultProducers;");
 
     state->insertRequestSetNode.create(state->db,
         "INSERT OR IGNORE INTO RequestSetNodes(nodeHash, payload) VALUES (?, ?)");
