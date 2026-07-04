@@ -531,11 +531,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    - Observation-permutation navigation (this
                      block): walker partitions its observation pool
                      by walker-computed state-match, iterating
-                     rounds until convergence or 8-round safety
-                     limit. Handles matches reachable in permuted
-                     orders (cb-385's 5-round evolution). Cap
-                     empirically measured: max 6 rounds seen across
-                     the main test suite (2026-07-05 iter 107).
+                     rounds until convergence (bounded by the size
+                     of `flat`, since each non-break iteration
+                     consumes at least one observation). Handles
+                     matches reachable in permuted orders (cb-385's
+                     5-round evolution).
 
                    Iter 63 attempted to convert this filter to
                    Path-3 trie lookup — regressed cb-sibling-b
@@ -554,12 +554,12 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                             if (seen.insert(key).second) flat.push_back(obs);
                         }
                     std::vector<cidasks::Edge> hypWalk;
-                    /* Iteration cap: empirically max 6 rounds seen across
-                       the entire main test suite (probed 2026-07-05); 8
-                       leaves headroom above the observed max. Tightened
-                       from 32 after measurement showed the previous cap
-                       was ~5x overshoot. */
-                    for (int iter = 0; iter < 8 && !flat.empty() && !found; ++iter) {
+                    /* Termination: each non-break iteration consumes at
+                       least one observation from `flat` (partition is
+                       non-empty when we don't break), so `flat.size()`
+                       strictly decreases. Bounded by `flat.size()`
+                       without an explicit numeric cap. */
+                    while (!flat.empty() && !found) {
                         auto currentId = cidasks::scopeStateIdAt(*subj, scope, hypWalk, hypWalk.size());
                         cidasks::Edge partition;
                         std::vector<cidasks::Observation> stillRemaining;
