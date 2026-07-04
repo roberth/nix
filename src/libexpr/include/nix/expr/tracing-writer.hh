@@ -135,15 +135,6 @@ class TracingWriter
        d1CidasksWalk.size() == perQAsksEdges.size() always holds. */
     cidasks::Edge pendingD1Edge;
 
-    /* apply-result CDI → (fnId, argId) pairs pending flush at next
-       logResult, feeding ApplyResultProducers. */
-    struct PendingApplyProducer {
-        Hash cidHash;
-        Hash fnIdHash;
-        Hash argIdHash;
-    };
-    std::vector<PendingApplyProducer> pendingApplyProducers;
-
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
        new query hash added to v13FactSet since the last logResult,
        whether from `logResponse` (= env/file), `noteEnvObservation`,
@@ -278,12 +269,6 @@ private:
     std::unordered_set<Hash> recordedQHashes;
 
 public:
-    void bufferApplyProducer(const Hash & cidHash,
-                             const Hash & fnIdHash, const Hash & argIdHash)
-    {
-        pendingApplyProducers.push_back({cidHash, fnIdHash, argIdHash});
-    }
-
     /* Path 3 stamp: insert one SubjectEvolutionEdges row. Called
        from cold's scopeStateIdAtWithHook hook callback at
        fact-`from` construction sites. Immediate write (not
@@ -771,15 +756,6 @@ public:
 
         /* QCidasksWalks snapshot serialization: DELETED. Walker's own
            cidasksWalk carries what's needed under lockstep growth. */
-
-        /* Drain pending ApplyResultProducers: apply-result CDIs are
-           made queryable by their (fn, arg) producer pair so warm
-           walker's resolveCdiId routes them to resolveApplyId. */
-        for (auto & p : pendingApplyProducers) {
-            decisionGraph->insertApplyResultProducer(
-                p.cidHash, p.fnIdHash, p.argIdHash);
-        }
-        pendingApplyProducers.clear();
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,

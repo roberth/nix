@@ -430,9 +430,6 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
                 step.curAfter);
         });
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
-    writer.bufferApplyProducer(applyScopeStateId,
-        Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256),
-        Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256));
     {
         const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(

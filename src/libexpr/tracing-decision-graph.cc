@@ -133,18 +133,6 @@ CREATE TABLE IF NOT EXISTS AmbientAsks (
     PRIMARY KEY (fromFactSetHash, requestSetHash)
 ) WITHOUT ROWID;
 
--- Apply-result producer index: cold records `applyResultCid → (fnId, argId)`
--- so warm walker can route apply-result CDIs through resolveApplyId
--- (which reconstructs the correct live proxy per (fn, arg)) instead of
--- cell iteration (which conflates distinct apply-result CDIs sharing
--- cell[0]'s Merkle subjectHash). Multiple evolved CIDs for the same
--- (fn, arg) apply are all mapped to the same producer pair.
-CREATE TABLE IF NOT EXISTS ApplyResultProducers (
-    cidHash  BLOB PRIMARY KEY,
-    fnIdHash BLOB NOT NULL,
-    argIdHash BLOB NOT NULL
-) WITHOUT ROWID;
-
 -- Path 3 (per-subject observation trie). Cold-side stamps each
 -- fold step encountered during scopeStateIdAt so walker can
 -- navigate subject's evolution as an edge-by-edge trie rather than
@@ -182,7 +170,6 @@ struct TracingDecisionGraph::State
     /* Storage layer */
     SQLiteStmt insertRequest, insertQuery, insertResult, insertLocalResponse;
     SQLiteStmt selectRequest, selectQuery, selectResult, selectLocalResponse;
-    SQLiteStmt insertApplyResultProducer, selectApplyResultProducer;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
     SQLiteStmt countAsks, countTerminals;
@@ -409,11 +396,6 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO Results(resultHash, payload) VALUES (?, ?)");
     state->insertLocalResponse.create(state->db,
         "INSERT OR IGNORE INTO LocalResponseMap(requestHash, contextHash, payload) VALUES (?, ?, ?)");
-    state->insertApplyResultProducer.create(state->db,
-        "INSERT OR IGNORE INTO ApplyResultProducers(cidHash, fnIdHash, argIdHash) VALUES (?, ?, ?)");
-    state->selectApplyResultProducer.create(state->db,
-        "SELECT fnIdHash, argIdHash FROM ApplyResultProducers WHERE cidHash = ?");
-
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
     state->selectQuery.create(state->db,
@@ -512,30 +494,6 @@ void TracingDecisionGraph::insertLocalResponse(
     dg_bindBlob(use, dg_hashToBlob(contextHash));
     dg_bindBlob(use, payload);
     use.exec();
-}
-
-void TracingDecisionGraph::insertApplyResultProducer(
-    const Hash & cidHash, const Hash & fnIdHash, const Hash & argIdHash)
-{
-    auto state(_state->lock());
-    auto use = state->insertApplyResultProducer.use();
-    dg_bindBlob(use, dg_hashToBlob(cidHash));
-    dg_bindBlob(use, dg_hashToBlob(fnIdHash));
-    dg_bindBlob(use, dg_hashToBlob(argIdHash));
-    use.exec();
-}
-
-std::optional<std::pair<Hash, Hash>>
-TracingDecisionGraph::getApplyResultProducer(const Hash & cidHash)
-{
-    auto state(_state->lock());
-    auto query = state->selectApplyResultProducer.use();
-    dg_bindBlob(query, dg_hashToBlob(cidHash));
-    if (!query.next())
-        return std::nullopt;
-    auto fn = dg_blobToHash(query.getBlob(0));
-    auto arg = dg_blobToHash(query.getBlob(1));
-    return std::make_pair(fn, arg);
 }
 
 #define ATOM_GET_CACHED(NAME, CACHE)                                            \

@@ -98,13 +98,6 @@ std::string TracingObject::evolvedQueryFrom() const
                     step.curAfter);
             });
         auto hex = evolved.to_string(HashFormat::Base16, false);
-        if (!applyFnIdHex.empty() && !applyArgIdHex.empty()) {
-            try {
-                auto fnH = Hash::parseNonSRIUnprefixed(applyFnIdHex, HashAlgorithm::SHA256);
-                auto argH = Hash::parseNonSRIUnprefixed(applyArgIdHex, HashAlgorithm::SHA256);
-                writer.bufferApplyProducer(evolved, fnH, argH);
-            } catch (...) {}
-        }
         return hex;
     }
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());
@@ -367,9 +360,6 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
        TracingEvaluator::apply. */
     auto applyScopeStateId = cidasks::scopeStateIdAfter(resultSubject, applyScopeLocal, {});
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
-    writer.bufferApplyProducer(applyScopeStateId,
-        Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256),
-        Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256));
 
     /* Record the apply Request payload at the cidasks hash so dispatch
        and the legacy QueryApply{fn, arg} payload coincide. The legacy

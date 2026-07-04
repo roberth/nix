@@ -148,14 +148,6 @@ public:
     std::optional<std::string> getLocalResponsePayload(const RequestHash & requestHash, const Hash & contextHash);
 
 
-    /* Apply-result producer index: cold records `applyResultCid → (fnId, argId)`
-       so warm walker can route apply-result CDIs through resolveApplyId
-       (proper per-apply live reconstruction) instead of cell iteration
-       (which conflates distinct apply-result CDIs sharing cell[0]). */
-    void insertApplyResultProducer(
-        const Hash & cidHash, const Hash & fnIdHash, const Hash & argIdHash);
-    std::optional<std::pair<Hash, Hash>> getApplyResultProducer(const Hash & cidHash);
-
     /* ─────────────────────────────────────────────────────────────────
        Storage layer: set pools (content-addressed by canonical hash)
        ───────────────────────────────────────────────────────────────── */
