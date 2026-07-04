@@ -765,7 +765,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
 
     if (reqJson.contains("kind") && reqJson["kind"] == "localArg") {
         tracingCacheLog("resolve %s: localArg sidecar", idStr.substr(0, 12));
-        return chaseLocalArgSidecar(idStr, reqJson, ctx);
+        auto applyResultIdHex = reqJson["applyResultId"].get<std::string>();
+        resolveCdiId(applyResultIdHex, ctx);
+        if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
+            return it->second;
+        return nullptr;
     }
 
     auto tag = reqJson["query"].get<std::string>();
@@ -806,21 +810,6 @@ bool TracingReplayEvaluator::isLocalArgId(const Hash & idHash)
    Materialise a ReplayLocalObject keyed by it; its methods read
    recorded responses out of LocalResponseMap by qH(query{from=hex(id)}),
    matching what TracingLocalObject wrote during recording. */
-/* Local-direction: sidecar inserted by AmbientResolver::apply to mark
-   that this id is the local arg of a covariant callback. Chase to the
-   apply; the apply branch registers the live argObj under localId in
-   ctx.memo, so subsequent dispatches of local-incoming Facts find it
-   without re-chasing. */
-std::shared_ptr<Object> TracingReplayEvaluator::chaseLocalArgSidecar(
-    const std::string & idStr, const nlohmann::json & reqJson, ResolutionContext & ctx)
-{
-    auto applyResultIdHex = reqJson["applyResultId"].get<std::string>();
-    resolveCdiId(applyResultIdHex, ctx);
-    if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
-        return it->second;
-    return nullptr;
-}
-
 /* Mixed direction: fn is Outer (resolved through the producer chain to
    an AmbientObject); arg may be Local (standin) or Outer (resolved
    through chain). Invokes the apply live against fn and arg to

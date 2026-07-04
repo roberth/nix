@@ -145,14 +145,6 @@ class TracingReplayEvaluator : public Evaluator
         nullptr if the id can't be resolved. */
     std::shared_ptr<Object> resolveCdiId(const std::string & idStr, ResolutionContext & ctx);
 
-    /* The direction-/payload-specific branches of resolveCdiId,
-       extracted so each branch's discipline is named and visible.
-       chaseLocalArgSidecar is Local-direction-specific (frozen, served
-       from pool); resolveApplyId mixes direction (fn is Outer, arg may
-       be either); resolveProducerChild is Outer-direction-specific
-       (live navigation through the proxy graph). */
-    std::shared_ptr<Object> chaseLocalArgSidecar(const std::string & idStr, const nlohmann::json & reqJson, ResolutionContext & ctx);
-
     /** True iff the id resolves as a Local — either it has no
         producer Request in the pool (a TracingLocalObject's content
         hash whose id isn't itself a recorded query), or its pool
