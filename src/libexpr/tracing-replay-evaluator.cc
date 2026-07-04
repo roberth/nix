@@ -68,7 +68,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         std::move(currentProxy),
         {},
     };
-    ctx.currentQueryHash = queryHash;
     /* QCidasksWalks snapshot load: DELETED. Under lockstep
        walker/writer growth, walker's own cidasksWalk carries what's
        needed at each Q's flush moment; the per-Q snapshot table is

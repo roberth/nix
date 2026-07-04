@@ -47,9 +47,6 @@ class TracingReplayEvaluator : public Evaluator
             recursive resolveCdiId calls don't redo work. */
         std::map<std::string, std::shared_ptr<Object>> memo;
 
-        /** Current v13Walk's queryHash. */
-        Hash currentQueryHash{HashAlgorithm::SHA256};
-
         /** Per-applyReqHash dispatch counter within this walk. Used
             to compute the LocalResponseMap context: same applyReqHash
             dispatched multiple times (cb-repeated's PositionalSeed-
