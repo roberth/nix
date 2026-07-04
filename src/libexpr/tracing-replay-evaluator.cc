@@ -67,12 +67,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         std::move(currentProxy),
         {},
     };
-    /* QCidasksWalks snapshot load: DELETED. Under lockstep
-       walker/writer growth, walker's own cidasksWalk carries what's
-       needed at each Q's flush moment; the per-Q snapshot table is
-       redundant. Preserves the ctx.snapshotWalk vector empty so
-       downstream extendedWalkForMatch reduces to walker's cidasksWalk. */
-
     /* Per-edge buffer: dispatch() appends ambient facts here; the
        walk-loop promotes the buffer to a cumulative cidasksWalk
        edge on commit (via commitEdge) or discards it on reject.
@@ -414,21 +408,6 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
             "v13Walk retry: bumping applySeqRetryOffset -> %zu",
             ctx.applySeqRetryOffset);
     }
-    /* reverse-outgoing walkImpl fallback: DELETED. Was a targeted
-       cb-repeated helper via alternative rs ordering; the un-fold
-       Terminal deletion (see walkImpl) also removed the mechanism it
-       reached for. */
-    /* Snapshot-padding retry on miss. When cold's snapshot for this Q
-       exceeds walker's current cidasksWalk (cold/warm flush-pattern
-       asymmetry per per-arg-completion.md), scopeStateIdAt-driven
-       dispatch response resolution can differ from cold's at flush time
-       — the same subject CDI resolves to a different LiveObject under
-       walker's undersized cidasksWalk. Retry with cidasksWalk padded
-       to snapshot size, ONLY on primary miss so tests whose primary
-       walk succeeds (cb-higher-order, cb-higher-order-nested, cb-385)
-       stay on the unpadded path. Padding is spliced out post-walk so
-       walker's persistent cidasksWalk retains only real committed edges. */
-    /* Snapshot-padded retry DELETED (iteration 22 re-attempt). */
     if (!walkHit) {
         /* Walker missed. Rejected-edge obs are NOT committed to
            cidasksWalk: they represent wrong paths whose responses
@@ -493,10 +472,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
 
     /* Walk the proxy's argScope chain looking for a cell whose
        liveObject's scopeStateId matches idStr at some k under
-       walker's own cidasksWalk. The former snapshot-extension pass
-       (dedup(ctx.snapshotWalk) onto extendedWalkForMatch) was
-       DELETED when QCidasksWalks was removed; walker's cidasksWalk
-       is sufficient under lockstep growth. */
+       walker's own cidasksWalk. */
     std::vector<cidasks::Edge> extendedWalkForMatch = cidasksWalk;
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     int cellDepth = 0;

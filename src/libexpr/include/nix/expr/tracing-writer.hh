@@ -750,13 +750,6 @@ public:
            coordinates whose reqhashes came from a prior sibling's
            dispatch (cumulative-dependency principle) also get
            covered. */
-        /* EdgeResponses population: DELETED. The table has no readers
-           on the walker's hot path; write-only side effect. */
-
-
-        /* QCidasksWalks snapshot serialization: DELETED. Walker's own
-           cidasksWalk carries what's needed under lockstep growth. */
-
         return TriePosition{
             .resultNodeHash = resultNodeHash,
             .queryHashStr = qh.queryHash->to_string(HashFormat::Base16, false),
