@@ -1141,3 +1141,123 @@ stamps' idempotence on the same set of observations. The loop's
 per-round comparison was checking states that could never
 disagree with the fixed point in practice; instrumentation
 confirmed that empirically.
+
+## Iteration 109, 2026-07-05: full-alignment attempts refuted at the fold-XOR-coincidence boundary
+
+Follow-up push against the primary criterion — replacing the
+three-branch cell-chain structure (K=0 + Path 3 + converged
+fold) with one call, on the premise "cold broadcasts information
+per stamped CDI; walker looks it up and computes once, no
+per-branch fallback".
+
+**Alignment probes (baseline for the attempt):**
+
+- Writer probe: at all four cold-side `scopeStateIdAtWithHook`
+  sites (`tracing-writer.cc:78/341`, `tracing-object.cc:
+  evolvedQueryFrom`, `tracing-evaluator.cc:apply`) the
+  walk-order stamp equals the converged fixed point on cold's
+  walk. **2951/2951 AGREE.** Cold's `d1CidasksWalk` is greedy
+  for each stamped subject by construction.
+- Walker probe (branch × terminal-matches breakdown across the
+  full cb-\* + builtins-cache suite):
+  ```
+  148 K=0    terminal-matches=NO
+  121 K=0    terminal-matches=yes
+   82 Path3  terminal-matches=NO
+   99 Path3  terminal-matches=yes
+    1 conv   terminal-matches=NO
+  ```
+  Walker's terminal is `scopeStateIdAt(subj, scope, walk,
+  walk.size())`. Only 220/451 matches equal terminal — a single
+  scopeStateIdAt call at K=walk.size() is insufficient.
+- Walker probe (which walk-length K produces target via
+  `scopeStateIdAt`): every cell-chain match has at least one
+  K in `[0, walk.size()]` that works. Distribution is spread
+  (`K=[0,1]` × 248, `K=[2,3]` × 58, `K=[4]` × 15, ..., `K=[10]` × 1).
+  Walker's k-iter finds these; the challenge is picking the K
+  without a search.
+
+**Attempts and their refuting failure counts (cb-\* + builtins-cache):**
+
+- **Broadcast K per stamped CDI.** Cold's writer inserts
+  `(cid → prefixSize)` into a new `SubjectStampSites` table at
+  each of the four stamp sites; walker looks up K,
+  computes `scopeStateIdAt(*subj, cell.scope, walker.walk, K)`,
+  compares. Result: **10/31 fail** (with K=0 fallback for
+  unstamped CDIs from producer-object initial-CDI sites like
+  `ambient-object.cc`, `lambda-apply-result-object.cc`).
+  Mechanism: walker's `cidasksWalk[0..K-1]` doesn't equal cold's
+  `d1CidasksWalk[0..K-1]` at CDI-resolve time. The 1:1 alignment
+  the "Direction" section claimed is asymptotic, not per-call.
+  Same wall F2 hit.
+- **Broadcast subject_self_hash per stamped CDI.** Cold inserts
+  `(cid → subject_self_hash)`; walker walks the cell chain
+  returning the first cell whose live subject's self-hash equals
+  the stamped value — scope- and walk-independent structural
+  identity match. Result: **1/31 fail** (cb-sibling-b-depends-on-a).
+  Mechanism: sibling A and sibling B's cb-arg cells have the
+  same PositionalSeed{0} structural subject; subject_self_hash
+  alone doesn't discriminate them. The walker returns whichever
+  matches first, which is often wrong for cross-sibling CDI
+  resolves.
+- **Broadcast (subject_self_hash, scope, K) triple.** Two-step
+  match: cell's self-hash must equal stamped self-hash, then
+  `scopeStateIdAt(cell.subj, stampedScope, walker.walk, K)` must
+  equal the target CDI. Uses cold's scope (not cell's) to
+  decouple from walker's per-cell scope. Result: **7/31 fail**.
+  Same wall as the K-only broadcast: walker's walk shape
+  doesn't align at K.
+
+**Wall (iter 109):** every fully-aligned approach hits one of
+two failure modes at the same 1-to-7 test boundary.
+
+1. **Subject-hash-only identity match:** loses sibling
+   discrimination (cb-sibling-b). Cold's stamped subject
+   identity is structurally invariant, but at replay time the
+   walker's cell chain may contain multiple cells with the same
+   structural subject and different runtime scope / walk
+   contexts; the CDI computation was what discriminated them.
+2. **CDI-value verification at (cold_scope, K):** walker's walk
+   shape at K differs from cold's, so the computed value
+   diverges. F2/F18 characterised this as a general property:
+   walker's cidasksWalk grows in dispatch order, cold's
+   d1CidasksWalk grows in flush order; the two orders don't
+   coincide per-lookup.
+
+**Refuted architectural directions:**
+
+- **Bypass scope via cold's stamped scope in walker's computation.**
+  Uses cold's scope for hashing but returns walker's cell (whose
+  live scope may differ). Doesn't survive walk-shape mismatch —
+  same failure mode as the K-only broadcast.
+- **Bypass K via converged-only computation on walker's walk.**
+  Walker's converged over its walk ≠ cold's converged over
+  cold's walk when walker has extras that XOR-perturb the
+  greedy chain. 10/31 fail.
+
+The three-branch walker (iter 108's state — K=0 + Path 3 +
+observation-permutation-converged) survives because each branch
+covers cases the others miss: K=0 for initial-state stamps,
+Path 3 for cold-recorded fold paths, converged for grouping-
+mismatch fallbacks. Removing any breaks a specific test bound.
+
+**Route that remains open** — didn't fit the session's scope:
+
+- Redefine the CDI semantics so per-K uniqueness is a
+  disciplined property of the fold rather than an accident of
+  walk-order. This is deeper than iter 30's "structural stamp
+  index" attempt: not just recording every K value but
+  redesigning what a stamped CDI IS such that walker can
+  reproduce it without a walk-shape assumption. That's a
+  cross-cutting rewrite of `scopeStateIdAt` semantics + all
+  consumers, not a targeted alignment change.
+
+The SubjectStampSites table and the four writer-side stamp
+insertions were built and instrumented in this session (visible
+in the diff between iter 108 and the mid-session iter 109
+checkpoints); all four sites showed walk-order-equals-converged
+alignment on the writer, confirming that cold is emitting
+grouping-independent values. What blocks single-call alignment
+is walker's runtime state at resolve time, not cold's stamp
+values. Reverting the iter 109 additions leaves iter 108 as
+the shippable state.
