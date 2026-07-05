@@ -1317,3 +1317,55 @@ achievable but touch multiple files.
 Iter 108 remains the shippable state. Iter 111's additions to
 SubjectStampSites schema/writer/walker were reverted along with
 the fallback preserved intact.
+
+## Iteration 112, 2026-07-05: converged-only cell match refuted
+
+Attempted the single-call form: walker's cell-chain match becomes
+just `scopeStateIdAtConverged(cell.subj, cell.scope, walker.walk)
+== target_cid`. If it matches, walker returns the cell; no K=0
+fast path, no Path 3 trie navigation, no SubjectStampSites
+lookup. The idea: converged is grouping-independent and
+subsumes K=0 as its empty-fold degenerate case, so a single
+call should suffice.
+
+Result: **21/31** (10 regressions). Path 3's walk-order trie
+navigation matches CDIs that converged doesn't — specifically,
+CDIs whose stamped value equals walker's intermediate walk-
+order fold state at some edge, but not the greedy-partition
+fixed point. These are the fold-XOR-coincidence matches doc's
+F30 already characterized. Reverted.
+
+**Directions considered for iter 113:**
+
+- **applyScopeStateId-inclusive cell path hash.** Add a
+  recursive `pathHash` field to `ArgScopeCell` that XORs in the
+  enclosing apply's `applyScopeStateId` at cell birth. Cold
+  stamps cid → pathHash; walker matches cells by pathHash
+  identity. Sibling cb-arg cells would get distinct pathHashes
+  because their apply invocations differ in
+  `applyScopeStateId`.
+
+  Complication: cells are created in `makeCachedFnPrimOp::impl`
+  (expr-from-object.cc:459) BEFORE `applyScopeStateId` is known
+  (which is computed later in `TracingEvaluator::apply`). Would
+  require restructuring cell birth to defer the pathHash until
+  applyScopeStateId is available, or plumbing through multiple
+  call sites.
+
+- **Route pool-payload CDIs to pool first.** Reorder
+  `resolveCdiId` to check the Requests pool BEFORE cell chain.
+  If a CDI has a pool entry, use producer/sidecar/apply logic
+  directly. Doesn't fix cb-sibling-b's 3 failing CDIs though —
+  those don't have pool payloads.
+
+- **Extend SubjectStampSites schema with an `applyContext`
+  discriminator.** Cold stamps per CDI the applyReqHash of the
+  enclosing apply boundary. Walker's current v13Walk has an
+  applyReqHash it's dispatching for; walker matches only if the
+  stamp's applyReqHash equals walker's current one.
+
+Iter 108 remains shippable. Convergence-only was tried and refuted;
+the identity-based alignment (iter 110/111) hit a
+cell-collision blocker; both routes to full elimination need a
+richer cell discriminator than the current
+`(subject_self_hash, inheritedScope)` broadcast.
