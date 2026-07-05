@@ -1075,3 +1075,69 @@ narrow the architectural options to Path 3 (out of scope) or a
 walker-side recording of intermediate states (out of scope,
 requires structural change to `scopeStateIdAt`'s implementation
 to expose fold-step observations).
+
+## Iteration 108, 2026-07-05: obs-perm loop collapsed to a single converged-fold call
+
+The observation-permutation navigation in `resolveCdiId` was a
+bounded-iteration loop: at each round it computed the walker's
+current state, partitioned the observation pool by state-match,
+folded matches into a growing hypothetical walk, and compared the
+new terminal state against the target. Prior commits removed the
+iteration cap (`0893d48ab`) after proving termination by pool
+exhaustion; the loop still walked round by round though.
+
+**Alignment probe (full cb-\* + builtins-cache suite):** logged
+one entry per cell-chain match, tagged with which of the three
+branches (K=0, Path 3, obs-perm) resolved it and whether the
+greedy fold's fixed point matched the target.
+
+- **K=0**: 269 matches. Cold stamped many CDIs at the subject's
+  initial precondition (no obs folded in). Fixed point matches
+  the initial state only when no obs match at initial state,
+  which is not always the case — walker still needs K=0.
+- **Path 3 (walk-order trie)**: 181 matches, mostly at intermediate
+  walk positions cold's `SubjectEvolutionEdges` stamps mark.
+  Fixed point rarely matches intermediate states.
+- **Obs-perm**: 1 match (cb-385). Winning round = 0 (= first
+  partition), which happens to equal the greedy fold's fixed
+  point for that subject/pool.
+
+**The one obs-perm case has target == fixed point.** This makes
+the multi-round loop redundant — it can be replaced by a single
+call that computes the fixed point directly, without iterating
+round comparisons. Extract the greedy partition as
+`cidasks::scopeStateIdAtConverged(subj, scope, walk)` and let
+`resolveCdiId` compare its result to the target.
+
+**Alignment property:** `scopeStateIdAtConverged` is grouping- and
+order-independent. Its value depends only on the SET of
+observations in `walk`, not on how they are grouped into edges.
+That's the invariant the doc's original F17/F18 findings named as
+necessary for a search-free walker: two walks carrying the same
+observations reach the same convergence value regardless of edge
+layout. Cold's `scopeStateIdAtWithHook` populates the same
+trie rows via its own fold, so the walker's fixed-point value
+lines up with cold's stamp when they read the same aligned pool
+— no per-round hash comparison needed.
+
+**Not a full replacement for K=0 / Path 3.** The probe shows the
+majority of cold's stamped CDIs are at intermediate walk states,
+not the fixed point. K=0 remains as the fast path for initial
+states; Path 3 remains as the trie navigation for walk-order
+intermediate states. The convergence call now handles the
+grouping-mismatch fallback — same coverage as the old loop, but
+a single call rather than a bounded iteration.
+
+**Test evidence:** 159/0/5 main (unchanged), 477/0/15
+`--repeat=3` across the full main suite, no flakes.
+
+**Doc-level implication:** the previous strategic close named
+"walker-side recording of intermediate states" as out of scope
+because it seemed to require exposing fold-step observations.
+The convergence call didn't need to expose them — the greedy
+partition's fixed point is a single well-defined value on the
+pool, and cold's writer indirectly agrees on it via the trie
+stamps' idempotence on the same set of observations. The loop's
+per-round comparison was checking states that could never
+disagree with the fixed point in practice; instrumentation
+confirmed that empirically.
