@@ -1369,3 +1369,56 @@ the identity-based alignment (iter 110/111) hit a
 cell-collision blocker; both routes to full elimination need a
 richer cell discriminator than the current
 `(subject_self_hash, inheritedScope)` broadcast.
+
+## Iteration 113, 2026-07-05: Path 3 alone (30/31) vs trie-greedy alone (30/31) — complementary blockers
+
+Two single-branch variants tried:
+
+- **Path 3 walk-order alone** (K=0 subsumed as initial-state check
+  before the edge loop; no converged fallback). Walker iterates
+  its own `cidasksWalk` edge-by-edge, gates each observation on
+  a `SubjectEvolutionEdges` trie lookup, and folds matches. If
+  the running `cur` ever equals the target CDI, walker returns
+  the cell.
+
+  Result: **30/31**. Only cb-385 fails — its
+  `deep-indep test 4` needs the greedy convergence that its
+  "5-round evolution" comment references. Path 3's walk-order
+  never reaches those states because walker's walk grouping
+  doesn't match cold's fold order.
+
+- **Trie-driven greedy convergence alone.** Same trie gate as
+  Path 3, but walker processes the FULL observation pool
+  greedily instead of walker's edge order: at each round, fold
+  any obs whose trie step matches the current cur; loop until
+  no obs matches. This reproduces cold's fold path in any order.
+
+  Result: **30/31**. cb-385 passes; cb-sibling-b now fails
+  because trie-greedy over-matches — for cb-sibling-b's 3
+  outer-context CDIs (0da832565ec8, bc5e65734c6d,
+  96723f7f871b), the greedy fold finds trie steps cold recorded
+  in a different apply context, walker "matches" but the
+  semantically correct resolution is via the pool.
+
+**The two mechanisms are complementary.** cb-385 needs greedy
+observation ordering; cb-sibling-b needs strict walk-order.
+Neither alone catches both. Together they'd be iter 108's
+3-branch structure minus K=0 (Path 3 subsumes K=0 as initial-
+state check).
+
+**Direction for iter 114:** the greedy variant needs an
+apply-context gate to skip stamps from foreign apply
+boundaries. Cold's writer records apply-context (via
+`pendingApplyBoundaries` finalization for d=2 stamps vs.
+outer d=1 stamps); if walker filters trie steps by "matching
+my current v13Walk's apply context" (or its ancestor chain),
+trie-greedy could match cb-385 without over-matching
+cb-sibling-b.
+
+Concrete plan: extend `SubjectEvolutionEdges` schema with an
+optional `applyReqHash` column. Cold's writer populates it
+from `pendingApplyBoundaries` during d=2 stampAndEmit; d=1
+flush stamps leave it null (outer context). Walker's trie
+lookup filters: only follow steps whose applyReqHash matches
+walker's current dispatch context (or is null for outer
+resolves).
