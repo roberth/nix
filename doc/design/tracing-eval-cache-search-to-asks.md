@@ -1261,3 +1261,59 @@ grouping-independent values. What blocks single-call alignment
 is walker's runtime state at resolve time, not cold's stamp
 values. Reverting the iter 109 additions leaves iter 108 as
 the shippable state.
+
+## Iteration 111, 2026-07-05: (self_hash, inheritedScope) is still not unique per cell
+
+Follow-up attempt with subject-hash + inheritedScope broadcast per
+stamped CDI, plus a pool-payload guard (skip cell match when the
+CDI has a Requests-pool entry so producer/sidecar logic runs
+downstream). Result: **30/31**, cb-sibling-b-depends-on-a again
+the sole failure.
+
+**Instrumentation across cb-\* + builtins-cache:**
+
+- Fallback (iter 108's 3-branch) matches: 269 K=0 + 181 Path 3 +
+  1 converged = 451.
+- Primary (identity on (self_hash, scope)) agrees on all 451 of
+  them.
+- Primary also matches 32 CDIs where fallback misses. Those
+  extras cause the regression when primary is authoritative:
+  walker returns a cell that iter 108 correctly left unmatched
+  (falls to pool → nullptr → downstream fails safely).
+
+**Root cause characterized:** the `(self_hash, scope)` pair
+collides across structurally-identical cells. cb-sibling-b's
+outer bindings mean walker's cell chain during warm carries a
+cell whose `(subject_self_hash, inheritedScope)` equals what
+cold stamped for a different cell's CDI. Adding a pool-payload
+guard doesn't fix it — the 3 failing CDIs (0da832565ec8,
+bc5e65734c6d, 96723f7f871b) aren't in the Requests pool, so the
+guard doesn't skip them.
+
+**What actually discriminates the two cells:** their specific
+apply invocations differ — sibling A's cb-apply has a distinct
+`applyScopeStateId` from sibling B's (because their argument
+values differ: `{ f = fA; x = 1 }` vs. `{ f = fB; x = a.whatever }`).
+Cell-instance identity in the codebase is (subject, scope,
+depth, parent) — none of those differ between A and B. Only
+their live objects differ (runtime).
+
+**Direction for iter 112:** add an `applyScopeStateId`-inclusive
+per-cell path hash. Each cell computes a stable identifier that
+folds in its containing apply's `applyScopeStateId`. Cold stamps
+this per CDI; walker matches cells by identity. Since
+`applyScopeStateId` differs per invocation, sibling cells get
+distinct path hashes and the collision goes away.
+
+Practical complication: cell creation happens in `makeCachedFnPrimOp::impl`
+(expr-from-object.cc:449-590), not in the writer's four stamp
+sites. To broadcast a cell-identity hash per CDI, the stamp
+sites need to know the current cell's identity. Either the fact
+struct in `pendingDepth1Facts` grows a cell-identity field
+plumbed through, or the writer inspects the current
+TracingObject's argScope chain at stamp time — both are
+achievable but touch multiple files.
+
+Iter 108 remains the shippable state. Iter 111's additions to
+SubjectStampSites schema/writer/walker were reverted along with
+the fallback preserved intact.
