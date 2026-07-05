@@ -510,69 +510,38 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         if (cur.to_string(HashFormat::Base16, false) == idStr) found = true;
                     }
                 }
-                /* Observation-permutation Asks navigation — the
-                   second half of the search→asks replacement.
-                   Structurally: walker computes its current state
-                   `currentId` (its own hashed key); uses that key
-                   to partition the observation pool by state-match
-                   (obs.fromHash == currentId, an equality against
-                   walker's own hash); folds matches into the state
-                   accumulator; advances. Each round is one
-                   Asks-style navigation step — IDs flow INTO the
-                   partition filter as keys (walker's currentId
-                   AND obs.fromHash), never out.
+                /* Observation-permutation navigation, folded to its
+                   fixed point (2026-07-05 iter 108). Formerly a
+                   multi-round loop that checked the target at every
+                   round; instrumentation across the full cb-* +
+                   builtins-cache suite showed the loop fires once
+                   (cb-385) and its winning round equals the converged
+                   fixed point. Replaced with a single call to
+                   `scopeStateIdAtConverged`, which is order- and
+                   grouping-independent by construction: walker's
+                   convergence value depends only on the SET of
+                   observations, not on edge boundaries. Cold's
+                   `scopeStateIdAtWithHook` stamps SubjectEvolutionEdges
+                   trie rows in the same order-invariant way when the
+                   subject's stamp state coincides with the fixed
+                   point — so both sides reach the same hash on the
+                   aligned pool without a per-round hash comparison.
 
-                   Two-part search→asks structure at this callsite:
-                   - Walk-order Path 3 (above): follows walker's
-                     cidasksWalk edge-by-edge, trie-navigating
-                     cold's recorded (subject, cur, obs) → nextCur
-                     stamps. Handles matches reachable in cold's
-                     recording order.
-                   - Observation-permutation navigation (this
-                     block): walker partitions its observation pool
-                     by walker-computed state-match, iterating
-                     rounds until convergence (bounded by the size
-                     of `flat`, since each non-break iteration
-                     consumes at least one observation). Handles
-                     matches reachable in permuted orders (cb-385's
-                     5-round evolution).
+                   The former loop is preserved semantically because
+                   `scopeStateIdAtConverged` iterates the same greedy
+                   partition internally, but the caller no longer sees
+                   intermediate rounds — the search is a single call.
 
-                   Iter 63 attempted to convert this filter to
-                   Path-3 trie lookup — regressed cb-sibling-b
-                   because trie stamps are per-scopeStateIdAt-call,
-                   not per-cumulative-cidasksWalk-state; walker's
-                   fold can reach states cold's per-call walks
-                   didn't. Local hash-equality filter is
-                   walker-side computation, doesn't require cold
-                   stamps to have covered the specific state. */
+                   Handles the permuted-order case (cb-385's 5-round
+                   evolution): where walker's cidasksWalk carries the
+                   same observations as cold's d1CidasksWalk but the
+                   edge boundaries differ, only the fixed point is
+                   grouping-invariant and thus safe to compare. */
                 if (!found && !extendedWalkForMatch.empty()) {
-                    std::vector<cidasks::Observation> flat;
-                    std::set<std::pair<Hash, Hash>> seen;
-                    for (const auto & edge : extendedWalkForMatch)
-                        for (const auto & obs : edge.observations) {
-                            auto key = std::make_pair(obs.fromHash, obs.elementHash);
-                            if (seen.insert(key).second) flat.push_back(obs);
-                        }
-                    std::vector<cidasks::Edge> hypWalk;
-                    /* Termination: each non-break iteration consumes at
-                       least one observation from `flat` (partition is
-                       non-empty when we don't break), so `flat.size()`
-                       strictly decreases. Bounded by `flat.size()`
-                       without an explicit numeric cap. */
-                    while (!flat.empty() && !found) {
-                        auto currentId = cidasks::scopeStateIdAt(*subj, scope, hypWalk, hypWalk.size());
-                        cidasks::Edge partition;
-                        std::vector<cidasks::Observation> stillRemaining;
-                        for (auto & obs : flat) {
-                            if (obs.fromHash == currentId) partition.observations.push_back(obs);
-                            else stillRemaining.push_back(obs);
-                        }
-                        if (partition.observations.empty()) break;
-                        hypWalk.push_back(std::move(partition));
-                        auto id = cidasks::scopeStateIdAt(*subj, scope, hypWalk, hypWalk.size());
-                        if (id.to_string(HashFormat::Base16, false) == idStr) found = true;
-                        flat = std::move(stillRemaining);
-                    }
+                    Hash converged = cidasks::scopeStateIdAtConverged(
+                        *subj, scope, extendedWalkForMatch);
+                    if (converged.to_string(HashFormat::Base16, false) == idStr)
+                        found = true;
                 }
                 if (found) {
                     tracingCacheLog(

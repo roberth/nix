@@ -156,6 +156,25 @@ Hash scopeStateIdAfter(const Subject & subject, const Hash & scope, const std::v
     (including derived) should use `structuralAddress` instead. */
 Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex);
 
+/** Grouping-independent converged fold. Flattens `walk` into a
+    deduplicated observation pool (by (fromHash, elementHash)) and
+    repeatedly partitions it by state-match: at each round, all
+    observations whose `fromHash` equals `subject`'s current state
+    are pulled out as a synthetic edge and appended to a growing
+    hypothetical walk; the round terminates when no observation
+    matches. Returns `subject`'s state at the tail of that
+    hypothetical walk — a fixed point of the greedy convergence.
+
+    The result depends only on the SET of observations in `walk`,
+    not on how they are grouped into edges. This is the alignment
+    property the search→asks project needs: recorder and replayer
+    reach the same value from any two walks carrying the same
+    observations, regardless of edge boundaries. Semantically
+    equivalent to iterating the observation-permutation loop in
+    `TracingReplayEvaluator::resolveCdiId` to its fixed point. */
+Hash scopeStateIdAtConverged(
+    const Subject & subject, const Hash & scope, const std::vector<Edge> & walk);
+
 /** Compute a content-addressed structural identifier for any
     `subject` — including `DerivedSubject`, where `scopeStateIdAt`
     traps. For non-derived subjects this delegates to `scopeStateIdAt`.

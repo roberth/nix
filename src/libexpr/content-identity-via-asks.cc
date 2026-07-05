@@ -332,6 +332,46 @@ Hash scopeStateIdAfter(const Subject & subject, const Hash & scope, const std::v
     return scopeStateIdAt(subject, scope, walk, walk.size());
 }
 
+Hash scopeStateIdAtConverged(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk)
+{
+    /* Flatten walk into deduped observation pool keyed by
+       (fromHash, elementHash). Order within `walk` is discarded —
+       the greedy partition below only reads `fromHash` for state-
+       match and XOR-folds `elementHash`, both order-insensitive. */
+    std::vector<Observation> flat;
+    std::set<std::pair<Hash, Hash>> seen;
+    for (auto & edge : walk)
+        for (auto & obs : edge.observations) {
+            auto key = std::make_pair(obs.fromHash, obs.elementHash);
+            if (seen.insert(key).second) flat.push_back(obs);
+        }
+    /* Greedy state-match partition: at each round, pull every obs
+       whose fromHash == subject's current state into a synthetic
+       edge; append; recompute the subject's state; repeat until no
+       obs matches. `scopeStateIdAt(subj, scope, hypWalk, hypWalk.size())`
+       XOR-folds each edge's matching obs into the running state,
+       so state advances one round per iteration.
+
+       Termination: each non-break round consumes at least one obs
+       from `flat` (partition is non-empty when we don't break), so
+       `flat.size()` strictly decreases. Bounded by initial pool
+       size without an explicit numeric cap. */
+    std::vector<Edge> hypWalk;
+    while (!flat.empty()) {
+        auto currentId = scopeStateIdAt(subject, scope, hypWalk, hypWalk.size());
+        Edge partition;
+        std::vector<Observation> stillRemaining;
+        for (auto & obs : flat) {
+            if (obs.fromHash == currentId) partition.observations.push_back(obs);
+            else stillRemaining.push_back(obs);
+        }
+        if (partition.observations.empty()) break;
+        hypWalk.push_back(std::move(partition));
+        flat = std::move(stillRemaining);
+    }
+    return scopeStateIdAt(subject, scope, hypWalk, hypWalk.size());
+}
+
 Hash structuralAddress(
     const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
 {
