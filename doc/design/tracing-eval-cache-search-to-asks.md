@@ -1422,3 +1422,51 @@ flush stamps leave it null (outer context). Walker's trie
 lookup filters: only follow steps whose applyReqHash matches
 walker's current dispatch context (or is null for outer
 resolves).
+
+## Iteration 114, 2026-07-05: Path 3 + trie-greedy replacing converged doesn't help — trie is not a stricter subset of regular converged
+
+Tested: keep iter 108's Path 3 walk-order branch, swap the
+converged fallback for a trie-driven greedy fold. The trie
+gate should be MORE restrictive than regular converged (it
+requires cold to have stamped the specific fold step), so
+walker's greedy-fold pool would shrink to only cold-recorded
+transitions.
+
+Result: **30/31**, cb-sibling-b-depends-on-a fails.
+
+**Static analysis said trie-greedy ⊆ regular converged:** for
+walker's fold to fire via trie lookup, the trie row
+`(subject, walker.cur, obs.from, obs.elem)` must exist, and by
+cold's stamping construction this requires
+`cold.curBefore == cold.obs.from == walker.cur == walker.obs.from`
+— identical to the regular converged fold's
+`obs.fromHash == walker.cur` check plus a cold-stamp gate.
+
+**Empirically trie-greedy matches strictly more, though.**
+For cb-sibling-b's 3 failing CDIs, trie-greedy fires but
+regular converged doesn't. The pending explanation is that
+walker's `cidasksWalk` during warm has observations whose
+`fromHash` happens to equal walker's cell's current cur AND
+cold stamped those transitions for the same subject in a
+different apply context. Regular converged's per-round
+partition finds them by fromHash match; the trie's per-subject
+scoping should filter them but apparently doesn't. Not yet
+pinned to a specific mechanism — need obs-level instrumentation
+to trace WHY the two mechanisms diverge for those 3 CDIs.
+
+**Iteration status:** after 6 iterations (109 through 114)
+exploring single-branch cell-chain matches, the wall remains
+where F30 characterised it: walker's per-cell fold-XOR
+coincidences reach CDIs cold stamped for other cells / other
+contexts. Every replacement of iter 108's three-branch
+structure either misses cases (Path 3 alone / converged alone /
+trie-greedy alone: each 30/31 on a different test) or
+over-matches (identity-only variants: 30/31 with cb-sibling-b).
+
+**Shippable state remains iter 108.** The primary
+`resolveCdiId`'s cell-chain block collapsed the obs-perm loop
+to a single call (iter 108 landed), and every subsequent
+attempt to further collapse K=0 + Path 3 + converged into one
+mechanism regresses at least one test. Full single-call
+alignment likely requires the major CDI-semantics redesign
+F30 named — beyond a single session's scope.
