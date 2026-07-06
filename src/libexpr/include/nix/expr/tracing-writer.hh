@@ -77,7 +77,7 @@ class TracingWriter
        each new Fact, and a seenRequests set dedupes per request.
        This makes the per-logResult cost O(1) instead of O(|factSet|)
        for the hash computation: insertFactSet (which would re-sort
-       and re-fold all members) is bypassed via primeFactSetCache. */
+       and re-fold all members) is bypassed via installFactSet. */
     std::vector<TracingDecisionGraph::Fact> envFactSet;
     TracingDecisionGraph::SetHash envFactSetHash;
     std::unordered_set<Hash> seenRequests;
@@ -709,7 +709,7 @@ public:
         decisionGraph->insertResult(resultNodeHash, resultPayload);
 
         /* envFactSetHash is maintained incrementally per fact; skip
-           insertFactSet's O(N log N) sort + fold. primeFactSetCache
+           insertFactSet's O(N log N) sort + fold. installFactSet
            makes the members available to record() via getFactSet
            without rebuilding the hash. responseFor + seenRequests
            are passed by reference so record() doesn't re-build its
@@ -721,7 +721,7 @@ public:
            and hand the root hash to record() as the precomputed RS
            hash for the whole-remaining edge — record() can then
            skip its insertRequestSet(remainingVec) call. */
-        decisionGraph->primeFactSetCache(envFactSetHash, envFactSet);
+        decisionGraph->installFactSet(envFactSetHash, envFactSet);
         sessionRequestsTrie.persist(*decisionGraph);
 
         tracingCacheLog("logResult: Q=%s factSet=%s -> result (inserting %zu Asks edges)",

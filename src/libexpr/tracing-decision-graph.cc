@@ -716,7 +716,7 @@ TracingDecisionGraph::insertFactSet(std::vector<Fact> members)
     return setHash;
 }
 
-void TracingDecisionGraph::primeFactSetCache(
+void TracingDecisionGraph::installFactSet(
     const SetHash & hash, const std::vector<Fact> & members)
 {
     auto state(_state->lock());
