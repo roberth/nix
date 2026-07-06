@@ -119,8 +119,8 @@ class TracingWriter
        facts field). */
 
     /* Persistent cidasks chain for depth-1 ambient observations.
-       envWalk is kept 1:1-aligned with `perQAsksEdges`:
-       every Asks edge inserted into `perQAsksEdges` is paired with
+       envWalk is kept 1:1-aligned with `envAsksEdges`:
+       every Asks edge inserted into `envAsksEdges` is paired with
        a d1 edge inserted at the SAME index. This invariant lets the
        walker's `cidasksWalk` — which grows once per dispatched Asks
        edge via `commitEdge` — match the writer's d1 walk
@@ -132,7 +132,7 @@ class TracingWriter
        drains pendingDepth1Facts into it) and `splitFlush` (which
        pushes it to envWalk paired with a perQAsksEdge). May
        be empty (= file-read-only Asks edge) — still pushed so that
-       envWalk.size() == perQAsksEdges.size() always holds. */
+       envWalk.size() == envAsksEdges.size() always holds. */
     cidasks::Edge pendingD1Edge;
 
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
@@ -141,7 +141,7 @@ class TracingWriter
        or `flushPendingAmbient`. AmbientQueries are depth-1 just like
        file reads; bundling them with env/file into one Asks edge per
        logResult keeps the trie's edge structure 1:1 with envWalk.
-       `perQAsksEdges` retains each finalized boundary so every Q's
+       `envAsksEdges` retains each finalized boundary so every Q's
        logResult can pre-insert all of them in its namespace via
        INSERT OR IGNORE (= idempotent). */
     std::vector<Hash> pendingNewRequests;
@@ -152,7 +152,7 @@ class TracingWriter
         TracingDecisionGraph::SetHash fromFactSetHash;
         TracingDecisionGraph::SetHash requestSetHash;
     };
-    std::vector<PerQAsksEdge> perQAsksEdges;
+    std::vector<PerQAsksEdge> envAsksEdges;
     /* Mirrors `seenRequests` but keyed by query hash, not fact hash.
        record()'s slow path iterates this to build the trailing
        remaining-edge — an Asks edge's requestSet is a set of query
@@ -181,7 +181,7 @@ class TracingWriter
         Hash applyRequestHash;   ///< natural hash of applyQueryPayload
         std::vector<PendingFact> facts;
         /* Chronological insertion: ε perQAsksEdge for this boundary
-           is inserted into perQAsksEdges at this position at finalize
+           is inserted into envAsksEdges at this position at finalize
            time (= position recorded at markApplyBoundary time, AFTER
            splitFlush(false) drained pre-boundary d=1 chunk). This
            makes the walker dispatch the ε edge BEFORE the body's
@@ -214,9 +214,9 @@ class TracingWriter
               i.e. the synthetic d=1 apply Fact's element hash. On
               each re-process, recomputed; the delta between old and
               new is XOR-applied to envFactSetHash and downstream
-              perQAsksEdges' fromFactSetHash to keep the writer
+              envAsksEdges' fromFactSetHash to keep the writer
               state consistent with the extended chain.
-            - `pos` = the actual perQAsksEdges position where this
+            - `pos` = the actual envAsksEdges position where this
               boundary's ε edge ended up after insertion (=
               `insertionIndex + shift` at finalize time). Needed
               because subsequent boundaries' insertions don't shift
@@ -262,7 +262,7 @@ private:
 
     /* Q hashes that have been logResult'd in this writer's lifetime.
        Re-inserted under at late-d2-obs re-process time so the
-       updated `perQAsksEdges` (with corrected downstream
+       updated `envAsksEdges` (with corrected downstream
        `fromFactSetHash`) lands as additional Asks rows under each
        prior Q — letting the walker's chain walk for those Q's use
        the post-re-open propagation. */
@@ -727,8 +727,8 @@ public:
         tracingCacheLog("logResult: Q=%s factSet=%s -> result (inserting %zu Asks edges)",
                         qh.queryHash->to_string(HashFormat::Base16, false).substr(0, 12),
                         envFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                        perQAsksEdges.size());
-        for (const auto & edge : perQAsksEdges)
+                        envAsksEdges.size());
+        for (const auto & edge : envAsksEdges)
             decisionGraph->insertAsks(*qh.queryHash, edge.fromFactSetHash, edge.requestSetHash);
 
         /* If we have per-Q edges, skip the whole-remaining shortcut
@@ -736,7 +736,7 @@ public:
            ctx.edgeIndex). Pass `allRequestHashes` (= query hashes),
            not `seenRequests` (= fact hashes for XOR dedup); record()'s
            slow path iterates this for its trailing remaining-edge. */
-        if (perQAsksEdges.empty())
+        if (envAsksEdges.empty())
             decisionGraph->record(*qh.queryHash, envFactSetHash, resultNodeHash,
                 responseFor, seenRequests, allRequestsTrie.rootHash());
         else
@@ -745,7 +745,7 @@ public:
 
         /* Populate per-edge response table AFTER `record()` so
            Patricia-split-added Asks rows are covered too. Enumerate
-           ALL Asks rows for Q (not just `perQAsksEdges`), and use
+           ALL Asks rows for Q (not just `envAsksEdges`), and use
            LRM (`getLocalResponsePayload`) as the source of truth so
            coordinates whose reqhashes came from a prior sibling's
            dispatch (cumulative-dependency principle) also get

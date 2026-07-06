@@ -52,7 +52,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
        Under the 1:1 alignment invariant, the new edge is NOT pushed
        here; it's staged in `pendingD1Edge` for `splitFlush` to push
        paired with the corresponding perQAsksEdge. This keeps
-       writer.envWalk.size() == perQAsksEdges.size() at every
+       writer.envWalk.size() == envAsksEdges.size() at every
        transition. */
     size_t d1EdgeIndex = envWalk.size();
     cidasks::Edge & d1NewEdge = pendingD1Edge;
@@ -230,7 +230,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
        writer used at record time. */
     if (!pendingNewRequests.empty()) {
         auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
-        perQAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         /* 1:1 alignment: push the staged d1 edge alongside the
            perQAsksEdge. The d1 edge may be empty (= file-read-only
            Asks edge with no ambient observations) — still pushed so
@@ -240,7 +240,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
         tracingCacheLog("finalize: final d1 Asks edge from=%s rs-size=%zu (perQ=%zu d1=%zu)",
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
-                        perQAsksEdges.size(),
+                        envAsksEdges.size(),
                         envWalk.size());
         prevQFactSetHash = envFactSetHash;
         pendingNewRequests.clear();
@@ -298,7 +298,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
        ε BEFORE its body's d=1 facts in walker dispatch order. Each
        insertion shifts subsequent indices by 1, tracked via `shift`.
        Each ε's elementHash propagates into all subsequent
-       perQAsksEdges' fromFactSetHash (= walker's cur advances by
+       envAsksEdges' fromFactSetHash (= walker's cur advances by
        ε at that position). priorEpsilonAccum accumulates earlier
        ε contributions so each new ε's own fromFactSetHash reflects
        all prior ε contributions to its left. */
@@ -400,7 +400,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
         if (!boundary.finalized) {
             /* First finalize for this boundary. Process all facts
                accumulated so far, insert d=1 apply Fact, ε edge, and
-               propagate the factHash to downstream perQAsksEdges.
+               propagate the factHash to downstream envAsksEdges.
 
                `boundaryOuterCtx` = the walker's outer d1 cur at the
                moment this boundary's cb-apply Request will be
@@ -451,7 +451,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             size_t pos = boundary.insertionIndex + shift;
             Hash epsilonFromHash = TracingDecisionGraph::xorHashes(
                 boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
-            perQAsksEdges.insert(perQAsksEdges.begin() + pos,
+            envAsksEdges.insert(envAsksEdges.begin() + pos,
                 {epsilonFromHash, epsilonReqSet});
             envWalk.insert(envWalk.begin() + pos, std::move(applyEdge));
             tracingCacheLog("finalize: ε Asks edge inserted at pos=%zu from=%s (insertionIndex=%zu shift=%zu perQ=%zu)",
@@ -459,12 +459,12 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                             epsilonFromHash.to_string(HashFormat::Base16, false).substr(0, 12),
                             boundary.insertionIndex,
                             shift,
-                            perQAsksEdges.size());
+                            envAsksEdges.size());
             ++shift;
 
-            for (size_t i = pos + 1; i < perQAsksEdges.size(); ++i)
-                perQAsksEdges[i].fromFactSetHash = TracingDecisionGraph::xorHashes(
-                    perQAsksEdges[i].fromFactSetHash, factHash);
+            for (size_t i = pos + 1; i < envAsksEdges.size(); ++i)
+                envAsksEdges[i].fromFactSetHash = TracingDecisionGraph::xorHashes(
+                    envAsksEdges[i].fromFactSetHash, factHash);
             priorEpsilonAccum = TracingDecisionGraph::xorHashes(priorEpsilonAccum, factHash);
             /* Keep prevQFactSetHash aligned with envFactSetHash after
                the boundary XOR-fold. Without this, subsequent Q's
@@ -498,7 +498,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                warm (= different AmbientResult), so the walker's cur
                would diverge from the recorded factHash that
                `[finalize: ε Asks edge]` baked into downstream
-               perQAsksEdges. Instead we only need the late probes'
+               envAsksEdges. Instead we only need the late probes'
                request payloads and recorded responses in the pool
                so `ReplayLocalObject`'s `readResponse` finds them.
                Validation against AmbientAsks is skipped for boundaries
@@ -558,13 +558,13 @@ void TracingWriter::splitFlush(bool finalize)
        pushed so the indices match the walker's commitEdge counts. */
     if (!pendingNewRequests.empty()) {
         auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
-        perQAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         envWalk.push_back(std::move(pendingD1Edge));
         pendingD1Edge = {};
         tracingCacheLog("splitFlush: new Asks edge from=%s rs-size=%zu (perQ=%zu d1=%zu)",
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
-                        perQAsksEdges.size(),
+                        envAsksEdges.size(),
                         envWalk.size());
         prevQFactSetHash = envFactSetHash;
         pendingNewRequests.clear();
@@ -612,7 +612,7 @@ void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
        only known after the body finishes. flushPendingAmbient at
        logResult walks pendingApplyBoundaries in order and finalises
        each one, INSERTING the ε perQAsksEdge at the chronological
-       insertionIndex (= position in perQAsksEdges captured AFTER
+       insertionIndex (= position in envAsksEdges captured AFTER
        splitFlush(false) drained the pre-boundary d=1 chunk). This
        puts ε BEFORE its body's d=1 facts in walker dispatch order,
        so the lambda-standin's seedCell extension fires before
@@ -621,14 +621,14 @@ void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
         applyReqHash,
         applyReqHash,
         {},
-        perQAsksEdges.size(),  // insertionIndex AFTER pre-boundary chunk
+        envAsksEdges.size(),  // insertionIndex AFTER pre-boundary chunk
         prevQFactSetHash,      // fromFactSetHashAtBoundary
         Hash(HashAlgorithm::SHA256)  // boundaryOuterCtx (populated at first finalize)
     });
     tracingCacheLog("markApplyBoundary: buffered (applyReqHash=%s, pendingBoundaries=%zu, insertionIndex=%zu)",
                     applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
                     pendingApplyBoundaries.size(),
-                    perQAsksEdges.size());
+                    envAsksEdges.size());
 }
 
 } // namespace nix

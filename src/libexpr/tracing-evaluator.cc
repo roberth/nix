@@ -413,10 +413,10 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     /* Per-arg-completion option 2: apply-result argStateId evolves with
        the writer's envWalk at the moment of apply. With the
        1:1 alignment restructure, writer.d1.size grows in lockstep
-       with perQAsksEdges; walker.cidasksWalk grows per dispatched
+       with envAsksEdges; walker.cidasksWalk grows per dispatched
        Asks edge. At sibling B's apply, walker.cidasksWalk should
        have caught up to writer.d1.size at cold sib B apply (= all
-       of sib A's perQAsksEdges traversed via prior v13Walks). */
+       of sib A's envAsksEdges traversed via prior v13Walks). */
     auto & d1Walk = writer.getD1CidasksWalk();
     /* Path 3: stamp SubjectEvolutionEdges via hook. */
     Hash resultSelfHash = cidasks::scopeStateIdAt(
