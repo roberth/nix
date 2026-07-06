@@ -249,11 +249,11 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
        downstream so the registry's resultId and this proxy's argStateId
        for queryFn lookups agree. */
     int localDepth = callerScope ? callerScope->depth + 1 : 0;
-    Subject argSubject{PositionalSeed{localDepth}};
+    Subject argId{PositionalSeed{localDepth}};
     applyFn(subjectHashAfter(subject, argAncestry, {}), std::move(argObj), callerScope);
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(subject),
-        .arg = std::make_shared<const Subject>(std::move(argSubject)),
+        .arg = std::make_shared<const Subject>(std::move(argId)),
     }};
     auto result = std::make_shared<AmbientObject>(std::move(resultSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Apply-result argAncestry cell rooted at the caller's argAncestry. */

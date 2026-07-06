@@ -222,7 +222,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        on the apply result continue to be recorded in the depth-2
        trace with an evolved scopeStateId (per the cidasks design). */
     auto argCdiHex = argObj->getStateHashHex();
-    Subject argSubject = argObj->getSubject()
+    Subject argId = argObj->getSubject()
         ? *argObj->getSubject()
         : Subject{PostulatedIdempotentRead{
               argCdiHex
@@ -231,7 +231,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
     auto result = inner->queryApply(argObj);
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(subject),
-        .arg = std::make_shared<const Subject>(std::move(argSubject)),
+        .arg = std::make_shared<const Subject>(std::move(argId)),
     }};
     return std::make_shared<TracingCallbackArg>(
         std::move(result), std::move(resultSubject), writer, rootFSRoot, argCell, argAncestry, depth2ApplyId);

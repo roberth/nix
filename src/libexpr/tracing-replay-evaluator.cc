@@ -494,7 +494,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    Empirical (iter 61 probe): 137/137 k-iter matches
                    also reached by trie navigation. */
                 if (!found) {
-                    Hash subjectSelfHash = stateHashAt(
+                    Hash argIdHash = stateHashAt(
                         *subj, Hash(HashAlgorithm::SHA256), {}, 0);
                     Hash cur = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
                     for (const auto & edge : extendedWalkForMatch) {
@@ -502,7 +502,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         Hash edgeAcc(HashAlgorithm::SHA256);
                         for (const auto & obs : edge.observations) {
                             auto next = decisionGraph.getSubjectEvolutionEdge(
-                                subjectSelfHash, cur, obs.fromHash, obs.elementHash);
+                                argIdHash, cur, obs.fromHash, obs.elementHash);
                             if (next)
                                 edgeAcc = TracingDecisionGraph::xorHashes(edgeAcc, obs.elementHash);
                         }
@@ -1002,9 +1002,9 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        applyResult subject's evolved cid using fnObj's subject +
        PositionalSeed{sidecarDepth} as arg. */
     {
-        Subject seedSubject{PositionalSeed{sidecarDepth}};
+        Subject argId{PositionalSeed{sidecarDepth}};
         Hash evolvedLeafStateHash = stateHashAt(
-            seedSubject, sidecarScope, envWalk, envWalk.size());
+            argId, sidecarScope, envWalk, envWalk.size());
         auto evolvedLeafStateHashHex = evolvedLeafStateHash.to_string(HashFormat::Base16, false);
         ctx.memo[evolvedLeafStateHashHex] = replayLocal;
         tracingCacheLog(
@@ -1015,7 +1015,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         if (auto * fnSubj = fnObj->getSubject()) {
             Subject applyResultSubj{ApplyResultSubject{
                 .fn = std::make_shared<const Subject>(*fnSubj),
-                .arg = std::make_shared<const Subject>(std::move(seedSubject)),
+                .arg = std::make_shared<const Subject>(std::move(argId)),
             }};
             Hash applyArgAncestryForStateHash = fnObj->getArgAncestry();
             Hash evolvedApplyResultStateHash = stateHashAt(
@@ -1323,8 +1323,8 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
             "construction site.", typeid(obj).name());
     };
 
-    auto fnId = getId(*fn);
-    auto argId = getId(*arg);
+    auto fnStateHashStr = getId(*fn);
+    auto argStateHashStr = getId(*arg);
 
     /* Outer-direction applies (= fn is an AmbientObject) must NEVER
        be replayed from cache — the outer value's behaviour is the
@@ -1365,14 +1365,14 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        instead of being frozen by `PostulatedIdempotentRead{this.scopeStateId}`. Fall
        back to PostulatedIdempotentRead only when no Subject is exposed
        (= atom whose argStateId is fully determined at construction). */
-    auto fnIdHash = Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256);
-    auto argIdHash = Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256);
+    auto fnIdHash = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
+    auto argIdHash = Hash::parseNonSRIUnprefixed(argStateHashStr, HashAlgorithm::SHA256);
 
     Subject fnSubj = fn->getSubject()
         ? *fn->getSubject()
         : Subject{PostulatedIdempotentRead{fnIdHash}};
 
-    Subject argSubj = arg->getSubject()
+    Subject argId = arg->getSubject()
         ? *arg->getSubject()
         : Subject{PostulatedIdempotentRead{argIdHash}};
 
@@ -1383,7 +1383,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),
-        .arg = std::make_shared<const Subject>(std::move(argSubj)),
+        .arg = std::make_shared<const Subject>(std::move(argId)),
     }};
 
     /* Walker mirror of TracingEvaluator::apply's option 2 evolution.

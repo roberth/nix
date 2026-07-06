@@ -290,14 +290,14 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        boundary maximally predictable — two cb calls observing the
        same way through their args reach the same trie position
        regardless of where the arg's source came from. */
-    Subject argSubject{PositionalSeed{localCell->depth}};
+    Subject argId{PositionalSeed{localCell->depth}};
     /* Sample resolver->callArgAncestry at fire time. TracingEvaluator::apply
        leaves callArgAncestry at the current sibling's siblingScope (no
        restore), so this sample reflects the CURRENT sibling context
        walker is operating under. Do not freeze at closure-creation
        time — the argAncestry evolves, and freezing would emit stale hashes. */
     Hash argAncestry = resolverHandle->callArgAncestry;
-    auto argStateHash = stateHashAfter(argSubject, argAncestry, {});
+    auto argStateHash = stateHashAfter(argId, argAncestry, {});
     tracingCacheLog("AmbientApply::run: argAncestry=%s argStateHash=%s",
                     argAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
                     argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));
@@ -342,7 +342,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
     auto wrappedArg = (innerWriter && outerRootFSRoot
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
-              argObj, argSubject, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell,
+              argObj, argId, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell,
               resolverHandle->callArgAncestry, resultId))
         : argObj;
 
@@ -462,14 +462,14 @@ static PrimOp * makeCachedFnPrimOp(
                            Sibling cb apply invocations share the same
                            Subject and discriminate via their observation
                            factsets, not via state-creep. */
-                        Subject seedSubject{PositionalSeed{seedCell->depth}};
+                        Subject argId{PositionalSeed{seedCell->depth}};
                         /* Inherit the resolver's callArgAncestry (= argStateId(Q)
                            of this cached call). Sibling cached calls
                            with different Qs get distinct rootIds and
                            therefore distinct subject-derived content
                            ids throughout this cb-apply boundary. */
                         Hash callArgAncestry = resolver->callArgAncestry;
-                        auto rootId = stateHashAfter(seedSubject, callArgAncestry, {});
+                        auto rootId = stateHashAfter(argId, callArgAncestry, {});
                         /* Per-apply observation context. Captures the
                            outer's probes on the cb arg as they fire
                            through queryFn; the apply-result wrapper
@@ -481,7 +481,7 @@ static PrimOp * makeCachedFnPrimOp(
                            the same cached call (`inner.f 5` vs
                            `inner.f 2`), per the depth-2 design. */
                         auto applyContext = std::make_shared<ApplyContext>(
-                            ApplyContext{seedSubject, callArgAncestry, {}});
+                            ApplyContext{argId, callArgAncestry, {}});
                         /* Boundary-trace-only discipline: do NOT
                            register outerArgObj under rootId in the
                            shared resolver. Sibling cb apply invocations
@@ -575,7 +575,7 @@ static PrimOp * makeCachedFnPrimOp(
                            SourceRoot outlives the Values the outer
                            evaluator builds from any returned RootedPaths. */
                         auto contraArg =
-                            make_ref<AmbientObject>(std::move(seedSubject), std::move(queryFn), state.rootFSRoot, std::move(applyFn));
+                            make_ref<AmbientObject>(std::move(argId), std::move(queryFn), state.rootFSRoot, std::move(applyFn));
                         /* Wire seedCell.liveObject to contraArg now
                            that it exists. This is the deliberate
                            shared_ptr cycle documented on

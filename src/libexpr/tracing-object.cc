@@ -87,13 +87,13 @@ std::string TracingObject::evolvedQueryFrom() const
            so walker can navigate subject's evolution edge-by-edge
            rather than iterating K. Uses the subject's Merkle
            content hash as the trie root key. */
-        Hash subjectSelfHash = stateHashAt(
+        Hash argIdHash = stateHashAt(
             *applyResultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
         auto evolved = stateHashAtStamping(
             *applyResultSubject, applyArgAncestry, walk, walk.size(),
             [&](const EvolutionStep & step) {
                 writer.insertSubjectEvolutionEdge(
-                    subjectSelfHash, step.curBefore,
+                    argIdHash, step.curBefore,
                     step.obsFromHash, step.obsElementHash,
                     step.curAfter);
             });
@@ -346,14 +346,14 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
         ? *getSubject()
         : Subject{PostulatedIdempotentRead{fnIdHash}};
     Hash applyArgAncestryLocal = getSubject() ? getArgAncestry() : applyArgAncestry;
-    Subject argSubj = argObj->getSubject()
+    Subject argId = argObj->getSubject()
         ? *argObj->getSubject()
         : Subject{PostulatedIdempotentRead{argIdHash}};
     if (argObj->getSubject())
         applyArgAncestryLocal = argObj->getArgAncestry();
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),
-        .arg = std::make_shared<const Subject>(std::move(argSubj)),
+        .arg = std::make_shared<const Subject>(std::move(argId)),
     }};
 
     /* apply-result argStateId is content-only — see commentary in

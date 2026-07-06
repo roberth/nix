@@ -291,10 +291,10 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
             "construction site.", typeid(obj).name());
     };
 
-    auto fnId = getId(*fn);
-    auto argId = getId(*arg);
+    auto fnStateHashStr = getId(*fn);
+    auto argStateHashStr = getId(*arg);
 
-    tracingCacheLog("tracing: apply fnId=%s argId=%s", fnId, argId);
+    tracingCacheLog("tracing: apply fnStateHash=%s argStateHash=%s", fnStateHashStr, argStateHashStr);
 
     /* cb-apply boundary: record an explicit ε edge for this apply.
        openApplyBoundary closes the preceding observations as one
@@ -303,7 +303,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        advance their cumulative cidasks walk by one for ε, so the
        apply-result's argStateId is computed at a walk index the walker
        can reach via the recorded chain. */
-    nlohmann::json applyQ = trace::QueryApply{fnId, argId};
+    nlohmann::json applyQ = trace::QueryApply{fnStateHashStr, argStateHashStr};
 
     /* If fn is a TracingCallbackArg (= inner-supplied lambda the
        outer is now applying — the cb-higher-order case), record
@@ -351,22 +351,22 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        outside-the-boundary Subject. Same convention as
        `AmbientObject::queryApply` and the walker's
        `<replay-local-lambda>` primop. */
-    auto fnIdHash = Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256);
-    auto argIdHash = Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256);
+    auto fnIdHash = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
+    auto argIdHash = Hash::parseNonSRIUnprefixed(argStateHashStr, HashAlgorithm::SHA256);
 
     Subject fnSubj = fn->getSubject()
         ? *fn->getSubject()
         : Subject{PostulatedIdempotentRead{fnIdHash}};
 
-    Subject argSubj;
+    Subject argId;
     Hash argArgAncestryForApply{HashAlgorithm::SHA256};
     if (fnIsTlo) {
         auto callerScope = effectiveArgCell(*fn);
         int localDepth = callerScope ? callerScope->depth + 1 : 0;
-        argSubj = Subject{PositionalSeed{localDepth}};
+        argId = Subject{PositionalSeed{localDepth}};
         argArgAncestryForApply = Hash{HashAlgorithm::SHA256};
     } else {
-        argSubj = arg->getSubject()
+        argId = arg->getSubject()
             ? *arg->getSubject()
             : Subject{PostulatedIdempotentRead{argIdHash}};
         argArgAncestryForApply = arg->getArgAncestry();
@@ -378,7 +378,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),
-        .arg = std::make_shared<const Subject>(std::move(argSubj)),
+        .arg = std::make_shared<const Subject>(std::move(argId)),
     }};
 
     Hash enclosingApplyId(HashAlgorithm::SHA256);
@@ -396,7 +396,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         auto fnSubjHex = fnSubjHash.to_string(HashFormat::Base16, false);
         auto argSubjHex = argSubjHash.to_string(HashFormat::Base16, false);
         tracingCacheLog(
-            "writer logAmbientApplyFact: fnSubj=%s argSubj=%s applyArgAncestry=%s fnHex=%s argHex=%s",
+            "writer logAmbientApplyFact: fnSubj=%s argId=%s applyArgAncestry=%s fnHex=%s argHex=%s",
             describe(*ars.fn),
             describe(*ars.arg),
             applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -406,7 +406,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         writer.logAmbientApplyFact(applyQd2, resultSubject, applyArgAncestry);
     } else {
         tracingCacheLog("openApplyBoundary callsite=TracingEvaluator::apply fn=%s arg=%s",
-                        fnId.substr(0, 12), argId.substr(0, 12));
+                        fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
         writer.openApplyBoundary(applyQ);
     }
 
@@ -419,13 +419,13 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        of sib A's envAsksEdges traversed via prior v13Walks). */
     auto & d1Walk = writer.getD1CidasksWalk();
     /* Path 3: stamp SubjectEvolutionEdges via hook. */
-    Hash resultSelfHash = stateHashAt(
+    Hash resultIdHash = stateHashAt(
         resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
     auto applyArgAncestryStateHash = stateHashAtStamping(
         resultSubject, applyArgAncestry, d1Walk, d1Walk.size(),
         [&](const EvolutionStep & step) {
             writer.insertSubjectEvolutionEdge(
-                resultSelfHash, step.curBefore,
+                resultIdHash, step.curBefore,
                 step.obsFromHash, step.obsElementHash,
                 step.curAfter);
         });
@@ -440,7 +440,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
             applyArgAncestryStateHashHex.substr(0, 16));
     }
 
-    auto v = writer.getSink().logQuery(trace::QueryApply{fnId, argId});
+    auto v = writer.getSink().logQuery(trace::QueryApply{fnStateHashStr, argStateHashStr});
 
     /* Per-invocation callArgAncestry for GENUINE cb-apply (not curried
        follow-up): sibling cb-apply invocations of the SAME cached

@@ -299,12 +299,12 @@ std::string describe(const Subject & subject);
     same ApplyContext so the chain `wrapper.getAttr("foo").getInt()`
     accumulates all three observations into one walk.
 
-    `argSubject`/`argAncestry` identify the cb arg's structural Subject and
+    `argId`/`argAncestry` identify the cb arg's structural Subject and
     its inherited argAncestry (= per the cidasks Inheritance section, the
     outer-argAncestry argStateIds that the per-invocation scopeStateIds compose with). */
 struct ApplyContext
 {
-    Subject argSubject;
+    Subject argId;
     Hash argAncestry;
     std::vector<Observation> observations;
 };
