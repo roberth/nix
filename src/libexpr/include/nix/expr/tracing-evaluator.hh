@@ -45,7 +45,7 @@ public:
     ref<Object> mkAttrs(const std::map<std::string, ref<Object>> & attrs) override;
     ref<Object> getInternalPrimOp(const std::string & name) override;
     ref<Object> apply(ref<Object> fn, ref<Object> arg) override;
-    std::shared_ptr<struct AmbientResolver> getAmbientResolver() override
+    std::shared_ptr<struct OuterResolver> getAmbientResolver() override
     {
         return inner->getAmbientResolver();
     }

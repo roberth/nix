@@ -343,7 +343,7 @@ RootValue ReplayCallbackArg::defeatCache()
         "frozen local — use toValueOrProxy to obtain a primop replay");
 }
 
-RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<AmbientResolver> resolver)
+RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<OuterResolver> resolver)
 {
     /* Per via-Asks Replay (ambient layer): the walker reconstructs the
        LocalObject as a live Nix Value tree, lazily produced from

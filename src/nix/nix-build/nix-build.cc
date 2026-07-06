@@ -341,7 +341,7 @@ static void main_nix_build(int argc, char ** argv)
     std::unique_ptr<TracingDecisionGraph> tracingDecisionGraph;
     std::unique_ptr<TracingWriter> tracingWriter;
     std::shared_ptr<Evaluator> evaluator;
-    std::shared_ptr<AmbientResolver> resolver;
+    std::shared_ptr<OuterResolver> resolver;
 
     std::shared_ptr<EvalState> state;
     if (evalSettings.useTracingEvalCache) {

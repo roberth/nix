@@ -196,7 +196,7 @@ RootValue OuterObject::defeatCache()
     throw Error("ambient defeatCache: not supported on virtual values");
 }
 
-RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<AmbientResolver> resolver)
+RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<OuterResolver> resolver)
 {
     /* The virtual-value path: build a thunk that, when forced, evaluates
        an `ExprFromObject` proxy against this Object — same construction

@@ -60,12 +60,12 @@ struct ExprFromObject : ExprProxy
      *
      * Created via makeAmbientResolver(outerState, innerEvaluator).
      */
-    std::shared_ptr<struct AmbientResolver> ambientResolver;
+    std::shared_ptr<struct OuterResolver> ambientResolver;
 
     explicit ExprFromObject(
         std::shared_ptr<Object> obj,
         std::shared_ptr<Evaluator> innerEvaluator = nullptr,
-        std::shared_ptr<AmbientResolver> ambientResolver = nullptr)
+        std::shared_ptr<OuterResolver> ambientResolver = nullptr)
         : obj(std::move(obj))
         , innerEvaluator(std::move(innerEvaluator))
         , ambientResolver(std::move(ambientResolver))
@@ -83,13 +83,13 @@ struct ExprFromObjectAttr : ExprProxy
     std::shared_ptr<Object> parentObj;
     std::string name;
     std::shared_ptr<Evaluator> innerEvaluator;
-    std::shared_ptr<struct AmbientResolver> ambientResolver;
+    std::shared_ptr<struct OuterResolver> ambientResolver;
 
     ExprFromObjectAttr(
         std::shared_ptr<Object> parentObj,
         std::string name,
         std::shared_ptr<Evaluator> innerEvaluator,
-        std::shared_ptr<AmbientResolver> ambientResolver = nullptr)
+        std::shared_ptr<OuterResolver> ambientResolver = nullptr)
         : parentObj(std::move(parentObj))
         , name(std::move(name))
         , innerEvaluator(std::move(innerEvaluator))
@@ -101,7 +101,7 @@ struct ExprFromObjectAttr : ExprProxy
 };
 
 /**
- * Create a shared AmbientResolver for use with ExprFromObject.
+ * Create a shared OuterResolver for use with ExprFromObject.
  * The resolver is shared across all function calls within a single
  * builtins.cache invocation.
  *
@@ -112,7 +112,7 @@ struct ExprFromObjectAttr : ExprProxy
  *   bridges argObj directly.
  */
 class TracingWriter;
-std::shared_ptr<AmbientResolver> makeAmbientResolver(
+std::shared_ptr<OuterResolver> makeAmbientResolver(
     EvalState * outerState,
     std::shared_ptr<Evaluator> innerEvaluator,
     TracingWriter * innerWriter = nullptr);
@@ -120,11 +120,11 @@ std::shared_ptr<AmbientResolver> makeAmbientResolver(
 /** Set the resolver's cached-call argAncestry — used by subject-id to make
     sibling cached calls' state hashes distinct via inheritance.
     Should be unique per cached call (e.g. hash of import path). */
-void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callArgAncestry);
+void setAmbientResolverCallScope(OuterResolver & resolver, Hash callArgAncestry);
 
 /** Get the resolver's current callArgAncestry for RAII save/restore around
     per-cb-invocation argAncestry overrides. */
-Hash getAmbientResolverCallScope(const AmbientResolver & resolver);
+Hash getAmbientResolverCallScope(const OuterResolver & resolver);
 
 /** Register a live outer-direction proxy under a subject-id `subject` +
     `argAncestry` in the resolver's outer-values map. Used by the
@@ -140,7 +140,7 @@ Hash getAmbientResolverCallScope(const AmbientResolver & resolver);
     contract (= overwrite-on-conflict) keyed by `(subject, argAncestry)`
     structural-equality. */
 void registerAmbientResolverProxy(
-    AmbientResolver & resolver,
+    OuterResolver & resolver,
     Subject subject,
     Hash argAncestry,
     std::shared_ptr<Object> obj);
@@ -157,7 +157,7 @@ void registerAmbientResolverProxy(
     (= post-observations evolution), which differs from the
     initial state hash we registered under. */
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(
-    AmbientResolver & resolver,
+    OuterResolver & resolver,
     const Hash & idHash,
     const std::vector<Edge> & envWalk,
     TracingDecisionGraph * dg = nullptr);

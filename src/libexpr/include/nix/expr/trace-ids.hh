@@ -5,7 +5,7 @@
  * system. Prevents accidental mixing of:
  *
  * - ValueHandle: JSON trace correlation handle (TraceSink)
- * - AmbientId:   AmbientResolver registry handle, a content Hash.
+ * - OuterId:   OuterResolver registry handle, a content Hash.
  *                Seed roots use the empty-set hash (their
  *                state hash at apply time, since no
  *                observations have happened yet); derived values
@@ -50,13 +50,13 @@ struct ValueHandleTag
 /** JSON trace correlation handle (links Query and Result entries). */
 using ValueHandle = StrongId<ValueHandleTag, uint64_t>;
 
-/** AmbientResolver registry handle for outer/local values.
+/** OuterResolver registry handle for outer/local values.
  *
  *  A content Hash. Seed roots are `hashString("seed:N")` /
  *  `hashString("local:N")` for an interpreter-side counter N;
  *  derived values are the producer query's `queryHash`. Both go
  *  through the same map. */
-using AmbientId = Hash;
+using OuterId = Hash;
 
 } // namespace nix
 

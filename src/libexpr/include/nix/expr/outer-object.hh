@@ -28,7 +28,7 @@ namespace nix {
 struct AmbientQueryResult
 {
     trace::ResultVariant result;
-    std::optional<AmbientId> childId; // id of child Object in the resolver, if applicable
+    std::optional<OuterId> childId; // id of child Object in the resolver, if applicable
 };
 
 /**
@@ -37,7 +37,7 @@ struct AmbientQueryResult
  * inherited argAncestry (both for state-hash attribution at the writer).
  */
 using AmbientQueryFn = std::function<AmbientQueryResult(
-    AmbientId objectId,
+    OuterId objectId,
     const trace::QueryVariant &,
     Subject,
     Hash argAncestry)>;
@@ -56,8 +56,8 @@ using AmbientQueryFn = std::function<AmbientQueryResult(
  * (OuterObject::queryApply) knows its own proxy graph
  * position and threads the effective cell through.
  */
-using AmbientApplyFn = std::function<AmbientId(
-    AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)>;
+using AmbientApplyFn = std::function<OuterId(
+    OuterId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)>;
 
 /**
  * Object implementation backed by ambient queries to the outer evaluator.
@@ -160,7 +160,7 @@ public:
     ObjectType getTypeLazy() override;
     ObjectType getType() override;
     RootValue defeatCache() override;
-    RootValue toValueOrProxy(EvalState & state, std::shared_ptr<AmbientResolver> resolver) override;
+    RootValue toValueOrProxy(EvalState & state, std::shared_ptr<OuterResolver> resolver) override;
     std::optional<FunctionInfo> getFunctionInfo() override;
     PosIdx getPos() override;
     std::optional<std::vector<std::string>> getAttrPath() override;
@@ -171,7 +171,7 @@ public:
      */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 
-    AmbientId getCdi() const
+    OuterId getCdi() const
     {
         /* state hash at the empty factset, with this proxy's inherited
            argAncestry applied. For multi-edge use, callers must pass the

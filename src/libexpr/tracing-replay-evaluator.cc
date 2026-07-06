@@ -576,7 +576,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
         /* "Not in pool" means the id has no recorded provenance — no
            producer Request and no localArg sidecar. Such ids are
            OUTER-direction by elimination: an inner local's argId is
-           always sidecar-registered by AmbientResolver::apply (=
+           always sidecar-registered by OuterResolver::apply (=
            inserting `{kind: "localArg", applyResultId: ...}` at the
            argId), and any derived value has a producer Request. Only
            outer-seed state hashes minted by makeCachedFnPrimOp.impl — e.g.

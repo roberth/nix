@@ -15,7 +15,7 @@ static ref<SourceRoot> stubAmbientRoot()
 /* Tests use PostulatedIdempotentRead to pin the proxy's content id to a
    stable per-test value. The Subject variant exists for cases like
    apply-result args that don't have a positional/derived form. */
-static AmbientId testId(int n)
+static OuterId testId(int n)
 {
     return hashString(HashAlgorithm::SHA256, "test:" + std::to_string(n));
 }
@@ -25,7 +25,7 @@ static Subject testSubject(int n)
     return Subject{PostulatedIdempotentRead{testId(n)}};
 }
 
-static std::string ambientHex(AmbientId id)
+static std::string ambientHex(OuterId id)
 {
     return id.to_string(HashFormat::Base16, false);
 }
@@ -38,7 +38,7 @@ static std::string ambientHex(AmbientId id)
 static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> responses)
 {
     return [responses = std::move(responses)](
-               AmbientId objectId,
+               OuterId objectId,
                const trace::QueryVariant & q,
                Subject /*subject*/,
                Hash /*argAncestry*/) -> AmbientQueryResult {
@@ -53,7 +53,7 @@ static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> r
             throw Error("mock resolver: no response for %s", key);
 
         // For queries that produce children, return a deterministic child id
-        std::optional<AmbientId> childId;
+        std::optional<OuterId> childId;
         if (std::holds_alternative<trace::ResultMaybeType>(it->second)) {
             auto & rmt = std::get<trace::ResultMaybeType>(it->second);
             if (rmt.type)

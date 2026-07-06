@@ -535,7 +535,7 @@ public:
     /**
      * Defer a Requests-pool insert until logResult.
      *
-     * AmbientResolver::apply uses this to register the QueryApply
+     * OuterResolver::apply uses this to register the QueryApply
      * Request and the localArg sidecar. At flush: if `keyPlaceholder`
      * is set the insert key is that key (the local's state hash);
      * otherwise the insert key is the hash of the payload (the apply
@@ -575,7 +575,7 @@ public:
      *
      * Required at every cb-apply boundary the writer crosses
      * during a body run — TracingEvaluator::apply,
-     * TracingObject::queryApply, AmbientResolver::apply. Without
+     * TracingObject::queryApply, OuterResolver::apply. Without
      * this split, multiple body-level cb-applies collapse into a
      * single Asks edge in the recorded trie, but the walker
      * advances its cumulative `envWalk` once per dispatched

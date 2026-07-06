@@ -60,7 +60,7 @@ class ReplayCallbackArg : public Object
     /* Initial state hash (= stateHashAt(subject, argAncestry, {}, 0)) — kept for
        legacy id-string consumers (e.g. defeatCache's recursive
        apply construction). */
-    AmbientId localId;
+    OuterId localId;
     /* Shared walk across all proxies in one cb apply. Each validated
        probe appends a Fact (one fact per edge, matching the writer's
        multi-edge AmbientAsks structure). `stateHashAt` reads this
@@ -123,7 +123,7 @@ class ReplayCallbackArg : public Object
 
     /* cb-arg apply context, sourced from the writer's localArg
        sidecar. `applyDepth` = `localCell->depth` at the recorder's
-       AmbientResolver::apply boundary. `applyArgAncestry` = the resolver's
+       OuterResolver::apply boundary. `applyArgAncestry` = the resolver's
        callArgAncestry. Used by the lambda primop to compose nested
        apply-result subjects matching the recorder's encoding (=
        `ApplyResultSubject{fn=this.subject, arg=PositionalSeed{depth+1}}`
@@ -268,7 +268,7 @@ public:
         `ApplyResultSubject` encoding so the synthetic ReplayCallbackArg's reads
         match what the recorder wrote (= avoids the cb-higher-order
         recursion). */
-    RootValue toValueOrProxy(EvalState & state, std::shared_ptr<AmbientResolver> resolver) override;
+    RootValue toValueOrProxy(EvalState & state, std::shared_ptr<OuterResolver> resolver) override;
     std::optional<FunctionInfo> getFunctionInfo() override;
     /** Recorded LocalObjects (frozen images) can't be applied without
         either reconstructing the function body from value-structure
@@ -285,7 +285,7 @@ public:
         not `Object::queryApply`. The override exists so that when
         callers are restructured to call `queryApply` uniformly, this
         is the entry that fires. The provenance tag in
-        `AmbientRegistry` keeps the existing-callers path correct
+        `OuterRegistry` keeps the existing-callers path correct
         until the restructure lands. */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 };

@@ -370,9 +370,9 @@ void from_json(const nlohmann::json & j, ResultWHNF & r)
 // ---------------------------------------------------------------------------
 
 /* StateHashLeaf encodes as the bare hex string (wire-format compatible with
-   the previous std::string `from` field). AmbientLeaf encodes as an
+   the previous std::string `from` field). OuterLeaf encodes as an
    object so a parser can distinguish the two on the rare cases where it
-   matters during transition; AmbientLeafs should not appear in recorded
+   matters during transition; OuterLeafs should not appear in recorded
    artifacts. */
 void to_json(nlohmann::json & j, const QueryLeaf & leaf)
 {
@@ -387,7 +387,7 @@ void from_json(const nlohmann::json & j, QueryLeaf & leaf)
     if (j.is_string())
         leaf = QueryLeaf{j.get<std::string>()};
     else if (j.is_object() && j.contains("ambient"))
-        leaf = QueryLeaf{AmbientLeaf{j.at("ambient").get<int>()}};
+        leaf = QueryLeaf{OuterLeaf{j.at("ambient").get<int>()}};
     else
         throw nlohmann::json::type_error::create(
             302, "QueryLeaf JSON must be a hex string or {\"ambient\": N}", &j);

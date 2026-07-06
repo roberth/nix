@@ -207,7 +207,7 @@ public:
      */
     virtual RootValue toValueOrProxy(
         EvalState & state,
-        std::shared_ptr<struct AmbientResolver> resolver = nullptr)
+        std::shared_ptr<struct OuterResolver> resolver = nullptr)
     {
         (void) state;
         (void) resolver;
@@ -419,7 +419,7 @@ public:
     virtual EvalState & getEvalState() = 0;
 
     /**
-     * Get the shared AmbientResolver if one is wired up below this
+     * Get the shared OuterResolver if one is wired up below this
      * evaluator. `Interpreter` returns its own `ambientResolver`
      * field; wrapping evaluators (`TracingEvaluator`,
      * `TracingReplayEvaluator`) delegate down. Returns null when no
@@ -432,7 +432,7 @@ public:
      * env facts on the apply's argObj and the cb-arg seed has
      * neither a producer Request nor a localArg sidecar.
      */
-    virtual std::shared_ptr<struct AmbientResolver> getAmbientResolver()
+    virtual std::shared_ptr<struct OuterResolver> getAmbientResolver()
     {
         return nullptr;
     }

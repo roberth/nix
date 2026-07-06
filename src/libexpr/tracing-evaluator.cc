@@ -456,7 +456,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     bool fnIsApplyResult = fn->getSubject()
         && std::holds_alternative<ApplyResultSubject>(fn->getSubject()->data);
     struct CallScopeGuard {
-        std::shared_ptr<AmbientResolver> resolver;
+        std::shared_ptr<OuterResolver> resolver;
         Hash oldScope{HashAlgorithm::SHA256};
         ~CallScopeGuard() {
             if (resolver) setAmbientResolverCallScope(*resolver, oldScope);

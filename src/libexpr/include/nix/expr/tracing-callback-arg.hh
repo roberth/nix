@@ -50,7 +50,7 @@ class TracingCallbackArg : public Object
 
     /** This local's state hash, scoped via argAncestry. Computed
         on demand from `subject` + `argAncestry`. */
-    AmbientId localId() const { return subjectHashAfter(subject, argAncestry, {}); }
+    OuterId localId() const { return subjectHashAfter(subject, argAncestry, {}); }
 
     /* The argCell cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;
@@ -109,7 +109,7 @@ public:
         ambient layer trace. */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 
-    AmbientId getCdi() const { return localId(); }
+    OuterId getCdi() const { return localId(); }
 
     std::optional<std::string> getStateHashHex() const override
     {

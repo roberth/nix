@@ -11,7 +11,7 @@ namespace nix {
 /* Same-name helper exists in outer-object.cc; both translation
    units are unity-built into libnixexpr, so the helpers must have
    distinct names to avoid ODR collisions. */
-static std::string tracingLocalFromOf(AmbientId id)
+static std::string tracingLocalFromOf(OuterId id)
 {
     return id.to_string(HashFormat::Base16, false);
 }

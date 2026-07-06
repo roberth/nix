@@ -275,10 +275,10 @@ struct ResultWHNF
  * CLI integration through this carrier hasn't landed.
  * See doc/design/tracing-eval-cache-subject-id.md §Foundational principles.
  */
-struct AmbientLeaf
+struct OuterLeaf
 {
     int index;
-    auto operator<=>(const AmbientLeaf &) const = default;
+    auto operator<=>(const OuterLeaf &) const = default;
 };
 
 /**
@@ -306,12 +306,12 @@ struct StateHashLeaf
  */
 struct QueryLeaf
 {
-    std::variant<AmbientLeaf, StateHashLeaf> data;
+    std::variant<OuterLeaf, StateHashLeaf> data;
 
     QueryLeaf() = default;
     QueryLeaf(std::string hex) : data(StateHashLeaf{std::move(hex)}) {}
     QueryLeaf(const char * hex) : data(StateHashLeaf{hex}) {}
-    QueryLeaf(AmbientLeaf a) : data(a) {}
+    QueryLeaf(OuterLeaf a) : data(a) {}
     QueryLeaf(StateHashLeaf c) : data(std::move(c)) {}
 
     bool isStateHash() const
@@ -320,7 +320,7 @@ struct QueryLeaf
     }
     bool isAmbient() const
     {
-        return std::holds_alternative<AmbientLeaf>(data);
+        return std::holds_alternative<OuterLeaf>(data);
     }
     const std::string & stateHash() const
     {
@@ -328,7 +328,7 @@ struct QueryLeaf
     }
     int ambientIndex() const
     {
-        return std::get<AmbientLeaf>(data).index;
+        return std::get<OuterLeaf>(data).index;
     }
 
     auto operator<=>(const QueryLeaf &) const = default;
