@@ -200,15 +200,15 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
        outer EvalState's rootFSRoot. Held as shared_ptr (rather than
        ref) so AmbientResolver stays default-constructible. */
     std::shared_ptr<SourceRoot> outerRootFSRoot;
-    /* Inherited scope (argStateId of this cached call's Q) — used by the
-       cb-apply boundary to make sibling cached calls' scope state ids
+    /* Inherited argAncestry (argStateId of this cached call's Q) — used by the
+       cb-apply boundary to make sibling cached calls' argAncestry state ids
        distinct via cidasks inheritance. Zero hash means no
-       inheritance (= no scope discrimination). */
+       inheritance (= no argAncestry discrimination). */
     Hash callArgAncestry = Hash(HashAlgorithm::SHA256);
 
     /* Outer-direction proxies registered live by the standin's
        `<replay-local-lambda>` primop (= `registerAmbientResolverProxy`).
-       Keyed by `(subject, scope)` so the walker's `resolveCdiId`
+       Keyed by `(subject, argAncestry)` so the walker's `resolveCdiId`
        can match the registered seed's cidasks-evolved argStateId at any
        walk-edge index, not just the initial one. List rather than
        map because subject equality isn't trivially hashable;
@@ -217,7 +217,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
     struct LiveProxyEntry
     {
         Subject subject;
-        Hash scope;
+        Hash argAncestry;
         std::shared_ptr<Object> obj;
     };
     std::vector<LiveProxyEntry> liveProxies;
@@ -277,7 +277,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
         throw Error("ambient apply requires outerState");
 
     /* Scope-graph cell for the cb arg, rooted at the caller's
-       effective scope (which AmbientObject::queryApply passes in
+       effective argAncestry (which AmbientObject::queryApply passes in
        because a resolved fn may be an InterpreterObject without a
        proxy parent chain). The cell carries only topology. */
     auto localCell = ArgCell::make(callerScope, argObj);
@@ -295,7 +295,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        leaves callArgAncestry at the current sibling's siblingScope (no
        restore), so this sample reflects the CURRENT sibling context
        walker is operating under. Do not freeze at closure-creation
-       time — the scope evolves, and freezing would emit stale hashes. */
+       time — the argAncestry evolves, and freezing would emit stale hashes. */
     Hash argAncestry = resolverHandle->callArgAncestry;
     auto argId = scopeStateIdAfter(argSubject, argAncestry, {});
     tracingCacheLog("AmbientApply::run: argAncestry=%s argId=%s",
@@ -324,7 +324,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
     /* Wrap the argObj in TracingCallbackArg so the outer's
        accesses on it during the apply land in the inner trace
        with `from=hex(argId)`. Inherit callArgAncestry so sibling cached
-       calls' local-args have distinct scope state ids.
+       calls' local-args have distinct argAncestry state ids.
 
        Skip the TLO wrap when argObj is a ReplayCallbackArg. At warm
        replay, the RLO standin reaching `runOn` already encapsulates
@@ -384,17 +384,17 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
         nlohmann::json localSidecar = {
             {"kind", "localArg"},
             {"applyResultId", resultId.to_string(HashFormat::Base16, false)},
-            /* Depth + scope let the replay-side lambda primop compose
+            /* Depth + argAncestry let the replay-side lambda primop compose
                the synthetic apply-result subject as
                `ApplyResultSubject{fn=this.subject, arg=PositionalSeed{depth+1}}`
-               with `scope` — matching what the writer's recording
+               with `argAncestry` — matching what the writer's recording
                produced when AmbientObject::queryApply built the apply
                result's subject. Without these fields the synthetic
                falls back to PostulatedIdempotentRead encoding which disagrees
                with the recorder's encoding, breaking CAS reads of
                the apply-result observations. */
             {"depth", localCell->depth},
-            {"scope", resolverHandle->callArgAncestry.to_string(HashFormat::Base16, false)},
+            {"argAncestry", resolverHandle->callArgAncestry.to_string(HashFormat::Base16, false)},
         };
         /* getTypeLazy (not getType) avoids forcing self-referential
            thunks like `args // { extra = true; }` where args is
@@ -474,7 +474,7 @@ static PrimOp * makeCachedFnPrimOp(
                            outer's probes on the cb arg as they fire
                            through queryFn; the apply-result wrapper
                            uses these observations to compute its
-                           evolved scope state id (via cidasks
+                           evolved argAncestry state id (via cidasks
                            ApplyResultSubject recursion through the
                            arg's evolved scopeStateId). This is what
                            distinguishes sibling apply calls within
@@ -761,10 +761,10 @@ Hash getAmbientResolverCallScope(const AmbientResolver & resolver)
 void registerAmbientResolverProxy(
     AmbientResolver & resolver,
     Subject subject,
-    Hash scope,
+    Hash argAncestry,
     std::shared_ptr<Object> obj)
 {
-    /* Overwrite-on-conflict for the same (subject, scope) key. The
+    /* Overwrite-on-conflict for the same (subject, argAncestry) key. The
        primop fires once per cb-apply boundary it covers; re-firing
        with the same args produces the same registration. Different
        boundaries register different subjects (= different
@@ -782,12 +782,12 @@ void registerAmbientResolverProxy(
     assert(newSeed && "registerAmbientResolverProxy: subject must be a PositionalSeed");
     for (auto & entry : resolver.liveProxies) {
         auto * existingSeed = std::get_if<PositionalSeed>(&entry.subject.data);
-        if (existingSeed && existingSeed->depth == newSeed->depth && entry.scope == scope) {
+        if (existingSeed && existingSeed->depth == newSeed->depth && entry.argAncestry == argAncestry) {
             entry.obj = std::move(obj);
             return;
         }
     }
-    resolver.liveProxies.push_back({std::move(subject), std::move(scope), std::move(obj)});
+    resolver.liveProxies.push_back({std::move(subject), std::move(argAncestry), std::move(obj)});
 }
 
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(
@@ -796,14 +796,14 @@ std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     const std::vector<Edge> & envWalk,
     TracingDecisionGraph * dg)
 {
-    /* Linear scan over each registered (subject, scope) x K in
+    /* Linear scan over each registered (subject, argAncestry) x K in
        envWalk. The hasSubjectStampSite gate turned out to be a
        tautology (cold stamped every CID walker ever resolves), so
        running the scan unconditionally is equivalent. */
     (void) dg;
     for (auto & entry : resolver.liveProxies) {
         for (size_t k = 0; k <= envWalk.size(); ++k) {
-            auto scopeStateId = scopeStateIdAt(entry.subject, entry.scope, envWalk, k);
+            auto scopeStateId = scopeStateIdAt(entry.subject, entry.argAncestry, envWalk, k);
             if (scopeStateId == idHash)
                 return entry.obj;
         }

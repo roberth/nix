@@ -117,17 +117,17 @@ std::shared_ptr<AmbientResolver> makeAmbientResolver(
     std::shared_ptr<Evaluator> innerEvaluator,
     TracingWriter * innerWriter = nullptr);
 
-/** Set the resolver's cached-call scope — used by cidasks to make
-    sibling cached calls' scope state ids distinct via inheritance.
+/** Set the resolver's cached-call argAncestry — used by cidasks to make
+    sibling cached calls' argAncestry state ids distinct via inheritance.
     Should be unique per cached call (e.g. hash of import path). */
 void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callArgAncestry);
 
 /** Get the resolver's current callArgAncestry for RAII save/restore around
-    per-cb-invocation scope overrides. */
+    per-cb-invocation argAncestry overrides. */
 Hash getAmbientResolverCallScope(const AmbientResolver & resolver);
 
 /** Register a live outer-direction proxy under a cidasks `subject` +
-    `scope` in the resolver's outer-values map. Used by the
+    `argAncestry` in the resolver's outer-values map. Used by the
     `<replay-local-lambda>` primop at warm replay to publish the
     live arg it received (args[0]) under the cb-arg seed's
     structural identity, so the OUTER walker can resolve d=1 facts
@@ -137,16 +137,16 @@ Hash getAmbientResolverCallScope(const AmbientResolver & resolver);
     priori. At cold these queries' answers came from the queryFn
     closure that captured the live outer arg; at warm this
     registration is the equivalent live channel. Single-entry
-    contract (= overwrite-on-conflict) keyed by `(subject, scope)`
+    contract (= overwrite-on-conflict) keyed by `(subject, argAncestry)`
     structural-equality. */
 void registerAmbientResolverProxy(
     AmbientResolver & resolver,
     Subject subject,
-    Hash scope,
+    Hash argAncestry,
     std::shared_ptr<Object> obj);
 
 /** Try to resolve a registered live-proxy from the resolver by
-    matching its registered `(subject, scope)` against the given
+    matching its registered `(subject, argAncestry)` against the given
     `idHash` at any edge boundary of `envWalk`. Returns nullptr
     if no registration matches at any edge. Used by
     `TracingReplayEvaluator::resolveCdiId` as a fallback after
