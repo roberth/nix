@@ -595,7 +595,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                    to `walkFacts` and advanced `chainCursor`, so the
                    first synthetic probe stamps at `walkFacts.size() == 1`
                    — matching the writer's flushPendingAmbient d=2
-                   loop at index 1 (= position after `logDepth2ApplyFact`'s
+                   loop at index 1 (= position after `logAmbientApplyFact`'s
                    fact in the boundary). */
                 synthetic->withAmbientAsksValidation();
                 /* Propagate apply context so a nested cb-higher-order

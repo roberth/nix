@@ -635,7 +635,7 @@ public:
      * otherwise push a new boundary; the captured id then flows to
      * the `LambdaApplyResultObject` wrapping the apply result, so
      * its observations land in the same boundary's d=2 chain as the
-     * recursive apply Fact `logDepth2ApplyFact` appended.
+     * recursive apply Fact `logAmbientApplyFact` appended.
      */
     std::optional<Hash> getCurrentApplyBoundaryId() const
     {
@@ -644,7 +644,7 @@ public:
         return pendingApplyBoundaries.back().applyId;
     }
 
-    void logDepth2ApplyFact(
+    void logAmbientApplyFact(
         const nlohmann::json & applyQueryPayload,
         const cidasks::Subject & resultSubject,
         const Hash & applyScope)

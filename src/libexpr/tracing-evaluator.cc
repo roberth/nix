@@ -314,7 +314,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        the standin's chainCursor by this fact's elementHash.
 
        Capture the enclosing boundary's applyId BEFORE
-       logDepth2ApplyFact / markApplyBoundary so the apply-result
+       logAmbientApplyFact / markApplyBoundary so the apply-result
        observations recorded after `inner->apply` returns (via
        `LambdaApplyResultObject` below) route to the same enclosing
        boundary the recursive apply Fact landed in. Their d=2
@@ -329,7 +329,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        and forces the outer walker into a `dispatchApplyLive` whose
        arg has no sidecar — a guaranteed miss that destabilises the
        outer chain. The recursive apply Fact (recorded in the
-       enclosing boundary by `logDepth2ApplyFact`) already covers
+       enclosing boundary by `logAmbientApplyFact`) already covers
        the d=2 chain entry for this apply, so a separate boundary
        carries no information.
 
@@ -396,14 +396,14 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         auto fnSubjHex = fnSubjHash.to_string(HashFormat::Base16, false);
         auto argSubjHex = argSubjHash.to_string(HashFormat::Base16, false);
         tracingCacheLog(
-            "writer logDepth2ApplyFact: fnSubj=%s argSubj=%s applyScope=%s fnHex=%s argHex=%s",
+            "writer logAmbientApplyFact: fnSubj=%s argSubj=%s applyScope=%s fnHex=%s argHex=%s",
             cidasks::describe(*ars.fn),
             cidasks::describe(*ars.arg),
             applyScope.to_string(HashFormat::Base16, false).substr(0, 12),
             fnSubjHex.substr(0, 12),
             argSubjHex.substr(0, 12));
         nlohmann::json applyQd2 = trace::QueryApply{fnSubjHex, argSubjHex};
-        writer.logDepth2ApplyFact(applyQd2, resultSubject, applyScope);
+        writer.logAmbientApplyFact(applyQd2, resultSubject, applyScope);
     } else {
         tracingCacheLog("markApplyBoundary callsite=TracingEvaluator::apply fn=%s arg=%s",
                         fnId.substr(0, 12), argId.substr(0, 12));
