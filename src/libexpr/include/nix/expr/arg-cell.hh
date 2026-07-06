@@ -57,9 +57,9 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
     cell. Navigation children carry the parent's cell directly; apply
     results carry their own fresh cell. Returns null for non-proxy
     Objects or for proxies that haven't been scoped. */
-inline std::shared_ptr<const ArgCell> effectiveArgScope(const Object & obj)
+inline std::shared_ptr<const ArgCell> effectiveArgCell(const Object & obj)
 {
-    return obj.getProxyArgScope();
+    return obj.getProxyArgCell();
 }
 
 } // namespace nix

@@ -121,7 +121,7 @@ public:
         baked at construction. */
     Hash getInheritedScope() const override { return applyArgAncestry; }
 
-    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argCell; }
+    std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
     /** Get the query hash string for trie identity, if available. */
     std::optional<std::string> getQueryHashStr() const

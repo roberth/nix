@@ -144,7 +144,7 @@ public:
         cb-arg seed). */
     std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
-    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argCell; }
+    std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

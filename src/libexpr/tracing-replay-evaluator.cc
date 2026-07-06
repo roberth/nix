@@ -456,7 +456,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
        liveObject's scopeStateId matches idStr at some k under
        walker's own cidasksWalk. */
     std::vector<Edge> extendedWalkForMatch = cidasksWalk;
-    auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
+    auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr;
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
         if (auto live = cell->liveObject) {
@@ -1411,7 +1411,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
     /* Apply-result scope cell. Parent = fn proxy's cell. */
-    auto cell = ArgCell::make(effectiveArgScope(*fn), arg.get_ptr());
+    auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
     obj->withScope(std::move(cell));
     obj->withApplyResultSubject(std::move(resultSubject), applyArgAncestry);
     /* Keep the applyContext attachment for the ensureInner-finalisation

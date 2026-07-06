@@ -82,7 +82,7 @@ public:
     /** This proxy's inherited scope. */
     Hash getInheritedScope() const override { return inheritedScope; }
 
-    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argCell; }
+    std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

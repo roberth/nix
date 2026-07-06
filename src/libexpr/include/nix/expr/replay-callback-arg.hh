@@ -226,7 +226,7 @@ public:
         respHash. */
     Hash getChainCursor() const { return *chainCursor; }
 
-    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argCell; }
+    std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
     /** Content-defined identity is the localId (= the cb-apply local
         arg's argStateId hash recorded at write time). Lets evaluator.apply

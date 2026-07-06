@@ -105,7 +105,7 @@ public:
         return *this;
     }
 
-    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argCell; }
+    std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
     /** Symmetric to TracingObject/TracingReplayObject: surface the
         ApplyResultSubject so a subsequent apply on this wrapper

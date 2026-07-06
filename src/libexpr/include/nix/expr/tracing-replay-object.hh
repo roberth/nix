@@ -141,7 +141,7 @@ public:
 
     std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
-    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argCell; }
+    std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
     /** Symmetric to `TracingObject::getSubject()`: surface the apply-
         result Subject when this wrapper is an apply result so the

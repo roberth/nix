@@ -455,7 +455,7 @@ static PrimOp * makeCachedFnPrimOp(
                            cell.liveObject is set to the AmbientObject
                            we're about to construct (below) so chain
                            navigation returns the proxy. */
-                        auto parentCell = effectiveArgScope(*fnObj);
+                        auto parentCell = effectiveArgCell(*fnObj);
                         auto seedCell = ArgCell::make(parentCell, /*liveObject set below*/ nullptr);
                         /* argStateId fix: this seed's Subject is the positional
                            handle at this static apply-stack depth.

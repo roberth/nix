@@ -361,7 +361,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     Subject argSubj;
     Hash argScopeForApply{HashAlgorithm::SHA256};
     if (fnIsTlo) {
-        auto callerScope = effectiveArgScope(*fn);
+        auto callerScope = effectiveArgCell(*fn);
         int localDepth = callerScope ? callerScope->depth + 1 : 0;
         argSubj = Subject{PositionalSeed{localDepth}};
         argScopeForApply = Hash{HashAlgorithm::SHA256};
@@ -482,7 +482,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     }
 
     auto result = inner->apply(fn, arg);
-    auto cell = ArgCell::make(effectiveArgScope(*fn), arg.get_ptr());
+    auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
 
     /* For the TLO-fn case (= cb-higher-order's recursive cb-apply):
        wrap the result in a TracingCallbackApplyResult so subsequent

@@ -239,7 +239,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
        when `resolve(fnId)` returns an InterpreterObject without a
        proxy parent chain. Keep a copy of argObj for the result's
        cell before moving it into applyFn. */
-    auto callerScope = effectiveArgScope(*this);
+    auto callerScope = effectiveArgCell(*this);
     auto argForScope = argObj;
     /* Each value crossing into a cb-apply boundary starts fresh as
        a PositionalSeed at the apply's reverse-De-Bruijn depth — no
