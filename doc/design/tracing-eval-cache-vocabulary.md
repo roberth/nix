@@ -119,20 +119,21 @@ Extension `H(S ∪ {e})` is O(1) given `e ∉ S`.
 
 ### 5. Edges
 
-**Asks edge** — a row in `Asks(queryHash, factSetHash) →
-requestSetHash`. "At walker state `(Q, cur)`, the next step is to
-dispatch this RequestSet's Requests."
+**Ask** — a row in `Ask(queryHash, factSetHash) →
+requestSetHash`. "At walker state `(Q, cur)`, the next step is
+to dispatch this RequestSet's Requests."
 
-**Terminal** — a row in `Terminals(queryHash, factSetHash) →
-resultHash`. "At walker state `(Q, cur)`, the recorded Result for
-`Q` is this." A Terminal ends a walk.
+**Terminal** — a row in `Terminal(queryHash, factSetHash) →
+resultHash`. "At walker state `(Q, cur)`, the recorded Result
+for `Q` is this." A Terminal ends a walk.
 
-**useful (dispatch)** — the subset of an edge's RequestSet whose
+**useful (dispatch)** — the subset of an Ask's RequestSet whose
 Responses aren't already known at `cur`. The walker only
-dispatches the useful subset; the rest is skipped as already-known.
+dispatches the useful subset; the rest is skipped as
+already-known.
 
 **hasAnyEdge** — a cheap existence check on `(Q, cur)`: does any
-Asks or Terminal row exist at that key? Used by the walker to
+Ask or Terminal row exist at that key? Used by the walker to
 reject branches that no recording ever passed through.
 
 ### 6. Walker state
@@ -158,16 +159,16 @@ reach, `nullopt` on miss.
 
 ### 7. Recording
 
-**record(Q, factSet, result, ...)** — writes an `(Asks, ...,
+**record(Q, factSet, result, ...)** — writes an `(Ask, ...,
 Terminal)` chain into the decision graph for a completed
 recording.
 
 **Patricia split** — when a new recording's remaining Requests
-partially overlap an existing edge's `useful` Requests
-(∅ ⊊ shared ⊊ useful), the existing edge is split at the
-overlap. Both tail edges reuse the original RequestSets; only the
-shared-prefix RequestSet is inserted anew, and dedups against any
-other recording producing the same shared set.
+partially overlap an existing Ask's `useful` Requests
+(∅ ⊊ shared ⊊ useful), the existing Ask is split at the
+overlap. Both tail Asks reuse the original RequestSets; only
+the shared-prefix RequestSet is inserted anew, and dedups
+against any other recording producing the same shared set.
 
 ### 8. RequestSet trie
 
@@ -200,10 +201,10 @@ Requests(requestHash BLOB PRIMARY KEY, payload BLOB)
 Queries (queryHash   BLOB PRIMARY KEY, payload BLOB)
 Results (resultHash  BLOB PRIMARY KEY, payload BLOB)
 RequestSetNodes(nodeHash BLOB PRIMARY KEY, payload BLOB) WITHOUT ROWID
-Asks     (queryHash BLOB, factSetHash BLOB, requestSetHash BLOB,
-          PRIMARY KEY (queryHash, factSetHash, requestSetHash)) WITHOUT ROWID
-Terminals(queryHash BLOB, factSetHash BLOB, resultHash BLOB,
-          PRIMARY KEY (queryHash, factSetHash, resultHash))     WITHOUT ROWID
+Ask     (queryHash BLOB, factSetHash BLOB, requestSetHash BLOB,
+         PRIMARY KEY (queryHash, factSetHash, requestSetHash)) WITHOUT ROWID
+Terminal(queryHash BLOB, factSetHash BLOB, resultHash BLOB,
+         PRIMARY KEY (queryHash, factSetHash, resultHash))     WITHOUT ROWID
 ```
 
 All are append-only via `INSERT OR IGNORE`; reads use prepared
@@ -256,11 +257,11 @@ types at the Ambient interaction. Payload is a `Query` / `Result`
 about an inner-owned callback-arg value. When the walker records
 or dispatches an ambient Fact it goes through this wrapper.
 
-**Ambient Asks edge** — a row in `AmbientAsks(fromFactSet) →
-(requestSet, toFactSet)`. Same shape as an Env Asks edge but
-keyed on factSet alone (no `Q`) and storing the transition
-explicitly as `toFactSet` — at replay the walker can't dispatch
-an inner-owned value live, since it no longer exists.
+**AmbientAsk** — a row in `AmbientAsk(fromFactSet) →
+(requestSet, toFactSet)`. Same shape as an Env Ask but keyed
+on factSet alone (no `Q`) and storing the transition
+explicitly as `toFactSet` — at replay the walker can't
+dispatch an inner-owned value live, since it no longer exists.
 
 **LocalResponses** — a persistent map
 `(requestHash, contextHash) → responsePayload` used by the
@@ -272,8 +273,27 @@ same-request observations under different outer contexts.
 ### 12. Subject identity
 
 Values inside a callback body need a stable name — the value's
-content changes as observations accumulate, but its identity
+content changes as **observations** accumulate, but its identity
 should stay pinned. That name is a **Subject**.
+
+**Observation** — a Fact viewed through the subject-identity
+lens. Just `(fromHash, elementHash)`:
+- `fromHash` — the state hash the subject had when it emitted
+  this observation.
+- `elementHash` — `SHA-256(requestHash || responseHash)`, same
+  as the Fact's contribution to the XOR-fold.
+
+Every Fact yields one Observation per subject that emitted it.
+
+**ObservationSet** — a batch of Observations that share a
+precondition state; the walker's fold at each step consumes one
+ObservationSet at a time. XOR-folding the member `elementHash`es
+yields the delta by which the FactSet's hash changes when this
+set is consumed — mathematically the same operation as
+`XOR-fold` in §4, but scoped to one step. `struct
+ObservationSet { std::vector<Observation> observations; }` in
+`subject-id.hh`. A **walk** (§13) is a sequence of
+ObservationSets.
 
 **Subject** — a structural identifier for a value. Four variants:
 
@@ -397,7 +417,7 @@ function of `(subject, argAncestry, walk, k)`, but naive
 evaluation is O(walk.size()) per query. The subject-evolution
 fast-path caches the individual fold-step transitions.
 
-**SubjectEvolutionEdges** — a persistent table storing
+**SubjectEvolutionEdge** — a persistent table storing
 `(argIdHash, curBefore, obs.from, obs.elem) → curAfter` — one row
 per single-observation fold step. Populated by the writer via a
 callback during `stateHashAtStamping`; consumed by the replay
@@ -416,12 +436,12 @@ Extends the base schema (§9):
 ```
 LocalResponses(requestHash BLOB, contextHash BLOB, payload BLOB,
                PRIMARY KEY (requestHash, contextHash)) WITHOUT ROWID
-AmbientAsks(fromFactSetHash BLOB, requestSetHash BLOB, toFactSetHash BLOB,
-            PRIMARY KEY (fromFactSetHash, requestSetHash)) WITHOUT ROWID
-SubjectEvolutionEdges(argIdHash BLOB, curBefore BLOB, obsFromHash BLOB,
-                      obsElemHash BLOB, curAfter BLOB,
-                      PRIMARY KEY (argIdHash, curBefore, obsFromHash, obsElemHash))
-                      WITHOUT ROWID
+AmbientAsk(fromFactSetHash BLOB, requestSetHash BLOB, toFactSetHash BLOB,
+           PRIMARY KEY (fromFactSetHash, requestSetHash)) WITHOUT ROWID
+SubjectEvolutionEdge(argIdHash BLOB, curBefore BLOB, obsFromHash BLOB,
+                     obsElemHash BLOB, curAfter BLOB,
+                     PRIMARY KEY (argIdHash, curBefore, obsFromHash, obsElemHash))
+                     WITHOUT ROWID
 ```
 
 Same `INSERT OR IGNORE` discipline. Same per-hash in-process
