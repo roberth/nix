@@ -3,7 +3,7 @@
  * @file
  * Per-process counters for `builtins.cache` walker outcomes.
  *
- * Tests use these to assert argStateId-layer properties (same-shape collapse,
+ * Tests use these to assert state hash-layer properties (same-shape collapse,
  * hit rate, etc.) that aren't visible from final-output comparison.
  *
  * Enable: set `NIX_CACHE_STATS_FILE=/path/to/stats.json`. On process

@@ -58,7 +58,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        falls short of cold's edgeIndex for later flushes referencing
        seed(1) at post-inner-apply positions. */
 
-    /* Per-walk resolution context. The cumulative cidasks walk
+    /* Per-walk resolution context. The cumulative subject-id walk
        (= `this->envWalk`) lives on the evaluator so it
        persists across walk calls — required for cell-chain
        scopeStateId computation to land at the writer's `d1EdgeIndex` (=
@@ -462,12 +462,12 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
         if (auto live = cell->liveObject) {
             if (auto * subj = live->getSubject()) {
                 /* Use the live proxy's own inherited argAncestry so the
-                   walker's argAncestry state id matches what the recorder
+                   walker's state hash matches what the recorder
                    computed at this proxy at flush. */
                 auto argAncestry = live->getArgAncestry();
                 bool found = false;
-                /* K=0 fast path — Asks-style initial-CDI lookup:
-                   subject's initial content-defined identifier
+                /* K=0 fast path — Asks-style initial state hash lookup:
+                   subject's initial state hash
                    (before any observation folds in) is a pure
                    function of (subject, argAncestry). Walker computes it
                    as a key and checks equality against the target
@@ -476,7 +476,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    empirical: 55% of cell-chain matches in the
                    cb-* + builtins-cache bounds land at K=0.
                    Structurally an Asks-style navigation: walker's
-                   own hashed state (initial CDI) IS the lookup
+                   own hashed state (initial state hash) IS the lookup
                    key. */
                 {
                     auto initialCdi = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
@@ -578,13 +578,13 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
            always sidecar-registered by AmbientResolver::apply (=
            inserting `{kind: "localArg", applyResultId: ...}` at the
            argId), and any derived value has a producer Request. Only
-           outer-seed argStateIds minted by makeCachedFnPrimOp.impl — e.g.
+           outer-seed state hashes minted by makeCachedFnPrimOp.impl — e.g.
            a nested AmbientObject for the int the outer body passes
            to inner_lambda in cb-higher-order's `g 10` — reach here.
 
            Live-proxy fallback: the `<replay-local-lambda>` primop
            registers the args[0] it receives under the cb-arg seed's
-           initial argStateId when fired (= registerAmbientResolverProxy in
+           initial state hash when fired (= registerAmbientResolverProxy in
            replay-callback-arg.cc). If we find a matching registration
            here, the OUTER walker resolves to that live proxy and
            dispatches the d=1 fact live against outer's actual value
@@ -712,11 +712,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            Using PostulatedIdempotentRead{localId} here is the Fix B
            anti-pattern documented in
            `tracing-eval-cache-per-arg-completion.md`:
-           `PostulatedIdempotentRead`'s argStateId is constant in `k`
+           `PostulatedIdempotentRead`'s state hash is constant in `k`
            (= no own-loop evolution), so once the standin's first
            probe extends the chain, every subsequent probe's
            `stampPerArgFields` reads back `localId` instead of the
-           cidasks-evolved argStateId the recorder stamped its facts
+           subject-id-evolved state hash the recorder stamped its facts
            against. The recorded reqHashes then can't be found in
            LocalResponseMap → cb-sibling fails with
            "no recorded response for getType on local". Both
@@ -1348,10 +1348,10 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     /* Inner-direction applies: fn is a recorded/cached entity
        (TracingReplayObject from evalFile, TracingCallbackArg's
-       counterparts, or an opaque argStateId). Each call constructs a
+       counterparts, or an opaque state hash). Each call constructs a
        fresh wrapper. Sibling cb apply invocations share the same
        (fnId, argId) at the boundary by construction (= the arg's
-       argStateId is the same positional seed across siblings), so a
+       state hash is the same positional seed across siblings), so a
        cross-invocation registry keyed by the apply Request hash
        would last-write-wins and conflate sibling invocations'
        per-call observation state — exactly the anti-pattern the
@@ -1361,10 +1361,10 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        of TracingEvaluator::apply. Use polymorphic `getSubject()` so
        apply-result wrappers (TracingReplayObject /
        TracingObject) expose their applyResultSubject as `fn` for
-       further applies — their argStateIds evolve via cidasks own-loop
+       further applies — their state hashes evolve via subject-id own-loop
        instead of being frozen by `PostulatedIdempotentRead{this.scopeStateId}`. Fall
        back to PostulatedIdempotentRead only when no Subject is exposed
-       (= atom whose argStateId is fully determined at construction). */
+       (= atom whose state hash is fully determined at construction). */
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
     auto argIdHash = Hash::parseNonSRIUnprefixed(argStateHashStr, HashAlgorithm::SHA256);
 

@@ -317,12 +317,12 @@ std::optional<std::vector<std::string>> TracingObject::getAttrPath()
 std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj)
 {
     /* Object-method counterpart of TracingEvaluator::apply. See
-       parallel commentary there for the cidasks routing of the
+       parallel commentary there for the subject-id routing of the
        apply's triePos and the applyResultSubject attachment. */
     auto fnIdOpt = getStateHashHex();
     auto argIdOpt = argObj->getStateHashHex();
     if (!fnIdOpt || !argIdOpt)
-        throw Error("TracingObject::queryApply: fn/arg lacks a content-defined identity");
+        throw Error("TracingObject::queryApply: fn/arg lacks a state hash");
 
     /* cb-apply boundary: record an explicit ε edge for this apply.
        See parallel call in TracingEvaluator::apply. */
@@ -339,7 +339,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
        an apply result, `getSubject()` surfaces its
        applyResultSubject — the next apply sees an evolving
        ApplyResultSubject constituent instead of `PostulatedIdempotentRead{
-       this.triePos}` which would freeze the argStateId. Plain TracingObjects
+       this.triePos}` which would freeze the state hash. Plain TracingObjects
        (= from evalFile, navigation children) return null and the
        PostulatedIdempotentRead fallback fires as a fixed-atom identity. */
     Subject fnSubj = getSubject()
@@ -356,12 +356,12 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
         .arg = std::make_shared<const Subject>(std::move(argId)),
     }};
 
-    /* apply-result argStateId is content-only — see commentary in
+    /* apply-result state hash is content-only — see commentary in
        TracingEvaluator::apply. */
     auto applyArgAncestryStateHash = stateHashAfter(resultSubject, applyArgAncestryLocal, {});
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
 
-    /* Record the apply Request payload at the cidasks hash so dispatch
+    /* Record the apply Request payload at the subject-id hash so dispatch
        and the legacy QueryApply{fn, arg} payload coincide. The legacy
        fnId/argId fields remain for the dispatcher's resolveCdiId
        chain. */

@@ -4,7 +4,7 @@
  * Content-defined identity computed as a pure function of subject
  * and factset. See `doc/design/tracing-eval-cache-content-identity-via-asks.md`.
  *
- * argAncestry state ids are not stored anywhere; they're computed on demand
+ * state hashes are not stored anywhere; they're computed on demand
  * from a value's static structural identifier (the "subject") and
  * the current factset. The recorder and the walker call the same
  * function with the same arguments and obtain identical hashes.
@@ -99,7 +99,7 @@ struct Subject
 };
 
 /** A single observation reduced to the two hashes stateHashAt needs.
-    `fromHash` is the argAncestry state id the query was issued against;
+    `fromHash` is the state hash the query was issued against;
     `elementHash` is SHA-256(reqHash || respHash) — the v13 H_element.
     Named `Observation` to match the doc's per-Asks-edge "facts about V"
     membership language (= each element is one observed (req, resp)
@@ -114,7 +114,7 @@ struct Observation
 
 /** An Asks edge's worth of observations. Observations in one edge are
     dispatched against a single shared precondition factset; their
-    `from` fields all refer to subjects' argAncestry state ids at that precondition. */
+    `from` fields all refer to subjects' state hashes at that precondition. */
 struct Edge
 {
     std::vector<Observation> observations;
@@ -124,32 +124,32 @@ struct Edge
     the writer at flush time where it already holds the variants. */
 Observation observationFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result);
 
-/** Compute the argAncestry state id of `subject` after walking through all
-    `edges`, inheriting `argAncestry` (the XOR of outer-argAncestry argStateIds — e.g.
-    argStateId(Q) at the cb-apply boundary). Passing the zero hash for
-    `argAncestry` gives the pure structural argAncestry state id, equivalent to
+/** Compute the state hash of `subject` after walking through all
+    `edges`, inheriting `argAncestry` (the XOR of outer-argAncestry state hashes — e.g.
+    state hash(Q) at the cb-apply boundary). Passing the zero hash for
+    `argAncestry` gives the pure structural state hash, equivalent to
     no inheritance.
 
     Inheritance applies at the leaf: `PositionalSeed` and
     `PostulatedIdempotentRead` XOR `argAncestry` into their base hash.
     `DerivedSubject` and `ApplyResultSubject` propagate `argAncestry`
-    via their constituents' (recursively argAncestry-aware) argAncestry state ids,
+    via their constituents' (recursively state-hash-aware) state hashes,
     so the structural derivation incorporates inheritance naturally
     via the constituents' `from`-field values. */
 Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
 
-/** Compute the argAncestry state id of `subject` at the precondition of the
+/** Compute the state hash of `subject` at the precondition of the
     edge at index `edgeIndex` in `walk`, inheriting `argAncestry`.
     `edgeIndex == 0` means the initial precondition (= empty
     factset); `edgeIndex == walk.size()` means the postcondition of
     the whole walk (equivalent to `stateHashAfter`).
 
     **Argument-level only.** Per the design (Principle 3, per-arg
-    centralization), only argument-level subjects bear argStateIds:
+    centralization), only argument-level subjects bear state hashes:
     `PositionalSeed` (cb_arg seed, evolves via own-loop),
-    `ApplyResultSubject` (composes constituent argument argStateIds), and
+    `ApplyResultSubject` (composes constituent argument state hashes), and
     `PostulatedIdempotentRead` (escape hatch). `DerivedSubject` does not
-    have a argStateId — observations on derived values fold into the cb_arg
+    have a state hash — observations on derived values fold into the cb_arg
     root's own-loop and the derived value is referenced via
     `(root_cdi, path)`. Passing a `DerivedSubject` traps; callers
     that want a content-addressed identifier for any Subject
@@ -182,7 +182,7 @@ Hash stateHashConverged(
     `qH(QueryGetAttr{name, from = root_cdi, fromCIDs, path})` for
     `GetAttr`, similarly for `GetListElem`. Used by `AmbientObject`,
     `TracingCallbackArg`, etc. to expose a single-`Hash` identity
-    handle even though derived values don't have argStateIds proper. */
+    handle even though derived values don't have state hashes proper. */
 Hash subjectHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex);
 
 /** Convenience: `subjectHashAt` at the walk's tail (= edgeIndex
@@ -289,7 +289,7 @@ std::string describe(const Subject & subject);
     chronological order, one Observation per call. Each Observation
     is conceptually its own one-fact Asks edge; `evolvedQueryFrom` on
     the wrapper wraps `observations` as a vector<Edge> with one fact
-    per edge so the cidasks own-loop re-evaluates `myCidAtK` per
+    per edge so the subject-id own-loop re-evaluates `myCidAtK` per
     observation.
 
     The context is **always read live**: no snapshot, no freeze. scopeStateIds
@@ -300,8 +300,8 @@ std::string describe(const Subject & subject);
     accumulates all three observations into one walk.
 
     `argId`/`argAncestry` identify the cb arg's structural Subject and
-    its inherited argAncestry (= per the cidasks Inheritance section, the
-    outer-argAncestry argStateIds that the per-invocation scopeStateIds compose with). */
+    its inherited argAncestry (= per the subject-id Inheritance section, the
+    outer-argAncestry state hashes that the per-invocation scopeStateIds compose with). */
 struct ApplyContext
 {
     Subject argId;

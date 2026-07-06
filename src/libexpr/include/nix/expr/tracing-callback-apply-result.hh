@@ -11,7 +11,7 @@
  *  - TracingObject's getType/getInt/etc. record sub-Q `Terminals`
  *    rows in the main trie via `writer.logQuery + logResult`. That's
  *    d=1 storage — appropriate for cached-fn results and other
- *    apply-results whose evolved argStateId participates in the d=1 walk.
+ *    apply-results whose evolved state hash participates in the d=1 walk.
  *
  *  - TracingCallbackApplyResult's methods record d=2 observations via
  *    `writer.logAmbientObservation`. They are grouped with the
@@ -28,7 +28,7 @@
  * `stampPerArgFields(query, syntheticSubject, syntheticScope,
  * walkFacts, walkFacts.size())` (where `walkFacts.size() == 1` after
  * the primop pushed the recursive apply Fact). Lookup keys agree by
- * the cidasks formula on both sides; the response payload comes
+ * the subject-id formula on both sides; the response payload comes
  * back; the synthetic's `advanceChainAndAppendFact` consumes the
  * matching AmbientAsks edge.
  *
@@ -75,7 +75,7 @@ class TracingCallbackApplyResult : public Object
     Hash depth2ApplyId;
 
     /* stateHashAfter(applyResultSubject, applyArgAncestry, {}) hex — the
-       content-only apply-result argStateId exposed via getStateHashHex. Computed
+       content-only apply-result state hash exposed via getStateHashHex. Computed
        once at construction to match `TracingEvaluator::apply`'s
        `applyArgAncestryStateHashHex` (= what the walker computes too). */
     std::string applyArgAncestryStateHashHex;

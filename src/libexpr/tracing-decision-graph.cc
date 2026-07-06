@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS Results (
 --
 -- Why keyed by requestHash, not by responseHash (= the natural CAS
 -- key): the depth-2 reqHash is `SHA-256(query{from =
--- cidasks-evolved scopeStateId})` — a pure function of (subject, scope,
+-- subject-id-evolved scopeStateId})` — a pure function of (subject, scope,
 -- prior facts in the chain). Two recordings reaching the same
 -- reqHash necessarily observed the same history; a deterministic
 -- env then produces the same response, so (request → response) is
@@ -1323,12 +1323,12 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
 
             /* Two-pass dispatch within an edge: successful dispatches
                populate the walker's pendingEdgeObservations, which
-               resolveCdiId consults for intra-edge subject-CDI
+               resolveCdiId consults for intra-edge subject state hash
                evolution. First-pass failures (dispatch returned the
                zero sentinel) get retried in a second pass after the
                successful obs have been buffered — this catches the
                case where an earlier-in-edge fact's `from` references a
-               CDI that only becomes resolvable after a later-in-edge
+               state hash that only becomes resolvable after a later-in-edge
                fact contributes to the fold. Bounded to two passes; a
                genuine dispatch failure stays zero and the walk's
                hasAnyEdge validation catches the divergent nextCur. */
@@ -1374,7 +1374,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                    leads walker to miss and fall through) stays live-first
                    in the primary pass; only when NO primary edge worked
                    do we speculate via LRM. This closes cb-repeated's
-                   walker-bug case (CDI collision on apply-result
+                   walker-bug case (state-hash collision on apply-result
                    subjects) without masking outer-body-change misses on
                    the primary pass. */
                 /* No LRM substitution here — correctness principle:
@@ -1386,7 +1386,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                    (a) genuinely reflecting an env change → MISS is
                        correct (interpreter re-eval or DISALLOW error)
                    (b) walker-side compute bug (cb-repeated's
-                       CDI-collapse) → fix the walker, not paper over
+                       state-hash collapse) → fix the walker, not paper over
                        with LRM substitution. */
                 tracingCacheLog("walk Q=%s rs=%s useful=%zu nextCur=%s NO RECORDED EDGE -> try next",
                                 q.to_string(HashFormat::Base16, false).substr(0, 12),

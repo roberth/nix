@@ -44,7 +44,7 @@ class TracingReplayObject : public Object
        cumulative envWalk). */
     std::shared_ptr<ApplyContext> applyContext;
     /* When apply-result, the ApplyResultSubject identifying it
-       structurally + the inherited argAncestry (= argStateId(Q)). Used together
+       structurally + the inherited argAncestry (= state hash(Q)). Used together
        with the evaluator's envWalk to compute the evolved scopeStateId
        at lookup time via the same formula the writer's TracingObject
        uses. */
@@ -108,7 +108,7 @@ public:
 
     /** Attach the per-apply observation context — for apply-result
         wrappers, so subsequent queries can compute the evolved
-        argAncestry state id via cidasks. */
+        state hash via subject-id. */
     TracingReplayObject & withApplyContext(
         std::shared_ptr<ApplyContext> ctx, Subject resultSubject)
     {
@@ -146,7 +146,7 @@ public:
     /** Symmetric to `TracingObject::getSubject()`: surface the apply-
         result Subject when this wrapper is an apply result so the
         next apply / further queries build `ApplyResultSubject{...}`
-        constituents whose argStateIds evolve via cidasks own-loop, instead
+        constituents whose state hashes evolve via subject-id own-loop, instead
         of falling back to `PostulatedIdempotentRead{this.scopeStateId}`. */
     const Subject * getSubject() const override
     {

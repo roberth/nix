@@ -39,7 +39,7 @@ class ReplayCallbackArg : public Object
 {
     /* Full structural identity. Combined with `argAncestry` and the shared
        `walkFacts`, `stateHashAt` computes this proxy's scopeStateId
-       at any walk position. The recorder's cidasks substitution at
+       at any walk position. The recorder's subject-id substitution at
        flush uses the same evaluation, so walker and recorder agree
        on per-probe `from` fields without snapshot/lazy hacks — even
        when a child's structural component depends on a parent's
@@ -229,7 +229,7 @@ public:
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
     /** Content-defined identity is the localId (= the cb-apply local
-        arg's argStateId hash recorded at write time). Lets evaluator.apply
+        arg's state hash hash recorded at write time). Lets evaluator.apply
         compute the apply Request hash when this standin is the arg. */
     std::optional<std::string> getStateHashHex() const override
     {

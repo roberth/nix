@@ -67,15 +67,15 @@ using AmbientApplyFn = std::function<AmbientId(
 class AmbientObject : public Object
 {
     Subject subject; ///< Static structural identifier (positional/derived/apply)
-    /* Inherited argAncestry: XOR of outer-argAncestry argStateIds (chiefly the cached
-       call's argStateId(Q)) for content-id inheritance, per
+    /* Inherited argAncestry: XOR of outer-argAncestry state hashes (chiefly the cached
+       call's state hash(Q)) for content-id inheritance, per
        content-identity-via-asks.md. Set at the cb-apply boundary;
        propagated to children. Zero hash if no inheritance. */
     Hash argAncestry;
     /* Per-apply observation context. Set on cb-arg seed AmbientObjects
        by makeCachedFnPrimOp.impl at the apply boundary; the queryFn
        closure routes observations through this context so the
-       apply-result wrapping can compute its evolved argAncestry state id via
+       apply-result wrapping can compute its evolved state hash via
        stateHashAfter against the accumulated walk. Null on
        non-cb-arg AmbientObjects. */
     std::shared_ptr<ApplyContext> applyContext;
@@ -110,9 +110,9 @@ public:
         apply-result), per the content-identity-via-asks design. */
     const Subject * getSubject() const override { return &subject; }
 
-    /** This proxy's inherited argAncestry (outer-argAncestry argStateIds composed),
-        used by cidasks to make sibling cached-call recordings'
-        argAncestry state ids distinct. */
+    /** This proxy's inherited argAncestry (outer-argAncestry state hashes composed),
+        used by subject-id to make sibling cached-call recordings'
+        state hashes distinct. */
     Hash getArgAncestry() const override { return argAncestry; }
 
     /** Set the proxy's argCell. Call right after construction at
@@ -123,7 +123,7 @@ public:
         return *this;
     }
 
-    /** Set the proxy's inherited argAncestry (outer-argAncestry argStateIds).
+    /** Set the proxy's inherited argAncestry (outer-argAncestry state hashes).
         Children created by this proxy inherit this argAncestry. */
     AmbientObject & withInheritedScope(const Hash & h)
     {
@@ -173,7 +173,7 @@ public:
 
     AmbientId getCdi() const
     {
-        /* argAncestry state id at the empty factset, with this proxy's inherited
+        /* state hash at the empty factset, with this proxy's inherited
            argAncestry applied. For multi-edge use, callers must pass the
            relevant walk via stateHashAt instead. */
         return subjectHashAfter(subject, argAncestry, {});

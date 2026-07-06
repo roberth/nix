@@ -161,8 +161,8 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     auto type = result->getType();
     auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
     auto obj = TracingObject::create(result, writer, v, triePos);
-    /* Root argAncestry-graph cell for the cached value. Cells now carry
-       only topology (depth/parent/liveObject); argAncestry state ids are pure
+    /* Root scope-graph cell for the cached value. Cells now carry
+       only topology (depth/parent/liveObject); state hashes are pure
        functions of the proxy's Subject under the via-Asks design. */
     obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
     return obj;
@@ -300,8 +300,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        openApplyBoundary closes the preceding observations as one
        Asks edge (β1) and then records a synthetic single-observation
        Asks edge (ε) carrying just the apply Request — both sides
-       advance their cumulative cidasks walk by one for ε, so the
-       apply-result's argStateId is computed at a walk index the walker
+       advance their cumulative subject-id walk by one for ε, so the
+       apply-result's state hash is computed at a walk index the walker
        can reach via the recorded chain. */
     nlohmann::json applyQ = trace::QueryApply{fnStateHashStr, argStateHashStr};
 
@@ -410,7 +410,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         writer.openApplyBoundary(applyQ);
     }
 
-    /* Per-arg-completion option 2: apply-result argStateId evolves with
+    /* Per-arg-completion option 2: apply-result state hash evolves with
        the writer's envWalk at the moment of apply. With the
        1:1 alignment restructure, writer.d1.size grows in lockstep
        with envAsksEdges; walker.envWalk grows per dispatched

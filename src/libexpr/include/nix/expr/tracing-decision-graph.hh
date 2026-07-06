@@ -132,7 +132,7 @@ public:
        argument requires the reqhash to be a pure function of
        (subject, argAncestry, prior facts in the chain); across writer
        sessions with different outer args, that assumption can fail
-       (same seed(N) pre-observation CDI → same reqhash → different
+       (same seed(N) pre-observation state hash → same reqhash → different
        responses from arg-dependent env), so d=1 dispatch MUST NOT
        read this map. See `cross-session-seed-collision` memory. */
     /* Context-widened LocalResponseMap: PK is (requestHash, contextHash).
@@ -250,7 +250,7 @@ public:
        It records the observations the outer makes against an
        inner-supplied LocalObject during a covariant callback.
        Same-call sibling collapse within is intentional;
-       cross-call disambiguation is via argAncestry state id inheritance.
+       cross-call disambiguation is via state hash inheritance.
 
        Unlike depth-1, edges store toFactSetHash explicitly: at
        depth-2 there is no live producer for incoming-ambient
@@ -340,7 +340,7 @@ public:
        Asks-edge attempt, AFTER the edge's useful requests have
        been dispatched, with `committed=true` if the resulting
        factset reaches a continuation and `false` if walk is
-       rejecting this branch. Used by the cidasks-aware caller to
+       rejecting this branch. Used by the subject-id-aware caller to
        promote per-edge dispatched facts into a `Edge`
        on commit (= principle 5/7) or discard them on reject. */
     /* Hit: returns (resultHash, terminalCur). The terminalCur is the

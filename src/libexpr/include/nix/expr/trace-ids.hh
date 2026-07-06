@@ -7,7 +7,7 @@
  * - ValueHandle: JSON trace correlation handle (TraceSink)
  * - AmbientId:   AmbientResolver registry handle, a content Hash.
  *                Seed roots use the empty-set hash (their
- *                content-defined identity at apply time, since no
+ *                state hash at apply time, since no
  *                observations have happened yet); derived values
  *                use the producer query's queryHash.
  */

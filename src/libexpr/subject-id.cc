@@ -213,17 +213,17 @@ Hash stateHashAtStamping(
 
 Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex)
 {
-    /* Compute subject's argAncestry state id at the precondition of the
+    /* Compute subject's state hash at the precondition of the
        `edgeIndex`-th edge by replaying the first `edgeIndex` edges'
-       effects on the subject's running argAncestry state id.
+       effects on the subject's running state hash.
 
-       Inheritance: `argAncestry` is the XOR of outer-argAncestry argStateIds (chiefly
-       the cached call's argStateId(Q) at the cb-apply boundary). Passing
+       Inheritance: `argAncestry` is the XOR of outer-argAncestry state hashes (chiefly
+       the cached call's state hash(Q) at the cb-apply boundary). Passing
        zero gives the pure structural id. Leaf subjects
        (PositionalSeed, PostulatedIdempotentRead) XOR `argAncestry` into their
        base hash. Composite subjects (DerivedSubject,
        ApplyResultSubject) propagate `argAncestry` recursively through
-       their constituents' argAncestry state ids; the structural derivation
+       their constituents' state hashes; the structural derivation
        at this level uses those scoped constituents' values in its
        query payload, so inheritance ripples through naturally
        without a second XOR at this level.
@@ -251,7 +251,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                     auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
                     return TracingDecisionGraph::xorHashes(base, argAncestry);
                 } else if constexpr (std::is_same_v<T, DerivedSubject>) {
-                    /* Derived subjects have no argStateId — only an address
+                    /* Derived subjects have no state hash — only an address
                        (= producer query hash). Callers that need an
                        address for any subject use `subjectHashAt`;
                        reaching this branch via `stateHashAt` means a
@@ -259,7 +259,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                        requires an argument-level subject. */
                     nix::unreachable();
                 } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
-                    /* Apply-result composes its constituents' argStateIds.
+                    /* Apply-result composes its constituents' state hashes.
                        Constituents may be Derived → route through
                        subjectHashAt (which dispatches Derived to
                        the producer-query-hash path). */
@@ -279,7 +279,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                        inputs) or under-XOR (= un-scoped inputs) — the
                        per-arg-completion doc (= option 1) avoids
                        both by treating PostulatedIdempotentRead as a
-                       pre-computed-argStateId atom. */
+                       pre-computed-state hash atom. */
                     return alt.hash;
                 } else {
                     throw Error("stateHashAt: unknown subject variant");
@@ -375,7 +375,7 @@ Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const
 Hash subjectHashAt(
     const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex)
 {
-    /* For non-derived subjects, the structural address IS the argStateId.
+    /* For non-derived subjects, the structural address IS the state hash.
        For DerivedSubject, stateHashAt traps; we compute the
        producer query hash (= what a `from = root_cdi` flush would
        hash for a query naming this derived value) directly. */

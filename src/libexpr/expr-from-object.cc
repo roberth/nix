@@ -34,7 +34,7 @@ namespace nix {
  *   The apply Request is also inserted into the pool so downstream
  *   `from=<apply_qH>` Facts can chase identity back.
  */
-/* Pure-storage registry mapping content-defined ids to live outer
+/* Pure-storage registry mapping state hashs to live outer
    Objects (values the inner reads through AmbientObject). The Local
    direction (inner values the outer reads via callback) doesn't go
    through this registry at all on replay — those are served by
@@ -67,7 +67,7 @@ struct AmbientRegistry
 
 /* Pure-dispatch wrapper around an Object's query interface. Knows how
    to invoke the right Object method for each QueryVariant alternative,
-   how to derive a child's content-defined id from a producer query's
+   how to derive a child's state hash from a producer query's
    payload, and how to register the derived child / delay its settled
    identity into the writer. Stateless apart from the references it
    holds. Constructed on demand from AmbientResolver members. */
@@ -174,7 +174,7 @@ struct AmbientApply
     /** Same as run, but the fnObj is provided directly instead of
         being resolved via the registry. Used by makeCachedFnPrimOp's
         applyFn closure when the seed AmbientObject itself is being
-        applied (= fnId is the seed's argStateId, which boundary discipline
+        applied (= fnId is the seed's state hash, which boundary discipline
         keeps unregistered to avoid sibling collisions; the closure
         captures outerArgObj instead). */
     std::pair<AmbientId, AmbientId> runOn(
@@ -200,16 +200,16 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
        outer EvalState's rootFSRoot. Held as shared_ptr (rather than
        ref) so AmbientResolver stays default-constructible. */
     std::shared_ptr<SourceRoot> outerRootFSRoot;
-    /* Inherited argAncestry (argStateId of this cached call's Q) — used by the
-       cb-apply boundary to make sibling cached calls' argAncestry state ids
-       distinct via cidasks inheritance. Zero hash means no
+    /* Inherited argAncestry (state hash of this cached call's Q) — used by the
+       cb-apply boundary to make sibling cached calls' state hashes
+       distinct via subject-id inheritance. Zero hash means no
        inheritance (= no argAncestry discrimination). */
     Hash callArgAncestry = Hash(HashAlgorithm::SHA256);
 
     /* Outer-direction proxies registered live by the standin's
        `<replay-local-lambda>` primop (= `registerAmbientResolverProxy`).
        Keyed by `(subject, argAncestry)` so the walker's `resolveCdiId`
-       can match the registered seed's cidasks-evolved argStateId at any
+       can match the registered seed's subject-id-evolved state hash at any
        walk-edge index, not just the initial one. List rather than
        map because subject equality isn't trivially hashable;
        n_registrations is small (= one per cb-apply boundary the
@@ -324,7 +324,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
     /* Wrap the argObj in TracingCallbackArg so the outer's
        accesses on it during the apply land in the inner trace
        with `from=hex(argId)`. Inherit callArgAncestry so sibling cached
-       calls' local-args have distinct argAncestry state ids.
+       calls' local-args have distinct state hashes.
 
        Skip the TLO wrap when argObj is a ReplayCallbackArg. At warm
        replay, the RLO standin reaching `runOn` already encapsulates
@@ -457,13 +457,13 @@ static PrimOp * makeCachedFnPrimOp(
                            navigation returns the proxy. */
                         auto parentCell = effectiveArgCell(*fnObj);
                         auto seedCell = ArgCell::make(parentCell, /*liveObject set below*/ nullptr);
-                        /* argStateId fix: this seed's Subject is the positional
+                        /* state hash fix: this seed's Subject is the positional
                            handle at this static apply-stack depth.
                            Sibling cb apply invocations share the same
                            Subject and discriminate via their observation
                            factsets, not via state-creep. */
                         Subject argId{PositionalSeed{seedCell->depth}};
-                        /* Inherit the resolver's callArgAncestry (= argStateId(Q)
+                        /* Inherit the resolver's callArgAncestry (= state hash(Q)
                            of this cached call). Sibling cached calls
                            with different Qs get distinct rootIds and
                            therefore distinct subject-derived content
@@ -474,7 +474,7 @@ static PrimOp * makeCachedFnPrimOp(
                            outer's probes on the cb arg as they fire
                            through queryFn; the apply-result wrapper
                            uses these observations to compute its
-                           evolved argAncestry state id (via cidasks
+                           evolved state hash (via subject-id
                            ApplyResultSubject recursion through the
                            arg's evolved scopeStateId). This is what
                            distinguishes sibling apply calls within
@@ -518,8 +518,8 @@ static PrimOp * makeCachedFnPrimOp(
                                are NOT pushed into applyContext.observations.
                                They would be noise from the apply-result
                                wrapper's perspective (their `fromHash` is
-                               the cb-arg seed's argStateId, not the wrapper's,
-                               so the cidasks own-loop on the wrapper
+                               the cb-arg seed's state hash, not the wrapper's,
+                               so the subject-id own-loop on the wrapper
                                doesn't fold them in) but the walk's size
                                growing from these silent pushes would
                                diverge writer (queryFn fires before
@@ -528,7 +528,7 @@ static PrimOp * makeCachedFnPrimOp(
                                fires after evolvedQueryFrom because
                                parentHash must be computed first to
                                build the query). The cb-arg
-                               AmbientObject's own argStateId uses
+                               AmbientObject's own state hash uses
                                subjectHashAfter with empty walk
                                (= content-only) anyway, so dropping
                                these pushes is consistent throughout. */
@@ -771,7 +771,7 @@ void registerAmbientResolverProxy(
        `applyDepth+1` values), so collisions across boundaries
        within one cache call are non-existent unless sibling
        cb-applies share the same cb-arg seed depth — same
-       boundary-trace-only caveat as the previous argStateId-keyed version.
+       boundary-trace-only caveat as the previous state hash-keyed version.
 
        `Subject` has no `operator==`; the primop only ever
        registers `PositionalSeed{depth}` here, so structural

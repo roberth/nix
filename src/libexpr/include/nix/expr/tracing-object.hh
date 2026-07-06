@@ -36,9 +36,9 @@ class TracingObject : public Object
        ancestor chain. */
     std::shared_ptr<const ArgCell> argCell;
 
-    /* For apply-result wrappers: the cidasks Subject that identifies
+    /* For apply-result wrappers: the subject-id Subject that identifies
        this apply structurally (ApplyResultSubject{fn, arg}), and the
-       inherited argAncestry (= argStateId(Q) at the cb-apply boundary). Child
+       inherited argAncestry (= state hash(Q) at the cb-apply boundary). Child
        queries on this wrapper emit at
        `stateHashAt(applyResultSubject, applyArgAncestry, writer.envWalk,
        walk.size())` — the per-arg evolved scopeStateId the design's
@@ -52,7 +52,7 @@ class TracingObject : public Object
        via shared_ptr. */
     std::shared_ptr<ApplyContext> applyContext;
 
-    /* Compute the wrapper's evolved argStateId live from
+    /* Compute the wrapper's evolved state hash live from
        applyContext->observations. */
     std::string evolvedQueryFrom() const;
 
@@ -104,12 +104,12 @@ public:
         is itself an apply result (= curried fn for the next apply, or
         target of further queries). Surfacing the Subject lets the
         next apply build `ApplyResultSubject{fn=this.subject, ...}`
-        with constituents whose argStateIds *evolve* via cidasks own-loop,
+        with constituents whose state hashes *evolve* via subject-id own-loop,
         instead of falling back to `PostulatedIdempotentRead{this.scopeStateId}` which
-        freezes the argStateId at construction time. Non-apply-result
+        freezes the state hash at construction time. Non-apply-result
         wrappers (= fresh from evalFile, navigation children)
         legitimately have no Subject — for those, the PostulatedIdempotentRead
-        fallback in callers describes an atom whose argStateId is fully
+        fallback in callers describes an atom whose state hash is fully
         determined and not subject to observation-driven evolution. */
     const Subject * getSubject() const override
     {

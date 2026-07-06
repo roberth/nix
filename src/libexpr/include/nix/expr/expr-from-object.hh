@@ -117,8 +117,8 @@ std::shared_ptr<AmbientResolver> makeAmbientResolver(
     std::shared_ptr<Evaluator> innerEvaluator,
     TracingWriter * innerWriter = nullptr);
 
-/** Set the resolver's cached-call argAncestry — used by cidasks to make
-    sibling cached calls' argAncestry state ids distinct via inheritance.
+/** Set the resolver's cached-call argAncestry — used by subject-id to make
+    sibling cached calls' state hashes distinct via inheritance.
     Should be unique per cached call (e.g. hash of import path). */
 void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callArgAncestry);
 
@@ -126,14 +126,14 @@ void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callArgAncestr
     per-cb-invocation argAncestry overrides. */
 Hash getAmbientResolverCallScope(const AmbientResolver & resolver);
 
-/** Register a live outer-direction proxy under a cidasks `subject` +
+/** Register a live outer-direction proxy under a subject-id `subject` +
     `argAncestry` in the resolver's outer-values map. Used by the
     `<replay-local-lambda>` primop at warm replay to publish the
     live arg it received (args[0]) under the cb-arg seed's
     structural identity, so the OUTER walker can resolve d=1 facts
-    whose `from` references the seed's argStateId — at ANY walk-edge
-    index, since the d=1 fact's `from` is the seed's cidasks-evolved
-    argStateId at flush time and the walker doesn't know that index a
+    whose `from` references the seed's state hash — at ANY walk-edge
+    index, since the d=1 fact's `from` is the seed's subject-id-evolved
+    state hash at flush time and the walker doesn't know that index a
     priori. At cold these queries' answers came from the queryFn
     closure that captured the live outer arg; at warm this
     registration is the equivalent live channel. Single-entry
@@ -153,9 +153,9 @@ void registerAmbientResolverProxy(
     cell-chain and Requests-pool resolution fail, before the
     "outer-seed by elimination" miss path. Iterating every edge
     boundary is necessary because the d=1 fact's `from` is the
-    seed's argStateId at the writer's flush-time `envWalk` index
+    seed's state hash at the writer's flush-time `envWalk` index
     (= post-observations evolution), which differs from the
-    initial argStateId we registered under. */
+    initial state hash we registered under. */
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     AmbientResolver & resolver,
     const Hash & idHash,

@@ -171,7 +171,7 @@ public:
         TracingWriter & writer,
         TracingDecisionGraph & decisionGraph);
 
-    /** Cumulative cidasks walk on the walker, mirroring the writer's
+    /** Cumulative subject-id walk on the walker, mirroring the writer's
         `envWalk`. Exposed so apply-result wrappers
         (TracingReplayObject with applyResultSubject) can compute
         `stateHashAt(subject, argAncestry, walk, walk.size())` and match the

@@ -377,8 +377,8 @@ void from_json(const nlohmann::json & j, PathStep & s);
 
 /** A path from a cb_arg root to the value being probed. Empty path
     means the observation is on the root itself. Used by the per-arg
-    cidasks model: every probe's path identifies *which* derived
-    value within the root is being probed, while the root's argStateId is
+    subject-id model: every probe's path identifies *which* derived
+    value within the root is being probed, while the root's state hash is
     what `fromCIDs` resolves to at flush. */
 struct PathExpr
 {
@@ -419,7 +419,7 @@ struct QueryGetAttr
     static constexpr std::string_view tag = "getAttr";
     std::string name;
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (one entry per hole in `path`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetAttr &) const = default;
 };
@@ -430,7 +430,7 @@ struct QueryGetString
 {
     static constexpr std::string_view tag = "getString";
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (one entry per hole in `path`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetString &) const = default;
 };
@@ -441,7 +441,7 @@ struct QueryGetStringWithContext
 {
     static constexpr std::string_view tag = "getStringWithContext";
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (one entry per hole in `path`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetStringWithContext &) const = default;
 };
@@ -452,7 +452,7 @@ struct QueryGetAttrNames
 {
     static constexpr std::string_view tag = "getAttrNames";
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (one entry per hole in `path`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetAttrNames &) const = default;
 };
@@ -463,7 +463,7 @@ struct QueryGetType
 {
     static constexpr std::string_view tag = "getType";
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (one entry per hole in `path`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetType &) const = default;
 };
@@ -474,7 +474,7 @@ struct QueryGetBool
 {
     static constexpr std::string_view tag = "getBool";
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (one entry per hole in `path`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetBool &) const = default;
 };
@@ -485,7 +485,7 @@ struct QueryGetInt
 {
     static constexpr std::string_view tag = "getInt";
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (one entry per hole in `path`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetInt &) const = default;
 };
@@ -496,7 +496,7 @@ struct QueryGetFloat
 {
     static constexpr std::string_view tag = "getFloat";
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (one entry per hole in `path`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetFloat &) const = default;
 };
@@ -507,7 +507,7 @@ struct QueryGetListOfStrings
 {
     static constexpr std::string_view tag = "getListOfStrings";
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (one entry per hole in `path`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetListOfStrings &) const = default;
 };
@@ -518,7 +518,7 @@ struct QueryGetListSize
 {
     static constexpr std::string_view tag = "getListSize";
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (one entry per hole in `path`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetListSize &) const = default;
 };
@@ -530,7 +530,7 @@ struct QueryGetListElem
     static constexpr std::string_view tag = "getListElem";
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
     size_t index;
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (one entry per hole in `path`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetListElem &) const = default;
 };
@@ -541,7 +541,7 @@ struct QueryGetPath
 {
     static constexpr std::string_view tag = "getPath";
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (one entry per hole in `path`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetPath &) const = default;
 };
@@ -568,7 +568,7 @@ struct QueryGetFunctionInfo
 {
     static constexpr std::string_view tag = "getFunctionInfo";
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromCIDs`)
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (one entry per hole in `path`)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetFunctionInfo &) const = default;
 };
@@ -593,9 +593,9 @@ DECLARE_QUERY_RESULT(QueryGetFunctionInfo, ResultFunctionInfo)
       leaf-form Objects (TracingObject, AmbientObject).
 
     - **Per-arg path-encoded mode** populates `fromCIDs` with the root
-      cb_args' argStateIds and uses `fnPath`/`argPath`+`fnRootIndex`/`argRootIndex`
+      cb_args' state hashes and uses `fnPath`/`argPath`+`fnRootIndex`/`argRootIndex`
       to encode how fn and arg are reached from those roots. Used by
-      cidasks to compute an ApplyResultSubject's scopeStateId without needing
+      subject-id to compute an ApplyResultSubject's scopeStateId without needing
       standalone derived-subject scopeStateIds — see
       `content-identity-via-asks.md` §Principle 3 (per-arg
       centralization). `fn`/`arg` stay empty in this mode.
@@ -607,7 +607,7 @@ struct QueryApply
     static constexpr std::string_view tag = "apply";
     QueryLeaf fn;  ///< Function identity (legacy direct mode)
     QueryLeaf arg; ///< Argument identity (legacy direct mode)
-    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg argStateIds (per-arg mode)
+    std::vector<QueryLeaf> fromCIDs;  ///< Root cb_arg state hashes (per-arg mode)
     PathExpr fnPath;                  ///< Path from `fromCIDs[fnRootIndex]` to fn
     PathExpr argPath;                 ///< Path from `fromCIDs[argRootIndex]` to arg
     size_t fnRootIndex{0};

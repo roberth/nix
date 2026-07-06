@@ -30,7 +30,7 @@ void TracingWriter::flushAmbient(bool finalize)
 
     /* Depth-1 facts (= ambient observations on outer state) fold into
        envFactSet immediately; we build a single edge per flush appended
-       to envWalk for cidasks own-fold evolution. Depth-2 facts
+       to envWalk for subject-id own-fold evolution. Depth-2 facts
        group by cb-apply id and are NOT folded into envFactSet — they
        live only in AmbientAsks rows, processed at `finalize=true`
        (= logResult) when each cb-apply's chain is known to be complete. */
@@ -64,7 +64,7 @@ void TracingWriter::flushAmbient(bool finalize)
     std::set<Hash> d1NewEdgeSeen;
 
     for (auto & pf : pendingDepth1Facts) {
-        /* Per-arg with multi-root: `from` is the first cb_arg's argStateId;
+        /* Per-arg with multi-root: `from` is the first cb_arg's state hash;
            `fromCIDs[]` carries all cb_arg roots reached via the
            subject tree; `path` encodes the access expression that
            walks from fromCIDs[0] to the observed subject. */
@@ -173,7 +173,7 @@ void TracingWriter::flushAmbient(bool finalize)
             }
         }
 
-        /* Append the substituted fact to the new d1 cidasks edge so
+        /* Append the substituted fact to the new d1 subject-id edge so
            later logResults' stateHashAt sees it in the own-loop.
 
            Per-edge dedup by elementHash: an Asks edge is a SET of
@@ -272,8 +272,8 @@ void TracingWriter::flushAmbient(bool finalize)
        cb-apply's chain its own subtree in AmbientAsks, so the
        walker can pick the right chain by knowing the apply Fact's
        reqHash — no ambiguity when multiple cb-applies are recorded.
-       via-Asks discrimination via inherited argStateId propagation still
-       flows through: different inherited argStateIds → different argId →
+       via-Asks discrimination via inherited state hash propagation still
+       flows through: different inherited state hashes → different argId →
        different applyReqHash → different chain root. Same-shape
        collapse still holds for identical cb-applies (= same fnId,
        same argId, same observations → same applyReqHash → same

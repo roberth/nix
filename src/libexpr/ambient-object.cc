@@ -56,7 +56,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     /* Inherit content-id argAncestry so the child's `from` fields include
-       the same argStateId(Q) the parent uses. */
+       the same state hash(Q) the parent uses. */
     child->withInheritedScope(argAncestry);
     return child;
 }
@@ -246,7 +246,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
        inherited Subject is propagated, so observations at the
        boundary are predictable regardless of where the arg came
        from. Must match what `AmbientApply::run` computes for argId
-       downstream so the registry's resultId and this proxy's argStateId
+       downstream so the registry's resultId and this proxy's state hash
        for queryFn lookups agree. */
     int localDepth = callerScope ? callerScope->depth + 1 : 0;
     Subject argId{PositionalSeed{localDepth}};

@@ -105,7 +105,7 @@ class TracingWriter
         trace::QueryVariant query;
         trace::ResultVariant result;
         Subject subject;
-        Hash argAncestry; ///< outer-argAncestry argStateIds for stateHashAt
+        Hash argAncestry; ///< outer-argAncestry state hashes for stateHashAt
         /* Empty hash = depth-1; otherwise = the cb apply's resultId,
            grouping this fact into the depth-2 sub-trace for that apply. */
         Hash depth2ApplyId{HashAlgorithm::SHA256};
@@ -118,7 +118,7 @@ class TracingWriter
        own probe sequence. Storage is below (= ApplyBoundary's
        facts field). */
 
-    /* Persistent cidasks chain for depth-1 ambient observations.
+    /* Persistent subject-id chain for depth-1 ambient observations.
        envWalk is kept 1:1-aligned with `envAsksEdges`:
        every Asks edge inserted into `envAsksEdges` is paired with
        a d1 edge inserted at the SAME index. This invariant lets the
@@ -293,7 +293,7 @@ public:
     {
     }
 
-    /** Cumulative cidasks walk over depth-1 ambient observations.
+    /** Cumulative subject-id walk over depth-1 ambient observations.
         One edge per logResult-triggered flush. Exposed so writer-side
         apply-result wrappers (TracingObject with applyResultSubject)
         can compute `stateHashAt(subject, argAncestry, walk, walk.size())`
@@ -410,7 +410,7 @@ public:
     /**
      * Log an ambient interaction as a d>0 Request/Response pair.
      *
-     * Under Phase 4 of content-defined identity, ambient facts are
+     * Under Phase 4 of state hash, ambient facts are
      * buffered here rather than eagerly inserted into envFactSet and
      * the Requests pool / LocalResponseMap — the `from` field of the query
      * may be a placeholder (counter-derived local id) whose final
@@ -537,7 +537,7 @@ public:
      *
      * AmbientResolver::apply uses this to register the QueryApply
      * Request and the localArg sidecar. At flush: if `keyPlaceholder`
-     * is set the insert key is that key (the local's argAncestry state id);
+     * is set the insert key is that key (the local's state hash);
      * otherwise the insert key is the hash of the payload (the apply
      * Q's own queryHash).
      */
@@ -581,10 +581,10 @@ public:
      * advances its cumulative `envWalk` once per dispatched
      * Asks edge (= principle 6) — leaving writer and walker at
      * different walk indices when they each compute the
-     * apply-result's argStateId, producing different queryHashes.
+     * apply-result's state hash, producing different queryHashes.
      *
      * Skip-on-empty per the principle 4 + 7 read: an Asks edge
-     * with no ambient observations doesn't move cidasks state, so
+     * with no ambient observations doesn't move subject-id state, so
      * walker's commitEdge is a no-op for it. Same on the writer.
      */
     void closeAsksEdge(bool finalize = false);

@@ -263,10 +263,10 @@ public:
     /**
      * If this Object is a cache-boundary proxy with a content-defined
      * identity — AmbientObject, TracingCallbackArg, TracingObject,
-     * TracingReplayObject — return its argStateId hex. Returns nullopt for
+     * TracingReplayObject — return its state hash hex. Returns nullopt for
      * regular Objects (InterpreterObject and friends). Used to build
      * apply Q hashes (`TracingReplayEvaluator::apply`) and to match
-     * `cell->liveObject` against a recorded argStateId
+     * `cell->liveObject` against a recorded state hash
      * (`TracingReplayEvaluator::resolveCdiId`'s cell-chain branch).
      *
      * Virtual rather than dynamic_cast so callers don't have to
@@ -290,7 +290,7 @@ public:
     }
 
     /**
-     * The proxy's inherited scope — the XOR of outer-scope argStateIds used
+     * The proxy's inherited scope — the XOR of outer-scope state hashes used
      * by stateHashAt to make sibling cached-call recordings'
      * scope state ids distinct. Zero hash for non-proxy Objects.
      */
@@ -427,7 +427,7 @@ public:
      *
      * The walker uses this to consult outer-direction proxies
      * registered live by the `<replay-local-lambda>` primop when
-     * resolving an inner-side cb-arg seed argStateId that has no recorded
+     * resolving an inner-side cb-arg seed state hash that has no recorded
      * provenance — closes the gap where the warm walker dispatches
      * d=1 facts on the apply's argObj and the cb-arg seed has
      * neither a producer Request nor a localArg sidecar.
