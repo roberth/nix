@@ -423,7 +423,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    subject + scope (= `PositionalSeed{applyDepth+1}`
                    at `applyArgAncestry`), matching what
                    `makeCachedFnPrimOp`'s impl uses for its
-                   `seedSubject` / `callScope` at cold; the walker
+                   `seedSubject` / `callArgAncestry` at cold; the walker
                    iterates `cidasksWalk` to find the matching edge.
                    Wraps args[0] in an `InterpreterObject` so the
                    walker can call getType / getInt / etc. live
@@ -496,7 +496,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
 
                 /* Apply scope: Merkle(fn.scope, arg.scope). The arg
                    crosses the boundary as a fresh positional seed
-                   (scope=0); fn carries applyScopeSaved (= callScope
+                   (scope=0); fn carries applyScopeSaved (= callArgAncestry
                    from sidecar). Used for stamping the apply Fact AND
                    for the synthetic's downstream probes — both
                    mirror the writer's `TracingCallbackApplyResult` whose

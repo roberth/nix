@@ -46,9 +46,9 @@ class ReplayCallbackArg : public Object
        evolving scopeStateId.
 
        For root (cb-apply) locals the subject is `PositionalSeed{depth}`
-       with the recorded callScope (per the localArg sidecar), so the
+       with the recorded callArgAncestry (per the localArg sidecar), so the
        walker reproduces the recorder's
-       `scopeStateIdAfter(PositionalSeed{D}, callScope, {})` directly.
+       `scopeStateIdAfter(PositionalSeed{D}, callArgAncestry, {})` directly.
 
        For children minted by maybeGetAttr/getListElem the subject is
        `DerivedSubject{parent.subject, ...}` — `scopeStateIdAt`
@@ -124,7 +124,7 @@ class ReplayCallbackArg : public Object
     /* cb-arg apply context, sourced from the writer's localArg
        sidecar. `applyDepth` = `localCell->depth` at the recorder's
        AmbientResolver::apply boundary. `applyArgAncestry` = the resolver's
-       callScope. Used by the lambda primop to compose nested
+       callArgAncestry. Used by the lambda primop to compose nested
        apply-result subjects matching the recorder's encoding (=
        `ApplyResultSubject{fn=this.subject, arg=PositionalSeed{depth+1}}`
        at `applyArgAncestry`). Inherited unchanged through derived

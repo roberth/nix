@@ -442,10 +442,10 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     auto v = writer.getSink().logQuery(trace::QueryApply{fnId, argId});
 
-    /* Per-invocation callScope for GENUINE cb-apply (not curried
+    /* Per-invocation callArgAncestry for GENUINE cb-apply (not curried
        follow-up): sibling cb-apply invocations of the SAME cached
        primop (cb-sibling's `cached { fA }` vs `cached { fB }`) share
-       the same resolver->callScope, so their inner facts stamp
+       the same resolver->callArgAncestry, so their inner facts stamp
        identical `from` fields → reqhash collision.
 
        Distinguish genuine cb-apply from curried follow-up by fn's

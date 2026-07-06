@@ -120,9 +120,9 @@ std::shared_ptr<AmbientResolver> makeAmbientResolver(
 /** Set the resolver's cached-call scope — used by cidasks to make
     sibling cached calls' scope state ids distinct via inheritance.
     Should be unique per cached call (e.g. hash of import path). */
-void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callScope);
+void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callArgAncestry);
 
-/** Get the resolver's current callScope for RAII save/restore around
+/** Get the resolver's current callArgAncestry for RAII save/restore around
     per-cb-invocation scope overrides. */
 Hash getAmbientResolverCallScope(const AmbientResolver & resolver);
 

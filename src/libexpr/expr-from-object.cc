@@ -204,7 +204,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
        cb-apply boundary to make sibling cached calls' scope state ids
        distinct via cidasks inheritance. Zero hash means no
        inheritance (= no scope discrimination). */
-    Hash callScope = Hash(HashAlgorithm::SHA256);
+    Hash callArgAncestry = Hash(HashAlgorithm::SHA256);
 
     /* Outer-direction proxies registered live by the standin's
        `<replay-local-lambda>` primop (= `registerAmbientResolverProxy`).
@@ -291,12 +291,12 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        same way through their args reach the same trie position
        regardless of where the arg's source came from. */
     Subject argSubject{PositionalSeed{localCell->depth}};
-    /* Sample resolver->callScope at fire time. TracingEvaluator::apply
-       leaves callScope at the current sibling's siblingScope (no
+    /* Sample resolver->callArgAncestry at fire time. TracingEvaluator::apply
+       leaves callArgAncestry at the current sibling's siblingScope (no
        restore), so this sample reflects the CURRENT sibling context
        walker is operating under. Do not freeze at closure-creation
        time — the scope evolves, and freezing would emit stale hashes. */
-    Hash argScope = resolverHandle->callScope;
+    Hash argScope = resolverHandle->callArgAncestry;
     auto argId = scopeStateIdAfter(argSubject, argScope, {});
     tracingCacheLog("AmbientApply::run: argScope=%s argId=%s",
                     argScope.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -323,7 +323,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
 
     /* Wrap the argObj in TracingCallbackArg so the outer's
        accesses on it during the apply land in the inner trace
-       with `from=hex(argId)`. Inherit callScope so sibling cached
+       with `from=hex(argId)`. Inherit callArgAncestry so sibling cached
        calls' local-args have distinct scope state ids.
 
        Skip the TLO wrap when argObj is a ReplayCallbackArg. At warm
@@ -343,7 +343,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
               argObj, argSubject, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell,
-              resolverHandle->callScope, resultId))
+              resolverHandle->callArgAncestry, resultId))
         : argObj;
 
     /* Bridge local arg via ExprFromObject. The cache memoises by
@@ -394,7 +394,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
                with the recorder's encoding, breaking CAS reads of
                the apply-result observations. */
             {"depth", localCell->depth},
-            {"scope", resolverHandle->callScope.to_string(HashFormat::Base16, false)},
+            {"scope", resolverHandle->callArgAncestry.to_string(HashFormat::Base16, false)},
         };
         /* getTypeLazy (not getType) avoids forcing self-referential
            thunks like `args // { extra = true; }` where args is
@@ -463,13 +463,13 @@ static PrimOp * makeCachedFnPrimOp(
                            Subject and discriminate via their observation
                            factsets, not via state-creep. */
                         Subject seedSubject{PositionalSeed{seedCell->depth}};
-                        /* Inherit the resolver's callScope (= argStateId(Q)
+                        /* Inherit the resolver's callArgAncestry (= argStateId(Q)
                            of this cached call). Sibling cached calls
                            with different Qs get distinct rootIds and
                            therefore distinct subject-derived content
                            ids throughout this cb-apply boundary. */
-                        Hash callScope = resolver->callScope;
-                        auto rootId = scopeStateIdAfter(seedSubject, callScope, {});
+                        Hash callArgAncestry = resolver->callArgAncestry;
+                        auto rootId = scopeStateIdAfter(seedSubject, callArgAncestry, {});
                         /* Per-apply observation context. Captures the
                            outer's probes on the cb arg as they fire
                            through queryFn; the apply-result wrapper
@@ -481,7 +481,7 @@ static PrimOp * makeCachedFnPrimOp(
                            the same cached call (`inner.f 5` vs
                            `inner.f 2`), per the depth-2 design. */
                         auto applyContext = std::make_shared<ApplyContext>(
-                            ApplyContext{seedSubject, callScope, {}});
+                            ApplyContext{seedSubject, callArgAncestry, {}});
                         /* Boundary-trace-only discipline: do NOT
                            register outerArgObj under rootId in the
                            shared resolver. Sibling cb apply invocations
@@ -582,11 +582,11 @@ static PrimOp * makeCachedFnPrimOp(
                            ArgCell::liveObject. */
                         seedCell->liveObject = contraArg.get_ptr();
                         contraArg->withArgCell(seedCell);
-                        contraArg->withInheritedScope(callScope);
+                        contraArg->withInheritedScope(callArgAncestry);
                         contraArg->withApplyContext(applyContext);
-                        tracingCacheLog("makeCachedFnPrimOp.impl: contraArg=%p seedCell=%p callScope=%s outerArg=%p",
+                        tracingCacheLog("makeCachedFnPrimOp.impl: contraArg=%p seedCell=%p callArgAncestry=%s outerArg=%p",
                                         (void*)contraArg.get_ptr().get(), (void*)seedCell.get(),
-                                        callScope.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                                        callArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
                                         (void*)outerArgObj.get());
                         auto result = innerEval->apply(ref<Object>(fnObj), contraArg);
                         tracingCacheLog("makeCachedFnPrimOp.impl: apply result=%p", (void*)result.get_ptr().get());
@@ -748,14 +748,14 @@ std::shared_ptr<AmbientResolver> makeAmbientResolver(
     return resolver;
 }
 
-void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callScope)
+void setAmbientResolverCallScope(AmbientResolver & resolver, Hash callArgAncestry)
 {
-    resolver.callScope = std::move(callScope);
+    resolver.callArgAncestry = std::move(callArgAncestry);
 }
 
 Hash getAmbientResolverCallScope(const AmbientResolver & resolver)
 {
-    return resolver.callScope;
+    return resolver.callArgAncestry;
 }
 
 void registerAmbientResolverProxy(

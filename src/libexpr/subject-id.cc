@@ -273,7 +273,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
                        — `AmbientObject::getCdi()` returns
                        structuralAddressAfter with argAncestry
                        baked in; ReplayCallbackArg's localId is
-                       scopeStateIdAfter(PositionalSeed{D}, callScope, {})
+                       scopeStateIdAfter(PositionalSeed{D}, callArgAncestry, {})
                        which is also scope-saturated. Re-XORing scope
                        here would either double-XOR (= scope-saturated
                        inputs) or under-XOR (= un-scoped inputs) — the
