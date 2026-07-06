@@ -452,7 +452,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                    entries from prior firings and the synthetic's
                    `stampPerArgFields` would compute its `from` at a
                    later edge index than the writer's
-                   `flushPendingAmbient` stamped, breaking the
+                   `flushAmbient` stamped, breaking the
                    LocalResponseMap lookup.
 
                    localWalkFacts copies just the standin's
@@ -506,7 +506,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
 
                 /* Advance the standin's chainCursor by the recorded
                    apply Fact's elementHash. Mirrors the writer's d=2
-                   stamping in flushPendingAmbient: subject =
+                   stamping in flushAmbient: subject =
                    ApplyResultSubject{fn, arg} = syntheticSubject;
                    scope = mergedApplyScope; edgeIndex =
                    walkFactsSaved->size() (= the apply Fact's position
@@ -594,7 +594,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                    primop has already pushed the recursive apply Fact
                    to `walkFacts` and advanced `chainCursor`, so the
                    first synthetic probe stamps at `walkFacts.size() == 1`
-                   — matching the writer's flushPendingAmbient d=2
+                   — matching the writer's flushAmbient d=2
                    loop at index 1 (= position after `logAmbientApplyFact`'s
                    fact in the boundary). */
                 synthetic->withAmbientAsksValidation();

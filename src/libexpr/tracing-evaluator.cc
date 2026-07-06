@@ -386,7 +386,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         if (auto enclosingId = writer.getCurrentApplyBoundaryId())
             enclosingApplyId = *enclosingId;
         /* d=2 apply Fact: Subject = resultSubject built above;
-           flushPendingAmbient stamps via the generic
+           flushAmbient stamps via the generic
            pathAndRootsFromSubject path. The QueryApply payload's
            fn/arg use Subject-derived hex so the walker (which has
            only Subjects at primop firing time) can byte-match. */

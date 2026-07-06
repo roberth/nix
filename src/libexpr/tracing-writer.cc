@@ -8,7 +8,7 @@
 
 namespace nix {
 
-void TracingWriter::flushPendingAmbient(bool finalize)
+void TracingWriter::flushAmbient(bool finalize)
 {
     if (!decisionGraph)
         return;
@@ -543,7 +543,7 @@ void TracingWriter::splitFlush(bool finalize)
        observations are present). At finalize=true this also computes
        AmbientResults for each buffered cb-apply boundary and folds
        the synthetic d=1 apply Facts in. */
-    flushPendingAmbient(finalize);
+    flushAmbient(finalize);
 
     /* Materialise the perQAsksEdge boundary so the trailing logResult
        (or a later splitFlush) inserts an Asks(Q, fromFactSet, RS) row
@@ -609,7 +609,7 @@ void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
 
     /* Buffer the boundary. The synthetic d=1 apply Fact's respHash
        is the AmbientResult = terminal of this cb-apply's d=2 chain,
-       only known after the body finishes. flushPendingAmbient at
+       only known after the body finishes. flushAmbient at
        logResult walks pendingApplyBoundaries in order and finalises
        each one, INSERTING the ε perQAsksEdge at the chronological
        insertionIndex (= position in envAsksEdges captured AFTER

@@ -29,7 +29,7 @@ void LambdaApplyResultObject::recordD2(const trace::QueryVariant & query, const 
        this apply-result is grouped with the recursive apply Fact
        under the enclosing cb-apply boundary so that the d=2 chain
        has [recursiveApplyFact, this_obs, next_obs, ...] in the
-       order they're appended. flushPendingAmbient's d=2 loop
+       order they're appended. flushAmbient's d=2 loop
        stamps each `from` at `edgeIndex = i` (= position in the
        boundary's facts vector), matching the walker's stamping at
        `walkFacts.size()` after the synthetic-side primop pushed

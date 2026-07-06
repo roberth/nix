@@ -90,7 +90,7 @@ class TracingWriter
     TracingDecisionGraph::TrieBuilder sessionRequestsTrie;
 
     /* Ambient facts buffered during recording and flushed at
-       logResult time via flushPendingAmbient. The Subject identifies
+       logResult time via flushAmbient. The Subject identifies
        which value the observation is about — flush uses it via
        cidasks::scopeStateIdAt to compute the fact's `from` field
        against the relevant Asks-edge precondition factset.
@@ -128,7 +128,7 @@ class TracingWriter
        computes the same value on both sides. Per-arg-completion
        option 2 depends on this alignment. */
     std::vector<cidasks::Edge> envWalk;
-    /* Stages the next d1 edge between `flushPendingAmbient` (which
+    /* Stages the next d1 edge between `flushAmbient` (which
        drains pendingDepth1Facts into it) and `splitFlush` (which
        pushes it to envWalk paired with a perQAsksEdge). May
        be empty (= file-read-only Asks edge) — still pushed so that
@@ -138,7 +138,7 @@ class TracingWriter
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
        new query hash added to envFactSet since the last logResult,
        whether from `logResponse` (= env/file), `noteEnvObservation`,
-       or `flushPendingAmbient`. AmbientQueries are depth-1 just like
+       or `flushAmbient`. AmbientQueries are depth-1 just like
        file reads; bundling them with env/file into one Asks edge per
        logResult keeps the trie's edge structure 1:1 with envWalk.
        `envAsksEdges` retains each finalized boundary so every Q's
@@ -169,7 +169,7 @@ class TracingWriter
     /* Deferred cb-apply boundaries. markApplyBoundary pushes a new
        entry with empty facts; logAmbientObservation appends probes to
        the most recently-pushed boundary whose applyId matches.
-       flushPendingAmbient processes each boundary's d=2 chain (=
+       flushAmbient processes each boundary's d=2 chain (=
        just its own facts), computes the terminal cumulative
        factSet as AmbientResult, and synthesises the d=1 apply Fact
        at `(applyReqHash, AmbientResult)`. Each cb-apply invocation
@@ -308,7 +308,7 @@ public:
     /** Cumulative factSet hash maintained per-fact via XOR-fold.
         At cold time, advances at `noteEnvObservation` (= walker
         dispatches), `logResponse` (= env/file recordings), and
-        `flushPendingAmbient` (= inner's ambient observations).
+        `flushAmbient` (= inner's ambient observations).
         At warm time, advances only at `noteEnvObservation` —
         which captures every dispatched fact, mirroring cold's
         cumulative. The walker reads this as the ground-truth
@@ -414,7 +414,7 @@ public:
      * buffered here rather than eagerly inserted into envFactSet and
      * the Requests pool / LocalResponseMap — the `from` field of the query
      * may be a placeholder (counter-derived local id) whose final
-     * Buffered until flushPendingAmbient() at logResult time
+     * Buffered until flushAmbient() at logResult time
      * inserts into the pool at the query payload's natural reqHash. */
     void logAmbientInteraction(
         const trace::QueryVariant & query,
@@ -455,7 +455,7 @@ public:
            apply-result — by then the boundary's first finalize
            pass has already run). Boundaries are no longer cleared
            after finalize; this search still finds them, and the
-           next `flushPendingAmbient(true)` pass picks up the new
+           next `flushAmbient(true)` pass picks up the new
            facts via `lastProcessedCount` and processes them
            incrementally. */
         for (auto it = pendingApplyBoundaries.rbegin();
@@ -563,7 +563,7 @@ public:
      * is folded into envFactSet / envWalk / pendingNewRequests
      * just like an ordinary depth-1 ambient observation.
      */
-    void flushPendingAmbient(bool finalize = false);
+    void flushAmbient(bool finalize = false);
 
     /**
      * End the current Asks edge at a cb-apply boundary inside a
@@ -599,7 +599,7 @@ public:
      * The d=1 apply Fact itself is *not* folded into envFactSet
      * here. Its response hash is the AmbientResult (= terminal of
      * the d=2 chain captured for this applyId), which is only known
-     * at flushPendingAmbient time. Deferring synthesis keeps the
+     * at flushAmbient time. Deferring synthesis keeps the
      * d=1 cur consistent with via-Asks §"Recording (depth-2)":
      * "The terminal factSet hash *is* the `AmbientResult`, which
      * the depth-1 walker XOR-folds into its own `cur` as the
@@ -623,7 +623,7 @@ public:
      * chainCursor by this fact's elementHash.
      *
      * Subject = ApplyResultSubject{fn, arg} (caller-built) so the
-     * generic flushPendingAmbient stamping puts the constituents'
+     * generic flushAmbient stamping puts the constituents'
      * roots into `fromCIDs[]` and an Apply step into `path`. Matches
      * walker stamping. No-op when there's no enclosing cb-apply.
      */

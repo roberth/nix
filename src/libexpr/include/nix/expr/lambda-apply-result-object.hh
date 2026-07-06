@@ -16,7 +16,7 @@
  *  - LambdaApplyResultObject's methods record d=2 observations via
  *    `writer.logAmbientObservation`. They are grouped with the
  *    enclosing cb-apply boundary's recursive apply Fact (= the same
- *    boundary `logAmbientApplyFact` appended to). At flushPendingAmbient
+ *    boundary `logAmbientApplyFact` appended to). At flushAmbient
  *    finalize the writer's d=2 loop stamps each observation with
  *    `from = hex(scopeStateIdAt(applyResultSubject, scope, walk, i))`,
  *    inserts the response payload into `LocalResponseMap` keyed by
@@ -57,7 +57,7 @@ class LambdaApplyResultObject : public Object
 
     /* ApplyResultSubject{PostulatedIdempotentRead{TLO.scopeStateId}, contraArg.subject}.
        Matches what `<replay-local-lambda>`'s primop builds for the
-       synthetic apply-result subject at warm. flushPendingAmbient's
+       synthetic apply-result subject at warm. flushAmbient's
        d=2 loop uses this subject to stamp each observation's `from`
        field at the appropriate edge index. */
     cidasks::Subject applyResultSubject;
