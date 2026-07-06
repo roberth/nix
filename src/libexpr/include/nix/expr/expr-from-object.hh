@@ -106,7 +106,7 @@ struct ExprFromObjectAttr : ExprProxy
  * builtins.cache invocation.
  *
  * @param innerWriter When non-null, enables Step E's incoming-Fact
- *   recording via TracingLocalObject during covariant callbacks.
+ *   recording via TracingCallbackArg during covariant callbacks.
  *   Callers without a writer (or who don't need replay hits on the
  *   apply) can pass nullptr; resolver.apply then skips the wrap and
  *   bridges argObj directly.

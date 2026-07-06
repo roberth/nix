@@ -3,7 +3,7 @@
 #include "nix/expr/expr-from-object.hh"
 #include "nix/expr/lambda-apply-result-object.hh"
 #include "nix/expr/tracing-decision-graph.hh"
-#include "nix/expr/tracing-local-object.hh"
+#include "nix/expr/tracing-callback-arg.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-source-accessor.hh"
@@ -305,7 +305,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        can reach via the recorded chain. */
     nlohmann::json applyQ = trace::QueryApply{fnId, argId};
 
-    /* If fn is a TracingLocalObject (= inner-supplied lambda the
+    /* If fn is a TracingCallbackArg (= inner-supplied lambda the
        outer is now applying — the cb-higher-order case), record
        this apply as a depth-2 fact under the ENCLOSING cb-apply's
        chain. Per via-Asks Replay (depth-2): the lambda primop at
@@ -338,7 +338,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        values) — those don't go through the lambda-primop path at
        warm and would just contaminate the enclosing chain's
        AmbientResult. */
-    bool fnIsTlo = dynamic_cast<TracingLocalObject *>(fn.get_ptr().get()) != nullptr;
+    bool fnIsTlo = dynamic_cast<TracingCallbackArg *>(fn.get_ptr().get()) != nullptr;
 
     /* Build the ApplyResultSubject from fn/arg constituents.
 

@@ -7,7 +7,7 @@
  * The OUTER's covariant callback (e.g. `f x` where `f` is an outer
  * lambda and `x` is an inner-supplied arg) lets the outer access
  * inner-side data. On the recording side the inner wraps the arg in
- * TracingLocalObject so the outer's accesses land in the inner's
+ * TracingCallbackArg so the outer's accesses land in the inner's
  * factSet as Facts. On replay the inner isn't running, so its arg
  * isn't reconstructable as a live Object — but its CONTENT was
  * persisted in LocalResponseMap. ReplayLocalObject reads that
@@ -236,7 +236,7 @@ public:
         return localId.to_string(HashFormat::Base16, false);
     }
 
-    /** Symmetric to TracingLocalObject: expose the standin's structural
+    /** Symmetric to TracingCallbackArg: expose the standin's structural
         Subject so a subsequent apply on this standin (= the cb-arg
         standin used as `arg` in `<replay-local-lambda>`'s recursive
         apply) composes ApplyResultSubject with this standin's

@@ -1,4 +1,4 @@
-#include "nix/expr/tracing-local-object.hh"
+#include "nix/expr/tracing-callback-arg.hh"
 #include "nix/expr/object-type.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
@@ -16,7 +16,7 @@ static std::string tracingLocalFromOf(AmbientId id)
     return id.to_string(HashFormat::Base16, false);
 }
 
-TracingLocalObject::TracingLocalObject(
+TracingCallbackArg::TracingCallbackArg(
     std::shared_ptr<Object> inner,
     cidasks::Subject subject_,
     TracingWriter & writer,
@@ -34,7 +34,7 @@ TracingLocalObject::TracingLocalObject(
 {
 }
 
-std::shared_ptr<Object> TracingLocalObject::maybeGetAttr(const std::string & name)
+std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & name)
 {
     auto child = inner->maybeGetAttr(name);
     trace::QueryGetAttr query{name, tracingLocalFromOf(localId())};
@@ -49,11 +49,11 @@ std::shared_ptr<Object> TracingLocalObject::maybeGetAttr(const std::string & nam
         .kind = cidasks::DerivedSubject::Kind::GetAttr,
         .name = name,
     }};
-    return std::make_shared<TracingLocalObject>(
+    return std::make_shared<TracingCallbackArg>(
         std::move(child), std::move(childSubject), writer, rootFSRoot, argScope, inheritedScope, depth2ApplyId);
 }
 
-trace::ResultWHNF & TracingLocalObject::whnf()
+trace::ResultWHNF & TracingCallbackArg::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
@@ -65,7 +65,7 @@ trace::ResultWHNF & TracingLocalObject::whnf()
     return *cachedWHNF;
 }
 
-std::vector<std::string> TracingLocalObject::getAttrNames()
+std::vector<std::string> TracingCallbackArg::getAttrNames()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
@@ -74,7 +74,7 @@ std::vector<std::string> TracingLocalObject::getAttrNames()
     return p->names;
 }
 
-std::string TracingLocalObject::getStringIgnoreContext()
+std::string TracingCallbackArg::getStringIgnoreContext()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFString>(&w.payload);
@@ -83,12 +83,12 @@ std::string TracingLocalObject::getStringIgnoreContext()
     return p->value;
 }
 
-std::string TracingLocalObject::getStringWithoutContext()
+std::string TracingCallbackArg::getStringWithoutContext()
 {
     return getStringIgnoreContext();
 }
 
-std::pair<std::string, NixStringContext> TracingLocalObject::getStringWithContext()
+std::pair<std::string, NixStringContext> TracingCallbackArg::getStringWithContext()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFString>(&w.payload);
@@ -100,7 +100,7 @@ std::pair<std::string, NixStringContext> TracingLocalObject::getStringWithContex
     return {p->value, std::move(ctx)};
 }
 
-RootedPath TracingLocalObject::getPath()
+RootedPath TracingCallbackArg::getPath()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFPath>(&w.payload);
@@ -111,7 +111,7 @@ RootedPath TracingLocalObject::getPath()
     return RootedPath{rootFSRoot, CanonPath{p->path}};
 }
 
-bool TracingLocalObject::getBool(std::string_view)
+bool TracingCallbackArg::getBool(std::string_view)
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFBool>(&w.payload);
@@ -120,7 +120,7 @@ bool TracingLocalObject::getBool(std::string_view)
     return p->value;
 }
 
-NixInt TracingLocalObject::getInt(std::string_view)
+NixInt TracingCallbackArg::getInt(std::string_view)
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFInt>(&w.payload);
@@ -129,7 +129,7 @@ NixInt TracingLocalObject::getInt(std::string_view)
     return NixInt{p->value};
 }
 
-NixFloat TracingLocalObject::getFloat(std::string_view)
+NixFloat TracingCallbackArg::getFloat(std::string_view)
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
@@ -138,7 +138,7 @@ NixFloat TracingLocalObject::getFloat(std::string_view)
     return p->value;
 }
 
-size_t TracingLocalObject::getListSize()
+size_t TracingCallbackArg::getListSize()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFList>(&w.payload);
@@ -147,7 +147,7 @@ size_t TracingLocalObject::getListSize()
     return p->size;
 }
 
-std::shared_ptr<Object> TracingLocalObject::getListElem(size_t index)
+std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
 {
     auto child = inner->getListElem(index);
     trace::QueryGetListElem query{tracingLocalFromOf(localId()), index};
@@ -157,16 +157,16 @@ std::shared_ptr<Object> TracingLocalObject::getListElem(size_t index)
         .kind = cidasks::DerivedSubject::Kind::GetListElem,
         .index = index,
     }};
-    return std::make_shared<TracingLocalObject>(
+    return std::make_shared<TracingCallbackArg>(
         std::move(child), std::move(childSubject), writer, rootFSRoot, argScope, inheritedScope, depth2ApplyId);
 }
 
-ObjectType TracingLocalObject::getTypeLazy()
+ObjectType TracingCallbackArg::getTypeLazy()
 {
     return getType();
 }
 
-ObjectType TracingLocalObject::getType()
+ObjectType TracingCallbackArg::getType()
 {
     auto type = stringToObjectType(whnf().type);
     tracingCacheLog("tlo: getType from=%s type=%s",
@@ -175,7 +175,7 @@ ObjectType TracingLocalObject::getType()
     return type;
 }
 
-RootValue TracingLocalObject::defeatCache()
+RootValue TracingCallbackArg::defeatCache()
 {
     /* Pass through unrecorded. defeatCache yields a concrete RootValue
        (no observable side effects), and there's no incoming-Fact shape
@@ -183,7 +183,7 @@ RootValue TracingLocalObject::defeatCache()
     return inner->defeatCache();
 }
 
-std::optional<FunctionInfo> TracingLocalObject::getFunctionInfo()
+std::optional<FunctionInfo> TracingCallbackArg::getFunctionInfo()
 {
     auto info = inner->getFunctionInfo();
     trace::ResultFunctionInfo rfi{
@@ -192,17 +192,17 @@ std::optional<FunctionInfo> TracingLocalObject::getFunctionInfo()
     return info;
 }
 
-PosIdx TracingLocalObject::getPos()
+PosIdx TracingCallbackArg::getPos()
 {
     return inner->getPos();
 }
 
-std::optional<std::vector<std::string>> TracingLocalObject::getAttrPath()
+std::optional<std::vector<std::string>> TracingCallbackArg::getAttrPath()
 {
     return inner->getAttrPath();
 }
 
-void TracingLocalObject::recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result)
+void TracingCallbackArg::recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
     /* Route through the depth-2 entry point: the outer is probing
        an inner-supplied local. The `depth2ApplyId` groups this fact
@@ -210,7 +210,7 @@ void TracingLocalObject::recordObservation(const trace::QueryVariant & query, co
     writer.logAmbientObservation(query, result, subject, inheritedScope, depth2ApplyId);
 }
 
-std::shared_ptr<Object> TracingLocalObject::queryApply(std::shared_ptr<Object> argObj)
+std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> argObj)
 {
     /* Delegate the apply itself to the wrapped inner Object. For an
        inner-supplied lambda (the cb-higher-order case) `inner` is an
@@ -233,7 +233,7 @@ std::shared_ptr<Object> TracingLocalObject::queryApply(std::shared_ptr<Object> a
         .fn = std::make_shared<const cidasks::Subject>(subject),
         .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
     }};
-    return std::make_shared<TracingLocalObject>(
+    return std::make_shared<TracingCallbackArg>(
         std::move(result), std::move(resultSubject), writer, rootFSRoot, argScope, inheritedScope, depth2ApplyId);
 }
 

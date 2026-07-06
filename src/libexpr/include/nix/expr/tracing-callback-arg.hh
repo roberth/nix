@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file
- * TracingLocalObject — wraps a local (inner-side) Object passed to the
+ * TracingCallbackArg — wraps a local (inner-side) Object passed to the
  * outer evaluator during a covariant callback. Each method call
  * records an "incoming" ambient Fact in the inner trace via the
  * writer's `logIncomingAmbientInteraction`, then delegates to the
@@ -34,7 +34,7 @@ class TracingWriter;
  * callback receives from the inner side, so the outer's accesses
  * land in the inner trace.
  */
-class TracingLocalObject : public Object
+class TracingCallbackArg : public Object
 {
     std::shared_ptr<Object> inner;
     cidasks::Subject subject;  ///< Static structural identifier
@@ -66,7 +66,7 @@ class TracingLocalObject : public Object
     void recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result);
 
 public:
-    TracingLocalObject(
+    TracingCallbackArg(
         std::shared_ptr<Object> inner,
         cidasks::Subject subject,
         TracingWriter & writer,
@@ -104,7 +104,7 @@ public:
     /** Object-method apply entry. Records the apply as a depth-2
         observation (= outer is applying this local to argObj), then
         delegates to `inner->queryApply(argObj)` and wraps the result
-        as another TracingLocalObject with an `ApplyResultSubject`
+        as another TracingCallbackArg with an `ApplyResultSubject`
         so further accesses on the result continue to land in the
         depth-2 trace. */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;

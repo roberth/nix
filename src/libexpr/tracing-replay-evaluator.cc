@@ -6,7 +6,7 @@
 #include "nix/expr/expr-from-object.hh"
 #include "nix/expr/replay-local-object.hh"
 #include "nix/expr/tracing-cache-stats.hh"
-#include "nix/expr/tracing-local-object.hh"
+#include "nix/expr/tracing-callback-arg.hh"
 #include "nix/expr/tracing-replay-object.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-decision-graph.hh"
@@ -677,11 +677,11 @@ bool TracingReplayEvaluator::isLocalArgId(const Hash & idHash)
 }
 
 /* Local-direction: unknown id in the Requests pool — most commonly an
-   inner-side TracingLocalObject's content-hash whose facts were emitted
+   inner-side TracingCallbackArg's content-hash whose facts were emitted
    with from=hex(id) but whose id itself isn't a producer Request.
    Materialise a ReplayLocalObject keyed by it; its methods read
    recorded responses out of LocalResponseMap by qH(query{from=hex(id)}),
-   matching what TracingLocalObject wrote during recording. */
+   matching what TracingCallbackArg wrote during recording. */
 /* Mixed direction: fn is Outer (resolved through the producer chain to
    an AmbientObject); arg may be Local (standin) or Outer (resolved
    through chain). Invokes the apply live against fn and arg to
@@ -707,7 +707,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
         /* The cb apply's local arg. Read the localArg sidecar to
            source the cb-arg's structural subject (depth + scope)
            and construct the standin with `PositionalSeed{depth}`
-           — matching the recorder's TracingLocalObject subject.
+           — matching the recorder's TracingCallbackArg subject.
 
            Using PostulatedIdempotentRead{localId} here is the Fix B
            anti-pattern documented in
@@ -1347,7 +1347,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     }
 
     /* Inner-direction applies: fn is a recorded/cached entity
-       (TracingReplayObject from evalFile, TracingLocalObject's
+       (TracingReplayObject from evalFile, TracingCallbackArg's
        counterparts, or an opaque argStateId). Each call constructs a
        fresh wrapper. Sibling cb apply invocations share the same
        (fnId, argId) at the boundary by construction (= the arg's

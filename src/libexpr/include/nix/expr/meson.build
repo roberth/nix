@@ -61,7 +61,7 @@ headers = [ config_pub_h ] + files(
   'tracing-decision-graph.hh',
   'tracing-environment.hh',
   'tracing-evaluator.hh',
-  'tracing-local-object.hh',
+  'tracing-callback-arg.hh',
   'tracing-object.hh',
   'tracing-replay-evaluator.hh',
   'tracing-replay-object.hh',

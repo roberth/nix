@@ -8,7 +8,7 @@
 #include "nix/expr/replay-local-object.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
-#include "nix/expr/tracing-local-object.hh"
+#include "nix/expr/tracing-callback-arg.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-writer.hh"
 
@@ -150,7 +150,7 @@ struct BridgedThunkCache
 
 /* Orchestrates a covariant-callback apply: resolves the outer fn from
    the registry, opens a cell for the inner-supplied arg, wraps the arg
-   in TracingLocalObject so outer accesses on it land in the inner
+   in TracingCallbackArg so outer accesses on it land in the inner
    trace, bridges the wrapped arg via ExprFromObject into an outer
    `mkApp` thunk, registers the apply result, and defers the Pass-1
    apply Request + Pass-2 localArg sidecar to the writer's flush.
@@ -190,13 +190,13 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
     EvalState * outerState = nullptr;
     std::shared_ptr<Evaluator> innerEvaluator;
     /* Writer for the inner trace. When set, the resolver wraps
-       covariant-callback args in TracingLocalObject so the outer's
+       covariant-callback args in TracingCallbackArg so the outer's
        accesses on them land in the inner's factSet as Facts whose
        response payloads can be replayed back from the Responses
        pool. Null when no inner writer is plumbed in — the wrap is
        skipped and replay can't hit on the apply. */
     TracingWriter * innerWriter = nullptr;
-    /* SourceRoot for TracingLocalObject's getPath. Reused from the
+    /* SourceRoot for TracingCallbackArg's getPath. Reused from the
        outer EvalState's rootFSRoot. Held as shared_ptr (rather than
        ref) so AmbientResolver stays default-constructible. */
     std::shared_ptr<SourceRoot> outerRootFSRoot;
@@ -303,7 +303,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
                     argId.to_string(HashFormat::Base16, false).substr(0, 12));
 
     /* Compute the resultId early so we can pass it to the
-       TracingLocalObject as depth2ApplyId — groups all depth-2 facts
+       TracingCallbackArg as depth2ApplyId — groups all depth-2 facts
        made on this local (and its descendants) into a single
        AmbientAsks edge at flush. */
     auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
@@ -321,7 +321,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
     trace::QueryApply applyQuery{fnIdStr, argIdStr};
     auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
 
-    /* Wrap the argObj in TracingLocalObject so the outer's
+    /* Wrap the argObj in TracingCallbackArg so the outer's
        accesses on it during the apply land in the inner trace
        with `from=hex(argId)`. Inherit callScope so sibling cached
        calls' local-args have distinct scope state ids.
@@ -341,7 +341,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        returns null, leaving the TLO wrap path unchanged. */
     auto wrappedArg = (innerWriter && outerRootFSRoot
                        && !dynamic_cast<ReplayLocalObject *>(argObj.get()))
-        ? std::shared_ptr<Object>(std::make_shared<TracingLocalObject>(
+        ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
               argObj, argSubject, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell,
               resolverHandle->callScope, resultId))
         : argObj;

@@ -171,7 +171,7 @@ sources = files(
   'tracing-environment.cc',
   'tracing-decision-graph.cc',
   'tracing-evaluator.cc',
-  'tracing-local-object.cc',
+  'tracing-callback-arg.cc',
   'tracing-object.cc',
   'tracing-replay-evaluator.cc',
   'tracing-replay-object.cc',

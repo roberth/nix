@@ -2,7 +2,7 @@
 /**
  * @file
  * LambdaApplyResultObject — writer-side wrapper for the result of
- * applying a TracingLocalObject (= an inner-supplied lambda crossing
+ * applying a TracingCallbackArg (= an inner-supplied lambda crossing
  * back from outer's body via `<cached-fn>(TLO).impl`) to its contraArg.
  *
  * Sibling of TracingObject; the difference is *where* method-level

@@ -615,7 +615,7 @@ public:
     /**
      * Log a nested cb-apply as a depth-2 fact under the enclosing
      * cb-apply's chain. Used by TracingEvaluator::apply when the
-     * fn is a TracingLocalObject (= inner-supplied lambda being
+     * fn is a TracingCallbackArg (= inner-supplied lambda being
      * applied by the outer). Per via-Asks Replay (depth-2): the
      * lambda primop at warm pulls this edge by (chainCursor,
      * stampedReqHash). Walker-side counterpart in
@@ -630,7 +630,7 @@ public:
     /**
      * Return the `applyId` of the cb-apply boundary currently on top
      * of `pendingApplyBoundaries`. Used by `IT::apply` when fn is a
-     * TracingLocalObject (= the recursive cb-apply path) to capture
+     * TracingCallbackArg (= the recursive cb-apply path) to capture
      * the enclosing boundary's id before the recursive call would
      * otherwise push a new boundary; the captured id then flows to
      * the `LambdaApplyResultObject` wrapping the apply result, so

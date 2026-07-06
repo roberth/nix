@@ -131,7 +131,7 @@ class TracingReplayEvaluator : public Evaluator
     std::shared_ptr<Object> resolveCdiId(const std::string & idStr, ResolutionContext & ctx);
 
     /** True iff the id resolves as a Local — either it has no
-        producer Request in the pool (a TracingLocalObject's content
+        producer Request in the pool (a TracingCallbackArg's content
         hash whose id isn't itself a recorded query), or its pool
         payload is a localArg sidecar, or the payload fails to parse
         (defensive fallback). False for any Outer-direction id with a

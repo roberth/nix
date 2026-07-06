@@ -264,7 +264,7 @@ public:
 
     /**
      * If this Object is a cache-boundary proxy with a content-defined
-     * identity — AmbientObject, TracingLocalObject, TracingObject,
+     * identity — AmbientObject, TracingCallbackArg, TracingObject,
      * TracingReplayObject — return its argStateId hex. Returns nullopt for
      * regular Objects (InterpreterObject and friends). Used to build
      * apply Q hashes (`TracingReplayEvaluator::apply`) and to match
@@ -281,7 +281,7 @@ public:
 
     /**
      * The proxy's static structural identifier — for AmbientObject
-     * and TracingLocalObject, the Subject they carry. Used by the
+     * and TracingCallbackArg, the Subject they carry. Used by the
      * walker to evolve scope state ids in lockstep with the recorder
      * (cidasks::scopeStateIdAt against the running walk). Returns null
      * for non-proxy Objects.

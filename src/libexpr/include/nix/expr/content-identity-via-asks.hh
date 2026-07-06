@@ -181,7 +181,7 @@ Hash scopeStateIdAtConverged(
     For `DerivedSubject` it returns the producer query's hash:
     `qH(QueryGetAttr{name, from = root_cdi, fromCIDs, path})` for
     `GetAttr`, similarly for `GetListElem`. Used by `AmbientObject`,
-    `TracingLocalObject`, etc. to expose a single-`Hash` identity
+    `TracingCallbackArg`, etc. to expose a single-`Hash` identity
     handle even though derived values don't have argStateIds proper. */
 Hash structuralAddress(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex);
 
