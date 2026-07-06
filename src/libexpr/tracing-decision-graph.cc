@@ -1086,7 +1086,7 @@ static void dg_recordImpl(
     const Hash & result,
     const std::unordered_map<Hash, Hash> & responseFor,
     const std::unordered_set<Hash> & allRequests,
-    const Hash * allRequestsRsHash = nullptr)
+    const Hash * sessionRequestsRsHash = nullptr)
 {
     auto cur = TracingDecisionGraph::emptySetHash();
     std::unordered_set<Hash> curRequests;
@@ -1175,8 +1175,8 @@ static void dg_recordImpl(
                supplied its canonical RS hash, skip insertRequestSet
                and jump straight to factSet — cur ⊕ allFacts =
                factSetHash by construction. */
-            if (curRequests.empty() && allRequestsRsHash) {
-                g.insertAsks(q, cur, *allRequestsRsHash);
+            if (curRequests.empty() && sessionRequestsRsHash) {
+                g.insertAsks(q, cur, *sessionRequestsRsHash);
                 cur = factSetHash;
                 break;
             }
@@ -1233,9 +1233,9 @@ void TracingDecisionGraph::record(
     const ResultHash & result,
     const std::unordered_map<Hash, Hash> & responseFor,
     const std::unordered_set<Hash> & allRequests,
-    const SetHash & allRequestsRsHash)
+    const SetHash & sessionRequestsRsHash)
 {
-    dg_recordImpl(*this, q, factSetHash, result, responseFor, allRequests, &allRequestsRsHash);
+    dg_recordImpl(*this, q, factSetHash, result, responseFor, allRequests, &sessionRequestsRsHash);
 }
 
 bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factSet)

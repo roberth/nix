@@ -87,7 +87,7 @@ class TracingWriter
     std::unordered_map<Hash, Hash> responseFor;
     /* Incremental trie of allRequests; gives record() the canonical
        RequestSet hash for the whole-remaining edge in O(1). */
-    TracingDecisionGraph::TrieBuilder allRequestsTrie;
+    TracingDecisionGraph::TrieBuilder sessionRequestsTrie;
 
     /* Ambient facts buffered during recording and flushed at
        logResult time via flushPendingAmbient. The Subject identifies
@@ -401,7 +401,7 @@ public:
             envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 envFactSetHash, queryHash, responseHash);
             responseFor.emplace(queryHash, responseHash);
-            allRequestsTrie.insert(queryHash);
+            sessionRequestsTrie.insert(queryHash);
             if (allRequestHashes.insert(queryHash).second)
                 pendingNewRequests.push_back(queryHash);
         }
@@ -526,7 +526,7 @@ public:
             envFactSet.push_back({request, response});
             envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 envFactSetHash, request, response);
-            allRequestsTrie.insert(request);
+            sessionRequestsTrie.insert(request);
             if (allRequestHashes.insert(request).second)
                 pendingNewRequests.push_back(request);
         }
@@ -715,14 +715,14 @@ public:
            are passed by reference so record() doesn't re-build its
            per-call lookup map and remaining set.
 
-           allRequestsTrie is maintained incrementally per fact and
+           sessionRequestsTrie is maintained incrementally per fact and
            gives us the canonical RequestSet root hash for the
            current allRequests in O(1). Persist any unwritten nodes
            and hand the root hash to record() as the precomputed RS
            hash for the whole-remaining edge — record() can then
            skip its insertRequestSet(remainingVec) call. */
         decisionGraph->primeFactSetCache(envFactSetHash, envFactSet);
-        allRequestsTrie.persist(*decisionGraph);
+        sessionRequestsTrie.persist(*decisionGraph);
 
         tracingCacheLog("logResult: Q=%s factSet=%s -> result (inserting %zu Asks edges)",
                         qh.queryHash->to_string(HashFormat::Base16, false).substr(0, 12),
@@ -738,7 +738,7 @@ public:
            slow path iterates this for its trailing remaining-edge. */
         if (envAsksEdges.empty())
             decisionGraph->record(*qh.queryHash, envFactSetHash, resultNodeHash,
-                responseFor, seenRequests, allRequestsTrie.rootHash());
+                responseFor, seenRequests, sessionRequestsTrie.rootHash());
         else
             decisionGraph->record(*qh.queryHash, envFactSetHash, resultNodeHash,
                 responseFor, allRequestHashes);

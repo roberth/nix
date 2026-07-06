@@ -202,7 +202,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 envFactSetHash, queryHash, responseHash);
             responseFor.emplace(queryHash, responseHash);
-            allRequestsTrie.insert(queryHash);
+            sessionRequestsTrie.insert(queryHash);
             if (allRequestHashes.insert(queryHash).second)
                 pendingNewRequests.push_back(queryHash);
         }
@@ -437,7 +437,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                 envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
                     envFactSetHash, boundary.applyRequestHash, ambientResult);
                 responseFor.emplace(boundary.applyRequestHash, ambientResult);
-                allRequestsTrie.insert(boundary.applyRequestHash);
+                sessionRequestsTrie.insert(boundary.applyRequestHash);
                 allRequestHashes.insert(boundary.applyRequestHash);
             }
 

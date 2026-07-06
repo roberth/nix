@@ -329,7 +329,7 @@ public:
         const ResultHash & result,
         const std::unordered_map<Hash, Hash> & responseFor,
         const std::unordered_set<Hash> & allRequests,
-        const SetHash & allRequestsRsHash);
+        const SetHash & sessionRequestsRsHash);
 
     /* Navigate from (Q, ∅) using `dispatch` to evaluate Requests
        the recorded path needs. Returns the Result hash on hit,
