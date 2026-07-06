@@ -706,7 +706,7 @@ void from_json(const nlohmann::json & j, QueryGetWHNF & q)
 void to_json(nlohmann::json & j, const QueryApply & q)
 {
     j = nlohmann::json{{"query", QueryApply::tag}, {"params", {{"fn", q.fn}, {"arg", q.arg}}}};
-    /* Per-arg mode (= ApplyResultSubject scopeStateId computation under
+    /* Per-arg mode (= ApplyResultSubject state hash computation under
        per-arg centralization) emits fromCIDs + fn/argPath + root
        indices. Legacy direct mode leaves them empty. */
     if (!q.fromCIDs.empty())

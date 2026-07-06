@@ -561,7 +561,7 @@ public:
 
     /* Accumulated callArgAncestry from enclosing cached calls (=
        XOR-fold of all ancestor cached-call contributions per
-       via-asks's `scopeStateId(LocalObject) = ... ⊕ state hash(Q) ⊕
+       via-asks's `state hash(LocalObject) = ... ⊕ state hash(Q) ⊕
        state hash(Q_outer) ⊕ ...` formula). When `builtins.cache` runs,
        the new resolver's callArgAncestry = `inheritedCallScope XOR
        own contribution`, and the inner EvalState created for the

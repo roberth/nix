@@ -183,7 +183,7 @@ Hash stateHashAtStamping(
        navigate via a table stamped from these emissions.
 
        Within a single walk edge, all observations are matched
-       against the edge-entry scopeStateId (not the accumulated
+       against the edge-entry state hash (not the accumulated
        one). This means multiple observations in the same edge
        fold into the SAME curBefore; the emitted `curAfter` is
        curBefore XOR obs.elem (per-observation), not the
@@ -242,7 +242,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                PositionalSeed / PostulatedIdempotentRead it IS k-invariant
                pure position. For ApplyResultSubject it depends on `k`
                because it composes the constituents' *fully evolved*
-               scopeStateIds (= constituents' stateHashAt at the
+               state hashes (= constituents' stateHashAt at the
                same k) into a SHA-sealed shape — so the apply's id
                varies with k via constituent evolution even before
                this subject's selfFactFold contributes. */
@@ -292,8 +292,8 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                subject iff `obs.fromHash` (= the recorder-stamped
                subject pointer carried in the `from` field of the
                query that produced the fact) equals this subject's
-               running scopeStateId at step k. The result is the
-               contribution to scopeStateId that comes from v13 facts
+               running state hash at step k. The result is the
+               contribution to state hash that comes from v13 facts
                about self. */
             Hash selfFactFold = Hash(HashAlgorithm::SHA256);
             std::string foldTrace;

@@ -45,7 +45,7 @@ class TracingReplayObject : public Object
     std::shared_ptr<ApplyContext> applyContext;
     /* When apply-result, the ApplyResultSubject identifying it
        structurally + the inherited argAncestry (= state hash(Q)). Used together
-       with the evaluator's envWalk to compute the evolved scopeStateId
+       with the evaluator's envWalk to compute the evolved state hash
        at lookup time via the same formula the writer's TracingObject
        uses. */
     std::optional<Subject> applyResultSubject;
@@ -147,7 +147,7 @@ public:
         result Subject when this wrapper is an apply result so the
         next apply / further queries build `ApplyResultSubject{...}`
         constituents whose state hashes evolve via subject-id own-loop, instead
-        of falling back to `PostulatedIdempotentRead{this.scopeStateId}`. */
+        of falling back to `PostulatedIdempotentRead{this.state hash}`. */
     const Subject * getSubject() const override
     {
         return applyResultSubject ? &*applyResultSubject : nullptr;

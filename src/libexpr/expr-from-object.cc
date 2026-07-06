@@ -285,7 +285,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        treated uniformly as a value — no inherited Subject is
        propagated. Identity at this boundary starts fresh as
        PositionalSeed at the apply's static (reverse-De-Bruijn)
-       depth; the body's own observations on the arg evolve the scopeStateId
+       depth; the body's own observations on the arg evolve the state hash
        within the Asks structure. This keeps observations at the
        boundary maximally predictable — two cb calls observing the
        same way through their args reach the same trie position
@@ -476,7 +476,7 @@ static PrimOp * makeCachedFnPrimOp(
                            uses these observations to compute its
                            evolved state hash (via subject-id
                            ApplyResultSubject recursion through the
-                           arg's evolved scopeStateId). This is what
+                           arg's evolved state hash). This is what
                            distinguishes sibling apply calls within
                            the same cached call (`inner.f 5` vs
                            `inner.f 2`), per the depth-2 design. */
@@ -803,8 +803,8 @@ std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     (void) dg;
     for (auto & entry : resolver.liveProxies) {
         for (size_t k = 0; k <= envWalk.size(); ++k) {
-            auto scopeStateId = stateHashAt(entry.subject, entry.argAncestry, envWalk, k);
-            if (scopeStateId == idHash)
+            auto stateHash = stateHashAt(entry.subject, entry.argAncestry, envWalk, k);
+            if (stateHash == idHash)
                 return entry.obj;
         }
     }

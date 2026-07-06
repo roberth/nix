@@ -595,8 +595,8 @@ DECLARE_QUERY_RESULT(QueryGetFunctionInfo, ResultFunctionInfo)
     - **Per-arg path-encoded mode** populates `fromCIDs` with the root
       cb_args' state hashes and uses `fnPath`/`argPath`+`fnRootIndex`/`argRootIndex`
       to encode how fn and arg are reached from those roots. Used by
-      subject-id to compute an ApplyResultSubject's scopeStateId without needing
-      standalone derived-subject scopeStateIds — see
+      subject-id to compute an ApplyResultSubject's state hash without needing
+      standalone derived-subject state hashes — see
       `content-identity-via-asks.md` §Principle 3 (per-arg
       centralization). `fn`/`arg` stay empty in this mode.
 

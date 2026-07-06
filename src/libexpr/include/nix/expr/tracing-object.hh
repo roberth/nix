@@ -41,7 +41,7 @@ class TracingObject : public Object
        inherited argAncestry (= state hash(Q) at the cb-apply boundary). Child
        queries on this wrapper emit at
        `stateHashAt(applyResultSubject, applyArgAncestry, writer.envWalk,
-       walk.size())` — the per-arg evolved scopeStateId the design's
+       walk.size())` — the per-arg evolved state hash the design's
        principle #3 requires for sibling discrimination. Null on
        non-apply-result wrappers (= navigation children). */
     std::optional<Subject> applyResultSubject;
@@ -83,7 +83,7 @@ public:
     }
 
     /** Attach the apply-result structural identity — for apply-result
-        wrappers, so subsequent child queries emit at the evolved scopeStateId.
+        wrappers, so subsequent child queries emit at the evolved state hash.
         Mirrors TracingReplayObject's machinery. */
     TracingObject & withApplyResultSubject(Subject subject, Hash argAncestry)
     {
@@ -105,7 +105,7 @@ public:
         target of further queries). Surfacing the Subject lets the
         next apply build `ApplyResultSubject{fn=this.subject, ...}`
         with constituents whose state hashes *evolve* via subject-id own-loop,
-        instead of falling back to `PostulatedIdempotentRead{this.scopeStateId}` which
+        instead of falling back to `PostulatedIdempotentRead{this.state hash}` which
         freezes the state hash at construction time. Non-apply-result
         wrappers (= fresh from evalFile, navigation children)
         legitimately have no Subject — for those, the PostulatedIdempotentRead

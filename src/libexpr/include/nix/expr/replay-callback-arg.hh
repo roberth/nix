@@ -38,12 +38,12 @@ class TracingDecisionGraph;
 class ReplayCallbackArg : public Object
 {
     /* Full structural identity. Combined with `argAncestry` and the shared
-       `walkFacts`, `stateHashAt` computes this proxy's scopeStateId
+       `walkFacts`, `stateHashAt` computes this proxy's state hash
        at any walk position. The recorder's subject-id substitution at
        flush uses the same evaluation, so walker and recorder agree
        on per-probe `from` fields without snapshot/lazy hacks — even
        when a child's structural component depends on a parent's
-       evolving scopeStateId.
+       evolving state hash.
 
        For root (cb-apply) locals the subject is `PositionalSeed{depth}`
        with the recorded callArgAncestry (per the localArg sidecar), so the
@@ -52,19 +52,19 @@ class ReplayCallbackArg : public Object
 
        For children minted by maybeGetAttr/getListElem the subject is
        `DerivedSubject{parent.subject, ...}` — `stateHashAt`
-       recursively re-evaluates the parent's scopeStateId at the child's
+       recursively re-evaluates the parent's state hash at the child's
        current edge index, so children don't need to snapshot parent
        state at creation. */
     Subject subject;
     Hash argAncestry;
-    /* Initial scopeStateId (= stateHashAt(subject, argAncestry, {}, 0)) — kept for
+    /* Initial state hash (= stateHashAt(subject, argAncestry, {}, 0)) — kept for
        legacy id-string consumers (e.g. defeatCache's recursive
        apply construction). */
     AmbientId localId;
     /* Shared walk across all proxies in one cb apply. Each validated
        probe appends a Fact (one fact per edge, matching the writer's
        multi-edge AmbientAsks structure). `stateHashAt` reads this
-       to compute each proxy's evolved scopeStateId.
+       to compute each proxy's evolved state hash.
 
        Backed as a shared single-fact-edge sequence: each entry is
        wrapped in a single-fact Edge so the walk's edge indices match
@@ -143,7 +143,7 @@ public:
     /* Constructor for derived children. Subject is built by the
        parent's maybeGetAttr / getListElem as `DerivedSubject{parent,
        ...}`. Inherits parent's shared walk/cursor so the child's
-       scopeStateId evaluation rides on the same per-cb-apply chain. */
+       state hash evaluation rides on the same per-cb-apply chain. */
     ReplayCallbackArg(
         Subject subject_,
         Hash scope_,

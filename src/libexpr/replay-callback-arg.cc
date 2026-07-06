@@ -58,7 +58,7 @@ static Hash stampPerArgFields(
 
 /* Look up the recorded payload for `query` in LocalResponseMap.
    The map is keyed by requestHash and that's sound at depth-2
-   because reqHash is `SHA-256(query{from = subject-id-evolved scopeStateId})`
+   because reqHash is `SHA-256(query{from = subject-id-evolved state hash})`
    — a pure function of (subject, argAncestry, prior chain facts). Two
    recordings reaching the same reqHash necessarily observed the
    same history; a deterministic env then produces the same
@@ -88,12 +88,12 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, c
    singleton-requestSet edge from `*chainCursor → toFactSet`, and
    (c) on a match advances the shared chain cursor and appends the
    fact to the shared walk so subsequent probes compose against the
-   correctly evolved scopeStateIds. On mismatch we throw a divergence signal
+   correctly evolved state hashes. On mismatch we throw a divergence signal
    which the surrounding walker layer turns into a miss → depth-1
    fallback handles re-eval. */
 /* Append the just-probed fact to `walkFacts` so the next probe's
    `stampPerArgFields` sees its own-loop contribution. Whether or not
-   validation against AmbientAsks runs, the per-arg scopeStateId evolution
+   validation against AmbientAsks runs, the per-arg state hash evolution
    relies on the walk extending in lockstep with the recorder — so
    this needs to fire on every probe, not just validated ones. */
 template<typename Q>
@@ -174,7 +174,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     if (!r.type)
         return nullptr;
     /* Child Subject is DerivedSubject of THIS subject — `stateHashAt`
-       on the child will recompute parent's scopeStateId at the child's
+       on the child will recompute parent's state hash at the child's
        current edge index, so any further parent observations are
        reflected automatically. Pass shared walk/cursor. */
     Subject childSubject{DerivedSubject{

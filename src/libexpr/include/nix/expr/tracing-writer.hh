@@ -297,7 +297,7 @@ public:
         One edge per logResult-triggered flush. Exposed so writer-side
         apply-result wrappers (TracingObject with applyResultSubject)
         can compute `stateHashAt(subject, argAncestry, walk, walk.size())`
-        — the per-arg evolved scopeStateId the design's principle #3 requires
+        — the per-arg evolved state hash the design's principle #3 requires
         for child queries on those wrappers. Walker's parallel handle
         is TracingReplayEvaluator::getCidasksWalk. */
     const std::vector<Edge> & getD1CidasksWalk() const

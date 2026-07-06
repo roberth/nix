@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS Results (
 --
 -- Why keyed by requestHash, not by responseHash (= the natural CAS
 -- key): the depth-2 reqHash is `SHA-256(query{from =
--- subject-id-evolved scopeStateId})` — a pure function of (subject, scope,
+-- subject-id-evolved state hash})` — a pure function of (subject, scope,
 -- prior facts in the chain). Two recordings reaching the same
 -- reqHash necessarily observed the same history; a deterministic
 -- env then produces the same response, so (request → response) is
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS AmbientAsks (
 --
 -- Row semantics: `(subjectHash, curHash, obs*)` uniquely identifies
 -- a fold step at cold record time. `nextCurHash` is what subject's
--- scopeStateId becomes after folding this observation. Walker
+-- state hash becomes after folding this observation. Walker
 -- reproduces the navigation by looking up its own current cur +
 -- observation and following the recorded nextCur.
 --

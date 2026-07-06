@@ -55,7 +55,7 @@ class TracingCallbackApplyResult : public Object
     ref<Object> inner;
     TracingWriter & writer;
 
-    /* ApplyResultSubject{PostulatedIdempotentRead{TLO.scopeStateId}, contraArg.subject}.
+    /* ApplyResultSubject{PostulatedIdempotentRead{TLO.state hash}, contraArg.subject}.
        Matches what `<replay-local-lambda>`'s primop builds for the
        synthetic apply-result subject at warm. flushAmbient's
        d=2 loop uses this subject to stamp each observation's `from`

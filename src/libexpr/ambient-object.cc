@@ -38,10 +38,10 @@ AmbientObject::AmbientObject(
 
 std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 {
-    auto scopeStateId = subjectHashAfter(subject, argAncestry, {});
+    auto stateHash = subjectHashAfter(subject, argAncestry, {});
     trace::QueryGetAttr q{name, std::string{}};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
-    auto qr = queryFn(scopeStateId, q, subject, argAncestry);
+    auto qr = queryFn(stateHash, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultMaybeType>(&qr.result);
     if (!r || !r->type)
         return nullptr;
@@ -65,10 +65,10 @@ trace::ResultWHNF & AmbientObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    auto scopeStateId = subjectHashAfter(subject, argAncestry, {});
+    auto stateHash = subjectHashAfter(subject, argAncestry, {});
     trace::QueryGetWHNF q{std::string{}};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
-    auto qr = queryFn(scopeStateId, q, subject, argAncestry);
+    auto qr = queryFn(stateHash, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("ambient getWHNF: unexpected result type");
@@ -163,10 +163,10 @@ size_t AmbientObject::getListSize()
 
 std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
 {
-    auto scopeStateId = subjectHashAfter(subject, argAncestry, {});
+    auto stateHash = subjectHashAfter(subject, argAncestry, {});
     trace::QueryGetListElem q{std::string{}, index};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
-    auto qr = queryFn(scopeStateId, q, subject, argAncestry);
+    auto qr = queryFn(stateHash, q, subject, argAncestry);
     if (!qr.childId)
         throw Error("ambient getListElem: resolver didn't return child id");
     Subject childSubject{DerivedSubject{
@@ -210,10 +210,10 @@ RootValue AmbientObject::toValueOrProxy(EvalState & state, std::shared_ptr<Ambie
 
 std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
 {
-    auto scopeStateId = subjectHashAfter(subject, argAncestry, {});
+    auto stateHash = subjectHashAfter(subject, argAncestry, {});
     trace::QueryGetFunctionInfo q{std::string{}};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
-    auto qr = queryFn(scopeStateId, q, subject, argAncestry);
+    auto qr = queryFn(stateHash, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
         return std::nullopt;

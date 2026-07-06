@@ -152,7 +152,7 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
        distinct scope state ids throughout the cb-apply boundary.
        XOR-fold with `state.inheritedCallScope` to accumulate
        across enclosing cached calls (= per via-asks
-       `scopeStateId(LocalObject) = ... ⊕ state hash(Q) ⊕ state hash(Q_outer) ⊕
+       `state hash(LocalObject) = ... ⊕ state hash(Q) ⊕ state hash(Q_outer) ⊕
        ...`). For a top-level cached call, `inheritedCallScope`
        is 0 and this reduces to the own contribution. The inner
        EvalState (= cached body's evaluator) carries the combined

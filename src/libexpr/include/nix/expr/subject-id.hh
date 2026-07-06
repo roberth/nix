@@ -219,8 +219,8 @@ Hash stateHashAtStamping(
     subject at a given walk edge index. The returned query's JSON
     hash equals `stateHashAt(applyResult, argAncestry, walk, edgeIndex)`,
     so callers can use the same value as both the Requests-pool key
-    (= reqHash) and the apply-result's scopeStateId (= what's recorded as
-    `from` on downstream facts). Threads cb_arg root scopeStateIds at
+    (= reqHash) and the apply-result's state hash (= what's recorded as
+    `from` on downstream facts). Threads cb_arg root state hashes at
     `edgeIndex` into `fromCIDs[]`, copies the Apply step's
     `fnPath`/`argPath`/root indices into the top-level query, and
     leaves `fn`/`arg` populated only if the caller passes them for
@@ -292,7 +292,7 @@ std::string describe(const Subject & subject);
     per edge so the subject-id own-loop re-evaluates `myCidAtK` per
     observation.
 
-    The context is **always read live**: no snapshot, no freeze. scopeStateIds
+    The context is **always read live**: no snapshot, no freeze. state hashes
     are retrieved by re-running `stateHashAt` against the
     current state of `observations` on every `evolvedQueryFrom` call.
     Derived children of the wrapper share the same shared_ptr to the
@@ -301,7 +301,7 @@ std::string describe(const Subject & subject);
 
     `argId`/`argAncestry` identify the cb arg's structural Subject and
     its inherited argAncestry (= per the subject-id Inheritance section, the
-    outer-argAncestry state hashes that the per-invocation scopeStateIds compose with). */
+    outer-argAncestry state hashes that the per-invocation state hashes compose with). */
 struct ApplyContext
 {
     Subject argId;

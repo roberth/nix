@@ -61,7 +61,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
     /* Per-walk resolution context. The cumulative subject-id walk
        (= `this->envWalk`) lives on the evaluator so it
        persists across walk calls — required for cell-chain
-       scopeStateId computation to land at the writer's `d1EdgeIndex` (=
+       state hash computation to land at the writer's `d1EdgeIndex` (=
        cumulative across logResults). */
     ResolutionContext ctx{
         std::move(currentProxy),
@@ -71,7 +71,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        walk-loop promotes the buffer to a cumulative envWalk
        edge on commit (via commitEdge) or discards it on reject.
        Without the buffer, rejected-edge facts would pollute
-       envWalk and throw off the cell-chain scopeStateId computations. */
+       envWalk and throw off the cell-chain state hash computations. */
     std::vector<Observation> pendingEdgeObservations;
 
     auto commitEdge = [&]() {
@@ -453,7 +453,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
 
 
     /* Walk the proxy's argCell chain looking for a cell whose
-       liveObject's scopeStateId matches idStr at some k under
+       liveObject's state hash matches idStr at some k under
        walker's own envWalk. */
     std::vector<Edge> extendedWalkForMatch = envWalk;
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr;
@@ -725,7 +725,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            PositionalSeed and PostulatedIdempotentRead both yield `localId`),
            which is why this bug stayed latent until cb-sibling
            landed: it's the first test that needs the standin's
-           scopeStateId to *evolve* via subsequent probes for downstream
+           state hash to *evolve* via subsequent probes for downstream
            discrimination.
 
            Opt into depth-2 per-probe validation (= each probe
@@ -1362,7 +1362,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        apply-result wrappers (TracingReplayObject /
        TracingObject) expose their applyResultSubject as `fn` for
        further applies — their state hashes evolve via subject-id own-loop
-       instead of being frozen by `PostulatedIdempotentRead{this.scopeStateId}`. Fall
+       instead of being frozen by `PostulatedIdempotentRead{this.state hash}`. Fall
        back to PostulatedIdempotentRead only when no Subject is exposed
        (= atom whose state hash is fully determined at construction). */
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
