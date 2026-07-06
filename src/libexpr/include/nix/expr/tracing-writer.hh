@@ -111,7 +111,7 @@ class TracingWriter
         Hash depth2ApplyId{HashAlgorithm::SHA256};
     };
     /* Depth-1 facts (= ambient observations on outer state). Drained
-       at every intermediate splitFlush and at finalize. */
+       at every intermediate closeAsksEdge and at finalize. */
     std::vector<PendingFact> pendingDepth1Facts;
     /* Depth-2 facts live on their owning PendingApplyBoundary so
        each cb-apply invocation's chain is built from exactly its
@@ -129,7 +129,7 @@ class TracingWriter
        option 2 depends on this alignment. */
     std::vector<cidasks::Edge> envWalk;
     /* Stages the next d1 edge between `flushAmbient` (which
-       drains pendingDepth1Facts into it) and `splitFlush` (which
+       drains pendingDepth1Facts into it) and `closeAsksEdge` (which
        pushes it to envWalk paired with a perQAsksEdge). May
        be empty (= file-read-only Asks edge) — still pushed so that
        envWalk.size() == envAsksEdges.size() always holds. */
@@ -183,7 +183,7 @@ class TracingWriter
         /* Chronological insertion: ε perQAsksEdge for this boundary
            is inserted into envAsksEdges at this position at finalize
            time (= position recorded at markApplyBoundary time, AFTER
-           splitFlush(false) drained pre-boundary d=1 chunk). This
+           closeAsksEdge(false) drained pre-boundary d=1 chunk). This
            makes the walker dispatch the ε edge BEFORE the body's
            d=1 facts that follow, so the lambda-standin's primop
            fires and seedCell extension happens in time for seed(N+1)
@@ -552,7 +552,7 @@ public:
      * Flush buffered ambient facts and Requests into the pool at
      * their natural reqHashes.
      *
-     * Called from `splitFlush` (= every cb-apply boundary and at
+     * Called from `closeAsksEdge` (= every cb-apply boundary and at
      * logResult). With `finalize=false` (= intermediate flushes),
      * only depth-1 facts are drained; depth-2 facts and buffered
      * `pendingApplyBoundaries` stay buffered for later. With
@@ -587,12 +587,12 @@ public:
      * with no ambient observations doesn't move cidasks state, so
      * walker's commitEdge is a no-op for it. Same on the writer.
      */
-    void splitFlush(bool finalize = false);
+    void closeAsksEdge(bool finalize = false);
 
     /**
      * Mark a cb-apply boundary in the recording. Closes the
      * preceding observations into their own Asks edge (= β1 via
-     * splitFlush), inserts the apply Request payload into the CAS
+     * closeAsksEdge), inserts the apply Request payload into the CAS
      * pool, and buffers a `PendingApplyBoundary` recording the
      * applyId and reqHash.
      *
@@ -695,13 +695,13 @@ public:
            buffered cb-apply boundaries (computing each one's
            AmbientResult from its d=2 chain and folding the
            synthetic d=1 apply Fact in), and close the trailing
-           Asks edge boundary. splitFlush is also called at every
+           Asks edge boundary. closeAsksEdge is also called at every
            cb-apply boundary inside a body run, but with
            finalize=false; the d=2-driven AmbientResult computation
            happens only here at logResult, since intermediate
            splitFlushes can be interleaved with the apply's body
            and the d=2 chain may not be complete yet. */
-        splitFlush(/*finalize=*/ true);
+        closeAsksEdge(/*finalize=*/ true);
 
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);

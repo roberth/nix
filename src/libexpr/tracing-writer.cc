@@ -50,7 +50,7 @@ void TracingWriter::flushAmbient(bool finalize)
        across logResults.
 
        Under the 1:1 alignment invariant, the new edge is NOT pushed
-       here; it's staged in `pendingD1Edge` for `splitFlush` to push
+       here; it's staged in `pendingD1Edge` for `closeAsksEdge` to push
        paired with the corresponding perQAsksEdge. This keeps
        writer.envWalk.size() == envAsksEdges.size() at every
        transition. */
@@ -207,7 +207,7 @@ void TracingWriter::flushAmbient(bool finalize)
                 pendingNewRequests.push_back(queryHash);
         }
     }
-    /* d1NewEdge is staged in pendingD1Edge — splitFlush pushes it
+    /* d1NewEdge is staged in pendingD1Edge — closeAsksEdge pushes it
        paired with the perQAsksEdge so the 1:1 alignment holds. */
     pendingDepth1Facts.clear();
 
@@ -260,7 +260,7 @@ void TracingWriter::flushAmbient(bool finalize)
            the apply boundary contributes to cur but not to any
            subject's own-fold (= phantom edge for walk-index sync).
         5. Add applyReqHash to pendingNewRequests so the trailing
-           splitFlush's perQAsksEdge close picks it up.
+           closeAsksEdge's perQAsksEdge close picks it up.
 
        Reverse-nested order is acceptable but unnecessary: AmbientResult
        for one apply doesn't depend on another's chain — each group is
@@ -293,7 +293,7 @@ void TracingWriter::flushAmbient(bool finalize)
 
        Chronological ε insertion: each boundary's ε perQAsksEdge is
        INSERTED at boundary.insertionIndex (= captured at
-       markApplyBoundary time, AFTER splitFlush(false) drained the
+       markApplyBoundary time, AFTER closeAsksEdge(false) drained the
        pre-boundary d=1 chunk), not appended at the end. This puts
        ε BEFORE its body's d=1 facts in walker dispatch order. Each
        insertion shifts subsequent indices by 1, tracked via `shift`.
@@ -533,7 +533,7 @@ void TracingWriter::flushAmbient(bool finalize)
        (option (b)). */
 }
 
-void TracingWriter::splitFlush(bool finalize)
+void TracingWriter::closeAsksEdge(bool finalize)
 {
     if (!decisionGraph)
         return;
@@ -546,7 +546,7 @@ void TracingWriter::splitFlush(bool finalize)
     flushAmbient(finalize);
 
     /* Materialise the perQAsksEdge boundary so the trailing logResult
-       (or a later splitFlush) inserts an Asks(Q, fromFactSet, RS) row
+       (or a later closeAsksEdge) inserts an Asks(Q, fromFactSet, RS) row
        for this transition into Q's namespace. Skip-on-empty is
        deliberate: an edge with no requests has nothing to advance, so
        neither writer's envWalk nor walker's cidasksWalk grows
@@ -561,7 +561,7 @@ void TracingWriter::splitFlush(bool finalize)
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         envWalk.push_back(std::move(pendingD1Edge));
         pendingD1Edge = {};
-        tracingCacheLog("splitFlush: new Asks edge from=%s rs-size=%zu (perQ=%zu d1=%zu)",
+        tracingCacheLog("closeAsksEdge: new Asks edge from=%s rs-size=%zu (perQ=%zu d1=%zu)",
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
                         envAsksEdges.size(),
@@ -597,7 +597,7 @@ void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
        (= β1). The intermediate flush only drains depth-1 facts; any
        depth-2 facts from prior unfinalised cb-applies (= nested case)
        stay buffered, waiting for their own boundary's finalize. */
-    splitFlush(/*finalize=*/ false);
+    closeAsksEdge(/*finalize=*/ false);
 
     /* Insert the apply Request payload into the CAS pool now — its
        hash is known immediately, payload doesn't depend on AmbientResult.
@@ -613,7 +613,7 @@ void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
        logResult walks pendingApplyBoundaries in order and finalises
        each one, INSERTING the ε perQAsksEdge at the chronological
        insertionIndex (= position in envAsksEdges captured AFTER
-       splitFlush(false) drained the pre-boundary d=1 chunk). This
+       closeAsksEdge(false) drained the pre-boundary d=1 chunk). This
        puts ε BEFORE its body's d=1 facts in walker dispatch order,
        so the lambda-standin's seedCell extension fires before
        seed(N+1) probes try to resolve. */
