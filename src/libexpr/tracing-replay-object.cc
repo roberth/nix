@@ -145,17 +145,17 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
                     Q::tag,
                     queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
                     qj.dump());
-    auto v13 = evaluator.v13Walk(queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this());
-    if (!v13) {
+    auto walkResult = evaluator.walk(queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this());
+    if (!walkResult) {
         tracingCacheLog("walker lookup: %s MISS Q=%s",
                         Q::tag,
                         queryHash.to_string(HashFormat::Base16, false).substr(0, 12));
         return std::nullopt;
     }
     try {
-        auto j = cborStringToJson(v13->payload);
+        auto j = cborStringToJson(walkResult->payload);
         tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
-        return std::make_pair(j.template get<R>(), v13->resultNodeHash);
+        return std::make_pair(j.template get<R>(), walkResult->resultNodeHash);
     } catch (const nlohmann::json::exception & e) {
         tracingCacheLog("replay: v13 payload parse failed: %s", e.what());
         return std::nullopt;
@@ -171,22 +171,22 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
                     Q::tag,
                     queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
                     qj.dump());
-    auto v13 = evaluator.v13Walk(queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this());
-    if (!v13) {
+    auto walkResult = evaluator.walk(queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this());
+    if (!walkResult) {
         tracingCacheLog("walker lookup: %s MISS Q=%s",
                         Q::tag,
                         queryHash.to_string(HashFormat::Base16, false).substr(0, 12));
         return std::nullopt;
     }
     try {
-        auto j = cborStringToJson(v13->payload);
+        auto j = cborStringToJson(walkResult->payload);
         tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
         return std::make_pair(
             j.template get<R>(),
             TriePosition{
-                .resultNodeHash = v13->resultNodeHash,
+                .resultNodeHash = walkResult->resultNodeHash,
                 .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
-                .factSetHash = v13->terminalCur,
+                .factSetHash = walkResult->terminalCur,
             });
     } catch (const nlohmann::json::exception & e) {
         tracingCacheLog("replay: v13 payload parse failed: %s", e.what());
@@ -233,7 +233,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
             if (deepFromHex != parentHash) {
                 trace::QueryGetAttr deepQuery{name, deepFromHex};
                 if (auto deep = lookupStructuralChild<trace::QueryGetAttr, trace::ResultMaybeType>(deepQuery)) {
-                    /* Deeper hit validated (v13Walk's chain traversal
+                    /* Deeper hit validated (walk's chain traversal
                        returned success). Use it — this is a
                        sibling-specific recording. */
                     auto deepQueryHash = TracingDecisionGraph::computeQueryHash(deepQuery);

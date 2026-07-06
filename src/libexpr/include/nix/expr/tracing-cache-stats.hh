@@ -9,8 +9,8 @@
  * Enable: set `NIX_CACHE_STATS_FILE=/path/to/stats.json`. On process
  * exit the file is written with `{ "hits": N, "misses": M, "fallbacks": F }`.
  *
- * - **hits**: `v13Walk` matched a Terminal (fast path or walk()).
- * - **misses**: `v13Walk` returned nullopt (no recorded entry reachable).
+ * - **hits**: `walk` matched a Terminal (fast path or walk()).
+ * - **misses**: `walk` returned nullopt (no recorded entry reachable).
  * - **fallbacks**: a `TracingReplayObject` lookup miss activated the
  *   recording-side inner evaluator (`ensureInner` fired).
  *

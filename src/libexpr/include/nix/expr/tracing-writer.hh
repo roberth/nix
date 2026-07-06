@@ -48,7 +48,7 @@ struct TriePosition
 {
     Hash resultNodeHash;          // v13 ResultHash for this result
     std::string queryHashStr;     // hex of the queryHash that produced it
-    /* Walker-side: the cur the v13Walk landed on when committing
+    /* Walker-side: the cur the walk landed on when committing
        this terminal. Used by child Q lookups as a candidate startCur
        (= structurally-anchored lookup position) so a child walk
        starts from its parent's reached factSet rather than from

@@ -34,8 +34,8 @@ TracingReplayEvaluator::TracingReplayEvaluator(
 {
 }
 
-std::optional<TracingReplayEvaluator::V13WalkResult>
-TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy)
+std::optional<TracingReplayEvaluator::WalkResult>
+TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy)
 {
     /* The entire walk is VALIDATION of recorded state — any apply
        queries triggered through `fnObj->queryApply(...)` during
@@ -60,7 +60,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
 
     /* Per-walk resolution context. The cumulative cidasks walk
        (= `this->cidasksWalk`) lives on the evaluator so it
-       persists across v13Walk calls — required for cell-chain
+       persists across walk calls — required for cell-chain
        scopeStateId computation to land at the writer's `d1EdgeIndex` (=
        cumulative across logResults). */
     ResolutionContext ctx{
@@ -342,7 +342,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         parentAnchor = parentTR->getTriePos().factSetHash;
     }
     /* Track rejected-edge obs across all attempts. Committed on walk
-       MISS so subsequent v13Walk calls' resolveCdiId sees the obs
+       MISS so subsequent walk calls' resolveCdiId sees the obs
        walker produced during the failed traversal — those obs carry
        real (req, resp) pairs from cold's recorded responses, and
        future resolves at deeper edgeIndex may need them. Only
@@ -387,7 +387,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         if (ctx.dispatchedApplyReqsThisWalk.empty()) break;
         ctx.applySeqRetryOffset++;
         tracingCacheLog(
-            "v13Walk retry: bumping applySeqRetryOffset -> %zu",
+            "walk retry: bumping applySeqRetryOffset -> %zu",
             ctx.applySeqRetryOffset);
     }
     if (!walkHit) {
@@ -406,7 +406,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         return std::nullopt;
     }
     tracingCacheStats().hits++;
-    return V13WalkResult{std::move(*payload), walkHit->resultHash, walkHit->terminalCur};
+    return WalkResult{std::move(*payload), walkHit->resultHash, walkHit->terminalCur};
 }
 
 std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std::string & requestCbor, ResolutionContext & ctx)
@@ -1221,7 +1221,7 @@ std::optional<std::pair<std::string, TriePosition>>
 TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentProxy)
 {
     auto queryHash = TracingDecisionGraph::computeQueryHash(query);
-    auto v13 = v13Walk(queryHash, std::move(currentProxy));
+    auto v13 = walk(queryHash, std::move(currentProxy));
     if (!v13)
         return std::nullopt;
     tracingCacheLog("replay hit (v13 walk): %s", Q::tag);

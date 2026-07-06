@@ -28,12 +28,12 @@ class TracingReplayEvaluator : public Evaluator
     /**
      * Per-walk resolution context.
      *
-     * Threaded through v13Walk → dispatch → getCurrentResponse →
+     * Threaded through walk → dispatch → getCurrentResponse →
      * dispatchAmbientQuery → resolveCdiId. Holds the proxy
      * whose method triggered this walk (so resolveCdiId can
      * walk the parent / argScope chain on the proxy graph) plus a
      * per-walk memo of ids already resolved. Lives only for the
-     * duration of one v13Walk call — no cross-call leakage as
+     * duration of one walk call — no cross-call leakage as
      * happened with the previous evaluator-global ambientState.
      */
     struct ResolutionContext
@@ -70,23 +70,23 @@ class TracingReplayEvaluator : public Evaluator
         std::unordered_map<std::string, size_t> assignedApplySeq;
 
         /** Set of applyReqHashes dispatched via `dispatchApplyLive`
-            during THIS v13Walk attempt. On miss, walker uses this to
+            during THIS walk attempt. On miss, walker uses this to
             decide whether to increment `applySeqRetryOffset` and retry
             with a different applySeq. */
         std::unordered_set<Hash> dispatchedApplyReqsThisWalk;
 
-        /** Retry-driven applySeq offset. Fresh v13Walk starts at 0
+        /** Retry-driven applySeq offset. Fresh walk starts at 0
             (matches cold's first-boundary seq). Walk miss with cb-apply
             dispatched bumps this and retries: fresh ctx state re-runs
-            walk with next boundary's respHash. Bounded by v13Walk's
+            walk with next boundary's respHash. Bounded by walk's
             retry-count max. cb-repeated variant 2 pattern: .b's WHNF
             needs offset=1, .c's WHNF needs offset=2 — each rediscovered
-            per v13Walk without leaking into sibling Q's fresh contexts. */
+            per walk without leaking into sibling Q's fresh contexts. */
         size_t applySeqRetryOffset = 0;
 
     };
 
-    /** Cumulative walk across all v13Walk calls in this session.
+    /** Cumulative walk across all walk calls in this session.
         Each successfully committed Asks edge appends one entry,
         deduplicated by the edge's content-equal fact set so re-
         traversing a shared prefix doesn't double-fold. Mirrors the
@@ -100,7 +100,7 @@ class TracingReplayEvaluator : public Evaluator
     std::vector<cidasks::Edge> cidasksWalk;
     /** Dedup committed edges by their elementHash-set fingerprint
         (= XOR-fold of fact element hashes within the edge). When
-        a later v13Walk re-traverses an Asks edge already in
+        a later walk re-traverses an Asks edge already in
         cidasksWalk (= shared prefix), commitEdge is a no-op. */
     std::unordered_set<Hash> committedEdgeFingerprints;
 
@@ -213,8 +213,8 @@ public:
         Terminal — child Q lookups thread it through their TracingReplayObject's
         TriePosition.factSetHash and use it as their structural-anchor
         candidate startCur. */
-    struct V13WalkResult { std::string payload; Hash resultNodeHash; Hash terminalCur; };
-    std::optional<V13WalkResult> v13Walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy = nullptr);
+    struct WalkResult { std::string payload; Hash resultNodeHash; Hash terminalCur; };
+    std::optional<WalkResult> walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy = nullptr);
 
     bool isReadOnly() const override;
     Store & getStore() override;
