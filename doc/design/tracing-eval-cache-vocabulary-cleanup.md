@@ -346,6 +346,12 @@ field, and prose term) becomes `argAncestry` everywhere.
 | `ArgScopeCell` (type in `arg-scope.hh`) | `ArgCell` | **Not an argAncestry** — a navigation cell carrying `(depth, parent, liveObject)` for walking the proxy chain. The word "scope" in the old name meant proxy-chain position, not cidasks-scope; keeping it would leave a landmine after `scope` → `argAncestry` sweeps. File `arg-scope.hh` → `arg-cell.hh`. |
 | `argScope` field (`std::shared_ptr<const ArgScopeCell>` type) | `argCell` | Field rename mirrors the type. |
 | `effectiveArgScope()` / `getProxyArgScope()` (free function / virtual method) | `effectiveArgCell()` / `getProxyArgCell()` | Same reason. |
+| `withScope(...)` (setter method on `TracingObject`, `ReplayCallbackArg`, `AmbientObject`, `TracingCallbackApplyResult`) | `withArgCell(...)` | The setter takes a `std::shared_ptr<const ArgCell>` — after the type rename, "Scope" in the method name is stale. Word-boundary safe; keep parameter name `argCell_`. |
+| `getInheritedScope()` (virtual method on `Object`) | `getArgAncestry()` | Returns a Hash — the object's inherited argAncestry. "Inherited scope" in the old name conflated the argAncestry-hash and the ArgCell-navigation concepts; the method returns *only* the hash. Also updates all callers (`fn->getInheritedScope()` etc.). |
+| `argScopeForApply` (Hash local in `tracing-evaluator.cc`) | `argArgAncestryForApply` | Compound not caught by bare-`argScope` field rename (no word boundary before `ForApply`). Value is the arg-side argAncestry to feed `combineArgAncestries`. |
+| `applyScopeForCid` (Hash local in `tracing-replay-evaluator.cc`) | `applyArgAncestryForStateHash` | Compound. Fold the `Cid` → `StateHash` transition alongside; that value characterises a state, so `StateHash` not `Cid`. |
+| `cidasksWalk` (walker-side `std::vector<Edge>` field on `TracingReplayEvaluator` + locals) | `envWalk` | Symmetric with the writer's `envWalk` (formerly `d1CidasksWalk`) — same concept, same type, opposite side of the recording/replay boundary. |
+| `evolvedLeafCid` / `evolvedLeafCidHex` / `evolvedApplyResultCid` (Hash / string locals) | `evolvedLeafStateHash` / `evolvedLeafStateHashHex` / `evolvedApplyResultStateHash` | `Cid` in these locals is the old name for state hash. Fold the `Cid` → `StateHash` transition. |
 
 ### 4.5 Subject-evolution fast-path (formerly "Path-3")
 
@@ -580,28 +586,42 @@ each with its own checkpoint:
      (type); `arg-scope.hh` → `arg-cell.hh` (file); `argScope`
      field on `TracingObject` and elsewhere → `argCell`;
      `effectiveArgScope()` → `effectiveArgCell()`;
-     `getProxyArgScope()` → `getProxyArgCell()`. Word-boundary
-     safe once the type is renamed. Commit atomically per
-     rename target.
+     `getProxyArgScope()` → `getProxyArgCell()`; `withScope(...)`
+     setter method on `TracingObject` / `ReplayCallbackArg` /
+     `AmbientObject` / `TracingCallbackApplyResult` →
+     `withArgCell(...)`. Word-boundary safe once the type is
+     renamed. Commit atomically per rename target.
   2. **Cidasks-scope hash family — bare-word part (Green).**
      `inheritedScope` field → `argAncestry` (bare word,
-     word-boundary safe). `callScope` field on `AmbientResolver`
-     and its locals → `callArgAncestry`. Local variables named
+     word-boundary safe). `getInheritedScope()` virtual method
+     on `Object` and overrides → `getArgAncestry()` (updates all
+     callers). `callScope` field on `AmbientResolver` and its
+     locals → `callArgAncestry`. Local variables named
      `applyScope` holding a `Hash` → `applyArgAncestry`. Note:
      the `applyScope` helper function itself was already renamed
      in 6a (see above) to avoid the shadow — no work needed here.
      One commit per identifier.
-  3. **`applyScope*` compound variables (Green).**
-     `applyScopeLocal` → `applyArgAncestryLocal`;
-     `applyScopeSaved` → `applyArgAncestrySaved`;
-     `applyScopeStateId` → `applyArgAncestryStateHash` (also
-     folds the `stateId` → `stateHash` transition per 6c);
-     `applyScopeStateIdHex` → `applyArgAncestryStateHashHex`.
-     Word-boundary sed on each `applyScope`-prefixed compound
-     doesn't match after prior sub-steps because the base
-     `applyScope` is already gone; enumerate the compound names
-     directly. One commit per compound (or batched by file if
-     tests still green).
+  3. **Scope-family compound variables + Cid-family locals
+     (Green).** Word-boundary sed on the bases (`applyScope`,
+     `argScope`, `Cid`) does not touch compound-suffix forms;
+     enumerate each. Rename set:
+     - `applyScopeLocal` → `applyArgAncestryLocal`
+     - `applyScopeSaved` → `applyArgAncestrySaved`
+     - `applyScopeStateId` → `applyArgAncestryStateHash` (folds
+       `stateId` → `stateHash` per rule 6)
+     - `applyScopeStateIdHex` → `applyArgAncestryStateHashHex`
+     - `argScopeForApply` → `argArgAncestryForApply`
+     - `applyScopeForCid` → `applyArgAncestryForStateHash`
+       (folds `Cid` → `StateHash`)
+     - `evolvedLeafCid` → `evolvedLeafStateHash`
+     - `evolvedLeafCidHex` → `evolvedLeafStateHashHex`
+     - `evolvedApplyResultCid` → `evolvedApplyResultStateHash`
+     - `cidasksWalk` (walker-side vector<Edge> + locals) →
+       `envWalk` (symmetric with the writer's already-renamed
+       envWalk from step 1)
+
+     One commit per compound (or batched by file if tests still
+     green).
   4. **Bare `scope` in `subject-id.{hh,cc}` (Green).** After
      the navigation family and compound-name renames land,
      remaining `scope` parameters and locals inside the module
@@ -966,6 +986,14 @@ applyScopeLocal                   applyArgAncestryLocal
 applyScopeSaved                   applyArgAncestrySaved
 applyScopeStateId                 applyArgAncestryStateHash
 applyScopeStateIdHex              applyArgAncestryStateHashHex
+argScopeForApply                  argArgAncestryForApply
+applyScopeForCid                  applyArgAncestryForStateHash
+withScope() [Object setter]       withArgCell()
+getInheritedScope() [Object]      getArgAncestry()
+cidasksWalk (walker-side)         envWalk
+evolvedLeafCid                    evolvedLeafStateHash
+evolvedLeafCidHex                 evolvedLeafStateHashHex
+evolvedApplyResultCid             evolvedApplyResultStateHash
 fnScope / argScope (params)       fnArgAncestry / argArgAncestry
 callScope (field + locals)        callArgAncestry
 ArgScopeCell (type)               ArgCell
