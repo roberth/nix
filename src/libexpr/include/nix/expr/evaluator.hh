@@ -20,9 +20,7 @@
 
 namespace nix {
 
-namespace cidasks {
 struct Subject;
-}
 
 class Store;
 class EvalState;
@@ -283,17 +281,17 @@ public:
      * The proxy's static structural identifier — for AmbientObject
      * and TracingCallbackArg, the Subject they carry. Used by the
      * walker to evolve scope state ids in lockstep with the recorder
-     * (cidasks::scopeStateIdAt against the running walk). Returns null
+     * (scopeStateIdAt against the running walk). Returns null
      * for non-proxy Objects.
      */
-    virtual const cidasks::Subject * getSubject() const
+    virtual const Subject * getSubject() const
     {
         return nullptr;
     }
 
     /**
      * The proxy's inherited scope — the XOR of outer-scope argStateIds used
-     * by cidasks::scopeStateIdAt to make sibling cached-call recordings'
+     * by scopeStateIdAt to make sibling cached-call recordings'
      * scope state ids distinct. Zero hash for non-proxy Objects.
      */
     virtual Hash getInheritedScope() const

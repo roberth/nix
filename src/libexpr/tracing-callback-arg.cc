@@ -18,7 +18,7 @@ static std::string tracingLocalFromOf(AmbientId id)
 
 TracingCallbackArg::TracingCallbackArg(
     std::shared_ptr<Object> inner,
-    cidasks::Subject subject_,
+    Subject subject_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
     std::shared_ptr<const ArgScopeCell> argScope,
@@ -44,9 +44,9 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
     recordObservation(query, resultJson);
     if (!child)
         return nullptr;
-    cidasks::Subject childSubject{cidasks::DerivedSubject{
-        .parent = std::make_shared<const cidasks::Subject>(subject),
-        .kind = cidasks::DerivedSubject::Kind::GetAttr,
+    Subject childSubject{DerivedSubject{
+        .parent = std::make_shared<const Subject>(subject),
+        .kind = DerivedSubject::Kind::GetAttr,
         .name = name,
     }};
     return std::make_shared<TracingCallbackArg>(
@@ -152,9 +152,9 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
     auto child = inner->getListElem(index);
     trace::QueryGetListElem query{tracingLocalFromOf(localId()), index};
     recordObservation(query, trace::ResultType{objectTypeToString(child->getType())});
-    cidasks::Subject childSubject{cidasks::DerivedSubject{
-        .parent = std::make_shared<const cidasks::Subject>(subject),
-        .kind = cidasks::DerivedSubject::Kind::GetListElem,
+    Subject childSubject{DerivedSubject{
+        .parent = std::make_shared<const Subject>(subject),
+        .kind = DerivedSubject::Kind::GetListElem,
         .index = index,
     }};
     return std::make_shared<TracingCallbackArg>(
@@ -222,16 +222,16 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        on the apply result continue to be recorded in the depth-2
        trace with an evolved scopeStateId (per the cidasks design). */
     auto argCdiHex = argObj->getScopeStateIdHex();
-    cidasks::Subject argSubject = argObj->getSubject()
+    Subject argSubject = argObj->getSubject()
         ? *argObj->getSubject()
-        : cidasks::Subject{cidasks::PostulatedIdempotentRead{
+        : Subject{PostulatedIdempotentRead{
               argCdiHex
                   ? Hash::parseNonSRIUnprefixed(*argCdiHex, HashAlgorithm::SHA256)
                   : Hash{HashAlgorithm::SHA256}}};
     auto result = inner->queryApply(argObj);
-    cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
-        .fn = std::make_shared<const cidasks::Subject>(subject),
-        .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
+    Subject resultSubject{ApplyResultSubject{
+        .fn = std::make_shared<const Subject>(subject),
+        .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
     return std::make_shared<TracingCallbackArg>(
         std::move(result), std::move(resultSubject), writer, rootFSRoot, argScope, inheritedScope, depth2ApplyId);

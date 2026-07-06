@@ -6,7 +6,7 @@
 
 #include <optional>
 #include <string>
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/trace-types.hh"
 #include "nix/util/hash.hh"
 #include "nix/util/ref.hh"
@@ -67,7 +67,7 @@ public:
     virtual trace::ResultVariant ambientQuery(
         const trace::QueryVariant & query,
         std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
-        cidasks::Subject subject,
+        Subject subject,
         Hash inheritedScope = Hash(HashAlgorithm::SHA256))
     {
         (void) subject;

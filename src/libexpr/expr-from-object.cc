@@ -1,6 +1,6 @@
 #include "nix/expr/expr-from-object.hh"
 #include "nix/expr/ambient-object.hh"
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/environment.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/interpreter-object.hh"
@@ -216,7 +216,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
        primop fires at). */
     struct LiveProxyEntry
     {
-        cidasks::Subject subject;
+        Subject subject;
         Hash scope;
         std::shared_ptr<Object> obj;
     };
@@ -290,14 +290,14 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        boundary maximally predictable — two cb calls observing the
        same way through their args reach the same trie position
        regardless of where the arg's source came from. */
-    cidasks::Subject argSubject{cidasks::PositionalSeed{localCell->depth}};
+    Subject argSubject{PositionalSeed{localCell->depth}};
     /* Sample resolver->callScope at fire time. TracingEvaluator::apply
        leaves callScope at the current sibling's siblingScope (no
        restore), so this sample reflects the CURRENT sibling context
        walker is operating under. Do not freeze at closure-creation
        time — the scope evolves, and freezing would emit stale hashes. */
     Hash argScope = resolverHandle->callScope;
-    auto argId = cidasks::scopeStateIdAfter(argSubject, argScope, {});
+    auto argId = scopeStateIdAfter(argSubject, argScope, {});
     tracingCacheLog("AmbientApply::run: argScope=%s argId=%s",
                     argScope.to_string(HashFormat::Base16, false).substr(0, 12),
                     argId.to_string(HashFormat::Base16, false).substr(0, 12));
@@ -462,14 +462,14 @@ static PrimOp * makeCachedFnPrimOp(
                            Sibling cb apply invocations share the same
                            Subject and discriminate via their observation
                            factsets, not via state-creep. */
-                        cidasks::Subject seedSubject{cidasks::PositionalSeed{seedCell->depth}};
+                        Subject seedSubject{PositionalSeed{seedCell->depth}};
                         /* Inherit the resolver's callScope (= argStateId(Q)
                            of this cached call). Sibling cached calls
                            with different Qs get distinct rootIds and
                            therefore distinct subject-derived content
                            ids throughout this cb-apply boundary. */
                         Hash callScope = resolver->callScope;
-                        auto rootId = cidasks::scopeStateIdAfter(seedSubject, callScope, {});
+                        auto rootId = scopeStateIdAfter(seedSubject, callScope, {});
                         /* Per-apply observation context. Captures the
                            outer's probes on the cb arg as they fire
                            through queryFn; the apply-result wrapper
@@ -480,8 +480,8 @@ static PrimOp * makeCachedFnPrimOp(
                            distinguishes sibling apply calls within
                            the same cached call (`inner.f 5` vs
                            `inner.f 2`), per the depth-2 design. */
-                        auto applyContext = std::make_shared<cidasks::ApplyContext>(
-                            cidasks::ApplyContext{seedSubject, callScope, {}});
+                        auto applyContext = std::make_shared<ApplyContext>(
+                            ApplyContext{seedSubject, callScope, {}});
                         /* Boundary-trace-only discipline: do NOT
                            register outerArgObj under rootId in the
                            shared resolver. Sibling cb apply invocations
@@ -497,7 +497,7 @@ static PrimOp * makeCachedFnPrimOp(
                                                   &innerEnv, applyContext](
                             AmbientId objectId,
                             const trace::QueryVariant & q,
-                            cidasks::Subject subject,
+                            Subject subject,
                             Hash inheritedScope) {
                             /* For cb-arg queries (objectId == this cb's
                                rootId), dispatch on the captured
@@ -760,7 +760,7 @@ Hash getAmbientResolverCallScope(const AmbientResolver & resolver)
 
 void registerAmbientResolverProxy(
     AmbientResolver & resolver,
-    cidasks::Subject subject,
+    Subject subject,
     Hash scope,
     std::shared_ptr<Object> obj)
 {
@@ -773,15 +773,15 @@ void registerAmbientResolverProxy(
        cb-applies share the same cb-arg seed depth — same
        boundary-trace-only caveat as the previous argStateId-keyed version.
 
-       `cidasks::Subject` has no `operator==`; the primop only ever
+       `Subject` has no `operator==`; the primop only ever
        registers `PositionalSeed{depth}` here, so structural
        equality reduces to comparing the depth field. Asserting on
        the variant tag keeps this collapse honest if a future caller
        passes a different variant. */
-    auto * newSeed = std::get_if<cidasks::PositionalSeed>(&subject.data);
+    auto * newSeed = std::get_if<PositionalSeed>(&subject.data);
     assert(newSeed && "registerAmbientResolverProxy: subject must be a PositionalSeed");
     for (auto & entry : resolver.liveProxies) {
-        auto * existingSeed = std::get_if<cidasks::PositionalSeed>(&entry.subject.data);
+        auto * existingSeed = std::get_if<PositionalSeed>(&entry.subject.data);
         if (existingSeed && existingSeed->depth == newSeed->depth && entry.scope == scope) {
             entry.obj = std::move(obj);
             return;
@@ -793,7 +793,7 @@ void registerAmbientResolverProxy(
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     AmbientResolver & resolver,
     const Hash & idHash,
-    const std::vector<cidasks::Edge> & cidasksWalk,
+    const std::vector<Edge> & cidasksWalk,
     TracingDecisionGraph * dg)
 {
     /* Linear scan over each registered (subject, scope) x K in
@@ -803,7 +803,7 @@ std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     (void) dg;
     for (auto & entry : resolver.liveProxies) {
         for (size_t k = 0; k <= cidasksWalk.size(); ++k) {
-            auto scopeStateId = cidasks::scopeStateIdAt(entry.subject, entry.scope, cidasksWalk, k);
+            auto scopeStateId = scopeStateIdAt(entry.subject, entry.scope, cidasksWalk, k);
             if (scopeStateId == idHash)
                 return entry.obj;
         }

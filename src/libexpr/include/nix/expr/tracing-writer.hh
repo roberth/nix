@@ -5,7 +5,7 @@
  * v13 decision-graph index.
  */
 
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/trace-sink.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
@@ -92,7 +92,7 @@ class TracingWriter
     /* Ambient facts buffered during recording and flushed at
        logResult time via flushAmbient. The Subject identifies
        which value the observation is about — flush uses it via
-       cidasks::scopeStateIdAt to compute the fact's `from` field
+       scopeStateIdAt to compute the fact's `from` field
        against the relevant Asks-edge precondition factset.
 
        Layer marker: depth-1 facts (inner asks outer about an outer
@@ -104,7 +104,7 @@ class TracingWriter
     {
         trace::QueryVariant query;
         trace::ResultVariant result;
-        cidasks::Subject subject;
+        Subject subject;
         Hash inheritedScope; ///< outer-scope argStateIds for scopeStateIdAt
         /* Empty hash = depth-1; otherwise = the cb apply's resultId,
            grouping this fact into the depth-2 sub-trace for that apply. */
@@ -127,13 +127,13 @@ class TracingWriter
        edge-for-edge, so `scopeStateIdAt(subject, scope, walk, K)`
        computes the same value on both sides. Per-arg-completion
        option 2 depends on this alignment. */
-    std::vector<cidasks::Edge> envWalk;
+    std::vector<Edge> envWalk;
     /* Stages the next d1 edge between `flushAmbient` (which
        drains pendingDepth1Facts into it) and `closeAsksEdge` (which
        pushes it to envWalk paired with a perQAsksEdge). May
        be empty (= file-read-only Asks edge) — still pushed so that
        envWalk.size() == envAsksEdges.size() always holds. */
-    cidasks::Edge pendingD1Edge;
+    Edge pendingD1Edge;
 
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
        new query hash added to envFactSet since the last logResult,
@@ -300,7 +300,7 @@ public:
         — the per-arg evolved scopeStateId the design's principle #3 requires
         for child queries on those wrappers. Walker's parallel handle
         is TracingReplayEvaluator::getCidasksWalk. */
-    const std::vector<cidasks::Edge> & getD1CidasksWalk() const
+    const std::vector<Edge> & getD1CidasksWalk() const
     {
         return envWalk;
     }
@@ -419,7 +419,7 @@ public:
     void logAmbientInteraction(
         const trace::QueryVariant & query,
         const trace::ResultVariant & result,
-        cidasks::Subject subject,
+        Subject subject,
         Hash inheritedScope = Hash(HashAlgorithm::SHA256))
     {
         if (!decisionGraph)
@@ -437,7 +437,7 @@ public:
     void logAmbientObservation(
         const trace::QueryVariant & query,
         const trace::ResultVariant & result,
-        cidasks::Subject subject,
+        Subject subject,
         Hash inheritedScope,
         Hash applyId)
     {
@@ -646,8 +646,8 @@ public:
 
     void logAmbientApplyFact(
         const nlohmann::json & applyQueryPayload,
-        const cidasks::Subject & resultSubject,
-        const Hash & applyScope)
+        const Subject & resultSubject,
+        const Hash & applyArgAncestry)
     {
         if (!decisionGraph)
             return;
@@ -662,7 +662,7 @@ public:
             trace::QueryVariant{applyQ},
             trace::ResultVariant{trace::ResultType{"apply"}},
             resultSubject,
-            applyScope,
+            applyArgAncestry,
             enclosing.applyId,
         });
     }

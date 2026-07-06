@@ -1,5 +1,5 @@
 #include "nix/expr/tracing-writer.hh"
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-cache-stats.hh"
 #include "nix/expr/tracing-decision-graph.hh"
@@ -55,7 +55,7 @@ void TracingWriter::flushAmbient(bool finalize)
        writer.envWalk.size() == envAsksEdges.size() at every
        transition. */
     size_t d1EdgeIndex = envWalk.size();
-    cidasks::Edge & d1NewEdge = pendingD1Edge;
+    Edge & d1NewEdge = pendingD1Edge;
     d1NewEdge = {};
     /* Per-edge dedup of observations by elementHash. An Asks edge is a
        set, not a list — XOR-folding the same observation twice cancels
@@ -68,16 +68,16 @@ void TracingWriter::flushAmbient(bool finalize)
            `fromCIDs[]` carries all cb_arg roots reached via the
            subject tree; `path` encodes the access expression that
            walks from fromCIDs[0] to the observed subject. */
-        auto [path, roots] = cidasks::pathAndRootsFromSubject(pf.subject);
+        auto [path, roots] = pathAndRootsFromSubject(pf.subject);
         std::vector<trace::QueryLeaf> fromCIDs;
         fromCIDs.reserve(roots.size());
         for (auto & root : roots) {
             /* Path 3: stamp SubjectEvolutionEdges via hook. */
-            Hash rootSelfHash = cidasks::scopeStateIdAt(
+            Hash rootSelfHash = scopeStateIdAt(
                 root, Hash(HashAlgorithm::SHA256), {}, 0);
-            auto cid = cidasks::scopeStateIdAtWithHook(
+            auto cid = scopeStateIdAtWithHook(
                 root, pf.inheritedScope, envWalk, d1EdgeIndex,
-                [&](const cidasks::EvolutionStep & step) {
+                [&](const EvolutionStep & step) {
                     insertSubjectEvolutionEdge(
                         rootSelfHash, step.curBefore,
                         step.obsFromHash, step.obsElementHash,
@@ -94,7 +94,7 @@ void TracingWriter::flushAmbient(bool finalize)
             [](const auto & q) -> std::string { return std::string(q.tag); }, pf.query);
         tracingCacheLog(
             "flush d1 fact: subject=%s query=%s from=%s path=%zu fromCIDs=%zu",
-            cidasks::describe(pf.subject), queryTag, fromHex.substr(0, 12),
+            describe(pf.subject), queryTag, fromHex.substr(0, 12),
             path.steps.size(), fromCIDs.size());
 
         nlohmann::json queryJson;
@@ -149,7 +149,7 @@ void TracingWriter::flushAmbient(bool finalize)
             std::vector<trace::QueryLeaf> initialFromCIDs;
             initialFromCIDs.reserve(roots.size());
             for (auto & root : roots) {
-                auto initCid = cidasks::scopeStateIdAt(
+                auto initCid = scopeStateIdAt(
                     root, pf.inheritedScope, {}, 0);
                 initialFromCIDs.emplace_back(
                     initCid.to_string(HashFormat::Base16, false));
@@ -325,22 +325,22 @@ void TracingWriter::flushAmbient(bool finalize)
            Used both for first-finalize processing (with AmbientAsks)
            and for late-d2-obs re-processing (without AmbientAsks —
            see commentary at the "late probe" branch below). */
-        auto stampAndEmit = [&](size_t i, const std::vector<cidasks::Edge> & walk,
+        auto stampAndEmit = [&](size_t i, const std::vector<Edge> & walk,
                                 Hash cumulativeFactSet, bool withAmbientAsks,
                                 Hash boundaryOuterCtx = Hash(HashAlgorithm::SHA256))
-            -> std::pair<Hash, cidasks::Edge>
+            -> std::pair<Hash, Edge>
         {
             auto & pf = group[i];
-            auto [path, roots] = cidasks::pathAndRootsFromSubject(pf.subject);
+            auto [path, roots] = pathAndRootsFromSubject(pf.subject);
             std::vector<trace::QueryLeaf> fromCIDs;
             fromCIDs.reserve(roots.size());
             for (auto & root : roots) {
                 /* Path 3: stamp SubjectEvolutionEdges via hook. */
-                Hash rootSelfHash = cidasks::scopeStateIdAt(
+                Hash rootSelfHash = scopeStateIdAt(
                     root, Hash(HashAlgorithm::SHA256), {}, 0);
-                auto cid = cidasks::scopeStateIdAtWithHook(
+                auto cid = scopeStateIdAtWithHook(
                     root, pf.inheritedScope, walk, /*edgeIndex=*/ i,
-                    [&](const cidasks::EvolutionStep & step) {
+                    [&](const EvolutionStep & step) {
                         insertSubjectEvolutionEdge(
                             rootSelfHash, step.curBefore,
                             step.obsFromHash, step.obsElementHash,
@@ -358,7 +358,7 @@ void TracingWriter::flushAmbient(bool finalize)
             tracingCacheLog(
                 "flush d2 fact: applyId=%s i=%zu subject=%s query=%s from=%s path=%zu fromCIDs=%zu ambientAsks=%s",
                 boundary.applyId.to_string(HashFormat::Base16, false).substr(0, 12),
-                i, cidasks::describe(pf.subject), queryTag, fromHex.substr(0, 12),
+                i, describe(pf.subject), queryTag, fromHex.substr(0, 12),
                 path.steps.size(), fromCIDs.size(), withAmbientAsks ? "yes" : "no");
 
             nlohmann::json queryJson;
@@ -390,7 +390,7 @@ void TracingWriter::flushAmbient(bool finalize)
                 decisionGraph->insertAmbientAsks(cumulativeFactSet, requestSet, toFactSet);
             }
 
-            cidasks::Edge edge;
+            Edge edge;
             auto elementHash = TracingDecisionGraph::xorFactIntoHash(
                 Hash(HashAlgorithm::SHA256), queryHash, responseHash);
             edge.observations.push_back({fromCdi, elementHash});
@@ -415,7 +415,7 @@ void TracingWriter::flushAmbient(bool finalize)
             Hash boundaryOuterCtx = TracingDecisionGraph::xorHashes(
                 boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
             boundary.boundaryOuterCtx = boundaryOuterCtx;
-            std::vector<cidasks::Edge> walk;
+            std::vector<Edge> walk;
             walk.reserve(group.size());
             Hash cumulativeFactSet = boundary.applyRequestHash;
             for (size_t i = 0; i < group.size(); ++i) {
@@ -441,7 +441,7 @@ void TracingWriter::flushAmbient(bool finalize)
                 allRequestHashes.insert(boundary.applyRequestHash);
             }
 
-            cidasks::Edge applyEdge;
+            Edge applyEdge;
             applyEdge.observations.push_back({
                 Hash(HashAlgorithm::SHA256),
                 factHash,
@@ -504,7 +504,7 @@ void TracingWriter::flushAmbient(bool finalize)
                Validation against AmbientAsks is skipped for boundaries
                whose chain is empty at chainStart — see
                `ReplayCallbackArg::withChainStart`. */
-            std::vector<cidasks::Edge> walk;
+            std::vector<Edge> walk;
             walk.reserve(group.size());
             Hash cumulativeFactSet = boundary.applyRequestHash;
             for (size_t i = 0; i < boundary.lastProcessedCount; ++i) {

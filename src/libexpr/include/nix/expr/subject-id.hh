@@ -23,7 +23,7 @@
 #include <variant>
 #include <vector>
 
-namespace nix::cidasks {
+namespace nix {
 
 struct Subject;
 
@@ -264,7 +264,7 @@ PathAndRoots pathAndRootsFromSubject(const Subject & subject);
     combination must be non-commutative (= `f a` ≠ `a f`; cf.
     `flip apply`), so SHA-256 over a tagged concatenation rather
     than XOR. */
-inline Hash applyScope(const Hash & fnScope, const Hash & argScope)
+inline Hash combineArgAncestries(const Hash & fnScope, const Hash & argScope)
 {
     std::string s = "apply-scope:";
     s += fnScope.to_string(HashFormat::Base16, false);
@@ -293,7 +293,7 @@ std::string describe(const Subject & subject);
     observation.
 
     The context is **always read live**: no snapshot, no freeze. scopeStateIds
-    are retrieved by re-running `cidasks::scopeStateIdAt` against the
+    are retrieved by re-running `scopeStateIdAt` against the
     current state of `observations` on every `evolvedQueryFrom` call.
     Derived children of the wrapper share the same shared_ptr to the
     same ApplyContext so the chain `wrapper.getAttr("foo").getInt()`
@@ -309,4 +309,4 @@ struct ApplyContext
     std::vector<Observation> observations;
 };
 
-} // namespace nix::cidasks
+} // namespace nix

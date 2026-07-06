@@ -25,7 +25,7 @@
  */
 
 #include "nix/expr/arg-scope.hh"
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/trace-ids.hh"
@@ -38,7 +38,7 @@ class TracingDecisionGraph;
 class ReplayCallbackArg : public Object
 {
     /* Full structural identity. Combined with `scope` and the shared
-       `walkFacts`, `cidasks::scopeStateIdAt` computes this proxy's scopeStateId
+       `walkFacts`, `scopeStateIdAt` computes this proxy's scopeStateId
        at any walk position. The recorder's cidasks substitution at
        flush uses the same evaluation, so walker and recorder agree
        on per-probe `from` fields without snapshot/lazy hacks — even
@@ -55,7 +55,7 @@ class ReplayCallbackArg : public Object
        recursively re-evaluates the parent's scopeStateId at the child's
        current edge index, so children don't need to snapshot parent
        state at creation. */
-    cidasks::Subject subject;
+    Subject subject;
     Hash scope;
     /* Initial scopeStateId (= scopeStateIdAt(subject, scope, {}, 0)) — kept for
        legacy id-string consumers (e.g. defeatCache's recursive
@@ -69,7 +69,7 @@ class ReplayCallbackArg : public Object
        Backed as a shared single-fact-edge sequence: each entry is
        wrapped in a single-fact Edge so the walk's edge indices match
        the recorder's flush walk. */
-    std::shared_ptr<std::vector<cidasks::Edge>> walkFacts;
+    std::shared_ptr<std::vector<Edge>> walkFacts;
     /* Shared chain cursor across all proxies in one cb apply. Each
        validated probe advances `*chainCursor` to the matched edge's
        toFactSet. */
@@ -123,16 +123,16 @@ class ReplayCallbackArg : public Object
 
     /* cb-arg apply context, sourced from the writer's localArg
        sidecar. `applyDepth` = `localCell->depth` at the recorder's
-       AmbientResolver::apply boundary. `applyScope` = the resolver's
+       AmbientResolver::apply boundary. `applyArgAncestry` = the resolver's
        callScope. Used by the lambda primop to compose nested
        apply-result subjects matching the recorder's encoding (=
        `ApplyResultSubject{fn=this.subject, arg=PositionalSeed{depth+1}}`
-       at `applyScope`). Inherited unchanged through derived
+       at `applyArgAncestry`). Inherited unchanged through derived
        children (= the nested apply's positional depth is one
        deeper than the cb-arg's, regardless of attr/list navigation
        within the cb-arg's structure). */
     std::optional<int> applyDepth;
-    std::optional<Hash> applyScope;
+    std::optional<Hash> applyArgAncestry;
 
     /* Argument-scope cell. Navigation children carry the same cell
        as their parent; the top-level (cb-arg) Local carries the
@@ -145,9 +145,9 @@ public:
        ...}`. Inherits parent's shared walk/cursor so the child's
        scopeStateId evaluation rides on the same per-cb-apply chain. */
     ReplayCallbackArg(
-        cidasks::Subject subject_,
+        Subject subject_,
         Hash scope_,
-        std::shared_ptr<std::vector<cidasks::Edge>> walkFacts_,
+        std::shared_ptr<std::vector<Edge>> walkFacts_,
         std::shared_ptr<Hash> chainCursor_,
         Hash outerContext_,
         TracingDecisionGraph & dg,
@@ -155,7 +155,7 @@ public:
         EvalState * state = nullptr)
         : subject(std::move(subject_))
         , scope(std::move(scope_))
-        , localId(cidasks::structuralAddress(subject, scope, *walkFacts_, 0))
+        , localId(structuralAddress(subject, scope, *walkFacts_, 0))
         , walkFacts(std::move(walkFacts_))
         , chainCursor(std::move(chainCursor_))
         , outerContext(std::move(outerContext_))
@@ -209,12 +209,12 @@ public:
     ReplayCallbackArg & withApplyContext(int depth_, Hash scope_)
     {
         applyDepth = depth_;
-        applyScope = std::move(scope_);
+        applyArgAncestry = std::move(scope_);
         return *this;
     }
 
     std::optional<int> getApplyDepth() const { return applyDepth; }
-    std::optional<Hash> getApplyScope() const { return applyScope; }
+    std::optional<Hash> getApplyScope() const { return applyArgAncestry; }
 
     /** Whether per-probe validation is enabled for this proxy. */
     bool hasAmbientAsksValidation() const { return validateAgainstAmbientAsks; }
@@ -241,7 +241,7 @@ public:
         standin used as `arg` in `<replay-local-lambda>`'s recursive
         apply) composes ApplyResultSubject with this standin's
         evolving Subject. */
-    const cidasks::Subject * getSubject() const override { return &subject; }
+    const Subject * getSubject() const override { return &subject; }
 
     Hash getInheritedScope() const override { return scope; }
 

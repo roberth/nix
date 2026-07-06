@@ -5,7 +5,7 @@
  * ExprFromObject - Expr that evaluates by pulling from an Object.
  */
 
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/nixexpr.hh"
 
@@ -141,7 +141,7 @@ Hash getAmbientResolverCallScope(const AmbientResolver & resolver);
     structural-equality. */
 void registerAmbientResolverProxy(
     AmbientResolver & resolver,
-    cidasks::Subject subject,
+    Subject subject,
     Hash scope,
     std::shared_ptr<Object> obj);
 
@@ -159,7 +159,7 @@ void registerAmbientResolverProxy(
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     AmbientResolver & resolver,
     const Hash & idHash,
-    const std::vector<cidasks::Edge> & cidasksWalk,
+    const std::vector<Edge> & cidasksWalk,
     TracingDecisionGraph * dg = nullptr);
 
 } // namespace nix

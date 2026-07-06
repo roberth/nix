@@ -1,7 +1,7 @@
 #pragma once
 
 #include "nix/expr/arg-scope.hh"
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/util/hash.hh"
@@ -40,17 +40,17 @@ class TracingObject : public Object
        this apply structurally (ApplyResultSubject{fn, arg}), and the
        inherited scope (= argStateId(Q) at the cb-apply boundary). Child
        queries on this wrapper emit at
-       `scopeStateIdAt(applyResultSubject, applyScope, writer.envWalk,
+       `scopeStateIdAt(applyResultSubject, applyArgAncestry, writer.envWalk,
        walk.size())` — the per-arg evolved scopeStateId the design's
        principle #3 requires for sibling discrimination. Null on
        non-apply-result wrappers (= navigation children). */
-    std::optional<cidasks::Subject> applyResultSubject;
-    Hash applyScope{HashAlgorithm::SHA256};
+    std::optional<Subject> applyResultSubject;
+    Hash applyArgAncestry{HashAlgorithm::SHA256};
 
     /* Per-invocation observation context shared with the cb-arg
        AmbientObject's queryFn and propagated to derived children
        via shared_ptr. */
-    std::shared_ptr<cidasks::ApplyContext> applyContext;
+    std::shared_ptr<ApplyContext> applyContext;
 
     /* Compute the wrapper's evolved argStateId live from
        applyContext->observations. */
@@ -85,20 +85,20 @@ public:
     /** Attach the apply-result structural identity — for apply-result
         wrappers, so subsequent child queries emit at the evolved scopeStateId.
         Mirrors TracingReplayObject's machinery. */
-    TracingObject & withApplyResultSubject(cidasks::Subject subject, Hash scope)
+    TracingObject & withApplyResultSubject(Subject subject, Hash scope)
     {
         applyResultSubject = std::move(subject);
-        applyScope = std::move(scope);
+        applyArgAncestry = std::move(scope);
         return *this;
     }
 
-    TracingObject & withApplyContext(std::shared_ptr<cidasks::ApplyContext> ctx)
+    TracingObject & withApplyContext(std::shared_ptr<ApplyContext> ctx)
     {
         applyContext = std::move(ctx);
         return *this;
     }
 
-    std::shared_ptr<cidasks::ApplyContext> getApplyContext() const { return applyContext; }
+    std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
     /** Expose the apply-result structural Subject when this wrapper
         is itself an apply result (= curried fn for the next apply, or
@@ -111,7 +111,7 @@ public:
         legitimately have no Subject — for those, the PostulatedIdempotentRead
         fallback in callers describes an atom whose argStateId is fully
         determined and not subject to observation-driven evolution. */
-    const cidasks::Subject * getSubject() const override
+    const Subject * getSubject() const override
     {
         return applyResultSubject ? &*applyResultSubject : nullptr;
     }
@@ -119,7 +119,7 @@ public:
     /** Inherited scope for `scopeStateIdAt(getSubject(), getInheritedScope(), …)`.
         For apply-result wrappers it's the cb-apply boundary's scope
         baked at construction. */
-    Hash getInheritedScope() const override { return applyScope; }
+    Hash getInheritedScope() const override { return applyArgAncestry; }
 
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 

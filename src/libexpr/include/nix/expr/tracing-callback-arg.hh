@@ -13,7 +13,7 @@
  */
 
 #include "nix/expr/arg-scope.hh"
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/source-root.hh"
 #include "nix/expr/trace-ids.hh"
@@ -37,7 +37,7 @@ class TracingWriter;
 class TracingCallbackArg : public Object
 {
     std::shared_ptr<Object> inner;
-    cidasks::Subject subject;  ///< Static structural identifier
+    Subject subject;  ///< Static structural identifier
     /* Inherited scope: XOR of outer-scope argStateIds (argStateId(Q) at the
        cb-apply boundary). Propagated to navigation children. */
     Hash inheritedScope;
@@ -50,7 +50,7 @@ class TracingCallbackArg : public Object
 
     /** This local's scope state id, scoped via inheritedScope. Computed
         on demand from `subject` + `inheritedScope`. */
-    AmbientId localId() const { return cidasks::structuralAddressAfter(subject, inheritedScope, {}); }
+    AmbientId localId() const { return structuralAddressAfter(subject, inheritedScope, {}); }
 
     /* The argScope cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;
@@ -68,7 +68,7 @@ class TracingCallbackArg : public Object
 public:
     TracingCallbackArg(
         std::shared_ptr<Object> inner,
-        cidasks::Subject subject,
+        Subject subject,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
         std::shared_ptr<const ArgScopeCell> argScope,
@@ -77,7 +77,7 @@ public:
 
     /** This proxy's structural identity, per the
         content-identity-via-asks design. */
-    const cidasks::Subject * getSubject() const override { return &subject; }
+    const Subject * getSubject() const override { return &subject; }
 
     /** This proxy's inherited scope. */
     Hash getInheritedScope() const override { return inheritedScope; }

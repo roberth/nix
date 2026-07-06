@@ -1,7 +1,7 @@
 #pragma once
 
 #include "nix/expr/arg-scope.hh"
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/tracing-writer.hh"
 
@@ -42,14 +42,14 @@ class TracingReplayObject : public Object
        still inspect; not used for evolvedQueryFrom under the
        option-2 encoding (which routes through the evaluator's
        cumulative cidasksWalk). */
-    std::shared_ptr<cidasks::ApplyContext> applyContext;
+    std::shared_ptr<ApplyContext> applyContext;
     /* When apply-result, the ApplyResultSubject identifying it
        structurally + the inherited scope (= argStateId(Q)). Used together
        with the evaluator's cidasksWalk to compute the evolved scopeStateId
        at lookup time via the same formula the writer's TracingObject
        uses. */
-    std::optional<cidasks::Subject> applyResultSubject;
-    Hash applyScope{HashAlgorithm::SHA256};
+    std::optional<Subject> applyResultSubject;
+    Hash applyArgAncestry{HashAlgorithm::SHA256};
 
     ref<Object> ensureInner() const;
 
@@ -110,36 +110,36 @@ public:
         wrappers, so subsequent queries can compute the evolved
         scope state id via cidasks. */
     TracingReplayObject & withApplyContext(
-        std::shared_ptr<cidasks::ApplyContext> ctx, cidasks::Subject resultSubject)
+        std::shared_ptr<ApplyContext> ctx, Subject resultSubject)
     {
         applyContext = std::move(ctx);
         applyResultSubject = std::move(resultSubject);
         if (applyContext)
-            applyScope = applyContext->scope;
+            applyArgAncestry = applyContext->scope;
         return *this;
     }
 
     /** Attach the apply-result Subject + scope without going through
         ApplyContext. Mirrors the writer-side
         `TracingObject::withApplyResultSubject`. */
-    TracingReplayObject & withApplyResultSubject(cidasks::Subject subject, Hash scope)
+    TracingReplayObject & withApplyResultSubject(Subject subject, Hash scope)
     {
         applyResultSubject = std::move(subject);
-        applyScope = std::move(scope);
+        applyArgAncestry = std::move(scope);
         return *this;
     }
 
     /** Attach just the ApplyContext (for the finalised side-channel),
-        leaving applyResultSubject/applyScope alone. Used by
+        leaving applyResultSubject/applyArgAncestry alone. Used by
         TracingReplayEvaluator::apply after it has already set the
         Subject via withApplyResultSubject. */
-    TracingReplayObject & withApplyContextOnly(std::shared_ptr<cidasks::ApplyContext> ctx)
+    TracingReplayObject & withApplyContextOnly(std::shared_ptr<ApplyContext> ctx)
     {
         applyContext = std::move(ctx);
         return *this;
     }
 
-    std::shared_ptr<cidasks::ApplyContext> getApplyContext() const { return applyContext; }
+    std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
@@ -148,12 +148,12 @@ public:
         next apply / further queries build `ApplyResultSubject{...}`
         constituents whose argStateIds evolve via cidasks own-loop, instead
         of falling back to `PostulatedIdempotentRead{this.scopeStateId}`. */
-    const cidasks::Subject * getSubject() const override
+    const Subject * getSubject() const override
     {
         return applyResultSubject ? &*applyResultSubject : nullptr;
     }
 
-    Hash getInheritedScope() const override { return applyScope; }
+    Hash getInheritedScope() const override { return applyArgAncestry; }
 
     const TriePosition & getTriePos() const
     {

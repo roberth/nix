@@ -1,4 +1,4 @@
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-writer.hh"  // for jsonToCborString
@@ -7,7 +7,7 @@
 #include <cstring>
 #include <nlohmann/json.hpp>
 
-namespace nix::cidasks {
+namespace nix {
 
 static std::string hashHex(const Hash & h)
 {
@@ -20,10 +20,10 @@ Hash extractFrom(const trace::QueryVariant & query)
         [](const auto & q) -> Hash {
             if constexpr (requires { q.from; }) {
                 if (!q.from.isContent())
-                    throw Error("cidasks::extractFrom: query.from is not a ContentLeaf");
+                    throw Error("extractFrom: query.from is not a ContentLeaf");
                 return Hash::parseNonSRIUnprefixed(q.from.contentHash(), HashAlgorithm::SHA256);
             } else {
-                throw Error("cidasks::extractFrom: query type has no `from` field");
+                throw Error("extractFrom: query type has no `from` field");
             }
         },
         query);
@@ -148,14 +148,14 @@ trace::QueryApply makeApplyResultQuery(
     const std::vector<Edge> & walk, size_t edgeIndex)
 {
     if (!std::holds_alternative<ApplyResultSubject>(applyResultSubject.data))
-        throw Error("cidasks::makeApplyResultQuery: subject is not an ApplyResultSubject");
+        throw Error("makeApplyResultQuery: subject is not an ApplyResultSubject");
 
     auto par = pathAndRootsFromSubject(applyResultSubject);
     if (par.path.steps.size() != 1
         || par.path.steps[0].kind != trace::PathStep::Kind::Apply
         || !par.path.steps[0].fnPath
         || !par.path.steps[0].argPath)
-        throw Error("cidasks::makeApplyResultQuery: unexpected path shape");
+        throw Error("makeApplyResultQuery: unexpected path shape");
     const auto & applyStep = par.path.steps[0];
 
     trace::QueryApply q;
@@ -282,7 +282,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
                        pre-computed-argStateId atom. */
                     return alt.hash;
                 } else {
-                    throw Error("cidasks::scopeStateIdAt: unknown subject variant");
+                    throw Error("scopeStateIdAt: unknown subject variant");
                 }
             };
 
@@ -435,4 +435,4 @@ std::string describe(const Subject & subject)
         subject.data);
 }
 
-} // namespace nix::cidasks
+} // namespace nix

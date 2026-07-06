@@ -38,7 +38,7 @@
  */
 
 #include "nix/expr/arg-scope.hh"
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/trace-types.hh"
 #include "nix/expr/tracing-writer.hh"
@@ -60,12 +60,12 @@ class TracingCallbackApplyResult : public Object
        synthetic apply-result subject at warm. flushAmbient's
        d=2 loop uses this subject to stamp each observation's `from`
        field at the appropriate edge index. */
-    cidasks::Subject applyResultSubject;
+    Subject applyResultSubject;
 
     /* Scope inherited from the cb-apply boundary — = contraArg's
        inheritedScope = the resolver's callScope. The walker's
        sidecar lookup recovers the same scope. */
-    Hash applyScope;
+    Hash applyArgAncestry;
 
     /* The enclosing cb-apply boundary's `applyId` (= what `runOn`
        computed as `queryHash(QueryApply{fn, arg})` when it pushed
@@ -74,7 +74,7 @@ class TracingCallbackApplyResult : public Object
        observations route to the correct boundary's d=2 chain. */
     Hash depth2ApplyId;
 
-    /* scopeStateIdAfter(applyResultSubject, applyScope, {}) hex — the
+    /* scopeStateIdAfter(applyResultSubject, applyArgAncestry, {}) hex — the
        content-only apply-result argStateId exposed via getScopeStateIdHex. Computed
        once at construction to match `TracingEvaluator::apply`'s
        `applyScopeStateIdHex` (= what the walker computes too). */
@@ -95,8 +95,8 @@ public:
     TracingCallbackApplyResult(
         ref<Object> inner,
         TracingWriter & writer,
-        cidasks::Subject applyResultSubject,
-        Hash applyScope,
+        Subject applyResultSubject,
+        Hash applyArgAncestry,
         Hash depth2ApplyId);
 
     TracingCallbackApplyResult & withScope(std::shared_ptr<const ArgScopeCell> cell)
@@ -111,9 +111,9 @@ public:
         ApplyResultSubject so a subsequent apply on this wrapper
         composes evolving ApplyResultSubject constituents instead of
         the frozen PostulatedIdempotentRead{applyScopeStateIdHex} fallback. */
-    const cidasks::Subject * getSubject() const override { return &applyResultSubject; }
+    const Subject * getSubject() const override { return &applyResultSubject; }
 
-    Hash getInheritedScope() const override { return applyScope; }
+    Hash getInheritedScope() const override { return applyArgAncestry; }
 
     std::optional<std::string> getScopeStateIdHex() const override { return applyScopeStateIdHex; }
 

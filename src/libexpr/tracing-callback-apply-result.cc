@@ -10,16 +10,16 @@ namespace nix {
 TracingCallbackApplyResult::TracingCallbackApplyResult(
     ref<Object> inner_,
     TracingWriter & writer_,
-    cidasks::Subject applyResultSubject_,
+    Subject applyResultSubject_,
     Hash applyScope_,
     Hash depth2ApplyId_)
     : inner(std::move(inner_))
     , writer(writer_)
     , applyResultSubject(std::move(applyResultSubject_))
-    , applyScope(std::move(applyScope_))
+    , applyArgAncestry(std::move(applyScope_))
     , depth2ApplyId(std::move(depth2ApplyId_))
 {
-    auto scopeStateId = cidasks::scopeStateIdAfter(applyResultSubject, applyScope, {});
+    auto scopeStateId = scopeStateIdAfter(applyResultSubject, applyArgAncestry, {});
     applyScopeStateIdHex = scopeStateId.to_string(HashFormat::Base16, false);
 }
 
@@ -34,7 +34,7 @@ void TracingCallbackApplyResult::recordD2(const trace::QueryVariant & query, con
        boundary's facts vector), matching the walker's stamping at
        `walkFacts.size()` after the synthetic-side primop pushed
        the apply Fact. */
-    writer.logAmbientObservation(query, result, applyResultSubject, applyScope, depth2ApplyId);
+    writer.logAmbientObservation(query, result, applyResultSubject, applyArgAncestry, depth2ApplyId);
 }
 
 std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::string & name)

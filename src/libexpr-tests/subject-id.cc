@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 
 namespace nix::cidasks {

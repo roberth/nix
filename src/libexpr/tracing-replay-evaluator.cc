@@ -72,7 +72,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        edge on commit (via commitEdge) or discards it on reject.
        Without the buffer, rejected-edge facts would pollute
        cidasksWalk and throw off the cell-chain scopeStateId computations. */
-    std::vector<cidasks::Observation> pendingEdgeObservations;
+    std::vector<Observation> pendingEdgeObservations;
 
     auto commitEdge = [&]() {
         /* 1:1 alignment with writer's envWalk: writer inserts each
@@ -86,8 +86,8 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
            Split: partition pending obs into ε (fromHash=0) and real
            (non-zero fromHash). Commit real obs as the primary edge;
            each ε obs becomes its own subsequent edge. */
-        std::vector<cidasks::Observation> realObs;
-        std::vector<cidasks::Observation> epsilonObs;
+        std::vector<Observation> realObs;
+        std::vector<Observation> epsilonObs;
         realObs.reserve(pendingEdgeObservations.size());
         for (auto & obs : pendingEdgeObservations) {
             if (obs.fromHash == Hash(HashAlgorithm::SHA256))
@@ -97,7 +97,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         }
         pendingEdgeObservations.clear();
 
-        auto tryPush = [&](std::vector<cidasks::Observation> obs) {
+        auto tryPush = [&](std::vector<Observation> obs) {
             if (obs.empty()) {
                 tracingCacheLog("dispatch: edge empty, skip commit");
                 return;
@@ -107,7 +107,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
                 fingerprint = TracingDecisionGraph::xorFactIntoHash(
                     fingerprint, f.fromHash, f.elementHash);
             if (committedEdgeFingerprints.insert(fingerprint).second) {
-                cidasks::Edge edge;
+                Edge edge;
                 edge.observations = std::move(obs);
                 cidasksWalk.push_back(std::move(edge));
                 tracingCacheLog("dispatch: committed edge, cidasksWalk=%zu (obs=%zu)",
@@ -349,7 +349,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        preserve on final miss; on hit, the winning edges are already
        committed and the rejected ones represent wrong branches whose
        obs would contaminate the correct chain. */
-    std::vector<cidasks::Observation> rejectedObs;
+    std::vector<Observation> rejectedObs;
     auto commitRejected = [&](const std::vector<Hash> &) {
         for (auto & obs : pendingEdgeObservations)
             rejectedObs.push_back(std::move(obs));
@@ -455,7 +455,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
     /* Walk the proxy's argScope chain looking for a cell whose
        liveObject's scopeStateId matches idStr at some k under
        walker's own cidasksWalk. */
-    std::vector<cidasks::Edge> extendedWalkForMatch = cidasksWalk;
+    std::vector<Edge> extendedWalkForMatch = cidasksWalk;
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgScope() : nullptr;
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
@@ -479,7 +479,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    own hashed state (initial CDI) IS the lookup
                    key. */
                 {
-                    auto initialCdi = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, 0);
+                    auto initialCdi = scopeStateIdAt(*subj, scope, extendedWalkForMatch, 0);
                     if (initialCdi.to_string(HashFormat::Base16, false) == idStr) {
                         found = true;
                     }
@@ -494,9 +494,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    Empirical (iter 61 probe): 137/137 k-iter matches
                    also reached by trie navigation. */
                 if (!found) {
-                    Hash subjectSelfHash = cidasks::scopeStateIdAt(
+                    Hash subjectSelfHash = scopeStateIdAt(
                         *subj, Hash(HashAlgorithm::SHA256), {}, 0);
-                    Hash cur = cidasks::scopeStateIdAt(*subj, scope, extendedWalkForMatch, 0);
+                    Hash cur = scopeStateIdAt(*subj, scope, extendedWalkForMatch, 0);
                     for (const auto & edge : extendedWalkForMatch) {
                         if (found) break;
                         Hash edgeAcc(HashAlgorithm::SHA256);
@@ -538,7 +538,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    edge boundaries differ, only the fixed point is
                    grouping-invariant and thus safe to compare. */
                 if (!found && !extendedWalkForMatch.empty()) {
-                    Hash converged = cidasks::scopeStateIdAtConverged(
+                    Hash converged = scopeStateIdAtConverged(
                         *subj, scope, extendedWalkForMatch);
                     if (converged.to_string(HashFormat::Base16, false) == idStr)
                         found = true;
@@ -546,14 +546,14 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                 if (found) {
                     tracingCacheLog(
                         "resolve %s: cell[%d] subject=%s MATCH",
-                        idStr.substr(0, 12), cellDepth, cidasks::describe(*subj));
+                        idStr.substr(0, 12), cellDepth, describe(*subj));
                     ctx.memo[idStr] = live;
                     return live;
                 }
                 tracingCacheLog(
                     "resolve %s: cell[%d] subject=%s miss across %zu edges (+collected)",
                     idStr.substr(0, 12), cellDepth,
-                    cidasks::describe(*subj), cidasksWalk.size() + 1);
+                    describe(*subj), cidasksWalk.size() + 1);
             } else {
                 tracingCacheLog("resolve %s: cell[%d] live has no subject", idStr.substr(0, 12), cellDepth);
             }
@@ -743,7 +743,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                     auto sidecarDepth = sidecarJson["depth"].get<int>();
                     auto sidecarScope = Hash::parseNonSRIUnprefixed(
                         sidecarJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
-                    cidasks::Subject rootSubject{cidasks::PositionalSeed{sidecarDepth}};
+                    Subject rootSubject{PositionalSeed{sidecarDepth}};
                     Hash fallthroughApplyReqHash2{HashAlgorithm::SHA256};
                     try {
                         fallthroughApplyReqHash2 = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
@@ -758,7 +758,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                         + "|" + std::to_string(fallthroughSeq2));
                     auto rlo = std::make_shared<ReplayCallbackArg>(
                         std::move(rootSubject), sidecarScope,
-                        std::make_shared<std::vector<cidasks::Edge>>(),
+                        std::make_shared<std::vector<Edge>>(),
                         std::make_shared<Hash>(HashAlgorithm::SHA256),
                         fallthroughSeqCtx2, decisionGraph, inner->getEvalState().rootFSRoot,
                         &inner->getEvalState());
@@ -905,7 +905,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     auto sidecarScope = Hash::parseNonSRIUnprefixed(
         sidecarJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
 
-    cidasks::Subject rootSubject{cidasks::PositionalSeed{sidecarDepth}};
+    Subject rootSubject{PositionalSeed{sidecarDepth}};
     /* Sibling-discriminating walkFacts seed: inject walker's
        currentProxy's applyContext observations into the RLO's initial
        walk. Without this, RLO's per-arg fields are computed against
@@ -917,11 +917,11 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        Injecting the current sibling's applyContext obs makes the
        RLO's CDIs reflect the SPECIFIC sibling context walker is
        operating under. */
-    auto seededWalkFacts = std::make_shared<std::vector<cidasks::Edge>>();
+    auto seededWalkFacts = std::make_shared<std::vector<Edge>>();
     if (auto * proxyTR = dynamic_cast<TracingReplayObject *>(ctx.currentProxy.get())) {
         if (auto proxyCtx = proxyTR->getApplyContext()) {
             for (auto & obs : proxyCtx->observations) {
-                cidasks::Edge edge;
+                Edge edge;
                 edge.observations.push_back(obs);
                 seededWalkFacts->push_back(std::move(edge));
             }
@@ -1002,8 +1002,8 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        applyResult subject's evolved cid using fnObj's subject +
        PositionalSeed{sidecarDepth} as arg. */
     {
-        cidasks::Subject seedSubject{cidasks::PositionalSeed{sidecarDepth}};
-        Hash evolvedLeafCid = cidasks::scopeStateIdAt(
+        Subject seedSubject{PositionalSeed{sidecarDepth}};
+        Hash evolvedLeafCid = scopeStateIdAt(
             seedSubject, sidecarScope, cidasksWalk, cidasksWalk.size());
         auto evolvedLeafCidHex = evolvedLeafCid.to_string(HashFormat::Base16, false);
         ctx.memo[evolvedLeafCidHex] = replayLocal;
@@ -1013,12 +1013,12 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
             seqCtx.to_string(HashFormat::Base16, false).substr(0, 12));
 
         if (auto * fnSubj = fnObj->getSubject()) {
-            cidasks::Subject applyResultSubj{cidasks::ApplyResultSubject{
-                .fn = std::make_shared<const cidasks::Subject>(*fnSubj),
-                .arg = std::make_shared<const cidasks::Subject>(std::move(seedSubject)),
+            Subject applyResultSubj{ApplyResultSubject{
+                .fn = std::make_shared<const Subject>(*fnSubj),
+                .arg = std::make_shared<const Subject>(std::move(seedSubject)),
             }};
             Hash applyScopeForCid = fnObj->getInheritedScope();
-            Hash evolvedApplyResultCid = cidasks::scopeStateIdAt(
+            Hash evolvedApplyResultCid = scopeStateIdAt(
                 applyResultSubj, applyScopeForCid, cidasksWalk, cidasksWalk.size());
             auto evolvedApplyResultCidHex =
                 evolvedApplyResultCid.to_string(HashFormat::Base16, false);
@@ -1368,22 +1368,22 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256);
     auto argIdHash = Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256);
 
-    cidasks::Subject fnSubj = fn->getSubject()
+    Subject fnSubj = fn->getSubject()
         ? *fn->getSubject()
-        : cidasks::Subject{cidasks::PostulatedIdempotentRead{fnIdHash}};
+        : Subject{PostulatedIdempotentRead{fnIdHash}};
 
-    cidasks::Subject argSubj = arg->getSubject()
+    Subject argSubj = arg->getSubject()
         ? *arg->getSubject()
-        : cidasks::Subject{cidasks::PostulatedIdempotentRead{argIdHash}};
+        : Subject{PostulatedIdempotentRead{argIdHash}};
 
     /* Apply boundary's scope combines fn's and arg's inherited scopes
        symmetrically but non-commutatively — mirrors the writer's
        formula in `TracingEvaluator::apply`. */
-    Hash applyScope = cidasks::applyScope(fn->getInheritedScope(), arg->getInheritedScope());
+    Hash applyArgAncestry = combineArgAncestries(fn->getInheritedScope(), arg->getInheritedScope());
 
-    cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
-        .fn = std::make_shared<const cidasks::Subject>(std::move(fnSubj)),
-        .arg = std::make_shared<const cidasks::Subject>(std::move(argSubj)),
+    Subject resultSubject{ApplyResultSubject{
+        .fn = std::make_shared<const Subject>(std::move(fnSubj)),
+        .arg = std::make_shared<const Subject>(std::move(argSubj)),
     }};
 
     /* Walker mirror of TracingEvaluator::apply's option 2 evolution.
@@ -1392,15 +1392,15 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        edge-for-edge once all prior cb-applies' chains have been
        dispatched. */
     auto & walk = writer.getD1CidasksWalk();
-    auto applyScopeStateId = cidasks::scopeStateIdAt(resultSubject, applyScope, walk, walk.size());
+    auto applyScopeStateId = scopeStateIdAt(resultSubject, applyArgAncestry, walk, walk.size());
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
     {
-        const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
+        const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(
             "walker apply: fn=%s arg=%s scope=%s -> applyScopeStateId=%s",
-            cidasks::describe(*apr.fn),
-            cidasks::describe(*apr.arg),
-            applyScope.to_string(HashFormat::Base16, false).substr(0, 12),
+            describe(*apr.fn),
+            describe(*apr.arg),
+            applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
             applyScopeStateIdHex.substr(0, 16));
     }
 
@@ -1413,7 +1413,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     /* Apply-result scope cell. Parent = fn proxy's cell. */
     auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
     obj->withScope(std::move(cell));
-    obj->withApplyResultSubject(std::move(resultSubject), applyScope);
+    obj->withApplyResultSubject(std::move(resultSubject), applyArgAncestry);
     /* Keep the applyContext attachment for the ensureInner-finalisation
        side-channel that other paths still inspect (e.g. tests that
        check applyContext->finalized). Pre-population of observations

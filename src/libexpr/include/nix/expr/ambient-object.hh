@@ -9,7 +9,7 @@
  */
 
 #include "nix/expr/arg-scope.hh"
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/source-root.hh"
 #include "nix/expr/trace-ids.hh"
@@ -39,7 +39,7 @@ struct AmbientQueryResult
 using AmbientQueryFn = std::function<AmbientQueryResult(
     AmbientId objectId,
     const trace::QueryVariant &,
-    cidasks::Subject,
+    Subject,
     Hash inheritedScope)>;
 
 /**
@@ -66,7 +66,7 @@ using AmbientApplyFn = std::function<AmbientId(
  */
 class AmbientObject : public Object
 {
-    cidasks::Subject subject; ///< Static structural identifier (positional/derived/apply)
+    Subject subject; ///< Static structural identifier (positional/derived/apply)
     /* Inherited scope: XOR of outer-scope argStateIds (chiefly the cached
        call's argStateId(Q)) for content-id inheritance, per
        content-identity-via-asks.md. Set at the cb-apply boundary;
@@ -76,9 +76,9 @@ class AmbientObject : public Object
        by makeCachedFnPrimOp.impl at the apply boundary; the queryFn
        closure routes observations through this context so the
        apply-result wrapping can compute its evolved scope state id via
-       cidasks::scopeStateIdAfter against the accumulated walk. Null on
+       scopeStateIdAfter against the accumulated walk. Null on
        non-cb-arg AmbientObjects. */
-    std::shared_ptr<cidasks::ApplyContext> applyContext;
+    std::shared_ptr<ApplyContext> applyContext;
     AmbientQueryFn queryFn;   ///< Callback to issue ambient queries
     AmbientApplyFn applyFn;   ///< Callback for function application (may be null)
     /* lazy-paths: stable SourceRoot for paths returned by `getPath`.
@@ -104,11 +104,11 @@ class AmbientObject : public Object
     trace::ResultWHNF & whnf();
 
 public:
-    AmbientObject(cidasks::Subject subject, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
+    AmbientObject(Subject subject, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
 
     /** This proxy's structural identity (positional / derived /
         apply-result), per the content-identity-via-asks design. */
-    const cidasks::Subject * getSubject() const override { return &subject; }
+    const Subject * getSubject() const override { return &subject; }
 
     /** This proxy's inherited scope (outer-scope argStateIds composed),
         used by cidasks to make sibling cached-call recordings'
@@ -134,7 +134,7 @@ public:
     /** Attach a per-apply observation context. Used on cb-arg seed
         AmbientObjects at the cb-apply boundary; the queryFn closure
         routes observations into this context. */
-    AmbientObject & withApplyContext(std::shared_ptr<cidasks::ApplyContext> ctx)
+    AmbientObject & withApplyContext(std::shared_ptr<ApplyContext> ctx)
     {
         applyContext = std::move(ctx);
         return *this;
@@ -142,7 +142,7 @@ public:
 
     /** Read this proxy's apply context (= null unless this is a
         cb-arg seed). */
-    std::shared_ptr<cidasks::ApplyContext> getApplyContext() const { return applyContext; }
+    std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
     std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
 
@@ -175,8 +175,8 @@ public:
     {
         /* scope state id at the empty factset, with this proxy's inherited
            scope applied. For multi-edge use, callers must pass the
-           relevant walk via cidasks::scopeStateIdAt instead. */
-        return cidasks::structuralAddressAfter(subject, inheritedScope, {});
+           relevant walk via scopeStateIdAt instead. */
+        return structuralAddressAfter(subject, inheritedScope, {});
     }
 
     std::optional<std::string> getScopeStateIdHex() const override

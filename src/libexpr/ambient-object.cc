@@ -12,13 +12,13 @@ namespace nix {
    reqHash matches what the writer flushed for the corresponding
    observation. */
 template <typename Q>
-static void stampPerArgFieldsAmbient(Q & q, const cidasks::Subject & subject, const Hash & inheritedScope)
+static void stampPerArgFieldsAmbient(Q & q, const Subject & subject, const Hash & inheritedScope)
 {
-    auto par = cidasks::pathAndRootsFromSubject(subject);
+    auto par = pathAndRootsFromSubject(subject);
     std::vector<trace::QueryLeaf> fromCIDs;
     fromCIDs.reserve(par.roots.size());
     for (size_t i = 0; i < par.roots.size(); ++i) {
-        auto cid = cidasks::scopeStateIdAfter(par.roots[i], inheritedScope, {});
+        auto cid = scopeStateIdAfter(par.roots[i], inheritedScope, {});
         fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
     }
     q.from = fromCIDs.empty() ? trace::QueryLeaf{std::string{}} : fromCIDs[0];
@@ -27,7 +27,7 @@ static void stampPerArgFieldsAmbient(Q & q, const cidasks::Subject & subject, co
 }
 
 AmbientObject::AmbientObject(
-    cidasks::Subject subject_, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn)
+    Subject subject_, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn)
     : subject(std::move(subject_))
     , inheritedScope(HashAlgorithm::SHA256)
     , queryFn(std::move(queryFn))
@@ -38,7 +38,7 @@ AmbientObject::AmbientObject(
 
 std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 {
-    auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
+    auto scopeStateId = structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetAttr q{name, std::string{}};
     stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
@@ -47,9 +47,9 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
         return nullptr;
     if (!qr.childId)
         throw Error("ambient maybeGetAttr: resolver didn't return child id");
-    cidasks::Subject childSubject{cidasks::DerivedSubject{
-        .parent = std::make_shared<const cidasks::Subject>(subject),
-        .kind = cidasks::DerivedSubject::Kind::GetAttr,
+    Subject childSubject{DerivedSubject{
+        .parent = std::make_shared<const Subject>(subject),
+        .kind = DerivedSubject::Kind::GetAttr,
         .name = name,
     }};
     auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
@@ -65,7 +65,7 @@ trace::ResultWHNF & AmbientObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
+    auto scopeStateId = structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetWHNF q{std::string{}};
     stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
@@ -163,15 +163,15 @@ size_t AmbientObject::getListSize()
 
 std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
 {
-    auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
+    auto scopeStateId = structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetListElem q{std::string{}, index};
     stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
     if (!qr.childId)
         throw Error("ambient getListElem: resolver didn't return child id");
-    cidasks::Subject childSubject{cidasks::DerivedSubject{
-        .parent = std::make_shared<const cidasks::Subject>(subject),
-        .kind = cidasks::DerivedSubject::Kind::GetListElem,
+    Subject childSubject{DerivedSubject{
+        .parent = std::make_shared<const Subject>(subject),
+        .kind = DerivedSubject::Kind::GetListElem,
         .index = index,
     }};
     auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
@@ -210,7 +210,7 @@ RootValue AmbientObject::toValueOrProxy(EvalState & state, std::shared_ptr<Ambie
 
 std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
 {
-    auto scopeStateId = cidasks::structuralAddressAfter(subject, inheritedScope, {});
+    auto scopeStateId = structuralAddressAfter(subject, inheritedScope, {});
     trace::QueryGetFunctionInfo q{std::string{}};
     stampPerArgFieldsAmbient(q, subject, inheritedScope);
     auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
@@ -249,11 +249,11 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
        downstream so the registry's resultId and this proxy's argStateId
        for queryFn lookups agree. */
     int localDepth = callerScope ? callerScope->depth + 1 : 0;
-    cidasks::Subject argSubject{cidasks::PositionalSeed{localDepth}};
-    applyFn(cidasks::structuralAddressAfter(subject, inheritedScope, {}), std::move(argObj), callerScope);
-    cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
-        .fn = std::make_shared<const cidasks::Subject>(subject),
-        .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
+    Subject argSubject{PositionalSeed{localDepth}};
+    applyFn(structuralAddressAfter(subject, inheritedScope, {}), std::move(argObj), callerScope);
+    Subject resultSubject{ApplyResultSubject{
+        .fn = std::make_shared<const Subject>(subject),
+        .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
     auto result = std::make_shared<AmbientObject>(std::move(resultSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Apply-result scope cell rooted at the caller's scope. */

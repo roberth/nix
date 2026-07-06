@@ -178,7 +178,7 @@ public:
        cost of insertFactSet. */
     static Hash xorFactIntoHash(const Hash & h, const Hash & request, const Hash & response);
 
-    /* XOR two set-hashes. Used by cidasks::scopeStateIdAt and similar
+    /* XOR two set-hashes. Used by scopeStateIdAt and similar
        XOR-fold operations over factSet hashes. */
     static Hash xorHashes(const Hash & a, const Hash & b);
 
@@ -341,7 +341,7 @@ public:
        been dispatched, with `committed=true` if the resulting
        factset reaches a continuation and `false` if walk is
        rejecting this branch. Used by the cidasks-aware caller to
-       promote per-edge dispatched facts into a `cidasks::Edge`
+       promote per-edge dispatched facts into a `Edge`
        on commit (= principle 5/7) or discard them on reject. */
     /* Hit: returns (resultHash, terminalCur). The terminalCur is the
        factSet the walk landed on when committing the terminal — child

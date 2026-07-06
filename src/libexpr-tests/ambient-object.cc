@@ -20,9 +20,9 @@ static AmbientId testId(int n)
     return hashString(HashAlgorithm::SHA256, "test:" + std::to_string(n));
 }
 
-static cidasks::Subject testSubject(int n)
+static Subject testSubject(int n)
 {
-    return cidasks::Subject{cidasks::PostulatedIdempotentRead{testId(n)}};
+    return Subject{PostulatedIdempotentRead{testId(n)}};
 }
 
 static std::string ambientHex(AmbientId id)
@@ -40,7 +40,7 @@ static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> r
     return [responses = std::move(responses)](
                AmbientId objectId,
                const trace::QueryVariant & q,
-               cidasks::Subject /*subject*/,
+               Subject /*subject*/,
                Hash /*inheritedScope*/) -> AmbientQueryResult {
         std::string objHex = ambientHex(objectId);
         std::string key = std::visit(
@@ -113,10 +113,10 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
     /* Child scopeStateId is the producer query's queryHash. With Subject-based
        construction the AmbientObject derives this from DerivedSubject
        at construction time. */
-    auto childCdi = cidasks::structuralAddressAfter(
-        cidasks::Subject{cidasks::DerivedSubject{
-            .parent = std::make_shared<const cidasks::Subject>(testSubject(0)),
-            .kind = cidasks::DerivedSubject::Kind::GetAttr,
+    auto childCdi = structuralAddressAfter(
+        Subject{DerivedSubject{
+            .parent = std::make_shared<const Subject>(testSubject(0)),
+            .kind = DerivedSubject::Kind::GetAttr,
             .name = "x",
         }},
         Hash(HashAlgorithm::SHA256),
@@ -145,10 +145,10 @@ TEST(AmbientObjectTest, GetAttrMissing)
 TEST(AmbientObjectTest, GetListElem)
 {
     auto seed = testId(0);
-    auto childCdi = cidasks::structuralAddressAfter(
-        cidasks::Subject{cidasks::DerivedSubject{
-            .parent = std::make_shared<const cidasks::Subject>(testSubject(0)),
-            .kind = cidasks::DerivedSubject::Kind::GetListElem,
+    auto childCdi = structuralAddressAfter(
+        Subject{DerivedSubject{
+            .parent = std::make_shared<const Subject>(testSubject(0)),
+            .kind = DerivedSubject::Kind::GetListElem,
             .index = 1,
         }},
         Hash(HashAlgorithm::SHA256),

@@ -76,10 +76,10 @@ ref<TracingObject> TracingObject::create(
 std::string TracingObject::evolvedQueryFrom() const
 {
     if (applyResultSubject && applyContext) {
-        std::vector<cidasks::Edge> walk;
+        std::vector<Edge> walk;
         walk.reserve(applyContext->observations.size());
         for (auto & obs : applyContext->observations) {
-            cidasks::Edge edge;
+            Edge edge;
             edge.observations.push_back(obs);
             walk.push_back(std::move(edge));
         }
@@ -87,11 +87,11 @@ std::string TracingObject::evolvedQueryFrom() const
            so walker can navigate subject's evolution edge-by-edge
            rather than iterating K. Uses the subject's Merkle
            content hash as the trie root key. */
-        Hash subjectSelfHash = cidasks::scopeStateIdAt(
+        Hash subjectSelfHash = scopeStateIdAt(
             *applyResultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
-        auto evolved = cidasks::scopeStateIdAtWithHook(
-            *applyResultSubject, applyScope, walk, walk.size(),
-            [&](const cidasks::EvolutionStep & step) {
+        auto evolved = scopeStateIdAtWithHook(
+            *applyResultSubject, applyArgAncestry, walk, walk.size(),
+            [&](const EvolutionStep & step) {
                 writer.insertSubjectEvolutionEdge(
                     subjectSelfHash, step.curBefore,
                     step.obsFromHash, step.obsElementHash,
@@ -342,23 +342,23 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
        this.triePos}` which would freeze the argStateId. Plain TracingObjects
        (= from evalFile, navigation children) return null and the
        PostulatedIdempotentRead fallback fires as a fixed-atom identity. */
-    cidasks::Subject fnSubj = getSubject()
+    Subject fnSubj = getSubject()
         ? *getSubject()
-        : cidasks::Subject{cidasks::PostulatedIdempotentRead{fnIdHash}};
-    Hash applyScopeLocal = getSubject() ? getInheritedScope() : applyScope;
-    cidasks::Subject argSubj = argObj->getSubject()
+        : Subject{PostulatedIdempotentRead{fnIdHash}};
+    Hash applyScopeLocal = getSubject() ? getInheritedScope() : applyArgAncestry;
+    Subject argSubj = argObj->getSubject()
         ? *argObj->getSubject()
-        : cidasks::Subject{cidasks::PostulatedIdempotentRead{argIdHash}};
+        : Subject{PostulatedIdempotentRead{argIdHash}};
     if (argObj->getSubject())
         applyScopeLocal = argObj->getInheritedScope();
-    cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
-        .fn = std::make_shared<const cidasks::Subject>(std::move(fnSubj)),
-        .arg = std::make_shared<const cidasks::Subject>(std::move(argSubj)),
+    Subject resultSubject{ApplyResultSubject{
+        .fn = std::make_shared<const Subject>(std::move(fnSubj)),
+        .arg = std::make_shared<const Subject>(std::move(argSubj)),
     }};
 
     /* apply-result argStateId is content-only — see commentary in
        TracingEvaluator::apply. */
-    auto applyScopeStateId = cidasks::scopeStateIdAfter(resultSubject, applyScopeLocal, {});
+    auto applyScopeStateId = scopeStateIdAfter(resultSubject, applyScopeLocal, {});
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
 
     /* Record the apply Request payload at the cidasks hash so dispatch

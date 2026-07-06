@@ -51,27 +51,27 @@ std::string TracingReplayObject::evolvedQueryFrom() const
     if (applyResultSubject && inner) {
         if (auto * innerT = dynamic_cast<TracingObject *>(inner->get_ptr().get())) {
             if (auto innerCtx = innerT->getApplyContext()) {
-                std::vector<cidasks::Edge> walk;
+                std::vector<Edge> walk;
                 walk.reserve(innerCtx->observations.size());
                 for (auto & obs : innerCtx->observations) {
-                    cidasks::Edge edge;
+                    Edge edge;
                     edge.observations.push_back(obs);
                     walk.push_back(std::move(edge));
                 }
-                auto evolved = cidasks::scopeStateIdAt(*applyResultSubject, applyScope, walk, walk.size());
+                auto evolved = scopeStateIdAt(*applyResultSubject, applyArgAncestry, walk, walk.size());
                 return evolved.to_string(HashFormat::Base16, false);
             }
         }
     }
     if (applyResultSubject && applyContext) {
-        std::vector<cidasks::Edge> walk;
+        std::vector<Edge> walk;
         walk.reserve(applyContext->observations.size());
         for (auto & obs : applyContext->observations) {
-            cidasks::Edge edge;
+            Edge edge;
             edge.observations.push_back(obs);
             walk.push_back(std::move(edge));
         }
-        auto evolved = cidasks::scopeStateIdAt(*applyResultSubject, applyScope, walk, walk.size());
+        auto evolved = scopeStateIdAt(*applyResultSubject, applyArgAncestry, walk, walk.size());
         auto hex = evolved.to_string(HashFormat::Base16, false);
         return hex;
     }
@@ -91,14 +91,14 @@ std::vector<std::string> TracingReplayObject::parentHashCandidates() const
            sibling attrs in those warmups recorded at this prefix
            regardless of which warmup wrote them. */
         if (postWHNFObservationCount && *postWHNFObservationCount < applyContext->observations.size()) {
-            std::vector<cidasks::Edge> walk;
+            std::vector<Edge> walk;
             walk.reserve(*postWHNFObservationCount);
             for (size_t i = 0; i < *postWHNFObservationCount; ++i) {
-                cidasks::Edge edge;
+                Edge edge;
                 edge.observations.push_back(applyContext->observations[i]);
                 walk.push_back(std::move(edge));
             }
-            auto snap = cidasks::scopeStateIdAt(*applyResultSubject, applyScope, walk, walk.size());
+            auto snap = scopeStateIdAt(*applyResultSubject, applyArgAncestry, walk, walk.size());
             auto snapHex = snap.to_string(HashFormat::Base16, false);
             if (snapHex != out.front())
                 out.push_back(snapHex);
@@ -213,22 +213,22 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
            observation). If the deeper lookup hits AND its chain
            validates against live env, prefer it. */
         if (applyResultSubject && applyContext) {
-            std::vector<cidasks::Edge> specWalk;
+            std::vector<Edge> specWalk;
             specWalk.reserve(applyContext->observations.size() + 1);
             for (auto & obs : applyContext->observations) {
-                cidasks::Edge edge;
+                Edge edge;
                 edge.observations.push_back(obs);
                 specWalk.push_back(std::move(edge));
             }
-            cidasks::Observation specObs{
+            Observation specObs{
                 Hash::parseNonSRIUnprefixed(parentHash, HashAlgorithm::SHA256),
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), shallowQueryHash, shallowResp)};
-            cidasks::Edge specEdge;
+            Edge specEdge;
             specEdge.observations.push_back(specObs);
             specWalk.push_back(std::move(specEdge));
-            auto deepFrom = cidasks::scopeStateIdAt(
-                *applyResultSubject, applyScope, specWalk, specWalk.size());
+            auto deepFrom = scopeStateIdAt(
+                *applyResultSubject, applyArgAncestry, specWalk, specWalk.size());
             auto deepFromHex = deepFrom.to_string(HashFormat::Base16, false);
             if (deepFromHex != parentHash) {
                 trace::QueryGetAttr deepQuery{name, deepFromHex};
@@ -289,22 +289,22 @@ std::optional<const trace::ResultWHNF *> TracingReplayObject::whnf()
            depends on observations (i.e. applyContext with obs); if
            there are no obs, deeper == shallow, no lookup needed. */
         if (applyResultSubject && applyContext && !applyContext->observations.empty()) {
-            std::vector<cidasks::Edge> specWalk;
+            std::vector<Edge> specWalk;
             specWalk.reserve(applyContext->observations.size() + 1);
             for (auto & obs : applyContext->observations) {
-                cidasks::Edge edge;
+                Edge edge;
                 edge.observations.push_back(obs);
                 specWalk.push_back(std::move(edge));
             }
-            cidasks::Observation specObs{
+            Observation specObs{
                 Hash::parseNonSRIUnprefixed(parentHash, HashAlgorithm::SHA256),
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), shallowQueryHash, shallowResp)};
-            cidasks::Edge specEdge;
+            Edge specEdge;
             specEdge.observations.push_back(specObs);
             specWalk.push_back(std::move(specEdge));
-            auto deepFrom = cidasks::scopeStateIdAt(
-                *applyResultSubject, applyScope, specWalk, specWalk.size());
+            auto deepFrom = scopeStateIdAt(
+                *applyResultSubject, applyArgAncestry, specWalk, specWalk.size());
             auto deepFromHex = deepFrom.to_string(HashFormat::Base16, false);
             if (deepFromHex != parentHash) {
                 trace::QueryGetWHNF deepQuery{deepFromHex};

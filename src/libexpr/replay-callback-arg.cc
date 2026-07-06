@@ -1,5 +1,5 @@
 #include "nix/expr/replay-callback-arg.hh"
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/expr-from-object.hh"
 #include "nix/expr/interpreter-object.hh"
 #include "nix/expr/object-type.hh"
@@ -33,17 +33,17 @@ ReplayCallbackArg & ReplayCallbackArg::withChainStart(Hash root)
 template <typename Q>
 static Hash stampPerArgFields(
     Q & query,
-    const cidasks::Subject & subject,
+    const Subject & subject,
     const Hash & scope,
-    const std::vector<cidasks::Edge> & walkFacts,
+    const std::vector<Edge> & walkFacts,
     size_t edgeIndex)
 {
-    auto par = cidasks::pathAndRootsFromSubject(subject);
+    auto par = pathAndRootsFromSubject(subject);
     std::vector<trace::QueryLeaf> fromCIDs;
     fromCIDs.reserve(par.roots.size());
     Hash fromCdi(HashAlgorithm::SHA256);
     for (size_t i = 0; i < par.roots.size(); ++i) {
-        auto cid = cidasks::scopeStateIdAt(par.roots[i], scope, walkFacts, edgeIndex);
+        auto cid = scopeStateIdAt(par.roots[i], scope, walkFacts, edgeIndex);
         if (i == 0)
             fromCdi = cid;
         fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
@@ -99,14 +99,14 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, c
 template<typename Q>
 static void appendFactToWalk(
     const Q & query, const Hash & fromCdi, const nlohmann::json & responseJson,
-    std::vector<cidasks::Edge> & walkFacts)
+    std::vector<Edge> & walkFacts)
 {
     auto reqHash = TracingDecisionGraph::computeQueryHash(query);
     auto responsePayload = jsonToCborString(responseJson);
     auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
     auto elementHash = TracingDecisionGraph::xorFactIntoHash(
         Hash(HashAlgorithm::SHA256), reqHash, responseHash);
-    cidasks::Edge edge;
+    Edge edge;
     edge.observations.push_back({fromCdi, elementHash});
     walkFacts.push_back(std::move(edge));
 }
@@ -115,7 +115,7 @@ template<typename Q>
 static void advanceChainAndAppendFact(
     TracingDecisionGraph & dg, const Q & query, const Hash & fromCdi,
     const nlohmann::json & responseJson,
-    std::vector<cidasks::Edge> & walkFacts, Hash & chainCursor)
+    std::vector<Edge> & walkFacts, Hash & chainCursor)
 {
     auto reqHash = TracingDecisionGraph::computeQueryHash(query);
     tracingCacheLog(
@@ -177,9 +177,9 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
        on the child will recompute parent's scopeStateId at the child's
        current edge index, so any further parent observations are
        reflected automatically. Pass shared walk/cursor. */
-    cidasks::Subject childSubject{cidasks::DerivedSubject{
-        .parent = std::make_shared<const cidasks::Subject>(subject),
-        .kind = cidasks::DerivedSubject::Kind::GetAttr,
+    Subject childSubject{DerivedSubject{
+        .parent = std::make_shared<const Subject>(subject),
+        .kind = DerivedSubject::Kind::GetAttr,
         .name = name,
     }};
     auto child = std::make_shared<ReplayCallbackArg>(
@@ -195,8 +195,8 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
        the same cb-arg's depth/scope (= the nested apply's positional
        depth is one deeper than the cb-arg's, regardless of how many
        getAttr/getListElem steps deep the apply happens). */
-    if (applyDepth && applyScope)
-        child->withApplyContext(*applyDepth, *applyScope);
+    if (applyDepth && applyArgAncestry)
+        child->withApplyContext(*applyDepth, *applyArgAncestry);
     return child;
 }
 
@@ -304,9 +304,9 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
     else
         appendFactToWalk(query, fromCdi, rJson, *walkFacts);
-    cidasks::Subject childSubject{cidasks::DerivedSubject{
-        .parent = std::make_shared<const cidasks::Subject>(subject),
-        .kind = cidasks::DerivedSubject::Kind::GetListElem,
+    Subject childSubject{DerivedSubject{
+        .parent = std::make_shared<const Subject>(subject),
+        .kind = DerivedSubject::Kind::GetListElem,
         .index = index,
     }};
     auto child = std::make_shared<ReplayCallbackArg>(
@@ -315,8 +315,8 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
     if (validateAgainstAmbientAsks)
         child->withAmbientAsksValidation();
     child->withScope(argScope);
-    if (applyDepth && applyScope)
-        child->withApplyContext(*applyDepth, *applyScope);
+    if (applyDepth && applyArgAncestry)
+        child->withApplyContext(*applyDepth, *applyArgAncestry);
     return child;
 }
 
@@ -375,7 +375,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
     auto walkFactsSaved = walkFacts;
     auto chainCursorSaved = chainCursor;
     auto applyDepthSaved = applyDepth;
-    auto applyScopeSaved = applyScope;
+    auto applyScopeSaved = applyArgAncestry;
     auto outerContextSaved = outerContext;
     /* Capture the resolver so the primop can register the live arg
        it receives (args[0]) as an outer-direction proxy. The OUTER
@@ -421,7 +421,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    is the seed's cidasks-evolved argStateId at any
                    walk-edge index. Registration carries the
                    subject + scope (= `PositionalSeed{applyDepth+1}`
-                   at `applyScope`), matching what
+                   at `applyArgAncestry`), matching what
                    `makeCachedFnPrimOp`'s impl uses for its
                    `seedSubject` / `callScope` at cold; the walker
                    iterates `cidasksWalk` to find the matching edge.
@@ -429,8 +429,8 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    walker can call getType / getInt / etc. live
                    against outer's actual Value. */
                 if (resolverSaved) {
-                    cidasks::Subject seedSubject{
-                        cidasks::PositionalSeed{*applyDepthSaved + 1}};
+                    Subject seedSubject{
+                        PositionalSeed{*applyDepthSaved + 1}};
                     auto outerArgObj = std::make_shared<InterpreterObject>(
                         state, allocRootValue(args[0]));
                     registerAmbientResolverProxy(
@@ -464,7 +464,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    chain advance independent of prior firings while
                    still starting from the right position in the
                    recorded chain. */
-                auto localWalkFacts = std::make_shared<std::vector<cidasks::Edge>>(
+                auto localWalkFacts = std::make_shared<std::vector<Edge>>(
                     walkFactsSaved->begin(),
                     walkFactsSaved->begin() + std::min(initialWalkFactsSize, walkFactsSaved->size()));
                 auto localChainCursor = std::make_shared<Hash>(*initialChainCursor);
@@ -482,16 +482,16 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    represents the fn of the nested apply; its
                    `subject` IS the recorder's "this AmbientObject's
                    subject". The arg subject is PositionalSeed{depth+1}
-                   at applyScope, with `depth` threaded in through the
+                   at applyArgAncestry, with `depth` threaded in through the
                    localArg sidecar. The standin's construction (in
                    dispatchApplyLive) requires the sidecar to carry
                    depth+scope, so the optionals are always set
                    here. */
-                cidasks::Subject argSubject{
-                    cidasks::PositionalSeed{*applyDepthSaved + 1}};
-                cidasks::Subject syntheticSubject{cidasks::ApplyResultSubject{
-                    .fn = std::make_shared<const cidasks::Subject>(subjectSaved),
-                    .arg = std::make_shared<const cidasks::Subject>(std::move(argSubject)),
+                Subject argSubject{
+                    PositionalSeed{*applyDepthSaved + 1}};
+                Subject syntheticSubject{ApplyResultSubject{
+                    .fn = std::make_shared<const Subject>(subjectSaved),
+                    .arg = std::make_shared<const Subject>(std::move(argSubject)),
                 }};
 
                 /* Apply scope: Merkle(fn.scope, arg.scope). The arg
@@ -501,7 +501,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    for the synthetic's downstream probes — both
                    mirror the writer's `TracingCallbackApplyResult` whose
                    scope is the same Merkle. */
-                Hash mergedApplyScope = cidasks::applyScope(
+                Hash mergedApplyScope = combineArgAncestries(
                     *applyScopeSaved, Hash{HashAlgorithm::SHA256});
 
                 /* Advance the standin's chainCursor by the recorded
@@ -517,24 +517,24 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    chainCursor as the AmbientResult. */
                 {
                     size_t edgeIndex = walkFactsSaved->size();
-                    Hash applyScope = mergedApplyScope;
+                    Hash applyArgAncestry = mergedApplyScope;
 
-                    auto fnSubjHex = cidasks::scopeStateIdAt(
-                        subjectSaved, applyScope, *walkFactsSaved, edgeIndex)
+                    auto fnSubjHex = scopeStateIdAt(
+                        subjectSaved, applyArgAncestry, *walkFactsSaved, edgeIndex)
                         .to_string(HashFormat::Base16, false);
-                    cidasks::Subject argSubjLocal{
-                        cidasks::PositionalSeed{*applyDepthSaved + 1}};
-                    auto argSubjHex = cidasks::scopeStateIdAt(
-                        argSubjLocal, applyScope, *walkFactsSaved, edgeIndex)
+                    Subject argSubjLocal{
+                        PositionalSeed{*applyDepthSaved + 1}};
+                    auto argSubjHex = scopeStateIdAt(
+                        argSubjLocal, applyArgAncestry, *walkFactsSaved, edgeIndex)
                         .to_string(HashFormat::Base16, false);
 
                     /* Generic stamping via syntheticSubject. */
-                    auto [path, roots] = cidasks::pathAndRootsFromSubject(syntheticSubject);
+                    auto [path, roots] = pathAndRootsFromSubject(syntheticSubject);
                     std::vector<trace::QueryLeaf> fromCIDs;
                     fromCIDs.reserve(roots.size());
                     for (auto & root : roots) {
-                        auto cid = cidasks::scopeStateIdAt(
-                            root, applyScope, *walkFactsSaved, edgeIndex);
+                        auto cid = scopeStateIdAt(
+                            root, applyArgAncestry, *walkFactsSaved, edgeIndex);
                         fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
                     }
 
@@ -547,9 +547,9 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     auto stampedReqHash = hashString(HashAlgorithm::SHA256, stampedJson.dump());
 
                     tracingCacheLog(
-                        "walker primop applyFact: subject=%s applyScope=%s edgeIndex=%zu fnHex=%s argHex=%s stampedReqHash=%s",
-                        cidasks::describe(syntheticSubject),
-                        applyScope.to_string(HashFormat::Base16, false).substr(0, 12),
+                        "walker primop applyFact: subject=%s applyArgAncestry=%s edgeIndex=%zu fnHex=%s argHex=%s stampedReqHash=%s",
+                        describe(syntheticSubject),
+                        applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
                         edgeIndex,
                         fnSubjHex.substr(0, 12),
                         argSubjHex.substr(0, 12),
@@ -566,7 +566,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                         : Hash::parseNonSRIUnprefixed(
                               fromCIDs[0].contentHash(), HashAlgorithm::SHA256);
 
-                    cidasks::Edge edge;
+                    Edge edge;
                     edge.observations.push_back({fromCdi, elementHash});
                     localWalkFacts->push_back(std::move(edge));
                     *localChainCursor = TracingDecisionGraph::xorHashes(

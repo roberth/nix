@@ -59,7 +59,7 @@ std::optional<std::string> TracingEnvironment::getEnv(const std::string & name)
 trace::ResultVariant TracingEnvironment::ambientQuery(
     const trace::QueryVariant & query,
     std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
-    cidasks::Subject subject,
+    Subject subject,
     Hash inheritedScope)
 {
     auto result = resolve(query);

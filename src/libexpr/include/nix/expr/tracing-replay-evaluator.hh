@@ -1,6 +1,6 @@
 #pragma once
 
-#include "nix/expr/content-identity-via-asks.hh"
+#include "nix/expr/subject-id.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-writer.hh"
@@ -97,7 +97,7 @@ class TracingReplayEvaluator : public Evaluator
         encodings reproducible at warm — without it, cell-chain
         scopeStateId computation lands at the wrong edge index (= cb-385's
         original failure mode) and per-arg `from` lookups miss. */
-    std::vector<cidasks::Edge> cidasksWalk;
+    std::vector<Edge> cidasksWalk;
     /** Dedup committed edges by their elementHash-set fingerprint
         (= XOR-fold of fact element hashes within the edge). When
         a later walk re-traverses an Asks edge already in
@@ -177,7 +177,7 @@ public:
         `scopeStateIdAt(subject, scope, walk, walk.size())` and match the
         writer's evolved scopeStateId at the same walk index — the per-arg
         identity alignment principle #3 requires. */
-    const std::vector<cidasks::Edge> & getCidasksWalk() const
+    const std::vector<Edge> & getCidasksWalk() const
     {
         return cidasksWalk;
     }

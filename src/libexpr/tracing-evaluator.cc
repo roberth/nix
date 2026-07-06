@@ -354,31 +354,31 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnId, HashAlgorithm::SHA256);
     auto argIdHash = Hash::parseNonSRIUnprefixed(argId, HashAlgorithm::SHA256);
 
-    cidasks::Subject fnSubj = fn->getSubject()
+    Subject fnSubj = fn->getSubject()
         ? *fn->getSubject()
-        : cidasks::Subject{cidasks::PostulatedIdempotentRead{fnIdHash}};
+        : Subject{PostulatedIdempotentRead{fnIdHash}};
 
-    cidasks::Subject argSubj;
+    Subject argSubj;
     Hash argScopeForApply{HashAlgorithm::SHA256};
     if (fnIsTlo) {
         auto callerScope = effectiveArgScope(*fn);
         int localDepth = callerScope ? callerScope->depth + 1 : 0;
-        argSubj = cidasks::Subject{cidasks::PositionalSeed{localDepth}};
+        argSubj = Subject{PositionalSeed{localDepth}};
         argScopeForApply = Hash{HashAlgorithm::SHA256};
     } else {
         argSubj = arg->getSubject()
             ? *arg->getSubject()
-            : cidasks::Subject{cidasks::PostulatedIdempotentRead{argIdHash}};
+            : Subject{PostulatedIdempotentRead{argIdHash}};
         argScopeForApply = arg->getInheritedScope();
     }
 
     /* Apply boundary's scope combines fn's and arg's inherited scopes
        symmetrically but non-commutatively. The walker mirrors this. */
-    Hash applyScope = cidasks::applyScope(fn->getInheritedScope(), argScopeForApply);
+    Hash applyArgAncestry = combineArgAncestries(fn->getInheritedScope(), argScopeForApply);
 
-    cidasks::Subject resultSubject{cidasks::ApplyResultSubject{
-        .fn = std::make_shared<const cidasks::Subject>(std::move(fnSubj)),
-        .arg = std::make_shared<const cidasks::Subject>(std::move(argSubj)),
+    Subject resultSubject{ApplyResultSubject{
+        .fn = std::make_shared<const Subject>(std::move(fnSubj)),
+        .arg = std::make_shared<const Subject>(std::move(argSubj)),
     }};
 
     Hash enclosingApplyId(HashAlgorithm::SHA256);
@@ -390,20 +390,20 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
            pathAndRootsFromSubject path. The QueryApply payload's
            fn/arg use Subject-derived hex so the walker (which has
            only Subjects at primop firing time) can byte-match. */
-        const auto & ars = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
-        auto fnSubjHash = cidasks::scopeStateIdAfter(*ars.fn, applyScope, {});
-        auto argSubjHash = cidasks::scopeStateIdAfter(*ars.arg, applyScope, {});
+        const auto & ars = std::get<ApplyResultSubject>(resultSubject.data);
+        auto fnSubjHash = scopeStateIdAfter(*ars.fn, applyArgAncestry, {});
+        auto argSubjHash = scopeStateIdAfter(*ars.arg, applyArgAncestry, {});
         auto fnSubjHex = fnSubjHash.to_string(HashFormat::Base16, false);
         auto argSubjHex = argSubjHash.to_string(HashFormat::Base16, false);
         tracingCacheLog(
-            "writer logAmbientApplyFact: fnSubj=%s argSubj=%s applyScope=%s fnHex=%s argHex=%s",
-            cidasks::describe(*ars.fn),
-            cidasks::describe(*ars.arg),
-            applyScope.to_string(HashFormat::Base16, false).substr(0, 12),
+            "writer logAmbientApplyFact: fnSubj=%s argSubj=%s applyArgAncestry=%s fnHex=%s argHex=%s",
+            describe(*ars.fn),
+            describe(*ars.arg),
+            applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
             fnSubjHex.substr(0, 12),
             argSubjHex.substr(0, 12));
         nlohmann::json applyQd2 = trace::QueryApply{fnSubjHex, argSubjHex};
-        writer.logAmbientApplyFact(applyQd2, resultSubject, applyScope);
+        writer.logAmbientApplyFact(applyQd2, resultSubject, applyArgAncestry);
     } else {
         tracingCacheLog("openApplyBoundary callsite=TracingEvaluator::apply fn=%s arg=%s",
                         fnId.substr(0, 12), argId.substr(0, 12));
@@ -419,11 +419,11 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        of sib A's envAsksEdges traversed via prior v13Walks). */
     auto & d1Walk = writer.getD1CidasksWalk();
     /* Path 3: stamp SubjectEvolutionEdges via hook. */
-    Hash resultSelfHash = cidasks::scopeStateIdAt(
+    Hash resultSelfHash = scopeStateIdAt(
         resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
-    auto applyScopeStateId = cidasks::scopeStateIdAtWithHook(
-        resultSubject, applyScope, d1Walk, d1Walk.size(),
-        [&](const cidasks::EvolutionStep & step) {
+    auto applyScopeStateId = scopeStateIdAtWithHook(
+        resultSubject, applyArgAncestry, d1Walk, d1Walk.size(),
+        [&](const EvolutionStep & step) {
             writer.insertSubjectEvolutionEdge(
                 resultSelfHash, step.curBefore,
                 step.obsFromHash, step.obsElementHash,
@@ -431,12 +431,12 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         });
     auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
     {
-        const auto & apr = std::get<cidasks::ApplyResultSubject>(resultSubject.data);
+        const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(
             "writer apply: fn=%s arg=%s scope=%s -> applyScopeStateId=%s",
-            cidasks::describe(*apr.fn),
-            cidasks::describe(*apr.arg),
-            applyScope.to_string(HashFormat::Base16, false).substr(0, 12),
+            describe(*apr.fn),
+            describe(*apr.arg),
+            applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
             applyScopeStateIdHex.substr(0, 16));
     }
 
@@ -454,7 +454,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        identity hash). Curried follow-up's fn is an ApplyResultSubject
        (result of a previous apply). Only XOR at the former. */
     bool fnIsApplyResult = fn->getSubject()
-        && std::holds_alternative<cidasks::ApplyResultSubject>(fn->getSubject()->data);
+        && std::holds_alternative<ApplyResultSubject>(fn->getSubject()->data);
     struct CallScopeGuard {
         std::shared_ptr<AmbientResolver> resolver;
         Hash oldScope{HashAlgorithm::SHA256};
@@ -495,7 +495,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        `chainCursor` aligned with the cold AmbientResult. */
     if (fnIsTlo) {
         auto laro = std::make_shared<TracingCallbackApplyResult>(
-            result, writer, std::move(resultSubject), applyScope, enclosingApplyId);
+            result, writer, std::move(resultSubject), applyArgAncestry, enclosingApplyId);
         laro->withScope(std::move(cell));
         return ref<Object>(laro);
     }
@@ -506,7 +506,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     };
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withScope(std::move(cell));
-    obj->withApplyResultSubject(std::move(resultSubject), applyScope);
+    obj->withApplyResultSubject(std::move(resultSubject), applyArgAncestry);
     if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
         if (auto ctx = argAmb->getApplyContext())
             obj->withApplyContext(std::move(ctx));
