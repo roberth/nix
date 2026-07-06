@@ -80,7 +80,7 @@ class ReplayLocalObject : public Object
        cb-applies of the same abstract fn+arg within one cached body
        resolve to their respective recorded responses (cb-repeated-
        cb-apply-diff-args's fix). Cold's insertLocalResponse writes
-       with writer.v13FactSetHash at the matching moment; walker at
+       with writer.envFactSetHash at the matching moment; walker at
        ReplayLocalObject construction time receives its own outer
        cur which — by lockstep growth of walker.cidasksWalk with
        writer.envWalk under Path 3 — equals cold's writer cur. */

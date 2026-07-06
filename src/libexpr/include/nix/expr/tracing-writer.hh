@@ -78,8 +78,8 @@ class TracingWriter
        This makes the per-logResult cost O(1) instead of O(|factSet|)
        for the hash computation: insertFactSet (which would re-sort
        and re-fold all members) is bypassed via primeFactSetCache. */
-    std::vector<TracingDecisionGraph::Fact> v13FactSet;
-    TracingDecisionGraph::SetHash v13FactSetHash;
+    std::vector<TracingDecisionGraph::Fact> envFactSet;
+    TracingDecisionGraph::SetHash envFactSetHash;
     std::unordered_set<Hash> seenRequests;
     /* request → response lookup, maintained as facts arrive.
        Handed to record() by reference so it doesn't rebuild
@@ -96,7 +96,7 @@ class TracingWriter
        against the relevant Asks-edge precondition factset.
 
        Layer marker: depth-1 facts (inner asks outer about an outer
-       value) feed into the depth-1 v13FactSet. Depth-2 facts (outer
+       value) feed into the depth-1 envFactSet. Depth-2 facts (outer
        probes an inner-supplied LocalObject during a cb apply) group
        by their `applyId` (= the cb apply's resultId) into a depth-2
        Asks-edge in `AmbientAsks`, per the via-Asks design. */
@@ -136,7 +136,7 @@ class TracingWriter
     cidasks::Edge pendingD1Edge;
 
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
-       new query hash added to v13FactSet since the last logResult,
+       new query hash added to envFactSet since the last logResult,
        whether from `logResponse` (= env/file), `noteEnvObservation`,
        or `flushPendingAmbient`. AmbientQueries are depth-1 just like
        file reads; bundling them with env/file into one Asks edge per
@@ -213,7 +213,7 @@ class TracingWriter
             - `factHash` = current SHA-256(applyReqHash || cumulativeFactSet),
               i.e. the synthetic d=1 apply Fact's element hash. On
               each re-process, recomputed; the delta between old and
-              new is XOR-applied to v13FactSetHash and downstream
+              new is XOR-applied to envFactSetHash and downstream
               perQAsksEdges' fromFactSetHash to keep the writer
               state consistent with the extended chain.
             - `pos` = the actual perQAsksEdges position where this
@@ -289,7 +289,7 @@ public:
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
         : sink(sink)
         , decisionGraph(decisionGraph)
-        , v13FactSetHash(TracingDecisionGraph::emptySetHash())
+        , envFactSetHash(TracingDecisionGraph::emptySetHash())
     {
     }
 
@@ -318,7 +318,7 @@ public:
         sibling-style divergence). */
     const TracingDecisionGraph::SetHash & getV13FactSetHash() const
     {
-        return v13FactSetHash;
+        return envFactSetHash;
     }
 
     /**
@@ -392,14 +392,14 @@ public:
            Idempotent observations (same request, same response —
            e.g. file reads, env reads) collapse to one entry; sibling
            cb applies (same request, different responses) keep both
-           contributions so v13FactSetHash reflects both elementHashes
+           contributions so envFactSetHash reflects both elementHashes
            and the trie's per-(Q, factSet) terminals don't collide. */
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), queryHash, responseHash);
         if (seenRequests.insert(factHash).second) {
-            v13FactSet.push_back({queryHash, responseHash});
-            v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                v13FactSetHash, queryHash, responseHash);
+            envFactSet.push_back({queryHash, responseHash});
+            envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
+                envFactSetHash, queryHash, responseHash);
             responseFor.emplace(queryHash, responseHash);
             allRequestsTrie.insert(queryHash);
             if (allRequestHashes.insert(queryHash).second)
@@ -411,7 +411,7 @@ public:
      * Log an ambient interaction as a d>0 Request/Response pair.
      *
      * Under Phase 4 of content-defined identity, ambient facts are
-     * buffered here rather than eagerly inserted into v13FactSet and
+     * buffered here rather than eagerly inserted into envFactSet and
      * the Requests pool / LocalResponseMap — the `from` field of the query
      * may be a placeholder (counter-derived local id) whose final
      * Buffered until flushPendingAmbient() at logResult time
@@ -484,7 +484,7 @@ public:
      * each `(request, response)` it computes is a real observation of
      * the environment, just like one made via `logResponse` or
      * `logAmbientInteraction` during interpretation. Feeding it back
-     * into `v13FactSet` keeps the writer's cumulative state invariant
+     * into `envFactSet` keeps the writer's cumulative state invariant
      * to whether facts came via interpretation or cache-hit dispatch.
      * Without this, a subsequent `logResult` for some Q that fell
      * back to inner would record at a factSetHash missing the
@@ -501,7 +501,7 @@ public:
             /* Cross-context update: if we previously noted a different
                response for the SAME request (cb-sibling's shared
                reqhash across sibling contexts), replace the old fact
-               with the new one. Otherwise v13FactSet accumulates
+               with the new one. Otherwise envFactSet accumulates
                multiple fact hashes per request but record() can only
                emit one dispatch per request per chain — walker can
                contribute one fact-hash per dispatch, so the chain
@@ -509,23 +509,23 @@ public:
                canonical one aligns the chain with warm walker's
                current-context live-dispatch. */
             if (auto it = responseFor.find(request); it != responseFor.end() && it->second != response) {
-                /* XOR out the old fact from v13FactSetHash and drop the
-                   old entry from v13FactSet. seenRequests keeps the old
+                /* XOR out the old fact from envFactSetHash and drop the
+                   old entry from envFactSet. seenRequests keeps the old
                    factHash entry to guard against re-adding it. */
-                v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                    v13FactSetHash, request, it->second);
+                envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
+                    envFactSetHash, request, it->second);
                 auto oldResp = it->second;
-                v13FactSet.erase(
-                    std::remove_if(v13FactSet.begin(), v13FactSet.end(),
+                envFactSet.erase(
+                    std::remove_if(envFactSet.begin(), envFactSet.end(),
                         [&](const auto & f) { return f.request == request && f.response == oldResp; }),
-                    v13FactSet.end());
+                    envFactSet.end());
                 it->second = response;
             } else {
                 responseFor.emplace(request, response);
             }
-            v13FactSet.push_back({request, response});
-            v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                v13FactSetHash, request, response);
+            envFactSet.push_back({request, response});
+            envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
+                envFactSetHash, request, response);
             allRequestsTrie.insert(request);
             if (allRequestHashes.insert(request).second)
                 pendingNewRequests.push_back(request);
@@ -560,7 +560,7 @@ public:
      * also processed: for each, the d=2 chain group is built,
      * its terminal `cumulativeFactSet` is the AmbientResult, and
      * the d=1 synthetic apply Fact `(applyReqHash, AmbientResult)`
-     * is folded into v13FactSet / envWalk / pendingNewRequests
+     * is folded into envFactSet / envWalk / pendingNewRequests
      * just like an ordinary depth-1 ambient observation.
      */
     void flushPendingAmbient(bool finalize = false);
@@ -596,7 +596,7 @@ public:
      * pool, and buffers a `PendingApplyBoundary` recording the
      * applyId and reqHash.
      *
-     * The d=1 apply Fact itself is *not* folded into v13FactSet
+     * The d=1 apply Fact itself is *not* folded into envFactSet
      * here. Its response hash is the AmbientResult (= terminal of
      * the d=2 chain captured for this applyId), which is only known
      * at flushPendingAmbient time. Deferring synthesis keeps the
@@ -708,7 +708,7 @@ public:
         auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
         decisionGraph->insertResult(resultNodeHash, resultPayload);
 
-        /* v13FactSetHash is maintained incrementally per fact; skip
+        /* envFactSetHash is maintained incrementally per fact; skip
            insertFactSet's O(N log N) sort + fold. primeFactSetCache
            makes the members available to record() via getFactSet
            without rebuilding the hash. responseFor + seenRequests
@@ -721,12 +721,12 @@ public:
            and hand the root hash to record() as the precomputed RS
            hash for the whole-remaining edge — record() can then
            skip its insertRequestSet(remainingVec) call. */
-        decisionGraph->primeFactSetCache(v13FactSetHash, v13FactSet);
+        decisionGraph->primeFactSetCache(envFactSetHash, envFactSet);
         allRequestsTrie.persist(*decisionGraph);
 
         tracingCacheLog("logResult: Q=%s factSet=%s -> result (inserting %zu Asks edges)",
                         qh.queryHash->to_string(HashFormat::Base16, false).substr(0, 12),
-                        v13FactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                        envFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         perQAsksEdges.size());
         for (const auto & edge : perQAsksEdges)
             decisionGraph->insertAsks(*qh.queryHash, edge.fromFactSetHash, edge.requestSetHash);
@@ -737,10 +737,10 @@ public:
            not `seenRequests` (= fact hashes for XOR dedup); record()'s
            slow path iterates this for its trailing remaining-edge. */
         if (perQAsksEdges.empty())
-            decisionGraph->record(*qh.queryHash, v13FactSetHash, resultNodeHash,
+            decisionGraph->record(*qh.queryHash, envFactSetHash, resultNodeHash,
                 responseFor, seenRequests, allRequestsTrie.rootHash());
         else
-            decisionGraph->record(*qh.queryHash, v13FactSetHash, resultNodeHash,
+            decisionGraph->record(*qh.queryHash, envFactSetHash, resultNodeHash,
                 responseFor, allRequestHashes);
 
         /* Populate per-edge response table AFTER `record()` so

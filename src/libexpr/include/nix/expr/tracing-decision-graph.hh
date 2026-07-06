@@ -390,7 +390,7 @@ public:
 
        Maintains an in-memory hash-prefix trie that grows by one
        Request hash at a time. Used by TracingWriter to keep a
-       running canonical RequestSet hash for the global v13FactSet's
+       running canonical RequestSet hash for the global envFactSet's
        requests without paying O(N) per logResult.
 
        Insertion is O(log N) amortised — one path-copy from leaf to

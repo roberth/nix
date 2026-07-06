@@ -29,9 +29,9 @@ void TracingWriter::flushPendingAmbient(bool finalize)
     pendingRequests.clear();
 
     /* Depth-1 facts (= ambient observations on outer state) fold into
-       v13FactSet immediately; we build a single edge per flush appended
+       envFactSet immediately; we build a single edge per flush appended
        to envWalk for cidasks own-fold evolution. Depth-2 facts
-       group by cb-apply id and are NOT folded into v13FactSet — they
+       group by cb-apply id and are NOT folded into envFactSet — they
        live only in AmbientAsks rows, processed at `finalize=true`
        (= logResult) when each cb-apply's chain is known to be complete. */
 
@@ -198,9 +198,9 @@ void TracingWriter::flushPendingAmbient(bool finalize)
         /* Dedupe by (request, response). See logResponse. */
         auto factHash = elementHash;
         if (seenRequests.insert(factHash).second) {
-            v13FactSet.push_back({queryHash, responseHash});
-            v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                v13FactSetHash, queryHash, responseHash);
+            envFactSet.push_back({queryHash, responseHash});
+            envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
+                envFactSetHash, queryHash, responseHash);
             responseFor.emplace(queryHash, responseHash);
             allRequestsTrie.insert(queryHash);
             if (allRequestHashes.insert(queryHash).second)
@@ -242,7 +242,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                         pendingNewRequests.size(),
                         perQAsksEdges.size(),
                         envWalk.size());
-        prevQFactSetHash = v13FactSetHash;
+        prevQFactSetHash = envFactSetHash;
         pendingNewRequests.clear();
     }
 
@@ -255,7 +255,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
         3. The terminal `cumulativeFactSet` IS the AmbientResult
            (via-Asks §"Recording (depth-2)").
         4. Synthesize the d=1 apply Fact (applyReqHash, AmbientResult);
-           fold into v13FactSet and append a synthetic edge to
+           fold into envFactSet and append a synthetic edge to
            envWalk (fromHash=Hash(0), elementHash=factHash) —
            the apply boundary contributes to cur but not to any
            subject's own-fold (= phantom edge for walk-index sync).
@@ -283,7 +283,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
     /* Same-shape collapse happens automatically via content-addressed
        AmbientAsks rows: two boundaries with the same applyId and the
        same probes produce identical rows that INSERT OR IGNORE
-       deduplicates; v13FactSet's seenRequests deduplicates the
+       deduplicates; envFactSet's seenRequests deduplicates the
        synthesised d=1 Fact too. Process each boundary independently
        so its own pendingDepth2FactsByApply slice gets folded into
        its own chain — collapsing the boundary list before processing
@@ -433,9 +433,9 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             auto factHash = TracingDecisionGraph::xorFactIntoHash(
                 Hash(HashAlgorithm::SHA256), boundary.applyRequestHash, ambientResult);
             if (seenRequests.insert(factHash).second) {
-                v13FactSet.push_back({boundary.applyRequestHash, ambientResult});
-                v13FactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                    v13FactSetHash, boundary.applyRequestHash, ambientResult);
+                envFactSet.push_back({boundary.applyRequestHash, ambientResult});
+                envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
+                    envFactSetHash, boundary.applyRequestHash, ambientResult);
                 responseFor.emplace(boundary.applyRequestHash, ambientResult);
                 allRequestsTrie.insert(boundary.applyRequestHash);
                 allRequestHashes.insert(boundary.applyRequestHash);
@@ -466,7 +466,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                 perQAsksEdges[i].fromFactSetHash = TracingDecisionGraph::xorHashes(
                     perQAsksEdges[i].fromFactSetHash, factHash);
             priorEpsilonAccum = TracingDecisionGraph::xorHashes(priorEpsilonAccum, factHash);
-            /* Keep prevQFactSetHash aligned with v13FactSetHash after
+            /* Keep prevQFactSetHash aligned with envFactSetHash after
                the boundary XOR-fold. Without this, subsequent Q's
                `markApplyBoundary` captures a stale (pre-boundary)
                fromFactSetHashAtBoundary, and subsequent `finalize`
@@ -475,7 +475,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                variant 2's Q=6063a6243f6c walk misses at cur=99566783ffd7
                because cold indexed its edges at pre-boundary state
                3dc1fe6c5b76 = 99566783ffd7 XOR factHash_boundary0. */
-            prevQFactSetHash = v13FactSetHash;
+            prevQFactSetHash = envFactSetHash;
 
             /* Stash state on the boundary so subsequent re-processing
                passes (= late d2 obs) can pick up where this finalize
@@ -539,7 +539,7 @@ void TracingWriter::splitFlush(bool finalize)
         return;
 
     /* Process pending ambient observations into one new Asks edge
-       transition (= advances v13FactSetHash and envWalk when
+       transition (= advances envFactSetHash and envWalk when
        observations are present). At finalize=true this also computes
        AmbientResults for each buffered cb-apply boundary and folds
        the synthetic d=1 apply Facts in. */
@@ -566,7 +566,7 @@ void TracingWriter::splitFlush(bool finalize)
                         pendingNewRequests.size(),
                         perQAsksEdges.size(),
                         envWalk.size());
-        prevQFactSetHash = v13FactSetHash;
+        prevQFactSetHash = envFactSetHash;
         pendingNewRequests.clear();
     }
 }

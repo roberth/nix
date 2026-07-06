@@ -720,7 +720,7 @@ void TracingDecisionGraph::primeFactSetCache(
     const SetHash & hash, const std::vector<Fact> & members)
 {
     auto state(_state->lock());
-    /* Always store the latest snapshot — the caller's growing v13FactSet
+    /* Always store the latest snapshot — the caller's growing envFactSet
        supersedes any prior shorter version recorded under the same
        hash. Distinct factSet hashes never collide so this only
        overwrites when the caller has re-primed at the same hash. */

@@ -271,7 +271,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
         if (!isAmbient)
             dispatchCache.emplace(requestHash, h);
         /* Dispatched facts are real environment observations; feed
-           them into the writer's v13FactSet so any subsequent
+           them into the writer's envFactSet so any subsequent
            logResult records at the same factSetHash regardless of
            which facts came from interpretation vs cache-hit
            dispatch. */

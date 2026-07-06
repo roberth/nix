@@ -325,7 +325,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
        Skip `markApplyBoundary` entirely for the TLO-fn path: it
        would push a fresh empty boundary whose synthetic d=1 fact
-       `(applyReqHash, applyReqHash)` enters v13FactSet at finalize
+       `(applyReqHash, applyReqHash)` enters envFactSet at finalize
        and forces the outer walker into a `dispatchApplyLive` whose
        arg has no sidecar — a guaranteed miss that destabilises the
        outer chain. The recursive apply Fact (recorded in the
@@ -469,7 +469,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
             /* Sibling discrimination (cb-sibling-b): applyScopeStateId
                alone collides across siblings whose constituents are
                structurally identical at apply time. XOR in
-               writer.v13FactSetHash so cold's sibling A (applying at
+               writer.envFactSetHash so cold's sibling A (applying at
                v13FactSet_A) and sibling B (applying at v13FactSet_B >
                v13FactSet_A) get distinct siblingScopes → distinct
                inner-ambient-object inheritedScopes → distinct
