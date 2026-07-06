@@ -23,7 +23,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
     /** Reverse-De-Bruijn depth: 0 at the cache call's argument,
         N+1 in a cell whose parent is at depth N. Set at
         construction, immutable. Used as the positional handle
-        when computing argAncestry state ids via scopeStateIdAfter. */
+        when computing argAncestry state ids via stateHashAfter. */
     int depth = 0;
 
     /** Next-outer cell. Null at the root (the cache call's

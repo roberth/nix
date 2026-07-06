@@ -74,7 +74,7 @@ class TracingCallbackApplyResult : public Object
        observations route to the correct boundary's d=2 chain. */
     Hash depth2ApplyId;
 
-    /* scopeStateIdAfter(applyResultSubject, applyArgAncestry, {}) hex — the
+    /* stateHashAfter(applyResultSubject, applyArgAncestry, {}) hex — the
        content-only apply-result argStateId exposed via getScopeStateIdHex. Computed
        once at construction to match `TracingEvaluator::apply`'s
        `applyArgAncestryStateHashHex` (= what the walker computes too). */

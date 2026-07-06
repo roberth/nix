@@ -297,7 +297,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        walker is operating under. Do not freeze at closure-creation
        time — the argAncestry evolves, and freezing would emit stale hashes. */
     Hash argAncestry = resolverHandle->callArgAncestry;
-    auto argId = scopeStateIdAfter(argSubject, argAncestry, {});
+    auto argId = stateHashAfter(argSubject, argAncestry, {});
     tracingCacheLog("AmbientApply::run: argAncestry=%s argId=%s",
                     argAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
                     argId.to_string(HashFormat::Base16, false).substr(0, 12));
@@ -469,7 +469,7 @@ static PrimOp * makeCachedFnPrimOp(
                            therefore distinct subject-derived content
                            ids throughout this cb-apply boundary. */
                         Hash callArgAncestry = resolver->callArgAncestry;
-                        auto rootId = scopeStateIdAfter(seedSubject, callArgAncestry, {});
+                        auto rootId = stateHashAfter(seedSubject, callArgAncestry, {});
                         /* Per-apply observation context. Captures the
                            outer's probes on the cb arg as they fire
                            through queryFn; the apply-result wrapper

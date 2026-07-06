@@ -19,7 +19,7 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
     , applyArgAncestry(std::move(applyScope_))
     , depth2ApplyId(std::move(depth2ApplyId_))
 {
-    auto scopeStateId = scopeStateIdAfter(applyResultSubject, applyArgAncestry, {});
+    auto scopeStateId = stateHashAfter(applyResultSubject, applyArgAncestry, {});
     applyArgAncestryStateHashHex = scopeStateId.to_string(HashFormat::Base16, false);
 }
 

@@ -46,15 +46,15 @@ static Hash noScope()
 
 TEST(CidAsks, PositionalSeedInitialIdIsDeterministic)
 {
-    auto a = scopeStateIdAfter(seed(0), noScope(), {});
-    auto b = scopeStateIdAfter(seed(0), noScope(), {});
+    auto a = stateHashAfter(seed(0), noScope(), {});
+    auto b = stateHashAfter(seed(0), noScope(), {});
     EXPECT_EQ(a, b);
 }
 
 TEST(CidAsks, DifferentDepthsHaveDifferentInitialIds)
 {
-    auto a = scopeStateIdAfter(seed(0), noScope(), {});
-    auto b = scopeStateIdAfter(seed(1), noScope(), {});
+    auto a = stateHashAfter(seed(0), noScope(), {});
+    auto b = stateHashAfter(seed(1), noScope(), {});
     EXPECT_NE(a, b);
 }
 
@@ -75,7 +75,7 @@ TEST(CidAsks, ApplyResultDistinguishesFnAndArg)
     auto fn0 = seed(0);
     auto fn1 = seed(1);
     auto arg = seed(2);
-    EXPECT_NE(scopeStateIdAfter(applyResult(fn0, arg), noScope(), {}), scopeStateIdAfter(applyResult(fn1, arg), noScope(), {}));
+    EXPECT_NE(stateHashAfter(applyResult(fn0, arg), noScope(), {}), stateHashAfter(applyResult(fn1, arg), noScope(), {}));
 }
 
 /* ---- observation-driven evolution ---- */
@@ -83,14 +83,14 @@ TEST(CidAsks, ApplyResultDistinguishesFnAndArg)
 TEST(CidAsks, ObservationOnSeedAdvancesContentId)
 {
     auto s = seed(0);
-    auto initial = scopeStateIdAfter(s, noScope(), {});
+    auto initial = stateHashAfter(s, noScope(), {});
 
     // A getInt fact whose from matches the seed's initial id.
     trace::QueryGetWHNF q{hex(initial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{42}};
     Edge e{.observations = {observationFromQR(q, r)}};
 
-    auto after = scopeStateIdAfter(s, noScope(), {e});
+    auto after = stateHashAfter(s, noScope(), {e});
     EXPECT_NE(initial, after);
 
     // The advance is exactly elementHash XORed in.
@@ -103,15 +103,15 @@ TEST(CidAsks, FactOnUnrelatedSubjectDoesNotAdvance)
 {
     auto s0 = seed(0);
     auto s1 = seed(1);
-    auto s1Initial = scopeStateIdAfter(s1, noScope(), {});
+    auto s1Initial = stateHashAfter(s1, noScope(), {});
 
     // Fact whose from matches s1, not s0.
     trace::QueryGetWHNF q{hex(s1Initial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{99}};
     Edge e{.observations = {observationFromQR(q, r)}};
 
-    EXPECT_EQ(scopeStateIdAfter(s0, noScope(), {}), scopeStateIdAfter(s0, noScope(), {e}));
-    EXPECT_NE(scopeStateIdAfter(s1, noScope(), {}), scopeStateIdAfter(s1, noScope(), {e}));
+    EXPECT_EQ(stateHashAfter(s0, noScope(), {}), stateHashAfter(s0, noScope(), {e}));
+    EXPECT_NE(stateHashAfter(s1, noScope(), {}), stateHashAfter(s1, noScope(), {e}));
 }
 
 TEST(CidAsks, SameShapeCollapse)
@@ -120,13 +120,13 @@ TEST(CidAsks, SameShapeCollapse)
     // They cannot be distinguished without their own observations.
     auto a = seed(0);
     auto b = seed(0);
-    EXPECT_EQ(scopeStateIdAfter(a, noScope(), {}), scopeStateIdAfter(b, noScope(), {}));
+    EXPECT_EQ(stateHashAfter(a, noScope(), {}), stateHashAfter(b, noScope(), {}));
 }
 
 TEST(CidAsks, XorCommutativityWithinEdge)
 {
     auto s = seed(0);
-    auto initial = scopeStateIdAfter(s, noScope(), {});
+    auto initial = stateHashAfter(s, noScope(), {});
 
     trace::QueryGetWHNF q1{hex(initial)};
     trace::ResultWHNF r1{"int", trace::WHNFInt{1}};
@@ -139,7 +139,7 @@ TEST(CidAsks, XorCommutativityWithinEdge)
     Edge eBA{.observations = {f2, f1}};
 
     // Within one edge, dispatch order doesn't matter.
-    EXPECT_EQ(scopeStateIdAfter(s, noScope(), {eAB}), scopeStateIdAfter(s, noScope(), {eBA}));
+    EXPECT_EQ(stateHashAfter(s, noScope(), {eAB}), stateHashAfter(s, noScope(), {eBA}));
 }
 
 /* ---- derived evolution: parent advances → derived advances ---- */
@@ -149,7 +149,7 @@ TEST(CidAsks, DerivedAdvancesWhenParentAdvances)
     auto parent = seed(0);
     auto child = getAttrOn(parent, "x");
 
-    auto parentInitial = scopeStateIdAfter(parent, noScope(), {});
+    auto parentInitial = stateHashAfter(parent, noScope(), {});
     auto childInitial = structuralAddressAfter(child, noScope(), {});
 
     // A fact on the parent.
@@ -194,7 +194,7 @@ TEST(CidAsks, InheritanceDistinguishesPositionalSeedsAcrossScopes)
     auto scopeA = scopeFor("A");
     auto scopeB = scopeFor("B");
 
-    EXPECT_NE(scopeStateIdAfter(s, scopeA, {}), scopeStateIdAfter(s, scopeB, {}));
+    EXPECT_NE(stateHashAfter(s, scopeA, {}), stateHashAfter(s, scopeB, {}));
 }
 
 TEST(CidAsks, InheritanceDistinguishesDerivedAcrossScopes)
@@ -217,8 +217,8 @@ TEST(CidAsks, InheritancePropagatesIntoDerivedQueryPayload)
     auto scopeA = scopeFor("A");
     auto scopeB = scopeFor("B");
 
-    auto parentInA = scopeStateIdAfter(parent, scopeA, {});
-    auto parentInB = scopeStateIdAfter(parent, scopeB, {});
+    auto parentInA = stateHashAfter(parent, scopeA, {});
+    auto parentInB = stateHashAfter(parent, scopeB, {});
     EXPECT_NE(parentInA, parentInB);
 
     auto childInA = structuralAddressAfter(child, scopeA, {});
@@ -234,7 +234,7 @@ TEST(CidAsks, InheritanceWithEmptyScopeMatchesUnscoped)
     auto s = seed(0);
     auto child = getAttrOn(s, "x");
 
-    EXPECT_EQ(scopeStateIdAfter(s, noScope(), {}), scopeStateIdAfter(s, Hash(HashAlgorithm::SHA256), {}));
+    EXPECT_EQ(stateHashAfter(s, noScope(), {}), stateHashAfter(s, Hash(HashAlgorithm::SHA256), {}));
     EXPECT_EQ(structuralAddressAfter(child, noScope(), {}), structuralAddressAfter(child, Hash(HashAlgorithm::SHA256), {}));
 }
 
@@ -246,7 +246,7 @@ TEST(CidAsks, InheritanceDistinguishesApplyResultAcrossScopes)
     auto scopeA = scopeFor("A");
     auto scopeB = scopeFor("B");
 
-    EXPECT_NE(scopeStateIdAfter(result, scopeA, {}), scopeStateIdAfter(result, scopeB, {}));
+    EXPECT_NE(stateHashAfter(result, scopeA, {}), stateHashAfter(result, scopeB, {}));
 }
 
 TEST(CidAsks, ObservationOnScopedSeedRequiresMatchingScopedFromHash)
@@ -257,8 +257,8 @@ TEST(CidAsks, ObservationOnScopedSeedRequiresMatchingScopedFromHash)
     auto s = seed(0);
     auto scope = scopeFor("Q1");
 
-    auto scopedInitial = scopeStateIdAfter(s, scope, {});
-    auto unscopedInitial = scopeStateIdAfter(s, noScope(), {});
+    auto scopedInitial = stateHashAfter(s, scope, {});
+    auto unscopedInitial = stateHashAfter(s, noScope(), {});
     EXPECT_NE(scopedInitial, unscopedInitial);
 
     trace::QueryGetWHNF qScoped{hex(scopedInitial)};
@@ -267,8 +267,8 @@ TEST(CidAsks, ObservationOnScopedSeedRequiresMatchingScopedFromHash)
     Edge eScoped{.observations = {observationFromQR(qScoped, r)}};
     Edge eUnscoped{.observations = {observationFromQR(qUnscoped, r)}};
 
-    EXPECT_NE(scopeStateIdAfter(s, scope, {eScoped}), scopedInitial);
-    EXPECT_EQ(scopeStateIdAfter(s, scope, {eUnscoped}), scopedInitial);
+    EXPECT_NE(stateHashAfter(s, scope, {eScoped}), scopedInitial);
+    EXPECT_EQ(stateHashAfter(s, scope, {eUnscoped}), scopedInitial);
 }
 
 } // namespace nix::cidasks

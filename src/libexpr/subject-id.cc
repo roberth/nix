@@ -273,7 +273,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & argAncestry, const std
                        — `AmbientObject::getCdi()` returns
                        structuralAddressAfter with argAncestry
                        baked in; ReplayCallbackArg's localId is
-                       scopeStateIdAfter(PositionalSeed{D}, callArgAncestry, {})
+                       stateHashAfter(PositionalSeed{D}, callArgAncestry, {})
                        which is also argAncestry-saturated. Re-XORing argAncestry
                        here would either double-XOR (= argAncestry-saturated
                        inputs) or under-XOR (= un-scoped inputs) — the
@@ -327,7 +327,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & argAncestry, const std
         subject.data);
 }
 
-Hash scopeStateIdAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
+Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
 {
     return scopeStateIdAt(subject, argAncestry, walk, walk.size());
 }

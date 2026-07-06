@@ -76,7 +76,7 @@ class AmbientObject : public Object
        by makeCachedFnPrimOp.impl at the apply boundary; the queryFn
        closure routes observations through this context so the
        apply-result wrapping can compute its evolved argAncestry state id via
-       scopeStateIdAfter against the accumulated walk. Null on
+       stateHashAfter against the accumulated walk. Null on
        non-cb-arg AmbientObjects. */
     std::shared_ptr<ApplyContext> applyContext;
     AmbientQueryFn queryFn;   ///< Callback to issue ambient queries

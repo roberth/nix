@@ -18,7 +18,7 @@ static void stampPerArgFieldsAmbient(Q & q, const Subject & subject, const Hash 
     std::vector<trace::QueryLeaf> fromCIDs;
     fromCIDs.reserve(par.roots.size());
     for (size_t i = 0; i < par.roots.size(); ++i) {
-        auto cid = scopeStateIdAfter(par.roots[i], argAncestry, {});
+        auto cid = stateHashAfter(par.roots[i], argAncestry, {});
         fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
     }
     q.from = fromCIDs.empty() ? trace::QueryLeaf{std::string{}} : fromCIDs[0];

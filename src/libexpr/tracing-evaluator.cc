@@ -391,8 +391,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
            fn/arg use Subject-derived hex so the walker (which has
            only Subjects at primop firing time) can byte-match. */
         const auto & ars = std::get<ApplyResultSubject>(resultSubject.data);
-        auto fnSubjHash = scopeStateIdAfter(*ars.fn, applyArgAncestry, {});
-        auto argSubjHash = scopeStateIdAfter(*ars.arg, applyArgAncestry, {});
+        auto fnSubjHash = stateHashAfter(*ars.fn, applyArgAncestry, {});
+        auto argSubjHash = stateHashAfter(*ars.arg, applyArgAncestry, {});
         auto fnSubjHex = fnSubjHash.to_string(HashFormat::Base16, false);
         auto argSubjHex = argSubjHash.to_string(HashFormat::Base16, false);
         tracingCacheLog(

@@ -48,7 +48,7 @@ class ReplayCallbackArg : public Object
        For root (cb-apply) locals the subject is `PositionalSeed{depth}`
        with the recorded callArgAncestry (per the localArg sidecar), so the
        walker reproduces the recorder's
-       `scopeStateIdAfter(PositionalSeed{D}, callArgAncestry, {})` directly.
+       `stateHashAfter(PositionalSeed{D}, callArgAncestry, {})` directly.
 
        For children minted by maybeGetAttr/getListElem the subject is
        `DerivedSubject{parent.subject, ...}` — `scopeStateIdAt`

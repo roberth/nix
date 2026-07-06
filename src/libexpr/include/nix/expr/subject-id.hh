@@ -136,13 +136,13 @@ Observation observationFromQR(const trace::QueryVariant & query, const trace::Re
     via their constituents' (recursively argAncestry-aware) argAncestry state ids,
     so the structural derivation incorporates inheritance naturally
     via the constituents' `from`-field values. */
-Hash scopeStateIdAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
+Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
 
 /** Compute the argAncestry state id of `subject` at the precondition of the
     edge at index `edgeIndex` in `walk`, inheriting `argAncestry`.
     `edgeIndex == 0` means the initial precondition (= empty
     factset); `edgeIndex == walk.size()` means the postcondition of
-    the whole walk (equivalent to `scopeStateIdAfter`).
+    the whole walk (equivalent to `stateHashAfter`).
 
     **Argument-level only.** Per the design (Principle 3, per-arg
     centralization), only argument-level subjects bear argStateIds:
@@ -186,7 +186,7 @@ Hash stateHashConverged(
 Hash structuralAddress(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex);
 
 /** Convenience: `structuralAddress` at the walk's tail (= edgeIndex
-    = walk.size()). Mirrors `scopeStateIdAfter` but defined for all
+    = walk.size()). Mirrors `stateHashAfter` but defined for all
     subject forms. */
 Hash structuralAddressAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
 

@@ -358,7 +358,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
 
     /* apply-result argStateId is content-only — see commentary in
        TracingEvaluator::apply. */
-    auto applyArgAncestryStateHash = scopeStateIdAfter(resultSubject, applyArgAncestryLocal, {});
+    auto applyArgAncestryStateHash = stateHashAfter(resultSubject, applyArgAncestryLocal, {});
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
 
     /* Record the apply Request payload at the cidasks hash so dispatch
