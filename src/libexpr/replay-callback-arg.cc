@@ -41,11 +41,11 @@ static Hash stampPerArgFields(
     auto par = pathAndRootsFromSubject(subject);
     std::vector<trace::QueryLeaf> fromCIDs;
     fromCIDs.reserve(par.roots.size());
-    Hash fromCdi(HashAlgorithm::SHA256);
+    Hash fromStateHash(HashAlgorithm::SHA256);
     for (size_t i = 0; i < par.roots.size(); ++i) {
         auto cid = stateHashAt(par.roots[i], argAncestry, walkFacts, edgeIndex);
         if (i == 0)
-            fromCdi = cid;
+            fromStateHash = cid;
         fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
     }
     query.from = fromCIDs.empty()
@@ -53,7 +53,7 @@ static Hash stampPerArgFields(
         : fromCIDs[0];
     query.path = std::move(par.path);
     query.fromCIDs = std::move(fromCIDs);
-    return fromCdi;
+    return fromStateHash;
 }
 
 /* Look up the recorded payload for `query` in LocalResponseMap.
@@ -98,7 +98,7 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, c
    this needs to fire on every probe, not just validated ones. */
 template<typename Q>
 static void appendFactToWalk(
-    const Q & query, const Hash & fromCdi, const nlohmann::json & responseJson,
+    const Q & query, const Hash & fromStateHash, const nlohmann::json & responseJson,
     std::vector<Edge> & walkFacts)
 {
     auto reqHash = TracingDecisionGraph::computeQueryHash(query);
@@ -107,20 +107,20 @@ static void appendFactToWalk(
     auto elementHash = TracingDecisionGraph::xorFactIntoHash(
         Hash(HashAlgorithm::SHA256), reqHash, responseHash);
     Edge edge;
-    edge.observations.push_back({fromCdi, elementHash});
+    edge.observations.push_back({fromStateHash, elementHash});
     walkFacts.push_back(std::move(edge));
 }
 
 template<typename Q>
 static void advanceChainAndAppendFact(
-    TracingDecisionGraph & dg, const Q & query, const Hash & fromCdi,
+    TracingDecisionGraph & dg, const Q & query, const Hash & fromStateHash,
     const nlohmann::json & responseJson,
     std::vector<Edge> & walkFacts, Hash & chainCursor)
 {
     auto reqHash = TracingDecisionGraph::computeQueryHash(query);
     tracingCacheLog(
         "walk: probe %s from=%s reqHash=%s cursor=%s walkSize=%zu",
-        Q::tag, fromCdi.to_string(HashFormat::Base16, false).substr(0, 12),
+        Q::tag, fromStateHash.to_string(HashFormat::Base16, false).substr(0, 12),
         reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
         chainCursor.to_string(HashFormat::Base16, false).substr(0, 12),
         walkFacts.size());
@@ -131,7 +131,7 @@ static void advanceChainAndAppendFact(
             continue;
         if (std::find(requestSet->begin(), requestSet->end(), reqHash) == requestSet->end())
             continue;
-        appendFactToWalk(query, fromCdi, responseJson, walkFacts);
+        appendFactToWalk(query, fromStateHash, responseJson, walkFacts);
         /* Direction (2) cb-repeated fix: advance chainCursor by
            XOR-folding the live (reqHash, responseHash) rather than
            reading cold's `toFactSet`. Cold's AmbientAsks schema
@@ -164,12 +164,12 @@ static void advanceChainAndAppendFact(
 std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name)
 {
     trace::QueryGetAttr query{name, std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
+    auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, outerContext);
     if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+        advanceChainAndAppendFact(decisionGraph, query, fromStateHash, rJson, *walkFacts, *chainCursor);
     else
-        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
+        appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     trace::ResultMaybeType r = rJson;
     if (!r.type)
         return nullptr;
@@ -205,12 +205,12 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
     if (cachedWHNF)
         return *cachedWHNF;
     trace::QueryGetWHNF query{std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
+    auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, outerContext);
     if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+        advanceChainAndAppendFact(decisionGraph, query, fromStateHash, rJson, *walkFacts, *chainCursor);
     else
-        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
+        appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     cachedWHNF = rJson.get<trace::ResultWHNF>();
     return *cachedWHNF;
 }
@@ -298,12 +298,12 @@ size_t ReplayCallbackArg::getListSize()
 std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
 {
     trace::QueryGetListElem query{std::string{}, index};
-    auto fromCdi = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
+    auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, outerContext);
     if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+        advanceChainAndAppendFact(decisionGraph, query, fromStateHash, rJson, *walkFacts, *chainCursor);
     else
-        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
+        appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     Subject childSubject{DerivedSubject{
         .parent = std::make_shared<const Subject>(subject),
         .kind = DerivedSubject::Kind::GetListElem,
@@ -561,13 +561,13 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     auto elementHash = TracingDecisionGraph::xorFactIntoHash(
                         Hash(HashAlgorithm::SHA256), stampedReqHash, respHash);
 
-                    Hash fromCdi = fromCIDs.empty()
+                    Hash fromStateHash = fromCIDs.empty()
                         ? Hash(HashAlgorithm::SHA256)
                         : Hash::parseNonSRIUnprefixed(
                               fromCIDs[0].contentHash(), HashAlgorithm::SHA256);
 
                     Edge edge;
-                    edge.observations.push_back({fromCdi, elementHash});
+                    edge.observations.push_back({fromStateHash, elementHash});
                     localWalkFacts->push_back(std::move(edge));
                     *localChainCursor = TracingDecisionGraph::xorHashes(
                         *localChainCursor, elementHash);
@@ -627,12 +627,12 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
 std::optional<FunctionInfo> ReplayCallbackArg::getFunctionInfo()
 {
     trace::QueryGetFunctionInfo query{std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
+    auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, outerContext);
     if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
+        advanceChainAndAppendFact(decisionGraph, query, fromStateHash, rJson, *walkFacts, *chainCursor);
     else
-        appendFactToWalk(query, fromCdi, rJson, *walkFacts);
+        appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     trace::ResultFunctionInfo r = rJson;
     if (!r.hasInfo)
         return std::nullopt;

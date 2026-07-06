@@ -86,7 +86,7 @@ void TracingWriter::flushAmbient(bool finalize)
             fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
         }
         std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
-        auto fromCdi = fromCIDs.empty()
+        auto fromStateHash = fromCIDs.empty()
             ? Hash(HashAlgorithm::SHA256)
             : Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
 
@@ -193,7 +193,7 @@ void TracingWriter::flushAmbient(bool finalize)
         auto elementHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), queryHash, responseHash);
         if (d1NewEdgeSeen.insert(elementHash).second)
-            d1NewEdge.observations.push_back({fromCdi, elementHash});
+            d1NewEdge.observations.push_back({fromStateHash, elementHash});
 
         /* Dedupe by (request, response). See logResponse. */
         auto factHash = elementHash;
@@ -349,7 +349,7 @@ void TracingWriter::flushAmbient(bool finalize)
                 fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
             }
             std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
-            auto fromCdi = fromCIDs.empty()
+            auto fromStateHash = fromCIDs.empty()
                 ? Hash(HashAlgorithm::SHA256)
                 : Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
 
@@ -393,7 +393,7 @@ void TracingWriter::flushAmbient(bool finalize)
             Edge edge;
             auto elementHash = TracingDecisionGraph::xorFactIntoHash(
                 Hash(HashAlgorithm::SHA256), queryHash, responseHash);
-            edge.observations.push_back({fromCdi, elementHash});
+            edge.observations.push_back({fromStateHash, elementHash});
             return {toFactSet, std::move(edge)};
         };
 
