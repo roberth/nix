@@ -257,7 +257,7 @@ TEST_F(TracingDecisionGraphTest, AsksInsertGetRoundTrip)
     auto factSet = g.insertFactSet({});
     auto requestSet = g.insertRequestSet({sha("a"), sha("b")});
 
-    g.insertAsks(q, factSet, requestSet);
+    g.insertAsk(q, factSet, requestSet);
 
     auto edges = g.getAsks(q, factSet);
     ASSERT_EQ(edges.size(), 1u);
@@ -271,9 +271,9 @@ TEST_F(TracingDecisionGraphTest, AsksInsertIsIdempotent)
     auto factSet = TracingDecisionGraph::emptySetHash();
     auto requestSet = g.insertRequestSet({sha("a")});
 
-    g.insertAsks(q, factSet, requestSet);
-    g.insertAsks(q, factSet, requestSet);
-    g.insertAsks(q, factSet, requestSet);
+    g.insertAsk(q, factSet, requestSet);
+    g.insertAsk(q, factSet, requestSet);
+    g.insertAsk(q, factSet, requestSet);
 
     EXPECT_EQ(g.getAsks(q, factSet).size(), 1u);
 }
@@ -287,8 +287,8 @@ TEST_F(TracingDecisionGraphTest, AsksMultipleOutgoingPerPosition)
     auto rs1 = g.insertRequestSet({sha("a")});
     auto rs2 = g.insertRequestSet({sha("b")});
 
-    g.insertAsks(q, factSet, rs1);
-    g.insertAsks(q, factSet, rs2);
+    g.insertAsk(q, factSet, rs1);
+    g.insertAsk(q, factSet, rs2);
 
     auto edges = g.getAsks(q, factSet);
     std::set<Hash> got(edges.begin(), edges.end());
@@ -304,9 +304,9 @@ TEST_F(TracingDecisionGraphTest, AsksRemovePicksTheRightEdge)
     auto rs1 = g.insertRequestSet({sha("a")});
     auto rs2 = g.insertRequestSet({sha("b")});
 
-    g.insertAsks(q, factSet, rs1);
-    g.insertAsks(q, factSet, rs2);
-    g.removeAsks(q, factSet, rs1);
+    g.insertAsk(q, factSet, rs1);
+    g.insertAsk(q, factSet, rs2);
+    g.removeAsk(q, factSet, rs1);
 
     auto edges = g.getAsks(q, factSet);
     ASSERT_EQ(edges.size(), 1u);
@@ -322,8 +322,8 @@ TEST_F(TracingDecisionGraphTest, AsksIsolatedByQ)
     auto rs1 = g.insertRequestSet({sha("a")});
     auto rs2 = g.insertRequestSet({sha("b")});
 
-    g.insertAsks(q1, factSet, rs1);
-    g.insertAsks(q2, factSet, rs2);
+    g.insertAsk(q1, factSet, rs1);
+    g.insertAsk(q2, factSet, rs2);
 
     auto e1 = g.getAsks(q1, factSet);
     auto e2 = g.getAsks(q2, factSet);
@@ -533,7 +533,7 @@ TEST_F(TracingDecisionGraphTest, PersistsAcrossReopen)
     {
         TracingDecisionGraph g(dbPath);
         g.insertRequestSet({sha("a")});
-        g.insertAsks(q, TracingDecisionGraph::emptySetHash(), rs);
+        g.insertAsk(q, TracingDecisionGraph::emptySetHash(), rs);
         g.insertTerminal(q, TracingDecisionGraph::emptySetHash(), sha("R"));
     }
     {

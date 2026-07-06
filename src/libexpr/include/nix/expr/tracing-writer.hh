@@ -127,13 +127,13 @@ class TracingWriter
        edge-for-edge, so `stateHashAt(subject, argAncestry, walk, K)`
        computes the same value on both sides. Per-arg-completion
        option 2 depends on this alignment. */
-    std::vector<Edge> envWalk;
+    std::vector<ObservationSet> envWalk;
     /* Stages the next env edge between `flushAmbient` (which
        drains pendingDepth1Facts into it) and `closeAsksEdge` (which
        pushes it to envWalk paired with a perQAsksEdge). May
        be empty (= file-read-only Asks edge) — still pushed so that
        envWalk.size() == envAsksEdges.size() always holds. */
-    Edge pendingD1Edge;
+    ObservationSet pendingD1Edge;
 
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
        new query hash added to envFactSet since the last logResult,
@@ -300,7 +300,7 @@ public:
         — the per-arg evolved state hash the design's principle #3 requires
         for child queries on those wrappers. Walker's parallel handle
         is TracingReplayEvaluator::getCidasksWalk. */
-    const std::vector<Edge> & getD1CidasksWalk() const
+    const std::vector<ObservationSet> & getD1CidasksWalk() const
     {
         return envWalk;
     }
@@ -729,7 +729,7 @@ public:
                         envFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         envAsksEdges.size());
         for (const auto & edge : envAsksEdges)
-            decisionGraph->insertAsks(*qh.queryHash, edge.fromFactSetHash, edge.requestSetHash);
+            decisionGraph->insertAsk(*qh.queryHash, edge.fromFactSetHash, edge.requestSetHash);
 
         /* If we have per-Q edges, skip the whole-remaining shortcut
            so the walker walks them one by one (= each commit advances

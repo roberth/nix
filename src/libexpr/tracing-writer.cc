@@ -55,7 +55,7 @@ void TracingWriter::flushAmbient(bool finalize)
        writer.envWalk.size() == envAsksEdges.size() at every
        transition. */
     size_t d1EdgeIndex = envWalk.size();
-    Edge & d1NewEdge = pendingD1Edge;
+    ObservationSet & d1NewEdge = pendingD1Edge;
     d1NewEdge = {};
     /* Per-edge dedup of observations by elementHash. An Asks edge is a
        set, not a list — XOR-folding the same observation twice cancels
@@ -325,10 +325,10 @@ void TracingWriter::flushAmbient(bool finalize)
            Used both for first-finalize processing (with AmbientAsks)
            and for late-d2-obs re-processing (without AmbientAsks —
            see commentary at the "late probe" branch below). */
-        auto stampAndEmit = [&](size_t i, const std::vector<Edge> & walk,
+        auto stampAndEmit = [&](size_t i, const std::vector<ObservationSet> & walk,
                                 Hash cumulativeFactSet, bool withAmbientAsks,
                                 Hash boundaryOuterCtx = Hash(HashAlgorithm::SHA256))
-            -> std::pair<Hash, Edge>
+            -> std::pair<Hash, ObservationSet>
         {
             auto & pf = group[i];
             auto [path, roots] = pathAndRootsFromSubject(pf.subject);
@@ -387,10 +387,10 @@ void TracingWriter::flushAmbient(bool finalize)
                 cumulativeFactSet, queryHash, responseHash);
             if (withAmbientAsks) {
                 auto requestSet = decisionGraph->insertRequestSet({queryHash});
-                decisionGraph->insertAmbientAsks(cumulativeFactSet, requestSet, toFactSet);
+                decisionGraph->insertAmbientAsk(cumulativeFactSet, requestSet, toFactSet);
             }
 
-            Edge edge;
+            ObservationSet edge;
             auto elementHash = TracingDecisionGraph::xorFactIntoHash(
                 Hash(HashAlgorithm::SHA256), queryHash, responseHash);
             edge.observations.push_back({fromStateHash, elementHash});
@@ -415,7 +415,7 @@ void TracingWriter::flushAmbient(bool finalize)
             Hash boundaryOuterCtx = TracingDecisionGraph::xorHashes(
                 boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
             boundary.boundaryOuterCtx = boundaryOuterCtx;
-            std::vector<Edge> walk;
+            std::vector<ObservationSet> walk;
             walk.reserve(group.size());
             Hash cumulativeFactSet = boundary.applyRequestHash;
             for (size_t i = 0; i < group.size(); ++i) {
@@ -441,7 +441,7 @@ void TracingWriter::flushAmbient(bool finalize)
                 allRequestHashes.insert(boundary.applyRequestHash);
             }
 
-            Edge applyEdge;
+            ObservationSet applyEdge;
             applyEdge.observations.push_back({
                 Hash(HashAlgorithm::SHA256),
                 factHash,
@@ -504,7 +504,7 @@ void TracingWriter::flushAmbient(bool finalize)
                Validation against AmbientAsks is skipped for boundaries
                whose chain is empty at chainStart — see
                `ReplayCallbackArg::withChainStart`. */
-            std::vector<Edge> walk;
+            std::vector<ObservationSet> walk;
             walk.reserve(group.size());
             Hash cumulativeFactSet = boundary.applyRequestHash;
             for (size_t i = 0; i < boundary.lastProcessedCount; ++i) {

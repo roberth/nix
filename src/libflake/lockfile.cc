@@ -324,10 +324,10 @@ std::optional<NonEmptyInputAttrPath> NonEmptyInputAttrPath::make(InputAttrPath p
     return NonEmptyInputAttrPath{std::move(path)};
 }
 
-std::map<InputAttrPath, Node::Edge> LockFile::getAllInputs() const
+std::map<InputAttrPath, Node::ObservationSet> LockFile::getAllInputs() const
 {
     std::set<ref<Node>> done;
-    std::map<InputAttrPath, Node::Edge> res;
+    std::map<InputAttrPath, Node::ObservationSet> res;
 
     [&](this const auto & recurse, const InputAttrPath & prefix, ref<Node> node) {
         if (!done.insert(node).second)
@@ -355,7 +355,7 @@ static std::string describe(const FlakeRef & flakeRef)
     return s;
 }
 
-std::ostream & operator<<(std::ostream & stream, const Node::Edge & edge)
+std::ostream & operator<<(std::ostream & stream, const Node::ObservationSet & edge)
 {
     if (auto node = std::get_if<0>(&edge))
         stream << describe((*node)->lockedRef);
@@ -364,7 +364,7 @@ std::ostream & operator<<(std::ostream & stream, const Node::Edge & edge)
     return stream;
 }
 
-static bool equals(const Node::Edge & e1, const Node::Edge & e2)
+static bool equals(const Node::ObservationSet & e1, const Node::ObservationSet & e2)
 {
     if (auto n1 = std::get_if<0>(&e1))
         if (auto n2 = std::get_if<0>(&e2))

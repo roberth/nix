@@ -97,9 +97,9 @@ struct LockedNode;
  */
 struct Node : std::enable_shared_from_this<Node>
 {
-    typedef std::variant<ref<LockedNode>, InputAttrPath> Edge;
+    typedef std::variant<ref<LockedNode>, InputAttrPath> ObservationSet;
 
-    std::map<FlakeId, Edge> inputs;
+    std::map<FlakeId, ObservationSet> inputs;
 
     virtual ~Node() {}
 };
@@ -156,7 +156,7 @@ struct LockFile
 
     std::shared_ptr<Node> findInput(const InputAttrPath & path);
 
-    std::map<InputAttrPath, Node::Edge> getAllInputs() const;
+    std::map<InputAttrPath, Node::ObservationSet> getAllInputs() const;
 
     static std::string diff(const LockFile & oldLocks, const LockFile & newLocks);
 

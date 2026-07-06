@@ -793,7 +793,7 @@ void registerAmbientResolverProxy(
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     OuterResolver & resolver,
     const Hash & idHash,
-    const std::vector<Edge> & envWalk,
+    const std::vector<ObservationSet> & envWalk,
     TracingDecisionGraph * dg)
 {
     /* Linear scan over each registered (subject, argAncestry) x K in

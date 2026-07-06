@@ -107,7 +107,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
                 fingerprint = TracingDecisionGraph::xorFactIntoHash(
                     fingerprint, f.fromHash, f.elementHash);
             if (committedEdgeFingerprints.insert(fingerprint).second) {
-                Edge edge;
+                ObservationSet edge;
                 edge.observations = std::move(obs);
                 envWalk.push_back(std::move(edge));
                 tracingCacheLog("dispatch: committed edge, envWalk=%zu (obs=%zu)",
@@ -455,7 +455,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
     /* Walk the proxy's argCell chain looking for a cell whose
        liveObject's state hash matches idStr at some k under
        walker's own envWalk. */
-    std::vector<Edge> extendedWalkForMatch = envWalk;
+    std::vector<ObservationSet> extendedWalkForMatch = envWalk;
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr;
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
@@ -489,7 +489,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                    walker looks up (subject, cur, obs.from, obs.elem)
                    in cold-recorded SubjectEvolutionEdges; if edge
                    exists, folds obs.elem into edge accumulator.
-                   Edge-scoped semantics (all obs in one edge check
+                   ObservationSet-scoped semantics (all obs in one edge check
                    against edge-entry cur) preserved.
                    Empirical: every previously-iterated K-match is
                    also reached by trie navigation, so the loop's
@@ -757,7 +757,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                         + "|" + std::to_string(fallthroughSeq2));
                     auto rlo = std::make_shared<ReplayCallbackArg>(
                         std::move(rootSubject), sidecarScope,
-                        std::make_shared<std::vector<Edge>>(),
+                        std::make_shared<std::vector<ObservationSet>>(),
                         std::make_shared<Hash>(HashAlgorithm::SHA256),
                         fallthroughSeqCtx2, decisionGraph, inner->getEvalState().rootFSRoot,
                         &inner->getEvalState());
@@ -916,11 +916,11 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        Injecting the current sibling's applyContext obs makes the
        ReplayCallbackArg's CDIs reflect the SPECIFIC sibling context walker is
        operating under. */
-    auto seededWalkFacts = std::make_shared<std::vector<Edge>>();
+    auto seededWalkFacts = std::make_shared<std::vector<ObservationSet>>();
     if (auto * proxyTR = dynamic_cast<TracingReplayObject *>(ctx.currentProxy.get())) {
         if (auto proxyCtx = proxyTR->getApplyContext()) {
             for (auto & obs : proxyCtx->observations) {
-                Edge edge;
+                ObservationSet edge;
                 edge.observations.push_back(obs);
                 seededWalkFacts->push_back(std::move(edge));
             }

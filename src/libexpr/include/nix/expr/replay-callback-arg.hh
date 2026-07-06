@@ -67,9 +67,9 @@ class ReplayCallbackArg : public Object
        to compute each proxy's evolved state hash.
 
        Backed as a shared single-fact-edge sequence: each entry is
-       wrapped in a single-fact Edge so the walk's edge indices match
+       wrapped in a single-fact ObservationSet so the walk's edge indices match
        the recorder's flush walk. */
-    std::shared_ptr<std::vector<Edge>> walkFacts;
+    std::shared_ptr<std::vector<ObservationSet>> walkFacts;
     /* Shared chain cursor across all proxies in one cb apply. Each
        validated probe advances `*chainCursor` to the matched edge's
        toFactSet. */
@@ -147,7 +147,7 @@ public:
     ReplayCallbackArg(
         Subject subject_,
         Hash scope_,
-        std::shared_ptr<std::vector<Edge>> walkFacts_,
+        std::shared_ptr<std::vector<ObservationSet>> walkFacts_,
         std::shared_ptr<Hash> chainCursor_,
         Hash outerContext_,
         TracingDecisionGraph & dg,

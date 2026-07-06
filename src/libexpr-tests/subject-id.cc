@@ -88,7 +88,7 @@ TEST(CidAsks, ObservationOnSeedAdvancesContentId)
     // A getInt fact whose from matches the seed's initial id.
     trace::QueryGetWHNF q{hex(initial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{42}};
-    Edge e{.observations = {observationFromQR(q, r)}};
+    ObservationSet e{.observations = {observationFromQR(q, r)}};
 
     auto after = stateHashAfter(s, noScope(), {e});
     EXPECT_NE(initial, after);
@@ -108,7 +108,7 @@ TEST(CidAsks, FactOnUnrelatedSubjectDoesNotAdvance)
     // Fact whose from matches s1, not s0.
     trace::QueryGetWHNF q{hex(s1Initial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{99}};
-    Edge e{.observations = {observationFromQR(q, r)}};
+    ObservationSet e{.observations = {observationFromQR(q, r)}};
 
     EXPECT_EQ(stateHashAfter(s0, noScope(), {}), stateHashAfter(s0, noScope(), {e}));
     EXPECT_NE(stateHashAfter(s1, noScope(), {}), stateHashAfter(s1, noScope(), {e}));
@@ -135,8 +135,8 @@ TEST(CidAsks, XorCommutativityWithinEdge)
 
     auto f1 = observationFromQR(q1, r1);
     auto f2 = observationFromQR(q2, r2);
-    Edge eAB{.observations = {f1, f2}};
-    Edge eBA{.observations = {f2, f1}};
+    ObservationSet eAB{.observations = {f1, f2}};
+    ObservationSet eBA{.observations = {f2, f1}};
 
     // Within one edge, dispatch order doesn't matter.
     EXPECT_EQ(stateHashAfter(s, noScope(), {eAB}), stateHashAfter(s, noScope(), {eBA}));
@@ -155,7 +155,7 @@ TEST(CidAsks, DerivedAdvancesWhenParentAdvances)
     // A fact on the parent.
     trace::QueryGetWHNF q{hex(parentInitial)};
     trace::ResultWHNF r{"set", trace::WHNFAttrs{{"x"}}};
-    Edge e{.observations = {observationFromQR(q, r)}};
+    ObservationSet e{.observations = {observationFromQR(q, r)}};
 
     auto childAfter = subjectHashAfter(child, noScope(), {e});
     EXPECT_NE(childInitial, childAfter);  // address changes because parent's CDI did
@@ -176,7 +176,7 @@ TEST(CidAsks, DerivedDoesNotAdvanceOnFactsTargetedAtItself)
     // A fact whose `from` matches the child's address (not the root's).
     trace::QueryGetWHNF q{hex(childInitial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{7}};
-    Edge e{.observations = {observationFromQR(q, r)}};
+    ObservationSet e{.observations = {observationFromQR(q, r)}};
 
     EXPECT_EQ(subjectHashAfter(child, noScope(), {e}), childInitial);
 }
@@ -264,8 +264,8 @@ TEST(CidAsks, ObservationOnScopedSeedRequiresMatchingScopedFromHash)
     trace::QueryGetWHNF qScoped{hex(scopedInitial)};
     trace::QueryGetWHNF qUnscoped{hex(unscopedInitial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{1}};
-    Edge eScoped{.observations = {observationFromQR(qScoped, r)}};
-    Edge eUnscoped{.observations = {observationFromQR(qUnscoped, r)}};
+    ObservationSet eScoped{.observations = {observationFromQR(qScoped, r)}};
+    ObservationSet eUnscoped{.observations = {observationFromQR(qUnscoped, r)}};
 
     EXPECT_NE(stateHashAfter(s, scope, {eScoped}), scopedInitial);
     EXPECT_EQ(stateHashAfter(s, scope, {eUnscoped}), scopedInitial);

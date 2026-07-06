@@ -215,7 +215,7 @@ public:
     /* Insert an Asks edge: at (Q, factSet), the box's next set of
        Requests is `requestSet`. Idempotent on
        (queryHash, factSetHash, requestSetHash). */
-    void insertAsks(const QueryHash & q, const SetHash & factSet, const SetHash & requestSet);
+    void insertAsk(const QueryHash & q, const SetHash & factSet, const SetHash & requestSet);
 
     /* Look up the outgoing RequestSet edges at (Q, factSet). */
     std::vector<SetHash> getAsks(const QueryHash & q, const SetHash & factSet);
@@ -223,7 +223,7 @@ public:
 
     /* Remove a specific Asks edge. Used by Patricia split to
        re-point an existing edge. */
-    void removeAsks(const QueryHash & q, const SetHash & factSet, const SetHash & requestSet);
+    void removeAsk(const QueryHash & q, const SetHash & factSet, const SetHash & requestSet);
 
     /* Insert a Terminal: at (Q, factSet), the recorded Result for
        Q is `result`. Idempotent on
@@ -260,7 +260,7 @@ public:
     /* Insert a ambient layer Asks edge: at `fromFactSet`, dispatching
        `requestSet` and observing the recorded responses lands at
        `toFactSet`. Idempotent on (fromFactSet, requestSet). */
-    void insertAmbientAsks(const SetHash & fromFactSet, const SetHash & requestSet, const SetHash & toFactSet);
+    void insertAmbientAsk(const SetHash & fromFactSet, const SetHash & requestSet, const SetHash & toFactSet);
 
     /* Look up ambient layer outgoing edges at `fromFactSet`. Returns a
        list of (requestSetHash, toFactSetHash) pairs. */
@@ -340,14 +340,14 @@ public:
        been dispatched, with `committed=true` if the resulting
        factset reaches a continuation and `false` if walk is
        rejecting this branch. Used by the subject-id-aware caller to
-       promote per-edge dispatched facts into a `Edge`
+       promote per-edge dispatched facts into a `ObservationSet`
        on commit (= principle 5/7) or discard them on reject. */
     /* Hit: returns (resultHash, terminalCur). The terminalCur is the
        factSet the walk landed on when committing the terminal — child
        Q lookups use it as their candidate startCur, so a child's walk
        starts from its parent's structural anchor. */
     struct WalkHit { ResultHash resultHash; SetHash terminalCur; };
-    /* Edge context passed to dispatch: identifies the specific Asks
+    /* ObservationSet context passed to dispatch: identifies the specific Asks
        edge whose requests are being dispatched. */
     struct EdgeContext
     {

@@ -104,14 +104,14 @@ CREATE TABLE IF NOT EXISTS RequestSetNodes (
 -- WITHOUT ROWID stores rows directly in the PK B-tree instead of in a
 -- separate heap with a duplicate PK index — a ~50% reduction in
 -- on-disk size for these all-blob, no-other-payload tables.
-CREATE TABLE IF NOT EXISTS Asks (
+CREATE TABLE IF NOT EXISTS Ask (
     queryHash      BLOB NOT NULL,
     factSetHash    BLOB NOT NULL,
     requestSetHash BLOB NOT NULL,
     PRIMARY KEY (queryHash, factSetHash, requestSetHash)
 ) WITHOUT ROWID;
 
-CREATE TABLE IF NOT EXISTS Terminals (
+CREATE TABLE IF NOT EXISTS Terminal (
     queryHash   BLOB NOT NULL,
     factSetHash BLOB NOT NULL,
     resultHash  BLOB NOT NULL,
@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS Terminals (
 -- is stored explicitly: at ambient layer there is no live producer for
 -- incoming-ambient observations, so the walker can't reproduce the
 -- transition by live dispatch the way env layer does.
-CREATE TABLE IF NOT EXISTS AmbientAsks (
+CREATE TABLE IF NOT EXISTS AmbientAsk (
     fromFactSetHash BLOB NOT NULL,
     requestSetHash  BLOB NOT NULL,
     toFactSetHash   BLOB NOT NULL,
@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS AmbientAsks (
 -- forward-compat schema entry so cold can begin populating and
 -- future iterations can implement navigation without a schema
 -- migration.
-CREATE TABLE IF NOT EXISTS SubjectEvolutionEdges (
+CREATE TABLE IF NOT EXISTS SubjectEvolutionEdge (
     subjectHash    BLOB NOT NULL,
     curHash        BLOB NOT NULL,
     obsFromHash    BLOB NOT NULL,
@@ -175,11 +175,11 @@ struct TracingDecisionGraph::State
     SQLiteStmt countAsks, countTerminals;
 
     /* Decision graph layer */
-    SQLiteStmt insertAsks, selectAsks, deleteAsks;
+    SQLiteStmt insertAsk, selectAsks, deleteAsks;
     SQLiteStmt insertTerminal, selectTerminal;
 
     /* Depth-2 decision graph layer */
-    SQLiteStmt insertAmbientAsks, selectAmbientAsks;
+    SQLiteStmt insertAmbientAsk, selectAmbientAsks;
 
     /* (subject-evolution fast-path) — populated by cold's
        stateHashAtStamping fold callback; consumed by
@@ -419,30 +419,30 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
        schema versions if present (incompatible payload format). */
     state->db.exec("DROP TABLE IF EXISTS RequestSets;");
 
-    state->insertAsks.create(state->db,
-        "INSERT OR IGNORE INTO Asks(queryHash, factSetHash, requestSetHash) VALUES (?, ?, ?)");
+    state->insertAsk.create(state->db,
+        "INSERT OR IGNORE INTO Ask(queryHash, factSetHash, requestSetHash) VALUES (?, ?, ?)");
     state->selectAsks.create(state->db,
-        "SELECT requestSetHash FROM Asks WHERE queryHash = ? AND factSetHash = ?");
+        "SELECT requestSetHash FROM Ask WHERE queryHash = ? AND factSetHash = ?");
     state->deleteAsks.create(state->db,
-        "DELETE FROM Asks WHERE queryHash = ? AND factSetHash = ? AND requestSetHash = ?");
+        "DELETE FROM Ask WHERE queryHash = ? AND factSetHash = ? AND requestSetHash = ?");
     state->insertTerminal.create(state->db,
-        "INSERT OR IGNORE INTO Terminals(queryHash, factSetHash, resultHash) VALUES (?, ?, ?)");
+        "INSERT OR IGNORE INTO Terminal(queryHash, factSetHash, resultHash) VALUES (?, ?, ?)");
     state->selectTerminal.create(state->db,
-        "SELECT resultHash FROM Terminals WHERE queryHash = ? AND factSetHash = ?");
+        "SELECT resultHash FROM Terminal WHERE queryHash = ? AND factSetHash = ?");
     state->countAsks.create(state->db,
-        "SELECT 1 FROM Asks WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
+        "SELECT 1 FROM Ask WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
     state->countTerminals.create(state->db,
-        "SELECT 1 FROM Terminals WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
-    state->insertAmbientAsks.create(state->db,
-        "INSERT OR IGNORE INTO AmbientAsks(fromFactSetHash, requestSetHash, toFactSetHash) VALUES (?, ?, ?)");
+        "SELECT 1 FROM Terminal WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
+    state->insertAmbientAsk.create(state->db,
+        "INSERT OR IGNORE INTO AmbientAsk(fromFactSetHash, requestSetHash, toFactSetHash) VALUES (?, ?, ?)");
     state->selectAmbientAsks.create(state->db,
-        "SELECT requestSetHash, toFactSetHash FROM AmbientAsks WHERE fromFactSetHash = ?");
+        "SELECT requestSetHash, toFactSetHash FROM AmbientAsk WHERE fromFactSetHash = ?");
     state->insertSubjectEvolutionEdge.create(state->db,
-        "INSERT OR IGNORE INTO SubjectEvolutionEdges("
+        "INSERT OR IGNORE INTO SubjectEvolutionEdge("
         "subjectHash, curHash, obsFromHash, obsElementHash, nextCurHash) "
         "VALUES (?, ?, ?, ?, ?)");
     state->selectSubjectEvolutionEdge.create(state->db,
-        "SELECT nextCurHash FROM SubjectEvolutionEdges "
+        "SELECT nextCurHash FROM SubjectEvolutionEdge "
         "WHERE subjectHash = ? AND curHash = ? "
         "AND obsFromHash = ? AND obsElementHash = ?");
 }
@@ -959,11 +959,11 @@ TracingDecisionGraph::getFactSet(const SetHash & h)
    Decision graph layer
    ───────────────────────────────────────────────────────────────────── */
 
-void TracingDecisionGraph::insertAsks(
+void TracingDecisionGraph::insertAsk(
     const QueryHash & q, const SetHash & factSet, const SetHash & requestSet)
 {
     auto state(_state->lock());
-    auto use = state->insertAsks.use();
+    auto use = state->insertAsk.use();
     dg_bindBlob(use, dg_hashToBlob(q));
     dg_bindBlob(use, dg_hashToBlob(factSet));
     dg_bindBlob(use, dg_hashToBlob(requestSet));
@@ -983,7 +983,7 @@ TracingDecisionGraph::getAsks(const QueryHash & q, const SetHash & factSet)
     return out;
 }
 
-void TracingDecisionGraph::removeAsks(
+void TracingDecisionGraph::removeAsk(
     const QueryHash & q, const SetHash & factSet, const SetHash & requestSet)
 {
     auto state(_state->lock());
@@ -994,11 +994,11 @@ void TracingDecisionGraph::removeAsks(
     use.exec();
 }
 
-void TracingDecisionGraph::insertAmbientAsks(
+void TracingDecisionGraph::insertAmbientAsk(
     const SetHash & fromFactSet, const SetHash & requestSet, const SetHash & toFactSet)
 {
     auto state(_state->lock());
-    auto use = state->insertAmbientAsks.use();
+    auto use = state->insertAmbientAsk.use();
     dg_bindBlob(use, dg_hashToBlob(fromFactSet));
     dg_bindBlob(use, dg_hashToBlob(requestSet));
     dg_bindBlob(use, dg_hashToBlob(toFactSet));
@@ -1137,9 +1137,9 @@ static void dg_recordImpl(
 
             auto sharedRsHash = g.insertRequestSet(shared);
             auto intermediate = curExtendedBy(shared);
-            g.insertAsks(q, cur, sharedRsHash);
-            g.insertAsks(q, intermediate, rsHash);
-            g.removeAsks(q, cur, rsHash);
+            g.insertAsk(q, cur, sharedRsHash);
+            g.insertAsk(q, intermediate, rsHash);
+            g.removeAsk(q, cur, rsHash);
             tracingCacheLog(
                 "record Q=%s Patricia split at cur=%s: shared=%zu of useful=%zu "
                 "(intermediate=%s, sharedRS=%s, tailRS=%s)",
@@ -1176,7 +1176,7 @@ static void dg_recordImpl(
                and jump straight to factSet — cur ⊕ allFacts =
                factSetHash by construction. */
             if (dispatchedSoFar.empty() && sessionRequestsRsHash) {
-                g.insertAsks(q, cur, *sessionRequestsRsHash);
+                g.insertAsk(q, cur, *sessionRequestsRsHash);
                 cur = factSetHash;
                 break;
             }
@@ -1186,7 +1186,7 @@ static void dg_recordImpl(
                 if (!dispatchedSoFar.count(req))
                     remainingVec.push_back(req);
             auto rsHash = g.insertRequestSet(remainingVec);
-            g.insertAsks(q, cur, rsHash);
+            g.insertAsk(q, cur, rsHash);
             extendCur(remainingVec);
         }
     }

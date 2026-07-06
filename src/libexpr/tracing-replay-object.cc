@@ -51,10 +51,10 @@ std::string TracingReplayObject::evolvedQueryFrom() const
     if (applyResultSubject && inner) {
         if (auto * innerT = dynamic_cast<TracingObject *>(inner->get_ptr().get())) {
             if (auto innerCtx = innerT->getApplyContext()) {
-                std::vector<Edge> walk;
+                std::vector<ObservationSet> walk;
                 walk.reserve(innerCtx->observations.size());
                 for (auto & obs : innerCtx->observations) {
-                    Edge edge;
+                    ObservationSet edge;
                     edge.observations.push_back(obs);
                     walk.push_back(std::move(edge));
                 }
@@ -64,10 +64,10 @@ std::string TracingReplayObject::evolvedQueryFrom() const
         }
     }
     if (applyResultSubject && applyContext) {
-        std::vector<Edge> walk;
+        std::vector<ObservationSet> walk;
         walk.reserve(applyContext->observations.size());
         for (auto & obs : applyContext->observations) {
-            Edge edge;
+            ObservationSet edge;
             edge.observations.push_back(obs);
             walk.push_back(std::move(edge));
         }
@@ -91,10 +91,10 @@ std::vector<std::string> TracingReplayObject::parentHashCandidates() const
            sibling attrs in those warmups recorded at this prefix
            regardless of which warmup wrote them. */
         if (postWHNFObservationCount && *postWHNFObservationCount < applyContext->observations.size()) {
-            std::vector<Edge> walk;
+            std::vector<ObservationSet> walk;
             walk.reserve(*postWHNFObservationCount);
             for (size_t i = 0; i < *postWHNFObservationCount; ++i) {
-                Edge edge;
+                ObservationSet edge;
                 edge.observations.push_back(applyContext->observations[i]);
                 walk.push_back(std::move(edge));
             }
@@ -213,10 +213,10 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
            observation). If the deeper lookup hits AND its chain
            validates against live env, prefer it. */
         if (applyResultSubject && applyContext) {
-            std::vector<Edge> specWalk;
+            std::vector<ObservationSet> specWalk;
             specWalk.reserve(applyContext->observations.size() + 1);
             for (auto & obs : applyContext->observations) {
-                Edge edge;
+                ObservationSet edge;
                 edge.observations.push_back(obs);
                 specWalk.push_back(std::move(edge));
             }
@@ -224,7 +224,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
                 Hash::parseNonSRIUnprefixed(parentHash, HashAlgorithm::SHA256),
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), shallowQueryHash, shallowResp)};
-            Edge specEdge;
+            ObservationSet specEdge;
             specEdge.observations.push_back(specObs);
             specWalk.push_back(std::move(specEdge));
             auto deepFrom = stateHashAt(
@@ -289,10 +289,10 @@ std::optional<const trace::ResultWHNF *> TracingReplayObject::whnf()
            depends on observations (i.e. applyContext with obs); if
            there are no obs, deeper == shallow, no lookup needed. */
         if (applyResultSubject && applyContext && !applyContext->observations.empty()) {
-            std::vector<Edge> specWalk;
+            std::vector<ObservationSet> specWalk;
             specWalk.reserve(applyContext->observations.size() + 1);
             for (auto & obs : applyContext->observations) {
-                Edge edge;
+                ObservationSet edge;
                 edge.observations.push_back(obs);
                 specWalk.push_back(std::move(edge));
             }
@@ -300,7 +300,7 @@ std::optional<const trace::ResultWHNF *> TracingReplayObject::whnf()
                 Hash::parseNonSRIUnprefixed(parentHash, HashAlgorithm::SHA256),
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), shallowQueryHash, shallowResp)};
-            Edge specEdge;
+            ObservationSet specEdge;
             specEdge.observations.push_back(specObs);
             specWalk.push_back(std::move(specEdge));
             auto deepFrom = stateHashAt(

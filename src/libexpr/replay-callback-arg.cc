@@ -35,7 +35,7 @@ static Hash stampPerArgFields(
     Q & query,
     const Subject & subject,
     const Hash & argAncestry,
-    const std::vector<Edge> & walkFacts,
+    const std::vector<ObservationSet> & walkFacts,
     size_t edgeIndex)
 {
     auto par = pathAndRootsFromSubject(subject);
@@ -99,14 +99,14 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, c
 template<typename Q>
 static void appendFactToWalk(
     const Q & query, const Hash & fromStateHash, const nlohmann::json & responseJson,
-    std::vector<Edge> & walkFacts)
+    std::vector<ObservationSet> & walkFacts)
 {
     auto reqHash = TracingDecisionGraph::computeQueryHash(query);
     auto responsePayload = jsonToCborString(responseJson);
     auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
     auto elementHash = TracingDecisionGraph::xorFactIntoHash(
         Hash(HashAlgorithm::SHA256), reqHash, responseHash);
-    Edge edge;
+    ObservationSet edge;
     edge.observations.push_back({fromStateHash, elementHash});
     walkFacts.push_back(std::move(edge));
 }
@@ -115,7 +115,7 @@ template<typename Q>
 static void advanceChainAndAppendFact(
     TracingDecisionGraph & dg, const Q & query, const Hash & fromStateHash,
     const nlohmann::json & responseJson,
-    std::vector<Edge> & walkFacts, Hash & chainCursor)
+    std::vector<ObservationSet> & walkFacts, Hash & chainCursor)
 {
     auto reqHash = TracingDecisionGraph::computeQueryHash(query);
     tracingCacheLog(
@@ -464,7 +464,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    chain advance independent of prior firings while
                    still starting from the right position in the
                    recorded chain. */
-                auto localWalkFacts = std::make_shared<std::vector<Edge>>(
+                auto localWalkFacts = std::make_shared<std::vector<ObservationSet>>(
                     walkFactsSaved->begin(),
                     walkFactsSaved->begin() + std::min(initialWalkFactsSize, walkFactsSaved->size()));
                 auto localChainCursor = std::make_shared<Hash>(*initialChainCursor);
@@ -566,7 +566,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                         : Hash::parseNonSRIUnprefixed(
                               fromStateHashes[0].stateHash(), HashAlgorithm::SHA256);
 
-                    Edge edge;
+                    ObservationSet edge;
                     edge.observations.push_back({fromStateHash, elementHash});
                     localWalkFacts->push_back(std::move(edge));
                     *localChainCursor = TracingDecisionGraph::xorHashes(

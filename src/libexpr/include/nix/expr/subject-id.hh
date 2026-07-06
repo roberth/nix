@@ -115,7 +115,7 @@ struct Observation
 /** An Asks edge's worth of observations. Observations in one edge are
     dispatched against a single shared precondition factset; their
     `from` fields all refer to subjects' state hashes at that precondition. */
-struct Edge
+struct ObservationSet
 {
     std::vector<Observation> observations;
 };
@@ -136,7 +136,7 @@ Observation observationFromQR(const trace::QueryVariant & query, const trace::Re
     via their constituents' (recursively state-hash-aware) state hashes,
     so the structural derivation incorporates inheritance naturally
     via the constituents' `from`-field values. */
-Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
+Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk);
 
 /** Compute the state hash of `subject` at the precondition of the
     edge at index `edgeIndex` in `walk`, inheriting `argAncestry`.
@@ -154,7 +154,7 @@ Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std
     `(root_cdi, path)`. Passing a `DerivedSubject` traps; callers
     that want a content-addressed identifier for any Subject
     (including derived) should use `subjectHashAt` instead. */
-Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex);
+Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk, size_t edgeIndex);
 
 /** Grouping-independent converged fold. Flattens `walk` into a
     deduplicated observation pool (by (fromHash, elementHash)) and
@@ -173,7 +173,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
     equivalent to iterating the observation-permutation loop in
     `TracingReplayEvaluator::resolveStateHash` to its fixed point. */
 Hash stateHashConverged(
-    const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
+    const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk);
 
 /** Compute a content-addressed structural identifier for any
     `subject` — including `DerivedSubject`, where `stateHashAt`
@@ -183,12 +183,12 @@ Hash stateHashConverged(
     `GetAttr`, similarly for `GetListElem`. Used by `OuterObject`,
     `TracingCallbackArg`, etc. to expose a single-`Hash` identity
     handle even though derived values don't have state hashes proper. */
-Hash subjectHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex);
+Hash subjectHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk, size_t edgeIndex);
 
 /** Convenience: `subjectHashAt` at the walk's tail (= edgeIndex
     = walk.size()). Mirrors `stateHashAfter` but defined for all
     subject forms. */
-Hash subjectHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
+Hash subjectHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk);
 
 /** Per-subject observation trie fold step, as consumed by the subject-evolution fast-path
     stamping / navigation. Emitted by `stateHashAtStamping`
@@ -211,7 +211,7 @@ struct EvolutionStep {
 Hash stateHashAtStamping(
     const Subject & subject,
     const Hash & argAncestry,
-    const std::vector<Edge> & walk,
+    const std::vector<ObservationSet> & walk,
     size_t edgeIndex,
     const std::function<void(const EvolutionStep &)> & hook);
 
@@ -229,7 +229,7 @@ Hash stateHashAtStamping(
 trace::QueryApply makeApplyResultQuery(
     const Subject & applyResultSubject,
     const Hash & argAncestry,
-    const std::vector<Edge> & walk,
+    const std::vector<ObservationSet> & walk,
     size_t edgeIndex);
 
 /** Convenience: extract a query's `from` field as a Hash, if it has
@@ -288,7 +288,7 @@ std::string describe(const Subject & subject);
     its derived children. Both directions land in `observations` in
     chronological order, one Observation per call. Each Observation
     is conceptually its own one-fact Asks edge; `evolvedQueryFrom` on
-    the wrapper wraps `observations` as a vector<Edge> with one fact
+    the wrapper wraps `observations` as a vector<ObservationSet> with one fact
     per edge so the subject-id own-loop re-evaluates `myCidAtK` per
     observation.
 

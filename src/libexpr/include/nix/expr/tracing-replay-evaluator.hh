@@ -97,7 +97,7 @@ class TracingReplayEvaluator : public Evaluator
         encodings reproducible at warm — without it, cell-chain
         state hash computation lands at the wrong edge index (= cb-385's
         original failure mode) and per-arg `from` lookups miss. */
-    std::vector<Edge> envWalk;
+    std::vector<ObservationSet> envWalk;
     /** Dedup committed edges by their elementHash-set fingerprint
         (= XOR-fold of fact element hashes within the edge). When
         a later walk re-traverses an Asks edge already in
@@ -177,7 +177,7 @@ public:
         `stateHashAt(subject, argAncestry, walk, walk.size())` and match the
         writer's evolved state hash at the same walk index — the per-arg
         identity alignment principle #3 requires. */
-    const std::vector<Edge> & getCidasksWalk() const
+    const std::vector<ObservationSet> & getCidasksWalk() const
     {
         return envWalk;
     }

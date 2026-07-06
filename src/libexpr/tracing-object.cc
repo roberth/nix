@@ -76,10 +76,10 @@ ref<TracingObject> TracingObject::create(
 std::string TracingObject::evolvedQueryFrom() const
 {
     if (applyResultSubject && applyContext) {
-        std::vector<Edge> walk;
+        std::vector<ObservationSet> walk;
         walk.reserve(applyContext->observations.size());
         for (auto & obs : applyContext->observations) {
-            Edge edge;
+            ObservationSet edge;
             edge.observations.push_back(obs);
             walk.push_back(std::move(edge));
         }

@@ -145,7 +145,7 @@ Observation observationFromQR(const trace::QueryVariant & query, const trace::Re
 
 trace::QueryApply makeApplyResultQuery(
     const Subject & applyResultSubject, const Hash & argAncestry,
-    const std::vector<Edge> & walk, size_t edgeIndex)
+    const std::vector<ObservationSet> & walk, size_t edgeIndex)
 {
     if (!std::holds_alternative<ApplyResultSubject>(applyResultSubject.data))
         throw Error("makeApplyResultQuery: subject is not an ApplyResultSubject");
@@ -174,7 +174,7 @@ trace::QueryApply makeApplyResultQuery(
 Hash stateHashAtStamping(
     const Subject & subject,
     const Hash & argAncestry,
-    const std::vector<Edge> & walk,
+    const std::vector<ObservationSet> & walk,
     size_t edgeIndex,
     const std::function<void(const EvolutionStep &)> & hook)
 {
@@ -211,7 +211,7 @@ Hash stateHashAtStamping(
     return result;
 }
 
-Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex)
+Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk, size_t edgeIndex)
 {
     /* Compute subject's state hash at the precondition of the
        `edgeIndex`-th edge by replaying the first `edgeIndex` edges'
@@ -327,12 +327,12 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
         subject.data);
 }
 
-Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
+Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk)
 {
     return stateHashAt(subject, argAncestry, walk, walk.size());
 }
 
-Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
+Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk)
 {
     /* Flatten walk into deduped observation pool keyed by
        (fromHash, elementHash). Order within `walk` is discarded —
@@ -356,10 +356,10 @@ Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const
        from `flat` (partition is non-empty when we don't break), so
        `flat.size()` strictly decreases. Bounded by initial pool
        size without an explicit numeric cap. */
-    std::vector<Edge> hypWalk;
+    std::vector<ObservationSet> hypWalk;
     while (!flat.empty()) {
         auto currentId = stateHashAt(subject, argAncestry, hypWalk, hypWalk.size());
-        Edge partition;
+        ObservationSet partition;
         std::vector<Observation> stillRemaining;
         for (auto & obs : flat) {
             if (obs.fromHash == currentId) partition.observations.push_back(obs);
@@ -373,7 +373,7 @@ Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const
 }
 
 Hash subjectHashAt(
-    const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex)
+    const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk, size_t edgeIndex)
 {
     /* For non-derived subjects, the structural address IS the state hash.
        For DerivedSubject, stateHashAt traps; we compute the
@@ -405,7 +405,7 @@ Hash subjectHashAt(
     return stateHashAt(subject, argAncestry, walk, edgeIndex);
 }
 
-Hash subjectHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
+Hash subjectHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk)
 {
     return subjectHashAt(subject, argAncestry, walk, walk.size());
 }
