@@ -40,7 +40,7 @@ class TracingObject : public Object
        this apply structurally (ApplyResultSubject{fn, arg}), and the
        inherited scope (= argStateId(Q) at the cb-apply boundary). Child
        queries on this wrapper emit at
-       `scopeStateIdAt(applyResultSubject, applyScope, writer.d1CidasksWalk,
+       `scopeStateIdAt(applyResultSubject, applyScope, writer.envWalk,
        walk.size())` — the per-arg evolved scopeStateId the design's
        principle #3 requires for sibling discrimination. Null on
        non-apply-result wrappers (= navigation children). */

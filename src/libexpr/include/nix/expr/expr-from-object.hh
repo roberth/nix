@@ -153,7 +153,7 @@ void registerAmbientResolverProxy(
     cell-chain and Requests-pool resolution fail, before the
     "outer-seed by elimination" miss path. Iterating every edge
     boundary is necessary because the d=1 fact's `from` is the
-    seed's argStateId at the writer's flush-time `d1CidasksWalk` index
+    seed's argStateId at the writer's flush-time `envWalk` index
     (= post-observations evolution), which differs from the
     initial argStateId we registered under. */
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(

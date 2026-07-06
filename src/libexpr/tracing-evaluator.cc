@@ -411,7 +411,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     }
 
     /* Per-arg-completion option 2: apply-result argStateId evolves with
-       the writer's d1CidasksWalk at the moment of apply. With the
+       the writer's envWalk at the moment of apply. With the
        1:1 alignment restructure, writer.d1.size grows in lockstep
        with perQAsksEdges; walker.cidasksWalk grows per dispatched
        Asks edge. At sibling B's apply, walker.cidasksWalk should

@@ -30,7 +30,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
 
     /* Depth-1 facts (= ambient observations on outer state) fold into
        v13FactSet immediately; we build a single edge per flush appended
-       to d1CidasksWalk for cidasks own-fold evolution. Depth-2 facts
+       to envWalk for cidasks own-fold evolution. Depth-2 facts
        group by cb-apply id and are NOT folded into v13FactSet — they
        live only in AmbientAsks rows, processed at `finalize=true`
        (= logResult) when each cb-apply's chain is known to be complete. */
@@ -44,17 +44,17 @@ void TracingWriter::flushPendingAmbient(bool finalize)
     };
 
     /* Depth-1: this flush's ambient facts form ONE edge appended to
-       the persistent `d1CidasksWalk` chain (= principles 3/5/7). Each
-       fact's `from` substitutes against `d1CidasksWalk[walk.size()]`
+       the persistent `envWalk` chain (= principles 3/5/7). Each
+       fact's `from` substitutes against `envWalk[walk.size()]`
        — the precondition for the new edge — so per-arg roots evolve
        across logResults.
 
        Under the 1:1 alignment invariant, the new edge is NOT pushed
        here; it's staged in `pendingD1Edge` for `splitFlush` to push
        paired with the corresponding perQAsksEdge. This keeps
-       writer.d1CidasksWalk.size() == perQAsksEdges.size() at every
+       writer.envWalk.size() == perQAsksEdges.size() at every
        transition. */
-    size_t d1EdgeIndex = d1CidasksWalk.size();
+    size_t d1EdgeIndex = envWalk.size();
     cidasks::Edge & d1NewEdge = pendingD1Edge;
     d1NewEdge = {};
     /* Per-edge dedup of observations by elementHash. An Asks edge is a
@@ -76,7 +76,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
             Hash rootSelfHash = cidasks::scopeStateIdAt(
                 root, Hash(HashAlgorithm::SHA256), {}, 0);
             auto cid = cidasks::scopeStateIdAtWithHook(
-                root, pf.inheritedScope, d1CidasksWalk, d1EdgeIndex,
+                root, pf.inheritedScope, envWalk, d1EdgeIndex,
                 [&](const cidasks::EvolutionStep & step) {
                     insertSubjectEvolutionEdge(
                         rootSelfHash, step.curBefore,
@@ -136,7 +136,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
            {})` — always at empty walk — so the fn CID equals the reqHash
            of the getAttr/getListElem query IF the from field is at
            initial state. The primary insert above uses the evolved
-           `d1CidasksWalk` state, so when any observations have
+           `envWalk` state, so when any observations have
            accumulated before this flush, the primary reqHash diverges
            from the fn CID and walker's `resolveCdiId` pool lookup
            misses. The secondary insert closes that gap: walker looks up
@@ -235,13 +235,13 @@ void TracingWriter::flushPendingAmbient(bool finalize)
            perQAsksEdge. The d1 edge may be empty (= file-read-only
            Asks edge with no ambient observations) — still pushed so
            the indices match. */
-        d1CidasksWalk.push_back(std::move(pendingD1Edge));
+        envWalk.push_back(std::move(pendingD1Edge));
         pendingD1Edge = {};
         tracingCacheLog("finalize: final d1 Asks edge from=%s rs-size=%zu (perQ=%zu d1=%zu)",
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
                         perQAsksEdges.size(),
-                        d1CidasksWalk.size());
+                        envWalk.size());
         prevQFactSetHash = v13FactSetHash;
         pendingNewRequests.clear();
     }
@@ -256,7 +256,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
            (via-Asks §"Recording (depth-2)").
         4. Synthesize the d=1 apply Fact (applyReqHash, AmbientResult);
            fold into v13FactSet and append a synthetic edge to
-           d1CidasksWalk (fromHash=Hash(0), elementHash=factHash) —
+           envWalk (fromHash=Hash(0), elementHash=factHash) —
            the apply boundary contributes to cur but not to any
            subject's own-fold (= phantom edge for walk-index sync).
         5. Add applyReqHash to pendingNewRequests so the trailing
@@ -453,7 +453,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
                 boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
             perQAsksEdges.insert(perQAsksEdges.begin() + pos,
                 {epsilonFromHash, epsilonReqSet});
-            d1CidasksWalk.insert(d1CidasksWalk.begin() + pos, std::move(applyEdge));
+            envWalk.insert(envWalk.begin() + pos, std::move(applyEdge));
             tracingCacheLog("finalize: ε Asks edge inserted at pos=%zu from=%s (insertionIndex=%zu shift=%zu perQ=%zu)",
                             pos,
                             epsilonFromHash.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -539,7 +539,7 @@ void TracingWriter::splitFlush(bool finalize)
         return;
 
     /* Process pending ambient observations into one new Asks edge
-       transition (= advances v13FactSetHash and d1CidasksWalk when
+       transition (= advances v13FactSetHash and envWalk when
        observations are present). At finalize=true this also computes
        AmbientResults for each buffered cb-apply boundary and folds
        the synthetic d=1 apply Facts in. */
@@ -549,7 +549,7 @@ void TracingWriter::splitFlush(bool finalize)
        (or a later splitFlush) inserts an Asks(Q, fromFactSet, RS) row
        for this transition into Q's namespace. Skip-on-empty is
        deliberate: an edge with no requests has nothing to advance, so
-       neither writer's d1CidasksWalk nor walker's cidasksWalk grows
+       neither writer's envWalk nor walker's cidasksWalk grows
        for it (= principles 4 + 7).
 
        1:1 alignment: push the staged d1 edge alongside the
@@ -559,13 +559,13 @@ void TracingWriter::splitFlush(bool finalize)
     if (!pendingNewRequests.empty()) {
         auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
         perQAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-        d1CidasksWalk.push_back(std::move(pendingD1Edge));
+        envWalk.push_back(std::move(pendingD1Edge));
         pendingD1Edge = {};
         tracingCacheLog("splitFlush: new Asks edge from=%s rs-size=%zu (perQ=%zu d1=%zu)",
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
                         perQAsksEdges.size(),
-                        d1CidasksWalk.size());
+                        envWalk.size());
         prevQFactSetHash = v13FactSetHash;
         pendingNewRequests.clear();
     }
@@ -579,7 +579,7 @@ void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
     /* Suppressed during walker re-dispatch of an already-recorded
        apply (= `dispatchApplyLive`). Re-dispatch is validation, not a
        new cb-apply event — each re-dispatch would otherwise add a
-       redundant ε edge to d1CidasksWalk, breaking the 1:1 alignment
+       redundant ε edge to envWalk, breaking the 1:1 alignment
        with walker.cidasksWalk at warm. */
     if (suppressApplyBoundary > 0) {
         tracingCacheLog("markApplyBoundary: SUPPRESSED (in dispatchApplyLive)");

@@ -90,7 +90,7 @@ class TracingReplayEvaluator : public Evaluator
         Each successfully committed Asks edge appends one entry,
         deduplicated by the edge's content-equal fact set so re-
         traversing a shared prefix doesn't double-fold. Mirrors the
-        writer's `d1CidasksWalk` — both grow per Asks edge ever
+        writer's `envWalk` — both grow per Asks edge ever
         committed, so `scopeStateIdAt(subject, scope, cidasksWalk, K)`
         on the walker matches the writer's `scopeStateIdAt` at the
         same edge K. This alignment is what makes per-fact `from`
@@ -172,7 +172,7 @@ public:
         TracingDecisionGraph & decisionGraph);
 
     /** Cumulative cidasks walk on the walker, mirroring the writer's
-        `d1CidasksWalk`. Exposed so apply-result wrappers
+        `envWalk`. Exposed so apply-result wrappers
         (TracingReplayObject with applyResultSubject) can compute
         `scopeStateIdAt(subject, scope, walk, walk.size())` and match the
         writer's evolved scopeStateId at the same walk index — the per-arg
@@ -183,7 +183,7 @@ public:
     }
 
     /** Access the shared TracingWriter. Used by TracingReplayObject's
-        `evolvedQueryFrom` to read the writer's `d1CidasksWalk`
+        `evolvedQueryFrom` to read the writer's `envWalk`
         directly — single source of truth for the cumulative walk on
         both writer and walker sides, so option-2 encoding can't drift
         between the two. */

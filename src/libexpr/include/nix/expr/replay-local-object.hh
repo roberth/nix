@@ -83,7 +83,7 @@ class ReplayLocalObject : public Object
        with writer.v13FactSetHash at the matching moment; walker at
        ReplayLocalObject construction time receives its own outer
        cur which — by lockstep growth of walker.cidasksWalk with
-       writer.d1CidasksWalk under Path 3 — equals cold's writer cur. */
+       writer.envWalk under Path 3 — equals cold's writer cur. */
     Hash outerContext;
     TracingDecisionGraph & decisionGraph;
     ref<SourceRoot> rootFSRoot;

@@ -119,7 +119,7 @@ class TracingWriter
        facts field). */
 
     /* Persistent cidasks chain for depth-1 ambient observations.
-       d1CidasksWalk is kept 1:1-aligned with `perQAsksEdges`:
+       envWalk is kept 1:1-aligned with `perQAsksEdges`:
        every Asks edge inserted into `perQAsksEdges` is paired with
        a d1 edge inserted at the SAME index. This invariant lets the
        walker's `cidasksWalk` — which grows once per dispatched Asks
@@ -127,12 +127,12 @@ class TracingWriter
        edge-for-edge, so `scopeStateIdAt(subject, scope, walk, K)`
        computes the same value on both sides. Per-arg-completion
        option 2 depends on this alignment. */
-    std::vector<cidasks::Edge> d1CidasksWalk;
+    std::vector<cidasks::Edge> envWalk;
     /* Stages the next d1 edge between `flushPendingAmbient` (which
        drains pendingDepth1Facts into it) and `splitFlush` (which
-       pushes it to d1CidasksWalk paired with a perQAsksEdge). May
+       pushes it to envWalk paired with a perQAsksEdge). May
        be empty (= file-read-only Asks edge) — still pushed so that
-       d1CidasksWalk.size() == perQAsksEdges.size() always holds. */
+       envWalk.size() == perQAsksEdges.size() always holds. */
     cidasks::Edge pendingD1Edge;
 
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
@@ -140,7 +140,7 @@ class TracingWriter
        whether from `logResponse` (= env/file), `noteEnvObservation`,
        or `flushPendingAmbient`. AmbientQueries are depth-1 just like
        file reads; bundling them with env/file into one Asks edge per
-       logResult keeps the trie's edge structure 1:1 with d1CidasksWalk.
+       logResult keeps the trie's edge structure 1:1 with envWalk.
        `perQAsksEdges` retains each finalized boundary so every Q's
        logResult can pre-insert all of them in its namespace via
        INSERT OR IGNORE (= idempotent). */
@@ -242,7 +242,7 @@ class TracingWriter
        `AmbientObject::queryApply` → `applyFn` → `AmbientApply::run`,
        which would normally fire `markApplyBoundary` — but that path
        represents validation of an already-recorded apply event, not a
-       NEW event. Letting it fire inflates `d1CidasksWalk` with ε edges
+       NEW event. Letting it fire inflates `envWalk` with ε edges
        per re-validation, breaking the walker's 1:1 alignment with
        cold's writer at warm. */
     size_t suppressApplyBoundary = 0;
@@ -302,7 +302,7 @@ public:
         is TracingReplayEvaluator::getCidasksWalk. */
     const std::vector<cidasks::Edge> & getD1CidasksWalk() const
     {
-        return d1CidasksWalk;
+        return envWalk;
     }
 
     /** Cumulative factSet hash maintained per-fact via XOR-fold.
@@ -560,7 +560,7 @@ public:
      * also processed: for each, the d=2 chain group is built,
      * its terminal `cumulativeFactSet` is the AmbientResult, and
      * the d=1 synthetic apply Fact `(applyReqHash, AmbientResult)`
-     * is folded into v13FactSet / d1CidasksWalk / pendingNewRequests
+     * is folded into v13FactSet / envWalk / pendingNewRequests
      * just like an ordinary depth-1 ambient observation.
      */
     void flushPendingAmbient(bool finalize = false);
@@ -568,7 +568,7 @@ public:
     /**
      * End the current Asks edge at a cb-apply boundary inside a
      * body run. Processes pending observations (advancing
-     * d1CidasksWalk by one edge if any ambient observations are
+     * envWalk by one edge if any ambient observations are
      * pending), finalises the perQAsksEdge boundary, and resets
      * pendingNewRequests so the next observation set starts a
      * fresh edge.
@@ -606,7 +606,7 @@ public:
      * `Response` for the enclosing `AmbientQuery`."
      *
      * The `fromHash` of the synthetic d=1 apply Fact's
-     * d1CidasksWalk observation is `Hash(0)` — the apply boundary
+     * envWalk observation is `Hash(0)` — the apply boundary
      * is a walk-advance marker, not a fact about any subject, so
      * it doesn't fold into any subject's own-loop.
      */

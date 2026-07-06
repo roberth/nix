@@ -43,10 +43,10 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        dispatchApplyLive) re-route through `AmbientObject::queryApply
        → applyFn → AmbientApply::run` and would each fire a fresh
        `markApplyBoundary` on the writer if not suppressed. Each fresh
-       boundary inflates `d1CidasksWalk` with a redundant ε edge
+       boundary inflates `envWalk` with a redundant ε edge
        beyond the genuine cb-apply events the recorder already
        captured. Suppress for the walk's duration so writer's
-       d1CidasksWalk stays in 1:1 alignment with walker's
+       envWalk stays in 1:1 alignment with walker's
        cidasksWalk. */
     TracingWriter::SuppressApplyBoundary suppressBoundary(writer);
 
@@ -54,7 +54,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
        inner cb-apply boundaries fired inside dispatchApplyLive's
        cb-fn execution) synthesise a phantom ε obs in walker's
        cidasksWalk. Cold's writer would have inserted these as ε
-       edges into d1CidasksWalk; without this walker's walk-index
+       edges into envWalk; without this walker's walk-index
        falls short of cold's edgeIndex for later flushes referencing
        seed(1) at post-inner-apply positions. */
 
@@ -75,7 +75,7 @@ TracingReplayEvaluator::v13Walk(const Hash & queryHash, std::shared_ptr<Object> 
     std::vector<cidasks::Observation> pendingEdgeObservations;
 
     auto commitEdge = [&]() {
-        /* 1:1 alignment with writer's d1CidasksWalk: writer inserts each
+        /* 1:1 alignment with writer's envWalk: writer inserts each
            cb-apply boundary's ε obs as a SEPARATE d1 edge at its
            `insertionIndex`, not bundled with the real-obs edge that
            triggered it. Walker's dispatch() pushes ε obs (fromHash=0)
@@ -534,7 +534,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
 
                    Handles the permuted-order case (cb-385's 5-round
                    evolution): where walker's cidasksWalk carries the
-                   same observations as cold's d1CidasksWalk but the
+                   same observations as cold's envWalk but the
                    edge boundaries differ, only the fixed point is
                    grouping-invariant and thus safe to compare. */
                 if (!found && !extendedWalkForMatch.empty()) {
@@ -1388,7 +1388,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     /* Walker mirror of TracingEvaluator::apply's option 2 evolution.
        Uses walker.cidasksWalk (the cumulative committed walk), which
-       under the 1:1 alignment restructure matches writer.d1CidasksWalk
+       under the 1:1 alignment restructure matches writer.envWalk
        edge-for-edge once all prior cb-applies' chains have been
        dispatched. */
     auto & walk = writer.getD1CidasksWalk();
