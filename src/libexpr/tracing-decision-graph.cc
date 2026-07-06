@@ -615,12 +615,12 @@ TracingDecisionGraph::emptySetHash()
 std::vector<TracingDecisionGraph::RequestHash>
 TracingDecisionGraph::usefulDispatch(
     const std::vector<RequestHash> & edgeRequestSet,
-    const std::unordered_set<RequestHash> & curRequests)
+    const std::unordered_set<RequestHash> & dispatchedSoFar)
 {
     std::vector<RequestHash> out;
     out.reserve(edgeRequestSet.size());
     for (const auto & req : edgeRequestSet)
-        if (!curRequests.count(req))
+        if (!dispatchedSoFar.count(req))
             out.push_back(req);
     return out;
 }
@@ -1077,8 +1077,8 @@ TracingDecisionGraph::getTerminal(const QueryHash & q, const SetHash & factSet)
 
 /* Inner body of record(). Both overloads call this with their
    pre-built (responseFor, allRequests). The body doesn't mutate
-   either; it tracks a local curRequests for "what I've consumed
-   so far". remaining-as-set = allRequests \ curRequests. */
+   either; it tracks a local dispatchedSoFar for "what I've consumed
+   so far". remaining-as-set = allRequests \ dispatchedSoFar. */
 static void dg_recordImpl(
     TracingDecisionGraph & g,
     const Hash & q,
@@ -1089,26 +1089,26 @@ static void dg_recordImpl(
     const Hash * sessionRequestsRsHash = nullptr)
 {
     auto cur = TracingDecisionGraph::emptySetHash();
-    std::unordered_set<Hash> curRequests;
+    std::unordered_set<Hash> dispatchedSoFar;
 
     auto isInRemaining = [&](const Hash & req) {
-        return allRequests.count(req) && !curRequests.count(req);
+        return allRequests.count(req) && !dispatchedSoFar.count(req);
     };
 
     auto extendCur = [&](const std::vector<Hash> & reqs) {
         for (const auto & req : reqs) {
-            assert(!curRequests.count(req));
+            assert(!dispatchedSoFar.count(req));
             auto it = responseFor.find(req);
             assert(it != responseFor.end());
             cur = dg_xorHash(cur, dg_factElementHash(req, it->second));
-            curRequests.insert(req);
+            dispatchedSoFar.insert(req);
         }
     };
 
     auto curExtendedBy = [&](const std::vector<Hash> & reqs) -> Hash {
         Hash h = cur;
         for (const auto & req : reqs) {
-            assert(!curRequests.count(req));
+            assert(!dispatchedSoFar.count(req));
             auto it = responseFor.find(req);
             assert(it != responseFor.end());
             h = dg_xorHash(h, dg_factElementHash(req, it->second));
@@ -1116,14 +1116,14 @@ static void dg_recordImpl(
         return h;
     };
 
-    while (curRequests.size() < allRequests.size()) {
+    while (dispatchedSoFar.size() < allRequests.size()) {
         /* Eager Patricia split pass: any existing edge whose
            usefulDispatch partially overlaps remaining gets split. */
         for (const auto & rsHash : g.getAsks(q, cur)) {
             auto rsMembers = g.getRequestSet(rsHash);
             if (!rsMembers)
                 continue;
-            auto useful = TracingDecisionGraph::usefulDispatch(*rsMembers, curRequests);
+            auto useful = TracingDecisionGraph::usefulDispatch(*rsMembers, dispatchedSoFar);
             if (useful.empty())
                 continue;
 
@@ -1156,7 +1156,7 @@ static void dg_recordImpl(
             auto rsMembers = g.getRequestSet(rsHash);
             if (!rsMembers)
                 continue;
-            auto useful = TracingDecisionGraph::usefulDispatch(*rsMembers, curRequests);
+            auto useful = TracingDecisionGraph::usefulDispatch(*rsMembers, dispatchedSoFar);
             if (useful.empty())
                 continue;
             bool subset = std::all_of(useful.begin(), useful.end(),
@@ -1175,15 +1175,15 @@ static void dg_recordImpl(
                supplied its canonical RS hash, skip insertRequestSet
                and jump straight to factSet — cur ⊕ allFacts =
                factSetHash by construction. */
-            if (curRequests.empty() && sessionRequestsRsHash) {
+            if (dispatchedSoFar.empty() && sessionRequestsRsHash) {
                 g.insertAsks(q, cur, *sessionRequestsRsHash);
                 cur = factSetHash;
                 break;
             }
             std::vector<Hash> remainingVec;
-            remainingVec.reserve(allRequests.size() - curRequests.size());
+            remainingVec.reserve(allRequests.size() - dispatchedSoFar.size());
             for (const auto & req : allRequests)
-                if (!curRequests.count(req))
+                if (!dispatchedSoFar.count(req))
                     remainingVec.push_back(req);
             auto rsHash = g.insertRequestSet(remainingVec);
             g.insertAsks(q, cur, rsHash);
@@ -1261,11 +1261,11 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
     const SetHash & startCur)
 {
     auto cur = startCur;
-    /* curRequests speeds up the "is this request already in cur?"
+    /* dispatchedSoFar speeds up the "is this request already in cur?"
        filter on each edge, and (since dispatch filters them out
        too) guarantees the XOR-extension below isn't fed a fact
        that's already folded into cur. */
-    std::unordered_set<RequestHash> curRequests;
+    std::unordered_set<RequestHash> dispatchedSoFar;
     tracingCacheLog("walk Q=%s startCur=%s",
                     q.to_string(HashFormat::Base16, false).substr(0, 12),
                     cur.to_string(HashFormat::Base16, false).substr(0, 12));
@@ -1292,10 +1292,10 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
 
         bool advanced = false;
         /* Direction (2) cb-repeated: two-pass edge iteration. Primary
-           pass uses the standard `useful` set (filtered by curRequests).
+           pass uses the standard `useful` set (filtered by dispatchedSoFar).
            If all primary-pass edges either skip (empty useful) or fail
            the `hasAnyEdge` validation, a fallback pass tries the
-           apply-request bypass — allowing an already-in-curRequests
+           apply-request bypass — allowing an already-in-dispatchedSoFar
            cb-apply to re-dispatch via `dispatchApplyLive`'s per-request
            seq counter, which returns distinct AmbientResults per
            invocation. cb-repeated's `(cb 10) + (cb 20)` PositionalSeed
@@ -1308,12 +1308,12 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
             if (!requestSetOpt)
                 continue;
 
-            /* Primary pass: standard useful set (curRequests-filtered).
-               Fallback pass: augment with in-curRequests apply reqs. */
-            auto useful = usefulDispatch(*requestSetOpt, curRequests);
+            /* Primary pass: standard useful set (dispatchedSoFar-filtered).
+               Fallback pass: augment with in-dispatchedSoFar apply reqs. */
+            auto useful = usefulDispatch(*requestSetOpt, dispatchedSoFar);
             if (pass == 1 && useful.empty()) {
                 for (const auto & req : *requestSetOpt) {
-                    if (curRequests.count(req) && isApplyRequest(req)) {
+                    if (dispatchedSoFar.count(req) && isApplyRequest(req)) {
                         useful.push_back(req);
                     }
                 }
@@ -1407,7 +1407,7 @@ committed:;
                             nextCur.to_string(HashFormat::Base16, false).substr(0, 12));
             cur = nextCur;
             for (const auto & req : useful)
-                curRequests.insert(req);
+                dispatchedSoFar.insert(req);
             if (onEdgeAttempt)
                 onEdgeAttempt(/*committed=*/ true, useful);
             advanced = true;

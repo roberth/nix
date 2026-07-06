@@ -115,7 +115,7 @@ public:
        loop: `dispatchApplyLive` fires the fn fresh each invocation via
        a per-request seq counter, so the same reqHash returns distinct
        AmbientResults across dispatches. `walk()` uses this signal to
-       BYPASS the `curRequests` set-membership filter when otherwise
+       BYPASS the `dispatchedSoFar` set-membership filter when otherwise
        useful is empty, allowing multiple cb-apply invocations of the
        same reqHash (cb-repeated's `(cb 10) + (cb 20)` PositionalSeed
        collision) to advance through cold's recorded Asks graph via
@@ -207,7 +207,7 @@ public:
        dispatches per (Q, FactSet)". */
     static std::vector<RequestHash> usefulDispatch(
         const std::vector<RequestHash> & edgeRequestSet,
-        const std::unordered_set<RequestHash> & curRequests);
+        const std::unordered_set<RequestHash> & dispatchedSoFar);
 
     /* ─────────────────────────────────────────────────────────────────
        Decision graph layer: edges keyed by (Q, factSet)
