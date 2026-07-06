@@ -404,7 +404,7 @@ void to_json(nlohmann::json & j, const PathStep & s)
     } else if (s.kind == PathStep::Kind::GetListElem) {
         j = nlohmann::json{{"kind", "listElem"}, {"index", s.index}};
     } else {
-        /* Apply: persist both sub-paths inline. fromCIDs indices live
+        /* Apply: persist both sub-paths inline. fromStateHashes indices live
            alongside so the walker knows which cb_arg each side
            resolves against (= multi-root applies are supported even
            though today's recorder only emits single-root). */
@@ -477,27 +477,27 @@ void from_json(const nlohmann::json & j, PathExpr & p)
 // ---------------------------------------------------------------------------
 
 /* Conditional emission for the new path-carrying fields. Empty
-   `fromCIDs` / `path` are omitted so existing serialized forms (=
+   `fromStateHashes` / `path` are omitted so existing serialized forms (=
    pre-#86 fields) hash byte-identically to before. Emitters that
    wire path through populate one or both; consumers read them back
    tolerantly. */
-static void emitPathAndFromCIDs(
+static void emitPathAndFromStateHashes(
     nlohmann::json & params,
-    const std::vector<QueryLeaf> & fromCIDs,
+    const std::vector<QueryLeaf> & fromStateHashes,
     const PathExpr & path)
 {
-    if (!fromCIDs.empty()) params["fromCIDs"] = fromCIDs;
+    if (!fromStateHashes.empty()) params["fromStateHashes"] = fromStateHashes;
     if (!path.steps.empty()) params["path"] = path;
 }
 
-static void parsePathAndFromCIDs(
+static void parsePathAndFromStateHashes(
     const nlohmann::json & params,
-    std::vector<QueryLeaf> & fromCIDs,
+    std::vector<QueryLeaf> & fromStateHashes,
     PathExpr & path)
 {
-    fromCIDs.clear();
+    fromStateHashes.clear();
     path = {};
-    if (params.contains("fromCIDs")) params.at("fromCIDs").get_to(fromCIDs);
+    if (params.contains("fromStateHashes")) params.at("fromStateHashes").get_to(fromStateHashes);
     if (params.contains("path")) params.at("path").get_to(path);
 }
 
@@ -525,128 +525,128 @@ void from_json(const nlohmann::json & j, QueryImport & q)
 void to_json(nlohmann::json & j, const QueryGetAttr & q)
 {
     j = nlohmann::json{{"query", QueryGetAttr::tag}, {"params", {{"name", q.name}, {"from", q.from}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetAttr & q)
 {
     j.at("params").at("name").get_to(q.name);
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetString & q)
 {
     j = nlohmann::json{{"query", QueryGetString::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetString & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetStringWithContext & q)
 {
     j = nlohmann::json{{"query", QueryGetStringWithContext::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetStringWithContext & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetAttrNames & q)
 {
     j = nlohmann::json{{"query", QueryGetAttrNames::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetAttrNames & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetType & q)
 {
     j = nlohmann::json{{"query", QueryGetType::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetType & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetBool & q)
 {
     j = nlohmann::json{{"query", QueryGetBool::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetBool & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetInt & q)
 {
     j = nlohmann::json{{"query", QueryGetInt::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetInt & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetFloat & q)
 {
     j = nlohmann::json{{"query", QueryGetFloat::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetFloat & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetListOfStrings & q)
 {
     j = nlohmann::json{{"query", QueryGetListOfStrings::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetListOfStrings & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetListSize & q)
 {
     j = nlohmann::json{{"query", QueryGetListSize::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetListSize & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetListElem & q)
 {
     j = nlohmann::json{{"query", QueryGetListElem::tag}, {"params", {{"from", q.from}, {"index", q.index}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetListElem & q)
@@ -658,25 +658,25 @@ void from_json(const nlohmann::json & j, QueryGetListElem & q)
 void to_json(nlohmann::json & j, const QueryGetPath & q)
 {
     j = nlohmann::json{{"query", QueryGetPath::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetPath & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetFunctionInfo & q)
 {
     j = nlohmann::json{{"query", QueryGetFunctionInfo::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetFunctionInfo & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const ResultFunctionInfo & r)
@@ -694,23 +694,23 @@ void from_json(const nlohmann::json & j, ResultFunctionInfo & r)
 void to_json(nlohmann::json & j, const QueryGetWHNF & q)
 {
     j = nlohmann::json{{"query", QueryGetWHNF::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromCIDs(j["params"], q.fromCIDs, q.path);
+    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
 void from_json(const nlohmann::json & j, QueryGetWHNF & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromCIDs(j.at("params"), q.fromCIDs, q.path);
+    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryApply & q)
 {
     j = nlohmann::json{{"query", QueryApply::tag}, {"params", {{"fn", q.fn}, {"arg", q.arg}}}};
     /* Per-arg mode (= ApplyResultSubject state hash computation under
-       per-arg centralization) emits fromCIDs + fn/argPath + root
+       per-arg centralization) emits fromStateHashes + fn/argPath + root
        indices. Legacy direct mode leaves them empty. */
-    if (!q.fromCIDs.empty())
-        j["params"]["fromCIDs"] = q.fromCIDs;
+    if (!q.fromStateHashes.empty())
+        j["params"]["fromStateHashes"] = q.fromStateHashes;
     if (!q.fnPath.steps.empty())
         j["params"]["fnPath"] = q.fnPath;
     if (!q.argPath.steps.empty())
@@ -726,8 +726,8 @@ void from_json(const nlohmann::json & j, QueryApply & q)
     j.at("params").at("fn").get_to(q.fn);
     j.at("params").at("arg").get_to(q.arg);
     const auto & params = j.at("params");
-    if (params.contains("fromCIDs"))
-        params.at("fromCIDs").get_to(q.fromCIDs);
+    if (params.contains("fromStateHashes"))
+        params.at("fromStateHashes").get_to(q.fromStateHashes);
     if (params.contains("fnPath"))
         params.at("fnPath").get_to(q.fnPath);
     if (params.contains("argPath"))

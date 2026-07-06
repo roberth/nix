@@ -179,7 +179,7 @@ Hash stateHashConverged(
     `subject` — including `DerivedSubject`, where `stateHashAt`
     traps. For non-derived subjects this delegates to `stateHashAt`.
     For `DerivedSubject` it returns the producer query's hash:
-    `qH(QueryGetAttr{name, from = root_cdi, fromCIDs, path})` for
+    `qH(QueryGetAttr{name, from = root_cdi, fromStateHashes, path})` for
     `GetAttr`, similarly for `GetListElem`. Used by `AmbientObject`,
     `TracingCallbackArg`, etc. to expose a single-`Hash` identity
     handle even though derived values don't have state hashes proper. */
@@ -221,7 +221,7 @@ Hash stateHashAtStamping(
     so callers can use the same value as both the Requests-pool key
     (= reqHash) and the apply-result's state hash (= what's recorded as
     `from` on downstream facts). Threads cb_arg root state hashes at
-    `edgeIndex` into `fromCIDs[]`, copies the Apply step's
+    `edgeIndex` into `fromStateHashes[]`, copies the Apply step's
     `fnPath`/`argPath`/root indices into the top-level query, and
     leaves `fn`/`arg` populated only if the caller passes them for
     the legacy direct payload's readability — the per-arg fields

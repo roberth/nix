@@ -65,12 +65,12 @@ void TracingWriter::flushAmbient(bool finalize)
 
     for (auto & pf : pendingDepth1Facts) {
         /* Per-arg with multi-root: `from` is the first cb_arg's state hash;
-           `fromCIDs[]` carries all cb_arg roots reached via the
+           `fromStateHashes[]` carries all cb_arg roots reached via the
            subject tree; `path` encodes the access expression that
-           walks from fromCIDs[0] to the observed subject. */
+           walks from fromStateHashes[0] to the observed subject. */
         auto [path, roots] = pathAndRootsFromSubject(pf.subject);
-        std::vector<trace::QueryLeaf> fromCIDs;
-        fromCIDs.reserve(roots.size());
+        std::vector<trace::QueryLeaf> fromStateHashes;
+        fromStateHashes.reserve(roots.size());
         for (auto & root : roots) {
             /* Subject-evolution fast-path: stamp SubjectEvolutionEdges via hook. */
             Hash rootSelfHash = stateHashAt(
@@ -83,27 +83,27 @@ void TracingWriter::flushAmbient(bool finalize)
                         step.obsFromHash, step.obsElementHash,
                         step.curAfter);
                 });
-            fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
+            fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
         }
-        std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
-        auto fromStateHash = fromCIDs.empty()
+        std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].contentHash();
+        auto fromStateHash = fromStateHashes.empty()
             ? Hash(HashAlgorithm::SHA256)
             : Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
 
         std::string queryTag = std::visit(
             [](const auto & q) -> std::string { return std::string(q.tag); }, pf.query);
         tracingCacheLog(
-            "flush env fact: subject=%s query=%s from=%s path=%zu fromCIDs=%zu",
+            "flush env fact: subject=%s query=%s from=%s path=%zu fromStateHashes=%zu",
             describe(pf.subject), queryTag, fromHex.substr(0, 12),
-            path.steps.size(), fromCIDs.size());
+            path.steps.size(), fromStateHashes.size());
 
         nlohmann::json queryJson;
         std::visit([&](const auto & q) { queryJson = q; }, pf.query);
         rewriteFromInQuery(queryJson, fromHex);
         if (!path.steps.empty())
             queryJson["params"]["path"] = path;
-        if (!fromCIDs.empty())
-            queryJson["params"]["fromCIDs"] = fromCIDs;
+        if (!fromStateHashes.empty())
+            queryJson["params"]["fromStateHashes"] = fromStateHashes;
         nlohmann::json resultJson;
         std::visit([&](const auto & r) { resultJson = r; }, pf.result);
 
@@ -146,21 +146,21 @@ void TracingWriter::flushAmbient(bool finalize)
            has evolved walk so this is the ONLY reqHash under which
            walker finds the fn's producer. */
         if ((queryTag == "getAttr" || queryTag == "getListElem") && !roots.empty()) {
-            std::vector<trace::QueryLeaf> initialFromCIDs;
-            initialFromCIDs.reserve(roots.size());
+            std::vector<trace::QueryLeaf> initialFromStateHashes;
+            initialFromStateHashes.reserve(roots.size());
             for (auto & root : roots) {
                 auto initCid = stateHashAt(
                     root, pf.argAncestry, {}, 0);
-                initialFromCIDs.emplace_back(
+                initialFromStateHashes.emplace_back(
                     initCid.to_string(HashFormat::Base16, false));
             }
-            std::string initialFromHex = initialFromCIDs[0].contentHash();
+            std::string initialFromHex = initialFromStateHashes[0].contentHash();
             nlohmann::json initialQueryJson;
             std::visit([&](const auto & q) { initialQueryJson = q; }, pf.query);
             rewriteFromInQuery(initialQueryJson, initialFromHex);
             if (!path.steps.empty())
                 initialQueryJson["params"]["path"] = path;
-            initialQueryJson["params"]["fromCIDs"] = initialFromCIDs;
+            initialQueryJson["params"]["fromStateHashes"] = initialFromStateHashes;
             auto initialReqHash = hashString(
                 HashAlgorithm::SHA256, initialQueryJson.dump());
             if (initialReqHash != queryHash) {
@@ -332,8 +332,8 @@ void TracingWriter::flushAmbient(bool finalize)
         {
             auto & pf = group[i];
             auto [path, roots] = pathAndRootsFromSubject(pf.subject);
-            std::vector<trace::QueryLeaf> fromCIDs;
-            fromCIDs.reserve(roots.size());
+            std::vector<trace::QueryLeaf> fromStateHashes;
+            fromStateHashes.reserve(roots.size());
             for (auto & root : roots) {
                 /* Subject-evolution fast-path: stamp SubjectEvolutionEdges via hook. */
                 Hash rootSelfHash = stateHashAt(
@@ -346,28 +346,28 @@ void TracingWriter::flushAmbient(bool finalize)
                             step.obsFromHash, step.obsElementHash,
                             step.curAfter);
                     });
-                fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
+                fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
             }
-            std::string fromHex = fromCIDs.empty() ? std::string{} : fromCIDs[0].contentHash();
-            auto fromStateHash = fromCIDs.empty()
+            std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].contentHash();
+            auto fromStateHash = fromStateHashes.empty()
                 ? Hash(HashAlgorithm::SHA256)
                 : Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
 
             std::string queryTag = std::visit(
                 [](const auto & q) -> std::string { return std::string(q.tag); }, pf.query);
             tracingCacheLog(
-                "flush ambient fact: applyId=%s i=%zu subject=%s query=%s from=%s path=%zu fromCIDs=%zu ambientAsks=%s",
+                "flush ambient fact: applyId=%s i=%zu subject=%s query=%s from=%s path=%zu fromStateHashes=%zu ambientAsks=%s",
                 boundary.applyId.to_string(HashFormat::Base16, false).substr(0, 12),
                 i, describe(pf.subject), queryTag, fromHex.substr(0, 12),
-                path.steps.size(), fromCIDs.size(), withAmbientAsks ? "yes" : "no");
+                path.steps.size(), fromStateHashes.size(), withAmbientAsks ? "yes" : "no");
 
             nlohmann::json queryJson;
             std::visit([&](const auto & q) { queryJson = q; }, pf.query);
             rewriteFromInQuery(queryJson, fromHex);
             if (!path.steps.empty())
                 queryJson["params"]["path"] = path;
-            if (!fromCIDs.empty())
-                queryJson["params"]["fromCIDs"] = fromCIDs;
+            if (!fromStateHashes.empty())
+                queryJson["params"]["fromStateHashes"] = fromStateHashes;
             nlohmann::json resultJson;
             std::visit([&](const auto & r) { resultJson = r; }, pf.result);
 

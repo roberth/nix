@@ -624,7 +624,7 @@ public:
      *
      * Subject = ApplyResultSubject{fn, arg} (caller-built) so the
      * generic flushAmbient stamping puts the constituents'
-     * roots into `fromCIDs[]` and an Apply step into `path`. Matches
+     * roots into `fromStateHashes[]` and an Apply step into `path`. Matches
      * walker stamping. No-op when there's no enclosing cb-apply.
      */
     /**

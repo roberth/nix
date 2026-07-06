@@ -989,7 +989,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        AND at the fn leaf's evolved CID at THIS invocation (which
        DOES differ per invocation because seed(1)_evolved captures
        the outer walk's per-boundary ε folds). Cold's outer probe
-       recorded `from = fromCIDs[0]` which is the FIRST root's cid;
+       recorded `from = fromStateHashes[0]` which is the FIRST root's cid;
        for `applyResult(getAttr(seed(1), "cb"), seed(N))` that first
        root is seed(1). So walker's dispatch of `getWHNF from=X`
        calls resolveCdiId(X = seed(1)_evolved) — memoising a
@@ -1034,7 +1034,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
    navigation step (getAttr / getListElem). Resolve parent through the
    producer chain, then perform the live navigation step on it. */
 /* Per-arg path navigation with multi-root support. `roots` are the
-   live Objects corresponding to the query's `fromCIDs[]` entries (=
+   live Objects corresponding to the query's `fromStateHashes[]` entries (=
    each entry is a cb_arg's ReplayCallbackArg). The top-level path navigates
    from `roots[0]`; Apply steps reach into `roots` by index via
    their `fnRootIndex` / `argRootIndex` so higher-order applies (=
@@ -1087,7 +1087,7 @@ static trace::PathExpr parsePathFromParams(const nlohmann::json & params)
     return path;
 }
 
-/* Resolve the query's roots: prefer `fromCIDs[]` if present (=
+/* Resolve the query's roots: prefer `fromStateHashes[]` if present (=
    per-arg multi-root), fall back to the legacy single `from` field.
    Returns empty vector on resolution failure for any root. */
 static std::vector<std::shared_ptr<Object>> resolveRoots(
@@ -1095,8 +1095,8 @@ static std::vector<std::shared_ptr<Object>> resolveRoots(
     std::function<std::shared_ptr<Object>(const std::string &)> resolve)
 {
     std::vector<std::shared_ptr<Object>> roots;
-    if (params.contains("fromCIDs")) {
-        for (auto & cid : params["fromCIDs"]) {
+    if (params.contains("fromStateHashes")) {
+        for (auto & cid : params["fromStateHashes"]) {
             std::string cidHex;
             if (cid.is_string())
                 cidHex = cid.get<std::string>();
@@ -1123,10 +1123,10 @@ static std::vector<std::shared_ptr<Object>> resolveRoots(
 std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
     const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx)
 {
-    if (!params.contains("from") && !params.contains("fromCIDs"))
+    if (!params.contains("from") && !params.contains("fromStateHashes"))
         return nullptr;
 
-    /* Per-arg multi-root: resolve each fromCIDs[] entry to a live
+    /* Per-arg multi-root: resolve each fromStateHashes[] entry to a live
        cb_arg ReplayCallbackArg, then navigate. The producer query records the
        path-to-parent in `path`; navigation uses both. */
     auto roots = resolveRoots(params,
@@ -1171,7 +1171,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
 
 
     /* Every ambient response must be live-validated, just like file
-       reads and env vars. Resolve each fromCIDs[] entry to a live
+       reads and env vars. Resolve each fromStateHashes[] entry to a live
        Object (single-root falls back to `from`) and navigate by the
        recorded path. The query body (= leaf op like getAttr "x")
        then runs on the navigated child. */

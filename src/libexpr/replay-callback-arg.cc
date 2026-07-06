@@ -24,10 +24,10 @@ ReplayCallbackArg & ReplayCallbackArg::withChainStart(Hash root)
     return *this;
 }
 
-/* Populate `query`'s per-arg fields (from, path, fromCIDs) so its
+/* Populate `query`'s per-arg fields (from, path, fromStateHashes) so its
    reqHash matches what the writer flushed for the corresponding
-   recorder probe. Multi-root applies fill fromCIDs[] with multiple
-   leaf-root state hashes; the canonical `from` field carries fromCIDs[0].
+   recorder probe. Multi-root applies fill fromStateHashes[] with multiple
+   leaf-root state hashes; the canonical `from` field carries fromStateHashes[0].
    Returns the first-root state hash for callers (= used to log/diagnose
    and for the AmbientAsks chain advance). */
 template <typename Q>
@@ -39,20 +39,20 @@ static Hash stampPerArgFields(
     size_t edgeIndex)
 {
     auto par = pathAndRootsFromSubject(subject);
-    std::vector<trace::QueryLeaf> fromCIDs;
-    fromCIDs.reserve(par.roots.size());
+    std::vector<trace::QueryLeaf> fromStateHashes;
+    fromStateHashes.reserve(par.roots.size());
     Hash fromStateHash(HashAlgorithm::SHA256);
     for (size_t i = 0; i < par.roots.size(); ++i) {
         auto cid = stateHashAt(par.roots[i], argAncestry, walkFacts, edgeIndex);
         if (i == 0)
             fromStateHash = cid;
-        fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
+        fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
     }
-    query.from = fromCIDs.empty()
+    query.from = fromStateHashes.empty()
         ? trace::QueryLeaf{std::string{}}
-        : fromCIDs[0];
+        : fromStateHashes[0];
     query.path = std::move(par.path);
-    query.fromCIDs = std::move(fromCIDs);
+    query.fromStateHashes = std::move(fromStateHashes);
     return fromStateHash;
 }
 
@@ -530,20 +530,20 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
 
                     /* Generic stamping via syntheticSubject. */
                     auto [path, roots] = pathAndRootsFromSubject(syntheticSubject);
-                    std::vector<trace::QueryLeaf> fromCIDs;
-                    fromCIDs.reserve(roots.size());
+                    std::vector<trace::QueryLeaf> fromStateHashes;
+                    fromStateHashes.reserve(roots.size());
                     for (auto & root : roots) {
                         auto cid = stateHashAt(
                             root, applyArgAncestry, *walkFactsSaved, edgeIndex);
-                        fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
+                        fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
                     }
 
                     trace::QueryApply stampedQ{fnSubjHex, argSubjHex};
                     nlohmann::json stampedJson = stampedQ;
                     if (!path.steps.empty())
                         stampedJson["params"]["path"] = path;
-                    if (!fromCIDs.empty())
-                        stampedJson["params"]["fromCIDs"] = fromCIDs;
+                    if (!fromStateHashes.empty())
+                        stampedJson["params"]["fromStateHashes"] = fromStateHashes;
                     auto stampedReqHash = hashString(HashAlgorithm::SHA256, stampedJson.dump());
 
                     tracingCacheLog(
@@ -561,10 +561,10 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     auto elementHash = TracingDecisionGraph::xorFactIntoHash(
                         Hash(HashAlgorithm::SHA256), stampedReqHash, respHash);
 
-                    Hash fromStateHash = fromCIDs.empty()
+                    Hash fromStateHash = fromStateHashes.empty()
                         ? Hash(HashAlgorithm::SHA256)
                         : Hash::parseNonSRIUnprefixed(
-                              fromCIDs[0].contentHash(), HashAlgorithm::SHA256);
+                              fromStateHashes[0].contentHash(), HashAlgorithm::SHA256);
 
                     Edge edge;
                     edge.observations.push_back({fromStateHash, elementHash});

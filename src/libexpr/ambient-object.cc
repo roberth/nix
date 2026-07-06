@@ -8,22 +8,22 @@
 
 namespace nix {
 
-/* Populate `q`'s per-arg fields (from, path, fromCIDs) so its
+/* Populate `q`'s per-arg fields (from, path, fromStateHashes) so its
    reqHash matches what the writer flushed for the corresponding
    observation. */
 template <typename Q>
 static void stampPerArgFieldsAmbient(Q & q, const Subject & subject, const Hash & argAncestry)
 {
     auto par = pathAndRootsFromSubject(subject);
-    std::vector<trace::QueryLeaf> fromCIDs;
-    fromCIDs.reserve(par.roots.size());
+    std::vector<trace::QueryLeaf> fromStateHashes;
+    fromStateHashes.reserve(par.roots.size());
     for (size_t i = 0; i < par.roots.size(); ++i) {
         auto cid = stateHashAfter(par.roots[i], argAncestry, {});
-        fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
+        fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
     }
-    q.from = fromCIDs.empty() ? trace::QueryLeaf{std::string{}} : fromCIDs[0];
+    q.from = fromStateHashes.empty() ? trace::QueryLeaf{std::string{}} : fromStateHashes[0];
     q.path = std::move(par.path);
-    q.fromCIDs = std::move(fromCIDs);
+    q.fromStateHashes = std::move(fromStateHashes);
 }
 
 AmbientObject::AmbientObject(

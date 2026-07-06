@@ -31,7 +31,7 @@ Hash fromStateHashOf(const trace::QueryVariant & query)
 
 /* Subject leaf equality — used by the path builder to dedupe roots
    (= two derivation chains rooted at the same PositionalSeed or
-   PostulatedIdempotentRead share one entry in fromCIDs). Only meaningful
+   PostulatedIdempotentRead share one entry in fromStateHashes). Only meaningful
    for leaf forms; the builder only compares leaves. */
 static bool sameLeaf(const Subject & a, const Subject & b)
 {
@@ -57,7 +57,7 @@ PathAndRoots pathAndRootsFromSubject(const Subject & subject)
        subjects (PositionalSeed, PostulatedIdempotentRead) deduplicate
        against previously-collected roots so shared cb_args (= fn
        and arg derived from the same outer arg) collapse to one
-       fromCIDs entry. */
+       fromStateHashes entry. */
     struct Builder
     {
         std::vector<Subject> roots;
@@ -159,10 +159,10 @@ trace::QueryApply makeApplyResultQuery(
     const auto & applyStep = par.path.steps[0];
 
     trace::QueryApply q;
-    q.fromCIDs.reserve(par.roots.size());
+    q.fromStateHashes.reserve(par.roots.size());
     for (auto & root : par.roots) {
         auto cid = stateHashAt(root, argAncestry, walk, edgeIndex);
-        q.fromCIDs.emplace_back(hashHex(cid));
+        q.fromStateHashes.emplace_back(hashHex(cid));
     }
     q.fnPath = *applyStep.fnPath;
     q.argPath = *applyStep.argPath;
@@ -381,23 +381,23 @@ Hash subjectHashAt(
        hash for a query naming this derived value) directly. */
     if (auto * d = std::get_if<DerivedSubject>(&subject.data)) {
         auto [pathToParent, parentRoots] = pathAndRootsFromSubject(*d->parent);
-        std::vector<trace::QueryLeaf> fromCIDs;
-        fromCIDs.reserve(parentRoots.size());
+        std::vector<trace::QueryLeaf> fromStateHashes;
+        fromStateHashes.reserve(parentRoots.size());
         for (auto & root : parentRoots) {
             auto cid = stateHashAt(root, argAncestry, walk, edgeIndex);
-            fromCIDs.emplace_back(hashHex(cid));
+            fromStateHashes.emplace_back(hashHex(cid));
         }
-        auto fromLeaf = fromCIDs.empty() ? trace::QueryLeaf("") : fromCIDs[0];
+        auto fromLeaf = fromStateHashes.empty() ? trace::QueryLeaf("") : fromStateHashes[0];
         nlohmann::json qj;
         if (d->kind == DerivedSubject::Kind::GetAttr) {
             trace::QueryGetAttr q{d->name, fromLeaf};
             q.path = pathToParent;
-            q.fromCIDs = fromCIDs;
+            q.fromStateHashes = fromStateHashes;
             qj = q;
         } else {
             trace::QueryGetListElem q{fromLeaf, d->index};
             q.path = pathToParent;
-            q.fromCIDs = fromCIDs;
+            q.fromStateHashes = fromStateHashes;
             qj = q;
         }
         return hashString(HashAlgorithm::SHA256, qj.dump());
