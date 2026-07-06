@@ -272,7 +272,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
                        hashes that already encode the relevant scope
                        — `AmbientObject::getCdi()` returns
                        structuralAddressAfter with inheritedScope
-                       baked in; ReplayLocalObject's localId is
+                       baked in; ReplayCallbackArg's localId is
                        scopeStateIdAfter(PositionalSeed{D}, callScope, {})
                        which is also scope-saturated. Re-XORing scope
                        here would either double-XOR (= scope-saturated

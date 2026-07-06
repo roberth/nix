@@ -4,7 +4,7 @@
 #include "nix/expr/arg-scope.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/expr-from-object.hh"
-#include "nix/expr/replay-local-object.hh"
+#include "nix/expr/replay-callback-arg.hh"
 #include "nix/expr/tracing-cache-stats.hh"
 #include "nix/expr/tracing-callback-arg.hh"
 #include "nix/expr/tracing-replay-object.hh"
@@ -441,7 +441,7 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
    Then fall through to producer-Request resolution: find idStr in
    the Requests pool, resolve the parent recursively, dispatch the
    producer's query on the parent. QueryApply payloads invoke the
-   live apply against a (frozen) ReplayLocalObject arg. localArg
+   live apply against a (frozen) ReplayCallbackArg arg. localArg
    sidecars chase to the apply. */
 std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string & idStr, ResolutionContext & ctx)
 {
@@ -585,7 +585,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
            Live-proxy fallback: the `<replay-local-lambda>` primop
            registers the args[0] it receives under the cb-arg seed's
            initial argStateId when fired (= registerAmbientResolverProxy in
-           replay-local-object.cc). If we find a matching registration
+           replay-callback-arg.cc). If we find a matching registration
            here, the OUTER walker resolves to that live proxy and
            dispatches the d=1 fact live against outer's actual value
            — capability-mediated, not cached. This closes the seed-
@@ -679,7 +679,7 @@ bool TracingReplayEvaluator::isLocalArgId(const Hash & idHash)
 /* Local-direction: unknown id in the Requests pool — most commonly an
    inner-side TracingCallbackArg's content-hash whose facts were emitted
    with from=hex(id) but whose id itself isn't a producer Request.
-   Materialise a ReplayLocalObject keyed by it; its methods read
+   Materialise a ReplayCallbackArg keyed by it; its methods read
    recorded responses out of LocalResponseMap by qH(query{from=hex(id)}),
    matching what TracingCallbackArg wrote during recording. */
 /* Mixed direction: fn is Outer (resolved through the producer chain to
@@ -756,7 +756,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                     Hash fallthroughSeqCtx2 = hashString(HashAlgorithm::SHA256,
                         fallthroughApplyReqHash2.to_string(HashFormat::Base16, false)
                         + "|" + std::to_string(fallthroughSeq2));
-                    auto rlo = std::make_shared<ReplayLocalObject>(
+                    auto rlo = std::make_shared<ReplayCallbackArg>(
                         std::move(rootSubject), sidecarScope,
                         std::make_shared<std::vector<cidasks::Edge>>(),
                         std::make_shared<Hash>(HashAlgorithm::SHA256),
@@ -882,7 +882,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         ~InFlightGuard() { set.erase(key); }
     } guard{inFlightApplyReqs, applyReqHash};
 
-    /* Fresh per-dispatch ReplayLocalObject for the inner-supplied
+    /* Fresh per-dispatch ReplayCallbackArg for the inner-supplied
        value. Per via-Asks Replay (depth-2): the walker reconstructs
        the LocalObject as a live Nix Value tree (= lazily produced
        from CAS atoms), hands it to outer's f, and lets f run
@@ -927,7 +927,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
             }
         }
     }
-    auto replayLocal = std::make_shared<ReplayLocalObject>(
+    auto replayLocal = std::make_shared<ReplayCallbackArg>(
         std::move(rootSubject), sidecarScope,
         seededWalkFacts,
         std::make_shared<Hash>(HashAlgorithm::SHA256),

@@ -5,7 +5,7 @@
 #include "nix/expr/eval.hh"
 #include "nix/expr/interpreter-object.hh"
 #include "nix/expr/object-type.hh"
-#include "nix/expr/replay-local-object.hh"
+#include "nix/expr/replay-callback-arg.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-callback-arg.hh"
@@ -38,7 +38,7 @@ namespace nix {
    Objects (values the inner reads through AmbientObject). The Local
    direction (inner values the outer reads via callback) doesn't go
    through this registry at all on replay — those are served by
-   ReplayLocalObject standins from LocalResponseMap. Local
+   ReplayCallbackArg standins from LocalResponseMap. Local
    registration on the recording side was previously here as a write-
    only map; dropped because nothing read it back. */
 struct AmbientRegistry
@@ -130,7 +130,7 @@ struct AmbientQuery
    inner passes the same argObj to the outer multiple times, the
    outer's cycle detection must see ONE Value, not many. Keyed by
    Object* identity (NOT argId): two distinct argObjs can share the
-   same argId hash (e.g. a frozen ReplayLocalObject built by the
+   same argId hash (e.g. a frozen ReplayCallbackArg built by the
    walker's apply branch and a live InterpreterObject from a fall-back
    inner rerun both seed at depth-marker), and they correctly resolve
    to distinct thunks here. */
@@ -326,7 +326,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        with `from=hex(argId)`. Inherit callScope so sibling cached
        calls' local-args have distinct scope state ids.
 
-       Skip the TLO wrap when argObj is a ReplayLocalObject. At warm
+       Skip the TLO wrap when argObj is a ReplayCallbackArg. At warm
        replay, the RLO standin reaching `runOn` already encapsulates
        the recorded contract for the cb-arg crossing — the standin's
        primop and its synthetic apply-result handle the per-probe
@@ -340,7 +340,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        is an `InterpreterObject` of a real inner Value and the cast
        returns null, leaving the TLO wrap path unchanged. */
     auto wrappedArg = (innerWriter && outerRootFSRoot
-                       && !dynamic_cast<ReplayLocalObject *>(argObj.get()))
+                       && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
               argObj, argSubject, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell,
               resolverHandle->callScope, resultId))
@@ -373,7 +373,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
 
        The sidecar carries `localType` so the replay-side walker
        can detect non-reconstructible locals (functions) without
-       forcing them. ReplayLocalObject can serve scalar/structural
+       forcing them. ReplayCallbackArg can serve scalar/structural
        responses from LocalResponseMap, but a function local has
        no recorded body to apply against a divergent argument — so
        the walker bails on dispatch in that case and the depth-1
@@ -401,7 +401,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
            defined in terms of the apply itself (= selfref-fn,
            mkOverridable patterns in builtins-cache.sh). It returns
            nThunk for unforced values, which we just don't record.
-           Also wrapped in try/catch because dispatch-time ReplayLocalObject
+           Also wrapped in try/catch because dispatch-time ReplayCallbackArg
            may have no recorded type fact. */
         try {
             auto t = argObj->getTypeLazy();
@@ -696,14 +696,14 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
            will throw at apply time (matching the prior behaviour
            for that combination, which the unit tests rely on for
            construction-only checks). */
-        /* ReplayLocalObject reconstructs a lambda LocalObject as a
+        /* ReplayCallbackArg reconstructs a lambda LocalObject as a
            primop via its own `toValueOrProxy` (= the
            <replay-local-lambda> mechanism in
-           replay-local-object.cc). Use it directly so the recorded
+           replay-callback-arg.cc). Use it directly so the recorded
            d=2 chain drives apply-time behaviour; the generic
            cached/ambient primops here would dispatch on
            `RLO::queryApply` which throws by design. */
-        if (dynamic_cast<ReplayLocalObject *>(obj.get())) {
+        if (dynamic_cast<ReplayCallbackArg *>(obj.get())) {
             auto val = obj->toValueOrProxy(state, ambientResolver);
             v = **val;
             break;

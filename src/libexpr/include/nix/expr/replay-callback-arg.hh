@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file
- * ReplayLocalObject: serves recorded responses for a local arg
+ * ReplayCallbackArg: serves recorded responses for a local arg
  * during replay-time apply invocation.
  *
  * The OUTER's covariant callback (e.g. `f x` where `f` is an outer
@@ -10,7 +10,7 @@
  * TracingCallbackArg so the outer's accesses land in the inner's
  * factSet as Facts. On replay the inner isn't running, so its arg
  * isn't reconstructable as a live Object — but its CONTENT was
- * persisted in LocalResponseMap. ReplayLocalObject reads that
+ * persisted in LocalResponseMap. ReplayCallbackArg reads that
  * content back so the outer can invoke its callback against a
  * deterministic frozen image of the recorded arg.
  *
@@ -35,7 +35,7 @@ namespace nix {
 
 class TracingDecisionGraph;
 
-class ReplayLocalObject : public Object
+class ReplayCallbackArg : public Object
 {
     /* Full structural identity. Combined with `scope` and the shared
        `walkFacts`, `cidasks::scopeStateIdAt` computes this proxy's scopeStateId
@@ -81,7 +81,7 @@ class ReplayLocalObject : public Object
        resolve to their respective recorded responses (cb-repeated-
        cb-apply-diff-args's fix). Cold's insertLocalResponse writes
        with writer.envFactSetHash at the matching moment; walker at
-       ReplayLocalObject construction time receives its own outer
+       ReplayCallbackArg construction time receives its own outer
        cur which — by lockstep growth of walker.cidasksWalk with
        writer.envWalk under Path 3 — equals cold's writer cur. */
     Hash outerContext;
@@ -144,7 +144,7 @@ public:
        parent's maybeGetAttr / getListElem as `DerivedSubject{parent,
        ...}`. Inherits parent's shared walk/cursor so the child's
        scopeStateId evaluation rides on the same per-cb-apply chain. */
-    ReplayLocalObject(
+    ReplayCallbackArg(
         cidasks::Subject subject_,
         Hash scope_,
         std::shared_ptr<std::vector<cidasks::Edge>> walkFacts_,
@@ -162,7 +162,7 @@ public:
         , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
 
     /** Set the proxy's argScope. Returns *this for chaining. */
-    ReplayLocalObject & withScope(std::shared_ptr<const ArgScopeCell> argScope_)
+    ReplayCallbackArg & withScope(std::shared_ptr<const ArgScopeCell> argScope_)
     {
         argScope = std::move(argScope_);
         return *this;
@@ -171,7 +171,7 @@ public:
     /** Opt into depth-2 per-probe validation. Set on the cb-apply
         local (= the standin materialised at the cb apply boundary,
         whose surface probes were recorded in AmbientAsks). */
-    ReplayLocalObject & withAmbientAsksValidation()
+    ReplayCallbackArg & withAmbientAsksValidation()
     {
         validateAgainstAmbientAsks = true;
         return *this;
@@ -197,7 +197,7 @@ public:
         readResponse the late probes; we just can't per-probe
         validate them against AmbientAsks because the chain row
         wasn't recorded. */
-    ReplayLocalObject & withChainStart(Hash root);
+    ReplayCallbackArg & withChainStart(Hash root);
 
     /** Set the cb-arg apply context (depth + scope) so the lambda
         primop on this RLO (or its derived children) can compose the
@@ -206,7 +206,7 @@ public:
         with the proper scope. Sourced from the writer's localArg
         sidecar at the standin's localId. Derived children inherit
         the parent's applyContext via the same setter. */
-    ReplayLocalObject & withApplyContext(int depth_, Hash scope_)
+    ReplayCallbackArg & withApplyContext(int depth_, Hash scope_)
     {
         applyDepth = depth_;
         applyScope = std::move(scope_);
@@ -274,7 +274,7 @@ public:
         either reconstructing the function body from value-structure
         atoms (task #75) or comparing the live arg's content to the
         recorded arg's content (task #74's depth-2 walker). Until one
-        of those lands, an apply on a ReplayLocalObject is undecidable
+        of those lands, an apply on a ReplayCallbackArg is undecidable
         — we don't know whether the recorded result still applies for
         the current live arg. Throw a recognizable signal that
         callers can interpret as "walker miss, fall through to live

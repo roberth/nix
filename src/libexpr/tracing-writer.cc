@@ -500,10 +500,10 @@ void TracingWriter::flushAmbient(bool finalize)
                `[finalize: ε Asks edge]` baked into downstream
                envAsksEdges. Instead we only need the late probes'
                request payloads and recorded responses in the pool
-               so `ReplayLocalObject`'s `readResponse` finds them.
+               so `ReplayCallbackArg`'s `readResponse` finds them.
                Validation against AmbientAsks is skipped for boundaries
                whose chain is empty at chainStart — see
-               `ReplayLocalObject::withChainStart`. */
+               `ReplayCallbackArg::withChainStart`. */
             std::vector<cidasks::Edge> walk;
             walk.reserve(group.size());
             Hash cumulativeFactSet = boundary.applyRequestHash;

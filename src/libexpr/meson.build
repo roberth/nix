@@ -166,7 +166,7 @@ sources = files(
   'trace-file.cc',
   'trace-types.cc',
   'lambda-apply-result-object.cc',
-  'replay-local-object.cc',
+  'replay-callback-arg.cc',
   'tracing-cache-stats.cc',
   'tracing-environment.cc',
   'tracing-decision-graph.cc',

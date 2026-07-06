@@ -1,4 +1,4 @@
-#include "nix/expr/replay-local-object.hh"
+#include "nix/expr/replay-callback-arg.hh"
 #include "nix/expr/content-identity-via-asks.hh"
 #include "nix/expr/expr-from-object.hh"
 #include "nix/expr/interpreter-object.hh"
@@ -13,7 +13,7 @@
 
 namespace nix {
 
-ReplayLocalObject & ReplayLocalObject::withChainStart(Hash root)
+ReplayCallbackArg & ReplayCallbackArg::withChainStart(Hash root)
 {
     *chainCursor = std::move(root);
     if (validateAgainstAmbientAsks) {
@@ -75,7 +75,7 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, c
         outerContext.to_string(HashFormat::Base16, false).substr(0, 12));
     auto payload = dg.getLocalResponsePayload(reqHash, outerContext);
     if (!payload)
-        throw Error("ReplayLocalObject: no recorded response for %s on local %s",
+        throw Error("ReplayCallbackArg: no recorded response for %s on local %s",
             Q::tag, query.from.isContent() ? query.from.contentHash() : "<ambient>");
     return cborStringToJson(*payload);
 }
@@ -161,7 +161,7 @@ static void advanceChainAndAppendFact(
         Q::tag);
 }
 
-std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name)
+std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name)
 {
     trace::QueryGetAttr query{name, std::string{}};
     auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
@@ -182,7 +182,7 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
         .kind = cidasks::DerivedSubject::Kind::GetAttr,
         .name = name,
     }};
-    auto child = std::make_shared<ReplayLocalObject>(
+    auto child = std::make_shared<ReplayCallbackArg>(
         std::move(childSubject), scope, walkFacts, chainCursor,
         outerContext, decisionGraph, rootFSRoot, state);
     /* Children inherit per-probe validation if the parent has it —
@@ -200,7 +200,7 @@ std::shared_ptr<Object> ReplayLocalObject::maybeGetAttr(const std::string & name
     return child;
 }
 
-const trace::ResultWHNF & ReplayLocalObject::whnf()
+const trace::ResultWHNF & ReplayCallbackArg::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
@@ -215,7 +215,7 @@ const trace::ResultWHNF & ReplayLocalObject::whnf()
     return *cachedWHNF;
 }
 
-std::vector<std::string> ReplayLocalObject::getAttrNames()
+std::vector<std::string> ReplayCallbackArg::getAttrNames()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
@@ -224,7 +224,7 @@ std::vector<std::string> ReplayLocalObject::getAttrNames()
     return p->names;
 }
 
-std::string ReplayLocalObject::getStringIgnoreContext()
+std::string ReplayCallbackArg::getStringIgnoreContext()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFString>(&w.payload);
@@ -233,12 +233,12 @@ std::string ReplayLocalObject::getStringIgnoreContext()
     return p->value;
 }
 
-std::string ReplayLocalObject::getStringWithoutContext()
+std::string ReplayCallbackArg::getStringWithoutContext()
 {
     return getStringIgnoreContext();
 }
 
-std::pair<std::string, NixStringContext> ReplayLocalObject::getStringWithContext()
+std::pair<std::string, NixStringContext> ReplayCallbackArg::getStringWithContext()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFString>(&w.payload);
@@ -250,7 +250,7 @@ std::pair<std::string, NixStringContext> ReplayLocalObject::getStringWithContext
     return {p->value, std::move(ctx)};
 }
 
-RootedPath ReplayLocalObject::getPath()
+RootedPath ReplayCallbackArg::getPath()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFPath>(&w.payload);
@@ -259,7 +259,7 @@ RootedPath ReplayLocalObject::getPath()
     return RootedPath{rootFSRoot, CanonPath{p->path}};
 }
 
-bool ReplayLocalObject::getBool(std::string_view)
+bool ReplayCallbackArg::getBool(std::string_view)
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFBool>(&w.payload);
@@ -268,7 +268,7 @@ bool ReplayLocalObject::getBool(std::string_view)
     return p->value;
 }
 
-NixInt ReplayLocalObject::getInt(std::string_view)
+NixInt ReplayCallbackArg::getInt(std::string_view)
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFInt>(&w.payload);
@@ -277,7 +277,7 @@ NixInt ReplayLocalObject::getInt(std::string_view)
     return NixInt{p->value};
 }
 
-NixFloat ReplayLocalObject::getFloat(std::string_view)
+NixFloat ReplayCallbackArg::getFloat(std::string_view)
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
@@ -286,7 +286,7 @@ NixFloat ReplayLocalObject::getFloat(std::string_view)
     return p->value;
 }
 
-size_t ReplayLocalObject::getListSize()
+size_t ReplayCallbackArg::getListSize()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFList>(&w.payload);
@@ -295,7 +295,7 @@ size_t ReplayLocalObject::getListSize()
     return p->size;
 }
 
-std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
+std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
 {
     trace::QueryGetListElem query{std::string{}, index};
     auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
@@ -309,7 +309,7 @@ std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
         .kind = cidasks::DerivedSubject::Kind::GetListElem,
         .index = index,
     }};
-    auto child = std::make_shared<ReplayLocalObject>(
+    auto child = std::make_shared<ReplayCallbackArg>(
         std::move(childSubject), scope, walkFacts, chainCursor,
         outerContext, decisionGraph, rootFSRoot, state);
     if (validateAgainstAmbientAsks)
@@ -320,30 +320,30 @@ std::shared_ptr<Object> ReplayLocalObject::getListElem(size_t index)
     return child;
 }
 
-ObjectType ReplayLocalObject::getType()
+ObjectType ReplayCallbackArg::getType()
 {
     return stringToObjectType(whnf().type);
 }
 
-ObjectType ReplayLocalObject::getTypeLazy()
+ObjectType ReplayCallbackArg::getTypeLazy()
 {
     return getType();
 }
 
-RootValue ReplayLocalObject::defeatCache()
+RootValue ReplayCallbackArg::defeatCache()
 {
     /* `defeatCache` means "bypass the cache and force the original
-       expression to get the actual Value" — but a ReplayLocalObject
+       expression to get the actual Value" — but a ReplayCallbackArg
        IS the cache for a frozen local arg whose original Value isn't
        live during replay. There's nothing to bypass to. Callers that
        want a Value-shaped handle for `mkApp` should use
        `toValueOrProxy` instead. */
     throw Error(
-        "ReplayLocalObject::defeatCache: cannot bypass the cache on a "
+        "ReplayCallbackArg::defeatCache: cannot bypass the cache on a "
         "frozen local — use toValueOrProxy to obtain a primop standin");
 }
 
-RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_ptr<AmbientResolver> resolver)
+RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<AmbientResolver> resolver)
 {
     /* Per via-Asks Replay (depth-2): the walker reconstructs the
        LocalObject as a live Nix Value tree, lazily produced from
@@ -578,7 +578,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
                    state. Scope = mergedApplyScope — matches writer's
                    `LambdaApplyResultObject` which carries this same
                    Merkle scope for its downstream observations. */
-                auto synthetic = std::make_shared<ReplayLocalObject>(
+                auto synthetic = std::make_shared<ReplayCallbackArg>(
                     std::move(syntheticSubject), mergedApplyScope,
                     localWalkFacts, localChainCursor,
                     outerContextSaved, *dg, rootFSRootSaved, &state);
@@ -624,7 +624,7 @@ RootValue ReplayLocalObject::toValueOrProxy(EvalState & evalState, std::shared_p
     return allocRootValue(val);
 }
 
-std::optional<FunctionInfo> ReplayLocalObject::getFunctionInfo()
+std::optional<FunctionInfo> ReplayCallbackArg::getFunctionInfo()
 {
     trace::QueryGetFunctionInfo query{std::string{}};
     auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
@@ -639,7 +639,7 @@ std::optional<FunctionInfo> ReplayLocalObject::getFunctionInfo()
     return FunctionInfo{r.formals, r.ellipsis};
 }
 
-std::shared_ptr<Object> ReplayLocalObject::queryApply(std::shared_ptr<Object> /*argObj*/)
+std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> /*argObj*/)
 {
     /* See header comment. Until depth-2 walker integration (task #74)
        or value-structure-atom reconstruction (task #75) lands, an
@@ -649,7 +649,7 @@ std::shared_ptr<Object> ReplayLocalObject::queryApply(std::shared_ptr<Object> /*
        (the chain still goes through defeatCache); this is groundwork
        for the uniform-queryApply restructure. */
     throw Error(
-        "ReplayLocalObject::queryApply: cannot validate apply on a recorded "
+        "ReplayCallbackArg::queryApply: cannot validate apply on a recorded "
         "frozen local without reconstructing its value structure (depth-2 "
         "walker not yet integrated)");
 }

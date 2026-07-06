@@ -125,7 +125,7 @@ public:
     std::optional<std::string> getResultPayload(const ResultHash & h);
 
     /* LocalResponseMap: response payload pool, keyed by the *request*
-       hash. d=2 REPLAY ONLY: `ReplayLocalObject` reads these back to
+       hash. d=2 REPLAY ONLY: `ReplayCallbackArg` reads these back to
        serve probes into a reconstructed LocalObject value tree — this
        is the design's "d=2 walker is the only consumer" contract from
        `content-identity-via-asks.md` ("Atom storage"). The soundness

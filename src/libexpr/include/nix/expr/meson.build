@@ -46,7 +46,7 @@ headers = [ config_pub_h ] + files(
   'print.hh',
   'provenance-object.hh',
   'lambda-apply-result-object.hh',
-  'replay-local-object.hh',
+  'replay-callback-arg.hh',
   'repl-exit-status.hh',
   'search-path.hh',
   'source-root.hh',

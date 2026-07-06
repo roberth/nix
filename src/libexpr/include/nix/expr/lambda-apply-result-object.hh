@@ -24,7 +24,7 @@
  *
  * The walker's `<replay-local-lambda>` primop, when its synthetic
  * apply-result probes `getType` / `getInt` etc. via
- * `ReplayLocalObject`, computes the same reqHash via
+ * `ReplayCallbackArg`, computes the same reqHash via
  * `stampPerArgFields(query, syntheticSubject, syntheticScope,
  * walkFacts, walkFacts.size())` (where `walkFacts.size() == 1` after
  * the primop pushed the recursive apply Fact). Lookup keys agree by
