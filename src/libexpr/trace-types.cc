@@ -379,7 +379,7 @@ void to_json(nlohmann::json & j, const QueryLeaf & leaf)
     if (leaf.isStateHash())
         j = leaf.stateHash();
     else
-        j = nlohmann::json{{"ambient", leaf.ambientIndex()}};
+        j = nlohmann::json{{"ambient", leaf.outerIndex()}};
 }
 
 void from_json(const nlohmann::json & j, QueryLeaf & leaf)

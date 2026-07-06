@@ -420,7 +420,7 @@ public:
 
     /**
      * Get the shared OuterResolver if one is wired up below this
-     * evaluator. `Interpreter` returns its own `ambientResolver`
+     * evaluator. `Interpreter` returns its own `outerResolver`
      * field; wrapping evaluators (`TracingEvaluator`,
      * `TracingReplayEvaluator`) delegate down. Returns null when no
      * cache stack is active.

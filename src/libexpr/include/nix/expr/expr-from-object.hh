@@ -45,10 +45,10 @@ struct ExprFromObject : ExprProxy
      *
      * When set, the Object is a function defined inside the cache
      * boundary. eval() creates a `<cached-fn>` PrimOp that routes
-     * calls through this evaluator. ambientResolver MUST also be set.
+     * calls through this evaluator. outerResolver MUST also be set.
      *
      * When null, functions are either absent or ambient (from the
-     * outer evaluator). Ambient functions get an `<ambient-fn>`
+     * outer evaluator). Ambient functions get an `<outer-fn>`
      * PrimOp that dispatches via OuterObject::queryApply().
      */
     std::shared_ptr<Evaluator> innerEvaluator;
@@ -60,15 +60,15 @@ struct ExprFromObject : ExprProxy
      *
      * Created via makeAmbientResolver(outerState, innerEvaluator).
      */
-    std::shared_ptr<struct OuterResolver> ambientResolver;
+    std::shared_ptr<struct OuterResolver> outerResolver;
 
     explicit ExprFromObject(
         std::shared_ptr<Object> obj,
         std::shared_ptr<Evaluator> innerEvaluator = nullptr,
-        std::shared_ptr<OuterResolver> ambientResolver = nullptr)
+        std::shared_ptr<OuterResolver> outerResolver = nullptr)
         : obj(std::move(obj))
         , innerEvaluator(std::move(innerEvaluator))
-        , ambientResolver(std::move(ambientResolver))
+        , outerResolver(std::move(outerResolver))
     {
     }
 
@@ -83,17 +83,17 @@ struct ExprFromObjectAttr : ExprProxy
     std::shared_ptr<Object> parentObj;
     std::string name;
     std::shared_ptr<Evaluator> innerEvaluator;
-    std::shared_ptr<struct OuterResolver> ambientResolver;
+    std::shared_ptr<struct OuterResolver> outerResolver;
 
     ExprFromObjectAttr(
         std::shared_ptr<Object> parentObj,
         std::string name,
         std::shared_ptr<Evaluator> innerEvaluator,
-        std::shared_ptr<OuterResolver> ambientResolver = nullptr)
+        std::shared_ptr<OuterResolver> outerResolver = nullptr)
         : parentObj(std::move(parentObj))
         , name(std::move(name))
         , innerEvaluator(std::move(innerEvaluator))
-        , ambientResolver(std::move(ambientResolver))
+        , outerResolver(std::move(outerResolver))
     {
     }
 

@@ -156,7 +156,7 @@ struct BridgedThunkCache
    apply Request + Pass-2 localArg sidecar to the writer's flush.
    Constructed transiently per call; holds refs/copies from the owning
    resolver. The `resolverHandle` shared_ptr is required for
-   ExprFromObject's `ambientResolver` field; everything else is by
+   ExprFromObject's `outerResolver` field; everything else is by
    reference. */
 struct OuterApply
 {
@@ -509,7 +509,7 @@ static PrimOp * makeCachedFnPrimOp(
                             OuterQueryResult qr = (objectId == rootId)
                                 ? resolver->queryOn(outerArgObj, q)
                                 : resolver->query(objectId, q);
-                            innerEnv.ambientQuery(
+                            innerEnv.outerQuery(
                                 q,
                                 [&](const trace::QueryVariant &) { return qr.result; },
                                 subject,
@@ -600,14 +600,14 @@ static PrimOp * makeCachedFnPrimOp(
  * Create a PrimOp for an ambient function (from the outer evaluator).
  * Calls dispatch through OuterObject::queryApply without an inner evaluator.
  */
-static PrimOp * makeAmbientFnPrimOp(std::shared_ptr<Object> fnObj, std::shared_ptr<OuterResolver> resolver)
+static PrimOp * makeOuterFnPrimOp(std::shared_ptr<Object> fnObj, std::shared_ptr<OuterResolver> resolver)
 {
     return new
 #if NIX_USE_BOEHMGC
         (GC)
 #endif
             PrimOp{
-                .name = "<ambient-fn>",
+                .name = "<outer-fn>",
                 .args = {"args"},
                 .arity = 1,
                 .impl =
@@ -631,7 +631,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
         auto attrs = state.buildBindings(names.size());
         for (const auto & name : names) {
             auto * thunk = state.allocValue();
-            auto * expr = new ExprFromObjectAttr(obj, name, innerEvaluator, ambientResolver);
+            auto * expr = new ExprFromObjectAttr(obj, name, innerEvaluator, outerResolver);
             state.mkThunk_(*thunk, expr);
             attrs.insert(state.symbols.create(name), thunk);
         }
@@ -644,7 +644,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
         auto builder = state.buildList(size);
         for (size_t i = 0; i < size; i++) {
             auto childObj = obj->getListElem(i);
-            auto childExpr = new ExprFromObject(std::move(childObj), innerEvaluator, ambientResolver);
+            auto childExpr = new ExprFromObject(std::move(childObj), innerEvaluator, outerResolver);
             builder.elems[i] = childExpr->maybeThunk(state, env);
         }
         v.mkList(builder);
@@ -689,10 +689,10 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
     case nFunction: {
         /* Dispatch on obj's dynamic type. An OuterObject wraps an
            outer value reached via ambient query; its apply must
-           route through queryApply (makeAmbientFnPrimOp). A concrete
+           route through queryApply (makeOuterFnPrimOp). A concrete
            fn with an inner evaluator goes through innerEval->apply
            (makeCachedFnPrimOp). A concrete fn without an inner
-           evaluator falls back to makeAmbientFnPrimOp — the impl
+           evaluator falls back to makeOuterFnPrimOp — the impl
            will throw at apply time (matching the prior behaviour
            for that combination, which the unit tests rely on for
            construction-only checks). */
@@ -704,17 +704,17 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
            cached/ambient primops here would dispatch on
            `ReplayCallbackArg::queryApply` which throws by design. */
         if (dynamic_cast<ReplayCallbackArg *>(obj.get())) {
-            auto val = obj->toValueOrProxy(state, ambientResolver);
+            auto val = obj->toValueOrProxy(state, outerResolver);
             v = **val;
             break;
         }
         PrimOp * primOp;
         if (dynamic_cast<OuterObject *>(obj.get())) {
-            primOp = makeAmbientFnPrimOp(obj, ambientResolver);
+            primOp = makeOuterFnPrimOp(obj, outerResolver);
         } else if (innerEvaluator) {
-            primOp = makeCachedFnPrimOp(obj, innerEvaluator, ambientResolver);
+            primOp = makeCachedFnPrimOp(obj, innerEvaluator, outerResolver);
         } else {
-            primOp = makeAmbientFnPrimOp(obj, ambientResolver);
+            primOp = makeOuterFnPrimOp(obj, outerResolver);
         }
         v.mkPrimOp(primOp);
         break;
@@ -733,7 +733,7 @@ void ExprFromObjectAttr::eval(EvalState & state, Env & env, Value & v)
     auto childObj = parentObj->maybeGetAttr(name);
     if (!childObj)
         state.error<TypeError>("ExprFromObjectAttr: attribute '%s' missing", name).debugThrow();
-    ExprFromObject(std::move(childObj), innerEvaluator, ambientResolver).eval(state, env, v);
+    ExprFromObject(std::move(childObj), innerEvaluator, outerResolver).eval(state, env, v);
 }
 
 std::shared_ptr<OuterResolver> makeAmbientResolver(

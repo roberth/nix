@@ -326,7 +326,7 @@ struct QueryLeaf
     {
         return std::get<StateHashLeaf>(data).hash;
     }
-    int ambientIndex() const
+    int outerIndex() const
     {
         return std::get<OuterLeaf>(data).index;
     }

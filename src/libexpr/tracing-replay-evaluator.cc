@@ -139,7 +139,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         if (!requestPayload)
             return Hash(HashAlgorithm::SHA256);
         bool isAmbient = false;
-        std::optional<Hash> ambientFromHash;
+        std::optional<Hash> outerFromHash;
         std::string queryTag;
         std::string queryDescription;
         try {
@@ -152,7 +152,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
                     auto & params = reqJson["params"];
                     if (params.contains("from")) {
                         try {
-                            ambientFromHash = Hash::parseNonSRIUnprefixed(
+                            outerFromHash = Hash::parseNonSRIUnprefixed(
                                 params["from"].get<std::string>(), HashAlgorithm::SHA256);
                         } catch (...) {}
                     }
@@ -241,7 +241,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
                         queryDescription);
                     writer.noteEnvObservation(requestHash, storedH);
                     pendingEdgeObservations.push_back({
-                        ambientFromHash.value_or(Hash(HashAlgorithm::SHA256)),
+                        outerFromHash.value_or(Hash(HashAlgorithm::SHA256)),
                         TracingDecisionGraph::xorFactIntoHash(
                             Hash(HashAlgorithm::SHA256), requestHash, storedH),
                     });
@@ -294,9 +294,9 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         } catch (...) {
             respJsonStr = "(unparseable)";
         }
-        if (isAmbient && ambientFromHash) {
+        if (isAmbient && outerFromHash) {
             pendingEdgeObservations.push_back({
-                *ambientFromHash,
+                *outerFromHash,
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), requestHash, h),
             });
@@ -304,7 +304,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
                 "dispatch ambient: req=%s payload=%s from=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
                 queryDescription,
-                ambientFromHash->to_string(HashFormat::Base16, false).substr(0, 12),
+                outerFromHash->to_string(HashFormat::Base16, false).substr(0, 12),
                 h.to_string(HashFormat::Base16, false).substr(0, 12),
                 reqJsonStr,
                 respJsonStr);

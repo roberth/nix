@@ -361,7 +361,7 @@ static void main_nix_build(int argc, char ** argv)
         state->evaluatorCompat = eval.get_ptr();
         evaluator = eval.get_ptr();
         resolver = makeAmbientResolver(state.get(), evaluator, tracingWriter.get());
-        interpreter->ambientResolver = resolver;
+        interpreter->outerResolver = resolver;
     } else {
         state = std::make_shared<EvalState>(myArgs.lookupPath, evalStore, fetchSettings, evalSettings, store);
     }

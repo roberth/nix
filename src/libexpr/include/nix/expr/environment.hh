@@ -64,7 +64,7 @@ public:
      * implementation delegates to the supplied resolve callback;
      * TracingEnvironment overrides to record the interaction.
      */
-    virtual trace::ResultVariant ambientQuery(
+    virtual trace::ResultVariant outerQuery(
         const trace::QueryVariant & query,
         std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
         Subject subject,

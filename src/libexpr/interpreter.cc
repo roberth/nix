@@ -114,8 +114,8 @@ ref<Object> Interpreter::apply(ref<Object> fn, ref<Object> arg)
        defeatCache pattern — `defeatCache` was the wrong name for the
        virtual-value case, since OuterObjects can't be "defeated"
        (they ARE the cache). */
-    auto fnValue = fn->toValueOrProxy(*evalState, ambientResolver);
-    auto argValue = arg->toValueOrProxy(*evalState, ambientResolver);
+    auto fnValue = fn->toValueOrProxy(*evalState, outerResolver);
+    auto argValue = arg->toValueOrProxy(*evalState, outerResolver);
 
     auto result = evalState->allocValue();
     // Create a lazy application thunk - evaluation happens when forced

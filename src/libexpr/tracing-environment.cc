@@ -56,7 +56,7 @@ std::optional<std::string> TracingEnvironment::getEnv(const std::string & name)
     return result;
 }
 
-trace::ResultVariant TracingEnvironment::ambientQuery(
+trace::ResultVariant TracingEnvironment::outerQuery(
     const trace::QueryVariant & query,
     std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
     Subject subject,
