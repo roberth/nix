@@ -138,7 +138,7 @@ class TracingWriter
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
        new query hash added to envFactSet since the last logResult,
        whether from `logResponse` (= env/file), `noteEnvObservation`,
-       or `flushAmbient`. AmbientQueries are env layer just like
+       or `flushAmbient`. OuterQueries are env layer just like
        file reads; bundling them with env/file into one Asks edge per
        logResult keeps the trie's edge structure 1:1 with envWalk.
        `envAsksEdges` retains each finalized boundary so every Q's
@@ -239,7 +239,7 @@ class TracingWriter
        elide redundant boundary firings during walker re-dispatch of a
        recorded apply (= `dispatchApplyLive`): walker's
        `fnObj->queryApply(replayLocal)` re-routes through
-       `OuterObject::queryApply` → `applyFn` → `AmbientApply::run`,
+       `OuterObject::queryApply` → `applyFn` → `OuterApply::run`,
        which would normally fire `openApplyBoundary` — but that path
        represents validation of an already-recorded apply event, not a
        NEW event. Letting it fire inflates `envWalk` with ε edges
@@ -603,7 +603,7 @@ public:
      * env cur consistent with via-Asks §"Recording (ambient layer)":
      * "The terminal factSet hash *is* the `AmbientResult`, which
      * the env layer walker XOR-folds into its own `cur` as the
-     * `Response` for the enclosing `AmbientQuery`."
+     * `Response` for the enclosing `OuterQuery`."
      *
      * The `fromHash` of the synthetic env apply Fact's
      * envWalk observation is `Hash(0)` — the apply boundary

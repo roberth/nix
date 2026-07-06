@@ -27,7 +27,7 @@ static void stampPerArgFieldsAmbient(Q & q, const Subject & subject, const Hash 
 }
 
 OuterObject::OuterObject(
-    Subject subject_, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn)
+    Subject subject_, OuterQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, OuterApplyFn applyFn)
     : subject(std::move(subject_))
     , argAncestry(HashAlgorithm::SHA256)
     , queryFn(std::move(queryFn))
@@ -245,7 +245,7 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
        a PositionalSeed at the apply's reverse-De-Bruijn depth — no
        inherited Subject is propagated, so observations at the
        boundary are predictable regardless of where the arg came
-       from. Must match what `AmbientApply::run` computes for argId
+       from. Must match what `OuterApply::run` computes for argId
        downstream so the registry's resultId and this proxy's state hash
        for queryFn lookups agree. */
     int localDepth = callerScope ? callerScope->depth + 1 : 0;

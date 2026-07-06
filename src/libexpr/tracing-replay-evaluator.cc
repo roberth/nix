@@ -41,7 +41,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        queries triggered through `fnObj->queryApply(...)` during
        dispatch (resolveApplyId, navigatePath's Apply step,
        dispatchApplyLive) re-route through `OuterObject::queryApply
-       → applyFn → AmbientApply::run` and would each fire a fresh
+       → applyFn → OuterApply::run` and would each fire a fresh
        `openApplyBoundary` on the writer if not suppressed. Each fresh
        boundary inflates `envWalk` with a redundant ε edge
        beyond the genuine cb-apply events the recorder already

@@ -25,7 +25,7 @@ namespace nix {
  * Response from an ambient query: the result plus an optional child id
  * for queries that produce child Objects (getAttr, getListElem, apply).
  */
-struct AmbientQueryResult
+struct OuterQueryResult
 {
     trace::ResultVariant result;
     std::optional<OuterId> childId; // id of child Object in the resolver, if applicable
@@ -36,7 +36,7 @@ struct AmbientQueryResult
  * Object id, the query, the caller's Subject, and the caller's
  * inherited argAncestry (both for state-hash attribution at the writer).
  */
-using AmbientQueryFn = std::function<AmbientQueryResult(
+using OuterQueryFn = std::function<OuterQueryResult(
     OuterId objectId,
     const trace::QueryVariant &,
     Subject,
@@ -56,7 +56,7 @@ using AmbientQueryFn = std::function<AmbientQueryResult(
  * (OuterObject::queryApply) knows its own proxy graph
  * position and threads the effective cell through.
  */
-using AmbientApplyFn = std::function<OuterId(
+using OuterApplyFn = std::function<OuterId(
     OuterId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)>;
 
 /**
@@ -79,8 +79,8 @@ class OuterObject : public Object
        stateHashAfter against the accumulated walk. Null on
        non-cb-arg OuterObjects. */
     std::shared_ptr<ApplyContext> applyContext;
-    AmbientQueryFn queryFn;   ///< Callback to issue ambient queries
-    AmbientApplyFn applyFn;   ///< Callback for function application (may be null)
+    OuterQueryFn queryFn;   ///< Callback to issue ambient queries
+    OuterApplyFn applyFn;   ///< Callback for function application (may be null)
     /* lazy-paths: stable SourceRoot for paths returned by `getPath`.
        Held as a member so the SourceRoot outlives the Value the
        outer evaluator constructs from the RootedPath (Value stores a
@@ -104,7 +104,7 @@ class OuterObject : public Object
     trace::ResultWHNF & whnf();
 
 public:
-    OuterObject(Subject subject, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
+    OuterObject(Subject subject, OuterQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, OuterApplyFn applyFn = {});
 
     /** This proxy's structural identity (positional / derived /
         apply-result), per the subject-id design. */

@@ -131,7 +131,7 @@ void TracingWriter::flushAmbient(bool finalize)
 
         /* Secondary index for producer queries (getAttr / getListElem):
            insert the SAME query payload under the initial-walk reqHash
-           (from = parent root's CID at walk={}, K=0). AmbientApply
+           (from = parent root's CID at walk={}, K=0). OuterApply
            computes fn CIDs as `subjectHashAfter(DerivedSubject, scope,
            {})` — always at empty walk — so the fn CID equals the reqHash
            of the getAttr/getListElem query IF the from field is at

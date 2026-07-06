@@ -35,13 +35,13 @@ static std::string ambientHex(OuterId id)
  * results. For child-producing queries, returns
  * `hashString("child:" + ambientHex(objectId))` as the child id.
  */
-static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> responses)
+static OuterQueryFn mockResolver(std::map<std::string, trace::ResultVariant> responses)
 {
     return [responses = std::move(responses)](
                OuterId objectId,
                const trace::QueryVariant & q,
                Subject /*subject*/,
-               Hash /*argAncestry*/) -> AmbientQueryResult {
+               Hash /*argAncestry*/) -> OuterQueryResult {
         std::string objHex = ambientHex(objectId);
         std::string key = std::visit(
             [&](const auto & query) -> std::string {

@@ -71,7 +71,7 @@ struct OuterRegistry
    payload, and how to register the derived child / delay its settled
    identity into the writer. Stateless apart from the references it
    holds. Constructed on demand from OuterResolver members. */
-struct AmbientQuery
+struct OuterQuery
 {
     OuterRegistry & registry;
     TracingWriter * innerWriter;
@@ -82,10 +82,10 @@ struct AmbientQuery
         captures its own outer arg and calls this directly for seed
         observations, so sibling cb invocations don't collide on the
         shared `outerValues` map. */
-    AmbientQueryResult on(std::shared_ptr<Object> obj, const trace::QueryVariant & q) const
+    OuterQueryResult on(std::shared_ptr<Object> obj, const trace::QueryVariant & q) const
     {
         return std::visit(
-            [&](const auto & query) -> AmbientQueryResult {
+            [&](const auto & query) -> OuterQueryResult {
                 using Q = std::decay_t<decltype(query)>;
                 if constexpr (std::is_same_v<Q, trace::QueryApply>) {
                     throw Error("ambient query: QueryApply should go through applyFn, not queryFn");
@@ -158,7 +158,7 @@ struct BridgedThunkCache
    resolver. The `resolverHandle` shared_ptr is required for
    ExprFromObject's `ambientResolver` field; everything else is by
    reference. */
-struct AmbientApply
+struct OuterApply
 {
     OuterRegistry & registry;
     BridgedThunkCache & bridgedLocals;
@@ -222,14 +222,14 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
     };
     std::vector<LiveProxyEntry> liveProxies;
 
-    AmbientQueryResult query(OuterId objectId, const trace::QueryVariant & q)
+    OuterQueryResult query(OuterId objectId, const trace::QueryVariant & q)
     {
         return queryOn(registry.resolveOuter(objectId), q);
     }
 
-    AmbientQueryResult queryOn(std::shared_ptr<Object> obj, const trace::QueryVariant & q)
+    OuterQueryResult queryOn(std::shared_ptr<Object> obj, const trace::QueryVariant & q)
     {
-        return AmbientQuery{registry, innerWriter}.on(std::move(obj), q);
+        return OuterQuery{registry, innerWriter}.on(std::move(obj), q);
     }
 
     /** Apply an outer fn (resolved from fnId) to a local argObj.
@@ -242,7 +242,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
     std::pair<OuterId, OuterId> apply(
         OuterId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
     {
-        return AmbientApply{
+        return OuterApply{
             registry, bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
             shared_from_this(),
         }.run(fnId, std::move(argObj), std::move(callerScope));
@@ -255,21 +255,21 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
         std::shared_ptr<Object> fnObj, OuterId fnId,
         std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
     {
-        return AmbientApply{
+        return OuterApply{
             registry, bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
             shared_from_this(),
         }.runOn(std::move(fnObj), fnId, std::move(argObj), std::move(callerScope));
     }
 };
 
-std::pair<OuterId, OuterId> AmbientApply::run(
+std::pair<OuterId, OuterId> OuterApply::run(
     OuterId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
 {
     auto fnObj = registry.resolveOuter(fnId);
     return runOn(std::move(fnObj), fnId, std::move(argObj), std::move(callerScope));
 }
 
-std::pair<OuterId, OuterId> AmbientApply::runOn(
+std::pair<OuterId, OuterId> OuterApply::runOn(
     std::shared_ptr<Object> fnObj, OuterId fnId,
     std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
 {
@@ -298,7 +298,7 @@ std::pair<OuterId, OuterId> AmbientApply::runOn(
        time — the argAncestry evolves, and freezing would emit stale hashes. */
     Hash argAncestry = resolverHandle->callArgAncestry;
     auto argStateHash = stateHashAfter(argId, argAncestry, {});
-    tracingCacheLog("AmbientApply::run: argAncestry=%s argStateHash=%s",
+    tracingCacheLog("OuterApply::run: argAncestry=%s argStateHash=%s",
                     argAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
                     argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));
 
@@ -314,7 +314,7 @@ std::pair<OuterId, OuterId> AmbientApply::runOn(
        call in TracingEvaluator::apply for the principle. */
     if (innerWriter) {
         nlohmann::json applyQ = trace::QueryApply{fnIdStr, argStateHashStr};
-        tracingCacheLog("openApplyBoundary callsite=AmbientApply::run fn=%s arg=%s",
+        tracingCacheLog("openApplyBoundary callsite=OuterApply::run fn=%s arg=%s",
                         fnIdStr.substr(0, 12), argStateHashStr.substr(0, 12));
         innerWriter->openApplyBoundary(applyQ);
     }
@@ -493,7 +493,7 @@ static PrimOp * makeCachedFnPrimOp(
                            queryFn captures its own outerArgObj and uses
                            it directly for seed (rootId) queries. */
                         auto & innerEnv = *innerEval->getEvalState().environment;
-                        AmbientQueryFn queryFn = [resolver, outerArgObj, rootId,
+                        OuterQueryFn queryFn = [resolver, outerArgObj, rootId,
                                                   &innerEnv, applyContext](
                             OuterId objectId,
                             const trace::QueryVariant & q,
@@ -506,7 +506,7 @@ static PrimOp * makeCachedFnPrimOp(
                                objects from earlier getAttr/getListElem),
                                delegate to the resolver which has them
                                registered. */
-                            AmbientQueryResult qr = (objectId == rootId)
+                            OuterQueryResult qr = (objectId == rootId)
                                 ? resolver->queryOn(outerArgObj, q)
                                 : resolver->query(objectId, q);
                             innerEnv.ambientQuery(
@@ -546,7 +546,7 @@ static PrimOp * makeCachedFnPrimOp(
                            Facts with `from=<apply_qH>` can have
                            their response payloads located via the
                            LocalResponseMap on replay. */
-                        AmbientApplyFn applyFn = [resolver, outerArgObj, rootId](
+                        OuterApplyFn applyFn = [resolver, outerArgObj, rootId](
                             OuterId fnId,
                             std::shared_ptr<Object> argObj,
                             std::shared_ptr<const ArgCell> callerScope) {
