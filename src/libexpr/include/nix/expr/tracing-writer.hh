@@ -185,7 +185,7 @@ class TracingWriter
            time (= position recorded at openApplyBoundary time, AFTER
            closeAsksEdge(false) drained pre-boundary env chunk). This
            makes the walker dispatch the ε edge BEFORE the body's
-           env facts that follow, so the lambda-standin's primop
+           env facts that follow, so the lambda-ReplayCallbackArg's primop
            fires and seedCell extension happens in time for seed(N+1)
            probes to resolve. */
         size_t insertionIndex;
@@ -619,7 +619,7 @@ public:
      * applied by the outer). Per via-Asks Replay (ambient layer): the
      * lambda primop at warm pulls this edge by (chainCursor,
      * stampedReqHash). Walker-side counterpart in
-     * `<replay-local-lambda>` impl advances the standin's
+     * `<replay-local-lambda>` impl advances the ReplayCallbackArg's
      * chainCursor by this fact's elementHash.
      *
      * Subject = ApplyResultSubject{fn, arg} (caller-built) so the

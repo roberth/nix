@@ -194,7 +194,7 @@ public:
      *  - `AmbientObject`: returns a thunk wrapping an `ExprFromObject`
      *    proxy that, when forced, dispatches through the resolver. Its
      *    `defeatCache` throws ("you can't bypass a cache you ARE").
-     *  - `ReplayCallbackArg`: returns a primop standin that, when
+     *  - `ReplayCallbackArg`: returns a primop replay that, when
      *    applied, materialises the next-level cached representation.
      *    Its `defeatCache` could also throw under the same principle.
      *

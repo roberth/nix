@@ -3,7 +3,7 @@
  * @file
  * TracingCallbackApplyResult — writer-side wrapper for the result of
  * applying a TracingCallbackArg (= an inner-supplied lambda crossing
- * back from outer's body via `<cached-fn>(TLO).impl`) to its contraArg.
+ * back from outer's body via `<cached-fn>(TracingCallbackArg).impl`) to its contraArg.
  *
  * Sibling of TracingObject; the difference is *where* method-level
  * observations land:
@@ -55,7 +55,7 @@ class TracingCallbackApplyResult : public Object
     ref<Object> inner;
     TracingWriter & writer;
 
-    /* ApplyResultSubject{PostulatedIdempotentRead{TLO.state hash}, contraArg.subject}.
+    /* ApplyResultSubject{PostulatedIdempotentRead{TracingCallbackArg.state hash}, contraArg.subject}.
        Matches what `<replay-local-lambda>`'s primop builds for the
        synthetic apply-result subject at warm. flushAmbient's
        ambient loop uses this subject to stamp each observation's `from`

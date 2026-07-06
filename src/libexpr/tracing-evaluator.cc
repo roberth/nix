@@ -311,7 +311,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        chain. Per via-Asks Replay (ambient layer): the lambda primop at
        warm pulls this edge by `(chainCursor, stampedReqHash)`.
        Walker-side counterpart: the lambda primop's impl advances
-       the standin's chainCursor by this fact's elementHash.
+       the ReplayCallbackArg's chainCursor by this fact's elementHash.
 
        Capture the enclosing boundary's applyId BEFORE
        logAmbientApplyFact / openApplyBoundary so the apply-result
@@ -319,11 +319,11 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        `TracingCallbackApplyResult` below) route to the same enclosing
        boundary the recursive apply Fact landed in. Their ambient
        chain order is: [recursiveApplyFact, applyResult.getType,
-       applyResult.getInt, ...] — matching the walker's standin's
+       applyResult.getInt, ...] — matching the walker's ReplayCallbackArg's
        primop manual-push (= one fact) followed by the synthetic's
        per-probe `advanceChainAndAppendFact` calls.
 
-       Skip `openApplyBoundary` entirely for the TLO-fn path: it
+       Skip `openApplyBoundary` entirely for the TracingCallbackArg-fn path: it
        would push a fresh empty boundary whose synthetic env fact
        `(applyReqHash, applyReqHash)` enters envFactSet at finalize
        and forces the outer walker into a `dispatchApplyLive` whose
@@ -333,7 +333,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        the ambient chain entry for this apply, so a separate boundary
        carries no information.
 
-       Filtered to TLO fn specifically so we don't add ambient facts
+       Filtered to TracingCallbackArg fn specifically so we don't add ambient facts
        for ordinary nested cb-applies (= cached-fn applied to outer
        values) — those don't go through the lambda-primop path at
        warm and would just contaminate the enclosing chain's
@@ -342,11 +342,11 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     /* Build the ApplyResultSubject from fn/arg constituents.
 
-       Non-TLO: `getSubject()` on each with PostulatedIdempotentRead
+       Non-TracingCallbackArg: `getSubject()` on each with PostulatedIdempotentRead
        fallback (= satisfied by fresh-from-evalFile TracingObjects and
        literal `mk*` Objects per the variant contract).
 
-       TLO-fn (= recursive cb-apply): the arg crosses the cb-apply
+       TracingCallbackArg-fn (= recursive cb-apply): the arg crosses the cb-apply
        boundary as `PositionalSeed{depth+1}` regardless of its
        outside-the-boundary Subject. Same convention as
        `AmbientObject::queryApply` and the walker's
@@ -484,7 +484,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto result = inner->apply(fn, arg);
     auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
 
-    /* For the TLO-fn case (= cb-higher-order's recursive cb-apply):
+    /* For the TracingCallbackArg-fn case (= cb-higher-order's recursive cb-apply):
        wrap the result in a TracingCallbackApplyResult so subsequent
        method calls (`getType`, `getInt`, etc.) record ambient
        observations on the enclosing cb-apply boundary instead of

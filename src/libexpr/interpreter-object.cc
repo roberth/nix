@@ -203,7 +203,7 @@ std::shared_ptr<Object> InterpreterObject::queryApply(std::shared_ptr<Object> ar
        `Interpreter::apply` for cases where the caller has an Object
        reference (not an Evaluator). Routes through `toValueOrProxy`
        so virtual-value subclasses (AmbientObject's ExprFromObject
-       thunk, ReplayCallbackArg's standin primop) pick their own
+       thunk, ReplayCallbackArg replay-object primop) pick their own
        Value representation — `defeatCache` on those throws because
        they ARE the cache. */
     auto argValue = argObj->toValueOrProxy(state, nullptr);

@@ -140,16 +140,16 @@ class TracingReplayEvaluator : public Evaluator
     std::shared_ptr<Object> resolveApplyId(const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx);
 
     /** ambient live AmbientResult computation for a cb-apply Fact
-        dispatch. Materialises a fresh standin rooted at
-        `applyReqHash`, invokes `fn->queryApply(standin)` live, then
+        dispatch. Materialises a fresh ReplayCallbackArg rooted at
+        `applyReqHash`, invokes `fn->queryApply(ReplayCallbackArg)` live, then
         FORCES the apply result (= via `getType()`) so outer's `f`
-        actually evaluates and drives probes against the standin
+        actually evaluates and drives probes against the ReplayCallbackArg
         through `ExprFromObject`'s bridge thunk. Per-probe
         `validateAgainstAmbientAsks` walks the recorded chain;
         divergence throws and is caught here. Returns
         `std::nullopt` on divergence so the env dispatch fails.
 
-        Returns the standin's terminal `chainCursor` — the
+        Returns the ReplayCallbackArg's terminal `chainCursor` — the
         AmbientResult to fold into env cur as the cb-apply
         Request's respHash. No memoisation: per via-Asks principle
         9, each dispatch re-invokes fn fresh. */

@@ -615,7 +615,7 @@ void TracingWriter::openApplyBoundary(const nlohmann::json & applyQueryPayload)
        insertionIndex (= position in envAsksEdges captured AFTER
        closeAsksEdge(false) drained the pre-boundary env chunk). This
        puts ε BEFORE its body's env facts in walker dispatch order,
-       so the lambda-standin's seedCell extension fires before
+       so the lambda-ReplayCallbackArg's seedCell extension fires before
        seed(N+1) probes try to resolve. */
     pendingApplyBoundaries.push_back({
         applyReqHash,

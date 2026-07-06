@@ -340,7 +340,7 @@ RootValue ReplayCallbackArg::defeatCache()
        `toValueOrProxy` instead. */
     throw Error(
         "ReplayCallbackArg::defeatCache: cannot bypass the cache on a "
-        "frozen local — use toValueOrProxy to obtain a primop standin");
+        "frozen local — use toValueOrProxy to obtain a primop replay");
 }
 
 RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<AmbientResolver> resolver)
@@ -384,17 +384,17 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
        captured at cold); without this registration the walker's
        resolveCdiId falls through "outer-seed by elimination" and the
        fact's dispatch fails. May be nullptr in unit-test paths that
-       construct a standin without a resolver — registration is
+       construct a ReplayCallbackArg without a resolver — registration is
        skipped then. */
     auto resolverSaved = resolver;
-    /* Capture the standin's chainCursor at primop-construction time
-       (= AFTER ExprFromObject(standin).eval's `obj->getType()` call
-       fires `standin.getType` and advances chainCursor via
+    /* Capture the ReplayCallbackArg's chainCursor at primop-construction time
+       (= AFTER ExprFromObject(replayObj).eval's `obj->getType()` call
+       fires `ReplayCallbackArg.getType` and advances chainCursor via
        `advanceChainAndAppendFact`, but BEFORE any primop firing has
        added apply Fact / synthetic probes). This is the chain root
        for each primop firing's local advance — resetting localChainCursor
        to this at every firing ensures multiple firings (= when the
-       cached standin's primop is invoked more than once) each
+       cached ReplayCallbackArg's primop is invoked more than once) each
        reproduce the same cold-side AmbientResult instead of
        accumulating XOR contributions across firings. */
     auto initialChainCursor = std::make_shared<Hash>(*chainCursor);
@@ -437,17 +437,17 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                         *resolverSaved, std::move(argId),
                         *applyArgAncestrySaved, std::move(outerArgObj));
                 }
-                /* Each primop firing replays the standin's chain
+                /* Each primop firing replays the ReplayCallbackArg's chain
                    advance (apply Fact + synthetic probes) on a LOCAL
-                   copy of walkFacts/chainCursor so the standin's
+                   copy of walkFacts/chainCursor so the ReplayCallbackArg's
                    persistent shared state isn't polluted across
                    firings.
 
-                   Why this is needed: the standin (materialised by
+                   Why this is needed: the ReplayCallbackArg (materialised by
                    `materialiseLocalStandin` and cached in
                    `ResolutionContext::memo`) is reused when the
                    walker dispatches multiple env facts whose
-                   resolution paths force the same standin's primop.
+                   resolution paths force the same ReplayCallbackArg's primop.
                    Without a copy, walkFacts would accumulate
                    entries from prior firings and the synthetic's
                    `stampPerArgFields` would compute its `from` at a
@@ -455,7 +455,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    `flushAmbient` stamped, breaking the
                    LocalResponseMap lookup.
 
-                   localWalkFacts copies just the standin's
+                   localWalkFacts copies just the ReplayCallbackArg's
                    surface-probe portion (= entries pushed before
                    any primop firing), trimming any contributions
                    from prior firings. localChainCursor resets to
@@ -478,12 +478,12 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                      }
                    where `localCell.depth = callerScope.depth + 1`.
 
-                   This lambda primop fires on the RLO that
+                   This lambda primop fires on the ReplayCallbackArg that
                    represents the fn of the nested apply; its
                    `subject` IS the recorder's "this AmbientObject's
                    subject". The arg subject is PositionalSeed{depth+1}
                    at applyArgAncestry, with `depth` threaded in through the
-                   localArg sidecar. The standin's construction (in
+                   localArg sidecar. The ReplayCallbackArg's construction (in
                    dispatchApplyLive) requires the sidecar to carry
                    depth+argAncestry, so the optionals are always set
                    here. */
@@ -504,14 +504,14 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                 Hash mergedApplyScope = combineArgAncestries(
                     *applyArgAncestrySaved, Hash{HashAlgorithm::SHA256});
 
-                /* Advance the standin's chainCursor by the recorded
+                /* Advance the ReplayCallbackArg's chainCursor by the recorded
                    apply Fact's elementHash. Mirrors the writer's ambient
                    stamping in flushAmbient: subject =
                    ApplyResultSubject{fn, arg} = syntheticSubject;
                    argAncestry = mergedApplyScope; edgeIndex =
                    walkFactsSaved->size() (= the apply Fact's position
                    in the writer's boundary facts list, AFTER the
-                   standin's surface probes).
+                   ReplayCallbackArg's surface probes).
 
                    Walker's env dispatch of ε reads this updated
                    chainCursor as the AmbientResult. */
@@ -574,7 +574,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                 }
 
                 /* Synthetic shares the LOCAL walk/cursor so its
-                   probes don't pollute the standin's persistent
+                   probes don't pollute the ReplayCallbackArg's persistent
                    state. Scope = mergedApplyScope — matches writer's
                    `TracingCallbackApplyResult` which carries this same
                    Merkle argAncestry for its downstream observations. */
@@ -590,7 +590,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    walk one AmbientAsks edge per probe to (a) keep
                    `chainCursor` aligned with the cold AmbientResult
                    (= principle 6 lockstep) and (b) detect divergence
-                   when the outer's behaviour changed. The standin's
+                   when the outer's behaviour changed. The ReplayCallbackArg's
                    primop has already pushed the recursive apply Fact
                    to `walkFacts` and advanced `chainCursor`, so the
                    first synthetic probe stamps at `walkFacts.size() == 1`
@@ -610,12 +610,12 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                 ExprFromObject(synthetic, nullptr, nullptr).eval(state, state.baseEnv, v);
 
                 /* Propagate the firing's final chainCursor to the
-                   standin's persistent state. `dispatchApplyLive`
+                   ReplayCallbackArg's persistent state. `dispatchApplyLive`
                    reads this as the AmbientResult for the cb-apply
                    Fact. Each firing's local chain advance produces
                    the same final cursor by construction, so this
                    assignment is deterministic across multiple
-                   firings of the same standin. */
+                   firings of the same ReplayCallbackArg. */
                 *chainCursorSaved = *localChainCursor;
             },
         };

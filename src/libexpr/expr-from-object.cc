@@ -206,7 +206,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
        inheritance (= no argAncestry discrimination). */
     Hash callArgAncestry = Hash(HashAlgorithm::SHA256);
 
-    /* Outer-direction proxies registered live by the standin's
+    /* Outer-direction proxies registered live by the ReplayCallbackArg's
        `<replay-local-lambda>` primop (= `registerAmbientResolverProxy`).
        Keyed by `(subject, argAncestry)` so the walker's `resolveCdiId`
        can match the registered seed's subject-id-evolved state hash at any
@@ -326,19 +326,19 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        with `from=hex(argId)`. Inherit callArgAncestry so sibling cached
        calls' local-args have distinct state hashes.
 
-       Skip the TLO wrap when argObj is a ReplayCallbackArg. At warm
-       replay, the RLO standin reaching `runOn` already encapsulates
-       the recorded contract for the cb-arg crossing — the standin's
+       Skip the TracingCallbackArg wrap when argObj is a ReplayCallbackArg. At warm
+       replay, the ReplayCallbackArg reaching `runOn` already encapsulates
+       the recorded contract for the cb-arg crossing — the ReplayCallbackArg's
        primop and its synthetic apply-result handle the per-probe
-       AmbientAsks lookups directly. Wrapping the standin in TLO
+       AmbientAsks lookups directly. Wrapping the ReplayCallbackArg in TracingCallbackArg
        would (1) add a redundant recording layer with no new
        information to capture (the writer isn't recording here at
-       warm) and (2) convert the standin's primop into the
-       `<cached-fn>(TLO)` cascade that bypasses the design's
+       warm) and (2) convert the ReplayCallbackArg's primop into the
+       `<cached-fn>(TracingCallbackArg)` cascade that bypasses the design's
        lambda-LO mechanism — exactly the bypass diagnosed in
        `tracing-eval-cache-higher-order-replay.md`. At cold, argObj
        is an `InterpreterObject` of a real inner Value and the cast
-       returns null, leaving the TLO wrap path unchanged. */
+       returns null, leaving the TracingCallbackArg wrap path unchanged. */
     auto wrappedArg = (innerWriter && outerRootFSRoot
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
@@ -702,7 +702,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
            replay-callback-arg.cc). Use it directly so the recorded
            ambient chain drives apply-time behaviour; the generic
            cached/ambient primops here would dispatch on
-           `RLO::queryApply` which throws by design. */
+           `ReplayCallbackArg::queryApply` which throws by design. */
         if (dynamic_cast<ReplayCallbackArg *>(obj.get())) {
             auto val = obj->toValueOrProxy(state, ambientResolver);
             v = **val;

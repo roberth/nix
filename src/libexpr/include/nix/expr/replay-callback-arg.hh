@@ -74,7 +74,7 @@ class ReplayCallbackArg : public Object
        validated probe advances `*chainCursor` to the matched edge's
        toFactSet. */
     std::shared_ptr<Hash> chainCursor;
-    /* Walker's outer env fact-set state at the moment this standin
+    /* Walker's outer env fact-set state at the moment this ReplayCallbackArg
        was constructed (= walker's cur before entering this cb-apply
        boundary). Used as the LocalResponseMap lookup context so two
        cb-applies of the same abstract fn+arg within one cached body
@@ -108,9 +108,9 @@ class ReplayCallbackArg : public Object
        `chainCursor` once to stay in lockstep but reuse the cached
        response on any subsequent call. Without this, when
        `dispatchAmbientQuery::navigatePath` invokes `queryApply`
-       multiple times against the same standin (= once per fact
+       multiple times against the same ReplayCallbackArg (= once per fact
        dispatched on the apply result), each Apply Value's force
-       re-fires the standin's surface probes and pushes a fresh fact
+       re-fires the ReplayCallbackArg's surface probes and pushes a fresh fact
        past where the recorder stopped recording — the next lookup at
        `walkFacts.size() > recorded_size` then misses
        LocalResponseMap and the walker fails. */
@@ -169,7 +169,7 @@ public:
     }
 
     /** Opt into ambient layer per-probe validation. Set on the cb-apply
-        local (= the standin materialised at the cb apply boundary,
+        local (= the ReplayCallbackArg materialised at the cb apply boundary,
         whose surface probes were recorded in AmbientAsks). */
     ReplayCallbackArg & withAmbientAsksValidation()
     {
@@ -181,7 +181,7 @@ public:
         chain is rooted at its applyReqHash (= the natural hash of
         the cb-apply payload) — different cb-applies' chains live in
         disjoint subtrees of AmbientAsks. The walker passes the
-        apply_qH it's resolving here so the standin's per-probe walk
+        apply_qH it's resolving here so the ReplayCallbackArg's per-probe walk
         starts at the right root.
 
         Side-effect: if the chain at this root is empty (= no
@@ -200,11 +200,11 @@ public:
     ReplayCallbackArg & withChainStart(Hash root);
 
     /** Set the cb-arg apply context (depth + argAncestry) so the lambda
-        primop on this RLO (or its derived children) can compose the
+        primop on this ReplayCallbackArg (or its derived children) can compose the
         nested apply-result's synthetic subject as
         `ApplyResultSubject{fn=this.subject, arg=PositionalSeed{depth+1}}`
         with the proper argAncestry. Sourced from the writer's localArg
-        sidecar at the standin's localId. Derived children inherit
+        sidecar at the ReplayCallbackArg's localId. Derived children inherit
         the parent's applyContext via the same setter. */
     ReplayCallbackArg & withApplyContext(int depth_, Hash scope_)
     {
@@ -220,7 +220,7 @@ public:
     bool hasAmbientAsksValidation() const { return validateAgainstAmbientAsks; }
 
     /** Current value of the ambient chain cursor. Read after the outer
-        has finished probing the standin (= after fn->queryApply
+        has finished probing the ReplayCallbackArg (= after fn->queryApply
         returns) to obtain the chain's terminal — that's the
         AmbientResult fed back as the cb-apply Request's env
         respHash. */
@@ -230,16 +230,16 @@ public:
 
     /** Content-defined identity is the localId (= the cb-apply local
         arg's state hash hash recorded at write time). Lets evaluator.apply
-        compute the apply Request hash when this standin is the arg. */
+        compute the apply Request hash when this ReplayCallbackArg is the arg. */
     std::optional<std::string> getStateHashHex() const override
     {
         return localId.to_string(HashFormat::Base16, false);
     }
 
-    /** Symmetric to TracingCallbackArg: expose the standin's structural
-        Subject so a subsequent apply on this standin (= the cb-arg
-        standin used as `arg` in `<replay-local-lambda>`'s recursive
-        apply) composes ApplyResultSubject with this standin's
+    /** Symmetric to TracingCallbackArg: expose the ReplayCallbackArg's structural
+        Subject so a subsequent apply on this ReplayCallbackArg (= the cb-arg
+        ReplayCallbackArg used as `arg` in `<replay-local-lambda>`'s recursive
+        apply) composes ApplyResultSubject with this ReplayCallbackArg's
         evolving Subject. */
     const Subject * getSubject() const override { return &subject; }
 
@@ -265,7 +265,7 @@ public:
         this Object is the fn. The current implementation delegates to
         `defeatCache` for behaviour parity; the structural-fix follow-up
         (= task #5) reimplements it to produce a primop with the correct
-        `ApplyResultSubject` encoding so the synthetic standin's reads
+        `ApplyResultSubject` encoding so the synthetic ReplayCallbackArg's reads
         match what the recorder wrote (= avoids the cb-higher-order
         recursion). */
     RootValue toValueOrProxy(EvalState & state, std::shared_ptr<AmbientResolver> resolver) override;

@@ -186,7 +186,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
               (= chain root; matches writer's empty-ambient-group path).
             - Chain present: invoke fn live via dispatchApplyLive,
               which forces the result so outer's f drives probes
-              against a fresh standin. On divergence, fail dispatch. */
+              against a fresh ReplayCallbackArg. On divergence, fail dispatch. */
         if (isAmbient && queryTag == "apply") {
             auto outgoing = decisionGraph.getAmbientAsks(requestHash);
             Hash applyRespHash{HashAlgorithm::SHA256};
@@ -597,7 +597,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
            Asks design forbids serving from the Responses pool for
            OUTER values ("ambient responses are capability-mediated,
            not cached" — primop doc §Replay semantics); the previous
-           fallback materialised an RLO and let its methods read out
+           fallback materialised an ReplayCallbackArg and let its methods read out
            of LocalResponseMap, which was correct for INNER locals but
            wrong here: it served the recorded outer response regardless
            of whether the live outer would produce it, silently masking
@@ -607,7 +607,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
            INNER locals are unaffected by this change: their sidecar
            presence routes them via `chaseLocalArgSidecar`, and
            `resolveApplyId` with explicit `isLocalArgId`
-           discrimination materialises their RLO. Serving inner
+           discrimination materialises their ReplayCallbackArg. Serving inner
            locals from the reconstructed value tree backed by
            LocalResponseMap is per design (= ambient layer Replay's
            "walker reconstructs the LocalObject as a live Nix Value
@@ -684,7 +684,7 @@ bool TracingReplayEvaluator::isLocalArgId(const Hash & idHash)
    recorded responses out of LocalResponseMap by qH(query{from=hex(id)}),
    matching what TracingCallbackArg wrote during recording. */
 /* Mixed direction: fn is Outer (resolved through the producer chain to
-   an AmbientObject); arg may be Local (standin) or Outer (resolved
+   an AmbientObject); arg may be Local (ReplayCallbackArg) or Outer (resolved
    through chain). Invokes the apply live against fn and arg to
    materialise the apply result; AmbientObject::queryApply registers the
    result in outerValues. */
@@ -707,12 +707,12 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     if (isLocalArgId(argHash)) {
         /* The cb apply's local arg. Read the localArg sidecar to
            source the cb-arg's structural subject (depth + argAncestry)
-           and construct the standin with `PositionalSeed{depth}`
+           and construct the ReplayCallbackArg with `PositionalSeed{depth}`
            — matching the recorder's TracingCallbackArg subject.
 
            Do NOT use `PostulatedIdempotentRead{localId}` here.
            `PostulatedIdempotentRead`'s state hash is constant in `k`
-           (= no own-loop evolution), so once the standin's first
+           (= no own-loop evolution), so once the ReplayCallbackArg's first
            probe extends the chain, every subsequent probe's
            `stampPerArgFields` reads back `localId` instead of the
            subject-id-evolved state hash the recorder stamped its facts
@@ -723,7 +723,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            reqHash regardless of subject (= at edgeIndex=0,
            PositionalSeed and PostulatedIdempotentRead both yield `localId`),
            which is why this bug stayed latent until cb-sibling
-           landed: it's the first test that needs the standin's
+           landed: it's the first test that needs the ReplayCallbackArg's
            state hash to *evolve* via subsequent probes for downstream
            discrimination.
 
@@ -734,7 +734,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            disjoint AmbientAsks subtrees; `idStr` IS this apply's
            chain root. */
         auto sidecarPayload = decisionGraph.getRequestPayload(argHash);
-        std::shared_ptr<Object> standin;
+        std::shared_ptr<Object> replayObj;
         if (sidecarPayload) {
             try {
                 auto sidecarJson = cborStringToJson(*sidecarPayload);
@@ -771,8 +771,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                            (emptySetHash) — the walk will fail safely. */
                     }
                     rlo->withApplyContext(sidecarDepth, sidecarScope);
-                    standin = rlo;
-                    ctx.memo[argIdStr] = standin;
+                    replayObj = rlo;
+                    ctx.memo[argIdStr] = replayObj;
                 }
             } catch (const std::exception &) {
                 /* Sidecar malformed — fall through to the PostulatedIdempotentRead
@@ -784,9 +784,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            PositionalSeed Subject. Signal resolution failure so the
            caller falls through to inner re-eval. The previous
            PostulatedIdempotentRead fallback violated principle 8's corollary
-           (= observation-driven evolution) and produced a standin
+           (= observation-driven evolution) and produced a ReplayCallbackArg
            whose discrimination was frozen at edgeIndex=0. */
-        argObj = standin;
+        argObj = replayObj;
     } else {
         argObj = resolveCdiId(argIdStr, ctx);
     }
@@ -860,14 +860,14 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     }
     if (!isLocalArgId(argHash)) {
         tracingCacheLog(
-            "dispatchApplyLive: arg %s is not a local; no ambient standin to drive",
+            "dispatchApplyLive: arg %s is not a local; no ambient ReplayCallbackArg to drive",
             argIdStr.substr(0, 12));
         return std::nullopt;
     }
 
     /* Cycle break (interim): the live invocation below can still
        trigger walker re-entry through nested cached-fn impls (=
-       inside the cb body's `<cached-fn>` on a TLO). Until that path
+       inside the cb body's `<cached-fn>` on a TracingCallbackArg). Until that path
        is also rewired, short-circuit re-entries to chain root. */
     if (!inFlightApplyReqs.insert(applyReqHash).second) {
         tracingCacheLog(
@@ -886,9 +886,9 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        the LocalObject as a live Nix Value tree (= lazily produced
        from CAS atoms), hands it to outer's f, and lets f run
        natively. For lambda LocalObjects, the `<replay-local-lambda>`
-       primop the RLO produces consults AmbientAsks at apply-time.
+       primop the ReplayCallbackArg produces consults AmbientAsks at apply-time.
        Per-call discipline: each cb-apply Fact dispatch creates its
-       own RLO; no ctx.memo lookup. */
+       own ReplayCallbackArg; no ctx.memo lookup. */
     /* Read the writer's localArg sidecar at argHash. depth+argAncestry are
        required: the structural subject (= PositionalSeed{depth} at
        argAncestry) evolves with observations on cb_arg the same way the
@@ -906,15 +906,15 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
 
     Subject rootSubject{PositionalSeed{sidecarDepth}};
     /* Sibling-discriminating walkFacts seed: inject walker's
-       currentProxy's applyContext observations into the RLO's initial
-       walk. Without this, RLO's per-arg fields are computed against
-       an empty walk — so sibling A's RLO and sibling B's RLO have
+       currentProxy's applyContext observations into the ReplayCallbackArg's initial
+       walk. Without this, ReplayCallbackArg's per-arg fields are computed against
+       an empty walk — so sibling A's ReplayCallbackArg and sibling B's ReplayCallbackArg have
        identical CDIs at their initial `.x` / `.f` probes, and LRM's
        first-writer-wins returns whichever sibling recorded first,
        yielding cross-sibling data mixing (cb-sibling-b's int-1000
        result = sibling A's x=1 folded with sibling B's f×1000).
        Injecting the current sibling's applyContext obs makes the
-       RLO's CDIs reflect the SPECIFIC sibling context walker is
+       ReplayCallbackArg's CDIs reflect the SPECIFIC sibling context walker is
        operating under. */
     auto seededWalkFacts = std::make_shared<std::vector<Edge>>();
     if (auto * proxyTR = dynamic_cast<TracingReplayObject *>(ctx.currentProxy.get())) {
@@ -936,16 +936,16 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     replayLocal->withAmbientAsksValidation().withChainStart(applyReqHash);
 
     /* Invoke outer's f LIVE via the Object-level apply entry. Object-
-       level apply preserves the RLO replayLocal as an Object through
+       level apply preserves the ReplayCallbackArg replayLocal as an Object through
        the bridging chain (= AmbientObject::queryApply → applyFn →
-       resolver->apply → runOn sees argObj as the RLO, NOT as an
+       resolver->apply → runOn sees argObj as the ReplayCallbackArg, NOT as an
        InterpreterObject wrapping a primop Value). That is what lets
-       Change B's TLO-skip kick in and lets outer's `g 5` fire the
-       standin's primop directly instead of routing through a
-       `<cached-fn>(TLO)` cascade that bypasses the ambient lambda-LO
+       Change B's TracingCallbackArg-skip kick in and lets outer's `g 5` fire the
+       ReplayCallbackArg's primop directly instead of routing through a
+       `<cached-fn>(TracingCallbackArg)` cascade that bypasses the ambient lambda-LO
        mechanism. The earlier Value-level `mkApp + force` path lost
-       the RLO's Object-ness behind two layers of Value wrapping.
-       Divergence (= ambient layer mismatch thrown out of the standin's
+       the ReplayCallbackArg's Object-ness behind two layers of Value wrapping.
+       Divergence (= ambient layer mismatch thrown out of the ReplayCallbackArg's
        primop, or an outer-side query failure) is caught and signaled
        as nullopt — the surrounding walker treats this as a miss. */
     std::shared_ptr<Object> resultObj;
@@ -983,7 +983,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
         ambientResult.to_string(HashFormat::Base16, false).substr(0, 12));
 
-    /* Correctness-first cb-repeated fix: memoise the standin at
+    /* Correctness-first cb-repeated fix: memoise the ReplayCallbackArg at
        BOTH the arg leaf's evolved CID (invariant across invocations
        in the outer walk — kept for chaseLocalArgSidecar-alignment)
        AND at the fn leaf's evolved CID at THIS invocation (which
@@ -997,7 +997,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
 
        Instead memoise at BOTH the LEAF (arg root) and at the
        applyResult subject's evolved cid, so any downstream lookup
-       via those cids finds THIS invocation's standin. Compute the
+       via those cids finds THIS invocation's ReplayCallbackArg. Compute the
        applyResult subject's evolved cid using fnObj's subject +
        PositionalSeed{sidecarDepth} as arg. */
     {
@@ -1007,7 +1007,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         auto evolvedLeafStateHashHex = evolvedLeafStateHash.to_string(HashFormat::Base16, false);
         ctx.memo[evolvedLeafStateHashHex] = replayLocal;
         tracingCacheLog(
-            "dispatchApplyLive: memoised RLO at leaf cid %s (walk.size=%zu, seqCtx=%s)",
+            "dispatchApplyLive: memoised ReplayCallbackArg at leaf cid %s (walk.size=%zu, seqCtx=%s)",
             evolvedLeafStateHashHex.substr(0, 12), envWalk.size(),
             seqCtx.to_string(HashFormat::Base16, false).substr(0, 12));
 
@@ -1023,7 +1023,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
                 evolvedApplyResultStateHash.to_string(HashFormat::Base16, false);
             ctx.memo[evolvedApplyResultCidHex] = replayLocal;
             tracingCacheLog(
-                "dispatchApplyLive: memoised RLO at applyResult cid %s (walk.size=%zu)",
+                "dispatchApplyLive: memoised ReplayCallbackArg at applyResult cid %s (walk.size=%zu)",
                 evolvedApplyResultCidHex.substr(0, 12), envWalk.size());
         }
     }
@@ -1035,7 +1035,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
    producer chain, then perform the live navigation step on it. */
 /* Per-arg path navigation with multi-root support. `roots` are the
    live Objects corresponding to the query's `fromCIDs[]` entries (=
-   each entry is a cb_arg's standin). The top-level path navigates
+   each entry is a cb_arg's ReplayCallbackArg). The top-level path navigates
    from `roots[0]`; Apply steps reach into `roots` by index via
    their `fnRootIndex` / `argRootIndex` so higher-order applies (=
    fn from one cb_arg, arg from another) work. */
@@ -1127,7 +1127,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
         return nullptr;
 
     /* Per-arg multi-root: resolve each fromCIDs[] entry to a live
-       cb_arg standin, then navigate. The producer query records the
+       cb_arg ReplayCallbackArg, then navigate. The producer query records the
        path-to-parent in `path`; navigation uses both. */
     auto roots = resolveRoots(params,
         [&](const std::string & cid) { return resolveCdiId(cid, ctx); });
