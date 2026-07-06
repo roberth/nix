@@ -34,7 +34,7 @@ template <typename Q>
 static Hash stampPerArgFields(
     Q & query,
     const Subject & subject,
-    const Hash & scope,
+    const Hash & argAncestry,
     const std::vector<Edge> & walkFacts,
     size_t edgeIndex)
 {
@@ -43,7 +43,7 @@ static Hash stampPerArgFields(
     fromCIDs.reserve(par.roots.size());
     Hash fromCdi(HashAlgorithm::SHA256);
     for (size_t i = 0; i < par.roots.size(); ++i) {
-        auto cid = scopeStateIdAt(par.roots[i], scope, walkFacts, edgeIndex);
+        auto cid = scopeStateIdAt(par.roots[i], argAncestry, walkFacts, edgeIndex);
         if (i == 0)
             fromCdi = cid;
         fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
@@ -59,7 +59,7 @@ static Hash stampPerArgFields(
 /* Look up the recorded payload for `query` in LocalResponseMap.
    The map is keyed by requestHash and that's sound at depth-2
    because reqHash is `SHA-256(query{from = cidasks-evolved scopeStateId})`
-   — a pure function of (subject, scope, prior chain facts). Two
+   — a pure function of (subject, argAncestry, prior chain facts). Two
    recordings reaching the same reqHash necessarily observed the
    same history; a deterministic env then produces the same
    response, so first-writer-wins in the map can't return the
@@ -82,7 +82,7 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, c
 
 /* Multi-edge AmbientAsks walker: dispatch and validate one probe at
    a time. Per the design's "Replay (depth-2)" section, each probe
-   (a) composes with `from = hex(scopeStateIdAt(subject, scope,
+   (a) composes with `from = hex(scopeStateIdAt(subject, argAncestry,
    walkFacts, walkFacts.size()))` so its reqHash matches what the
    recorder wrote at this point in the chain, (b) is looked up as a
    singleton-requestSet edge from `*chainCursor → toFactSet`, and
@@ -164,7 +164,7 @@ static void advanceChainAndAppendFact(
 std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name)
 {
     trace::QueryGetAttr query{name, std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, outerContext);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -183,7 +183,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
         .name = name,
     }};
     auto child = std::make_shared<ReplayCallbackArg>(
-        std::move(childSubject), scope, walkFacts, chainCursor,
+        std::move(childSubject), argAncestry, walkFacts, chainCursor,
         outerContext, decisionGraph, rootFSRoot, state);
     /* Children inherit per-probe validation if the parent has it —
        they're observed within the same cb apply's recorded chain. */
@@ -192,7 +192,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     /* Inherit cb-arg apply context — derived navigation stays within
-       the same cb-arg's depth/scope (= the nested apply's positional
+       the same cb-arg's depth/argAncestry (= the nested apply's positional
        depth is one deeper than the cb-arg's, regardless of how many
        getAttr/getListElem steps deep the apply happens). */
     if (applyDepth && applyArgAncestry)
@@ -205,7 +205,7 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
     if (cachedWHNF)
         return *cachedWHNF;
     trace::QueryGetWHNF query{std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, outerContext);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -298,7 +298,7 @@ size_t ReplayCallbackArg::getListSize()
 std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
 {
     trace::QueryGetListElem query{std::string{}, index};
-    auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, outerContext);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);
@@ -310,7 +310,7 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
         .index = index,
     }};
     auto child = std::make_shared<ReplayCallbackArg>(
-        std::move(childSubject), scope, walkFacts, chainCursor,
+        std::move(childSubject), argAncestry, walkFacts, chainCursor,
         outerContext, decisionGraph, rootFSRoot, state);
     if (validateAgainstAmbientAsks)
         child->withAmbientAsksValidation();
@@ -352,7 +352,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
        - `nFunction` (= an inner-supplied lambda LocalObject):
          reconstruct as a primop whose impl consults `AmbientAsks`
          at apply-time for a recorded edge matching the live arg's
-         evolved scope state id, and reproduces the recorded apply
+         evolved argAncestry state id, and reproduces the recorded apply
          result. Per the via-Asks doc's "Lambda LocalObjects don't
          need their body stored" — the application behavior lives
          in the recorded d=2 chain, not in a stored body.
@@ -420,7 +420,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    `resolveCdiId` can resolve d=1 facts whose `from`
                    is the seed's cidasks-evolved argStateId at any
                    walk-edge index. Registration carries the
-                   subject + scope (= `PositionalSeed{applyDepth+1}`
+                   subject + argAncestry (= `PositionalSeed{applyDepth+1}`
                    at `applyArgAncestry`), matching what
                    `makeCachedFnPrimOp`'s impl uses for its
                    `seedSubject` / `callArgAncestry` at cold; the walker
@@ -485,7 +485,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    at applyArgAncestry, with `depth` threaded in through the
                    localArg sidecar. The standin's construction (in
                    dispatchApplyLive) requires the sidecar to carry
-                   depth+scope, so the optionals are always set
+                   depth+argAncestry, so the optionals are always set
                    here. */
                 Subject argSubject{
                     PositionalSeed{*applyDepthSaved + 1}};
@@ -494,13 +494,13 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     .arg = std::make_shared<const Subject>(std::move(argSubject)),
                 }};
 
-                /* Apply scope: Merkle(fn.scope, arg.scope). The arg
+                /* Apply argAncestry: Merkle(fn.argAncestry, arg.argAncestry). The arg
                    crosses the boundary as a fresh positional seed
-                   (scope=0); fn carries applyArgAncestrySaved (= callArgAncestry
+                   (argAncestry=0); fn carries applyArgAncestrySaved (= callArgAncestry
                    from sidecar). Used for stamping the apply Fact AND
                    for the synthetic's downstream probes — both
                    mirror the writer's `TracingCallbackApplyResult` whose
-                   scope is the same Merkle. */
+                   argAncestry is the same Merkle. */
                 Hash mergedApplyScope = combineArgAncestries(
                     *applyArgAncestrySaved, Hash{HashAlgorithm::SHA256});
 
@@ -508,7 +508,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    apply Fact's elementHash. Mirrors the writer's d=2
                    stamping in flushAmbient: subject =
                    ApplyResultSubject{fn, arg} = syntheticSubject;
-                   scope = mergedApplyScope; edgeIndex =
+                   argAncestry = mergedApplyScope; edgeIndex =
                    walkFactsSaved->size() (= the apply Fact's position
                    in the writer's boundary facts list, AFTER the
                    standin's surface probes).
@@ -577,7 +577,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    probes don't pollute the standin's persistent
                    state. Scope = mergedApplyScope — matches writer's
                    `TracingCallbackApplyResult` which carries this same
-                   Merkle scope for its downstream observations. */
+                   Merkle argAncestry for its downstream observations. */
                 auto synthetic = std::make_shared<ReplayCallbackArg>(
                     std::move(syntheticSubject), mergedApplyScope,
                     localWalkFacts, localChainCursor,
@@ -601,7 +601,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                 /* Propagate apply context so a nested cb-higher-order
                    case (= the apply result is itself a function whose
                    `toValueOrProxy` builds another `<replay-local-lambda>`
-                   primop) composes the right depth/scope downstream. */
+                   primop) composes the right depth/argAncestry downstream. */
                 synthetic->withApplyContext(*applyDepthSaved, *applyArgAncestrySaved);
 
                 /* Convert to a Value. ExprFromObject probes
@@ -627,7 +627,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
 std::optional<FunctionInfo> ReplayCallbackArg::getFunctionInfo()
 {
     trace::QueryGetFunctionInfo query{std::string{}};
-    auto fromCdi = stampPerArgFields(query, subject, scope, *walkFacts, walkFacts->size());
+    auto fromCdi = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, outerContext);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromCdi, rJson, *walkFacts, *chainCursor);

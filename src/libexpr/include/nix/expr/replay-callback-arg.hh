@@ -37,7 +37,7 @@ class TracingDecisionGraph;
 
 class ReplayCallbackArg : public Object
 {
-    /* Full structural identity. Combined with `scope` and the shared
+    /* Full structural identity. Combined with `argAncestry` and the shared
        `walkFacts`, `scopeStateIdAt` computes this proxy's scopeStateId
        at any walk position. The recorder's cidasks substitution at
        flush uses the same evaluation, so walker and recorder agree
@@ -56,8 +56,8 @@ class ReplayCallbackArg : public Object
        current edge index, so children don't need to snapshot parent
        state at creation. */
     Subject subject;
-    Hash scope;
-    /* Initial scopeStateId (= scopeStateIdAt(subject, scope, {}, 0)) — kept for
+    Hash argAncestry;
+    /* Initial scopeStateId (= scopeStateIdAt(subject, argAncestry, {}, 0)) — kept for
        legacy id-string consumers (e.g. defeatCache's recursive
        apply construction). */
     AmbientId localId;
@@ -134,7 +134,7 @@ class ReplayCallbackArg : public Object
     std::optional<int> applyDepth;
     std::optional<Hash> applyArgAncestry;
 
-    /* Argument-scope cell. Navigation children carry the same cell
+    /* Argument-argAncestry cell. Navigation children carry the same cell
        as their parent; the top-level (cb-arg) Local carries the
        apply's cell. Cell's own `parent` field gives ancestor chain. */
     std::shared_ptr<const ArgCell> argCell;
@@ -154,8 +154,8 @@ public:
         ref<SourceRoot> rootFSRoot,
         EvalState * state = nullptr)
         : subject(std::move(subject_))
-        , scope(std::move(scope_))
-        , localId(structuralAddress(subject, scope, *walkFacts_, 0))
+        , argAncestry(std::move(scope_))
+        , localId(structuralAddress(subject, argAncestry, *walkFacts_, 0))
         , walkFacts(std::move(walkFacts_))
         , chainCursor(std::move(chainCursor_))
         , outerContext(std::move(outerContext_))
@@ -199,11 +199,11 @@ public:
         wasn't recorded. */
     ReplayCallbackArg & withChainStart(Hash root);
 
-    /** Set the cb-arg apply context (depth + scope) so the lambda
+    /** Set the cb-arg apply context (depth + argAncestry) so the lambda
         primop on this RLO (or its derived children) can compose the
         nested apply-result's synthetic subject as
         `ApplyResultSubject{fn=this.subject, arg=PositionalSeed{depth+1}}`
-        with the proper scope. Sourced from the writer's localArg
+        with the proper argAncestry. Sourced from the writer's localArg
         sidecar at the standin's localId. Derived children inherit
         the parent's applyContext via the same setter. */
     ReplayCallbackArg & withApplyContext(int depth_, Hash scope_)
@@ -243,7 +243,7 @@ public:
         evolving Subject. */
     const Subject * getSubject() const override { return &subject; }
 
-    Hash getArgAncestry() const override { return scope; }
+    Hash getArgAncestry() const override { return argAncestry; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
