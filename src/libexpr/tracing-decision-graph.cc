@@ -134,7 +134,7 @@ CREATE TABLE IF NOT EXISTS AmbientAsks (
 ) WITHOUT ROWID;
 
 -- Path 3 (per-subject observation trie). Cold-side stamps each
--- fold step encountered during scopeStateIdAt so walker can
+-- fold step encountered during stateHashAt so walker can
 -- navigate subject's evolution as an edge-by-edge trie rather than
 -- iterating K positions on its own walk. Consumed by walker at
 -- resolveCdiId's cell-loop K > 0 navigation.

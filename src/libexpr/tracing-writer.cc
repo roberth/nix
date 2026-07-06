@@ -73,7 +73,7 @@ void TracingWriter::flushAmbient(bool finalize)
         fromCIDs.reserve(roots.size());
         for (auto & root : roots) {
             /* Path 3: stamp SubjectEvolutionEdges via hook. */
-            Hash rootSelfHash = scopeStateIdAt(
+            Hash rootSelfHash = stateHashAt(
                 root, Hash(HashAlgorithm::SHA256), {}, 0);
             auto cid = stateHashAtStamping(
                 root, pf.argAncestry, envWalk, d1EdgeIndex,
@@ -149,7 +149,7 @@ void TracingWriter::flushAmbient(bool finalize)
             std::vector<trace::QueryLeaf> initialFromCIDs;
             initialFromCIDs.reserve(roots.size());
             for (auto & root : roots) {
-                auto initCid = scopeStateIdAt(
+                auto initCid = stateHashAt(
                     root, pf.argAncestry, {}, 0);
                 initialFromCIDs.emplace_back(
                     initCid.to_string(HashFormat::Base16, false));
@@ -174,7 +174,7 @@ void TracingWriter::flushAmbient(bool finalize)
         }
 
         /* Append the substituted fact to the new d1 cidasks edge so
-           later logResults' scopeStateIdAt sees it in the own-loop.
+           later logResults' stateHashAt sees it in the own-loop.
 
            Per-edge dedup by elementHash: an Asks edge is a SET of
            observations (per the design's principle 4), not a list. The
@@ -249,7 +249,7 @@ void TracingWriter::flushAmbient(bool finalize)
     /* Finalize pass: process each buffered cb-apply boundary in the
        order recorded. For each boundary:
         1. Look up its d=2 group (may be empty if no probes happened).
-        2. Build the d=2 chain via incremental scopeStateIdAt
+        2. Build the d=2 chain via incremental stateHashAt
            substitution — each fact's `from` is computed against the
            chain prefix the walker reconstructs probe-by-probe.
         3. The terminal `cumulativeFactSet` IS the AmbientResult
@@ -336,7 +336,7 @@ void TracingWriter::flushAmbient(bool finalize)
             fromCIDs.reserve(roots.size());
             for (auto & root : roots) {
                 /* Path 3: stamp SubjectEvolutionEdges via hook. */
-                Hash rootSelfHash = scopeStateIdAt(
+                Hash rootSelfHash = stateHashAt(
                     root, Hash(HashAlgorithm::SHA256), {}, 0);
                 auto cid = stateHashAtStamping(
                     root, pf.argAncestry, walk, /*edgeIndex=*/ i,

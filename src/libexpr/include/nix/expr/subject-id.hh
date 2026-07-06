@@ -98,7 +98,7 @@ struct Subject
     std::variant<PositionalSeed, DerivedSubject, ApplyResultSubject, PostulatedIdempotentRead> data;
 };
 
-/** A single observation reduced to the two hashes scopeStateIdAt needs.
+/** A single observation reduced to the two hashes stateHashAt needs.
     `fromHash` is the argAncestry state id the query was issued against;
     `elementHash` is SHA-256(reqHash || respHash) — the v13 H_element.
     Named `Observation` to match the doc's per-Asks-edge "facts about V"
@@ -154,7 +154,7 @@ Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std
     `(root_cdi, path)`. Passing a `DerivedSubject` traps; callers
     that want a content-addressed identifier for any Subject
     (including derived) should use `structuralAddress` instead. */
-Hash scopeStateIdAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex);
+Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex);
 
 /** Grouping-independent converged fold. Flattens `walk` into a
     deduplicated observation pool (by (fromHash, elementHash)) and
@@ -176,8 +176,8 @@ Hash stateHashConverged(
     const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
 
 /** Compute a content-addressed structural identifier for any
-    `subject` — including `DerivedSubject`, where `scopeStateIdAt`
-    traps. For non-derived subjects this delegates to `scopeStateIdAt`.
+    `subject` — including `DerivedSubject`, where `stateHashAt`
+    traps. For non-derived subjects this delegates to `stateHashAt`.
     For `DerivedSubject` it returns the producer query's hash:
     `qH(QueryGetAttr{name, from = root_cdi, fromCIDs, path})` for
     `GetAttr`, similarly for `GetListElem`. Used by `AmbientObject`,
@@ -203,8 +203,8 @@ struct EvolutionStep {
     Hash curAfter;
 };
 
-/** Variant of `scopeStateIdAt` that emits a callback per fold
-    step. `scopeStateIdAt` delegates to this with a no-op hook.
+/** Variant of `stateHashAt` that emits a callback per fold
+    step. `stateHashAt` delegates to this with a no-op hook.
     Cold's writer passes a callback that inserts each step into
     `SubjectEvolutionEdges` (Path 3 stamping). Used only at cold
     record time — walker doesn't call this variant. */
@@ -217,7 +217,7 @@ Hash stateHashAtStamping(
 
 /** Build the per-arg-encoded `QueryApply` payload for an apply-result
     subject at a given walk edge index. The returned query's JSON
-    hash equals `scopeStateIdAt(applyResult, argAncestry, walk, edgeIndex)`,
+    hash equals `stateHashAt(applyResult, argAncestry, walk, edgeIndex)`,
     so callers can use the same value as both the Requests-pool key
     (= reqHash) and the apply-result's scopeStateId (= what's recorded as
     `from` on downstream facts). Threads cb_arg root scopeStateIds at
@@ -293,7 +293,7 @@ std::string describe(const Subject & subject);
     observation.
 
     The context is **always read live**: no snapshot, no freeze. scopeStateIds
-    are retrieved by re-running `scopeStateIdAt` against the
+    are retrieved by re-running `stateHashAt` against the
     current state of `observations` on every `evolvedQueryFrom` call.
     Derived children of the wrapper share the same shared_ptr to the
     same ApplyContext so the chain `wrapper.getAttr("foo").getInt()`

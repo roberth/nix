@@ -58,7 +58,7 @@ std::string TracingReplayObject::evolvedQueryFrom() const
                     edge.observations.push_back(obs);
                     walk.push_back(std::move(edge));
                 }
-                auto evolved = scopeStateIdAt(*applyResultSubject, applyArgAncestry, walk, walk.size());
+                auto evolved = stateHashAt(*applyResultSubject, applyArgAncestry, walk, walk.size());
                 return evolved.to_string(HashFormat::Base16, false);
             }
         }
@@ -71,7 +71,7 @@ std::string TracingReplayObject::evolvedQueryFrom() const
             edge.observations.push_back(obs);
             walk.push_back(std::move(edge));
         }
-        auto evolved = scopeStateIdAt(*applyResultSubject, applyArgAncestry, walk, walk.size());
+        auto evolved = stateHashAt(*applyResultSubject, applyArgAncestry, walk, walk.size());
         auto hex = evolved.to_string(HashFormat::Base16, false);
         return hex;
     }
@@ -98,7 +98,7 @@ std::vector<std::string> TracingReplayObject::parentHashCandidates() const
                 edge.observations.push_back(applyContext->observations[i]);
                 walk.push_back(std::move(edge));
             }
-            auto snap = scopeStateIdAt(*applyResultSubject, applyArgAncestry, walk, walk.size());
+            auto snap = stateHashAt(*applyResultSubject, applyArgAncestry, walk, walk.size());
             auto snapHex = snap.to_string(HashFormat::Base16, false);
             if (snapHex != out.front())
                 out.push_back(snapHex);
@@ -227,7 +227,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
             Edge specEdge;
             specEdge.observations.push_back(specObs);
             specWalk.push_back(std::move(specEdge));
-            auto deepFrom = scopeStateIdAt(
+            auto deepFrom = stateHashAt(
                 *applyResultSubject, applyArgAncestry, specWalk, specWalk.size());
             auto deepFromHex = deepFrom.to_string(HashFormat::Base16, false);
             if (deepFromHex != parentHash) {
@@ -303,7 +303,7 @@ std::optional<const trace::ResultWHNF *> TracingReplayObject::whnf()
             Edge specEdge;
             specEdge.observations.push_back(specObs);
             specWalk.push_back(std::move(specEdge));
-            auto deepFrom = scopeStateIdAt(
+            auto deepFrom = stateHashAt(
                 *applyResultSubject, applyArgAncestry, specWalk, specWalk.size());
             auto deepFromHex = deepFrom.to_string(HashFormat::Base16, false);
             if (deepFromHex != parentHash) {

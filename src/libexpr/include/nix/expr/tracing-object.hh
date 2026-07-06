@@ -40,7 +40,7 @@ class TracingObject : public Object
        this apply structurally (ApplyResultSubject{fn, arg}), and the
        inherited argAncestry (= argStateId(Q) at the cb-apply boundary). Child
        queries on this wrapper emit at
-       `scopeStateIdAt(applyResultSubject, applyArgAncestry, writer.envWalk,
+       `stateHashAt(applyResultSubject, applyArgAncestry, writer.envWalk,
        walk.size())` — the per-arg evolved scopeStateId the design's
        principle #3 requires for sibling discrimination. Null on
        non-apply-result wrappers (= navigation children). */
@@ -116,7 +116,7 @@ public:
         return applyResultSubject ? &*applyResultSubject : nullptr;
     }
 
-    /** Inherited argAncestry for `scopeStateIdAt(getSubject(), getArgAncestry(), …)`.
+    /** Inherited argAncestry for `stateHashAt(getSubject(), getArgAncestry(), …)`.
         For apply-result wrappers it's the cb-apply boundary's argAncestry
         baked at construction. */
     Hash getArgAncestry() const override { return applyArgAncestry; }

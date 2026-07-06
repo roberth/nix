@@ -479,7 +479,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    own hashed state (initial CDI) IS the lookup
                    key. */
                 {
-                    auto initialCdi = scopeStateIdAt(*subj, argAncestry, extendedWalkForMatch, 0);
+                    auto initialCdi = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
                     if (initialCdi.to_string(HashFormat::Base16, false) == idStr) {
                         found = true;
                     }
@@ -494,9 +494,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    Empirical (iter 61 probe): 137/137 k-iter matches
                    also reached by trie navigation. */
                 if (!found) {
-                    Hash subjectSelfHash = scopeStateIdAt(
+                    Hash subjectSelfHash = stateHashAt(
                         *subj, Hash(HashAlgorithm::SHA256), {}, 0);
-                    Hash cur = scopeStateIdAt(*subj, argAncestry, extendedWalkForMatch, 0);
+                    Hash cur = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
                     for (const auto & edge : extendedWalkForMatch) {
                         if (found) break;
                         Hash edgeAcc(HashAlgorithm::SHA256);
@@ -1003,7 +1003,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        PositionalSeed{sidecarDepth} as arg. */
     {
         Subject seedSubject{PositionalSeed{sidecarDepth}};
-        Hash evolvedLeafStateHash = scopeStateIdAt(
+        Hash evolvedLeafStateHash = stateHashAt(
             seedSubject, sidecarScope, envWalk, envWalk.size());
         auto evolvedLeafStateHashHex = evolvedLeafStateHash.to_string(HashFormat::Base16, false);
         ctx.memo[evolvedLeafStateHashHex] = replayLocal;
@@ -1018,7 +1018,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
                 .arg = std::make_shared<const Subject>(std::move(seedSubject)),
             }};
             Hash applyArgAncestryForStateHash = fnObj->getArgAncestry();
-            Hash evolvedApplyResultStateHash = scopeStateIdAt(
+            Hash evolvedApplyResultStateHash = stateHashAt(
                 applyResultSubj, applyArgAncestryForStateHash, envWalk, envWalk.size());
             auto evolvedApplyResultCidHex =
                 evolvedApplyResultStateHash.to_string(HashFormat::Base16, false);
@@ -1392,7 +1392,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        edge-for-edge once all prior cb-applies' chains have been
        dispatched. */
     auto & walk = writer.getD1CidasksWalk();
-    auto applyArgAncestryStateHash = scopeStateIdAt(resultSubject, applyArgAncestry, walk, walk.size());
+    auto applyArgAncestryStateHash = stateHashAt(resultSubject, applyArgAncestry, walk, walk.size());
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);

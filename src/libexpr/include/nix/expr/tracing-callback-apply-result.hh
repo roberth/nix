@@ -18,7 +18,7 @@
  *    enclosing cb-apply boundary's recursive apply Fact (= the same
  *    boundary `logAmbientApplyFact` appended to). At flushAmbient
  *    finalize the writer's d=2 loop stamps each observation with
- *    `from = hex(scopeStateIdAt(applyResultSubject, argAncestry, walk, i))`,
+ *    `from = hex(stateHashAt(applyResultSubject, argAncestry, walk, i))`,
  *    inserts the response payload into `LocalResponseMap` keyed by
  *    the resulting reqHash, and inserts an `AmbientAsks` edge.
  *

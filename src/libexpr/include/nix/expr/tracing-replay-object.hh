@@ -55,7 +55,7 @@ class TracingReplayObject : public Object
 
     std::string evolvedQueryFrom() const;
     /** Candidate parent hashes for child Q construction. First is the
-        full evolved hash (= scopeStateIdAt over current applyContext
+        full evolved hash (= stateHashAt over current applyContext
         observations); if `postWHNFObservationCount` is set and points
         to a smaller fact set, a second candidate is the parent hash
         at that prefix (= the parent's "initial discovery state,"
@@ -89,7 +89,7 @@ class TracingReplayObject : public Object
     /* Snapshot of `applyContext->observations.size()` right after
        this TracingReplayObject's own `whnf()` push. The "parent's initial discovery
        state" — sibling attr probes recorded in independent sessions
-       were stamped with parent hash = scopeStateIdAt at THIS prefix.
+       were stamped with parent hash = stateHashAt at THIS prefix.
        parentHashCandidates uses it as a second lookup candidate
        (= "query at a smaller fact set so IDs align with recordings
        made before sibling probes accumulated"). */

@@ -92,7 +92,7 @@ class TracingWriter
     /* Ambient facts buffered during recording and flushed at
        logResult time via flushAmbient. The Subject identifies
        which value the observation is about — flush uses it via
-       scopeStateIdAt to compute the fact's `from` field
+       stateHashAt to compute the fact's `from` field
        against the relevant Asks-edge precondition factset.
 
        Layer marker: depth-1 facts (inner asks outer about an outer
@@ -105,7 +105,7 @@ class TracingWriter
         trace::QueryVariant query;
         trace::ResultVariant result;
         Subject subject;
-        Hash argAncestry; ///< outer-argAncestry argStateIds for scopeStateIdAt
+        Hash argAncestry; ///< outer-argAncestry argStateIds for stateHashAt
         /* Empty hash = depth-1; otherwise = the cb apply's resultId,
            grouping this fact into the depth-2 sub-trace for that apply. */
         Hash depth2ApplyId{HashAlgorithm::SHA256};
@@ -124,7 +124,7 @@ class TracingWriter
        a d1 edge inserted at the SAME index. This invariant lets the
        walker's `envWalk` — which grows once per dispatched Asks
        edge via `commitEdge` — match the writer's d1 walk
-       edge-for-edge, so `scopeStateIdAt(subject, argAncestry, walk, K)`
+       edge-for-edge, so `stateHashAt(subject, argAncestry, walk, K)`
        computes the same value on both sides. Per-arg-completion
        option 2 depends on this alignment. */
     std::vector<Edge> envWalk;
@@ -272,7 +272,7 @@ public:
     /* Path 3 stamp: insert one SubjectEvolutionEdges row. Called
        from cold's stateHashAtStamping hook callback at
        fact-`from` construction sites. Immediate write (not
-       buffered) — Path 3 emissions per scopeStateIdAt call are
+       buffered) — Path 3 emissions per stateHashAt call are
        bounded by the walk length × observations per edge and are
        infrequent enough that buffering isn't necessary. */
     void insertSubjectEvolutionEdge(
@@ -296,7 +296,7 @@ public:
     /** Cumulative cidasks walk over depth-1 ambient observations.
         One edge per logResult-triggered flush. Exposed so writer-side
         apply-result wrappers (TracingObject with applyResultSubject)
-        can compute `scopeStateIdAt(subject, argAncestry, walk, walk.size())`
+        can compute `stateHashAt(subject, argAncestry, walk, walk.size())`
         — the per-arg evolved scopeStateId the design's principle #3 requires
         for child queries on those wrappers. Walker's parallel handle
         is TracingReplayEvaluator::getCidasksWalk. */

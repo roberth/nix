@@ -43,7 +43,7 @@ static Hash stampPerArgFields(
     fromCIDs.reserve(par.roots.size());
     Hash fromCdi(HashAlgorithm::SHA256);
     for (size_t i = 0; i < par.roots.size(); ++i) {
-        auto cid = scopeStateIdAt(par.roots[i], argAncestry, walkFacts, edgeIndex);
+        auto cid = stateHashAt(par.roots[i], argAncestry, walkFacts, edgeIndex);
         if (i == 0)
             fromCdi = cid;
         fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
@@ -82,7 +82,7 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, c
 
 /* Multi-edge AmbientAsks walker: dispatch and validate one probe at
    a time. Per the design's "Replay (depth-2)" section, each probe
-   (a) composes with `from = hex(scopeStateIdAt(subject, argAncestry,
+   (a) composes with `from = hex(stateHashAt(subject, argAncestry,
    walkFacts, walkFacts.size()))` so its reqHash matches what the
    recorder wrote at this point in the chain, (b) is looked up as a
    singleton-requestSet edge from `*chainCursor → toFactSet`, and
@@ -173,7 +173,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     trace::ResultMaybeType r = rJson;
     if (!r.type)
         return nullptr;
-    /* Child Subject is DerivedSubject of THIS subject — `scopeStateIdAt`
+    /* Child Subject is DerivedSubject of THIS subject — `stateHashAt`
        on the child will recompute parent's scopeStateId at the child's
        current edge index, so any further parent observations are
        reflected automatically. Pass shared walk/cursor. */
@@ -519,12 +519,12 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     size_t edgeIndex = walkFactsSaved->size();
                     Hash applyArgAncestry = mergedApplyScope;
 
-                    auto fnSubjHex = scopeStateIdAt(
+                    auto fnSubjHex = stateHashAt(
                         subjectSaved, applyArgAncestry, *walkFactsSaved, edgeIndex)
                         .to_string(HashFormat::Base16, false);
                     Subject argSubjLocal{
                         PositionalSeed{*applyDepthSaved + 1}};
-                    auto argSubjHex = scopeStateIdAt(
+                    auto argSubjHex = stateHashAt(
                         argSubjLocal, applyArgAncestry, *walkFactsSaved, edgeIndex)
                         .to_string(HashFormat::Base16, false);
 
@@ -533,7 +533,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     std::vector<trace::QueryLeaf> fromCIDs;
                     fromCIDs.reserve(roots.size());
                     for (auto & root : roots) {
-                        auto cid = scopeStateIdAt(
+                        auto cid = stateHashAt(
                             root, applyArgAncestry, *walkFactsSaved, edgeIndex);
                         fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
                     }

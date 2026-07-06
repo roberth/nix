@@ -803,7 +803,7 @@ std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     (void) dg;
     for (auto & entry : resolver.liveProxies) {
         for (size_t k = 0; k <= envWalk.size(); ++k) {
-            auto scopeStateId = scopeStateIdAt(entry.subject, entry.argAncestry, envWalk, k);
+            auto scopeStateId = stateHashAt(entry.subject, entry.argAncestry, envWalk, k);
             if (scopeStateId == idHash)
                 return entry.obj;
         }

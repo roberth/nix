@@ -175,7 +175,7 @@ public:
     {
         /* argAncestry state id at the empty factset, with this proxy's inherited
            argAncestry applied. For multi-edge use, callers must pass the
-           relevant walk via scopeStateIdAt instead. */
+           relevant walk via stateHashAt instead. */
         return structuralAddressAfter(subject, argAncestry, {});
     }
 

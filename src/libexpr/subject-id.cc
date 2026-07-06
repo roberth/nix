@@ -161,7 +161,7 @@ trace::QueryApply makeApplyResultQuery(
     trace::QueryApply q;
     q.fromCIDs.reserve(par.roots.size());
     for (auto & root : par.roots) {
-        auto cid = scopeStateIdAt(root, argAncestry, walk, edgeIndex);
+        auto cid = stateHashAt(root, argAncestry, walk, edgeIndex);
         q.fromCIDs.emplace_back(hashHex(cid));
     }
     q.fnPath = *applyStep.fnPath;
@@ -178,7 +178,7 @@ Hash stateHashAtStamping(
     size_t edgeIndex,
     const std::function<void(const EvolutionStep &)> & hook)
 {
-    /* Mirrors scopeStateIdAt's fold logic, emitting one
+    /* Mirrors stateHashAt's fold logic, emitting one
        EvolutionStep per matched observation. Path 3 walker will
        navigate via a table stamped from these emissions.
 
@@ -190,13 +190,13 @@ Hash stateHashAtStamping(
        edge-cumulative fold. Path 3 walker will replicate this
        edge-scoped semantics — cur updates at edge boundaries,
        not per-observation. */
-    Hash result = scopeStateIdAt(subject, argAncestry, walk, edgeIndex);
-    Hash subjectSelfHash = scopeStateIdAt(subject, Hash(HashAlgorithm::SHA256), {}, 0);
+    Hash result = stateHashAt(subject, argAncestry, walk, edgeIndex);
+    Hash subjectSelfHash = stateHashAt(subject, Hash(HashAlgorithm::SHA256), {}, 0);
     Hash selfFactFold = Hash(HashAlgorithm::SHA256);
     for (size_t k = 0; k < edgeIndex && k < walk.size(); ++k) {
         Hash myScopeStateIdAtK = TracingDecisionGraph::xorHashes(
-            scopeStateIdAt(subject, argAncestry, walk, k), Hash(HashAlgorithm::SHA256));
-        /* Above is `scopeStateIdAt(subject, argAncestry, walk, k)` —
+            stateHashAt(subject, argAncestry, walk, k), Hash(HashAlgorithm::SHA256));
+        /* Above is `stateHashAt(subject, argAncestry, walk, k)` —
            subject's state at edge k's precondition. */
         for (auto & obs : walk[k].observations) {
             if (obs.fromHash == myScopeStateIdAtK) {
@@ -211,7 +211,7 @@ Hash stateHashAtStamping(
     return result;
 }
 
-Hash scopeStateIdAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex)
+Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex)
 {
     /* Compute subject's argAncestry state id at the precondition of the
        `edgeIndex`-th edge by replaying the first `edgeIndex` edges'
@@ -242,7 +242,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & argAncestry, const std
                PositionalSeed / PostulatedIdempotentRead it IS k-invariant
                pure position. For ApplyResultSubject it depends on `k`
                because it composes the constituents' *fully evolved*
-               scopeStateIds (= constituents' scopeStateIdAt at the
+               scopeStateIds (= constituents' stateHashAt at the
                same k) into a SHA-sealed shape — so the apply's id
                varies with k via constituent evolution even before
                this subject's selfFactFold contributes. */
@@ -254,7 +254,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & argAncestry, const std
                     /* Derived subjects have no argStateId — only an address
                        (= producer query hash). Callers that need an
                        address for any subject use `structuralAddress`;
-                       reaching this branch via `scopeStateIdAt` means a
+                       reaching this branch via `stateHashAt` means a
                        caller passed a derived subject where the design
                        requires an argument-level subject. */
                     nix::unreachable();
@@ -282,7 +282,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & argAncestry, const std
                        pre-computed-argStateId atom. */
                     return alt.hash;
                 } else {
-                    throw Error("scopeStateIdAt: unknown subject variant");
+                    throw Error("stateHashAt: unknown subject variant");
                 }
             };
 
@@ -313,7 +313,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & argAncestry, const std
 
             auto result = TracingDecisionGraph::xorHashes(subjectIdAt(edgeIndex), selfFactFold);
             tracingCacheLog(
-                "scopeStateIdAt: subject=%s argAncestry=%s walk.size=%zu edgeIndex=%zu\n"
+                "stateHashAt: subject=%s argAncestry=%s walk.size=%zu edgeIndex=%zu\n"
                 "  subjectIdAt(edgeIndex)=%s selfFactFold=%s result=%s%s",
                 describe(subject),
                 hashHex(argAncestry).substr(0, 12),
@@ -329,7 +329,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & argAncestry, const std
 
 Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
 {
-    return scopeStateIdAt(subject, argAncestry, walk, walk.size());
+    return stateHashAt(subject, argAncestry, walk, walk.size());
 }
 
 Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
@@ -348,7 +348,7 @@ Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const
     /* Greedy state-match partition: at each round, pull every obs
        whose fromHash == subject's current state into a synthetic
        edge; append; recompute the subject's state; repeat until no
-       obs matches. `scopeStateIdAt(subj, argAncestry, hypWalk, hypWalk.size())`
+       obs matches. `stateHashAt(subj, argAncestry, hypWalk, hypWalk.size())`
        XOR-folds each edge's matching obs into the running state,
        so state advances one round per iteration.
 
@@ -358,7 +358,7 @@ Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const
        size without an explicit numeric cap. */
     std::vector<Edge> hypWalk;
     while (!flat.empty()) {
-        auto currentId = scopeStateIdAt(subject, argAncestry, hypWalk, hypWalk.size());
+        auto currentId = stateHashAt(subject, argAncestry, hypWalk, hypWalk.size());
         Edge partition;
         std::vector<Observation> stillRemaining;
         for (auto & obs : flat) {
@@ -369,14 +369,14 @@ Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const
         hypWalk.push_back(std::move(partition));
         flat = std::move(stillRemaining);
     }
-    return scopeStateIdAt(subject, argAncestry, hypWalk, hypWalk.size());
+    return stateHashAt(subject, argAncestry, hypWalk, hypWalk.size());
 }
 
 Hash structuralAddress(
     const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex)
 {
     /* For non-derived subjects, the structural address IS the argStateId.
-       For DerivedSubject, scopeStateIdAt traps; we compute the
+       For DerivedSubject, stateHashAt traps; we compute the
        producer query hash (= what a `from = root_cdi` flush would
        hash for a query naming this derived value) directly. */
     if (auto * d = std::get_if<DerivedSubject>(&subject.data)) {
@@ -384,7 +384,7 @@ Hash structuralAddress(
         std::vector<trace::QueryLeaf> fromCIDs;
         fromCIDs.reserve(parentRoots.size());
         for (auto & root : parentRoots) {
-            auto cid = scopeStateIdAt(root, argAncestry, walk, edgeIndex);
+            auto cid = stateHashAt(root, argAncestry, walk, edgeIndex);
             fromCIDs.emplace_back(hashHex(cid));
         }
         auto fromLeaf = fromCIDs.empty() ? trace::QueryLeaf("") : fromCIDs[0];
@@ -402,7 +402,7 @@ Hash structuralAddress(
         }
         return hashString(HashAlgorithm::SHA256, qj.dump());
     }
-    return scopeStateIdAt(subject, argAncestry, walk, edgeIndex);
+    return stateHashAt(subject, argAncestry, walk, edgeIndex);
 }
 
 Hash structuralAddressAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)

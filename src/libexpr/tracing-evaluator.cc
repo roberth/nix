@@ -419,7 +419,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        of sib A's envAsksEdges traversed via prior v13Walks). */
     auto & d1Walk = writer.getD1CidasksWalk();
     /* Path 3: stamp SubjectEvolutionEdges via hook. */
-    Hash resultSelfHash = scopeStateIdAt(
+    Hash resultSelfHash = stateHashAt(
         resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
     auto applyArgAncestryStateHash = stateHashAtStamping(
         resultSubject, applyArgAncestry, d1Walk, d1Walk.size(),

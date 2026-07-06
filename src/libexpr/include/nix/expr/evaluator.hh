@@ -281,7 +281,7 @@ public:
      * The proxy's static structural identifier — for AmbientObject
      * and TracingCallbackArg, the Subject they carry. Used by the
      * walker to evolve scope state ids in lockstep with the recorder
-     * (scopeStateIdAt against the running walk). Returns null
+     * (stateHashAt against the running walk). Returns null
      * for non-proxy Objects.
      */
     virtual const Subject * getSubject() const
@@ -291,7 +291,7 @@ public:
 
     /**
      * The proxy's inherited scope — the XOR of outer-scope argStateIds used
-     * by scopeStateIdAt to make sibling cached-call recordings'
+     * by stateHashAt to make sibling cached-call recordings'
      * scope state ids distinct. Zero hash for non-proxy Objects.
      */
     virtual Hash getArgAncestry() const

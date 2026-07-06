@@ -178,7 +178,7 @@ public:
        cost of insertFactSet. */
     static Hash xorFactIntoHash(const Hash & h, const Hash & request, const Hash & response);
 
-    /* XOR two set-hashes. Used by scopeStateIdAt and similar
+    /* XOR two set-hashes. Used by stateHashAt and similar
        XOR-fold operations over factSet hashes. */
     static Hash xorHashes(const Hash & a, const Hash & b);
 
@@ -268,7 +268,7 @@ public:
     std::vector<std::pair<SetHash, SetHash>> getAmbientAsks(const SetHash & fromFactSet);
 
     /* Path 3: insert a per-subject observation trie edge. Cold
-       records each fold step encountered during scopeStateIdAt:
+       records each fold step encountered during stateHashAt:
        subject S at running state `cur`, seeing observation
        (from, elem) that matches (obs.from == cur), advances to
        `nextCur = cur XOR obs.elem`. Walker will consume via

@@ -38,7 +38,7 @@ class TracingDecisionGraph;
 class ReplayCallbackArg : public Object
 {
     /* Full structural identity. Combined with `argAncestry` and the shared
-       `walkFacts`, `scopeStateIdAt` computes this proxy's scopeStateId
+       `walkFacts`, `stateHashAt` computes this proxy's scopeStateId
        at any walk position. The recorder's cidasks substitution at
        flush uses the same evaluation, so walker and recorder agree
        on per-probe `from` fields without snapshot/lazy hacks — even
@@ -51,19 +51,19 @@ class ReplayCallbackArg : public Object
        `stateHashAfter(PositionalSeed{D}, callArgAncestry, {})` directly.
 
        For children minted by maybeGetAttr/getListElem the subject is
-       `DerivedSubject{parent.subject, ...}` — `scopeStateIdAt`
+       `DerivedSubject{parent.subject, ...}` — `stateHashAt`
        recursively re-evaluates the parent's scopeStateId at the child's
        current edge index, so children don't need to snapshot parent
        state at creation. */
     Subject subject;
     Hash argAncestry;
-    /* Initial scopeStateId (= scopeStateIdAt(subject, argAncestry, {}, 0)) — kept for
+    /* Initial scopeStateId (= stateHashAt(subject, argAncestry, {}, 0)) — kept for
        legacy id-string consumers (e.g. defeatCache's recursive
        apply construction). */
     AmbientId localId;
     /* Shared walk across all proxies in one cb apply. Each validated
        probe appends a Fact (one fact per edge, matching the writer's
-       multi-edge AmbientAsks structure). `scopeStateIdAt` reads this
+       multi-edge AmbientAsks structure). `stateHashAt` reads this
        to compute each proxy's evolved scopeStateId.
 
        Backed as a shared single-fact-edge sequence: each entry is

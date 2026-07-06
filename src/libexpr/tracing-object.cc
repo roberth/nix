@@ -87,7 +87,7 @@ std::string TracingObject::evolvedQueryFrom() const
            so walker can navigate subject's evolution edge-by-edge
            rather than iterating K. Uses the subject's Merkle
            content hash as the trie root key. */
-        Hash subjectSelfHash = scopeStateIdAt(
+        Hash subjectSelfHash = stateHashAt(
             *applyResultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
         auto evolved = stateHashAtStamping(
             *applyResultSubject, applyArgAncestry, walk, walk.size(),
