@@ -124,8 +124,13 @@ requestSetHash`. "At walker state `(Q, cur)`, the next step is
 to dispatch this RequestSet's Requests."
 
 **Terminal** — a row in `Terminal(queryHash, factSetHash) →
-resultHash`. "At walker state `(Q, cur)`, the recorded Result
-for `Q` is this." A Terminal ends a walk.
+resultHash`. A recording that reached `(Q, cur)` produced this
+Result. The Terminal *points at* a `resultHash`; the Result
+payload itself lives in the Results pool independently. Multiple
+Terminals at the same `(Q, cur)` are allowed — same walker
+state, different Result — if recorded evaluations diverge
+(nondeterminism policy is out of scope here). A Terminal ends a
+walk.
 
 **useful (dispatch)** — the subset of an Ask's RequestSet whose
 Responses aren't already known at `cur`. The walker only
