@@ -14,16 +14,16 @@ static std::string hashHex(const Hash & h)
     return h.to_string(HashFormat::Base16, false);
 }
 
-Hash extractFrom(const trace::QueryVariant & query)
+Hash fromStateHashOf(const trace::QueryVariant & query)
 {
     return std::visit(
         [](const auto & q) -> Hash {
             if constexpr (requires { q.from; }) {
                 if (!q.from.isContent())
-                    throw Error("extractFrom: query.from is not a ContentLeaf");
+                    throw Error("fromStateHashOf: query.from is not a ContentLeaf");
                 return Hash::parseNonSRIUnprefixed(q.from.contentHash(), HashAlgorithm::SHA256);
             } else {
-                throw Error("extractFrom: query type has no `from` field");
+                throw Error("fromStateHashOf: query type has no `from` field");
             }
         },
         query);
@@ -138,7 +138,7 @@ Observation observationFromQR(const trace::QueryVariant & query, const trace::Re
     auto respHash = TracingDecisionGraph::computeResponseHash(respPayload);
 
     return Observation{
-        .fromHash = extractFrom(query),
+        .fromHash = fromStateHashOf(query),
         .elementHash = TracingDecisionGraph::xorFactIntoHash(Hash(HashAlgorithm::SHA256), reqHash, respHash),
     };
 }

@@ -234,7 +234,7 @@ trace::QueryApply makeApplyResultQuery(
 
 /** Convenience: extract a query's `from` field as a Hash, if it has
     one. Apply queries don't have a `from`; throws. */
-Hash extractFrom(const trace::QueryVariant & query);
+Hash fromStateHashOf(const trace::QueryVariant & query);
 
 /** Convenience wrapper around `pathAndRootsFromSubject`: returns just
     the path. Use the full helper when roots are also needed (= writer
