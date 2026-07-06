@@ -26,7 +26,7 @@ TracingCallbackArg::TracingCallbackArg(
     Hash depth2ApplyId_)
     : inner(std::move(inner))
     , subject(std::move(subject_))
-    , inheritedScope(std::move(inheritedScope_))
+    , argAncestry(std::move(inheritedScope_))
     , depth2ApplyId(std::move(depth2ApplyId_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
@@ -50,7 +50,7 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
         .name = name,
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, inheritedScope, depth2ApplyId);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, argAncestry, depth2ApplyId);
 }
 
 trace::ResultWHNF & TracingCallbackArg::whnf()
@@ -158,7 +158,7 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
         .index = index,
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, inheritedScope, depth2ApplyId);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, argAncestry, depth2ApplyId);
 }
 
 ObjectType TracingCallbackArg::getTypeLazy()
@@ -207,7 +207,7 @@ void TracingCallbackArg::recordObservation(const trace::QueryVariant & query, co
     /* Route through the depth-2 entry point: the outer is probing
        an inner-supplied local. The `depth2ApplyId` groups this fact
        into the cb apply's AmbientAsks edge at flush. */
-    writer.logAmbientObservation(query, result, subject, inheritedScope, depth2ApplyId);
+    writer.logAmbientObservation(query, result, subject, argAncestry, depth2ApplyId);
 }
 
 std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> argObj)
@@ -234,7 +234,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(result), std::move(resultSubject), writer, rootFSRoot, argCell, inheritedScope, depth2ApplyId);
+        std::move(result), std::move(resultSubject), writer, rootFSRoot, argCell, argAncestry, depth2ApplyId);
 }
 
 } // namespace nix

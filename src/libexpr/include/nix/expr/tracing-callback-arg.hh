@@ -40,7 +40,7 @@ class TracingCallbackArg : public Object
     Subject subject;  ///< Static structural identifier
     /* Inherited scope: XOR of outer-scope argStateIds (argStateId(Q) at the
        cb-apply boundary). Propagated to navigation children. */
-    Hash inheritedScope;
+    Hash argAncestry;
     /* The cb apply this local belongs to (= apply's resultId). Used
        at flush to group depth-2 facts into an AmbientAsks edge per
        apply. Navigation children inherit. */
@@ -48,9 +48,9 @@ class TracingCallbackArg : public Object
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
-    /** This local's scope state id, scoped via inheritedScope. Computed
-        on demand from `subject` + `inheritedScope`. */
-    AmbientId localId() const { return structuralAddressAfter(subject, inheritedScope, {}); }
+    /** This local's scope state id, scoped via argAncestry. Computed
+        on demand from `subject` + `argAncestry`. */
+    AmbientId localId() const { return structuralAddressAfter(subject, argAncestry, {}); }
 
     /* The argCell cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;
@@ -72,7 +72,7 @@ public:
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
         std::shared_ptr<const ArgCell> argCell,
-        Hash inheritedScope = Hash(HashAlgorithm::SHA256),
+        Hash argAncestry = Hash(HashAlgorithm::SHA256),
         Hash depth2ApplyId = Hash(HashAlgorithm::SHA256));
 
     /** This proxy's structural identity, per the
@@ -80,7 +80,7 @@ public:
     const Subject * getSubject() const override { return &subject; }
 
     /** This proxy's inherited scope. */
-    Hash getInheritedScope() const override { return inheritedScope; }
+    Hash getInheritedScope() const override { return argAncestry; }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 

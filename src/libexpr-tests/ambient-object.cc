@@ -41,7 +41,7 @@ static AmbientQueryFn mockResolver(std::map<std::string, trace::ResultVariant> r
                AmbientId objectId,
                const trace::QueryVariant & q,
                Subject /*subject*/,
-               Hash /*inheritedScope*/) -> AmbientQueryResult {
+               Hash /*argAncestry*/) -> AmbientQueryResult {
         std::string objHex = ambientHex(objectId);
         std::string key = std::visit(
             [&](const auto & query) -> std::string {

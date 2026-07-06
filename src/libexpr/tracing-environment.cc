@@ -60,10 +60,10 @@ trace::ResultVariant TracingEnvironment::ambientQuery(
     const trace::QueryVariant & query,
     std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
     Subject subject,
-    Hash inheritedScope)
+    Hash argAncestry)
 {
     auto result = resolve(query);
-    writer.logAmbientInteraction(query, result, std::move(subject), std::move(inheritedScope));
+    writer.logAmbientInteraction(query, result, std::move(subject), std::move(argAncestry));
     return result;
 }
 

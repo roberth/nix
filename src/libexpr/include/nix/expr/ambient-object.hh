@@ -40,7 +40,7 @@ using AmbientQueryFn = std::function<AmbientQueryResult(
     AmbientId objectId,
     const trace::QueryVariant &,
     Subject,
-    Hash inheritedScope)>;
+    Hash argAncestry)>;
 
 /**
  * Callback type for ambient function application.
@@ -71,7 +71,7 @@ class AmbientObject : public Object
        call's argStateId(Q)) for content-id inheritance, per
        content-identity-via-asks.md. Set at the cb-apply boundary;
        propagated to children. Zero hash if no inheritance. */
-    Hash inheritedScope;
+    Hash argAncestry;
     /* Per-apply observation context. Set on cb-arg seed AmbientObjects
        by makeCachedFnPrimOp.impl at the apply boundary; the queryFn
        closure routes observations through this context so the
@@ -113,7 +113,7 @@ public:
     /** This proxy's inherited scope (outer-scope argStateIds composed),
         used by cidasks to make sibling cached-call recordings'
         scope state ids distinct. */
-    Hash getInheritedScope() const override { return inheritedScope; }
+    Hash getInheritedScope() const override { return argAncestry; }
 
     /** Set the proxy's argCell. Call right after construction at
         boundary sites. Returns *this for chaining. */
@@ -127,7 +127,7 @@ public:
         Children created by this proxy inherit this scope. */
     AmbientObject & withInheritedScope(const Hash & h)
     {
-        inheritedScope = h;
+        argAncestry = h;
         return *this;
     }
 
@@ -176,7 +176,7 @@ public:
         /* scope state id at the empty factset, with this proxy's inherited
            scope applied. For multi-edge use, callers must pass the
            relevant walk via scopeStateIdAt instead. */
-        return structuralAddressAfter(subject, inheritedScope, {});
+        return structuralAddressAfter(subject, argAncestry, {});
     }
 
     std::optional<std::string> getScopeStateIdHex() const override

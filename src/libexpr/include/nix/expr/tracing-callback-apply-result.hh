@@ -63,7 +63,7 @@ class TracingCallbackApplyResult : public Object
     Subject applyResultSubject;
 
     /* Scope inherited from the cb-apply boundary — = contraArg's
-       inheritedScope = the resolver's callScope. The walker's
+       argAncestry = the resolver's callScope. The walker's
        sidecar lookup recovers the same scope. */
     Hash applyArgAncestry;
 

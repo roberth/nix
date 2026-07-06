@@ -12,13 +12,13 @@ namespace nix {
    reqHash matches what the writer flushed for the corresponding
    observation. */
 template <typename Q>
-static void stampPerArgFieldsAmbient(Q & q, const Subject & subject, const Hash & inheritedScope)
+static void stampPerArgFieldsAmbient(Q & q, const Subject & subject, const Hash & argAncestry)
 {
     auto par = pathAndRootsFromSubject(subject);
     std::vector<trace::QueryLeaf> fromCIDs;
     fromCIDs.reserve(par.roots.size());
     for (size_t i = 0; i < par.roots.size(); ++i) {
-        auto cid = scopeStateIdAfter(par.roots[i], inheritedScope, {});
+        auto cid = scopeStateIdAfter(par.roots[i], argAncestry, {});
         fromCIDs.emplace_back(cid.to_string(HashFormat::Base16, false));
     }
     q.from = fromCIDs.empty() ? trace::QueryLeaf{std::string{}} : fromCIDs[0];
@@ -29,7 +29,7 @@ static void stampPerArgFieldsAmbient(Q & q, const Subject & subject, const Hash 
 AmbientObject::AmbientObject(
     Subject subject_, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn)
     : subject(std::move(subject_))
-    , inheritedScope(HashAlgorithm::SHA256)
+    , argAncestry(HashAlgorithm::SHA256)
     , queryFn(std::move(queryFn))
     , applyFn(std::move(applyFn))
     , ambientRootFSRoot(std::move(ambientRootFSRoot))
@@ -38,10 +38,10 @@ AmbientObject::AmbientObject(
 
 std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 {
-    auto scopeStateId = structuralAddressAfter(subject, inheritedScope, {});
+    auto scopeStateId = structuralAddressAfter(subject, argAncestry, {});
     trace::QueryGetAttr q{name, std::string{}};
-    stampPerArgFieldsAmbient(q, subject, inheritedScope);
-    auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
+    stampPerArgFieldsAmbient(q, subject, argAncestry);
+    auto qr = queryFn(scopeStateId, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultMaybeType>(&qr.result);
     if (!r || !r->type)
         return nullptr;
@@ -57,7 +57,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
     child->withArgCell(argCell);
     /* Inherit content-id scope so the child's `from` fields include
        the same argStateId(Q) the parent uses. */
-    child->withInheritedScope(inheritedScope);
+    child->withInheritedScope(argAncestry);
     return child;
 }
 
@@ -65,10 +65,10 @@ trace::ResultWHNF & AmbientObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    auto scopeStateId = structuralAddressAfter(subject, inheritedScope, {});
+    auto scopeStateId = structuralAddressAfter(subject, argAncestry, {});
     trace::QueryGetWHNF q{std::string{}};
-    stampPerArgFieldsAmbient(q, subject, inheritedScope);
-    auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
+    stampPerArgFieldsAmbient(q, subject, argAncestry);
+    auto qr = queryFn(scopeStateId, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("ambient getWHNF: unexpected result type");
@@ -163,10 +163,10 @@ size_t AmbientObject::getListSize()
 
 std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
 {
-    auto scopeStateId = structuralAddressAfter(subject, inheritedScope, {});
+    auto scopeStateId = structuralAddressAfter(subject, argAncestry, {});
     trace::QueryGetListElem q{std::string{}, index};
-    stampPerArgFieldsAmbient(q, subject, inheritedScope);
-    auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
+    stampPerArgFieldsAmbient(q, subject, argAncestry);
+    auto qr = queryFn(scopeStateId, q, subject, argAncestry);
     if (!qr.childId)
         throw Error("ambient getListElem: resolver didn't return child id");
     Subject childSubject{DerivedSubject{
@@ -177,7 +177,7 @@ std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
     auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
-    child->withInheritedScope(inheritedScope);
+    child->withInheritedScope(argAncestry);
     return child;
 }
 
@@ -210,10 +210,10 @@ RootValue AmbientObject::toValueOrProxy(EvalState & state, std::shared_ptr<Ambie
 
 std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
 {
-    auto scopeStateId = structuralAddressAfter(subject, inheritedScope, {});
+    auto scopeStateId = structuralAddressAfter(subject, argAncestry, {});
     trace::QueryGetFunctionInfo q{std::string{}};
-    stampPerArgFieldsAmbient(q, subject, inheritedScope);
-    auto qr = queryFn(scopeStateId, q, subject, inheritedScope);
+    stampPerArgFieldsAmbient(q, subject, argAncestry);
+    auto qr = queryFn(scopeStateId, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
         return std::nullopt;
@@ -250,7 +250,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
        for queryFn lookups agree. */
     int localDepth = callerScope ? callerScope->depth + 1 : 0;
     Subject argSubject{PositionalSeed{localDepth}};
-    applyFn(structuralAddressAfter(subject, inheritedScope, {}), std::move(argObj), callerScope);
+    applyFn(structuralAddressAfter(subject, argAncestry, {}), std::move(argObj), callerScope);
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(subject),
         .arg = std::make_shared<const Subject>(std::move(argSubject)),
@@ -259,7 +259,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
     /* Apply-result scope cell rooted at the caller's scope. */
     auto cell = ArgCell::make(callerScope, std::move(argForScope));
     result->withArgCell(std::move(cell));
-    result->withInheritedScope(inheritedScope);
+    result->withInheritedScope(argAncestry);
     return result;
 }
 

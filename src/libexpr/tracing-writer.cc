@@ -76,7 +76,7 @@ void TracingWriter::flushAmbient(bool finalize)
             Hash rootSelfHash = scopeStateIdAt(
                 root, Hash(HashAlgorithm::SHA256), {}, 0);
             auto cid = scopeStateIdAtWithHook(
-                root, pf.inheritedScope, envWalk, d1EdgeIndex,
+                root, pf.argAncestry, envWalk, d1EdgeIndex,
                 [&](const EvolutionStep & step) {
                     insertSubjectEvolutionEdge(
                         rootSelfHash, step.curBefore,
@@ -150,7 +150,7 @@ void TracingWriter::flushAmbient(bool finalize)
             initialFromCIDs.reserve(roots.size());
             for (auto & root : roots) {
                 auto initCid = scopeStateIdAt(
-                    root, pf.inheritedScope, {}, 0);
+                    root, pf.argAncestry, {}, 0);
                 initialFromCIDs.emplace_back(
                     initCid.to_string(HashFormat::Base16, false));
             }
@@ -339,7 +339,7 @@ void TracingWriter::flushAmbient(bool finalize)
                 Hash rootSelfHash = scopeStateIdAt(
                     root, Hash(HashAlgorithm::SHA256), {}, 0);
                 auto cid = scopeStateIdAtWithHook(
-                    root, pf.inheritedScope, walk, /*edgeIndex=*/ i,
+                    root, pf.argAncestry, walk, /*edgeIndex=*/ i,
                     [&](const EvolutionStep & step) {
                         insertSubjectEvolutionEdge(
                             rootSelfHash, step.curBefore,

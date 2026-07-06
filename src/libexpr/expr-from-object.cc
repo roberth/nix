@@ -498,7 +498,7 @@ static PrimOp * makeCachedFnPrimOp(
                             AmbientId objectId,
                             const trace::QueryVariant & q,
                             Subject subject,
-                            Hash inheritedScope) {
+                            Hash argAncestry) {
                             /* For cb-arg queries (objectId == this cb's
                                rootId), dispatch on the captured
                                outerArgObj directly — bypass the shared
@@ -513,7 +513,7 @@ static PrimOp * makeCachedFnPrimOp(
                                 q,
                                 [&](const trace::QueryVariant &) { return qr.result; },
                                 subject,
-                                inheritedScope);
+                                argAncestry);
                             /* Note: queryFn (= cb-arg side) observations
                                are NOT pushed into applyContext.observations.
                                They would be noise from the apply-result

@@ -105,7 +105,7 @@ class TracingWriter
         trace::QueryVariant query;
         trace::ResultVariant result;
         Subject subject;
-        Hash inheritedScope; ///< outer-scope argStateIds for scopeStateIdAt
+        Hash argAncestry; ///< outer-scope argStateIds for scopeStateIdAt
         /* Empty hash = depth-1; otherwise = the cb apply's resultId,
            grouping this fact into the depth-2 sub-trace for that apply. */
         Hash depth2ApplyId{HashAlgorithm::SHA256};
@@ -420,11 +420,11 @@ public:
         const trace::QueryVariant & query,
         const trace::ResultVariant & result,
         Subject subject,
-        Hash inheritedScope = Hash(HashAlgorithm::SHA256))
+        Hash argAncestry = Hash(HashAlgorithm::SHA256))
     {
         if (!decisionGraph)
             return;
-        pendingDepth1Facts.push_back({query, result, std::move(subject), std::move(inheritedScope),
+        pendingDepth1Facts.push_back({query, result, std::move(subject), std::move(argAncestry),
             /*depth2ApplyId=*/ Hash(HashAlgorithm::SHA256)});
     }
 
@@ -438,7 +438,7 @@ public:
         const trace::QueryVariant & query,
         const trace::ResultVariant & result,
         Subject subject,
-        Hash inheritedScope,
+        Hash argAncestry,
         Hash applyId)
     {
         if (!decisionGraph)
@@ -462,7 +462,7 @@ public:
              it != pendingApplyBoundaries.rend(); ++it) {
             if (it->applyId == applyId) {
                 it->facts.push_back({query, result, std::move(subject),
-                    std::move(inheritedScope), applyId});
+                    std::move(argAncestry), applyId});
                 if (it->finalized)
                     tracingCacheLog(
                         "logAmbientObservation: late probe queued for finalized applyId=%s (now %zu facts, %zu processed)",

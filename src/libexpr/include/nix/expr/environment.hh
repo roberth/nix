@@ -68,10 +68,10 @@ public:
         const trace::QueryVariant & query,
         std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
         Subject subject,
-        Hash inheritedScope = Hash(HashAlgorithm::SHA256))
+        Hash argAncestry = Hash(HashAlgorithm::SHA256))
     {
         (void) subject;
-        (void) inheritedScope;
+        (void) argAncestry;
         return resolve(query);
     }
 
