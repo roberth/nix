@@ -113,9 +113,9 @@ class TracingWriter
     /* Depth-1 facts (= ambient observations on outer state). Drained
        at every intermediate closeAsksEdge and at finalize. */
     std::vector<PendingFact> pendingDepth1Facts;
-    /* Depth-2 facts live on their owning PendingApplyBoundary so
+    /* Depth-2 facts live on their owning ApplyBoundary so
        each cb-apply invocation's chain is built from exactly its
-       own probe sequence. Storage is below (= PendingApplyBoundary's
+       own probe sequence. Storage is below (= ApplyBoundary's
        facts field). */
 
     /* Persistent cidasks chain for depth-1 ambient observations.
@@ -175,7 +175,7 @@ class TracingWriter
        at `(applyReqHash, AmbientResult)`. Each cb-apply invocation
        owns exactly its own probe sequence. Recording order = vector
        order. */
-    struct PendingApplyBoundary
+    struct ApplyBoundary
     {
         Hash applyId;            ///< depth2ApplyId for the d=2 group
         Hash applyRequestHash;   ///< natural hash of applyQueryPayload
@@ -233,7 +233,7 @@ class TracingWriter
            tail `facts[lastProcessedCount..]`. */
         size_t lastProcessedCount = 0;
     };
-    std::vector<PendingApplyBoundary> pendingApplyBoundaries;
+    std::vector<ApplyBoundary> pendingApplyBoundaries;
 
     /* RAII suppress counter for `openApplyBoundary` while > 0. Used to
        elide redundant boundary firings during walker re-dispatch of a
@@ -593,7 +593,7 @@ public:
      * Mark a cb-apply boundary in the recording. Closes the
      * preceding observations into their own Asks edge (= β1 via
      * closeAsksEdge), inserts the apply Request payload into the CAS
-     * pool, and buffers a `PendingApplyBoundary` recording the
+     * pool, and buffers a `ApplyBoundary` recording the
      * applyId and reqHash.
      *
      * The d=1 apply Fact itself is *not* folded into envFactSet
