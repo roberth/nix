@@ -159,8 +159,11 @@ Terminal.
 Request, returns a Response by asking the live environment.
 
 **walk(Q, dispatch, ..., startCur)** — the walker's top-level
-entry. Returns a `WalkHit` (result + terminalCur) on a Terminal
-reach, `nullopt` on miss.
+entry. Returns a `WalkHit` on a Terminal reach, `nullopt` on miss.
+
+**WalkHit** — `{resultHash, terminalCur}`. `resultHash` is the
+recorded Result the walk landed on; `terminalCur` is the `cur` at
+that Terminal (usable as a child query's `startCur`).
 
 ### 7. Recording
 
@@ -227,8 +230,8 @@ recomputed).
 ### 10. What the Ambient interaction is
 
 `builtins.cache` nests a cached inner evaluator inside an outer
-one. Two categories of value cross the cache boundary and each
-gets probed the other way around:
+one. Values cross the cache boundary in both directions; whichever
+side owns a value, the other side is what probes it:
 
 - **Outer-owned values** — Values the outer evaluator produced,
   passed to the inner as arguments. The inner reads them through
@@ -353,7 +356,7 @@ different kinds of hash unified in one call.
 and returns it as a `Hash`. Every observation a subject emits
 carries `stateHashAt(...)` at the emission time in this field.
 
-### 14. argAncestry — the enclosing scope of a subject
+### 14. argAncestry
 
 **argAncestry** — a `Hash`: the XOR-fold of enclosing callback
 args' state hashes at the moment the innermost callback was
@@ -407,8 +410,7 @@ cell; liveObject is the wrapped Object. Cells are pure topology —
 no hashes are stored on them.
 
 **argCell** — a field on writer- and replay-side Object wrappers
-holding a `shared_ptr<const ArgCell>`. Children inherit the
-parent's cell for navigation.
+holding a `shared_ptr<const ArgCell>`.
 
 **withArgCell(...)** — setter to attach a cell to a proxy.
 
@@ -422,16 +424,23 @@ function of `(subject, argAncestry, walk, k)`, but naive
 evaluation is O(walk.size()) per query. The subject-evolution
 fast-path caches the individual fold-step transitions.
 
-**SubjectEvolutionEdge** — a persistent table storing
-`(argIdHash, curBefore, obs.from, obs.elem) → curAfter` — one row
-per single-observation fold step. Populated by the writer via a
-callback during `stateHashAtStamping`; consumed by the replay
-walker to navigate a subject's evolution in O(1) per step.
+**SubjectEvolutionEdge** — a persistent table (schema in §18)
+with one row per single-observation fold step. Populated by the
+writer via a callback during `stateHashAtStamping`; consumed by
+the replay walker to navigate a subject's evolution in O(1) per
+step.
+
+**EvolutionStep** — one row's worth of data as a struct in
+`subject-id.hh`: `curBefore` (subject's state hash before this
+observation folds in), the observation's `fromHash` and
+`elementHash`, and `curAfter` (state hash after). Emitted by
+`stateHashAtStamping` to a callback; the writer's callback
+persists each into `SubjectEvolutionEdge`.
 
 **stateHashAtStamping(...)** — the writer-side variant of
-`stateHashAt` that emits `EvolutionStep` records to the callback
-as it folds. Structurally equivalent to `stateHashAt`; used only
-at record time.
+`stateHashAt` that emits an `EvolutionStep` for each fold step
+via a callback. Structurally equivalent to `stateHashAt`; used
+only at record time.
 
 
 ### 18. Ambient storage tables (additions)
