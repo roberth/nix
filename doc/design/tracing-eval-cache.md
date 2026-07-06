@@ -587,9 +587,9 @@ Performance harness under `tests/perf/tracing-cache/`:
 
 - `nixpkgs-validate.sh` — end-to-end correctness sweep across
   commits, attribute variants, and file-edit replay churn.
-- `v13-scaling-threshold.sh` — K=1..1000 cold/warm/db sweep on
+- `scaling-threshold.sh` — K=1..1000 cold/warm/db sweep on
   recent nixpkgs.
-- `v13-large-scale.sh` — K=1k..10k push toward `nix-env -qa` scale.
+- `scale.sh` — K=1k..10k push toward `nix-env -qa` scale.
 
 ## Open work
 
