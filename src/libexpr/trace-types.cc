@@ -155,42 +155,42 @@ static void resultVariantFromJson(const nlohmann::json & j, ResultVariant & resu
     throw nlohmann::json::parse_error::create(302, 0, "could not parse ambient result", &j);
 }
 
-void to_json(nlohmann::json & j, const AmbientOutgoingRequest & r)
+void to_json(nlohmann::json & j, const OuterValueRequest & r)
 {
     queryVariantToJson(j, r.query);
 }
 
-void from_json(const nlohmann::json & j, AmbientOutgoingRequest & r)
+void from_json(const nlohmann::json & j, OuterValueRequest & r)
 {
     queryVariantFromJson(j, r.query);
 }
 
-void to_json(nlohmann::json & j, const AmbientOutgoingResponse & r)
+void to_json(nlohmann::json & j, const OuterValueResponse & r)
 {
     resultVariantToJson(j, r.result);
 }
 
-void from_json(const nlohmann::json & j, AmbientOutgoingResponse & r)
+void from_json(const nlohmann::json & j, OuterValueResponse & r)
 {
     resultVariantFromJson(j, r.result);
 }
 
-void to_json(nlohmann::json & j, const AmbientIncomingRequest & r)
+void to_json(nlohmann::json & j, const InnerValueRequest & r)
 {
     queryVariantToJson(j, r.query);
 }
 
-void from_json(const nlohmann::json & j, AmbientIncomingRequest & r)
+void from_json(const nlohmann::json & j, InnerValueRequest & r)
 {
     queryVariantFromJson(j, r.query);
 }
 
-void to_json(nlohmann::json & j, const AmbientIncomingResponse & r)
+void to_json(nlohmann::json & j, const InnerValueResponse & r)
 {
     resultVariantToJson(j, r.result);
 }
 
-void from_json(const nlohmann::json & j, AmbientIncomingResponse & r)
+void from_json(const nlohmann::json & j, InnerValueResponse & r)
 {
     resultVariantFromJson(j, r.result);
 }
@@ -776,19 +776,19 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
             from_json(j["response"], resp);
             return Response<GetEnvRequest>{req, resp};
         }
-        if (type == AmbientOutgoingRequest::tag) {
-            AmbientOutgoingRequest req;
+        if (type == OuterValueRequest::tag) {
+            OuterValueRequest req;
             from_json(j["request"], req);
-            AmbientOutgoingResponse resp;
+            OuterValueResponse resp;
             from_json(j["response"], resp);
-            return Response<AmbientOutgoingRequest>{req, resp};
+            return Response<OuterValueRequest>{req, resp};
         }
-        if (type == AmbientIncomingRequest::tag) {
-            AmbientIncomingRequest req;
+        if (type == InnerValueRequest::tag) {
+            InnerValueRequest req;
             from_json(j["request"], req);
-            AmbientIncomingResponse resp;
+            InnerValueResponse resp;
             from_json(j["response"], resp);
-            return Response<AmbientIncomingRequest>{req, resp};
+            return Response<InnerValueRequest>{req, resp};
         }
         return std::nullopt;
     }

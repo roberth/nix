@@ -741,38 +741,38 @@ using ResultVariant = std::variant<
  * Outgoing ambient query: local→external.
  * Data queries (getType, getAttr, ...) and external calls (apply).
  */
-struct AmbientOutgoingRequest
+struct OuterValueRequest
 {
-    static constexpr std::string_view tag = "ambientOutgoing";
+    static constexpr std::string_view tag = "outerValue";
     QueryVariant query;
 };
 
-struct AmbientOutgoingResponse
+struct OuterValueResponse
 {
     ResultVariant result;
 };
 
-DECLARE_TRACE_PAIR(AmbientOutgoingRequest, AmbientOutgoingResponse)
+DECLARE_TRACE_PAIR(OuterValueRequest, OuterValueResponse)
 
 /**
  * Incoming ambient query: external→local.
  * The ambient evaluator accessing local values during a callback.
  */
-struct AmbientIncomingRequest
+struct InnerValueRequest
 {
-    static constexpr std::string_view tag = "ambientIncoming";
+    static constexpr std::string_view tag = "innerValue";
     QueryVariant query;
 };
 
-struct AmbientIncomingResponse
+struct InnerValueResponse
 {
     ResultVariant result;
 };
 
-DECLARE_TRACE_PAIR(AmbientIncomingRequest, AmbientIncomingResponse)
+DECLARE_TRACE_PAIR(InnerValueRequest, InnerValueResponse)
 
 template<template<typename> class F>
-using AllEnvRequests = ApplyWrapper<F, FileReadRequest, GetEnvRequest, AmbientOutgoingRequest, AmbientIncomingRequest>;
+using AllEnvRequests = ApplyWrapper<F, FileReadRequest, GetEnvRequest, OuterValueRequest, InnerValueRequest>;
 
 namespace detail {
 
