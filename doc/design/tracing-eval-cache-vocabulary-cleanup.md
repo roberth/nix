@@ -405,8 +405,8 @@ Rules:
    cache has one live version; the name doesn't need to say so.
 2. In *file names*, delete `v13` prefixes on shell scripts under
    `tests/perf/tracing-cache/`. Audit confirmed no scripts test a
-   v12 baseline — all three (`v13-smoke.sh`, `v13-complex-workload.sh`,
-   `v13-hit-rate.sh`) target the shipped cache and get renamed.
+   v12 baseline — all 10 `v13-*.sh` files target the shipped cache
+   and get renamed.
 3. In *docs*, `v13` remains: it identifies the era. Same for the
    `outdated/` docs, which are specifically about earlier versions.
 
@@ -520,10 +520,11 @@ step 7 (comment cleanup pass). One commit per identifier.
 
 **Step 2. `v13` → unversioned (§4.9).** Identifier renames
 (`v13FactSet`, `v13FactSetHash`, `v13Walk`) plus shell-script
-rename for all three `tests/perf/tracing-cache/v13-*.sh` files
-(no v12 baselines exist — confirmed). Also updates `v13Walk`
+rename for all 10 `tests/perf/tracing-cache/v13-*.sh` files (no
+v12 baselines exist — confirmed). Also updates `v13Walk`
 references in `tracing-cache-stats.hh` comments. One commit per
-identifier / file. *Checkpoint.*
+identifier; the 10 script renames batched into a single commit.
+*Checkpoint.*
 
 **Step 3. Writer field renames (§4.2).** `perQAsksEdges` →
 `envAsksEdges`, `lastQFactsHash` → `envCur`, `dispatchedTrie` →
