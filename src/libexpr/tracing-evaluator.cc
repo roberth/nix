@@ -359,22 +359,22 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         : Subject{PostulatedIdempotentRead{fnIdHash}};
 
     Subject argSubj;
-    Hash argScopeForApply{HashAlgorithm::SHA256};
+    Hash argArgAncestryForApply{HashAlgorithm::SHA256};
     if (fnIsTlo) {
         auto callerScope = effectiveArgCell(*fn);
         int localDepth = callerScope ? callerScope->depth + 1 : 0;
         argSubj = Subject{PositionalSeed{localDepth}};
-        argScopeForApply = Hash{HashAlgorithm::SHA256};
+        argArgAncestryForApply = Hash{HashAlgorithm::SHA256};
     } else {
         argSubj = arg->getSubject()
             ? *arg->getSubject()
             : Subject{PostulatedIdempotentRead{argIdHash}};
-        argScopeForApply = arg->getArgAncestry();
+        argArgAncestryForApply = arg->getArgAncestry();
     }
 
     /* Apply boundary's scope combines fn's and arg's inherited scopes
        symmetrically but non-commutatively. The walker mirrors this. */
-    Hash applyArgAncestry = combineArgAncestries(fn->getArgAncestry(), argScopeForApply);
+    Hash applyArgAncestry = combineArgAncestries(fn->getArgAncestry(), argArgAncestryForApply);
 
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),
@@ -421,7 +421,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     /* Path 3: stamp SubjectEvolutionEdges via hook. */
     Hash resultSelfHash = scopeStateIdAt(
         resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
-    auto applyScopeStateId = scopeStateIdAtWithHook(
+    auto applyArgAncestryStateHash = scopeStateIdAtWithHook(
         resultSubject, applyArgAncestry, d1Walk, d1Walk.size(),
         [&](const EvolutionStep & step) {
             writer.insertSubjectEvolutionEdge(
@@ -429,15 +429,15 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
                 step.obsFromHash, step.obsElementHash,
                 step.curAfter);
         });
-    auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
+    auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(
-            "writer apply: fn=%s arg=%s scope=%s -> applyScopeStateId=%s",
+            "writer apply: fn=%s arg=%s scope=%s -> applyArgAncestryStateHash=%s",
             describe(*apr.fn),
             describe(*apr.arg),
             applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
-            applyScopeStateIdHex.substr(0, 16));
+            applyArgAncestryStateHashHex.substr(0, 16));
     }
 
     auto v = writer.getSink().logQuery(trace::QueryApply{fnId, argId});
@@ -466,7 +466,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         if (auto resolver = inner->getAmbientResolver()) {
             guard.resolver = resolver;
             guard.oldScope = getAmbientResolverCallScope(*resolver);
-            /* Sibling discrimination (cb-sibling-b): applyScopeStateId
+            /* Sibling discrimination (cb-sibling-b): applyArgAncestryStateHash
                alone collides across siblings whose constituents are
                structurally identical at apply time. XOR in
                writer.envFactSetHash so cold's sibling A (applying at
@@ -475,7 +475,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
                inner-ambient-object inheritedScopes → distinct
                reqhashes for observations they emit. */
             auto siblingScope = TracingDecisionGraph::xorHashes(
-                TracingDecisionGraph::xorHashes(guard.oldScope, applyScopeStateId),
+                TracingDecisionGraph::xorHashes(guard.oldScope, applyArgAncestryStateHash),
                 writer.getV13FactSetHash());
             setAmbientResolverCallScope(*resolver, siblingScope);
         }
@@ -502,7 +502,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel; v13 doesn't key off this
-        .queryHashStr = applyScopeStateIdHex,
+        .queryHashStr = applyArgAncestryStateHashHex,
     };
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withArgCell(std::move(cell));

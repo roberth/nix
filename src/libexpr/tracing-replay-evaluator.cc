@@ -1017,9 +1017,9 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
                 .fn = std::make_shared<const Subject>(*fnSubj),
                 .arg = std::make_shared<const Subject>(std::move(seedSubject)),
             }};
-            Hash applyScopeForCid = fnObj->getArgAncestry();
+            Hash applyArgAncestryForStateHash = fnObj->getArgAncestry();
             Hash evolvedApplyResultCid = scopeStateIdAt(
-                applyResultSubj, applyScopeForCid, cidasksWalk, cidasksWalk.size());
+                applyResultSubj, applyArgAncestryForStateHash, cidasksWalk, cidasksWalk.size());
             auto evolvedApplyResultCidHex =
                 evolvedApplyResultCid.to_string(HashFormat::Base16, false);
             ctx.memo[evolvedApplyResultCidHex] = replayLocal;
@@ -1392,21 +1392,21 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        edge-for-edge once all prior cb-applies' chains have been
        dispatched. */
     auto & walk = writer.getD1CidasksWalk();
-    auto applyScopeStateId = scopeStateIdAt(resultSubject, applyArgAncestry, walk, walk.size());
-    auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
+    auto applyArgAncestryStateHash = scopeStateIdAt(resultSubject, applyArgAncestry, walk, walk.size());
+    auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(
-            "walker apply: fn=%s arg=%s scope=%s -> applyScopeStateId=%s",
+            "walker apply: fn=%s arg=%s scope=%s -> applyArgAncestryStateHash=%s",
             describe(*apr.fn),
             describe(*apr.arg),
             applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
-            applyScopeStateIdHex.substr(0, 16));
+            applyArgAncestryStateHashHex.substr(0, 16));
     }
 
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
-        .queryHashStr = applyScopeStateIdHex,
+        .queryHashStr = applyArgAncestryStateHashHex,
     };
     auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });

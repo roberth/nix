@@ -375,7 +375,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
     auto walkFactsSaved = walkFacts;
     auto chainCursorSaved = chainCursor;
     auto applyDepthSaved = applyDepth;
-    auto applyScopeSaved = applyArgAncestry;
+    auto applyArgAncestrySaved = applyArgAncestry;
     auto outerContextSaved = outerContext;
     /* Capture the resolver so the primop can register the live arg
        it receives (args[0]) as an outer-direction proxy. The OUTER
@@ -411,7 +411,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
             .impl = [dg, rootFSRootSaved, subjectSaved,
                      walkFactsSaved, chainCursorSaved,
                      initialChainCursor, initialWalkFactsSize,
-                     applyDepthSaved, applyScopeSaved,
+                     applyDepthSaved, applyArgAncestrySaved,
                      outerContextSaved,
                      resolverSaved](
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
@@ -435,7 +435,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                         state, allocRootValue(args[0]));
                     registerAmbientResolverProxy(
                         *resolverSaved, std::move(seedSubject),
-                        *applyScopeSaved, std::move(outerArgObj));
+                        *applyArgAncestrySaved, std::move(outerArgObj));
                 }
                 /* Each primop firing replays the standin's chain
                    advance (apply Fact + synthetic probes) on a LOCAL
@@ -496,13 +496,13 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
 
                 /* Apply scope: Merkle(fn.scope, arg.scope). The arg
                    crosses the boundary as a fresh positional seed
-                   (scope=0); fn carries applyScopeSaved (= callArgAncestry
+                   (scope=0); fn carries applyArgAncestrySaved (= callArgAncestry
                    from sidecar). Used for stamping the apply Fact AND
                    for the synthetic's downstream probes — both
                    mirror the writer's `TracingCallbackApplyResult` whose
                    scope is the same Merkle. */
                 Hash mergedApplyScope = combineArgAncestries(
-                    *applyScopeSaved, Hash{HashAlgorithm::SHA256});
+                    *applyArgAncestrySaved, Hash{HashAlgorithm::SHA256});
 
                 /* Advance the standin's chainCursor by the recorded
                    apply Fact's elementHash. Mirrors the writer's d=2
@@ -602,7 +602,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    case (= the apply result is itself a function whose
                    `toValueOrProxy` builds another `<replay-local-lambda>`
                    primop) composes the right depth/scope downstream. */
-                synthetic->withApplyContext(*applyDepthSaved, *applyScopeSaved);
+                synthetic->withApplyContext(*applyDepthSaved, *applyArgAncestrySaved);
 
                 /* Convert to a Value. ExprFromObject probes
                    synthetic for type/scalar value and constructs the

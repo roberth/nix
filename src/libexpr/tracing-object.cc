@@ -345,12 +345,12 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     Subject fnSubj = getSubject()
         ? *getSubject()
         : Subject{PostulatedIdempotentRead{fnIdHash}};
-    Hash applyScopeLocal = getSubject() ? getArgAncestry() : applyArgAncestry;
+    Hash applyArgAncestryLocal = getSubject() ? getArgAncestry() : applyArgAncestry;
     Subject argSubj = argObj->getSubject()
         ? *argObj->getSubject()
         : Subject{PostulatedIdempotentRead{argIdHash}};
     if (argObj->getSubject())
-        applyScopeLocal = argObj->getArgAncestry();
+        applyArgAncestryLocal = argObj->getArgAncestry();
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),
         .arg = std::make_shared<const Subject>(std::move(argSubj)),
@@ -358,8 +358,8 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
 
     /* apply-result argStateId is content-only — see commentary in
        TracingEvaluator::apply. */
-    auto applyScopeStateId = scopeStateIdAfter(resultSubject, applyScopeLocal, {});
-    auto applyScopeStateIdHex = applyScopeStateId.to_string(HashFormat::Base16, false);
+    auto applyArgAncestryStateHash = scopeStateIdAfter(resultSubject, applyArgAncestryLocal, {});
+    auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
 
     /* Record the apply Request payload at the cidasks hash so dispatch
        and the legacy QueryApply{fn, arg} payload coincide. The legacy
@@ -370,13 +370,13 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto result = inner->queryApply(argObj);
     TriePosition applyTriePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
-        .queryHashStr = applyScopeStateIdHex,
+        .queryHashStr = applyArgAncestryStateHashHex,
     };
     auto child = std::shared_ptr<TracingObject>(
         new TracingObject(ref<Object>(result), writer, v, applyTriePos));
     auto cell = ArgCell::make(argCell, argObj);
     child->withArgCell(std::move(cell));
-    child->withApplyResultSubject(std::move(resultSubject), applyScopeLocal);
+    child->withApplyResultSubject(std::move(resultSubject), applyArgAncestryLocal);
     if (auto * argAmb = dynamic_cast<AmbientObject *>(argObj.get())) {
         if (auto ctx = argAmb->getApplyContext())
             child->withApplyContext(std::move(ctx));

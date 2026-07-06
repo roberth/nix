@@ -20,7 +20,7 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
     , depth2ApplyId(std::move(depth2ApplyId_))
 {
     auto scopeStateId = scopeStateIdAfter(applyResultSubject, applyArgAncestry, {});
-    applyScopeStateIdHex = scopeStateId.to_string(HashFormat::Base16, false);
+    applyArgAncestryStateHashHex = scopeStateId.to_string(HashFormat::Base16, false);
 }
 
 void TracingCallbackApplyResult::recordD2(const trace::QueryVariant & query, const trace::ResultVariant & result)
@@ -161,8 +161,8 @@ ObjectType TracingCallbackApplyResult::getTypeLazy()
 ObjectType TracingCallbackApplyResult::getType()
 {
     auto type = stringToObjectType(whnf().type);
-    tracingCacheLog("laro: getType applyScopeStateId=%s type=%s",
-        applyScopeStateIdHex.substr(0, 16), objectTypeToString(type));
+    tracingCacheLog("laro: getType applyArgAncestryStateHash=%s type=%s",
+        applyArgAncestryStateHashHex.substr(0, 16), objectTypeToString(type));
     return type;
 }
 
