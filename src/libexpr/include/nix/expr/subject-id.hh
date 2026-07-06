@@ -153,7 +153,7 @@ Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std
     root's own-loop and the derived value is referenced via
     `(root_cdi, path)`. Passing a `DerivedSubject` traps; callers
     that want a content-addressed identifier for any Subject
-    (including derived) should use `structuralAddress` instead. */
+    (including derived) should use `subjectHashAt` instead. */
 Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex);
 
 /** Grouping-independent converged fold. Flattens `walk` into a
@@ -183,9 +183,9 @@ Hash stateHashConverged(
     `GetAttr`, similarly for `GetListElem`. Used by `AmbientObject`,
     `TracingCallbackArg`, etc. to expose a single-`Hash` identity
     handle even though derived values don't have argStateIds proper. */
-Hash structuralAddress(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex);
+Hash subjectHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex);
 
-/** Convenience: `structuralAddress` at the walk's tail (= edgeIndex
+/** Convenience: `subjectHashAt` at the walk's tail (= edgeIndex
     = walk.size()). Mirrors `stateHashAfter` but defined for all
     subject forms. */
 Hash subjectHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);

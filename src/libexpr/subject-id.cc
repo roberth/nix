@@ -253,7 +253,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                 } else if constexpr (std::is_same_v<T, DerivedSubject>) {
                     /* Derived subjects have no argStateId — only an address
                        (= producer query hash). Callers that need an
-                       address for any subject use `structuralAddress`;
+                       address for any subject use `subjectHashAt`;
                        reaching this branch via `stateHashAt` means a
                        caller passed a derived subject where the design
                        requires an argument-level subject. */
@@ -261,10 +261,10 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                 } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
                     /* Apply-result composes its constituents' argStateIds.
                        Constituents may be Derived → route through
-                       structuralAddress (which dispatches Derived to
+                       subjectHashAt (which dispatches Derived to
                        the producer-query-hash path). */
-                    auto fnAtK = structuralAddress(*alt.fn, argAncestry, walk, k);
-                    auto argAtK = structuralAddress(*alt.arg, argAncestry, walk, k);
+                    auto fnAtK = subjectHashAt(*alt.fn, argAncestry, walk, k);
+                    auto argAtK = subjectHashAt(*alt.arg, argAncestry, walk, k);
                     nlohmann::json qj = trace::QueryApply{hashHex(fnAtK), hashHex(argAtK)};
                     return hashString(HashAlgorithm::SHA256, qj.dump());
                 } else if constexpr (std::is_same_v<T, PostulatedIdempotentRead>) {
@@ -372,7 +372,7 @@ Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const
     return stateHashAt(subject, argAncestry, hypWalk, hypWalk.size());
 }
 
-Hash structuralAddress(
+Hash subjectHashAt(
     const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex)
 {
     /* For non-derived subjects, the structural address IS the argStateId.
@@ -407,7 +407,7 @@ Hash structuralAddress(
 
 Hash subjectHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
 {
-    return structuralAddress(subject, argAncestry, walk, walk.size());
+    return subjectHashAt(subject, argAncestry, walk, walk.size());
 }
 
 std::string describe(const Subject & subject)
