@@ -29,7 +29,7 @@ class TracingObject : public Object
     ValueHandle valueNum;
     std::optional<TriePosition> triePos;
 
-    /* Argument-scope cell. Apply-result proxies (constructed by
+    /* Argument-argAncestry cell. Apply-result proxies (constructed by
        TracingEvaluator::apply) open a fresh cell rooted at the fn's
        cell; navigation children (maybeGetAttr / getListElem) inherit
        the parent's cell. Cell's own `parent` field carries the
@@ -38,7 +38,7 @@ class TracingObject : public Object
 
     /* For apply-result wrappers: the cidasks Subject that identifies
        this apply structurally (ApplyResultSubject{fn, arg}), and the
-       inherited scope (= argStateId(Q) at the cb-apply boundary). Child
+       inherited argAncestry (= argStateId(Q) at the cb-apply boundary). Child
        queries on this wrapper emit at
        `scopeStateIdAt(applyResultSubject, applyArgAncestry, writer.envWalk,
        walk.size())` — the per-arg evolved scopeStateId the design's
@@ -85,10 +85,10 @@ public:
     /** Attach the apply-result structural identity — for apply-result
         wrappers, so subsequent child queries emit at the evolved scopeStateId.
         Mirrors TracingReplayObject's machinery. */
-    TracingObject & withApplyResultSubject(Subject subject, Hash scope)
+    TracingObject & withApplyResultSubject(Subject subject, Hash argAncestry)
     {
         applyResultSubject = std::move(subject);
-        applyArgAncestry = std::move(scope);
+        applyArgAncestry = std::move(argAncestry);
         return *this;
     }
 
@@ -116,8 +116,8 @@ public:
         return applyResultSubject ? &*applyResultSubject : nullptr;
     }
 
-    /** Inherited scope for `scopeStateIdAt(getSubject(), getArgAncestry(), …)`.
-        For apply-result wrappers it's the cb-apply boundary's scope
+    /** Inherited argAncestry for `scopeStateIdAt(getSubject(), getArgAncestry(), …)`.
+        For apply-result wrappers it's the cb-apply boundary's argAncestry
         baked at construction. */
     Hash getArgAncestry() const override { return applyArgAncestry; }
 

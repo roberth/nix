@@ -28,7 +28,7 @@ class TracingReplayObject : public Object
     std::function<ref<Object>()> getInner;
     mutable std::optional<ref<Object>> inner;
 
-    /* Argument-scope cell. Apply-result proxies open a fresh cell
+    /* Argument-argAncestry cell. Apply-result proxies open a fresh cell
        rooted at the fn's cell; navigation children carry the same
        cell as their parent. Cell's own `parent` field gives the
        ancestor chain. */
@@ -44,7 +44,7 @@ class TracingReplayObject : public Object
        cumulative envWalk). */
     std::shared_ptr<ApplyContext> applyContext;
     /* When apply-result, the ApplyResultSubject identifying it
-       structurally + the inherited scope (= argStateId(Q)). Used together
+       structurally + the inherited argAncestry (= argStateId(Q)). Used together
        with the evaluator's envWalk to compute the evolved scopeStateId
        at lookup time via the same formula the writer's TracingObject
        uses. */
@@ -108,7 +108,7 @@ public:
 
     /** Attach the per-apply observation context — for apply-result
         wrappers, so subsequent queries can compute the evolved
-        scope state id via cidasks. */
+        argAncestry state id via cidasks. */
     TracingReplayObject & withApplyContext(
         std::shared_ptr<ApplyContext> ctx, Subject resultSubject)
     {
@@ -119,13 +119,13 @@ public:
         return *this;
     }
 
-    /** Attach the apply-result Subject + scope without going through
+    /** Attach the apply-result Subject + argAncestry without going through
         ApplyContext. Mirrors the writer-side
         `TracingObject::withApplyResultSubject`. */
-    TracingReplayObject & withApplyResultSubject(Subject subject, Hash scope)
+    TracingReplayObject & withApplyResultSubject(Subject subject, Hash argAncestry)
     {
         applyResultSubject = std::move(subject);
-        applyArgAncestry = std::move(scope);
+        applyArgAncestry = std::move(argAncestry);
         return *this;
     }
 

@@ -38,7 +38,7 @@ class TracingCallbackArg : public Object
 {
     std::shared_ptr<Object> inner;
     Subject subject;  ///< Static structural identifier
-    /* Inherited scope: XOR of outer-scope argStateIds (argStateId(Q) at the
+    /* Inherited argAncestry: XOR of outer-argAncestry argStateIds (argStateId(Q) at the
        cb-apply boundary). Propagated to navigation children. */
     Hash argAncestry;
     /* The cb apply this local belongs to (= apply's resultId). Used
@@ -48,13 +48,13 @@ class TracingCallbackArg : public Object
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
-    /** This local's scope state id, scoped via argAncestry. Computed
+    /** This local's argAncestry state id, scoped via argAncestry. Computed
         on demand from `subject` + `argAncestry`. */
     AmbientId localId() const { return structuralAddressAfter(subject, argAncestry, {}); }
 
     /* The argCell cell this local belongs to. Navigation children
-       share the parent's cell. Used for scope-graph topology only;
-       scope state ids are derived from `subject`, not the cell. */
+       share the parent's cell. Used for argAncestry-graph topology only;
+       argAncestry state ids are derived from `subject`, not the cell. */
     std::shared_ptr<const ArgCell> argCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
@@ -79,7 +79,7 @@ public:
         content-identity-via-asks design. */
     const Subject * getSubject() const override { return &subject; }
 
-    /** This proxy's inherited scope. */
+    /** This proxy's inherited argAncestry. */
     Hash getArgAncestry() const override { return argAncestry; }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }

@@ -18,7 +18,7 @@
  *    enclosing cb-apply boundary's recursive apply Fact (= the same
  *    boundary `logAmbientApplyFact` appended to). At flushAmbient
  *    finalize the writer's d=2 loop stamps each observation with
- *    `from = hex(scopeStateIdAt(applyResultSubject, scope, walk, i))`,
+ *    `from = hex(scopeStateIdAt(applyResultSubject, argAncestry, walk, i))`,
  *    inserts the response payload into `LocalResponseMap` keyed by
  *    the resulting reqHash, and inserts an `AmbientAsks` edge.
  *
@@ -64,7 +64,7 @@ class TracingCallbackApplyResult : public Object
 
     /* Scope inherited from the cb-apply boundary — = contraArg's
        argAncestry = the resolver's callArgAncestry. The walker's
-       sidecar lookup recovers the same scope. */
+       sidecar lookup recovers the same argAncestry. */
     Hash applyArgAncestry;
 
     /* The enclosing cb-apply boundary's `applyId` (= what `runOn`
@@ -80,7 +80,7 @@ class TracingCallbackApplyResult : public Object
        `applyArgAncestryStateHashHex` (= what the walker computes too). */
     std::string applyArgAncestryStateHashHex;
 
-    /* Argument-scope cell — same shape as TracingObject. */
+    /* Argument-argAncestry cell — same shape as TracingObject. */
     std::shared_ptr<const ArgCell> argCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /

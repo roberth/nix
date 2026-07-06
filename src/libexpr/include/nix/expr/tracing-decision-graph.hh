@@ -130,7 +130,7 @@ public:
        is the design's "d=2 walker is the only consumer" contract from
        `content-identity-via-asks.md` ("Atom storage"). The soundness
        argument requires the reqhash to be a pure function of
-       (subject, scope, prior facts in the chain); across writer
+       (subject, argAncestry, prior facts in the chain); across writer
        sessions with different outer args, that assumption can fail
        (same seed(N) pre-observation CDI → same reqhash → different
        responses from arg-dependent env), so d=1 dispatch MUST NOT
@@ -250,7 +250,7 @@ public:
        It records the observations the outer makes against an
        inner-supplied LocalObject during a covariant callback.
        Same-call sibling collapse within is intentional;
-       cross-call disambiguation is via scope state id inheritance.
+       cross-call disambiguation is via argAncestry state id inheritance.
 
        Unlike depth-1, edges store toFactSetHash explicitly: at
        depth-2 there is no live producer for incoming-ambient

@@ -55,7 +55,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
     auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
-    /* Inherit content-id scope so the child's `from` fields include
+    /* Inherit content-id argAncestry so the child's `from` fields include
        the same argStateId(Q) the parent uses. */
     child->withInheritedScope(argAncestry);
     return child;
@@ -234,7 +234,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
 {
     if (!applyFn)
         throw Error("ambient apply: no apply callback");
-    /* Thread the caller's effective scope into applyFn so the cb
+    /* Thread the caller's effective argAncestry into applyFn so the cb
        apply's new local cell can chain off the right depth, even
        when `resolve(fnId)` returns an InterpreterObject without a
        proxy parent chain. Keep a copy of argObj for the result's
@@ -256,7 +256,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
         .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
     auto result = std::make_shared<AmbientObject>(std::move(resultSubject), queryFn, ambientRootFSRoot, applyFn);
-    /* Apply-result scope cell rooted at the caller's scope. */
+    /* Apply-result argAncestry cell rooted at the caller's argAncestry. */
     auto cell = ArgCell::make(callerScope, std::move(argForScope));
     result->withArgCell(std::move(cell));
     result->withInheritedScope(argAncestry);

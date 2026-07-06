@@ -34,7 +34,7 @@ struct AmbientQueryResult
 /**
  * Callback type for issuing ambient queries. Takes the caller's
  * Object id, the query, the caller's Subject, and the caller's
- * inherited scope (both for content-id attribution at the writer).
+ * inherited argAncestry (both for content-id attribution at the writer).
  */
 using AmbientQueryFn = std::function<AmbientQueryResult(
     AmbientId objectId,
@@ -67,7 +67,7 @@ using AmbientApplyFn = std::function<AmbientId(
 class AmbientObject : public Object
 {
     Subject subject; ///< Static structural identifier (positional/derived/apply)
-    /* Inherited scope: XOR of outer-scope argStateIds (chiefly the cached
+    /* Inherited argAncestry: XOR of outer-argAncestry argStateIds (chiefly the cached
        call's argStateId(Q)) for content-id inheritance, per
        content-identity-via-asks.md. Set at the cb-apply boundary;
        propagated to children. Zero hash if no inheritance. */
@@ -75,7 +75,7 @@ class AmbientObject : public Object
     /* Per-apply observation context. Set on cb-arg seed AmbientObjects
        by makeCachedFnPrimOp.impl at the apply boundary; the queryFn
        closure routes observations through this context so the
-       apply-result wrapping can compute its evolved scope state id via
+       apply-result wrapping can compute its evolved argAncestry state id via
        scopeStateIdAfter against the accumulated walk. Null on
        non-cb-arg AmbientObjects. */
     std::shared_ptr<ApplyContext> applyContext;
@@ -88,7 +88,7 @@ class AmbientObject : public Object
        resolver from the outer EvalState's `rootFSRoot`. */
     ref<SourceRoot> ambientRootFSRoot;
 
-    /* Argument-scope wiring. `argCell` is the nearest enclosing
+    /* Argument-argAncestry wiring. `argCell` is the nearest enclosing
        apply's cell — navigation children carry the same cell as their
        parent; apply-result proxies open a fresh cell rooted at the
        fn's cell. The cell carries its own `parent` field, so the
@@ -110,9 +110,9 @@ public:
         apply-result), per the content-identity-via-asks design. */
     const Subject * getSubject() const override { return &subject; }
 
-    /** This proxy's inherited scope (outer-scope argStateIds composed),
+    /** This proxy's inherited argAncestry (outer-argAncestry argStateIds composed),
         used by cidasks to make sibling cached-call recordings'
-        scope state ids distinct. */
+        argAncestry state ids distinct. */
     Hash getArgAncestry() const override { return argAncestry; }
 
     /** Set the proxy's argCell. Call right after construction at
@@ -123,8 +123,8 @@ public:
         return *this;
     }
 
-    /** Set the proxy's inherited scope (outer-scope argStateIds).
-        Children created by this proxy inherit this scope. */
+    /** Set the proxy's inherited argAncestry (outer-argAncestry argStateIds).
+        Children created by this proxy inherit this argAncestry. */
     AmbientObject & withInheritedScope(const Hash & h)
     {
         argAncestry = h;
@@ -173,8 +173,8 @@ public:
 
     AmbientId getCdi() const
     {
-        /* scope state id at the empty factset, with this proxy's inherited
-           scope applied. For multi-edge use, callers must pass the
+        /* argAncestry state id at the empty factset, with this proxy's inherited
+           argAncestry applied. For multi-edge use, callers must pass the
            relevant walk via scopeStateIdAt instead. */
         return structuralAddressAfter(subject, argAncestry, {});
     }

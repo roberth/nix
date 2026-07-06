@@ -1,12 +1,12 @@
 #pragma once
 /**
  * @file
- * ArgCell — scope-graph node for cache-boundary proxies.
+ * ArgCell — argAncestry-graph node for cache-boundary proxies.
  * Carries only structural topology (depth, parent, liveObject).
  *
  * Under the design in
  * doc/design/tracing-eval-cache-content-identity-via-asks.md,
- * scope state ids are pure functions of (subject, factset) and are not
+ * argAncestry state ids are pure functions of (subject, factset) and are not
  * stored on the cell. The cell exists for navigation through the
  * proxy graph; the `depth` field provides the static positional
  * handle that subjects use as their content-id seed.
@@ -23,7 +23,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
     /** Reverse-De-Bruijn depth: 0 at the cache call's argument,
         N+1 in a cell whose parent is at depth N. Set at
         construction, immutable. Used as the positional handle
-        when computing scope state ids via scopeStateIdAfter. */
+        when computing argAncestry state ids via scopeStateIdAfter. */
     int depth = 0;
 
     /** Next-outer cell. Null at the root (the cache call's

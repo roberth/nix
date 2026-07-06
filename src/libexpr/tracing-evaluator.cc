@@ -161,8 +161,8 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     auto type = result->getType();
     auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
     auto obj = TracingObject::create(result, writer, v, triePos);
-    /* Root scope-graph cell for the cached value. Cells now carry
-       only topology (depth/parent/liveObject); scope state ids are pure
+    /* Root argAncestry-graph cell for the cached value. Cells now carry
+       only topology (depth/parent/liveObject); argAncestry state ids are pure
        functions of the proxy's Subject under the via-Asks design. */
     obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
     return obj;
@@ -372,7 +372,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         argArgAncestryForApply = arg->getArgAncestry();
     }
 
-    /* Apply boundary's scope combines fn's and arg's inherited scopes
+    /* Apply boundary's argAncestry combines fn's and arg's inherited scopes
        symmetrically but non-commutatively. The walker mirrors this. */
     Hash applyArgAncestry = combineArgAncestries(fn->getArgAncestry(), argArgAncestryForApply);
 
@@ -433,7 +433,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     {
         const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(
-            "writer apply: fn=%s arg=%s scope=%s -> applyArgAncestryStateHash=%s",
+            "writer apply: fn=%s arg=%s argAncestry=%s -> applyArgAncestryStateHash=%s",
             describe(*apr.fn),
             describe(*apr.arg),
             applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),

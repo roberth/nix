@@ -91,7 +91,7 @@ class TracingReplayEvaluator : public Evaluator
         deduplicated by the edge's content-equal fact set so re-
         traversing a shared prefix doesn't double-fold. Mirrors the
         writer's `envWalk` — both grow per Asks edge ever
-        committed, so `scopeStateIdAt(subject, scope, envWalk, K)`
+        committed, so `scopeStateIdAt(subject, argAncestry, envWalk, K)`
         on the walker matches the writer's `scopeStateIdAt` at the
         same edge K. This alignment is what makes per-fact `from`
         encodings reproducible at warm — without it, cell-chain
@@ -174,7 +174,7 @@ public:
     /** Cumulative cidasks walk on the walker, mirroring the writer's
         `envWalk`. Exposed so apply-result wrappers
         (TracingReplayObject with applyResultSubject) can compute
-        `scopeStateIdAt(subject, scope, walk, walk.size())` and match the
+        `scopeStateIdAt(subject, argAncestry, walk, walk.size())` and match the
         writer's evolved scopeStateId at the same walk index — the per-arg
         identity alignment principle #3 requires. */
     const std::vector<Edge> & getCidasksWalk() const

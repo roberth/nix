@@ -461,15 +461,15 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
     for (; cell; cell = cell->parent, ++cellDepth) {
         if (auto live = cell->liveObject) {
             if (auto * subj = live->getSubject()) {
-                /* Use the live proxy's own inherited scope so the
-                   walker's scope state id matches what the recorder
+                /* Use the live proxy's own inherited argAncestry so the
+                   walker's argAncestry state id matches what the recorder
                    computed at this proxy at flush. */
-                auto scope = live->getArgAncestry();
+                auto argAncestry = live->getArgAncestry();
                 bool found = false;
                 /* K=0 fast path — Asks-style initial-CDI lookup:
                    subject's initial content-defined identifier
                    (before any observation folds in) is a pure
-                   function of (subject, scope). Walker computes it
+                   function of (subject, argAncestry). Walker computes it
                    as a key and checks equality against the target
                    — no iteration over K, no scanning for "which
                    walker-state produces target". F19 (2026-07-04)
@@ -479,7 +479,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    own hashed state (initial CDI) IS the lookup
                    key. */
                 {
-                    auto initialCdi = scopeStateIdAt(*subj, scope, extendedWalkForMatch, 0);
+                    auto initialCdi = scopeStateIdAt(*subj, argAncestry, extendedWalkForMatch, 0);
                     if (initialCdi.to_string(HashFormat::Base16, false) == idStr) {
                         found = true;
                     }
@@ -496,7 +496,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                 if (!found) {
                     Hash subjectSelfHash = scopeStateIdAt(
                         *subj, Hash(HashAlgorithm::SHA256), {}, 0);
-                    Hash cur = scopeStateIdAt(*subj, scope, extendedWalkForMatch, 0);
+                    Hash cur = scopeStateIdAt(*subj, argAncestry, extendedWalkForMatch, 0);
                     for (const auto & edge : extendedWalkForMatch) {
                         if (found) break;
                         Hash edgeAcc(HashAlgorithm::SHA256);
@@ -539,7 +539,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    grouping-invariant and thus safe to compare. */
                 if (!found && !extendedWalkForMatch.empty()) {
                     Hash converged = scopeStateIdAtConverged(
-                        *subj, scope, extendedWalkForMatch);
+                        *subj, argAncestry, extendedWalkForMatch);
                     if (converged.to_string(HashFormat::Base16, false) == idStr)
                         found = true;
                 }
@@ -705,7 +705,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     std::shared_ptr<Object> argObj;
     if (isLocalArgId(argHash)) {
         /* The cb apply's local arg. Read the localArg sidecar to
-           source the cb-arg's structural subject (depth + scope)
+           source the cb-arg's structural subject (depth + argAncestry)
            and construct the standin with `PositionalSeed{depth}`
            — matching the recorder's TracingCallbackArg subject.
 
@@ -739,10 +739,10 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
         if (sidecarPayload) {
             try {
                 auto sidecarJson = cborStringToJson(*sidecarPayload);
-                if (sidecarJson.contains("depth") && sidecarJson.contains("scope")) {
+                if (sidecarJson.contains("depth") && sidecarJson.contains("argAncestry")) {
                     auto sidecarDepth = sidecarJson["depth"].get<int>();
                     auto sidecarScope = Hash::parseNonSRIUnprefixed(
-                        sidecarJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
+                        sidecarJson["argAncestry"].get<std::string>(), HashAlgorithm::SHA256);
                     Subject rootSubject{PositionalSeed{sidecarDepth}};
                     Hash fallthroughApplyReqHash2{HashAlgorithm::SHA256};
                     try {
@@ -781,7 +781,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
             }
         }
         /* Missing or malformed sidecar = the recorder didn't supply
-           the depth/scope needed to reconstruct the cb-arg's
+           the depth/argAncestry needed to reconstruct the cb-arg's
            PositionalSeed Subject. Signal resolution failure so the
            caller falls through to inner re-eval. The previous
            PostulatedIdempotentRead fallback violated principle 8's corollary
@@ -890,9 +890,9 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        primop the RLO produces consults AmbientAsks at apply-time.
        Per-call discipline: each cb-apply Fact dispatch creates its
        own RLO; no ctx.memo lookup. */
-    /* Read the writer's localArg sidecar at argHash. depth+scope are
+    /* Read the writer's localArg sidecar at argHash. depth+argAncestry are
        required: the structural subject (= PositionalSeed{depth} at
-       scope) evolves with observations on cb_arg the same way the
+       argAncestry) evolves with observations on cb_arg the same way the
        writer did, which is what makes the synthetic's apply-result
        CAS reads find the recorded facts. */
     auto sidecarPayload = decisionGraph.getRequestPayload(argHash);
@@ -903,7 +903,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     auto sidecarJson = cborStringToJson(*sidecarPayload);
     auto sidecarDepth = sidecarJson["depth"].get<int>();
     auto sidecarScope = Hash::parseNonSRIUnprefixed(
-        sidecarJson["scope"].get<std::string>(), HashAlgorithm::SHA256);
+        sidecarJson["argAncestry"].get<std::string>(), HashAlgorithm::SHA256);
 
     Subject rootSubject{PositionalSeed{sidecarDepth}};
     /* Sibling-discriminating walkFacts seed: inject walker's
@@ -1376,7 +1376,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         ? *arg->getSubject()
         : Subject{PostulatedIdempotentRead{argIdHash}};
 
-    /* Apply boundary's scope combines fn's and arg's inherited scopes
+    /* Apply boundary's argAncestry combines fn's and arg's inherited scopes
        symmetrically but non-commutatively — mirrors the writer's
        formula in `TracingEvaluator::apply`. */
     Hash applyArgAncestry = combineArgAncestries(fn->getArgAncestry(), arg->getArgAncestry());
@@ -1397,7 +1397,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     {
         const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(
-            "walker apply: fn=%s arg=%s scope=%s -> applyArgAncestryStateHash=%s",
+            "walker apply: fn=%s arg=%s argAncestry=%s -> applyArgAncestryStateHash=%s",
             describe(*apr.fn),
             describe(*apr.arg),
             applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -1410,7 +1410,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     };
     auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
-    /* Apply-result scope cell. Parent = fn proxy's cell. */
+    /* Apply-result argAncestry cell. Parent = fn proxy's cell. */
     auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
     obj->withArgCell(std::move(cell));
     obj->withApplyResultSubject(std::move(resultSubject), applyArgAncestry);

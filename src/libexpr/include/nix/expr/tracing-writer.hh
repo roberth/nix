@@ -105,7 +105,7 @@ class TracingWriter
         trace::QueryVariant query;
         trace::ResultVariant result;
         Subject subject;
-        Hash argAncestry; ///< outer-scope argStateIds for scopeStateIdAt
+        Hash argAncestry; ///< outer-argAncestry argStateIds for scopeStateIdAt
         /* Empty hash = depth-1; otherwise = the cb apply's resultId,
            grouping this fact into the depth-2 sub-trace for that apply. */
         Hash depth2ApplyId{HashAlgorithm::SHA256};
@@ -124,7 +124,7 @@ class TracingWriter
        a d1 edge inserted at the SAME index. This invariant lets the
        walker's `envWalk` — which grows once per dispatched Asks
        edge via `commitEdge` — match the writer's d1 walk
-       edge-for-edge, so `scopeStateIdAt(subject, scope, walk, K)`
+       edge-for-edge, so `scopeStateIdAt(subject, argAncestry, walk, K)`
        computes the same value on both sides. Per-arg-completion
        option 2 depends on this alignment. */
     std::vector<Edge> envWalk;
@@ -296,7 +296,7 @@ public:
     /** Cumulative cidasks walk over depth-1 ambient observations.
         One edge per logResult-triggered flush. Exposed so writer-side
         apply-result wrappers (TracingObject with applyResultSubject)
-        can compute `scopeStateIdAt(subject, scope, walk, walk.size())`
+        can compute `scopeStateIdAt(subject, argAncestry, walk, walk.size())`
         — the per-arg evolved scopeStateId the design's principle #3 requires
         for child queries on those wrappers. Walker's parallel handle
         is TracingReplayEvaluator::getCidasksWalk. */
@@ -537,7 +537,7 @@ public:
      *
      * AmbientResolver::apply uses this to register the QueryApply
      * Request and the localArg sidecar. At flush: if `keyPlaceholder`
-     * is set the insert key is that key (the local's scope state id);
+     * is set the insert key is that key (the local's argAncestry state id);
      * otherwise the insert key is the hash of the payload (the apply
      * Q's own queryHash).
      */
