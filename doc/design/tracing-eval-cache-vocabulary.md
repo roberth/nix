@@ -4,11 +4,10 @@ The dictionary of terms used by the tracing eval-cache design doc
 and implementation. Each term is defined once; definitions depend
 only on earlier terms.
 
-Three **interactions** — peer conversations between pairs of
-participants. **Query** and **Env** are always present and are
-defined first. **Ambient** is specific to `builtins.cache`
-callbacks and is defined in §10 onward, once the Query/Env
-machinery is in hand.
+Three **interactions**, each between two participants. **Query**
+and **Env** are always present and are defined first. **Ambient**
+is specific to `builtins.cache` callbacks and is defined in §10
+onward.
 
 ---
 
@@ -115,9 +114,8 @@ Members are persisted in the `RequestSetNodes` trie.
 **requestSetHash** — the RequestSet identity.
 
 **XOR-fold** — the FactSet identity function: `H(S) = XOR over
-element hashes of members`. Commutative, associative,
-self-inverse, identity-with-zero. Extension `H(S ∪ {e})` is O(1)
-given the disjointness invariant `e ∉ S`.
+element hashes of members`. Commutative, associative, self-inverse.
+Extension `H(S ∪ {e})` is O(1) given `e ∉ S`.
 
 ### 5. Edges
 
@@ -261,9 +259,8 @@ or dispatches an ambient Fact it goes through this wrapper.
 **Ambient Asks edge** — a row in `AmbientAsks(fromFactSet) →
 (requestSet, toFactSet)`. Same shape as an Env Asks edge but
 keyed on factSet alone (no `Q`) and storing the transition
-explicitly as `toFactSet` — at replay the walker can't reproduce
-an ambient transition by live dispatch, because the "environment"
-being asked was an inner-supplied value that no longer exists.
+explicitly as `toFactSet` — at replay the walker can't dispatch
+an inner-owned value live, since it no longer exists.
 
 **LocalResponses** — a persistent map
 `(requestHash, contextHash) → responsePayload` used by the
@@ -274,12 +271,11 @@ same-request observations under different outer contexts.
 
 ### 12. Subject identity
 
-Values that cross a cb-apply boundary need a stable structural
-name so recording and replay agree on identity even when the
-value's content evolves through observations. That name is a
-**Subject**.
+Values inside a callback body need a stable name — the value's
+content changes as observations accumulate, but its identity
+should stay pinned. That name is a **Subject**.
 
-**Subject** — the algebraic form of an identifier. Four variants:
+**Subject** — a structural identifier for a value. Four variants:
 
 - **PositionalSeed{depth}** — a callback arg at a static
   apply-stack depth (reverse De Bruijn).
@@ -287,83 +283,71 @@ value's content evolves through observations. That name is a
   by `getAttr`/`getListElem` on a parent Subject.
 - **ApplyResultSubject{fn, arg}** — the result of applying one
   Subject to another.
-- **PostulatedIdempotentRead{hash}** — a subject whose source is
-  postulated to be re-readable idempotently (file, expression
-  string, literal); the carried hash identifies the source.
+- **PostulatedIdempotentRead{hash}** — a subject whose source can
+  be re-read as if content-addressed (file, expression string,
+  literal); the carried hash identifies the source.
 
-Subjects are **stable** — same structural shape, same Subject.
-The Subject is the algebraic form of an **argId**.
+Same structural shape → same Subject. A Subject is the value form
+of an **argId**.
 
-**argId** — a subject's stable identity. Two representations of
-the same identity: the Subject value (algebraic) and its bare
-SHA-256 hash (`argIdHash`). Under the naming discipline of the
-codebase, `Id`-suffixed names promise this invariance across
-observations, ancestry, and invocations.
+**argId** — a subject's stable identity, in either form: the
+Subject value or its SHA-256 hash (`argIdHash`). `Id`-suffixed
+names don't depend on observations, ancestry, or invocations.
 
-**argIdHash** — the hash-form representation of an argId. Local
-variables typed `Hash` that hold a subject's base hash
-use this suffix.
+**argIdHash** — an argId in `Hash` form. Local variables that
+hold a subject's base hash use this suffix.
 
 ### 13. State hash — the subject's evolving identity
 
-**state hash** — the value a subject characterizes to at a walk
-position. Combines the subject's Subject value, the enclosing
-argAncestry, and any observations already folded in. State hashes
-evolve as observations accumulate; they are situational, not
-stable ids.
+**state hash** — a subject's identity at a walk position:
+combines the Subject, the enclosing argAncestry, and the
+observations folded in so far. Evolves as observations accumulate;
+situational, not stable.
 
 **stateHashAt(argId, argAncestry, walk, k)** — the state hash of
-an argument-level subject at the precondition of edge `k` in the
-walk. Traps on `DerivedSubject` — derived values don't have their
-own observations; use `subjectHashAt` for a universal accessor.
+an arg-level subject at the precondition of edge `k`. Traps on
+`DerivedSubject` — derived values have no own observations to
+fold; use `subjectHashAt` instead.
 
 **stateHashAfter(argId, argAncestry, walk)** — `stateHashAt` at
 `k = walk.size()`.
 
-**stateHashConverged(argId, argAncestry, observations)** — the
-grouping-invariant fixed point of the state hash over an
-unordered observation set. Depends only on the *set* of
-observations, not on how they were partitioned into edges. Used
-by the replay walker as a fallback when the walk-order navigation
+**stateHashConverged(argId, argAncestry, observations)** — state
+hash computed over an unordered observation set: same result
+regardless of how observations were grouped into edges. Used by
+the replay walker as a fallback when walk-order navigation
 misses.
 
-**subjectHashAt(subject, argAncestry, walk, k)** — universal
-dispatch accessor. For arg-level Subjects returns
-`stateHashAt(...)`. For `DerivedSubject` returns the producer
-QueryGetAttr's queryHash — the Queries-pool key of the query that
-would produce the derived value at walk position k. Different
-values identified (subject state vs. query payload) unified in
-one accessor for caller convenience.
+**subjectHashAt(subject, argAncestry, walk, k)** — returns a
+hash for any Subject variant. Arg-level: `stateHashAt(...)`.
+Derived: the producer QueryGetAttr's queryHash — the Queries-pool
+key of the query that would produce the derived value at k. Two
+different kinds of hash unified in one call.
 
 **fromStateHashOf(query)** — reads the `from` field of a query
-payload and returns it as a Hash. Every observation a subject
-emits carries `stateHashAt(...)` at the emission time in this
-field.
+and returns it as a `Hash`. Every observation a subject emits
+carries `stateHashAt(...)` at the emission time in this field.
 
 ### 14. argAncestry — the enclosing scope of a subject
 
-**argAncestry** — a Hash. The XOR-fold of enclosing callback
+**argAncestry** — a `Hash`: the XOR-fold of enclosing callback
 args' state hashes at the moment the innermost callback was
 entered. Not a lexical scope — `let` bindings and other lexical
 constructs don't cross the cache boundary; only callback
-arguments do.
+arguments do. Itself a state hash (situational): its value
+depends on what observations have flowed into the outer arg
+states before entry.
 
-An argAncestry is itself a state hash (situational), not a stable
-id. Its value depends on what observations have flowed into the
-outer arg states before entry.
+**callArgAncestry** — an `argAncestry` stored on the
+`OuterResolver`, sampled at cb-apply fire time. Distinct from
+the `argAncestry` field on callback-arg proxies, which is the
+enclosing scope's argAncestry inherited by children.
 
-**inheritedScope / callArgAncestry** — argAncestry stored on
-specific objects: `argAncestry` on `OuterObject` / callback-arg
-proxies is the ancestry inherited from the enclosing scope;
-`callArgAncestry` on `AmbientResolver` is the ancestry of the
-cache call itself, sampled at cb-apply fire time.
-
-**combineArgAncestries(fnArgAncestry, argArgAncestry)** — the
-non-commutative combinator producing the argAncestry inside an
-apply-result callback body. Non-commutative because `f a` ≠ `a f`
-(cf. `flip apply`); computed as
-`SHA-256("apply-argAncestry:" || fnHex || ":" || argHex)` rather
-than XOR.
+**combineArgAncestries(fnArgAncestry, argArgAncestry)** —
+produces the argAncestry inside an apply-result callback body.
+Non-commutative because `f a` ≠ `a f` (cf. `flip apply`);
+computed as `SHA-256("apply-argAncestry:" || fnHex || ":" ||
+argHex)` rather than XOR.
 
 ### 15. Callback arg objects
 
@@ -379,11 +363,10 @@ reconstructed from `LocalResponses`. Serves the outer's probes
 from recorded data; throws an ambient-interaction divergence exception
 if the outer's probes don't match what was recorded.
 
-**OuterObject** — outer-evaluator-side proxy for an
-inner-supplied value in the callback body. Distinct from
-TracingCallbackArg (which is the *writer's* view of the arg);
-OuterObject is what the *outer evaluator* sees when it holds
-the arg during the callback body.
+**OuterObject** — the outer evaluator's view of the callback
+arg while running the callback body. Peer to `TracingCallbackArg`
+(writer view) and `ReplayCallbackArg` (replay view); all three
+wrap the same underlying arg from different sides.
 
 ### 16. Cell navigation
 
@@ -425,8 +408,6 @@ walker to navigate a subject's evolution in O(1) per step.
 as it folds. Structurally equivalent to `stateHashAt`; used only
 at record time.
 
-**subjectHashAfter / structuralIdAfter** — see §13; the `*After`
-convention applies uniformly at `k = walk.size()`.
 
 ### 18. Ambient storage tables (additions)
 
@@ -462,12 +443,6 @@ Two rules the vocabulary above obeys:
    Distinctive prefixes clarify what the hash is *of* — `queryHash`
    of a query payload, `resultHash` of a result, `stateHash` of a
    subject's state at a walk position.
-
-Characterizations (of a state or payload) may be represented as
-**data** (a `walk` vector of Edges, the members of a FactSet,
-`observations`) or as **hashes** (`stateHash`, `factSetHash`,
-`argAncestry`, `queryHash`). The rule about `Id` is a stability
-promise; the `Hash` suffix is just a type marker.
 
 ## Appendix B: what this dictionary does not cover
 
