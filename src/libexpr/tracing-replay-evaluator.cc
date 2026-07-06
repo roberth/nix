@@ -464,7 +464,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                 /* Use the live proxy's own inherited scope so the
                    walker's scope state id matches what the recorder
                    computed at this proxy at flush. */
-                auto scope = live->getInheritedScope();
+                auto scope = live->getArgAncestry();
                 bool found = false;
                 /* K=0 fast path — Asks-style initial-CDI lookup:
                    subject's initial content-defined identifier
@@ -1017,7 +1017,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
                 .fn = std::make_shared<const Subject>(*fnSubj),
                 .arg = std::make_shared<const Subject>(std::move(seedSubject)),
             }};
-            Hash applyScopeForCid = fnObj->getInheritedScope();
+            Hash applyScopeForCid = fnObj->getArgAncestry();
             Hash evolvedApplyResultCid = scopeStateIdAt(
                 applyResultSubj, applyScopeForCid, cidasksWalk, cidasksWalk.size());
             auto evolvedApplyResultCidHex =
@@ -1379,7 +1379,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     /* Apply boundary's scope combines fn's and arg's inherited scopes
        symmetrically but non-commutatively — mirrors the writer's
        formula in `TracingEvaluator::apply`. */
-    Hash applyArgAncestry = combineArgAncestries(fn->getInheritedScope(), arg->getInheritedScope());
+    Hash applyArgAncestry = combineArgAncestries(fn->getArgAncestry(), arg->getArgAncestry());
 
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),

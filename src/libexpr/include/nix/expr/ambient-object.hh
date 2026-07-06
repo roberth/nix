@@ -113,7 +113,7 @@ public:
     /** This proxy's inherited scope (outer-scope argStateIds composed),
         used by cidasks to make sibling cached-call recordings'
         scope state ids distinct. */
-    Hash getInheritedScope() const override { return argAncestry; }
+    Hash getArgAncestry() const override { return argAncestry; }
 
     /** Set the proxy's argCell. Call right after construction at
         boundary sites. Returns *this for chaining. */

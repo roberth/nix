@@ -153,7 +153,7 @@ public:
         return applyResultSubject ? &*applyResultSubject : nullptr;
     }
 
-    Hash getInheritedScope() const override { return applyArgAncestry; }
+    Hash getArgAncestry() const override { return applyArgAncestry; }
 
     const TriePosition & getTriePos() const
     {

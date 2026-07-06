@@ -113,7 +113,7 @@ public:
         the frozen PostulatedIdempotentRead{applyScopeStateIdHex} fallback. */
     const Subject * getSubject() const override { return &applyResultSubject; }
 
-    Hash getInheritedScope() const override { return applyArgAncestry; }
+    Hash getArgAncestry() const override { return applyArgAncestry; }
 
     std::optional<std::string> getScopeStateIdHex() const override { return applyScopeStateIdHex; }
 

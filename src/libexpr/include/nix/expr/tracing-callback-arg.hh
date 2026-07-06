@@ -80,7 +80,7 @@ public:
     const Subject * getSubject() const override { return &subject; }
 
     /** This proxy's inherited scope. */
-    Hash getInheritedScope() const override { return argAncestry; }
+    Hash getArgAncestry() const override { return argAncestry; }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 

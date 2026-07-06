@@ -294,7 +294,7 @@ public:
      * by scopeStateIdAt to make sibling cached-call recordings'
      * scope state ids distinct. Zero hash for non-proxy Objects.
      */
-    virtual Hash getInheritedScope() const
+    virtual Hash getArgAncestry() const
     {
         return Hash(HashAlgorithm::SHA256);
     }

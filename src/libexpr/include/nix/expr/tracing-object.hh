@@ -116,10 +116,10 @@ public:
         return applyResultSubject ? &*applyResultSubject : nullptr;
     }
 
-    /** Inherited scope for `scopeStateIdAt(getSubject(), getInheritedScope(), …)`.
+    /** Inherited scope for `scopeStateIdAt(getSubject(), getArgAncestry(), …)`.
         For apply-result wrappers it's the cb-apply boundary's scope
         baked at construction. */
-    Hash getInheritedScope() const override { return applyArgAncestry; }
+    Hash getArgAncestry() const override { return applyArgAncestry; }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 

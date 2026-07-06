@@ -345,12 +345,12 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     Subject fnSubj = getSubject()
         ? *getSubject()
         : Subject{PostulatedIdempotentRead{fnIdHash}};
-    Hash applyScopeLocal = getSubject() ? getInheritedScope() : applyArgAncestry;
+    Hash applyScopeLocal = getSubject() ? getArgAncestry() : applyArgAncestry;
     Subject argSubj = argObj->getSubject()
         ? *argObj->getSubject()
         : Subject{PostulatedIdempotentRead{argIdHash}};
     if (argObj->getSubject())
-        applyScopeLocal = argObj->getInheritedScope();
+        applyScopeLocal = argObj->getArgAncestry();
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),
         .arg = std::make_shared<const Subject>(std::move(argSubj)),

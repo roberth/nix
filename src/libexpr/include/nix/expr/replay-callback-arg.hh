@@ -243,7 +243,7 @@ public:
         evolving Subject. */
     const Subject * getSubject() const override { return &subject; }
 
-    Hash getInheritedScope() const override { return scope; }
+    Hash getArgAncestry() const override { return scope; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

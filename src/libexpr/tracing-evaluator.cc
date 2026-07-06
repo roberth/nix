@@ -369,12 +369,12 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         argSubj = arg->getSubject()
             ? *arg->getSubject()
             : Subject{PostulatedIdempotentRead{argIdHash}};
-        argScopeForApply = arg->getInheritedScope();
+        argScopeForApply = arg->getArgAncestry();
     }
 
     /* Apply boundary's scope combines fn's and arg's inherited scopes
        symmetrically but non-commutatively. The walker mirrors this. */
-    Hash applyArgAncestry = combineArgAncestries(fn->getInheritedScope(), argScopeForApply);
+    Hash applyArgAncestry = combineArgAncestries(fn->getArgAncestry(), argScopeForApply);
 
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),
