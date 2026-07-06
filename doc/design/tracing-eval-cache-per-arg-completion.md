@@ -2,7 +2,7 @@
 
 Implementation status for argument-level content-defined identity,
 as specified in
-[`tracing-eval-cache-content-identity-via-asks.md`](./tracing-eval-cache-content-identity-via-asks.md).
+[`tracing-eval-cache-subject-id.md`](./tracing-eval-cache-subject-id.md).
 
 ## What's in tree
 
@@ -199,7 +199,7 @@ relies on.
 
 **Per-use rule** — superseded. The canonical contract for
 `PostulatedIdempotentRead` now lives in its docstring at
-`src/libexpr/include/nix/expr/content-identity-via-asks.hh`. It
+`src/libexpr/include/nix/expr/subject-id.hh`. It
 postulates an *idempotent source*, not "an atom whose CDI is fully
 determined at construction." Valid: filesystem reads (snapshot
 semantics), expression strings hashed for parsing (referential

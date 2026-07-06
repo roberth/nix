@@ -4,7 +4,7 @@ A focused design proposal for closing the cb-higher-order family of
 failures (`cb-higher-order`, `cb-higher-order-nested`,
 `cb-stats-higher-order-baseline`) without violating the via-Asks
 principles. Companion to
-[`tracing-eval-cache-content-identity-via-asks.md`](./tracing-eval-cache-content-identity-via-asks.md)
+[`tracing-eval-cache-subject-id.md`](./tracing-eval-cache-subject-id.md)
 and [`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md).
 
 The cb-sibling failures (`cb-sibling-discrimination-via-observation`,
@@ -172,7 +172,7 @@ reproduces the cb-apply's recursive applies.
 
 ### The design's intent
 
-From [`tracing-eval-cache-content-identity-via-asks.md`](./tracing-eval-cache-content-identity-via-asks.md#atom-storage):
+From [`tracing-eval-cache-subject-id.md`](./tracing-eval-cache-subject-id.md#atom-storage):
 
 > Lambda LocalObjects don't need their body stored. A lambda's
 > atom is just `(localId, kind=lambda)`; the walker reconstructs

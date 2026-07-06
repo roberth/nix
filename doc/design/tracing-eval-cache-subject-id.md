@@ -1,12 +1,17 @@
-# Content identity via Asks
+# Subject identity (state hashes via Asks)
 
-Design principles for assigning content-defined identities to values
-referenced in the facts of `builtins.cache`'s trie.
+Design principles for assigning state hashes to values referenced in
+the facts of `builtins.cache`'s trie. Historically titled
+"Content identity via Asks"; the substance is unchanged, but under
+the vocabulary discipline of
+[`tracing-eval-cache-vocabulary-cleanup.md`](./tracing-eval-cache-vocabulary-cleanup.md)
+these are situational **state hashes** (not stable "content-defined
+identities"), computed by the `subject-id` module (formerly `cidasks`).
 
 The trie (defined in [`tracing-eval-cache.md`](./tracing-eval-cache.md))
 addresses positions by `(queryHash, factSetHash)` and connects them
-via `Asks` and `Terminals` edges. This document specifies how content
-ids attach to that machinery.
+via `Asks` and `Terminals` edges. This document specifies how state
+hashes attach to that machinery.
 
 ## Foundational principles
 
@@ -370,7 +375,7 @@ component membership and any new compounding it introduces.
   for any deeper case.
 - Per-use rule (separate from the nesting-depth audit above): see
   the variant's docstring at
-  `src/libexpr/include/nix/expr/content-identity-via-asks.hh` for
+  `src/libexpr/include/nix/expr/subject-id.hh` for
   the contract. Summary: `PostulatedIdempotentRead` postulates that
   the *source* can be re-read idempotently (= fs reads under
   snapshot semantics, expression strings hashed for parsing). It

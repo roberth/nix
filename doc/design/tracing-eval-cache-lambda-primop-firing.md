@@ -17,7 +17,7 @@ Targets:
 ## The design's lambda-LO intent
 
 From
-[`tracing-eval-cache-content-identity-via-asks.md`](./tracing-eval-cache-content-identity-via-asks.md#atom-storage):
+[`tracing-eval-cache-subject-id.md`](./tracing-eval-cache-subject-id.md#atom-storage):
 
 > Lambda LocalObjects don't need their body stored. A lambda's
 > atom is just `(localId, kind=lambda)`; the walker reconstructs
@@ -346,7 +346,7 @@ synthetic CDI.
 
 ## Validation against principles
 
-Per `tracing-eval-cache-content-identity-via-asks.md`:
+Per `tracing-eval-cache-subject-id.md`:
 
 **Foundational #6 (no deep hashing).** All lookups by query
 hash (= queries hashed via SHA-256). No value-content hashing.
