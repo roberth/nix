@@ -1,7 +1,7 @@
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/ambient-object.hh"
 #include "nix/expr/expr-from-object.hh"
-#include "nix/expr/lambda-apply-result-object.hh"
+#include "nix/expr/tracing-callback-apply-result.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-callback-arg.hh"
 #include "nix/expr/tracing-object.hh"
@@ -316,7 +316,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        Capture the enclosing boundary's applyId BEFORE
        logAmbientApplyFact / openApplyBoundary so the apply-result
        observations recorded after `inner->apply` returns (via
-       `LambdaApplyResultObject` below) route to the same enclosing
+       `TracingCallbackApplyResult` below) route to the same enclosing
        boundary the recursive apply Fact landed in. Their d=2
        chain order is: [recursiveApplyFact, applyResult.getType,
        applyResult.getInt, ...] — matching the walker's standin's
@@ -485,7 +485,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto cell = ArgScopeCell::make(effectiveArgScope(*fn), arg.get_ptr());
 
     /* For the TLO-fn case (= cb-higher-order's recursive cb-apply):
-       wrap the result in a LambdaApplyResultObject so subsequent
+       wrap the result in a TracingCallbackApplyResult so subsequent
        method calls (`getType`, `getInt`, etc.) record d=2
        observations on the enclosing cb-apply boundary instead of
        d=1 main-trie Terminals. The walker's `<replay-local-lambda>`
@@ -494,7 +494,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        synthetic's `advanceChainAndAppendFact` to keep
        `chainCursor` aligned with the cold AmbientResult. */
     if (fnIsTlo) {
-        auto laro = std::make_shared<LambdaApplyResultObject>(
+        auto laro = std::make_shared<TracingCallbackApplyResult>(
             result, writer, std::move(resultSubject), applyScope, enclosingApplyId);
         laro->withScope(std::move(cell));
         return ref<Object>(laro);

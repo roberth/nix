@@ -499,7 +499,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    (scope=0); fn carries applyScopeSaved (= callScope
                    from sidecar). Used for stamping the apply Fact AND
                    for the synthetic's downstream probes — both
-                   mirror the writer's `LambdaApplyResultObject` whose
+                   mirror the writer's `TracingCallbackApplyResult` whose
                    scope is the same Merkle. */
                 Hash mergedApplyScope = cidasks::applyScope(
                     *applyScopeSaved, Hash{HashAlgorithm::SHA256});
@@ -576,14 +576,14 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                 /* Synthetic shares the LOCAL walk/cursor so its
                    probes don't pollute the standin's persistent
                    state. Scope = mergedApplyScope — matches writer's
-                   `LambdaApplyResultObject` which carries this same
+                   `TracingCallbackApplyResult` which carries this same
                    Merkle scope for its downstream observations. */
                 auto synthetic = std::make_shared<ReplayCallbackArg>(
                     std::move(syntheticSubject), mergedApplyScope,
                     localWalkFacts, localChainCursor,
                     outerContextSaved, *dg, rootFSRootSaved, &state);
                 /* Enable per-probe AmbientAsks validation. After the
-                   `LambdaApplyResultObject` writer change, the
+                   `TracingCallbackApplyResult` writer change, the
                    apply-result observations live in the d=2 chain
                    (= same boundary as the recursive apply Fact above),
                    so the synthetic's `getType` / `getInt` etc. must

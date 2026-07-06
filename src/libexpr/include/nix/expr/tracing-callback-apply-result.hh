@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file
- * LambdaApplyResultObject — writer-side wrapper for the result of
+ * TracingCallbackApplyResult — writer-side wrapper for the result of
  * applying a TracingCallbackArg (= an inner-supplied lambda crossing
  * back from outer's body via `<cached-fn>(TLO).impl`) to its contraArg.
  *
@@ -13,7 +13,7 @@
  *    d=1 storage — appropriate for cached-fn results and other
  *    apply-results whose evolved argStateId participates in the d=1 walk.
  *
- *  - LambdaApplyResultObject's methods record d=2 observations via
+ *  - TracingCallbackApplyResult's methods record d=2 observations via
  *    `writer.logAmbientObservation`. They are grouped with the
  *    enclosing cb-apply boundary's recursive apply Fact (= the same
  *    boundary `logAmbientApplyFact` appended to). At flushAmbient
@@ -50,7 +50,7 @@
 
 namespace nix {
 
-class LambdaApplyResultObject : public Object
+class TracingCallbackApplyResult : public Object
 {
     ref<Object> inner;
     TracingWriter & writer;
@@ -92,14 +92,14 @@ class LambdaApplyResultObject : public Object
     void recordD2(const trace::QueryVariant & query, const trace::ResultVariant & result);
 
 public:
-    LambdaApplyResultObject(
+    TracingCallbackApplyResult(
         ref<Object> inner,
         TracingWriter & writer,
         cidasks::Subject applyResultSubject,
         Hash applyScope,
         Hash depth2ApplyId);
 
-    LambdaApplyResultObject & withScope(std::shared_ptr<const ArgScopeCell> cell)
+    TracingCallbackApplyResult & withScope(std::shared_ptr<const ArgScopeCell> cell)
     {
         argScope = std::move(cell);
         return *this;

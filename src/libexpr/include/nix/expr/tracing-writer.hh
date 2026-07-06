@@ -633,7 +633,7 @@ public:
      * TracingCallbackArg (= the recursive cb-apply path) to capture
      * the enclosing boundary's id before the recursive call would
      * otherwise push a new boundary; the captured id then flows to
-     * the `LambdaApplyResultObject` wrapping the apply result, so
+     * the `TracingCallbackApplyResult` wrapping the apply result, so
      * its observations land in the same boundary's d=2 chain as the
      * recursive apply Fact `logAmbientApplyFact` appended.
      */

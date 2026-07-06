@@ -1,4 +1,4 @@
-#include "nix/expr/lambda-apply-result-object.hh"
+#include "nix/expr/tracing-callback-apply-result.hh"
 #include "nix/expr/object-type.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
@@ -7,7 +7,7 @@
 
 namespace nix {
 
-LambdaApplyResultObject::LambdaApplyResultObject(
+TracingCallbackApplyResult::TracingCallbackApplyResult(
     ref<Object> inner_,
     TracingWriter & writer_,
     cidasks::Subject applyResultSubject_,
@@ -23,7 +23,7 @@ LambdaApplyResultObject::LambdaApplyResultObject(
     applyScopeStateIdHex = scopeStateId.to_string(HashFormat::Base16, false);
 }
 
-void LambdaApplyResultObject::recordD2(const trace::QueryVariant & query, const trace::ResultVariant & result)
+void TracingCallbackApplyResult::recordD2(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
     /* Route through the depth-2 entry point: every observation on
        this apply-result is grouped with the recursive apply Fact
@@ -37,7 +37,7 @@ void LambdaApplyResultObject::recordD2(const trace::QueryVariant & query, const 
     writer.logAmbientObservation(query, result, applyResultSubject, applyScope, depth2ApplyId);
 }
 
-std::shared_ptr<Object> LambdaApplyResultObject::maybeGetAttr(const std::string & name)
+std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::string & name)
 {
     auto child = inner->maybeGetAttr(name);
     trace::QueryGetAttr q{name, std::string{}};
@@ -47,7 +47,7 @@ std::shared_ptr<Object> LambdaApplyResultObject::maybeGetAttr(const std::string 
     return child;
 }
 
-trace::ResultWHNF & LambdaApplyResultObject::whnf()
+trace::ResultWHNF & TracingCallbackApplyResult::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
@@ -57,7 +57,7 @@ trace::ResultWHNF & LambdaApplyResultObject::whnf()
     return *cachedWHNF;
 }
 
-std::vector<std::string> LambdaApplyResultObject::getAttrNames()
+std::vector<std::string> TracingCallbackApplyResult::getAttrNames()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
@@ -66,7 +66,7 @@ std::vector<std::string> LambdaApplyResultObject::getAttrNames()
     return p->names;
 }
 
-std::string LambdaApplyResultObject::getStringIgnoreContext()
+std::string TracingCallbackApplyResult::getStringIgnoreContext()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFString>(&w.payload);
@@ -75,12 +75,12 @@ std::string LambdaApplyResultObject::getStringIgnoreContext()
     return p->value;
 }
 
-std::string LambdaApplyResultObject::getStringWithoutContext()
+std::string TracingCallbackApplyResult::getStringWithoutContext()
 {
     return getStringIgnoreContext();
 }
 
-std::pair<std::string, NixStringContext> LambdaApplyResultObject::getStringWithContext()
+std::pair<std::string, NixStringContext> TracingCallbackApplyResult::getStringWithContext()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFString>(&w.payload);
@@ -92,7 +92,7 @@ std::pair<std::string, NixStringContext> LambdaApplyResultObject::getStringWithC
     return {p->value, std::move(ctx)};
 }
 
-RootedPath LambdaApplyResultObject::getPath()
+RootedPath TracingCallbackApplyResult::getPath()
 {
     /* WHNF records that this is a path; the actual RootedPath needs the
        inner's SourceRoot. */
@@ -100,7 +100,7 @@ RootedPath LambdaApplyResultObject::getPath()
     return inner->getPath();
 }
 
-bool LambdaApplyResultObject::getBool(std::string_view)
+bool TracingCallbackApplyResult::getBool(std::string_view)
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFBool>(&w.payload);
@@ -109,7 +109,7 @@ bool LambdaApplyResultObject::getBool(std::string_view)
     return p->value;
 }
 
-NixInt LambdaApplyResultObject::getInt(std::string_view)
+NixInt TracingCallbackApplyResult::getInt(std::string_view)
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFInt>(&w.payload);
@@ -118,7 +118,7 @@ NixInt LambdaApplyResultObject::getInt(std::string_view)
     return NixInt{p->value};
 }
 
-NixFloat LambdaApplyResultObject::getFloat(std::string_view)
+NixFloat TracingCallbackApplyResult::getFloat(std::string_view)
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
@@ -127,7 +127,7 @@ NixFloat LambdaApplyResultObject::getFloat(std::string_view)
     return p->value;
 }
 
-size_t LambdaApplyResultObject::getListSize()
+size_t TracingCallbackApplyResult::getListSize()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFList>(&w.payload);
@@ -136,7 +136,7 @@ size_t LambdaApplyResultObject::getListSize()
     return p->size;
 }
 
-std::shared_ptr<Object> LambdaApplyResultObject::getListElem(size_t index)
+std::shared_ptr<Object> TracingCallbackApplyResult::getListElem(size_t index)
 {
     auto child = inner->getListElem(index);
     auto type = child->getType();
@@ -146,7 +146,7 @@ std::shared_ptr<Object> LambdaApplyResultObject::getListElem(size_t index)
     return child;
 }
 
-ObjectType LambdaApplyResultObject::getTypeLazy()
+ObjectType TracingCallbackApplyResult::getTypeLazy()
 {
     /* Delegate to `inner` for the type, but skip the d=2 recording —
        `getType` goes through `whnf()` which records the same
@@ -158,7 +158,7 @@ ObjectType LambdaApplyResultObject::getTypeLazy()
     return inner->getTypeLazy();
 }
 
-ObjectType LambdaApplyResultObject::getType()
+ObjectType TracingCallbackApplyResult::getType()
 {
     auto type = stringToObjectType(whnf().type);
     tracingCacheLog("laro: getType applyScopeStateId=%s type=%s",
@@ -166,12 +166,12 @@ ObjectType LambdaApplyResultObject::getType()
     return type;
 }
 
-RootValue LambdaApplyResultObject::defeatCache()
+RootValue TracingCallbackApplyResult::defeatCache()
 {
     return inner->defeatCache();
 }
 
-std::optional<FunctionInfo> LambdaApplyResultObject::getFunctionInfo()
+std::optional<FunctionInfo> TracingCallbackApplyResult::getFunctionInfo()
 {
     auto info = inner->getFunctionInfo();
     trace::ResultFunctionInfo rfi{
@@ -182,17 +182,17 @@ std::optional<FunctionInfo> LambdaApplyResultObject::getFunctionInfo()
     return info;
 }
 
-PosIdx LambdaApplyResultObject::getPos()
+PosIdx TracingCallbackApplyResult::getPos()
 {
     return inner->getPos();
 }
 
-std::optional<std::vector<std::string>> LambdaApplyResultObject::getAttrPath()
+std::optional<std::vector<std::string>> TracingCallbackApplyResult::getAttrPath()
 {
     return inner->getAttrPath();
 }
 
-std::shared_ptr<Object> LambdaApplyResultObject::queryApply(std::shared_ptr<Object> argObj)
+std::shared_ptr<Object> TracingCallbackApplyResult::queryApply(std::shared_ptr<Object> argObj)
 {
     /* The apply-result is a fresh value crossing the cb-apply boundary
        back to the cached body. Subsequent applies on it go through the
