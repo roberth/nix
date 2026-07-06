@@ -240,7 +240,7 @@ The confusion: the writer keeps two "walks" going in parallel — the
 | `d1CidasksWalk` | `envWalk` | [member] `std::vector<Edge>` on `TracingWriter`. Aligned 1:1 with `envAsksEdges` (below). |
 | `perQAsksEdges` | `envAsksEdges` | [member] Boundary log of finalized Asks edges for the current Query. |
 | `lastQFactsHash` | `envCur` | [member] The env-layer `cur` after the last successful walk. "Facts hash" is imprecise — this is a factSet hash, and it's the running env `cur`. |
-| `dispatchedTrie` | `envDispatchedTrie` | [member] Session-cumulative trie of dispatched Requests. Distinguishing from writer-side `allRequestsTrie`. |
+| `dispatchedTrie` | (no-op — not in code) | Draft plan listed this as if a `TracingReplayEvaluator` field held a session-cumulative trie of dispatched Requests. Execution grep confirmed the identifier doesn't exist. Row retained for historical clarity; skip during execution. |
 | `dispatchCache` | `responseFor` | [member] Match the writer's naming, which already calls the request→response map `responseFor`. |
 | `allRequestsTrie` | `sessionRequestsTrie` | [member] Writer's session-cumulative trie. "All requests" is ambiguous — this is all requests *this writer has seen*, not "all recorded". |
 | `allRequestsRsHash` | (parameter renamed inline) `sessionRequestsRsHash` | [param] Match. |
@@ -339,8 +339,9 @@ field, and prose term) becomes `argAncestry` everywhere.
 | `argId` where it actually means `stateHashAfter(argId, argAncestry, {})` (e.g. `expr-from-object.cc:300`) | `stateHash` (rename the local) or inline the computation | The former use of `argId` here was a false-stability claim: the value depends on `argAncestry` and so is already a state hash, even with an empty walk. Not a distinct concept; do not invent an "at-entry" name. |
 | `structuralAddress` in comments outside the module | `subjectHash` | |
 | `inheritedScope` (field on `PendingFact` etc.) | `argAncestry` | The concept is unified across the codebase now. |
-| `applyScope` (cidasks helper function) | `combineArgAncestries` | Non-commutative combinator producing the argAncestry inside an apply-result. Parameters `fnScope`/`argScope` become `fnArgAncestry`/`argArgAncestry`. Function name is distinct from natural local-variable names (was `applyArgAncestry` in an earlier draft, but that collided with locals and member fields at multiple call sites). |
+| `applyScope` (cidasks helper function) | `combineArgAncestries` | Non-commutative combinator producing the argAncestry inside an apply-result. Parameters `fnScope`/`argScope` become `fnArgAncestry`/`argArgAncestry`. Function name is distinct from natural local-variable names (was `applyArgAncestry` in an earlier draft, but that collided with locals and member fields at multiple call sites). **Must be renamed atomically with the namespace flatten (§6a)** — without the `cidasks::` qualifier the bare `applyScope` function name shadows same-named locals and the build breaks. |
 | `applyScope` (local variables holding a Hash) | `applyArgAncestry` | The scope's value at a local scope IS an argAncestry; the local should say so. Distinguished from the function name by concept. |
+| `applyScopeLocal` / `applyScopeSaved` / `applyScopeStateId` / `applyScopeStateIdHex` (compound locals) | `applyArgAncestryLocal` / `applyArgAncestrySaved` / `applyArgAncestryStateHash` / `applyArgAncestryStateHashHex` | Word-boundary sed on `applyScope` (in §6b sub-items 2–3) does NOT match these compounds because there's no word boundary between `Scope` and the trailing capitalised suffix. Enumerate each compound name explicitly. The `StateId` → `StateHash` transition on the two `applyScopeStateId*` variants also aligns them with rule 6 (the value characterises a state, so `Hash` not `Id`). |
 | `callScope` (field on `AmbientResolver` + locals) | `callArgAncestry` | Hash-typed field naming the cache call's own argAncestry. |
 | `ArgScopeCell` (type in `arg-scope.hh`) | `ArgCell` | **Not an argAncestry** — a navigation cell carrying `(depth, parent, liveObject)` for walking the proxy chain. The word "scope" in the old name meant proxy-chain position, not cidasks-scope; keeping it would leave a landmine after `scope` → `argAncestry` sweeps. File `arg-scope.hh` → `arg-cell.hh`. |
 | `argScope` field (`std::shared_ptr<const ArgScopeCell>` type) | `argCell` | Field rename mirrors the type. |
@@ -528,10 +529,11 @@ identifier; the 10 script renames batched into a single commit.
 *Checkpoint.*
 
 **Step 3. Writer field renames (§4.2).** `perQAsksEdges` →
-`envAsksEdges`, `lastQFactsHash` → `envCur`, `dispatchedTrie` →
-`envDispatchedTrie`, `dispatchCache` → `responseFor`,
-`allRequestsTrie` → `sessionRequestsTrie`, `curRequests` →
-`dispatchedSoFar`. One commit per field. *Checkpoint after
+`envAsksEdges`, `lastQFactsHash` → `envCur`, `dispatchCache` →
+`responseFor`, `allRequestsTrie` → `sessionRequestsTrie`,
+`curRequests` → `dispatchedSoFar`. (Plan originally listed
+`dispatchedTrie` → `envDispatchedTrie` too; execution found no
+such identifier — skip.) One commit per field. *Checkpoint after
 each; full test-suite checkpoint at end of step.*
 
 **Step 4. Writer method + nested-type renames (§4.2).**
@@ -551,10 +553,25 @@ full test-suite at end.*
 **Step 6. Subject-identity vocabulary (§4.4).** Three sub-steps,
 each with its own checkpoint:
 
-- **6a. Namespace flatten + file rename.** `nix::cidasks::` →
-  `nix::`; `content-identity-via-asks.{hh,cc}` →
-  `subject-id.{hh,cc}`. `#include` updates. Single atomic commit.
-  *Checkpoint.*
+- **6a. Namespace flatten + file rename + `applyScope`-function
+  rename (indivisible).** `nix::cidasks::` → `nix::`;
+  `content-identity-via-asks.{hh,cc}` → `subject-id.{hh,cc}`;
+  `#include` updates; `meson.build` entries;
+  `namespace nix::cidasks { struct Subject; }` in `evaluator.hh`
+  unwrapped; namespace declarations in the renamed files updated
+  to `namespace nix`. Alongside: rename the `applyScope` helper
+  function to `combineArgAncestries` (with parameters `fnScope`
+  → `fnArgAncestry`, `argScope` → `argArgAncestry`). **This last
+  piece cannot wait until 6b:** with `cidasks::` stripped, the
+  bare `applyScope` function name collides with local variables
+  and member fields also called `applyScope` at every call site,
+  producing a shadow that C++ cannot parse. The function name
+  must be distinct from natural variable names — that's why
+  `combineArgAncestries` (names the operation, not the result)
+  rather than `applyArgAncestry` (which is what the locals become
+  in 6b). Also renames the `libexpr-tests`
+  `content-identity-via-asks.cc` alongside the source-tree file
+  for consistency. Single atomic commit. *Checkpoint.*
 - **6b. `scope` and scope-family compounds → argAncestry / argCell
   families.** Mixed Green + Red. Sub-order chosen so the
   navigation-cell rename lands first (removes the noun-collision
@@ -566,36 +583,70 @@ each with its own checkpoint:
      `getProxyArgScope()` → `getProxyArgCell()`. Word-boundary
      safe once the type is renamed. Commit atomically per
      rename target.
-  2. **Cidasks-scope hash family (Green).** `inheritedScope`
-     field → `argAncestry`. `applyScope` (cidasks helper) →
-     `combineArgAncestries`, with parameters `fnScope`/`argScope`
-     → `fnArgAncestry`/`argArgAncestry`. `callScope` field on
-     `AmbientResolver` and locals → `callArgAncestry`. One
-     commit per identifier.
-  3. **Bare `scope` in `subject-id.{hh,cc}` (Green).** After
-     the navigation family is renamed, remaining `scope`
-     parameters and locals inside cidasks are unambiguously the
-     hash-typed cidasks-scope. Word-boundary `sed` inside the
-     module is now safe. Commit once for the module.
-  4. **Bare `scope` locals in callers (Red).** Per-site editor
+  2. **Cidasks-scope hash family — bare-word part (Green).**
+     `inheritedScope` field → `argAncestry` (bare word,
+     word-boundary safe). `callScope` field on `AmbientResolver`
+     and its locals → `callArgAncestry`. Local variables named
+     `applyScope` holding a `Hash` → `applyArgAncestry`. Note:
+     the `applyScope` helper function itself was already renamed
+     in 6a (see above) to avoid the shadow — no work needed here.
+     One commit per identifier.
+  3. **`applyScope*` compound variables (Green).**
+     `applyScopeLocal` → `applyArgAncestryLocal`;
+     `applyScopeSaved` → `applyArgAncestrySaved`;
+     `applyScopeStateId` → `applyArgAncestryStateHash` (also
+     folds the `stateId` → `stateHash` transition per 6c);
+     `applyScopeStateIdHex` → `applyArgAncestryStateHashHex`.
+     Word-boundary sed on each `applyScope`-prefixed compound
+     doesn't match after prior sub-steps because the base
+     `applyScope` is already gone; enumerate the compound names
+     directly. One commit per compound (or batched by file if
+     tests still green).
+  4. **Bare `scope` in `subject-id.{hh,cc}` (Green).** After
+     the navigation family and compound-name renames land,
+     remaining `scope` parameters and locals inside the module
+     are unambiguously the hash-typed cidasks-scope. Word-
+     boundary `sed` inside the two files is now safe. Commit
+     once for the module.
+  5. **Bare `scope` locals in callers (Red).** Per-site editor
      pass on `tracing-object.cc`, `tracing-replay-object.cc`,
-     `tracing-evaluator.cc`, `replay-local-object.cc`,
-     `expr-from-object.cc`, `ambient-object.cc`. Each `scope`
-     variable is either a cidasks-scope (rename) or a
-     C++/lexical usage in a comment (leave). Read every site.
-     Commit per file.
+     `tracing-evaluator.cc`, `replay-callback-arg.cc`,
+     `expr-from-object.cc`, `ambient-object.cc`,
+     `tracing-callback-arg.cc`. Recommended workflow: for each
+     file, read every function signature, decide once per
+     function whether its `scope` parameter or local is
+     cidasks-scope (rename) or C++/lexical (leave), then apply
+     the decision to every occurrence in that function. Do not
+     mix decisions within a function. Commit per file.
   *Checkpoint after each sub-item; full-suite at end of step.*
-- **6c. Function renames.** `scopeStateIdAt` → `stateHashAt`,
-  `scopeStateIdAfter` → `stateHashAfter`,
-  `scopeStateIdAtConverged` → `stateHashConverged`,
-  `scopeStateIdAtWithHook` → `stateHashAtStamping`,
-  `structuralAddress` → `subjectHashAt`,
-  `structuralAddressAfter` → `subjectHashAfter`,
-  `extractFrom` → `fromStateHashOf`. Plus caller-side locals
-  (`selfHash`/`subjectSelfHash` → `argIdHash`, `argSubject`
-  /`seedSubject` → `argId`, `argId`-that-means-a-state-hash
-  → `stateHash`). One commit per function; locals batched
-  by file. *Checkpoint.*
+- **6c. Function renames.** Substring hazards — `scopeStateIdAt`
+  is a strict prefix of both `scopeStateIdAtConverged` and
+  `scopeStateIdAtWithHook`, and `structuralAddress` is a strict
+  prefix of `structuralAddressAfter`. Renaming the shorter name
+  first would mangle the longer ones. Apply in this order:
+  1. `scopeStateIdAtConverged` → `stateHashConverged` (drops
+     the trailing `At` since a converged fold has no walk
+     index).
+  2. `scopeStateIdAtWithHook` → `stateHashAtStamping`.
+  3. `scopeStateIdAfter` → `stateHashAfter`.
+  4. `scopeStateIdAt` → `stateHashAt` (base form).
+  5. `structuralAddressAfter` → `subjectHashAfter`.
+  6. `structuralAddress` → `subjectHashAt`.
+  7. `extractFrom` → `fromStateHashOf`.
+
+  Then caller-side local renames:
+  - **Pre-grep for false-stability `argId` locals** (plan flags
+    `expr-from-object.cc:300`; verify no others via
+    `grep -rn "\\bargId\\b" src/libexpr` and check each site's
+    definition). Any local whose value depends on `argAncestry`
+    is a state hash, not an argId; rename to `stateHash`.
+  - `selfHash` / `subjectSelfHash` / `resultSelfHash` locals →
+    `argIdHash` (or `argId` if type context makes it unambiguous
+    at the site).
+  - `argSubject` / `argSubj` / `seedSubject` locals → `argId`.
+
+  One commit per function; locals batched by file.
+  *Checkpoint.*
 
 **Step 7. Comment cleanup (§4.5, §4.6, §5.1, §7.2).** The Red-
 category prose pass. Read every touched comment across the
@@ -682,6 +733,17 @@ Distinct compound identifiers with no substring risk. Verify with
 Target names that may already appear elsewhere. Grep for the *new*
 name before applying to catch conflicts.
 
+*Also in Yellow: qualifier-hidden collisions.* Removing a namespace
+or class qualifier (e.g. `cidasks::` → nothing) can expose a
+pre-existing name shadow that the qualifier had been masking. If a
+namespace holds a function `foo`, and callers hold local variables
+also named `foo`, `cidasks::foo(x)` works but `foo(x)` may resolve
+to the local (which typically has no call operator). Step 6a hit
+exactly this on `applyScope`. Before any namespace-flatten step,
+grep the exposed function names against the codebase for locals /
+member fields of the same name; if there is overlap, plan the
+function rename to happen atomically with the flatten.
+
 - `v13Walk` → `walk` — `TracingDecisionGraph::walk` already
   exists as a member. The rename lives on `TracingReplayEvaluator`,
   which is a different class — no C++ collision — but confirm no
@@ -694,6 +756,21 @@ name before applying to catch conflicts.
   `md2`, `sd2`, decimals, etc. Use `\bd2[A-Z]` regex, or spell out
   specific tokens (`logDepth2Observation`, `d2CidasksWalk`, etc.)
   rather than blind substring replacement.
+- **Function names that are prefixes of other function names.**
+  `\bscopeStateIdAt\b` does match `scopeStateIdAt` cleanly, but if
+  you sed the shorter name to `stateHashAt` before renaming the
+  longer `scopeStateIdAtConverged`, the longer name lands at
+  `stateHashAtConverged` (wanted `stateHashConverged`). Similarly
+  for `structuralAddress` vs `structuralAddressAfter`. Always
+  rename the *longest* name in a family first, then work backward
+  to the shortest. §6c spells out the concrete ordering.
+- **Compound names built on a to-be-renamed base.** Word-boundary
+  sed on `\bapplyScope\b` does NOT match `applyScopeLocal`,
+  `applyScopeSaved`, etc. — no word boundary between the last
+  lowercase letter of the base and the capitalised suffix. These
+  compounds must be enumerated separately (§4.4 lists them for
+  the `applyScope*` family; audit before other renames of a base
+  name for the same pattern).
 
 **Red (cannot be done with find-and-replace — per-site inspection
 required):**
@@ -706,13 +783,31 @@ human read of surrounding context.
   many are C++ variable scope, `let`-binding "in scope" prose, or
   generic namespace scope. Inside `subject-id.{hh,cc}` the
   parameter is unambiguously cidasks-scope (Green — handled in
-  step 6b sub-item 3); in callers each `scope` variable needs
-  per-site inspection (Red — sub-item 4). Rule of thumb: any
+  step 6b sub-item 4); in callers each `scope` variable needs
+  per-site inspection (Red — sub-item 5). Rule of thumb: any
   variable passed as the second arg to `stateHashAt` /
-  `subjectHashAt` / other cidasks functions is a cidasks-scope
+  `subjectHashAt` / other subject-id functions is a cidasks-scope
   and gets renamed. All comments: read every one; if the sentence
   is about ancestry-of-args, rewrite to use "argAncestry"; if
   about lexical or C++ scope, leave.
+
+  **Recommended per-function workflow.** For each file in the
+  Red pass, don't decide site-by-site — decide function-by-
+  function:
+  1. Read the function's signature. Does a `scope` parameter
+     appear? If yes: is it passed to a subject-id function
+     inside the body, or held on a cidasks-related field? If
+     yes to either, this function's `scope` is a cidasks-scope.
+     Rename every `scope` occurrence in the function body.
+  2. If the function has no `scope` parameter but declares a
+     local `scope`, look at how the local is used. If it feeds
+     `stateHashAt` / `subjectHashAt` / `combineArgAncestries`
+     / etc., it's a cidasks-scope. Rename.
+  3. If neither (rare — most `scope` in cache code is
+     cidasks-scope), leave and mark for step 7 comment cleanup.
+
+  Committing per-file keeps the review scope tight. Don't cross
+  files in a single commit during the Red pass.
 - **`selfHash`, `subjectSelfHash`, `resultSelfHash` locals** —
   ~40 occurrences. Each is `stateHashAt(argId, 0, {}, 0)`. Word-
   boundary find-replace is *safe* for these specific compound
@@ -765,27 +860,44 @@ For each mechanical rename step:
 
 ```
 # 1. Verify no unexpected pre-existing hits on the target name
-grep -wrn NEWNAME src/libexpr/
+grep -wrn NEWNAME src/libexpr/ src/libexpr-tests/
 
-# 2. Apply the rename
-find src/libexpr/ -type f \( -name '*.hh' -o -name '*.cc' \) \
+# 2. Substring-hazard check: does OLDNAME appear as a substring in
+#    other identifiers that shouldn't be renamed? If any hit turns
+#    out to be a compound like foo_OLDNAME_bar you don't want to
+#    touch, use a stricter pattern than \bOLDNAME\b.
+grep -rn "OLDNAME" src/libexpr/ | grep -v "\\bOLDNAME\\b"
+
+# 3. Apply the rename (Green-category)
+find src/libexpr/ src/libexpr-tests/ -type f \
+    \( -name '*.hh' -o -name '*.cc' -o -name 'meson.build' \) \
     -exec sed -i 's/\bOLDNAME\b/NEWNAME/g' {} +
 
-# 3. Verify the old name is gone
-grep -wrn OLDNAME src/libexpr/  # should be empty or only in
-                                # historical/outdated docs
+# 4. Verify the old name is gone
+grep -wrn OLDNAME src/libexpr/ src/libexpr-tests/
+    # should be empty or only in historical/outdated docs
 
-# 4. Read the diff, focus on comments
+# 5. Compound-name residue check: word-boundary sed does NOT match
+#    compounds like OLDNAMESuffix. Enumerate those explicitly.
+grep -rn "OLDNAME[A-Z]" src/libexpr/ src/libexpr-tests/
+
+# 6. Read the diff, focus on comments
 git diff --stat
 git diff src/libexpr/
 
-# 5. Compile + test
+# 7. Compile + fast tests
 meson compile -C build
-meson test -C build
+meson test -C build -t 2  # unit tests, ~2 min
 ```
 
-For the Red category, replace step 2 with a targeted editor pass
+For the Red category, replace step 3 with a targeted editor pass
 guided by grep output — do not use `sed`.
+
+**Working directory discipline:** meson expects to be run from the
+project root (or with `-C /home/sandbox/nix/build`). If you used
+`git mv` from a subdirectory or otherwise `cd`'d away, `pwd` before
+running `meson test -C build` — the tool call working directory
+persists across bash invocations.
 
 ### 7.4 What's out of scope for the mechanical pass
 
@@ -825,7 +937,7 @@ d1CidasksWalk                     envWalk
 d2  (as identifier prefix)        ambient
 perQAsksEdges                     envAsksEdges
 lastQFactsHash                    envCur
-dispatchedTrie                    envDispatchedTrie
+dispatchedTrie                    (no-op — identifier not in code; was aspirational in draft plan)
 dispatchCache                     responseFor
 allRequestsTrie                   sessionRequestsTrie
 allRequestsRsHash                 sessionRequestsRsHash
@@ -850,6 +962,10 @@ scope (cidasks param/field/local) argAncestry
 inheritedScope (field)            argAncestry
 applyScope (helper function)      combineArgAncestries
 applyScope (local variables)      applyArgAncestry
+applyScopeLocal                   applyArgAncestryLocal
+applyScopeSaved                   applyArgAncestrySaved
+applyScopeStateId                 applyArgAncestryStateHash
+applyScopeStateIdHex              applyArgAncestryStateHashHex
 fnScope / argScope (params)       fnArgAncestry / argArgAncestry
 callScope (field + locals)        callArgAncestry
 ArgScopeCell (type)               ArgCell
