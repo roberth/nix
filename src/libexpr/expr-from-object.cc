@@ -169,7 +169,7 @@ struct AmbientApply
     std::shared_ptr<AmbientResolver> resolverHandle;
 
     std::pair<AmbientId, AmbientId> run(
-        AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope);
+        AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope);
 
     /** Same as run, but the fnObj is provided directly instead of
         being resolved via the registry. Used by makeCachedFnPrimOp's
@@ -180,7 +180,7 @@ struct AmbientApply
     std::pair<AmbientId, AmbientId> runOn(
         std::shared_ptr<Object> fnObj, AmbientId fnId,
         std::shared_ptr<Object> argObj,
-        std::shared_ptr<const ArgScopeCell> callerScope);
+        std::shared_ptr<const ArgCell> callerScope);
 };
 
 struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
@@ -240,7 +240,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
      *  caller (applyFn closure) records the QueryApply Fact with
      *  the same arg id. */
     std::pair<AmbientId, AmbientId> apply(
-        AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope)
+        AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
     {
         return AmbientApply{
             registry, bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
@@ -253,7 +253,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
         applyFn closure for seed-self applies). */
     std::pair<AmbientId, AmbientId> applyOn(
         std::shared_ptr<Object> fnObj, AmbientId fnId,
-        std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope)
+        std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
     {
         return AmbientApply{
             registry, bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
@@ -263,7 +263,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
 };
 
 std::pair<AmbientId, AmbientId> AmbientApply::run(
-    AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope)
+    AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
 {
     auto fnObj = registry.resolveOuter(fnId);
     return runOn(std::move(fnObj), fnId, std::move(argObj), std::move(callerScope));
@@ -271,7 +271,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::run(
 
 std::pair<AmbientId, AmbientId> AmbientApply::runOn(
     std::shared_ptr<Object> fnObj, AmbientId fnId,
-    std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope)
+    std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
 {
     if (!outerState)
         throw Error("ambient apply requires outerState");
@@ -280,7 +280,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        effective scope (which AmbientObject::queryApply passes in
        because a resolved fn may be an InterpreterObject without a
        proxy parent chain). The cell carries only topology. */
-    auto localCell = ArgScopeCell::make(callerScope, argObj);
+    auto localCell = ArgCell::make(callerScope, argObj);
     /* Each new value that crosses INTO a cb-apply boundary is
        treated uniformly as a value — no inherited Subject is
        propagated. Identity at this boundary starts fresh as
@@ -456,7 +456,7 @@ static PrimOp * makeCachedFnPrimOp(
                            we're about to construct (below) so chain
                            navigation returns the proxy. */
                         auto parentCell = effectiveArgScope(*fnObj);
-                        auto seedCell = ArgScopeCell::make(parentCell, /*liveObject set below*/ nullptr);
+                        auto seedCell = ArgCell::make(parentCell, /*liveObject set below*/ nullptr);
                         /* argStateId fix: this seed's Subject is the positional
                            handle at this static apply-stack depth.
                            Sibling cb apply invocations share the same
@@ -549,7 +549,7 @@ static PrimOp * makeCachedFnPrimOp(
                         AmbientApplyFn applyFn = [resolver, outerArgObj, rootId](
                             AmbientId fnId,
                             std::shared_ptr<Object> argObj,
-                            std::shared_ptr<const ArgScopeCell> callerScope) {
+                            std::shared_ptr<const ArgCell> callerScope) {
                             /* Boundary-trace-only discipline keeps the
                                cb-arg seed unregistered in
                                AmbientRegistry. When the SEED ITSELF is
@@ -579,7 +579,7 @@ static PrimOp * makeCachedFnPrimOp(
                         /* Wire seedCell.liveObject to contraArg now
                            that it exists. This is the deliberate
                            shared_ptr cycle documented on
-                           ArgScopeCell::liveObject. */
+                           ArgCell::liveObject. */
                         seedCell->liveObject = contraArg.get_ptr();
                         contraArg->withScope(seedCell);
                         contraArg->withInheritedScope(callScope);

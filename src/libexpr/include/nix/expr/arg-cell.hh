@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file
- * ArgScopeCell — scope-graph node for cache-boundary proxies.
+ * ArgCell — scope-graph node for cache-boundary proxies.
  * Carries only structural topology (depth, parent, liveObject).
  *
  * Under the design in
@@ -18,7 +18,7 @@
 
 namespace nix {
 
-struct ArgScopeCell : std::enable_shared_from_this<ArgScopeCell>
+struct ArgCell : std::enable_shared_from_this<ArgCell>
 {
     /** Reverse-De-Bruijn depth: 0 at the cache call's argument,
         N+1 in a cell whose parent is at depth N. Set at
@@ -28,7 +28,7 @@ struct ArgScopeCell : std::enable_shared_from_this<ArgScopeCell>
 
     /** Next-outer cell. Null at the root (the cache call's
         argument). */
-    std::shared_ptr<const ArgScopeCell> parent;
+    std::shared_ptr<const ArgCell> parent;
 
     /** The live Object the cell represents. The walker's
         cell-chain resolution returns this to identify the live
@@ -40,11 +40,11 @@ struct ArgScopeCell : std::enable_shared_from_this<ArgScopeCell>
         may be null at construction if the live proxy isn't yet
         constructed; assign to the cell's `liveObject` field
         afterwards. */
-    static std::shared_ptr<ArgScopeCell> make(
-        std::shared_ptr<const ArgScopeCell> parent_,
+    static std::shared_ptr<ArgCell> make(
+        std::shared_ptr<const ArgCell> parent_,
         std::shared_ptr<Object> liveObject_)
     {
-        auto cell = std::make_shared<ArgScopeCell>();
+        auto cell = std::make_shared<ArgCell>();
         cell->parent = parent_;
         cell->depth = parent_ ? parent_->depth + 1 : 0;
         if (liveObject_)
@@ -57,7 +57,7 @@ struct ArgScopeCell : std::enable_shared_from_this<ArgScopeCell>
     cell. Navigation children carry the parent's cell directly; apply
     results carry their own fresh cell. Returns null for non-proxy
     Objects or for proxies that haven't been scoped. */
-inline std::shared_ptr<const ArgScopeCell> effectiveArgScope(const Object & obj)
+inline std::shared_ptr<const ArgCell> effectiveArgScope(const Object & obj)
 {
     return obj.getProxyArgScope();
 }

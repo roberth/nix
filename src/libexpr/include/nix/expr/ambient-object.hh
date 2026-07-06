@@ -8,7 +8,7 @@
  * a query through the provided callback and interprets the response.
  */
 
-#include "nix/expr/arg-scope.hh"
+#include "nix/expr/arg-cell.hh"
 #include "nix/expr/subject-id.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/source-root.hh"
@@ -57,7 +57,7 @@ using AmbientQueryFn = std::function<AmbientQueryResult(
  * position and threads the effective cell through.
  */
 using AmbientApplyFn = std::function<AmbientId(
-    AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgScopeCell> callerScope)>;
+    AmbientId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)>;
 
 /**
  * Object implementation backed by ambient queries to the outer evaluator.
@@ -94,7 +94,7 @@ class AmbientObject : public Object
        fn's cell. The cell carries its own `parent` field, so the
        ancestor chain is reachable from the cell — no proxy `parent`
        field needed. */
-    std::shared_ptr<const ArgScopeCell> argScope;
+    std::shared_ptr<const ArgCell> argScope;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which issues ONE QueryGetWHNF
@@ -117,7 +117,7 @@ public:
 
     /** Set the proxy's argScope. Call right after construction at
         boundary sites. Returns *this for chaining. */
-    AmbientObject & withScope(std::shared_ptr<const ArgScopeCell> argScope_)
+    AmbientObject & withScope(std::shared_ptr<const ArgCell> argScope_)
     {
         argScope = std::move(argScope_);
         return *this;
@@ -144,7 +144,7 @@ public:
         cb-arg seed). */
     std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
-    std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
+    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argScope; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

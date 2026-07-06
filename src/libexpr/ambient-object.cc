@@ -257,7 +257,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
     }};
     auto result = std::make_shared<AmbientObject>(std::move(resultSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Apply-result scope cell rooted at the caller's scope. */
-    auto cell = ArgScopeCell::make(callerScope, std::move(argForScope));
+    auto cell = ArgCell::make(callerScope, std::move(argForScope));
     result->withScope(std::move(cell));
     result->withInheritedScope(inheritedScope);
     return result;

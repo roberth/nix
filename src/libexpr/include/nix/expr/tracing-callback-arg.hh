@@ -12,7 +12,7 @@
  * state at replay time — the inner isn't running).
  */
 
-#include "nix/expr/arg-scope.hh"
+#include "nix/expr/arg-cell.hh"
 #include "nix/expr/subject-id.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/source-root.hh"
@@ -55,7 +55,7 @@ class TracingCallbackArg : public Object
     /* The argScope cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;
        scope state ids are derived from `subject`, not the cell. */
-    std::shared_ptr<const ArgScopeCell> argScope;
+    std::shared_ptr<const ArgCell> argScope;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE QueryGetWHNF
@@ -71,7 +71,7 @@ public:
         Subject subject,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
-        std::shared_ptr<const ArgScopeCell> argScope,
+        std::shared_ptr<const ArgCell> argScope,
         Hash inheritedScope = Hash(HashAlgorithm::SHA256),
         Hash depth2ApplyId = Hash(HashAlgorithm::SHA256));
 
@@ -82,7 +82,7 @@ public:
     /** This proxy's inherited scope. */
     Hash getInheritedScope() const override { return inheritedScope; }
 
-    std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
+    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argScope; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

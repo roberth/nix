@@ -21,7 +21,7 @@ TracingCallbackArg::TracingCallbackArg(
     Subject subject_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
-    std::shared_ptr<const ArgScopeCell> argScope,
+    std::shared_ptr<const ArgCell> argScope,
     Hash inheritedScope_,
     Hash depth2ApplyId_)
     : inner(std::move(inner))

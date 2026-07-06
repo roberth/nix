@@ -255,7 +255,7 @@ public:
      * carries the ancestor chain, so no proxy-level `parent` pointer
      * is needed. Returns null for non-proxy Objects.
      */
-    virtual std::shared_ptr<const struct ArgScopeCell> getProxyArgScope() const
+    virtual std::shared_ptr<const struct ArgCell> getProxyArgScope() const
     {
         return nullptr;
     }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "nix/expr/arg-scope.hh"
+#include "nix/expr/arg-cell.hh"
 #include "nix/expr/subject-id.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/tracing-writer.hh"
@@ -34,7 +34,7 @@ class TracingObject : public Object
        cell; navigation children (maybeGetAttr / getListElem) inherit
        the parent's cell. Cell's own `parent` field carries the
        ancestor chain. */
-    std::shared_ptr<const ArgScopeCell> argScope;
+    std::shared_ptr<const ArgCell> argScope;
 
     /* For apply-result wrappers: the cidasks Subject that identifies
        this apply structurally (ApplyResultSubject{fn, arg}), and the
@@ -76,7 +76,7 @@ public:
         std::optional<TriePosition> triePos = std::nullopt);
 
     /** Set the proxy's argScope. Returns *this for chaining. */
-    TracingObject & withScope(std::shared_ptr<const ArgScopeCell> argScope_)
+    TracingObject & withScope(std::shared_ptr<const ArgCell> argScope_)
     {
         argScope = std::move(argScope_);
         return *this;
@@ -121,7 +121,7 @@ public:
         baked at construction. */
     Hash getInheritedScope() const override { return applyArgAncestry; }
 
-    std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
+    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argScope; }
 
     /** Get the query hash string for trie identity, if available. */
     std::optional<std::string> getQueryHashStr() const

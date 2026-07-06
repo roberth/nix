@@ -37,7 +37,7 @@
  * exactly where the walker's lambda-LO mechanism reads from.
  */
 
-#include "nix/expr/arg-scope.hh"
+#include "nix/expr/arg-cell.hh"
 #include "nix/expr/subject-id.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/trace-types.hh"
@@ -81,7 +81,7 @@ class TracingCallbackApplyResult : public Object
     std::string applyScopeStateIdHex;
 
     /* Argument-scope cell — same shape as TracingObject. */
-    std::shared_ptr<const ArgScopeCell> argScope;
+    std::shared_ptr<const ArgCell> argScope;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE QueryGetWHNF
@@ -99,13 +99,13 @@ public:
         Hash applyArgAncestry,
         Hash depth2ApplyId);
 
-    TracingCallbackApplyResult & withScope(std::shared_ptr<const ArgScopeCell> cell)
+    TracingCallbackApplyResult & withScope(std::shared_ptr<const ArgCell> cell)
     {
         argScope = std::move(cell);
         return *this;
     }
 
-    std::shared_ptr<const ArgScopeCell> getProxyArgScope() const override { return argScope; }
+    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argScope; }
 
     /** Symmetric to TracingObject/TracingReplayObject: surface the
         ApplyResultSubject so a subsequent apply on this wrapper
