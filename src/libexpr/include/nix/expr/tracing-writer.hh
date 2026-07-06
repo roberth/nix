@@ -416,7 +416,7 @@ public:
      * may be a placeholder (counter-derived local id) whose final
      * Buffered until flushAmbient() at logResult time
      * inserts into the pool at the query payload's natural reqHash. */
-    void logAmbientInteraction(
+    void logOuterObservation(
         const trace::QueryVariant & query,
         const trace::ResultVariant & result,
         Subject subject,
@@ -483,7 +483,7 @@ public:
      * that recorded paths still hold against the current environment;
      * each `(request, response)` it computes is a real observation of
      * the environment, just like one made via `logResponse` or
-     * `logAmbientInteraction` during interpretation. Feeding it back
+     * `logOuterObservation` during interpretation. Feeding it back
      * into `envFactSet` keeps the writer's cumulative state invariant
      * to whether facts came via interpretation or cache-hit dispatch.
      * Without this, a subsequent `logResult` for some Q that fell

@@ -63,7 +63,7 @@ trace::ResultVariant TracingEnvironment::ambientQuery(
     Hash argAncestry)
 {
     auto result = resolve(query);
-    writer.logAmbientInteraction(query, result, std::move(subject), std::move(argAncestry));
+    writer.logOuterObservation(query, result, std::move(subject), std::move(argAncestry));
     return result;
 }
 
