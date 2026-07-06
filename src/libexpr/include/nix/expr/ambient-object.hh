@@ -117,7 +117,7 @@ public:
 
     /** Set the proxy's argCell. Call right after construction at
         boundary sites. Returns *this for chaining. */
-    AmbientObject & withScope(std::shared_ptr<const ArgCell> argScope_)
+    AmbientObject & withArgCell(std::shared_ptr<const ArgCell> argScope_)
     {
         argCell = std::move(argScope_);
         return *this;

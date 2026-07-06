@@ -162,7 +162,7 @@ public:
         , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
 
     /** Set the proxy's argCell. Returns *this for chaining. */
-    ReplayCallbackArg & withScope(std::shared_ptr<const ArgCell> argScope_)
+    ReplayCallbackArg & withArgCell(std::shared_ptr<const ArgCell> argScope_)
     {
         argCell = std::move(argScope_);
         return *this;

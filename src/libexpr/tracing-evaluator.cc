@@ -164,7 +164,7 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     /* Root scope-graph cell for the cached value. Cells now carry
        only topology (depth/parent/liveObject); scope state ids are pure
        functions of the proxy's Subject under the via-Asks design. */
-    obj->withScope(ArgCell::make(nullptr, obj.get_ptr()));
+    obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
     return obj;
 }
 
@@ -178,7 +178,7 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     auto type = result->getType();
     auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
     auto obj = TracingObject::create(result, writer, v, triePos);
-    obj->withScope(ArgCell::make(nullptr, obj.get_ptr()));
+    obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
     return obj;
 }
 
@@ -190,7 +190,7 @@ ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const Roote
     auto result = inner->evalExprLazy(expr, basePath);
     // Lazy: don't force type yet, just wrap
     auto obj = TracingObject::create(result, writer, v);
-    obj->withScope(ArgCell::make(nullptr, obj.get_ptr()));
+    obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
     return obj;
 }
 
@@ -496,7 +496,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     if (fnIsTlo) {
         auto laro = std::make_shared<TracingCallbackApplyResult>(
             result, writer, std::move(resultSubject), applyArgAncestry, enclosingApplyId);
-        laro->withScope(std::move(cell));
+        laro->withArgCell(std::move(cell));
         return ref<Object>(laro);
     }
 
@@ -505,7 +505,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         .queryHashStr = applyScopeStateIdHex,
     };
     auto obj = TracingObject::create(result, writer, v, triePos);
-    obj->withScope(std::move(cell));
+    obj->withArgCell(std::move(cell));
     obj->withApplyResultSubject(std::move(resultSubject), applyArgAncestry);
     if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
         if (auto ctx = argAmb->getApplyContext())

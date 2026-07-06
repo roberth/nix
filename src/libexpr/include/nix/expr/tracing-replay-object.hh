@@ -100,7 +100,7 @@ public:
         TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner);
 
     /** Set the proxy's argCell. Returns *this for chaining. */
-    TracingReplayObject & withScope(std::shared_ptr<const ArgCell> argScope_)
+    TracingReplayObject & withArgCell(std::shared_ptr<const ArgCell> argScope_)
     {
         argCell = std::move(argScope_);
         return *this;

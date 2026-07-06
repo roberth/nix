@@ -246,7 +246,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
                     auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
                     auto child = std::make_shared<TracingReplayObject>(
                         evaluator, deep->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
-                    child->withScope(argCell);
+                    child->withArgCell(argCell);
                     if (applyContext) child->withApplyContextOnly(applyContext);
                     return child;
                 }
@@ -264,7 +264,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
         auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
         auto child = std::make_shared<TracingReplayObject>(
             evaluator, shallowResult.second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
-        child->withScope(argCell);
+        child->withArgCell(argCell);
         if (applyContext) child->withApplyContextOnly(applyContext);
         return child;
     }
@@ -468,7 +468,7 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
             auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
             auto child = std::make_shared<TracingReplayObject>(
                 evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); });
-            child->withScope(argCell);
+            child->withArgCell(argCell);
             if (applyContext) child->withApplyContextOnly(applyContext);
             return child;
         }

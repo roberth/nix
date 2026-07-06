@@ -76,7 +76,7 @@ public:
         std::optional<TriePosition> triePos = std::nullopt);
 
     /** Set the proxy's argCell. Returns *this for chaining. */
-    TracingObject & withScope(std::shared_ptr<const ArgCell> argScope_)
+    TracingObject & withArgCell(std::shared_ptr<const ArgCell> argScope_)
     {
         argCell = std::move(argScope_);
         return *this;

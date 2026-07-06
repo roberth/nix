@@ -99,7 +99,7 @@ public:
         Hash applyArgAncestry,
         Hash depth2ApplyId);
 
-    TracingCallbackApplyResult & withScope(std::shared_ptr<const ArgCell> cell)
+    TracingCallbackApplyResult & withArgCell(std::shared_ptr<const ArgCell> cell)
     {
         argCell = std::move(cell);
         return *this;

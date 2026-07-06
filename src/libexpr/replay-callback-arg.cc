@@ -190,7 +190,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     if (validateAgainstAmbientAsks)
         child->withAmbientAsksValidation();
     /* Navigation child inherits parent's argCell cell directly. */
-    child->withScope(argCell);
+    child->withArgCell(argCell);
     /* Inherit cb-arg apply context — derived navigation stays within
        the same cb-arg's depth/scope (= the nested apply's positional
        depth is one deeper than the cb-arg's, regardless of how many
@@ -314,7 +314,7 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
         outerContext, decisionGraph, rootFSRoot, state);
     if (validateAgainstAmbientAsks)
         child->withAmbientAsksValidation();
-    child->withScope(argCell);
+    child->withArgCell(argCell);
     if (applyDepth && applyArgAncestry)
         child->withApplyContext(*applyDepth, *applyArgAncestry);
     return child;

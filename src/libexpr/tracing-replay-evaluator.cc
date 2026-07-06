@@ -1266,7 +1266,7 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
            the root, so cb apply cells opened with parent=this root
            carry the outer's intervening-observation state via XOR
            state-creep — distinguishing sibling cb invocations. */
-        obj->withScope(ArgCell::make(nullptr, obj.get_ptr()));
+        obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
         return obj;
     }
     tracingCacheLog("replay miss: evalFile %s", displayPath);
@@ -1279,7 +1279,7 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Roo
         tracingCacheLog("replay hit: evalExpr");
         auto obj = make_ref<TracingReplayObject>(
             *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); });
-        obj->withScope(ArgCell::make(nullptr, obj.get_ptr()));
+        obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
         return obj;
     }
     tracingCacheLog("replay miss: evalExpr");
@@ -1412,7 +1412,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
     /* Apply-result scope cell. Parent = fn proxy's cell. */
     auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
-    obj->withScope(std::move(cell));
+    obj->withArgCell(std::move(cell));
     obj->withApplyResultSubject(std::move(resultSubject), applyArgAncestry);
     /* Keep the applyContext attachment for the ensureInner-finalisation
        side-channel that other paths still inspect (e.g. tests that

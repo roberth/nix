@@ -581,7 +581,7 @@ static PrimOp * makeCachedFnPrimOp(
                            shared_ptr cycle documented on
                            ArgCell::liveObject. */
                         seedCell->liveObject = contraArg.get_ptr();
-                        contraArg->withScope(seedCell);
+                        contraArg->withArgCell(seedCell);
                         contraArg->withInheritedScope(callScope);
                         contraArg->withApplyContext(applyContext);
                         tracingCacheLog("makeCachedFnPrimOp.impl: contraArg=%p seedCell=%p callScope=%s outerArg=%p",

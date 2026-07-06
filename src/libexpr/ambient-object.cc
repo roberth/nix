@@ -54,7 +54,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
     }};
     auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
-    child->withScope(argCell);
+    child->withArgCell(argCell);
     /* Inherit content-id scope so the child's `from` fields include
        the same argStateId(Q) the parent uses. */
     child->withInheritedScope(inheritedScope);
@@ -176,7 +176,7 @@ std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
     }};
     auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
-    child->withScope(argCell);
+    child->withArgCell(argCell);
     child->withInheritedScope(inheritedScope);
     return child;
 }
@@ -258,7 +258,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
     auto result = std::make_shared<AmbientObject>(std::move(resultSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Apply-result scope cell rooted at the caller's scope. */
     auto cell = ArgCell::make(callerScope, std::move(argForScope));
-    result->withScope(std::move(cell));
+    result->withArgCell(std::move(cell));
     result->withInheritedScope(inheritedScope);
     return result;
 }
