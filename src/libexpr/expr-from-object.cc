@@ -297,28 +297,28 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        walker is operating under. Do not freeze at closure-creation
        time — the argAncestry evolves, and freezing would emit stale hashes. */
     Hash argAncestry = resolverHandle->callArgAncestry;
-    auto argId = stateHashAfter(argSubject, argAncestry, {});
-    tracingCacheLog("AmbientApply::run: argAncestry=%s argId=%s",
+    auto argStateHash = stateHashAfter(argSubject, argAncestry, {});
+    tracingCacheLog("AmbientApply::run: argAncestry=%s argStateHash=%s",
                     argAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
-                    argId.to_string(HashFormat::Base16, false).substr(0, 12));
+                    argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));
 
     /* Compute the resultId early so we can pass it to the
        TracingCallbackArg as depth2ApplyId — groups all depth-2 facts
        made on this local (and its descendants) into a single
        AmbientAsks edge at flush. */
     auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
-    auto argIdStr = argId.to_string(HashFormat::Base16, false);
+    auto argStateHashStr = argStateHash.to_string(HashFormat::Base16, false);
 
     /* cb-apply boundary: record the apply's synthetic walk-advance
-       edge (= ε) now that we have fnIdStr and argIdStr. See parallel
+       edge (= ε) now that we have fnIdStr and argStateHashStr. See parallel
        call in TracingEvaluator::apply for the principle. */
     if (innerWriter) {
-        nlohmann::json applyQ = trace::QueryApply{fnIdStr, argIdStr};
+        nlohmann::json applyQ = trace::QueryApply{fnIdStr, argStateHashStr};
         tracingCacheLog("openApplyBoundary callsite=AmbientApply::run fn=%s arg=%s",
-                        fnIdStr.substr(0, 12), argIdStr.substr(0, 12));
+                        fnIdStr.substr(0, 12), argStateHashStr.substr(0, 12));
         innerWriter->openApplyBoundary(applyQ);
     }
-    trace::QueryApply applyQuery{fnIdStr, argIdStr};
+    trace::QueryApply applyQuery{fnIdStr, argStateHashStr};
     auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
 
     /* Wrap the argObj in TracingCallbackArg so the outer's
@@ -410,10 +410,10 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
         } catch (...) {
             /* Replay-side path or unrecorded — skip. */
         }
-        innerWriter->deferRequest(localSidecar, argIdStr);
+        innerWriter->deferRequest(localSidecar, argStateHashStr);
     }
 
-    return {argId, resultId};
+    return {argStateHash, resultId};
 }
 
 /* Out-of-line virtual definitions so the abstract base gets a key
