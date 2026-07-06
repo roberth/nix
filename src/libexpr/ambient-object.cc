@@ -55,7 +55,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
     auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
-    /* Inherit content-id argAncestry so the child's `from` fields include
+    /* Inherit argAncestry so the child's `from` fields include
        the same state hash(Q) the parent uses. */
     child->withInheritedScope(argAncestry);
     return child;

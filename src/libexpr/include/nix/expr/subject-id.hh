@@ -2,7 +2,7 @@
 /**
  * @file
  * Content-defined identity computed as a pure function of subject
- * and factset. See `doc/design/tracing-eval-cache-content-identity-via-asks.md`.
+ * and factset. See `doc/design/tracing-eval-cache-subject-id.md`.
  *
  * state hashes are not stored anywhere; they're computed on demand
  * from a value's static structural identifier (the "subject") and

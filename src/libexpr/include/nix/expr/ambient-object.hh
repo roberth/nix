@@ -34,7 +34,7 @@ struct AmbientQueryResult
 /**
  * Callback type for issuing ambient queries. Takes the caller's
  * Object id, the query, the caller's Subject, and the caller's
- * inherited argAncestry (both for content-id attribution at the writer).
+ * inherited argAncestry (both for state-hash attribution at the writer).
  */
 using AmbientQueryFn = std::function<AmbientQueryResult(
     AmbientId objectId,
@@ -68,7 +68,7 @@ class AmbientObject : public Object
 {
     Subject subject; ///< Static structural identifier (positional/derived/apply)
     /* Inherited argAncestry: XOR of outer-argAncestry state hashes (chiefly the cached
-       call's state hash(Q)) for content-id inheritance, per
+       call's state hash(Q)) for argAncestry inheritance, per
        content-identity-via-asks.md. Set at the cb-apply boundary;
        propagated to children. Zero hash if no inheritance. */
     Hash argAncestry;
@@ -107,7 +107,7 @@ public:
     AmbientObject(Subject subject, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
 
     /** This proxy's structural identity (positional / derived /
-        apply-result), per the content-identity-via-asks design. */
+        apply-result), per the subject-id design. */
     const Subject * getSubject() const override { return &subject; }
 
     /** This proxy's inherited argAncestry (outer-argAncestry state hashes composed),

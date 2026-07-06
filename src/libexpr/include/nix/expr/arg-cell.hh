@@ -5,11 +5,11 @@
  * Carries only structural topology (depth, parent, liveObject).
  *
  * Under the design in
- * doc/design/tracing-eval-cache-content-identity-via-asks.md,
+ * doc/design/tracing-eval-cache-subject-id.md,
  * state hashes are pure functions of (subject, factset) and are not
  * stored on the cell. The cell exists for navigation through the
  * proxy graph; the `depth` field provides the static positional
- * handle that subjects use as their content-id seed.
+ * handle that subjects use as their base for state hashes.
  */
 
 #include "nix/expr/evaluator.hh"

@@ -230,7 +230,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
 
        For positional seeds, only direct observations matter:
        facts in earlier edges whose `from` equals the seed's
-       precondition-content-id at that edge contribute to its
+       precondition state hash at that edge contribute to its
        evolution. */
     return std::visit(
         [&](const auto & alt) -> Hash {

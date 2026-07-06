@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS Terminals (
 ) WITHOUT ROWID;
 
 -- Depth-2 (interaction-tracing) layer: the cb-apply boundary's
--- sub-trie. Per doc/design/tracing-eval-cache-content-identity-via-asks.md,
+-- sub-trie. Per doc/design/tracing-eval-cache-subject-id.md,
 -- ambient layer edges key on factSet alone (no Q column) — sibling cached
 -- calls' ambient layer sub-traces are kept apart by scope state id inheritance,
 -- and same-shape collapse within a call is intentional. toFactSetHash

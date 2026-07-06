@@ -580,7 +580,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
            inserting `{kind: "localArg", applyResultId: ...}` at the
            argId), and any derived value has a producer Request. Only
            outer-seed state hashes minted by makeCachedFnPrimOp.impl — e.g.
-           a nested AmbientObject for the int the outer body passes
+           a nested AmbientObject for the int the callback body passes
            to inner_lambda in cb-higher-order's `g 10` — reach here.
 
            Live-proxy fallback: the `<replay-local-lambda>` primop

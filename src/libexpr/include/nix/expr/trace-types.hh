@@ -273,7 +273,7 @@ struct ResultWHNF
  * CLI uses content-defined hashes via `ContentLeaf`. Currently
  * unused: the eval-cache path constructs `ContentLeaf` directly, and
  * CLI integration through this carrier hasn't landed.
- * See doc/design/tracing-eval-cache-content-identity-via-asks.md §Foundational principles.
+ * See doc/design/tracing-eval-cache-subject-id.md §Foundational principles.
  */
 struct AmbientLeaf
 {

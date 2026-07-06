@@ -76,7 +76,7 @@ public:
         Hash ambientApplyId = Hash(HashAlgorithm::SHA256));
 
     /** This proxy's structural identity, per the
-        content-identity-via-asks design. */
+        subject-id design. */
     const Subject * getSubject() const override { return &subject; }
 
     /** This proxy's inherited argAncestry. */

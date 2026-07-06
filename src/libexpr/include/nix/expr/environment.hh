@@ -60,7 +60,7 @@ public:
     /**
      * Issue an ambient query and return the result. `subject`
      * identifies the value the query is about (passed through to
-     * the writer for content-id computation at flush). The default
+     * the writer for state-hash computation at flush). The default
      * implementation delegates to the supplied resolve callback;
      * TracingEnvironment overrides to record the interaction.
      */

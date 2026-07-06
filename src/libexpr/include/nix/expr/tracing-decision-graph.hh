@@ -246,7 +246,7 @@ public:
        Decision graph layer: ambient layer (cb-apply boundary)
 
        The ambient layer trie is keyed on factSet alone (no Q), per
-       doc/design/tracing-eval-cache-content-identity-via-asks.md.
+       doc/design/tracing-eval-cache-subject-id.md.
        It records the observations the outer makes against an
        inner-supplied LocalObject during a covariant callback.
        Same-call sibling collapse within is intentional;
