@@ -27,12 +27,12 @@ static void stampPerArgFieldsAmbient(Q & q, const Subject & subject, const Hash 
 }
 
 OuterObject::OuterObject(
-    Subject subject_, OuterQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, OuterApplyFn applyFn)
+    Subject subject_, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn)
     : subject(std::move(subject_))
     , argAncestry(HashAlgorithm::SHA256)
     , queryFn(std::move(queryFn))
     , applyFn(std::move(applyFn))
-    , ambientRootFSRoot(std::move(ambientRootFSRoot))
+    , outerRootFSRoot(std::move(outerRootFSRoot))
 {
 }
 
@@ -52,7 +52,7 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
         .kind = DerivedSubject::Kind::GetAttr,
         .name = name,
     }};
-    auto child = std::make_shared<OuterObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
+    auto child = std::make_shared<OuterObject>(std::move(childSubject), queryFn, outerRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     /* Inherit argAncestry so the child's `from` fields include
@@ -122,7 +122,7 @@ RootedPath OuterObject::getPath()
        from this path. A one-off `SourceRoot::make` here would be
        freed when the returned RootedPath drops, leaving Value's raw
        SourceRoot pointer dangling. */
-    return RootedPath{ambientRootFSRoot, CanonPath(p->path)};
+    return RootedPath{outerRootFSRoot, CanonPath(p->path)};
 }
 
 bool OuterObject::getBool(std::string_view)
@@ -174,7 +174,7 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
         .kind = DerivedSubject::Kind::GetListElem,
         .index = index,
     }};
-    auto child = std::make_shared<OuterObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
+    auto child = std::make_shared<OuterObject>(std::move(childSubject), queryFn, outerRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     child->withInheritedScope(argAncestry);
@@ -255,7 +255,7 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
         .fn = std::make_shared<const Subject>(subject),
         .arg = std::make_shared<const Subject>(std::move(argId)),
     }};
-    auto result = std::make_shared<OuterObject>(std::move(resultSubject), queryFn, ambientRootFSRoot, applyFn);
+    auto result = std::make_shared<OuterObject>(std::move(resultSubject), queryFn, outerRootFSRoot, applyFn);
     /* Apply-result argAncestry cell rooted at the caller's argAncestry. */
     auto cell = ArgCell::make(callerScope, std::move(argForScope));
     result->withArgCell(std::move(cell));

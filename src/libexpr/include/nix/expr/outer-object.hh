@@ -86,7 +86,7 @@ class OuterObject : public Object
        outer evaluator constructs from the RootedPath (Value stores a
        raw SourceRoot pointer). Resolved at construction by the
        resolver from the outer EvalState's `rootFSRoot`. */
-    ref<SourceRoot> ambientRootFSRoot;
+    ref<SourceRoot> outerRootFSRoot;
 
     /* Argument-argAncestry wiring. `argCell` is the nearest enclosing
        apply's cell — navigation children carry the same cell as their
@@ -104,7 +104,7 @@ class OuterObject : public Object
     trace::ResultWHNF & whnf();
 
 public:
-    OuterObject(Subject subject, OuterQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, OuterApplyFn applyFn = {});
+    OuterObject(Subject subject, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn = {});
 
     /** This proxy's structural identity (positional / derived /
         apply-result), per the subject-id design. */
