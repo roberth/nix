@@ -418,7 +418,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        have caught up to writer.d1.size at cold sib B apply (= all
        of sib A's envAsksEdges traversed via prior v13Walks). */
     auto & d1Walk = writer.getD1CidasksWalk();
-    /* Path 3: stamp SubjectEvolutionEdges via hook. */
+    /* Subject-evolution fast-path: stamp SubjectEvolutionEdges via hook. */
     Hash resultIdHash = stateHashAt(
         resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
     auto applyArgAncestryStateHash = stateHashAtStamping(

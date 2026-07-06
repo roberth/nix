@@ -83,7 +83,7 @@ std::string TracingObject::evolvedQueryFrom() const
             edge.observations.push_back(obs);
             walk.push_back(std::move(edge));
         }
-        /* Path 3: emit fold-step stamps into SubjectEvolutionEdges
+        /* Subject-evolution fast-path: emit fold-step stamps into SubjectEvolutionEdges
            so walker can navigate subject's evolution edge-by-edge
            rather than iterating K. Uses the subject's Merkle
            content hash as the trie root key. */

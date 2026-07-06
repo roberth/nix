@@ -472,9 +472,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    function of (subject, argAncestry). Walker computes it
                    as a key and checks equality against the target
                    — no iteration over K, no scanning for "which
-                   walker-state produces target". F19 (2026-07-04)
-                   empirical: 55% of cell-chain matches in the
-                   cb-* + builtins-cache bounds land at K=0.
+                   walker-state produces target". Empirical: a
+                   majority of cell-chain matches in the cb-* +
+                   builtins-cache suite land at K=0.
                    Structurally an Asks-style navigation: walker's
                    own hashed state (initial state hash) IS the lookup
                    key. */
@@ -484,15 +484,16 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                         found = true;
                     }
                 }
-                /* Path 3 walker-side trie navigation for K > 0.
+                /* Subject-evolution fast-path walker-side trie navigation for K > 0.
                    Walker's current cur is its own hashed state (key);
                    walker looks up (subject, cur, obs.from, obs.elem)
                    in cold-recorded SubjectEvolutionEdges; if edge
                    exists, folds obs.elem into edge accumulator.
                    Edge-scoped semantics (all obs in one edge check
                    against edge-entry cur) preserved.
-                   Empirical (iter 61 probe): 137/137 k-iter matches
-                   also reached by trie navigation. */
+                   Empirical: every previously-iterated K-match is
+                   also reached by trie navigation, so the loop's
+                   K dimension is unnecessary here. */
                 if (!found) {
                     Hash argIdHash = stateHashAt(
                         *subj, Hash(HashAlgorithm::SHA256), {}, 0);
@@ -511,12 +512,12 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                     }
                 }
                 /* Observation-permutation navigation, folded to its
-                   fixed point (2026-07-05 iter 108). Formerly a
-                   multi-round loop that checked the target at every
-                   round; instrumentation across the full cb-* +
-                   builtins-cache suite showed the loop fires once
-                   (cb-385) and its winning round equals the converged
-                   fixed point. Replaced with a single call to
+                   fixed point. Formerly a multi-round loop that
+                   checked the target at every round; instrumentation
+                   across the full cb-* + builtins-cache suite showed
+                   the loop fires once and its winning round equals
+                   the converged fixed point. Replaced with a single
+                   call to
                    `stateHashConverged`, which is order- and
                    grouping-independent by construction: walker's
                    convergence value depends only on the SET of
@@ -709,9 +710,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            and construct the standin with `PositionalSeed{depth}`
            — matching the recorder's TracingCallbackArg subject.
 
-           Using PostulatedIdempotentRead{localId} here is the Fix B
-           anti-pattern documented in
-           `tracing-eval-cache-per-arg-completion.md`:
+           Do NOT use `PostulatedIdempotentRead{localId}` here.
            `PostulatedIdempotentRead`'s state hash is constant in `k`
            (= no own-loop evolution), so once the standin's first
            probe extends the chain, every subsequent probe's

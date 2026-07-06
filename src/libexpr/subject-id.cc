@@ -179,7 +179,7 @@ Hash stateHashAtStamping(
     const std::function<void(const EvolutionStep &)> & hook)
 {
     /* Mirrors stateHashAt's fold logic, emitting one
-       EvolutionStep per matched observation. Path 3 walker will
+       EvolutionStep per matched observation. Subject-evolution walker will
        navigate via a table stamped from these emissions.
 
        Within a single walk edge, all observations are matched
@@ -187,7 +187,7 @@ Hash stateHashAtStamping(
        one). This means multiple observations in the same edge
        fold into the SAME curBefore; the emitted `curAfter` is
        curBefore XOR obs.elem (per-observation), not the
-       edge-cumulative fold. Path 3 walker will replicate this
+       edge-cumulative fold. Subject-evolution walker will replicate this
        edge-scoped semantics — cur updates at edge boundaries,
        not per-observation. */
     Hash result = stateHashAt(subject, argAncestry, walk, edgeIndex);

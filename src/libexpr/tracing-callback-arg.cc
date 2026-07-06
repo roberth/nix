@@ -216,7 +216,8 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        inner-supplied lambda (the cb-higher-order case) `inner` is an
        InterpreterObject whose queryApply does mkApp + bridging. For
        a replay-time ReplayCallbackArg standin, inner->queryApply
-       throws "can't validate" (= the depth-2 divergence signal).
+       throws "can't validate" — the ambient-layer divergence
+       exception the walker turns into a cache miss.
 
        The result wrapper carries an ApplyResultSubject so accesses
        on the apply result continue to be recorded in the depth-2

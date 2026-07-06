@@ -72,7 +72,7 @@ void TracingWriter::flushAmbient(bool finalize)
         std::vector<trace::QueryLeaf> fromCIDs;
         fromCIDs.reserve(roots.size());
         for (auto & root : roots) {
-            /* Path 3: stamp SubjectEvolutionEdges via hook. */
+            /* Subject-evolution fast-path: stamp SubjectEvolutionEdges via hook. */
             Hash rootSelfHash = stateHashAt(
                 root, Hash(HashAlgorithm::SHA256), {}, 0);
             auto cid = stateHashAtStamping(
@@ -335,7 +335,7 @@ void TracingWriter::flushAmbient(bool finalize)
             std::vector<trace::QueryLeaf> fromCIDs;
             fromCIDs.reserve(roots.size());
             for (auto & root : roots) {
-                /* Path 3: stamp SubjectEvolutionEdges via hook. */
+                /* Subject-evolution fast-path: stamp SubjectEvolutionEdges via hook. */
                 Hash rootSelfHash = stateHashAt(
                     root, Hash(HashAlgorithm::SHA256), {}, 0);
                 auto cid = stateHashAtStamping(

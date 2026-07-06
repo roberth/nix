@@ -83,7 +83,7 @@ class ReplayCallbackArg : public Object
        with writer.envFactSetHash at the matching moment; walker at
        ReplayCallbackArg construction time receives its own outer
        cur which — by lockstep growth of walker.envWalk with
-       writer.envWalk under Path 3 — equals cold's writer cur. */
+       writer.envWalk via the subject-evolution fast-path — equals cold's writer cur. */
     Hash outerContext;
     TracingDecisionGraph & decisionGraph;
     ref<SourceRoot> rootFSRoot;

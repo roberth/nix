@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS AmbientAsks (
     PRIMARY KEY (fromFactSetHash, requestSetHash)
 ) WITHOUT ROWID;
 
--- Path 3 (per-subject observation trie). Cold-side stamps each
+-- (per-subject observation trie). Cold-side stamps each
 -- fold step encountered during stateHashAt so walker can
 -- navigate subject's evolution as an edge-by-edge trie rather than
 -- iterating K positions on its own walk. Consumed by walker at
@@ -181,7 +181,7 @@ struct TracingDecisionGraph::State
     /* Depth-2 decision graph layer */
     SQLiteStmt insertAmbientAsks, selectAmbientAsks;
 
-    /* Path 3 (subject observation trie) — populated by cold's
+    /* (subject-evolution fast-path) — populated by cold's
        stateHashAtStamping fold callback; consumed by
        walker's inline trie navigation in resolveCdiId. */
     SQLiteStmt insertSubjectEvolutionEdge, selectSubjectEvolutionEdge;

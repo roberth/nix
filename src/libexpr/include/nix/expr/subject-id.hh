@@ -190,7 +190,7 @@ Hash subjectHashAt(const Subject & subject, const Hash & argAncestry, const std:
     subject forms. */
 Hash subjectHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
 
-/** Per-subject observation trie fold step, as consumed by Path 3
+/** Per-subject observation trie fold step, as consumed by the subject-evolution fast-path
     stamping / navigation. Emitted by `stateHashAtStamping`
     whenever an observation matches the subject's running state
     and folds into it. The tuple `(curBefore, obsFromHash,
@@ -206,7 +206,7 @@ struct EvolutionStep {
 /** Variant of `stateHashAt` that emits a callback per fold
     step. `stateHashAt` delegates to this with a no-op hook.
     Cold's writer passes a callback that inserts each step into
-    `SubjectEvolutionEdges` (Path 3 stamping). Used only at cold
+    `SubjectEvolutionEdges` (Subject-evolution stamping). Used only at cold
     record time — walker doesn't call this variant. */
 Hash stateHashAtStamping(
     const Subject & subject,

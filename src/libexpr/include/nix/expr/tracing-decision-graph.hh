@@ -267,7 +267,7 @@ public:
        list of (requestSetHash, toFactSetHash) pairs. */
     std::vector<std::pair<SetHash, SetHash>> getAmbientAsks(const SetHash & fromFactSet);
 
-    /* Path 3: insert a per-subject observation trie edge. Cold
+    /* Subject-evolution fast-path: insert a per-subject observation trie edge. Cold
        records each fold step encountered during stateHashAt:
        subject S at running state `cur`, seeing observation
        (from, elem) that matches (obs.from == cur), advances to
@@ -279,7 +279,7 @@ public:
         const Hash & obsFromHash, const Hash & obsElementHash,
         const Hash & nextCurHash);
 
-    /* Path 3: look up a per-subject observation trie edge.
+    /* Subject-evolution fast-path: look up a per-subject observation trie edge.
        Returns nextCurHash if cold recorded a fold step matching
        (subject, cur, obs.from, obs.elem); nullopt otherwise
        (walker's observation didn't advance subject in cold's

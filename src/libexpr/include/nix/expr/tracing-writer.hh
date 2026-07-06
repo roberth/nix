@@ -269,10 +269,10 @@ private:
     std::unordered_set<Hash> recordedQHashes;
 
 public:
-    /* Path 3 stamp: insert one SubjectEvolutionEdges row. Called
+    /* Subject-evolution stamp: insert one SubjectEvolutionEdges row. Called
        from cold's stateHashAtStamping hook callback at
        fact-`from` construction sites. Immediate write (not
-       buffered) — Path 3 emissions per stateHashAt call are
+       buffered) — Subject-evolution emissions per stateHashAt call are
        bounded by the walk length × observations per edge and are
        infrequent enough that buffering isn't necessary. */
     void insertSubjectEvolutionEdge(
