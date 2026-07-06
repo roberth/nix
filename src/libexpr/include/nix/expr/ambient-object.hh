@@ -179,7 +179,7 @@ public:
         return subjectHashAfter(subject, argAncestry, {});
     }
 
-    std::optional<std::string> getScopeStateIdHex() const override
+    std::optional<std::string> getStateHashHex() const override
     {
         return getCdi().to_string(HashFormat::Base16, false);
     }

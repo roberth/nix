@@ -231,7 +231,7 @@ public:
     /** Content-defined identity is the localId (= the cb-apply local
         arg's argStateId hash recorded at write time). Lets evaluator.apply
         compute the apply Request hash when this standin is the arg. */
-    std::optional<std::string> getScopeStateIdHex() const override
+    std::optional<std::string> getStateHashHex() const override
     {
         return localId.to_string(HashFormat::Base16, false);
     }

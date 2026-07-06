@@ -221,7 +221,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        The result wrapper carries an ApplyResultSubject so accesses
        on the apply result continue to be recorded in the depth-2
        trace with an evolved scopeStateId (per the cidasks design). */
-    auto argCdiHex = argObj->getScopeStateIdHex();
+    auto argCdiHex = argObj->getStateHashHex();
     Subject argSubject = argObj->getSubject()
         ? *argObj->getSubject()
         : Subject{PostulatedIdempotentRead{

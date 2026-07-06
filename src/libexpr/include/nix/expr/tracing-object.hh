@@ -129,7 +129,7 @@ public:
         return triePos ? std::optional{triePos->queryHashStr} : std::nullopt;
     }
 
-    std::optional<std::string> getScopeStateIdHex() const override { return getQueryHashStr(); }
+    std::optional<std::string> getStateHashHex() const override { return getQueryHashStr(); }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

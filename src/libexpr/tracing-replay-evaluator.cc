@@ -1315,7 +1315,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        reaches here it's a wiring bug that has to be addressed at
        its construction site. */
     auto getId = [](Object & obj) -> std::string {
-        if (auto hex = obj.getScopeStateIdHex())
+        if (auto hex = obj.getStateHashHex())
             return *hex;
         throw Error(
             "TracingReplayEvaluator::apply: fn/arg lacks a content-defined "

@@ -75,7 +75,7 @@ class TracingCallbackApplyResult : public Object
     Hash depth2ApplyId;
 
     /* stateHashAfter(applyResultSubject, applyArgAncestry, {}) hex — the
-       content-only apply-result argStateId exposed via getScopeStateIdHex. Computed
+       content-only apply-result argStateId exposed via getStateHashHex. Computed
        once at construction to match `TracingEvaluator::apply`'s
        `applyArgAncestryStateHashHex` (= what the walker computes too). */
     std::string applyArgAncestryStateHashHex;
@@ -115,7 +115,7 @@ public:
 
     Hash getArgAncestry() const override { return applyArgAncestry; }
 
-    std::optional<std::string> getScopeStateIdHex() const override { return applyArgAncestryStateHashHex; }
+    std::optional<std::string> getStateHashHex() const override { return applyArgAncestryStateHashHex; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
