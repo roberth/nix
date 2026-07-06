@@ -74,7 +74,7 @@ class ReplayCallbackArg : public Object
        validated probe advances `*chainCursor` to the matched edge's
        toFactSet. */
     std::shared_ptr<Hash> chainCursor;
-    /* Walker's outer d1 fact-set state at the moment this standin
+    /* Walker's outer env fact-set state at the moment this standin
        was constructed (= walker's cur before entering this cb-apply
        boundary). Used as the LocalResponseMap lookup context so two
        cb-applies of the same abstract fn+arg within one cached body
@@ -95,15 +95,15 @@ class ReplayCallbackArg : public Object
        arguments by value. Threaded from `materialiseLocalStandin`. */
     EvalState * state;
     /* When true, each Object-method call validates the probe against
-       the recorded AmbientAsks edges from ∅ — the depth-2 per-probe
+       the recorded AmbientAsks edges from ∅ — the ambient layer per-probe
        check (= "did the outer probe the local in a recorded way?").
        Set on the cb-apply local that crosses the boundary. The
        primop's recursive synthetic (= apply result reconstruction)
-       has this false because its facts live in depth-1, not in
+       has this false because its facts live in env layer, not in
        AmbientAsks. */
     bool validateAgainstAmbientAsks = false;
 
-    /* Memoized WHNF response. The recorder logs ONE QueryGetWHNF d=2
+    /* Memoized WHNF response. The recorder logs ONE QueryGetWHNF ambient
        observation per value force; the walker must advance
        `chainCursor` once to stay in lockstep but reuse the cached
        response on any subsequent call. Without this, when
@@ -168,7 +168,7 @@ public:
         return *this;
     }
 
-    /** Opt into depth-2 per-probe validation. Set on the cb-apply
+    /** Opt into ambient layer per-probe validation. Set on the cb-apply
         local (= the standin materialised at the cb apply boundary,
         whose surface probes were recorded in AmbientAsks). */
     ReplayCallbackArg & withAmbientAsksValidation()
@@ -177,7 +177,7 @@ public:
         return *this;
     }
 
-    /** Set the d=2 chain's starting cursor. Each cb-apply's d=2
+    /** Set the ambient chain's starting cursor. Each cb-apply's ambient
         chain is rooted at its applyReqHash (= the natural hash of
         the cb-apply payload) — different cb-applies' chains live in
         disjoint subtrees of AmbientAsks. The walker passes the
@@ -192,7 +192,7 @@ public:
         actual probes only arrived later — by then those probes
         were inserted into `LocalResponseMap` but NOT into
         `AmbientAsks` (= extending the chain would corrupt
-        dispatchApplyLive's AmbientResult and break the d=1
+        dispatchApplyLive's AmbientResult and break the env
         per-Q cur propagation). The cb-apply local can still
         readResponse the late probes; we just can't per-probe
         validate them against AmbientAsks because the chain row
@@ -219,10 +219,10 @@ public:
     /** Whether per-probe validation is enabled for this proxy. */
     bool hasAmbientAsksValidation() const { return validateAgainstAmbientAsks; }
 
-    /** Current value of the d=2 chain cursor. Read after the outer
+    /** Current value of the ambient chain cursor. Read after the outer
         has finished probing the standin (= after fn->queryApply
         returns) to obtain the chain's terminal — that's the
-        AmbientResult fed back as the cb-apply Request's d=1
+        AmbientResult fed back as the cb-apply Request's env
         respHash. */
     Hash getChainCursor() const { return *chainCursor; }
 
@@ -273,7 +273,7 @@ public:
     /** Recorded LocalObjects (frozen images) can't be applied without
         either reconstructing the function body from value-structure
         atoms (task #75) or comparing the live arg's content to the
-        recorded arg's content (task #74's depth-2 walker). Until one
+        recorded arg's content (task #74's ambient layer walker). Until one
         of those lands, an apply on a ReplayCallbackArg is undecidable
         — we don't know whether the recorded result still applies for
         the current live arg. Throw a recognizable signal that

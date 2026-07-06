@@ -23,11 +23,11 @@ TracingCallbackArg::TracingCallbackArg(
     ref<SourceRoot> rootFSRoot,
     std::shared_ptr<const ArgCell> argCell,
     Hash inheritedScope_,
-    Hash depth2ApplyId_)
+    Hash ambientApplyId_)
     : inner(std::move(inner))
     , subject(std::move(subject_))
     , argAncestry(std::move(inheritedScope_))
-    , depth2ApplyId(std::move(depth2ApplyId_))
+    , ambientApplyId(std::move(ambientApplyId_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
     , argCell(std::move(argCell))
@@ -50,7 +50,7 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
         .name = name,
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, argAncestry, depth2ApplyId);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, argAncestry, ambientApplyId);
 }
 
 trace::ResultWHNF & TracingCallbackArg::whnf()
@@ -158,7 +158,7 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
         .index = index,
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, argAncestry, depth2ApplyId);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, argAncestry, ambientApplyId);
 }
 
 ObjectType TracingCallbackArg::getTypeLazy()
@@ -204,10 +204,10 @@ std::optional<std::vector<std::string>> TracingCallbackArg::getAttrPath()
 
 void TracingCallbackArg::recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
-    /* Route through the depth-2 entry point: the outer is probing
-       an inner-supplied local. The `depth2ApplyId` groups this fact
+    /* Route through the ambient layer entry point: the outer is probing
+       an inner-supplied local. The `ambientApplyId` groups this fact
        into the cb apply's AmbientAsks edge at flush. */
-    writer.logAmbientObservation(query, result, subject, argAncestry, depth2ApplyId);
+    writer.logAmbientObservation(query, result, subject, argAncestry, ambientApplyId);
 }
 
 std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> argObj)
@@ -220,7 +220,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        exception the walker turns into a cache miss.
 
        The result wrapper carries an ApplyResultSubject so accesses
-       on the apply result continue to be recorded in the depth-2
+       on the apply result continue to be recorded in the ambient layer
        trace with an evolved state hash (per the subject-id design). */
     auto argCdiHex = argObj->getStateHashHex();
     Subject argId = argObj->getSubject()
@@ -235,7 +235,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         .arg = std::make_shared<const Subject>(std::move(argId)),
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(result), std::move(resultSubject), writer, rootFSRoot, argCell, argAncestry, depth2ApplyId);
+        std::move(result), std::move(resultSubject), writer, rootFSRoot, argCell, argAncestry, ambientApplyId);
 }
 
 } // namespace nix

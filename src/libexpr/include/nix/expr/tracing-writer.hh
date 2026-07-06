@@ -95,10 +95,10 @@ class TracingWriter
        stateHashAt to compute the fact's `from` field
        against the relevant Asks-edge precondition factset.
 
-       Layer marker: depth-1 facts (inner asks outer about an outer
-       value) feed into the depth-1 envFactSet. Depth-2 facts (outer
+       Layer marker: env layer facts (inner asks outer about an outer
+       value) feed into the env layer envFactSet. Depth-2 facts (outer
        probes an inner-supplied LocalObject during a cb apply) group
-       by their `applyId` (= the cb apply's resultId) into a depth-2
+       by their `applyId` (= the cb apply's resultId) into a ambient layer
        Asks-edge in `AmbientAsks`, per the via-Asks design. */
     struct PendingFact
     {
@@ -106,9 +106,9 @@ class TracingWriter
         trace::ResultVariant result;
         Subject subject;
         Hash argAncestry; ///< outer-argAncestry state hashes for stateHashAt
-        /* Empty hash = depth-1; otherwise = the cb apply's resultId,
-           grouping this fact into the depth-2 sub-trace for that apply. */
-        Hash depth2ApplyId{HashAlgorithm::SHA256};
+        /* Empty hash = env layer; otherwise = the cb apply's resultId,
+           grouping this fact into the ambient layer sub-trace for that apply. */
+        Hash ambientApplyId{HashAlgorithm::SHA256};
     };
     /* Depth-1 facts (= ambient observations on outer state). Drained
        at every intermediate closeAsksEdge and at finalize. */
@@ -118,17 +118,17 @@ class TracingWriter
        own probe sequence. Storage is below (= ApplyBoundary's
        facts field). */
 
-    /* Persistent subject-id chain for depth-1 ambient observations.
+    /* Persistent subject-id chain for env layer ambient observations.
        envWalk is kept 1:1-aligned with `envAsksEdges`:
        every Asks edge inserted into `envAsksEdges` is paired with
-       a d1 edge inserted at the SAME index. This invariant lets the
+       a env edge inserted at the SAME index. This invariant lets the
        walker's `envWalk` — which grows once per dispatched Asks
-       edge via `commitEdge` — match the writer's d1 walk
+       edge via `commitEdge` — match the writer's env walk
        edge-for-edge, so `stateHashAt(subject, argAncestry, walk, K)`
        computes the same value on both sides. Per-arg-completion
        option 2 depends on this alignment. */
     std::vector<Edge> envWalk;
-    /* Stages the next d1 edge between `flushAmbient` (which
+    /* Stages the next env edge between `flushAmbient` (which
        drains pendingDepth1Facts into it) and `closeAsksEdge` (which
        pushes it to envWalk paired with a perQAsksEdge). May
        be empty (= file-read-only Asks edge) — still pushed so that
@@ -138,7 +138,7 @@ class TracingWriter
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
        new query hash added to envFactSet since the last logResult,
        whether from `logResponse` (= env/file), `noteEnvObservation`,
-       or `flushAmbient`. AmbientQueries are depth-1 just like
+       or `flushAmbient`. AmbientQueries are env layer just like
        file reads; bundling them with env/file into one Asks edge per
        logResult keeps the trie's edge structure 1:1 with envWalk.
        `envAsksEdges` retains each finalized boundary so every Q's
@@ -169,23 +169,23 @@ class TracingWriter
     /* Deferred cb-apply boundaries. openApplyBoundary pushes a new
        entry with empty facts; logAmbientObservation appends probes to
        the most recently-pushed boundary whose applyId matches.
-       flushAmbient processes each boundary's d=2 chain (=
+       flushAmbient processes each boundary's ambient chain (=
        just its own facts), computes the terminal cumulative
-       factSet as AmbientResult, and synthesises the d=1 apply Fact
+       factSet as AmbientResult, and synthesises the env apply Fact
        at `(applyReqHash, AmbientResult)`. Each cb-apply invocation
        owns exactly its own probe sequence. Recording order = vector
        order. */
     struct ApplyBoundary
     {
-        Hash applyId;            ///< depth2ApplyId for the d=2 group
+        Hash applyId;            ///< ambientApplyId for the ambient group
         Hash applyRequestHash;   ///< natural hash of applyQueryPayload
         std::vector<PendingFact> facts;
         /* Chronological insertion: ε perQAsksEdge for this boundary
            is inserted into envAsksEdges at this position at finalize
            time (= position recorded at openApplyBoundary time, AFTER
-           closeAsksEdge(false) drained pre-boundary d=1 chunk). This
+           closeAsksEdge(false) drained pre-boundary env chunk). This
            makes the walker dispatch the ε edge BEFORE the body's
-           d=1 facts that follow, so the lambda-standin's primop
+           env facts that follow, so the lambda-standin's primop
            fires and seedCell extension happens in time for seed(N+1)
            probes to resolve. */
         size_t insertionIndex;
@@ -195,23 +195,23 @@ class TracingWriter
            finalize, this gets XOR-propagated by prior ε's element
            hashes. */
         Hash fromFactSetHashAtBoundary;
-        /* Walker's outer d1 cur at THIS apply-boundary's dispatch
+        /* Walker's outer env cur at THIS apply-boundary's dispatch
            moment (= fromFactSetHashAtBoundary XOR priorEpsilonAccum
            at first-finalize time). Stored for late-obs re-processing
            so re-emitted LocalResponseMap inserts use the same
            context as the first-finalize inserts. Zero (empty hash)
            until first finalize populates it. */
         Hash boundaryOuterCtx;
-        /* Option (b) — late d2 obs support. Once a boundary's first
+        /* Option (b) — late ambient obs support. Once a boundary's first
            finalize pass runs, it stays in `pendingApplyBoundaries`
            with `finalized=true` so a later `logAmbientObservation`
            with the same applyId can find it and process the probe
            incrementally instead of dropping it. State preserved
            across re-processings:
-            - `cumulativeFactSet` = current d=2 chain terminal (=
+            - `cumulativeFactSet` = current ambient chain terminal (=
               AmbientResult so far).
             - `factHash` = current SHA-256(applyReqHash || cumulativeFactSet),
-              i.e. the synthetic d=1 apply Fact's element hash. On
+              i.e. the synthetic env apply Fact's element hash. On
               each re-process, recomputed; the delta between old and
               new is XOR-applied to envFactSetHash and downstream
               envAsksEdges' fromFactSetHash to keep the writer
@@ -293,7 +293,7 @@ public:
     {
     }
 
-    /** Cumulative subject-id walk over depth-1 ambient observations.
+    /** Cumulative subject-id walk over env layer ambient observations.
         One edge per logResult-triggered flush. Exposed so writer-side
         apply-result wrappers (TracingObject with applyResultSubject)
         can compute `stateHashAt(subject, argAncestry, walk, walk.size())`
@@ -425,14 +425,14 @@ public:
         if (!decisionGraph)
             return;
         pendingDepth1Facts.push_back({query, result, std::move(subject), std::move(argAncestry),
-            /*depth2ApplyId=*/ Hash(HashAlgorithm::SHA256)});
+            /*ambientApplyId=*/ Hash(HashAlgorithm::SHA256)});
     }
 
     /**
-     * Log a depth-2 observation (= the outer probes an inner-supplied
+     * Log a ambient layer observation (= the outer probes an inner-supplied
      * LocalObject during a cb apply). Same payload shape as the
-     * depth-1 path; the additional `applyId` (= the cb apply's
-     * resultId) groups this fact into a depth-2 sub-trace at flush.
+     * env layer path; the additional `applyId` (= the cb apply's
+     * resultId) groups this fact into a ambient layer sub-trace at flush.
      */
     void logAmbientObservation(
         const trace::QueryVariant & query,
@@ -448,7 +448,7 @@ public:
            building its probe sequence. Each invocation's probes
            land in its own facts vector, no cross-invocation mixing.
 
-           Option (b) — late d2 obs: the boundary may already be
+           Option (b) — late ambient obs: the boundary may already be
            `finalized=true` (e.g. cb-sibling's `{f,x}: f x` doesn't
            force its local during the body, so probes only fire
            when the outer subsequently accesses `.whatever` on the
@@ -554,14 +554,14 @@ public:
      *
      * Called from `closeAsksEdge` (= every cb-apply boundary and at
      * logResult). With `finalize=false` (= intermediate flushes),
-     * only depth-1 facts are drained; depth-2 facts and buffered
+     * only env layer facts are drained; ambient layer facts and buffered
      * `pendingApplyBoundaries` stay buffered for later. With
      * `finalize=true` (= logResult), pendingApplyBoundaries are
-     * also processed: for each, the d=2 chain group is built,
+     * also processed: for each, the ambient chain group is built,
      * its terminal `cumulativeFactSet` is the AmbientResult, and
-     * the d=1 synthetic apply Fact `(applyReqHash, AmbientResult)`
+     * the env synthetic apply Fact `(applyReqHash, AmbientResult)`
      * is folded into envFactSet / envWalk / pendingNewRequests
-     * just like an ordinary depth-1 ambient observation.
+     * just like an ordinary env layer ambient observation.
      */
     void flushAmbient(bool finalize = false);
 
@@ -596,16 +596,16 @@ public:
      * pool, and buffers a `ApplyBoundary` recording the
      * applyId and reqHash.
      *
-     * The d=1 apply Fact itself is *not* folded into envFactSet
+     * The env apply Fact itself is *not* folded into envFactSet
      * here. Its response hash is the AmbientResult (= terminal of
-     * the d=2 chain captured for this applyId), which is only known
+     * the ambient chain captured for this applyId), which is only known
      * at flushAmbient time. Deferring synthesis keeps the
-     * d=1 cur consistent with via-Asks §"Recording (depth-2)":
+     * env cur consistent with via-Asks §"Recording (ambient layer)":
      * "The terminal factSet hash *is* the `AmbientResult`, which
-     * the depth-1 walker XOR-folds into its own `cur` as the
+     * the env layer walker XOR-folds into its own `cur` as the
      * `Response` for the enclosing `AmbientQuery`."
      *
-     * The `fromHash` of the synthetic d=1 apply Fact's
+     * The `fromHash` of the synthetic env apply Fact's
      * envWalk observation is `Hash(0)` — the apply boundary
      * is a walk-advance marker, not a fact about any subject, so
      * it doesn't fold into any subject's own-loop.
@@ -613,10 +613,10 @@ public:
     void openApplyBoundary(const nlohmann::json & applyQueryPayload);
 
     /**
-     * Log a nested cb-apply as a depth-2 fact under the enclosing
+     * Log a nested cb-apply as a ambient layer fact under the enclosing
      * cb-apply's chain. Used by TracingEvaluator::apply when the
      * fn is a TracingCallbackArg (= inner-supplied lambda being
-     * applied by the outer). Per via-Asks Replay (depth-2): the
+     * applied by the outer). Per via-Asks Replay (ambient layer): the
      * lambda primop at warm pulls this edge by (chainCursor,
      * stampedReqHash). Walker-side counterpart in
      * `<replay-local-lambda>` impl advances the standin's
@@ -634,7 +634,7 @@ public:
      * the enclosing boundary's id before the recursive call would
      * otherwise push a new boundary; the captured id then flows to
      * the `TracingCallbackApplyResult` wrapping the apply result, so
-     * its observations land in the same boundary's d=2 chain as the
+     * its observations land in the same boundary's ambient chain as the
      * recursive apply Fact `logAmbientApplyFact` appended.
      */
     std::optional<Hash> getCurrentApplyBoundaryId() const
@@ -671,7 +671,7 @@ public:
      * When true, every file-read / env-var response payload gets
      * persisted into the decisionGraph's LocalResponseMap too —
      * useful for offline debugging when JSON traces aren't
-     * available. Default false: walker never reads depth-1 payloads
+     * available. Default false: walker never reads env layer payloads
      * from there (= live-dispatches against the env instead), so
      * the storage is pure overhead unless someone's grepping the
      * DB by hand.
@@ -693,14 +693,14 @@ public:
 
         /* Process any pending ambient observations, finalise
            buffered cb-apply boundaries (computing each one's
-           AmbientResult from its d=2 chain and folding the
-           synthetic d=1 apply Fact in), and close the trailing
+           AmbientResult from its ambient chain and folding the
+           synthetic env apply Fact in), and close the trailing
            Asks edge boundary. closeAsksEdge is also called at every
            cb-apply boundary inside a body run, but with
-           finalize=false; the d=2-driven AmbientResult computation
+           finalize=false; the ambient-driven AmbientResult computation
            happens only here at logResult, since intermediate
            splitFlushes can be interleaved with the apply's body
-           and the d=2 chain may not be complete yet. */
+           and the ambient chain may not be complete yet. */
         closeAsksEdge(/*finalize=*/ true);
 
         nlohmann::json j = result;

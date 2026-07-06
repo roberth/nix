@@ -114,7 +114,7 @@ class TracingReplayEvaluator : public Evaluator
         Short-circuits walker re-entry while outer's-f-invocation is
         still routed through TracingReplayEvaluator::apply. TODO:
         drop once invocation goes through a path that doesn't re-enter
-        the d=1 walker (= live Interpreter::apply against the
+        the env walker (= live Interpreter::apply against the
         reconstructed value tree). */
     std::unordered_set<TracingDecisionGraph::RequestHash> inFlightApplyReqs;
 
@@ -139,7 +139,7 @@ class TracingReplayEvaluator : public Evaluator
     bool isLocalArgId(const Hash & idHash);
     std::shared_ptr<Object> resolveApplyId(const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx);
 
-    /** d=2 live AmbientResult computation for a cb-apply Fact
+    /** ambient live AmbientResult computation for a cb-apply Fact
         dispatch. Materialises a fresh standin rooted at
         `applyReqHash`, invokes `fn->queryApply(standin)` live, then
         FORCES the apply result (= via `getType()`) so outer's `f`
@@ -147,10 +147,10 @@ class TracingReplayEvaluator : public Evaluator
         through `ExprFromObject`'s bridge thunk. Per-probe
         `validateAgainstAmbientAsks` walks the recorded chain;
         divergence throws and is caught here. Returns
-        `std::nullopt` on divergence so the d=1 dispatch fails.
+        `std::nullopt` on divergence so the env dispatch fails.
 
         Returns the standin's terminal `chainCursor` — the
-        AmbientResult to fold into d=1 cur as the cb-apply
+        AmbientResult to fold into env cur as the cb-apply
         Request's respHash. No memoisation: per via-Asks principle
         9, each dispatch re-invokes fn fresh. */
     std::optional<Hash> dispatchApplyLive(

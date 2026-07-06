@@ -307,8 +307,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     /* If fn is a TracingCallbackArg (= inner-supplied lambda the
        outer is now applying — the cb-higher-order case), record
-       this apply as a depth-2 fact under the ENCLOSING cb-apply's
-       chain. Per via-Asks Replay (depth-2): the lambda primop at
+       this apply as a ambient layer fact under the ENCLOSING cb-apply's
+       chain. Per via-Asks Replay (ambient layer): the lambda primop at
        warm pulls this edge by `(chainCursor, stampedReqHash)`.
        Walker-side counterpart: the lambda primop's impl advances
        the standin's chainCursor by this fact's elementHash.
@@ -317,23 +317,23 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        logAmbientApplyFact / openApplyBoundary so the apply-result
        observations recorded after `inner->apply` returns (via
        `TracingCallbackApplyResult` below) route to the same enclosing
-       boundary the recursive apply Fact landed in. Their d=2
+       boundary the recursive apply Fact landed in. Their ambient
        chain order is: [recursiveApplyFact, applyResult.getType,
        applyResult.getInt, ...] — matching the walker's standin's
        primop manual-push (= one fact) followed by the synthetic's
        per-probe `advanceChainAndAppendFact` calls.
 
        Skip `openApplyBoundary` entirely for the TLO-fn path: it
-       would push a fresh empty boundary whose synthetic d=1 fact
+       would push a fresh empty boundary whose synthetic env fact
        `(applyReqHash, applyReqHash)` enters envFactSet at finalize
        and forces the outer walker into a `dispatchApplyLive` whose
        arg has no sidecar — a guaranteed miss that destabilises the
        outer chain. The recursive apply Fact (recorded in the
        enclosing boundary by `logAmbientApplyFact`) already covers
-       the d=2 chain entry for this apply, so a separate boundary
+       the ambient chain entry for this apply, so a separate boundary
        carries no information.
 
-       Filtered to TLO fn specifically so we don't add d=2 facts
+       Filtered to TLO fn specifically so we don't add ambient facts
        for ordinary nested cb-applies (= cached-fn applied to outer
        values) — those don't go through the lambda-primop path at
        warm and would just contaminate the enclosing chain's
@@ -385,7 +385,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     if (fnIsTlo) {
         if (auto enclosingId = writer.getCurrentApplyBoundaryId())
             enclosingApplyId = *enclosingId;
-        /* d=2 apply Fact: Subject = resultSubject built above;
+        /* ambient apply Fact: Subject = resultSubject built above;
            flushAmbient stamps via the generic
            pathAndRootsFromSubject path. The QueryApply payload's
            fn/arg use Subject-derived hex so the walker (which has
@@ -486,9 +486,9 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     /* For the TLO-fn case (= cb-higher-order's recursive cb-apply):
        wrap the result in a TracingCallbackApplyResult so subsequent
-       method calls (`getType`, `getInt`, etc.) record d=2
+       method calls (`getType`, `getInt`, etc.) record ambient
        observations on the enclosing cb-apply boundary instead of
-       d=1 main-trie Terminals. The walker's `<replay-local-lambda>`
+       env main-trie Terminals. The walker's `<replay-local-lambda>`
        primop reads these from LocalResponseMap via the same
        per-arg-stamped reqHash; the AmbientAsks edges enable its
        synthetic's `advanceChainAndAppendFact` to keep

@@ -93,7 +93,7 @@ void TracingWriter::flushAmbient(bool finalize)
         std::string queryTag = std::visit(
             [](const auto & q) -> std::string { return std::string(q.tag); }, pf.query);
         tracingCacheLog(
-            "flush d1 fact: subject=%s query=%s from=%s path=%zu fromCIDs=%zu",
+            "flush env fact: subject=%s query=%s from=%s path=%zu fromCIDs=%zu",
             describe(pf.subject), queryTag, fromHex.substr(0, 12),
             path.steps.size(), fromCIDs.size());
 
@@ -125,7 +125,7 @@ void TracingWriter::flushAmbient(bool finalize)
             resultJson.dump());
 
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-        /* d=1 fact LRM insert at empty-hash context: kept for
+        /* env fact LRM insert at empty-hash context: kept for
            DISALLOW-mode fallback lookups. */
         decisionGraph->insertLocalResponse(queryHash, Hash(HashAlgorithm::SHA256), responsePayload);
 
@@ -173,7 +173,7 @@ void TracingWriter::flushAmbient(bool finalize)
             }
         }
 
-        /* Append the substituted fact to the new d1 subject-id edge so
+        /* Append the substituted fact to the new env-layer subject-id edge so
            later logResults' stateHashAt sees it in the own-loop.
 
            Per-edge dedup by elementHash: an Asks edge is a SET of
@@ -212,16 +212,16 @@ void TracingWriter::flushAmbient(bool finalize)
     pendingDepth1Facts.clear();
 
     if (!finalize) {
-        /* Intermediate flush: depth-2 facts stay buffered until
+        /* Intermediate flush: ambient layer facts stay buffered until
            their apply boundary is finalised at logResult. The cb-apply
-           boundary's d=2 chain may not be complete yet (= outer is
+           boundary's ambient chain may not be complete yet (= outer is
            still probing the local), so we can't compute AmbientResult
            here without risking an incomplete chain. */
         return;
     }
 
-    /* Finalize: close the final depth-1 chunk's perQAsksEdge BEFORE
-       processing apply boundaries. Without this the d1 facts get
+    /* Finalize: close the final env layer chunk's perQAsksEdge BEFORE
+       processing apply boundaries. Without this the env facts get
        bundled with the first apply boundary's perQAsksEdge — walker
        would still XOR-fold the same elementHashes (commutative) but
        intermediate Asks(Q, cur) lookups during walk() expect each
@@ -231,13 +231,13 @@ void TracingWriter::flushAmbient(bool finalize)
     if (!pendingNewRequests.empty()) {
         auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-        /* 1:1 alignment: push the staged d1 edge alongside the
-           perQAsksEdge. The d1 edge may be empty (= file-read-only
+        /* 1:1 alignment: push the staged env edge alongside the
+           perQAsksEdge. The env edge may be empty (= file-read-only
            Asks edge with no ambient observations) — still pushed so
            the indices match. */
         envWalk.push_back(std::move(pendingD1Edge));
         pendingD1Edge = {};
-        tracingCacheLog("finalize: final d1 Asks edge from=%s rs-size=%zu (perQ=%zu d1=%zu)",
+        tracingCacheLog("finalize: final env Asks edge from=%s rs-size=%zu (perQ=%zu env=%zu)",
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
                         envAsksEdges.size(),
@@ -248,13 +248,13 @@ void TracingWriter::flushAmbient(bool finalize)
 
     /* Finalize pass: process each buffered cb-apply boundary in the
        order recorded. For each boundary:
-        1. Look up its d=2 group (may be empty if no probes happened).
-        2. Build the d=2 chain via incremental stateHashAt
+        1. Look up its ambient group (may be empty if no probes happened).
+        2. Build the ambient chain via incremental stateHashAt
            substitution — each fact's `from` is computed against the
            chain prefix the walker reconstructs probe-by-probe.
         3. The terminal `cumulativeFactSet` IS the AmbientResult
-           (via-Asks §"Recording (depth-2)").
-        4. Synthesize the d=1 apply Fact (applyReqHash, AmbientResult);
+           (via-Asks §"Recording (ambient layer)").
+        4. Synthesize the env apply Fact (applyReqHash, AmbientResult);
            fold into envFactSet and append a synthetic edge to
            envWalk (fromHash=Hash(0), elementHash=factHash) —
            the apply boundary contributes to cur but not to any
@@ -264,9 +264,9 @@ void TracingWriter::flushAmbient(bool finalize)
 
        Reverse-nested order is acceptable but unnecessary: AmbientResult
        for one apply doesn't depend on another's chain — each group is
-       independent because their d=2 chains share no facts.
+       independent because their ambient chains share no facts.
 
-       Chain rooting: each cb-apply's d=2 chain is rooted at
+       Chain rooting: each cb-apply's ambient chain is rooted at
        `boundary.applyRequestHash` (= the natural hash of the apply
        payload) rather than `emptySetHash()`. This makes each
        cb-apply's chain its own subtree in AmbientAsks, so the
@@ -284,7 +284,7 @@ void TracingWriter::flushAmbient(bool finalize)
        AmbientAsks rows: two boundaries with the same applyId and the
        same probes produce identical rows that INSERT OR IGNORE
        deduplicates; envFactSet's seenRequests deduplicates the
-       synthesised d=1 Fact too. Process each boundary independently
+       synthesised env Fact too. Process each boundary independently
        so its own pendingDepth2FactsByApply slice gets folded into
        its own chain — collapsing the boundary list before processing
        conflates probes across boundaries and the resulting
@@ -294,8 +294,8 @@ void TracingWriter::flushAmbient(bool finalize)
        Chronological ε insertion: each boundary's ε perQAsksEdge is
        INSERTED at boundary.insertionIndex (= captured at
        openApplyBoundary time, AFTER closeAsksEdge(false) drained the
-       pre-boundary d=1 chunk), not appended at the end. This puts
-       ε BEFORE its body's d=1 facts in walker dispatch order. Each
+       pre-boundary env chunk), not appended at the end. This puts
+       ε BEFORE its body's env facts in walker dispatch order. Each
        insertion shifts subsequent indices by 1, tracked via `shift`.
        Each ε's elementHash propagates into all subsequent
        envAsksEdges' fromFactSetHash (= walker's cur advances by
@@ -356,7 +356,7 @@ void TracingWriter::flushAmbient(bool finalize)
             std::string queryTag = std::visit(
                 [](const auto & q) -> std::string { return std::string(q.tag); }, pf.query);
             tracingCacheLog(
-                "flush d2 fact: applyId=%s i=%zu subject=%s query=%s from=%s path=%zu fromCIDs=%zu ambientAsks=%s",
+                "flush ambient fact: applyId=%s i=%zu subject=%s query=%s from=%s path=%zu fromCIDs=%zu ambientAsks=%s",
                 boundary.applyId.to_string(HashFormat::Base16, false).substr(0, 12),
                 i, describe(pf.subject), queryTag, fromHex.substr(0, 12),
                 path.steps.size(), fromCIDs.size(), withAmbientAsks ? "yes" : "no");
@@ -399,16 +399,16 @@ void TracingWriter::flushAmbient(bool finalize)
 
         if (!boundary.finalized) {
             /* First finalize for this boundary. Process all facts
-               accumulated so far, insert d=1 apply Fact, ε edge, and
+               accumulated so far, insert env apply Fact, ε edge, and
                propagate the factHash to downstream envAsksEdges.
 
-               `boundaryOuterCtx` = the walker's outer d1 cur at the
+               `boundaryOuterCtx` = the walker's outer env cur at the
                moment this boundary's cb-apply Request will be
                dispatched at warm. Equals
                `boundary.fromFactSetHashAtBoundary XOR priorEpsilonAccum`
                (= state at openApplyBoundary time + all prior ε
                contributions). Used as the LocalResponseMap key
-               discriminator so d=2 chain facts within different
+               discriminator so ambient chain facts within different
                apply boundaries store under distinct rows, letting
                cb-repeated's two applies with the same abstract
                reqHash resolve to their respective responses. */
@@ -478,7 +478,7 @@ void TracingWriter::flushAmbient(bool finalize)
             prevQFactSetHash = envFactSetHash;
 
             /* Stash state on the boundary so subsequent re-processing
-               passes (= late d2 obs) can pick up where this finalize
+               passes (= late ambient obs) can pick up where this finalize
                left off. */
             boundary.finalized = true;
             boundary.cumulativeFactSet = ambientResult;
@@ -486,7 +486,7 @@ void TracingWriter::flushAmbient(bool finalize)
             boundary.pos = pos;
             boundary.lastProcessedCount = group.size();
         } else if (group.size() > boundary.lastProcessedCount) {
-            /* Late d2 obs path: the boundary was finalized in a
+            /* Late ambient obs path: the boundary was finalized in a
                previous flush, but new probes have since arrived
                (= cb-sibling's `{f,x}: f x` only forces its local on
                the outer's `.whatever` access, after `TO_A.getType`'s
@@ -521,7 +521,7 @@ void TracingWriter::flushAmbient(bool finalize)
                 walk.push_back(std::move(edge));
             }
             tracingCacheLog(
-                "late-d2 process: applyId=%s tail=%zu..%zu (probes now %zu)",
+                "late-ambient process: applyId=%s tail=%zu..%zu (probes now %zu)",
                 boundary.applyId.to_string(HashFormat::Base16, false).substr(0, 12),
                 boundary.lastProcessedCount, group.size() - 1, group.size());
             boundary.lastProcessedCount = group.size();
@@ -542,7 +542,7 @@ void TracingWriter::closeAsksEdge(bool finalize)
        transition (= advances envFactSetHash and envWalk when
        observations are present). At finalize=true this also computes
        AmbientResults for each buffered cb-apply boundary and folds
-       the synthetic d=1 apply Facts in. */
+       the synthetic env apply Facts in. */
     flushAmbient(finalize);
 
     /* Materialise the perQAsksEdge boundary so the trailing logResult
@@ -552,7 +552,7 @@ void TracingWriter::closeAsksEdge(bool finalize)
        neither writer's envWalk nor walker's envWalk grows
        for it (= principles 4 + 7).
 
-       1:1 alignment: push the staged d1 edge alongside the
+       1:1 alignment: push the staged env edge alongside the
        perQAsksEdge. May be empty (= file-read-only Asks edge with no
        ambient observations contributing observations to d1) — still
        pushed so the indices match the walker's commitEdge counts. */
@@ -561,7 +561,7 @@ void TracingWriter::closeAsksEdge(bool finalize)
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         envWalk.push_back(std::move(pendingD1Edge));
         pendingD1Edge = {};
-        tracingCacheLog("closeAsksEdge: new Asks edge from=%s rs-size=%zu (perQ=%zu d1=%zu)",
+        tracingCacheLog("closeAsksEdge: new Asks edge from=%s rs-size=%zu (perQ=%zu env=%zu)",
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
                         envAsksEdges.size(),
@@ -594,8 +594,8 @@ void TracingWriter::openApplyBoundary(const nlohmann::json & applyQueryPayload)
     }
 
     /* Close any preceding observations into their own Asks edge
-       (= β1). The intermediate flush only drains depth-1 facts; any
-       depth-2 facts from prior unfinalised cb-applies (= nested case)
+       (= β1). The intermediate flush only drains env layer facts; any
+       ambient layer facts from prior unfinalised cb-applies (= nested case)
        stay buffered, waiting for their own boundary's finalize. */
     closeAsksEdge(/*finalize=*/ false);
 
@@ -607,14 +607,14 @@ void TracingWriter::openApplyBoundary(const nlohmann::json & applyQueryPayload)
     auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
     decisionGraph->insertRequest(applyReqHash, applyPayloadCbor);
 
-    /* Buffer the boundary. The synthetic d=1 apply Fact's respHash
-       is the AmbientResult = terminal of this cb-apply's d=2 chain,
+    /* Buffer the boundary. The synthetic env apply Fact's respHash
+       is the AmbientResult = terminal of this cb-apply's ambient chain,
        only known after the body finishes. flushAmbient at
        logResult walks pendingApplyBoundaries in order and finalises
        each one, INSERTING the ε perQAsksEdge at the chronological
        insertionIndex (= position in envAsksEdges captured AFTER
-       closeAsksEdge(false) drained the pre-boundary d=1 chunk). This
-       puts ε BEFORE its body's d=1 facts in walker dispatch order,
+       closeAsksEdge(false) drained the pre-boundary env chunk). This
+       puts ε BEFORE its body's env facts in walker dispatch order,
        so the lambda-standin's seedCell extension fires before
        seed(N+1) probes try to resolve. */
     pendingApplyBoundaries.push_back({

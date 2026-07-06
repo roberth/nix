@@ -42,9 +42,9 @@ class TracingCallbackArg : public Object
        cb-apply boundary). Propagated to navigation children. */
     Hash argAncestry;
     /* The cb apply this local belongs to (= apply's resultId). Used
-       at flush to group depth-2 facts into an AmbientAsks edge per
+       at flush to group ambient layer facts into an AmbientAsks edge per
        apply. Navigation children inherit. */
-    Hash depth2ApplyId;
+    Hash ambientApplyId;
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
@@ -59,7 +59,7 @@ class TracingCallbackArg : public Object
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE QueryGetWHNF
-       d=2 observation. Subsequent calls decode the cached result. */
+       ambient observation. Subsequent calls decode the cached result. */
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 
@@ -73,7 +73,7 @@ public:
         ref<SourceRoot> rootFSRoot,
         std::shared_ptr<const ArgCell> argCell,
         Hash argAncestry = Hash(HashAlgorithm::SHA256),
-        Hash depth2ApplyId = Hash(HashAlgorithm::SHA256));
+        Hash ambientApplyId = Hash(HashAlgorithm::SHA256));
 
     /** This proxy's structural identity, per the
         content-identity-via-asks design. */
@@ -101,12 +101,12 @@ public:
     std::optional<FunctionInfo> getFunctionInfo() override;
     PosIdx getPos() override;
     std::optional<std::vector<std::string>> getAttrPath() override;
-    /** Object-method apply entry. Records the apply as a depth-2
+    /** Object-method apply entry. Records the apply as a ambient layer
         observation (= outer is applying this local to argObj), then
         delegates to `inner->queryApply(argObj)` and wraps the result
         as another TracingCallbackArg with an `ApplyResultSubject`
         so further accesses on the result continue to land in the
-        depth-2 trace. */
+        ambient layer trace. */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 
     AmbientId getCdi() const { return localId(); }

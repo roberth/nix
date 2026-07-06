@@ -57,7 +57,7 @@ static Hash stampPerArgFields(
 }
 
 /* Look up the recorded payload for `query` in LocalResponseMap.
-   The map is keyed by requestHash and that's sound at depth-2
+   The map is keyed by requestHash and that's sound at ambient layer
    because reqHash is `SHA-256(query{from = subject-id-evolved state hash})`
    — a pure function of (subject, argAncestry, prior chain facts). Two
    recordings reaching the same reqHash necessarily observed the
@@ -81,7 +81,7 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, c
 }
 
 /* Multi-edge AmbientAsks walker: dispatch and validate one probe at
-   a time. Per the design's "Replay (depth-2)" section, each probe
+   a time. Per the design's "Replay (ambient layer)" section, each probe
    (a) composes with `from = hex(stateHashAt(subject, argAncestry,
    walkFacts, walkFacts.size()))` so its reqHash matches what the
    recorder wrote at this point in the chain, (b) is looked up as a
@@ -89,7 +89,7 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, c
    (c) on a match advances the shared chain cursor and appends the
    fact to the shared walk so subsequent probes compose against the
    correctly evolved state hashes. On mismatch we throw a divergence signal
-   which the surrounding walker layer turns into a miss → depth-1
+   which the surrounding walker layer turns into a miss → env layer
    fallback handles re-eval. */
 /* Append the just-probed fact to `walkFacts` so the next probe's
    `stampPerArgFields` sees its own-loop contribution. Whether or not
@@ -142,7 +142,7 @@ static void advanceChainAndAppendFact(
            chainCursor from the same `from` position without schema
            widening. Live and cold agree when cold's stored
            `toFactSet == from XOR H(reqHash, respHash)` (writer's
-           d=2 stampAndEmit at tracing-writer.cc:349-351), so this
+           ambient stampAndEmit at tracing-writer.cc:349-351), so this
            substitution is exact for tests that don't repeat the same
            applyReqHash — no observable change there. */
         auto responsePayload = jsonToCborString(responseJson);
@@ -153,11 +153,11 @@ static void advanceChainAndAppendFact(
         return;
     }
     tracingCacheLog(
-        "depth-2 divergence: probe %s reqHash=%s no AmbientAsks edge from %s",
+        "ambient layer divergence: probe %s reqHash=%s no AmbientAsks edge from %s",
         Q::tag, reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
         chainCursor.to_string(HashFormat::Base16, false).substr(0, 12));
     throw Error(
-        "depth-2 divergence: probe %s on local has no AmbientAsks edge from current factSet",
+        "ambient layer divergence: probe %s on local has no AmbientAsks edge from current factSet",
         Q::tag);
 }
 
@@ -345,7 +345,7 @@ RootValue ReplayCallbackArg::defeatCache()
 
 RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<AmbientResolver> resolver)
 {
-    /* Per via-Asks Replay (depth-2): the walker reconstructs the
+    /* Per via-Asks Replay (ambient layer): the walker reconstructs the
        LocalObject as a live Nix Value tree, lazily produced from
        CAS atoms. The shape depends on the recorded type:
 
@@ -355,7 +355,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
          evolved state hash, and reproduces the recorded apply
          result. Per the via-Asks doc's "Lambda LocalObjects don't
          need their body stored" — the application behavior lives
-         in the recorded d=2 chain, not in a stored body.
+         in the recorded ambient chain, not in a stored body.
 
        - Other types (attrset / list / scalars): return a thunk
          wrapping `ExprFromObject(self)` so the consumer materialises
@@ -379,7 +379,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
     auto outerContextSaved = outerContext;
     /* Capture the resolver so the primop can register the live arg
        it receives (args[0]) as an outer-direction proxy. The OUTER
-       walker dispatches d=1 facts whose `from` references the cb-arg
+       walker dispatches env facts whose `from` references the cb-arg
        seed's initial state hash (= what the inner-side queryFn closure
        captured at cold); without this registration the walker's
        resolveCdiId falls through "outer-seed by elimination" and the
@@ -417,7 +417,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
                 /* Publish the live arg under the cb-arg seed's
                    structural identity so the OUTER walker's
-                   `resolveCdiId` can resolve d=1 facts whose `from`
+                   `resolveCdiId` can resolve env facts whose `from`
                    is the seed's subject-id-evolved state hash at any
                    walk-edge index. Registration carries the
                    subject + argAncestry (= `PositionalSeed{applyDepth+1}`
@@ -446,7 +446,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    Why this is needed: the standin (materialised by
                    `materialiseLocalStandin` and cached in
                    `ResolutionContext::memo`) is reused when the
-                   walker dispatches multiple d=1 facts whose
+                   walker dispatches multiple env facts whose
                    resolution paths force the same standin's primop.
                    Without a copy, walkFacts would accumulate
                    entries from prior firings and the synthetic's
@@ -505,7 +505,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     *applyArgAncestrySaved, Hash{HashAlgorithm::SHA256});
 
                 /* Advance the standin's chainCursor by the recorded
-                   apply Fact's elementHash. Mirrors the writer's d=2
+                   apply Fact's elementHash. Mirrors the writer's ambient
                    stamping in flushAmbient: subject =
                    ApplyResultSubject{fn, arg} = syntheticSubject;
                    argAncestry = mergedApplyScope; edgeIndex =
@@ -513,7 +513,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    in the writer's boundary facts list, AFTER the
                    standin's surface probes).
 
-                   Walker's d=1 dispatch of ε reads this updated
+                   Walker's env dispatch of ε reads this updated
                    chainCursor as the AmbientResult. */
                 {
                     size_t edgeIndex = walkFactsSaved->size();
@@ -584,7 +584,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     outerContextSaved, *dg, rootFSRootSaved, &state);
                 /* Enable per-probe AmbientAsks validation. After the
                    `TracingCallbackApplyResult` writer change, the
-                   apply-result observations live in the d=2 chain
+                   apply-result observations live in the ambient chain
                    (= same boundary as the recursive apply Fact above),
                    so the synthetic's `getType` / `getInt` etc. must
                    walk one AmbientAsks edge per probe to (a) keep
@@ -594,7 +594,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    primop has already pushed the recursive apply Fact
                    to `walkFacts` and advanced `chainCursor`, so the
                    first synthetic probe stamps at `walkFacts.size() == 1`
-                   — matching the writer's flushAmbient d=2
+                   — matching the writer's flushAmbient ambient
                    loop at index 1 (= position after `logAmbientApplyFact`'s
                    fact in the boundary). */
                 synthetic->withAmbientAsksValidation();
@@ -641,7 +641,7 @@ std::optional<FunctionInfo> ReplayCallbackArg::getFunctionInfo()
 
 std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> /*argObj*/)
 {
-    /* See header comment. Until depth-2 walker integration (task #74)
+    /* See header comment. Until ambient layer walker integration (task #74)
        or value-structure-atom reconstruction (task #75) lands, an
        apply on a recorded LocalObject can't be validated. Throw a
        recognizable signal — callers that route here will catch this
@@ -650,7 +650,7 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> /*
        for the uniform-queryApply restructure. */
     throw Error(
         "ReplayCallbackArg::queryApply: cannot validate apply on a recorded "
-        "frozen local without reconstructing its value structure (depth-2 "
+        "frozen local without reconstructing its value structure (ambient layer "
         "walker not yet integrated)");
 }
 

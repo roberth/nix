@@ -429,7 +429,7 @@ public:
      * registered live by the `<replay-local-lambda>` primop when
      * resolving an inner-side cb-arg seed state hash that has no recorded
      * provenance — closes the gap where the warm walker dispatches
-     * d=1 facts on the apply's argObj and the cb-arg seed has
+     * env facts on the apply's argObj and the cb-arg seed has
      * neither a producer Request nor a localArg sidecar.
      */
     virtual std::shared_ptr<struct AmbientResolver> getAmbientResolver()

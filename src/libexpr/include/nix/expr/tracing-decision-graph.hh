@@ -125,18 +125,18 @@ public:
     std::optional<std::string> getResultPayload(const ResultHash & h);
 
     /* LocalResponseMap: response payload pool, keyed by the *request*
-       hash. d=2 REPLAY ONLY: `ReplayCallbackArg` reads these back to
+       hash. ambient REPLAY ONLY: `ReplayCallbackArg` reads these back to
        serve probes into a reconstructed LocalObject value tree — this
-       is the design's "d=2 walker is the only consumer" contract from
+       is the design's "ambient walker is the only consumer" contract from
        `content-identity-via-asks.md` ("Atom storage"). The soundness
        argument requires the reqhash to be a pure function of
        (subject, argAncestry, prior facts in the chain); across writer
        sessions with different outer args, that assumption can fail
        (same seed(N) pre-observation state hash → same reqhash → different
-       responses from arg-dependent env), so d=1 dispatch MUST NOT
+       responses from arg-dependent env), so env dispatch MUST NOT
        read this map. See `cross-session-seed-collision` memory. */
     /* Context-widened LocalResponseMap: PK is (requestHash, contextHash).
-       contextHash is walker's/writer's outer d1 fact-set state at the
+       contextHash is walker's/writer's outer env fact-set state at the
        moment the response was recorded / is being consulted. Same
        request under different outer contexts stores/retrieves distinct
        payloads — deterministic lookup, no speculation needed. Fixes
@@ -243,27 +243,27 @@ public:
     bool hasAnyEdge(const QueryHash & q, const SetHash & factSet);
 
     /* ─────────────────────────────────────────────────────────────────
-       Decision graph layer: depth-2 (cb-apply boundary)
+       Decision graph layer: ambient layer (cb-apply boundary)
 
-       The depth-2 trie is keyed on factSet alone (no Q), per
+       The ambient layer trie is keyed on factSet alone (no Q), per
        doc/design/tracing-eval-cache-content-identity-via-asks.md.
        It records the observations the outer makes against an
        inner-supplied LocalObject during a covariant callback.
        Same-call sibling collapse within is intentional;
        cross-call disambiguation is via state hash inheritance.
 
-       Unlike depth-1, edges store toFactSetHash explicitly: at
-       depth-2 there is no live producer for incoming-ambient
+       Unlike env layer, edges store toFactSetHash explicitly: at
+       ambient layer there is no live producer for incoming-ambient
        observations at replay, so the walker can't reproduce the
        transition by live dispatch.
        ───────────────────────────────────────────────────────────────── */
 
-    /* Insert a depth-2 Asks edge: at `fromFactSet`, dispatching
+    /* Insert a ambient layer Asks edge: at `fromFactSet`, dispatching
        `requestSet` and observing the recorded responses lands at
        `toFactSet`. Idempotent on (fromFactSet, requestSet). */
     void insertAmbientAsks(const SetHash & fromFactSet, const SetHash & requestSet, const SetHash & toFactSet);
 
-    /* Look up depth-2 outgoing edges at `fromFactSet`. Returns a
+    /* Look up ambient layer outgoing edges at `fromFactSet`. Returns a
        list of (requestSetHash, toFactSetHash) pairs. */
     std::vector<std::pair<SetHash, SetHash>> getAmbientAsks(const SetHash & fromFactSet);
 

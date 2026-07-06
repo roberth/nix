@@ -12,12 +12,12 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
     TracingWriter & writer_,
     Subject applyResultSubject_,
     Hash applyScope_,
-    Hash depth2ApplyId_)
+    Hash ambientApplyId_)
     : inner(std::move(inner_))
     , writer(writer_)
     , applyResultSubject(std::move(applyResultSubject_))
     , applyArgAncestry(std::move(applyScope_))
-    , depth2ApplyId(std::move(depth2ApplyId_))
+    , ambientApplyId(std::move(ambientApplyId_))
 {
     auto stateHash = stateHashAfter(applyResultSubject, applyArgAncestry, {});
     applyArgAncestryStateHashHex = stateHash.to_string(HashFormat::Base16, false);
@@ -25,16 +25,16 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
 
 void TracingCallbackApplyResult::recordD2(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
-    /* Route through the depth-2 entry point: every observation on
+    /* Route through the ambient layer entry point: every observation on
        this apply-result is grouped with the recursive apply Fact
-       under the enclosing cb-apply boundary so that the d=2 chain
+       under the enclosing cb-apply boundary so that the ambient chain
        has [recursiveApplyFact, this_obs, next_obs, ...] in the
-       order they're appended. flushAmbient's d=2 loop
+       order they're appended. flushAmbient's ambient loop
        stamps each `from` at `edgeIndex = i` (= position in the
        boundary's facts vector), matching the walker's stamping at
        `walkFacts.size()` after the synthetic-side primop pushed
        the apply Fact. */
-    writer.logAmbientObservation(query, result, applyResultSubject, applyArgAncestry, depth2ApplyId);
+    writer.logAmbientObservation(query, result, applyResultSubject, applyArgAncestry, ambientApplyId);
 }
 
 std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::string & name)
@@ -148,9 +148,9 @@ std::shared_ptr<Object> TracingCallbackApplyResult::getListElem(size_t index)
 
 ObjectType TracingCallbackApplyResult::getTypeLazy()
 {
-    /* Delegate to `inner` for the type, but skip the d=2 recording —
+    /* Delegate to `inner` for the type, but skip the ambient recording —
        `getType` goes through `whnf()` which records the same
-       QueryGetWHNF payload, and the depth-2 chain has no dedup (= same
+       QueryGetWHNF payload, and the ambient layer chain has no dedup (= same
        fact appended twice cancels via XOR-fold at flush, breaking
        AmbientResult). Callers that need both `getTypeLazy` and
        `getType` get exactly one observation through the `getType`

@@ -303,7 +303,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
                     argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));
 
     /* Compute the resultId early so we can pass it to the
-       TracingCallbackArg as depth2ApplyId — groups all depth-2 facts
+       TracingCallbackArg as ambientApplyId — groups all ambient layer facts
        made on this local (and its descendants) into a single
        AmbientAsks edge at flush. */
     auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
@@ -363,7 +363,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
     auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
 
     /* Result id is queryHash(QueryApply{fn=fnId, arg=argId})
-       (already computed above for depth2ApplyId plumbing). */
+       (already computed above for ambientApplyId plumbing). */
     registry.registerOuterAt(resultId, std::move(resultObj));
 
     /* Defer the QueryApply Request and the localArg sidecar to the
@@ -376,7 +376,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        forcing them. ReplayCallbackArg can serve scalar/structural
        responses from LocalResponseMap, but a function local has
        no recorded body to apply against a divergent argument — so
-       the walker bails on dispatch in that case and the depth-1
+       the walker bails on dispatch in that case and the env layer
        fallback (= live re-eval) handles it. */
     if (innerWriter) {
         nlohmann::json applyJson = applyQuery;
@@ -479,7 +479,7 @@ static PrimOp * makeCachedFnPrimOp(
                            arg's evolved state hash). This is what
                            distinguishes sibling apply calls within
                            the same cached call (`inner.f 5` vs
-                           `inner.f 2`), per the depth-2 design. */
+                           `inner.f 2`), per the ambient layer design. */
                         auto applyContext = std::make_shared<ApplyContext>(
                             ApplyContext{argId, callArgAncestry, {}});
                         /* Boundary-trace-only discipline: do NOT
@@ -700,7 +700,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
            primop via its own `toValueOrProxy` (= the
            <replay-local-lambda> mechanism in
            replay-callback-arg.cc). Use it directly so the recorded
-           d=2 chain drives apply-time behaviour; the generic
+           ambient chain drives apply-time behaviour; the generic
            cached/ambient primops here would dispatch on
            `RLO::queryApply` which throws by design. */
         if (dynamic_cast<ReplayCallbackArg *>(obj.get())) {

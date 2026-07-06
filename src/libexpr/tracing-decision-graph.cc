@@ -48,13 +48,13 @@ CREATE TABLE IF NOT EXISTS Results (
 -- "Local" in the name: a row here is the payload the LocalObject
 -- (= the inner-supplied cb arg) revealed to one of the outer's
 -- probes during a covariant callback. The recorder always writes
--- these. A writer-level flag also redirects depth-1 ambient
+-- these. A writer-level flag also redirects env layer ambient
 -- response payloads here for offline debugging when the JSON
 -- traces aren't available; the walker never reads those, so the
 -- flag is debug-only.
 --
 -- Why keyed by requestHash, not by responseHash (= the natural CAS
--- key): the depth-2 reqHash is `SHA-256(query{from =
+-- key): the ambient layer reqHash is `SHA-256(query{from =
 -- subject-id-evolved state hash})` — a pure function of (subject, scope,
 -- prior facts in the chain). Two recordings reaching the same
 -- reqHash necessarily observed the same history; a deterministic
@@ -120,12 +120,12 @@ CREATE TABLE IF NOT EXISTS Terminals (
 
 -- Depth-2 (interaction-tracing) layer: the cb-apply boundary's
 -- sub-trie. Per doc/design/tracing-eval-cache-content-identity-via-asks.md,
--- depth-2 edges key on factSet alone (no Q column) — sibling cached
--- calls' depth-2 sub-traces are kept apart by scope state id inheritance,
+-- ambient layer edges key on factSet alone (no Q column) — sibling cached
+-- calls' ambient layer sub-traces are kept apart by scope state id inheritance,
 -- and same-shape collapse within a call is intentional. toFactSetHash
--- is stored explicitly: at depth-2 there is no live producer for
+-- is stored explicitly: at ambient layer there is no live producer for
 -- incoming-ambient observations, so the walker can't reproduce the
--- transition by live dispatch the way depth-1 does.
+-- transition by live dispatch the way env layer does.
 CREATE TABLE IF NOT EXISTS AmbientAsks (
     fromFactSetHash BLOB NOT NULL,
     requestSetHash  BLOB NOT NULL,

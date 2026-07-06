@@ -76,7 +76,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
 
     auto commitEdge = [&]() {
         /* 1:1 alignment with writer's envWalk: writer inserts each
-           cb-apply boundary's ε obs as a SEPARATE d1 edge at its
+           cb-apply boundary's ε obs as a SEPARATE env edge at its
            `insertionIndex`, not bundled with the real-obs edge that
            triggered it. Walker's dispatch() pushes ε obs (fromHash=0)
            into `pendingEdgeObservations` alongside real obs of the
@@ -183,7 +183,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         }
         /* Apply-boundary: AmbientResult split by chain presence.
             - No chain at applyReqHash: AmbientResult = applyReqHash
-              (= chain root; matches writer's empty-d=2-group path).
+              (= chain root; matches writer's empty-ambient-group path).
             - Chain present: invoke fn live via dispatchApplyLive,
               which forces the result so outer's f drives probes
               against a fresh standin. On divergence, fail dispatch. */
@@ -256,7 +256,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         }
         auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
         /* edgeCtx is threaded through walk() for offline-inspection
-           consumers; d=1 dispatch MUST NOT read stored responses to
+           consumers; env dispatch MUST NOT read stored responses to
            substitute for a live response that differs from cold's —
            doing so masks legitimate outer-body change detection (per
            the design's capability-mediated invariant) AND, even
@@ -588,7 +588,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
            initial state hash when fired (= registerAmbientResolverProxy in
            replay-callback-arg.cc). If we find a matching registration
            here, the OUTER walker resolves to that live proxy and
-           dispatches the d=1 fact live against outer's actual value
+           dispatches the env fact live against outer's actual value
            — capability-mediated, not cached. This closes the seed-
            resolution gap that otherwise kills cb-higher-order's
            DISALLOW_PARSE warm-replay steps.
@@ -609,7 +609,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
            `resolveApplyId` with explicit `isLocalArgId`
            discrimination materialises their RLO. Serving inner
            locals from the reconstructed value tree backed by
-           LocalResponseMap is per design (= depth-2 Replay's
+           LocalResponseMap is per design (= ambient layer Replay's
            "walker reconstructs the LocalObject as a live Nix Value
            tree from the CAS pool"). The forbidden thing is treating
            an OUTER-direction id as if it were a local. */
@@ -727,7 +727,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            state hash to *evolve* via subsequent probes for downstream
            discrimination.
 
-           Opt into depth-2 per-probe validation (= each probe
+           Opt into ambient layer per-probe validation (= each probe
            must appear in some recorded AmbientAsks edge's
            requestSet, or we throw divergence) and root the chain
            at applyReqHash — different cb-applies' chains live in
@@ -860,7 +860,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     }
     if (!isLocalArgId(argHash)) {
         tracingCacheLog(
-            "dispatchApplyLive: arg %s is not a local; no d=2 standin to drive",
+            "dispatchApplyLive: arg %s is not a local; no ambient standin to drive",
             argIdStr.substr(0, 12));
         return std::nullopt;
     }
@@ -882,7 +882,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     } guard{inFlightApplyReqs, applyReqHash};
 
     /* Fresh per-dispatch ReplayCallbackArg for the inner-supplied
-       value. Per via-Asks Replay (depth-2): the walker reconstructs
+       value. Per via-Asks Replay (ambient layer): the walker reconstructs
        the LocalObject as a live Nix Value tree (= lazily produced
        from CAS atoms), hands it to outer's f, and lets f run
        natively. For lambda LocalObjects, the `<replay-local-lambda>`
@@ -942,10 +942,10 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        InterpreterObject wrapping a primop Value). That is what lets
        Change B's TLO-skip kick in and lets outer's `g 5` fire the
        standin's primop directly instead of routing through a
-       `<cached-fn>(TLO)` cascade that bypasses the d=2 lambda-LO
+       `<cached-fn>(TLO)` cascade that bypasses the ambient lambda-LO
        mechanism. The earlier Value-level `mkApp + force` path lost
        the RLO's Object-ness behind two layers of Value wrapping.
-       Divergence (= depth-2 mismatch thrown out of the standin's
+       Divergence (= ambient layer mismatch thrown out of the standin's
        primop, or an outer-side query failure) is caught and signaled
        as nullopt — the surrounding walker treats this as a miss. */
     std::shared_ptr<Object> resultObj;

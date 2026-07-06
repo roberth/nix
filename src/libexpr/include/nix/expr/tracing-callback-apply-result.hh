@@ -10,14 +10,14 @@
  *
  *  - TracingObject's getType/getInt/etc. record sub-Q `Terminals`
  *    rows in the main trie via `writer.logQuery + logResult`. That's
- *    d=1 storage — appropriate for cached-fn results and other
- *    apply-results whose evolved state hash participates in the d=1 walk.
+ *    env storage — appropriate for cached-fn results and other
+ *    apply-results whose evolved state hash participates in the env walk.
  *
- *  - TracingCallbackApplyResult's methods record d=2 observations via
+ *  - TracingCallbackApplyResult's methods record ambient observations via
  *    `writer.logAmbientObservation`. They are grouped with the
  *    enclosing cb-apply boundary's recursive apply Fact (= the same
  *    boundary `logAmbientApplyFact` appended to). At flushAmbient
- *    finalize the writer's d=2 loop stamps each observation with
+ *    finalize the writer's ambient loop stamps each observation with
  *    `from = hex(stateHashAt(applyResultSubject, argAncestry, walk, i))`,
  *    inserts the response payload into `LocalResponseMap` keyed by
  *    the resulting reqHash, and inserts an `AmbientAsks` edge.
@@ -32,7 +32,7 @@
  * back; the synthetic's `advanceChainAndAppendFact` consumes the
  * matching AmbientAsks edge.
  *
- * Closes the d=1 main-trie bypass diagnosed in
+ * Closes the env main-trie bypass diagnosed in
  * `tracing-eval-cache-higher-order-replay.md` — the recordings land
  * exactly where the walker's lambda-LO mechanism reads from.
  */
@@ -58,7 +58,7 @@ class TracingCallbackApplyResult : public Object
     /* ApplyResultSubject{PostulatedIdempotentRead{TLO.state hash}, contraArg.subject}.
        Matches what `<replay-local-lambda>`'s primop builds for the
        synthetic apply-result subject at warm. flushAmbient's
-       d=2 loop uses this subject to stamp each observation's `from`
+       ambient loop uses this subject to stamp each observation's `from`
        field at the appropriate edge index. */
     Subject applyResultSubject;
 
@@ -71,8 +71,8 @@ class TracingCallbackApplyResult : public Object
        computed as `queryHash(QueryApply{fn, arg})` when it pushed
        this boundary). Captured BEFORE `IT::apply`'s
        `openApplyBoundary` would push a new entry, so the
-       observations route to the correct boundary's d=2 chain. */
-    Hash depth2ApplyId;
+       observations route to the correct boundary's ambient chain. */
+    Hash ambientApplyId;
 
     /* stateHashAfter(applyResultSubject, applyArgAncestry, {}) hex — the
        content-only apply-result state hash exposed via getStateHashHex. Computed
@@ -85,7 +85,7 @@ class TracingCallbackApplyResult : public Object
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE QueryGetWHNF
-       d=2 observation. Subsequent calls decode the cached result. */
+       ambient observation. Subsequent calls decode the cached result. */
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 
@@ -97,7 +97,7 @@ public:
         TracingWriter & writer,
         Subject applyResultSubject,
         Hash applyArgAncestry,
-        Hash depth2ApplyId);
+        Hash ambientApplyId);
 
     TracingCallbackApplyResult & withArgCell(std::shared_ptr<const ArgCell> cell)
     {
