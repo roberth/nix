@@ -144,7 +144,7 @@ Observation observationFromQR(const trace::QueryVariant & query, const trace::Re
 }
 
 trace::QueryApply makeApplyResultQuery(
-    const Subject & applyResultSubject, const Hash & scope,
+    const Subject & applyResultSubject, const Hash & argAncestry,
     const std::vector<Edge> & walk, size_t edgeIndex)
 {
     if (!std::holds_alternative<ApplyResultSubject>(applyResultSubject.data))
@@ -161,7 +161,7 @@ trace::QueryApply makeApplyResultQuery(
     trace::QueryApply q;
     q.fromCIDs.reserve(par.roots.size());
     for (auto & root : par.roots) {
-        auto cid = scopeStateIdAt(root, scope, walk, edgeIndex);
+        auto cid = scopeStateIdAt(root, argAncestry, walk, edgeIndex);
         q.fromCIDs.emplace_back(hashHex(cid));
     }
     q.fnPath = *applyStep.fnPath;
@@ -173,7 +173,7 @@ trace::QueryApply makeApplyResultQuery(
 
 Hash scopeStateIdAtWithHook(
     const Subject & subject,
-    const Hash & scope,
+    const Hash & argAncestry,
     const std::vector<Edge> & walk,
     size_t edgeIndex,
     const std::function<void(const EvolutionStep &)> & hook)
@@ -190,13 +190,13 @@ Hash scopeStateIdAtWithHook(
        edge-cumulative fold. Path 3 walker will replicate this
        edge-scoped semantics — cur updates at edge boundaries,
        not per-observation. */
-    Hash result = scopeStateIdAt(subject, scope, walk, edgeIndex);
+    Hash result = scopeStateIdAt(subject, argAncestry, walk, edgeIndex);
     Hash subjectSelfHash = scopeStateIdAt(subject, Hash(HashAlgorithm::SHA256), {}, 0);
     Hash selfFactFold = Hash(HashAlgorithm::SHA256);
     for (size_t k = 0; k < edgeIndex && k < walk.size(); ++k) {
         Hash myScopeStateIdAtK = TracingDecisionGraph::xorHashes(
-            scopeStateIdAt(subject, scope, walk, k), Hash(HashAlgorithm::SHA256));
-        /* Above is `scopeStateIdAt(subject, scope, walk, k)` —
+            scopeStateIdAt(subject, argAncestry, walk, k), Hash(HashAlgorithm::SHA256));
+        /* Above is `scopeStateIdAt(subject, argAncestry, walk, k)` —
            subject's state at edge k's precondition. */
         for (auto & obs : walk[k].observations) {
             if (obs.fromHash == myScopeStateIdAtK) {
@@ -211,19 +211,19 @@ Hash scopeStateIdAtWithHook(
     return result;
 }
 
-Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
+Hash scopeStateIdAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex)
 {
-    /* Compute subject's scope state id at the precondition of the
+    /* Compute subject's argAncestry state id at the precondition of the
        `edgeIndex`-th edge by replaying the first `edgeIndex` edges'
-       effects on the subject's running scope state id.
+       effects on the subject's running argAncestry state id.
 
-       Inheritance: `scope` is the XOR of outer-scope argStateIds (chiefly
+       Inheritance: `argAncestry` is the XOR of outer-argAncestry argStateIds (chiefly
        the cached call's argStateId(Q) at the cb-apply boundary). Passing
        zero gives the pure structural id. Leaf subjects
-       (PositionalSeed, PostulatedIdempotentRead) XOR `scope` into their
+       (PositionalSeed, PostulatedIdempotentRead) XOR `argAncestry` into their
        base hash. Composite subjects (DerivedSubject,
-       ApplyResultSubject) propagate `scope` recursively through
-       their constituents' scope state ids; the structural derivation
+       ApplyResultSubject) propagate `argAncestry` recursively through
+       their constituents' argAncestry state ids; the structural derivation
        at this level uses those scoped constituents' values in its
        query payload, so inheritance ripples through naturally
        without a second XOR at this level.
@@ -249,7 +249,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
             auto subjectIdAt = [&](size_t k) -> Hash {
                 if constexpr (std::is_same_v<T, PositionalSeed>) {
                     auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
-                    return TracingDecisionGraph::xorHashes(base, scope);
+                    return TracingDecisionGraph::xorHashes(base, argAncestry);
                 } else if constexpr (std::is_same_v<T, DerivedSubject>) {
                     /* Derived subjects have no argStateId — only an address
                        (= producer query hash). Callers that need an
@@ -263,19 +263,19 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
                        Constituents may be Derived → route through
                        structuralAddress (which dispatches Derived to
                        the producer-query-hash path). */
-                    auto fnAtK = structuralAddress(*alt.fn, scope, walk, k);
-                    auto argAtK = structuralAddress(*alt.arg, scope, walk, k);
+                    auto fnAtK = structuralAddress(*alt.fn, argAncestry, walk, k);
+                    auto argAtK = structuralAddress(*alt.arg, argAncestry, walk, k);
                     nlohmann::json qj = trace::QueryApply{hashHex(fnAtK), hashHex(argAtK)};
                     return hashString(HashAlgorithm::SHA256, qj.dump());
                 } else if constexpr (std::is_same_v<T, PostulatedIdempotentRead>) {
-                    /* X is treated as scope-saturated. Callers pass
-                       hashes that already encode the relevant scope
+                    /* X is treated as argAncestry-saturated. Callers pass
+                       hashes that already encode the relevant argAncestry
                        — `AmbientObject::getCdi()` returns
                        structuralAddressAfter with argAncestry
                        baked in; ReplayCallbackArg's localId is
                        scopeStateIdAfter(PositionalSeed{D}, callArgAncestry, {})
-                       which is also scope-saturated. Re-XORing scope
-                       here would either double-XOR (= scope-saturated
+                       which is also argAncestry-saturated. Re-XORing argAncestry
+                       here would either double-XOR (= argAncestry-saturated
                        inputs) or under-XOR (= un-scoped inputs) — the
                        per-arg-completion doc (= option 1) avoids
                        both by treating PostulatedIdempotentRead as a
@@ -313,10 +313,10 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
 
             auto result = TracingDecisionGraph::xorHashes(subjectIdAt(edgeIndex), selfFactFold);
             tracingCacheLog(
-                "scopeStateIdAt: subject=%s scope=%s walk.size=%zu edgeIndex=%zu\n"
+                "scopeStateIdAt: subject=%s argAncestry=%s walk.size=%zu edgeIndex=%zu\n"
                 "  subjectIdAt(edgeIndex)=%s selfFactFold=%s result=%s%s",
                 describe(subject),
-                hashHex(scope).substr(0, 12),
+                hashHex(argAncestry).substr(0, 12),
                 walk.size(), edgeIndex,
                 hashHex(subjectIdAt(edgeIndex)).substr(0, 12),
                 hashHex(selfFactFold).substr(0, 12),
@@ -327,12 +327,12 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
         subject.data);
 }
 
-Hash scopeStateIdAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk)
+Hash scopeStateIdAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
 {
-    return scopeStateIdAt(subject, scope, walk, walk.size());
+    return scopeStateIdAt(subject, argAncestry, walk, walk.size());
 }
 
-Hash scopeStateIdAtConverged(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk)
+Hash scopeStateIdAtConverged(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
 {
     /* Flatten walk into deduped observation pool keyed by
        (fromHash, elementHash). Order within `walk` is discarded —
@@ -348,7 +348,7 @@ Hash scopeStateIdAtConverged(const Subject & subject, const Hash & scope, const 
     /* Greedy state-match partition: at each round, pull every obs
        whose fromHash == subject's current state into a synthetic
        edge; append; recompute the subject's state; repeat until no
-       obs matches. `scopeStateIdAt(subj, scope, hypWalk, hypWalk.size())`
+       obs matches. `scopeStateIdAt(subj, argAncestry, hypWalk, hypWalk.size())`
        XOR-folds each edge's matching obs into the running state,
        so state advances one round per iteration.
 
@@ -358,7 +358,7 @@ Hash scopeStateIdAtConverged(const Subject & subject, const Hash & scope, const 
        size without an explicit numeric cap. */
     std::vector<Edge> hypWalk;
     while (!flat.empty()) {
-        auto currentId = scopeStateIdAt(subject, scope, hypWalk, hypWalk.size());
+        auto currentId = scopeStateIdAt(subject, argAncestry, hypWalk, hypWalk.size());
         Edge partition;
         std::vector<Observation> stillRemaining;
         for (auto & obs : flat) {
@@ -369,11 +369,11 @@ Hash scopeStateIdAtConverged(const Subject & subject, const Hash & scope, const 
         hypWalk.push_back(std::move(partition));
         flat = std::move(stillRemaining);
     }
-    return scopeStateIdAt(subject, scope, hypWalk, hypWalk.size());
+    return scopeStateIdAt(subject, argAncestry, hypWalk, hypWalk.size());
 }
 
 Hash structuralAddress(
-    const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex)
+    const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex)
 {
     /* For non-derived subjects, the structural address IS the argStateId.
        For DerivedSubject, scopeStateIdAt traps; we compute the
@@ -384,7 +384,7 @@ Hash structuralAddress(
         std::vector<trace::QueryLeaf> fromCIDs;
         fromCIDs.reserve(parentRoots.size());
         for (auto & root : parentRoots) {
-            auto cid = scopeStateIdAt(root, scope, walk, edgeIndex);
+            auto cid = scopeStateIdAt(root, argAncestry, walk, edgeIndex);
             fromCIDs.emplace_back(hashHex(cid));
         }
         auto fromLeaf = fromCIDs.empty() ? trace::QueryLeaf("") : fromCIDs[0];
@@ -402,12 +402,12 @@ Hash structuralAddress(
         }
         return hashString(HashAlgorithm::SHA256, qj.dump());
     }
-    return scopeStateIdAt(subject, scope, walk, edgeIndex);
+    return scopeStateIdAt(subject, argAncestry, walk, edgeIndex);
 }
 
-Hash structuralAddressAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk)
+Hash structuralAddressAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
 {
-    return structuralAddress(subject, scope, walk, walk.size());
+    return structuralAddress(subject, argAncestry, walk, walk.size());
 }
 
 std::string describe(const Subject & subject)

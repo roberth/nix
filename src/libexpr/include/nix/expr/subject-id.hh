@@ -4,7 +4,7 @@
  * Content-defined identity computed as a pure function of subject
  * and factset. See `doc/design/tracing-eval-cache-content-identity-via-asks.md`.
  *
- * scope state ids are not stored anywhere; they're computed on demand
+ * argAncestry state ids are not stored anywhere; they're computed on demand
  * from a value's static structural identifier (the "subject") and
  * the current factset. The recorder and the walker call the same
  * function with the same arguments and obtain identical hashes.
@@ -99,7 +99,7 @@ struct Subject
 };
 
 /** A single observation reduced to the two hashes scopeStateIdAt needs.
-    `fromHash` is the scope state id the query was issued against;
+    `fromHash` is the argAncestry state id the query was issued against;
     `elementHash` is SHA-256(reqHash || respHash) — the v13 H_element.
     Named `Observation` to match the doc's per-Asks-edge "facts about V"
     membership language (= each element is one observed (req, resp)
@@ -114,7 +114,7 @@ struct Observation
 
 /** An Asks edge's worth of observations. Observations in one edge are
     dispatched against a single shared precondition factset; their
-    `from` fields all refer to subjects' scope state ids at that precondition. */
+    `from` fields all refer to subjects' argAncestry state ids at that precondition. */
 struct Edge
 {
     std::vector<Observation> observations;
@@ -124,22 +124,22 @@ struct Edge
     the writer at flush time where it already holds the variants. */
 Observation observationFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result);
 
-/** Compute the scope state id of `subject` after walking through all
-    `edges`, inheriting `scope` (the XOR of outer-scope argStateIds — e.g.
+/** Compute the argAncestry state id of `subject` after walking through all
+    `edges`, inheriting `argAncestry` (the XOR of outer-argAncestry argStateIds — e.g.
     argStateId(Q) at the cb-apply boundary). Passing the zero hash for
-    `scope` gives the pure structural scope state id, equivalent to
+    `argAncestry` gives the pure structural argAncestry state id, equivalent to
     no inheritance.
 
     Inheritance applies at the leaf: `PositionalSeed` and
-    `PostulatedIdempotentRead` XOR `scope` into their base hash.
-    `DerivedSubject` and `ApplyResultSubject` propagate `scope`
-    via their constituents' (recursively scope-aware) scope state ids,
+    `PostulatedIdempotentRead` XOR `argAncestry` into their base hash.
+    `DerivedSubject` and `ApplyResultSubject` propagate `argAncestry`
+    via their constituents' (recursively argAncestry-aware) argAncestry state ids,
     so the structural derivation incorporates inheritance naturally
     via the constituents' `from`-field values. */
-Hash scopeStateIdAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk);
+Hash scopeStateIdAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
 
-/** Compute the scope state id of `subject` at the precondition of the
-    edge at index `edgeIndex` in `walk`, inheriting `scope`.
+/** Compute the argAncestry state id of `subject` at the precondition of the
+    edge at index `edgeIndex` in `walk`, inheriting `argAncestry`.
     `edgeIndex == 0` means the initial precondition (= empty
     factset); `edgeIndex == walk.size()` means the postcondition of
     the whole walk (equivalent to `scopeStateIdAfter`).
@@ -154,7 +154,7 @@ Hash scopeStateIdAfter(const Subject & subject, const Hash & scope, const std::v
     `(root_cdi, path)`. Passing a `DerivedSubject` traps; callers
     that want a content-addressed identifier for any Subject
     (including derived) should use `structuralAddress` instead. */
-Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex);
+Hash scopeStateIdAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex);
 
 /** Grouping-independent converged fold. Flattens `walk` into a
     deduplicated observation pool (by (fromHash, elementHash)) and
@@ -173,7 +173,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & scope, const std::vect
     equivalent to iterating the observation-permutation loop in
     `TracingReplayEvaluator::resolveCdiId` to its fixed point. */
 Hash scopeStateIdAtConverged(
-    const Subject & subject, const Hash & scope, const std::vector<Edge> & walk);
+    const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
 
 /** Compute a content-addressed structural identifier for any
     `subject` — including `DerivedSubject`, where `scopeStateIdAt`
@@ -183,12 +183,12 @@ Hash scopeStateIdAtConverged(
     `GetAttr`, similarly for `GetListElem`. Used by `AmbientObject`,
     `TracingCallbackArg`, etc. to expose a single-`Hash` identity
     handle even though derived values don't have argStateIds proper. */
-Hash structuralAddress(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk, size_t edgeIndex);
+Hash structuralAddress(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex);
 
 /** Convenience: `structuralAddress` at the walk's tail (= edgeIndex
     = walk.size()). Mirrors `scopeStateIdAfter` but defined for all
     subject forms. */
-Hash structuralAddressAfter(const Subject & subject, const Hash & scope, const std::vector<Edge> & walk);
+Hash structuralAddressAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
 
 /** Per-subject observation trie fold step, as consumed by Path 3
     stamping / navigation. Emitted by `scopeStateIdAtWithHook`
@@ -210,14 +210,14 @@ struct EvolutionStep {
     record time — walker doesn't call this variant. */
 Hash scopeStateIdAtWithHook(
     const Subject & subject,
-    const Hash & scope,
+    const Hash & argAncestry,
     const std::vector<Edge> & walk,
     size_t edgeIndex,
     const std::function<void(const EvolutionStep &)> & hook);
 
 /** Build the per-arg-encoded `QueryApply` payload for an apply-result
     subject at a given walk edge index. The returned query's JSON
-    hash equals `scopeStateIdAt(applyResult, scope, walk, edgeIndex)`,
+    hash equals `scopeStateIdAt(applyResult, argAncestry, walk, edgeIndex)`,
     so callers can use the same value as both the Requests-pool key
     (= reqHash) and the apply-result's scopeStateId (= what's recorded as
     `from` on downstream facts). Threads cb_arg root scopeStateIds at
@@ -228,7 +228,7 @@ Hash scopeStateIdAtWithHook(
     alone determine the hash. */
 trace::QueryApply makeApplyResultQuery(
     const Subject & applyResultSubject,
-    const Hash & scope,
+    const Hash & argAncestry,
     const std::vector<Edge> & walk,
     size_t edgeIndex);
 
@@ -259,14 +259,14 @@ struct PathAndRoots
 PathAndRoots pathAndRootsFromSubject(const Subject & subject);
 
 /** Combine fn's and arg's inherited scopes into an apply boundary's
-    scope. Apply treats both sides equally (= unlike QueryAttr or
+    argAncestry. Apply treats both sides equally (= unlike QueryAttr or
     curried-result subjects which have a neat single parent), but the
     combination must be non-commutative (= `f a` ≠ `a f`; cf.
     `flip apply`), so SHA-256 over a tagged concatenation rather
     than XOR. */
 inline Hash combineArgAncestries(const Hash & fnArgAncestry, const Hash & argArgAncestry)
 {
-    std::string s = "apply-scope:";
+    std::string s = "apply-argAncestry:";
     s += fnArgAncestry.to_string(HashFormat::Base16, false);
     s += ":";
     s += argArgAncestry.to_string(HashFormat::Base16, false);
@@ -299,13 +299,13 @@ std::string describe(const Subject & subject);
     same ApplyContext so the chain `wrapper.getAttr("foo").getInt()`
     accumulates all three observations into one walk.
 
-    `argSubject`/`scope` identify the cb arg's structural Subject and
-    its inherited scope (= per the cidasks Inheritance section, the
-    outer-scope argStateIds that the per-invocation scopeStateIds compose with). */
+    `argSubject`/`argAncestry` identify the cb arg's structural Subject and
+    its inherited argAncestry (= per the cidasks Inheritance section, the
+    outer-argAncestry argStateIds that the per-invocation scopeStateIds compose with). */
 struct ApplyContext
 {
     Subject argSubject;
-    Hash scope;
+    Hash argAncestry;
     std::vector<Observation> observations;
 };
 

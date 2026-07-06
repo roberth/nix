@@ -115,7 +115,7 @@ public:
         applyContext = std::move(ctx);
         applyResultSubject = std::move(resultSubject);
         if (applyContext)
-            applyArgAncestry = applyContext->scope;
+            applyArgAncestry = applyContext->argAncestry;
         return *this;
     }
 
