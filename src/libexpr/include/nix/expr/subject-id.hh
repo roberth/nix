@@ -264,12 +264,12 @@ PathAndRoots pathAndRootsFromSubject(const Subject & subject);
     combination must be non-commutative (= `f a` ≠ `a f`; cf.
     `flip apply`), so SHA-256 over a tagged concatenation rather
     than XOR. */
-inline Hash combineArgAncestries(const Hash & fnScope, const Hash & argScope)
+inline Hash combineArgAncestries(const Hash & fnArgAncestry, const Hash & argArgAncestry)
 {
     std::string s = "apply-scope:";
-    s += fnScope.to_string(HashFormat::Base16, false);
+    s += fnArgAncestry.to_string(HashFormat::Base16, false);
     s += ":";
-    s += argScope.to_string(HashFormat::Base16, false);
+    s += argArgAncestry.to_string(HashFormat::Base16, false);
     return hashString(HashAlgorithm::SHA256, s);
 }
 

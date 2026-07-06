@@ -296,10 +296,10 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
        restore), so this sample reflects the CURRENT sibling context
        walker is operating under. Do not freeze at closure-creation
        time — the scope evolves, and freezing would emit stale hashes. */
-    Hash argScope = resolverHandle->callArgAncestry;
-    auto argId = scopeStateIdAfter(argSubject, argScope, {});
-    tracingCacheLog("AmbientApply::run: argScope=%s argId=%s",
-                    argScope.to_string(HashFormat::Base16, false).substr(0, 12),
+    Hash argAncestry = resolverHandle->callArgAncestry;
+    auto argId = scopeStateIdAfter(argSubject, argAncestry, {});
+    tracingCacheLog("AmbientApply::run: argAncestry=%s argId=%s",
+                    argAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
                     argId.to_string(HashFormat::Base16, false).substr(0, 12));
 
     /* Compute the resultId early so we can pass it to the
