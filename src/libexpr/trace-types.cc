@@ -369,15 +369,15 @@ void from_json(const nlohmann::json & j, ResultWHNF & r)
 // QueryLeaf serialization
 // ---------------------------------------------------------------------------
 
-/* ContentLeaf encodes as the bare hex string (wire-format compatible with
+/* StateHashLeaf encodes as the bare hex string (wire-format compatible with
    the previous std::string `from` field). AmbientLeaf encodes as an
    object so a parser can distinguish the two on the rare cases where it
    matters during transition; AmbientLeafs should not appear in recorded
    artifacts. */
 void to_json(nlohmann::json & j, const QueryLeaf & leaf)
 {
-    if (leaf.isContent())
-        j = leaf.contentHash();
+    if (leaf.isStateHash())
+        j = leaf.stateHash();
     else
         j = nlohmann::json{{"ambient", leaf.ambientIndex()}};
 }

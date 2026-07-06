@@ -270,8 +270,8 @@ struct ResultWHNF
 /**
  * Numbered identifier carrier. Sanctioned only at the CLI per
  * Principle #1 of the content-identity design — everything below the
- * CLI uses content-defined hashes via `ContentLeaf`. Currently
- * unused: the eval-cache path constructs `ContentLeaf` directly, and
+ * CLI uses content-defined hashes via `StateHashLeaf`. Currently
+ * unused: the eval-cache path constructs `StateHashLeaf` directly, and
  * CLI integration through this carrier hasn't landed.
  * See doc/design/tracing-eval-cache-subject-id.md §Foundational principles.
  */
@@ -289,42 +289,42 @@ struct AmbientLeaf
  * std::string `from` field — recorded ContentLeafs are interchangeable
  * with the strings today's code already produces.
  */
-struct ContentLeaf
+struct StateHashLeaf
 {
     std::string hash;
-    auto operator<=>(const ContentLeaf &) const = default;
+    auto operator<=>(const StateHashLeaf &) const = default;
 };
 
 /**
  * QueryLeaf: the typed `from` (and `fn`/`arg`) field of Query types.
  *
  * Implicit construction from std::string / const char* produces a
- * ContentLeaf — most construction sites today pass a hex string for
+ * StateHashLeaf — most construction sites today pass a hex string for
  * `from`, and this lets them keep working without source changes during
  * the typed-leaf rollout. JSON serialisation also preserves the wire
- * format (ContentLeaf encodes as a plain string).
+ * format (StateHashLeaf encodes as a plain string).
  */
 struct QueryLeaf
 {
-    std::variant<AmbientLeaf, ContentLeaf> data;
+    std::variant<AmbientLeaf, StateHashLeaf> data;
 
     QueryLeaf() = default;
-    QueryLeaf(std::string hex) : data(ContentLeaf{std::move(hex)}) {}
-    QueryLeaf(const char * hex) : data(ContentLeaf{hex}) {}
+    QueryLeaf(std::string hex) : data(StateHashLeaf{std::move(hex)}) {}
+    QueryLeaf(const char * hex) : data(StateHashLeaf{hex}) {}
     QueryLeaf(AmbientLeaf a) : data(a) {}
-    QueryLeaf(ContentLeaf c) : data(std::move(c)) {}
+    QueryLeaf(StateHashLeaf c) : data(std::move(c)) {}
 
-    bool isContent() const
+    bool isStateHash() const
     {
-        return std::holds_alternative<ContentLeaf>(data);
+        return std::holds_alternative<StateHashLeaf>(data);
     }
     bool isAmbient() const
     {
         return std::holds_alternative<AmbientLeaf>(data);
     }
-    const std::string & contentHash() const
+    const std::string & stateHash() const
     {
-        return std::get<ContentLeaf>(data).hash;
+        return std::get<StateHashLeaf>(data).hash;
     }
     int ambientIndex() const
     {

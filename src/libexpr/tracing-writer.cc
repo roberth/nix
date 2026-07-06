@@ -85,7 +85,7 @@ void TracingWriter::flushAmbient(bool finalize)
                 });
             fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
         }
-        std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].contentHash();
+        std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].stateHash();
         auto fromStateHash = fromStateHashes.empty()
             ? Hash(HashAlgorithm::SHA256)
             : Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
@@ -149,12 +149,12 @@ void TracingWriter::flushAmbient(bool finalize)
             std::vector<trace::QueryLeaf> initialFromStateHashes;
             initialFromStateHashes.reserve(roots.size());
             for (auto & root : roots) {
-                auto initCid = stateHashAt(
+                auto initStateHash = stateHashAt(
                     root, pf.argAncestry, {}, 0);
                 initialFromStateHashes.emplace_back(
-                    initCid.to_string(HashFormat::Base16, false));
+                    initStateHash.to_string(HashFormat::Base16, false));
             }
-            std::string initialFromHex = initialFromStateHashes[0].contentHash();
+            std::string initialFromHex = initialFromStateHashes[0].stateHash();
             nlohmann::json initialQueryJson;
             std::visit([&](const auto & q) { initialQueryJson = q; }, pf.query);
             rewriteFromInQuery(initialQueryJson, initialFromHex);
@@ -348,7 +348,7 @@ void TracingWriter::flushAmbient(bool finalize)
                     });
                 fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
             }
-            std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].contentHash();
+            std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].stateHash();
             auto fromStateHash = fromStateHashes.empty()
                 ? Hash(HashAlgorithm::SHA256)
                 : Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);

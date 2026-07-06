@@ -19,9 +19,9 @@ Hash fromStateHashOf(const trace::QueryVariant & query)
     return std::visit(
         [](const auto & q) -> Hash {
             if constexpr (requires { q.from; }) {
-                if (!q.from.isContent())
-                    throw Error("fromStateHashOf: query.from is not a ContentLeaf");
-                return Hash::parseNonSRIUnprefixed(q.from.contentHash(), HashAlgorithm::SHA256);
+                if (!q.from.isStateHash())
+                    throw Error("fromStateHashOf: query.from is not a StateHashLeaf");
+                return Hash::parseNonSRIUnprefixed(q.from.stateHash(), HashAlgorithm::SHA256);
             } else {
                 throw Error("fromStateHashOf: query type has no `from` field");
             }

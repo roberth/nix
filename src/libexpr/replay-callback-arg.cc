@@ -70,13 +70,13 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, c
     auto reqHash = TracingDecisionGraph::computeQueryHash(query);
     tracingCacheLog(
         "rlo: read %s from=%s reqHash=%s outerCtx=%s",
-        Q::tag, query.from.isContent() ? query.from.contentHash().substr(0, 12) : "<?>",
+        Q::tag, query.from.isStateHash() ? query.from.stateHash().substr(0, 12) : "<?>",
         reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
         outerContext.to_string(HashFormat::Base16, false).substr(0, 12));
     auto payload = dg.getLocalResponsePayload(reqHash, outerContext);
     if (!payload)
         throw Error("ReplayCallbackArg: no recorded response for %s on local %s",
-            Q::tag, query.from.isContent() ? query.from.contentHash() : "<ambient>");
+            Q::tag, query.from.isStateHash() ? query.from.stateHash() : "<ambient>");
     return cborStringToJson(*payload);
 }
 
@@ -564,7 +564,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     Hash fromStateHash = fromStateHashes.empty()
                         ? Hash(HashAlgorithm::SHA256)
                         : Hash::parseNonSRIUnprefixed(
-                              fromStateHashes[0].contentHash(), HashAlgorithm::SHA256);
+                              fromStateHashes[0].stateHash(), HashAlgorithm::SHA256);
 
                     Edge edge;
                     edge.observations.push_back({fromStateHash, elementHash});
