@@ -45,7 +45,7 @@ using AmbientQueryFn = std::function<AmbientQueryResult(
 /**
  * Callback type for ambient function application.
  * Takes the function's Object id, the argument Object, and the
- * calling AmbientObject's effective argScope cell (the chain
+ * calling AmbientObject's effective argCell cell (the chain
  * root from which the new local cell's depth descends). Returns
  * the result Object id.
  *
@@ -88,13 +88,13 @@ class AmbientObject : public Object
        resolver from the outer EvalState's `rootFSRoot`. */
     ref<SourceRoot> ambientRootFSRoot;
 
-    /* Argument-scope wiring. `argScope` is the nearest enclosing
+    /* Argument-scope wiring. `argCell` is the nearest enclosing
        apply's cell — navigation children carry the same cell as their
        parent; apply-result proxies open a fresh cell rooted at the
        fn's cell. The cell carries its own `parent` field, so the
        ancestor chain is reachable from the cell — no proxy `parent`
        field needed. */
-    std::shared_ptr<const ArgCell> argScope;
+    std::shared_ptr<const ArgCell> argCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which issues ONE QueryGetWHNF
@@ -115,11 +115,11 @@ public:
         scope state ids distinct. */
     Hash getInheritedScope() const override { return inheritedScope; }
 
-    /** Set the proxy's argScope. Call right after construction at
+    /** Set the proxy's argCell. Call right after construction at
         boundary sites. Returns *this for chaining. */
     AmbientObject & withScope(std::shared_ptr<const ArgCell> argScope_)
     {
-        argScope = std::move(argScope_);
+        argCell = std::move(argScope_);
         return *this;
     }
 
@@ -144,7 +144,7 @@ public:
         cb-arg seed). */
     std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
-    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argScope; }
+    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argCell; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

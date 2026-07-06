@@ -129,7 +129,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
         if (qh.queryHash && childTriePos)
             pushObservation(parentHash, *qh.queryHash, childTriePos->resultNodeHash);
         auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
-        child->withScope(argScope);
+        child->withScope(argCell);
         if (applyContext) child->withApplyContext(applyContext);
         return child;
     }
@@ -252,7 +252,7 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     if (qh.queryHash && childTriePos)
         pushObservation(parentHash, *qh.queryHash, childTriePos->resultNodeHash);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
-    child->withScope(argScope);
+    child->withScope(argCell);
     if (applyContext) child->withApplyContext(applyContext);
     return child;
 }
@@ -374,7 +374,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     };
     auto child = std::shared_ptr<TracingObject>(
         new TracingObject(ref<Object>(result), writer, v, applyTriePos));
-    auto cell = ArgCell::make(argScope, argObj);
+    auto cell = ArgCell::make(argCell, argObj);
     child->withScope(std::move(cell));
     child->withApplyResultSubject(std::move(resultSubject), applyScopeLocal);
     if (auto * argAmb = dynamic_cast<AmbientObject *>(argObj.get())) {

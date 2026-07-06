@@ -81,7 +81,7 @@ class TracingCallbackApplyResult : public Object
     std::string applyScopeStateIdHex;
 
     /* Argument-scope cell — same shape as TracingObject. */
-    std::shared_ptr<const ArgCell> argScope;
+    std::shared_ptr<const ArgCell> argCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE QueryGetWHNF
@@ -101,11 +101,11 @@ public:
 
     TracingCallbackApplyResult & withScope(std::shared_ptr<const ArgCell> cell)
     {
-        argScope = std::move(cell);
+        argCell = std::move(cell);
         return *this;
     }
 
-    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argScope; }
+    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argCell; }
 
     /** Symmetric to TracingObject/TracingReplayObject: surface the
         ApplyResultSubject so a subsequent apply on this wrapper

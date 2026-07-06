@@ -34,7 +34,7 @@ class TracingObject : public Object
        cell; navigation children (maybeGetAttr / getListElem) inherit
        the parent's cell. Cell's own `parent` field carries the
        ancestor chain. */
-    std::shared_ptr<const ArgCell> argScope;
+    std::shared_ptr<const ArgCell> argCell;
 
     /* For apply-result wrappers: the cidasks Subject that identifies
        this apply structurally (ApplyResultSubject{fn, arg}), and the
@@ -75,10 +75,10 @@ public:
         ValueHandle valueNum,
         std::optional<TriePosition> triePos = std::nullopt);
 
-    /** Set the proxy's argScope. Returns *this for chaining. */
+    /** Set the proxy's argCell. Returns *this for chaining. */
     TracingObject & withScope(std::shared_ptr<const ArgCell> argScope_)
     {
-        argScope = std::move(argScope_);
+        argCell = std::move(argScope_);
         return *this;
     }
 
@@ -121,7 +121,7 @@ public:
         baked at construction. */
     Hash getInheritedScope() const override { return applyArgAncestry; }
 
-    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argScope; }
+    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argCell; }
 
     /** Get the query hash string for trie identity, if available. */
     std::optional<std::string> getQueryHashStr() const

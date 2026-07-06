@@ -31,7 +31,7 @@ class TracingReplayEvaluator : public Evaluator
      * Threaded through walk → dispatch → getCurrentResponse →
      * dispatchAmbientQuery → resolveCdiId. Holds the proxy
      * whose method triggered this walk (so resolveCdiId can
-     * walk the parent / argScope chain on the proxy graph) plus a
+     * walk the parent / argCell chain on the proxy graph) plus a
      * per-walk memo of ids already resolved. Lives only for the
      * duration of one walk call — no cross-call leakage as
      * happened with the previous evaluator-global ambientState.
@@ -40,7 +40,7 @@ class TracingReplayEvaluator : public Evaluator
     {
         /** The proxy whose method triggered this walk. Resolution
             walks this proxy's parent chain looking for matching
-            argScope cells. Null for top-level entry points
+            argCell cells. Null for top-level entry points
             (evalFile, evalExpr) where no proxy exists yet. */
         std::shared_ptr<Object> currentProxy;
         /** Memoise id → resolved Object within this single walk so
@@ -123,7 +123,7 @@ class TracingReplayEvaluator : public Evaluator
 
     /** Resolve a recorded ambient id (hex of a Hash) to a live
         Object. Seed ids are found by walking ctx.currentProxy's
-        parent / argScope chain on the proxy graph; derived ids are
+        parent / argCell chain on the proxy graph; derived ids are
         looked up by their producer Request in the Requests pool and
         resolved recursively. Per-walk memoisation in ctx.memo
         prevents redundant work within the same walk. Returns
@@ -203,7 +203,7 @@ public:
     /**
      * v13 walk lookup. Returns (resultPayload, resultHash) on hit,
      * nullopt on miss. `currentProxy` is the cache-boundary proxy
-     * whose method triggered this walk — its parent/argScope chain
+     * whose method triggered this walk — its parent/argCell chain
      * grounds ambient id resolution during dispatch. Null for
      * top-level entry points (evalFile/evalExpr) that have no
      * proxy yet.

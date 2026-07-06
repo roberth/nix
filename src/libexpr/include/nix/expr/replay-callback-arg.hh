@@ -137,7 +137,7 @@ class ReplayCallbackArg : public Object
     /* Argument-scope cell. Navigation children carry the same cell
        as their parent; the top-level (cb-arg) Local carries the
        apply's cell. Cell's own `parent` field gives ancestor chain. */
-    std::shared_ptr<const ArgCell> argScope;
+    std::shared_ptr<const ArgCell> argCell;
 
 public:
     /* Constructor for derived children. Subject is built by the
@@ -161,10 +161,10 @@ public:
         , outerContext(std::move(outerContext_))
         , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
 
-    /** Set the proxy's argScope. Returns *this for chaining. */
+    /** Set the proxy's argCell. Returns *this for chaining. */
     ReplayCallbackArg & withScope(std::shared_ptr<const ArgCell> argScope_)
     {
-        argScope = std::move(argScope_);
+        argCell = std::move(argScope_);
         return *this;
     }
 
@@ -226,7 +226,7 @@ public:
         respHash. */
     Hash getChainCursor() const { return *chainCursor; }
 
-    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argScope; }
+    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argCell; }
 
     /** Content-defined identity is the localId (= the cb-apply local
         arg's argStateId hash recorded at write time). Lets evaluator.apply

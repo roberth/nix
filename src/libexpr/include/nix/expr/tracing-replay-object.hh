@@ -32,7 +32,7 @@ class TracingReplayObject : public Object
        rooted at the fn's cell; navigation children carry the same
        cell as their parent. Cell's own `parent` field gives the
        ancestor chain. */
-    std::shared_ptr<const ArgCell> argScope;
+    std::shared_ptr<const ArgCell> argCell;
 
     /* Per-cb-apply observation context for the apply that produced
        this object. Set on apply-result wrappers by
@@ -99,10 +99,10 @@ public:
     TracingReplayObject(
         TracingReplayEvaluator & evaluator, TriePosition triePos, std::function<ref<Object>()> getInner);
 
-    /** Set the proxy's argScope. Returns *this for chaining. */
+    /** Set the proxy's argCell. Returns *this for chaining. */
     TracingReplayObject & withScope(std::shared_ptr<const ArgCell> argScope_)
     {
-        argScope = std::move(argScope_);
+        argCell = std::move(argScope_);
         return *this;
     }
 
@@ -141,7 +141,7 @@ public:
 
     std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
-    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argScope; }
+    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argCell; }
 
     /** Symmetric to `TracingObject::getSubject()`: surface the apply-
         result Subject when this wrapper is an apply result so the

@@ -53,7 +53,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
     }
 };
 
-/** Return the proxy's argScope cell — the nearest enclosing apply's
+/** Return the proxy's argCell cell — the nearest enclosing apply's
     cell. Navigation children carry the parent's cell directly; apply
     results carry their own fresh cell. Returns null for non-proxy
     Objects or for proxies that haven't been scoped. */

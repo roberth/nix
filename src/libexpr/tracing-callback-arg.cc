@@ -21,7 +21,7 @@ TracingCallbackArg::TracingCallbackArg(
     Subject subject_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
-    std::shared_ptr<const ArgCell> argScope,
+    std::shared_ptr<const ArgCell> argCell,
     Hash inheritedScope_,
     Hash depth2ApplyId_)
     : inner(std::move(inner))
@@ -30,7 +30,7 @@ TracingCallbackArg::TracingCallbackArg(
     , depth2ApplyId(std::move(depth2ApplyId_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
-    , argScope(std::move(argScope))
+    , argCell(std::move(argCell))
 {
 }
 
@@ -50,7 +50,7 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
         .name = name,
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argScope, inheritedScope, depth2ApplyId);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, inheritedScope, depth2ApplyId);
 }
 
 trace::ResultWHNF & TracingCallbackArg::whnf()
@@ -158,7 +158,7 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
         .index = index,
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argScope, inheritedScope, depth2ApplyId);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, inheritedScope, depth2ApplyId);
 }
 
 ObjectType TracingCallbackArg::getTypeLazy()
@@ -234,7 +234,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(result), std::move(resultSubject), writer, rootFSRoot, argScope, inheritedScope, depth2ApplyId);
+        std::move(result), std::move(resultSubject), writer, rootFSRoot, argCell, inheritedScope, depth2ApplyId);
 }
 
 } // namespace nix

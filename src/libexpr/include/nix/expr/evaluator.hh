@@ -248,7 +248,7 @@ public:
     }
 
     /**
-     * Cache-boundary proxy graph: return this Object's `argScope`
+     * Cache-boundary proxy graph: return this Object's `argCell`
      * cell — the nearest enclosing apply's cell. Navigation children
      * inherit the parent's cell; apply-result proxies open a fresh
      * cell rooted at the fn's cell. The cell's own `parent` field

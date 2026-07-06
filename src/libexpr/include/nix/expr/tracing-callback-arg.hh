@@ -52,10 +52,10 @@ class TracingCallbackArg : public Object
         on demand from `subject` + `inheritedScope`. */
     AmbientId localId() const { return structuralAddressAfter(subject, inheritedScope, {}); }
 
-    /* The argScope cell this local belongs to. Navigation children
+    /* The argCell cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;
        scope state ids are derived from `subject`, not the cell. */
-    std::shared_ptr<const ArgCell> argScope;
+    std::shared_ptr<const ArgCell> argCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE QueryGetWHNF
@@ -71,7 +71,7 @@ public:
         Subject subject,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
-        std::shared_ptr<const ArgCell> argScope,
+        std::shared_ptr<const ArgCell> argCell,
         Hash inheritedScope = Hash(HashAlgorithm::SHA256),
         Hash depth2ApplyId = Hash(HashAlgorithm::SHA256));
 
@@ -82,7 +82,7 @@ public:
     /** This proxy's inherited scope. */
     Hash getInheritedScope() const override { return inheritedScope; }
 
-    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argScope; }
+    std::shared_ptr<const ArgCell> getProxyArgScope() const override { return argCell; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

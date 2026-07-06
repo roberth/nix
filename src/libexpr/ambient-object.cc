@@ -53,8 +53,8 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
         .name = name,
     }};
     auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
-    /* Navigation child inherits parent's argScope cell directly. */
-    child->withScope(argScope);
+    /* Navigation child inherits parent's argCell cell directly. */
+    child->withScope(argCell);
     /* Inherit content-id scope so the child's `from` fields include
        the same argStateId(Q) the parent uses. */
     child->withInheritedScope(inheritedScope);
@@ -175,8 +175,8 @@ std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
         .index = index,
     }};
     auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
-    /* Navigation child inherits parent's argScope cell directly. */
-    child->withScope(argScope);
+    /* Navigation child inherits parent's argCell cell directly. */
+    child->withScope(argCell);
     child->withInheritedScope(inheritedScope);
     return child;
 }

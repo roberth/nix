@@ -435,7 +435,7 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
 /* Resolve a recorded ambient id (hex of a Hash) to a live Object.
    First check the per-walk memo (ctx.memo) for already-resolved ids.
    Then walk the proxy graph (ctx.currentProxy.parent → …) looking
-   for an argScope cell whose id matches — this is the seed-lookup
+   for an argCell cell whose id matches — this is the seed-lookup
    case, grounded in the proxy whose method triggered this walk
    rather than in any evaluator-global state.
    Then fall through to producer-Request resolution: find idStr in
@@ -452,7 +452,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
     }
 
 
-    /* Walk the proxy's argScope chain looking for a cell whose
+    /* Walk the proxy's argCell chain looking for a cell whose
        liveObject's scopeStateId matches idStr at some k under
        walker's own cidasksWalk. */
     std::vector<Edge> extendedWalkForMatch = cidasksWalk;
