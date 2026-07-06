@@ -108,7 +108,7 @@ class TracingReplayEvaluator : public Evaluator
        Requests many times (each top-level lookup re-walks the shared
        prefix). Memoize requestHash -> responseHash so the file read +
        CBOR encode + SHA-256 happens once per request. */
-    std::unordered_map<Hash, Hash> dispatchCache;
+    std::unordered_map<Hash, Hash> responseFor;
 
     /** applyReqHashes currently being driven by `dispatchApplyLive`.
         Short-circuits walker re-entry while outer's-f-invocation is

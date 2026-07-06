@@ -127,7 +127,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
     };
 
     /* Dispatcher: turns a Request hash into the current Response
-       hash. Memoised in dispatchCache for stable requests (file
+       hash. Memoised in responseFor for stable requests (file
        reads, env vars) where same request always gives same
        response. Ambient queries are NOT memoised because the same
        request hash can dispatch to different responses depending on
@@ -178,7 +178,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
             queryDescription = "(parse-failed)";
         }
         if (!isAmbient) {
-            if (auto it = dispatchCache.find(requestHash); it != dispatchCache.end())
+            if (auto it = responseFor.find(requestHash); it != responseFor.end())
                 return it->second;
         }
         /* Apply-boundary: AmbientResult split by chain presence.
@@ -269,7 +269,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
            DISPATCH FAILURE (see the block above), not on mismatch. */
         (void) edgeCtx;
         if (!isAmbient)
-            dispatchCache.emplace(requestHash, h);
+            responseFor.emplace(requestHash, h);
         /* Dispatched facts are real environment observations; feed
            them into the writer's envFactSet so any subsequent
            logResult records at the same factSetHash regardless of
