@@ -1003,13 +1003,13 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        PositionalSeed{sidecarDepth} as arg. */
     {
         Subject seedSubject{PositionalSeed{sidecarDepth}};
-        Hash evolvedLeafCid = scopeStateIdAt(
+        Hash evolvedLeafStateHash = scopeStateIdAt(
             seedSubject, sidecarScope, cidasksWalk, cidasksWalk.size());
-        auto evolvedLeafCidHex = evolvedLeafCid.to_string(HashFormat::Base16, false);
-        ctx.memo[evolvedLeafCidHex] = replayLocal;
+        auto evolvedLeafStateHashHex = evolvedLeafStateHash.to_string(HashFormat::Base16, false);
+        ctx.memo[evolvedLeafStateHashHex] = replayLocal;
         tracingCacheLog(
             "dispatchApplyLive: memoised RLO at leaf cid %s (walk.size=%zu, seqCtx=%s)",
-            evolvedLeafCidHex.substr(0, 12), cidasksWalk.size(),
+            evolvedLeafStateHashHex.substr(0, 12), cidasksWalk.size(),
             seqCtx.to_string(HashFormat::Base16, false).substr(0, 12));
 
         if (auto * fnSubj = fnObj->getSubject()) {
@@ -1018,10 +1018,10 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
                 .arg = std::make_shared<const Subject>(std::move(seedSubject)),
             }};
             Hash applyArgAncestryForStateHash = fnObj->getArgAncestry();
-            Hash evolvedApplyResultCid = scopeStateIdAt(
+            Hash evolvedApplyResultStateHash = scopeStateIdAt(
                 applyResultSubj, applyArgAncestryForStateHash, cidasksWalk, cidasksWalk.size());
             auto evolvedApplyResultCidHex =
-                evolvedApplyResultCid.to_string(HashFormat::Base16, false);
+                evolvedApplyResultStateHash.to_string(HashFormat::Base16, false);
             ctx.memo[evolvedApplyResultCidHex] = replayLocal;
             tracingCacheLog(
                 "dispatchApplyLive: memoised RLO at applyResult cid %s (walk.size=%zu)",
