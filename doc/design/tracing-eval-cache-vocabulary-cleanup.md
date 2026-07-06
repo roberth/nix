@@ -339,7 +339,8 @@ field, and prose term) becomes `argAncestry` everywhere.
 | `argId` where it actually means `stateHashAfter(argId, argAncestry, {})` (e.g. `expr-from-object.cc:300`) | `stateHash` (rename the local) or inline the computation | The former use of `argId` here was a false-stability claim: the value depends on `argAncestry` and so is already a state hash, even with an empty walk. Not a distinct concept; do not invent an "at-entry" name. |
 | `structuralAddress` in comments outside the module | `subjectHash` | |
 | `inheritedScope` (field on `PendingFact` etc.) | `argAncestry` | The concept is unified across the codebase now. |
-| `applyScope` (cidasks helper — combines fn+arg argAncestries) | `applyArgAncestry` | Non-commutative combinator producing the argAncestry inside an apply-result. Parameters `fnScope`/`argScope` become `fnArgAncestry`/`argArgAncestry`. |
+| `applyScope` (cidasks helper function) | `combineArgAncestries` | Non-commutative combinator producing the argAncestry inside an apply-result. Parameters `fnScope`/`argScope` become `fnArgAncestry`/`argArgAncestry`. Function name is distinct from natural local-variable names (was `applyArgAncestry` in an earlier draft, but that collided with locals and member fields at multiple call sites). |
+| `applyScope` (local variables holding a Hash) | `applyArgAncestry` | The scope's value at a local scope IS an argAncestry; the local should say so. Distinguished from the function name by concept. |
 | `callScope` (field on `AmbientResolver` + locals) | `callArgAncestry` | Hash-typed field naming the cache call's own argAncestry. |
 | `ArgScopeCell` (type in `arg-scope.hh`) | `ArgCell` | **Not an argAncestry** — a navigation cell carrying `(depth, parent, liveObject)` for walking the proxy chain. The word "scope" in the old name meant proxy-chain position, not cidasks-scope; keeping it would leave a landmine after `scope` → `argAncestry` sweeps. File `arg-scope.hh` → `arg-cell.hh`. |
 | `argScope` field (`std::shared_ptr<const ArgScopeCell>` type) | `argCell` | Field rename mirrors the type. |
@@ -567,7 +568,7 @@ each with its own checkpoint:
      rename target.
   2. **Cidasks-scope hash family (Green).** `inheritedScope`
      field → `argAncestry`. `applyScope` (cidasks helper) →
-     `applyArgAncestry`, with parameters `fnScope`/`argScope`
+     `combineArgAncestries`, with parameters `fnScope`/`argScope`
      → `fnArgAncestry`/`argArgAncestry`. `callScope` field on
      `AmbientResolver` and locals → `callArgAncestry`. One
      commit per identifier.
@@ -847,7 +848,8 @@ nix::cidasks::*                   nix::*   (flatten; no new namespace)
 content-identity-via-asks.hh/cc   subject-id.hh/cc
 scope (cidasks param/field/local) argAncestry
 inheritedScope (field)            argAncestry
-applyScope (helper + locals)      applyArgAncestry
+applyScope (helper function)      combineArgAncestries
+applyScope (local variables)      applyArgAncestry
 fnScope / argScope (params)       fnArgAncestry / argArgAncestry
 callScope (field + locals)        callArgAncestry
 ArgScopeCell (type)               ArgCell
