@@ -14,20 +14,18 @@ machinery is in hand.
 
 ## 1. Interactions
 
-Three interactions carry all the atomic conversations the cache
-observes and replays. Each is one asker asking one askee; the
-atomic conversation is "ask, receive answer." The atom *family*
-depends on what protocol the askee speaks — either the full
-evaluator `Query`/`Result` surface, or a narrower per-participant
-protocol.
+Three interactions carry all the ask/answer pairs the cache
+observes and replays. Each is one asker asking one askee. The
+payload types vary — either the full evaluator `Query`/`Result`
+surface, or a narrower per-participant protocol.
 
-| Interaction | Asker → Askee | Atom family | Notes |
+| Interaction | Asker → Askee | Payload types | Notes |
 |---|---|---|---|
 | **Query** | caller → evaluator | `Query` → `Result` | Full evaluator surface. |
 | **Env** | inner-evaluator → its environment | varies (see below) | Environment can be filesystem, env vars, or outer evaluator. |
-| **Ambient** | outer → inner-supplied local | `Query` → `Result` (wrapped) | Callback arg probes; the wrapper carries a direction tag. |
+| **Ambient** | outer → inner-supplied local | `Query` → `Result` (wrapped) | Callback arg probes. |
 
-Within Env, atoms take the participant-specific form:
+Within Env, payload types depend on the participant:
 
 - **filesystem** — `FileReadRequest` / `FileReadResponse`. Narrow
   protocol: the filesystem only speaks "read this file."
@@ -38,19 +36,19 @@ Within Env, atoms take the participant-specific form:
   wrapper. Full evaluator surface; the wrapper tags the payload
   as being about an outer-owned value.
 
-At Ambient, atoms are `Query` / `Result` payload inside an
-`InnerValueRequest` / `Response` wrapper — same full
-evaluator surface, wrapper tags the payload as being about an
-inner-owned callback-arg value.
+At Ambient, the payload is a `Query` / `Result` inside an
+`InnerValueRequest` / `Response` wrapper — same full evaluator
+surface, wrapper tags the payload as being about an inner-owned
+callback-arg value.
 
-Every atom is content-addressed by SHA-256 of its serialized
-payload.
+Every payload is content-addressed by SHA-256 of its serialized
+bytes.
 
 ---
 
 ## The Query interaction
 
-### 2. Atoms
+### 2. Payload types
 
 **Query** — an operation the caller asks. `evalFile`, `getAttr`,
 `getString`, `apply`, etc. The payload carries the operation, its
@@ -69,9 +67,9 @@ the Results pool.
 
 ## The Env interaction
 
-### 3. Atoms
+### 3. Payload types
 
-Three atom families at Env, one per environment participant.
+Three payload-type families at Env, one per environment participant.
 
 **FileReadRequest** / **FileReadResponse** — filesystem protocol.
 One question shape: "read this path." Response carries a content
@@ -87,16 +85,17 @@ tag it as a query about an outer-owned value. Same evaluator
 surface as the Query interaction — introduced here because the
 wrapper is what the walker records and dispatches at Env.
 
-**Request** / **Response** — the collective terms for atoms in
-any of the three families above. The walker treats them
-uniformly, hashing each into a `requestHash` / `responseHash`
-pair (see §5) regardless of participant.
+**Request** / **Response** — the collective terms for payloads in
+any of the three families above. The walker treats them uniformly,
+hashing each into a `requestHash` / `responseHash` pair (see §5)
+regardless of participant.
 
 **requestHash** / **responseHash** — content hashes of the
 respective payloads.
 
-**Fact** — one `(Request, Response)` pair. The atomic unit of
-"the environment behaved this way at this moment."
+**Fact** — one `(Request, Response)` pair. The unit of "the
+environment behaved this way at this moment"; the walker records
+and dispatches Facts as indivisible.
 
 **element hash** — `SHA-256(requestHash || responseHash)`. The
 per-Fact contribution to XOR-fold hashes below.
@@ -230,15 +229,15 @@ gets probed the other way around:
 - **Outer-owned values** — Values the outer evaluator produced,
   passed to the inner as arguments. The inner reads them through
   `OuterObject`. Queries about these are `OuterValueRequest`
-  atoms and belong to the Env interaction (see §3) — the outer
+  and belong to the Env interaction (see §3) — the outer
   evaluator is one of the inner's environment participants.
 - **Inner-owned callback-arg values** — Values the inner
   evaluator produced, that the outer receives when it invokes an
   inner-supplied callback. The outer's callback body reads them
   through the callback-arg objects (`TracingCallbackArg` /
   `ReplayCallbackArg`). Queries about these are
-  `InnerValueRequest` atoms and belong to the **Ambient
-  interaction proper**, which is what §§10–18 cover.
+  `InnerValueRequest`s and belong to the **Ambient interaction
+  proper**, which is what §§11–18 cover.
 
 Both wrappers carry the same `Query` / `Result` payload; what
 distinguishes them is which side owns the value being queried.
@@ -251,13 +250,13 @@ Vocabulary that carries over unchanged from Query/Env:
 
 Ambient-specific vocabulary is what §11 onward defines.
 
-### 11. Ambient atoms and edges
+### 11. Ambient payload types and edges
 
-**InnerValueRequest** / **InnerValueResponse** — the atom family
-at the Ambient interaction. Payload is a `Query` / `Result` (full
-evaluator surface); the wrapper tags the payload as being about
-an inner-owned callback-arg value. When the walker records or
-dispatches an ambient atom it goes through this wrapper.
+**InnerValueRequest** / **InnerValueResponse** — the payload
+types at the Ambient interaction. Payload is a `Query` / `Result`
+(full evaluator surface); the wrapper tags the payload as being
+about an inner-owned callback-arg value. When the walker records
+or dispatches an ambient Fact it goes through this wrapper.
 
 **Ambient Asks edge** — a row in `AmbientAsks(fromFactSet) →
 (requestSet, toFactSet)`. Same shape as an Env Asks edge but
@@ -296,13 +295,13 @@ Subjects are **stable** — same structural shape, same Subject.
 The Subject is the algebraic form of an **argId**.
 
 **argId** — a subject's stable identity. Two representations of
-the same identity: the Subject value (algebraic) and its atomic
+the same identity: the Subject value (algebraic) and its bare
 SHA-256 hash (`argIdHash`). Under the naming discipline of the
 codebase, `Id`-suffixed names promise this invariance across
 observations, ancestry, and invocations.
 
 **argIdHash** — the hash-form representation of an argId. Local
-variables typed `Hash` that hold a subject's atomic base hash
+variables typed `Hash` that hold a subject's base hash
 use this suffix.
 
 ### 13. State hash — the subject's evolving identity
