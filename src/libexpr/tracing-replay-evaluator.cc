@@ -42,7 +42,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        dispatch (resolveApplyId, navigatePath's Apply step,
        dispatchApplyLive) re-route through `AmbientObject::queryApply
        → applyFn → AmbientApply::run` and would each fire a fresh
-       `markApplyBoundary` on the writer if not suppressed. Each fresh
+       `openApplyBoundary` on the writer if not suppressed. Each fresh
        boundary inflates `envWalk` with a redundant ε edge
        beyond the genuine cb-apply events the recorder already
        captured. Suppress for the walk's duration so writer's
@@ -50,7 +50,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        cidasksWalk. */
     TracingWriter::SuppressApplyBoundary suppressBoundary(writer);
 
-    /* Register callback so suppressed markApplyBoundary calls (=
+    /* Register callback so suppressed openApplyBoundary calls (=
        inner cb-apply boundaries fired inside dispatchApplyLive's
        cb-fn execution) synthesise a phantom ε obs in walker's
        cidasksWalk. Cold's writer would have inserted these as ε

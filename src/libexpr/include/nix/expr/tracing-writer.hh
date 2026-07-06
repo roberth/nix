@@ -166,7 +166,7 @@ class TracingWriter
     };
     std::vector<PendingRequest> pendingRequests;
 
-    /* Deferred cb-apply boundaries. markApplyBoundary pushes a new
+    /* Deferred cb-apply boundaries. openApplyBoundary pushes a new
        entry with empty facts; logAmbientObservation appends probes to
        the most recently-pushed boundary whose applyId matches.
        flushAmbient processes each boundary's d=2 chain (=
@@ -182,14 +182,14 @@ class TracingWriter
         std::vector<PendingFact> facts;
         /* Chronological insertion: ε perQAsksEdge for this boundary
            is inserted into envAsksEdges at this position at finalize
-           time (= position recorded at markApplyBoundary time, AFTER
+           time (= position recorded at openApplyBoundary time, AFTER
            closeAsksEdge(false) drained pre-boundary d=1 chunk). This
            makes the walker dispatch the ε edge BEFORE the body's
            d=1 facts that follow, so the lambda-standin's primop
            fires and seedCell extension happens in time for seed(N+1)
            probes to resolve. */
         size_t insertionIndex;
-        /* prevQFactSetHash AT markApplyBoundary time = cur the
+        /* prevQFactSetHash AT openApplyBoundary time = cur the
            walker would have at the start of ε's dispatch BEFORE
            any prior ε's contributions. After each ε insertion at
            finalize, this gets XOR-propagated by prior ε's element
@@ -235,12 +235,12 @@ class TracingWriter
     };
     std::vector<PendingApplyBoundary> pendingApplyBoundaries;
 
-    /* RAII suppress counter for `markApplyBoundary` while > 0. Used to
+    /* RAII suppress counter for `openApplyBoundary` while > 0. Used to
        elide redundant boundary firings during walker re-dispatch of a
        recorded apply (= `dispatchApplyLive`): walker's
        `fnObj->queryApply(replayLocal)` re-routes through
        `AmbientObject::queryApply` → `applyFn` → `AmbientApply::run`,
-       which would normally fire `markApplyBoundary` — but that path
+       which would normally fire `openApplyBoundary` — but that path
        represents validation of an already-recorded apply event, not a
        NEW event. Letting it fire inflates `envWalk` with ε edges
        per re-validation, breaking the walker's 1:1 alignment with
@@ -248,7 +248,7 @@ class TracingWriter
     size_t suppressApplyBoundary = 0;
 
 public:
-    /* RAII helper: scoped suppress of markApplyBoundary. */
+    /* RAII helper: scoped suppress of openApplyBoundary. */
     class SuppressApplyBoundary
     {
         TracingWriter & writer;
@@ -610,7 +610,7 @@ public:
      * is a walk-advance marker, not a fact about any subject, so
      * it doesn't fold into any subject's own-loop.
      */
-    void markApplyBoundary(const nlohmann::json & applyQueryPayload);
+    void openApplyBoundary(const nlohmann::json & applyQueryPayload);
 
     /**
      * Log a nested cb-apply as a depth-2 fact under the enclosing

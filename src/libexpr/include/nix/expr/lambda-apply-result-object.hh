@@ -70,7 +70,7 @@ class LambdaApplyResultObject : public Object
     /* The enclosing cb-apply boundary's `applyId` (= what `runOn`
        computed as `queryHash(QueryApply{fn, arg})` when it pushed
        this boundary). Captured BEFORE `IT::apply`'s
-       `markApplyBoundary` would push a new entry, so the
+       `openApplyBoundary` would push a new entry, so the
        observations route to the correct boundary's d=2 chain. */
     Hash depth2ApplyId;
 

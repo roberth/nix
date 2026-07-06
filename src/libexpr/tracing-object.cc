@@ -327,9 +327,9 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     /* cb-apply boundary: record an explicit ε edge for this apply.
        See parallel call in TracingEvaluator::apply. */
     nlohmann::json applyBoundaryJson = trace::QueryApply{*fnIdOpt, *argIdOpt};
-    tracingCacheLog("markApplyBoundary callsite=TracingObject::queryApply fn=%s arg=%s",
+    tracingCacheLog("openApplyBoundary callsite=TracingObject::queryApply fn=%s arg=%s",
                     fnIdOpt->substr(0, 12), argIdOpt->substr(0, 12));
-    writer.markApplyBoundary(applyBoundaryJson);
+    writer.openApplyBoundary(applyBoundaryJson);
 
     auto fnIdHash = Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256);
     auto argIdHash = Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256);

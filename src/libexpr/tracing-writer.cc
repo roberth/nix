@@ -293,7 +293,7 @@ void TracingWriter::flushAmbient(bool finalize)
 
        Chronological ε insertion: each boundary's ε perQAsksEdge is
        INSERTED at boundary.insertionIndex (= captured at
-       markApplyBoundary time, AFTER closeAsksEdge(false) drained the
+       openApplyBoundary time, AFTER closeAsksEdge(false) drained the
        pre-boundary d=1 chunk), not appended at the end. This puts
        ε BEFORE its body's d=1 facts in walker dispatch order. Each
        insertion shifts subsequent indices by 1, tracked via `shift`.
@@ -406,7 +406,7 @@ void TracingWriter::flushAmbient(bool finalize)
                moment this boundary's cb-apply Request will be
                dispatched at warm. Equals
                `boundary.fromFactSetHashAtBoundary XOR priorEpsilonAccum`
-               (= state at markApplyBoundary time + all prior ε
+               (= state at openApplyBoundary time + all prior ε
                contributions). Used as the LocalResponseMap key
                discriminator so d=2 chain facts within different
                apply boundaries store under distinct rows, letting
@@ -468,7 +468,7 @@ void TracingWriter::flushAmbient(bool finalize)
             priorEpsilonAccum = TracingDecisionGraph::xorHashes(priorEpsilonAccum, factHash);
             /* Keep prevQFactSetHash aligned with envFactSetHash after
                the boundary XOR-fold. Without this, subsequent Q's
-               `markApplyBoundary` captures a stale (pre-boundary)
+               `openApplyBoundary` captures a stale (pre-boundary)
                fromFactSetHashAtBoundary, and subsequent `finalize`
                pushes edges indexed at a pre-boundary state that walker
                can't reach from its post-boundary cur. cb-repeated
@@ -571,7 +571,7 @@ void TracingWriter::closeAsksEdge(bool finalize)
     }
 }
 
-void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
+void TracingWriter::openApplyBoundary(const nlohmann::json & applyQueryPayload)
 {
     if (!decisionGraph)
         return;
@@ -582,7 +582,7 @@ void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
        redundant ε edge to envWalk, breaking the 1:1 alignment
        with walker.cidasksWalk at warm. */
     if (suppressApplyBoundary > 0) {
-        tracingCacheLog("markApplyBoundary: SUPPRESSED (in dispatchApplyLive)");
+        tracingCacheLog("openApplyBoundary: SUPPRESSED (in dispatchApplyLive)");
         /* Insert the apply Request payload into the CAS pool even when
            suppressed so walker's ambient-asks walk can look it up.
            Hook-based ε obs push in walker (iter <=91) is now redundant
@@ -625,7 +625,7 @@ void TracingWriter::markApplyBoundary(const nlohmann::json & applyQueryPayload)
         prevQFactSetHash,      // fromFactSetHashAtBoundary
         Hash(HashAlgorithm::SHA256)  // boundaryOuterCtx (populated at first finalize)
     });
-    tracingCacheLog("markApplyBoundary: buffered (applyReqHash=%s, pendingBoundaries=%zu, insertionIndex=%zu)",
+    tracingCacheLog("openApplyBoundary: buffered (applyReqHash=%s, pendingBoundaries=%zu, insertionIndex=%zu)",
                     applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
                     pendingApplyBoundaries.size(),
                     envAsksEdges.size());

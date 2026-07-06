@@ -297,7 +297,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     tracingCacheLog("tracing: apply fnId=%s argId=%s", fnId, argId);
 
     /* cb-apply boundary: record an explicit ε edge for this apply.
-       markApplyBoundary closes the preceding observations as one
+       openApplyBoundary closes the preceding observations as one
        Asks edge (β1) and then records a synthetic single-observation
        Asks edge (ε) carrying just the apply Request — both sides
        advance their cumulative cidasks walk by one for ε, so the
@@ -314,7 +314,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        the standin's chainCursor by this fact's elementHash.
 
        Capture the enclosing boundary's applyId BEFORE
-       logAmbientApplyFact / markApplyBoundary so the apply-result
+       logAmbientApplyFact / openApplyBoundary so the apply-result
        observations recorded after `inner->apply` returns (via
        `LambdaApplyResultObject` below) route to the same enclosing
        boundary the recursive apply Fact landed in. Their d=2
@@ -323,7 +323,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        primop manual-push (= one fact) followed by the synthetic's
        per-probe `advanceChainAndAppendFact` calls.
 
-       Skip `markApplyBoundary` entirely for the TLO-fn path: it
+       Skip `openApplyBoundary` entirely for the TLO-fn path: it
        would push a fresh empty boundary whose synthetic d=1 fact
        `(applyReqHash, applyReqHash)` enters envFactSet at finalize
        and forces the outer walker into a `dispatchApplyLive` whose
@@ -405,9 +405,9 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         nlohmann::json applyQd2 = trace::QueryApply{fnSubjHex, argSubjHex};
         writer.logAmbientApplyFact(applyQd2, resultSubject, applyScope);
     } else {
-        tracingCacheLog("markApplyBoundary callsite=TracingEvaluator::apply fn=%s arg=%s",
+        tracingCacheLog("openApplyBoundary callsite=TracingEvaluator::apply fn=%s arg=%s",
                         fnId.substr(0, 12), argId.substr(0, 12));
-        writer.markApplyBoundary(applyQ);
+        writer.openApplyBoundary(applyQ);
     }
 
     /* Per-arg-completion option 2: apply-result argStateId evolves with
