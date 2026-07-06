@@ -822,11 +822,8 @@ TEST_F(TracingDecisionGraphTest, EndToEndNestedQueries)
 /* ─────────────────────────────────────────────────────────────────────
    Phase 1 design tests
    ─────────────────────────────────────────────────────────────────────
-   Specification-by-test for the faithful Phase 1 record() at
-   doc/outdated/tracing-decision-graph-data-model.md lines 386–415.
-
-   These tests will FAIL against the current per-fact singleton-edge
-   strawman in record() and provide the green target for the rewrite.
+   Specification-by-test for the faithful Phase 1 record()
+   (patricia-split behaviour on multi-Request-overlap recordings).
 
    The semantic spec, briefly:
      - First-time recording of Q at (∅): one Asks edge whose

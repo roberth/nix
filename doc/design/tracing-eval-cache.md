@@ -1,11 +1,10 @@
 # Tracing eval cache (v13)
 
 This document describes the tracing eval cache as it is currently
-shipped on the `eval-cache-v13` branch. It supersedes the three legacy
-docs now under `doc/outdated/` (`tracing-index-data-model.md`,
-`tracing-sets-index-data-model.md`, `tracing-decision-graph-data-model.md`);
-those describe earlier attempts (v12 trie, v12.5 flat-CBOR sets, and
-a Phase-1 sketch that diverged from the eventual implementation).
+shipped on the `eval-cache-v13` branch. It supersedes three earlier
+data-model attempts (v12 trie, v12.5 flat-CBOR sets, and a Phase-1
+sketch that diverged from the eventual implementation) whose design
+docs have been removed from the tree; consult git history for those.
 
 ## What it is
 
