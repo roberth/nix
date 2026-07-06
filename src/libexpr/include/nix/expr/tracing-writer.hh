@@ -147,12 +147,12 @@ class TracingWriter
     std::vector<Hash> pendingNewRequests;
 
     TracingDecisionGraph::SetHash prevQFactSetHash{TracingDecisionGraph::emptySetHash()};
-    struct PerQAsksEdge
+    struct AsksEdgeRecord
     {
         TracingDecisionGraph::SetHash fromFactSetHash;
         TracingDecisionGraph::SetHash requestSetHash;
     };
-    std::vector<PerQAsksEdge> envAsksEdges;
+    std::vector<AsksEdgeRecord> envAsksEdges;
     /* Mirrors `seenRequests` but keyed by query hash, not fact hash.
        record()'s slow path iterates this to build the trailing
        remaining-edge — an Asks edge's requestSet is a set of query
