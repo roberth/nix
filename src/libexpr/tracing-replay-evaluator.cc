@@ -517,7 +517,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    builtins-cache suite showed the loop fires once
                    (cb-385) and its winning round equals the converged
                    fixed point. Replaced with a single call to
-                   `scopeStateIdAtConverged`, which is order- and
+                   `stateHashConverged`, which is order- and
                    grouping-independent by construction: walker's
                    convergence value depends only on the SET of
                    observations, not on edge boundaries. Cold's
@@ -528,7 +528,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    aligned pool without a per-round hash comparison.
 
                    The former loop is preserved semantically because
-                   `scopeStateIdAtConverged` iterates the same greedy
+                   `stateHashConverged` iterates the same greedy
                    partition internally, but the caller no longer sees
                    intermediate rounds — the search is a single call.
 
@@ -538,7 +538,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    edge boundaries differ, only the fixed point is
                    grouping-invariant and thus safe to compare. */
                 if (!found && !extendedWalkForMatch.empty()) {
-                    Hash converged = scopeStateIdAtConverged(
+                    Hash converged = stateHashConverged(
                         *subj, argAncestry, extendedWalkForMatch);
                     if (converged.to_string(HashFormat::Base16, false) == idStr)
                         found = true;

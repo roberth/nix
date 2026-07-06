@@ -172,7 +172,7 @@ Hash scopeStateIdAt(const Subject & subject, const Hash & argAncestry, const std
     observations, regardless of edge boundaries. Semantically
     equivalent to iterating the observation-permutation loop in
     `TracingReplayEvaluator::resolveCdiId` to its fixed point. */
-Hash scopeStateIdAtConverged(
+Hash stateHashConverged(
     const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
 
 /** Compute a content-addressed structural identifier for any

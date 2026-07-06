@@ -332,7 +332,7 @@ Hash scopeStateIdAfter(const Subject & subject, const Hash & argAncestry, const 
     return scopeStateIdAt(subject, argAncestry, walk, walk.size());
 }
 
-Hash scopeStateIdAtConverged(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
+Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
 {
     /* Flatten walk into deduped observation pool keyed by
        (fromHash, elementHash). Order within `walk` is discarded —
