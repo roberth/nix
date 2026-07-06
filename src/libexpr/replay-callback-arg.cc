@@ -424,7 +424,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    at `applyArgAncestry`), matching what
                    `makeCachedFnPrimOp`'s impl uses for its
                    `seedSubject` / `callArgAncestry` at cold; the walker
-                   iterates `cidasksWalk` to find the matching edge.
+                   iterates `envWalk` to find the matching edge.
                    Wraps args[0] in an `InterpreterObject` so the
                    walker can call getType / getInt / etc. live
                    against outer's actual Value. */

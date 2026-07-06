@@ -147,7 +147,7 @@ void registerAmbientResolverProxy(
 
 /** Try to resolve a registered live-proxy from the resolver by
     matching its registered `(subject, scope)` against the given
-    `idHash` at any edge boundary of `cidasksWalk`. Returns nullptr
+    `idHash` at any edge boundary of `envWalk`. Returns nullptr
     if no registration matches at any edge. Used by
     `TracingReplayEvaluator::resolveCdiId` as a fallback after
     cell-chain and Requests-pool resolution fail, before the
@@ -159,7 +159,7 @@ void registerAmbientResolverProxy(
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     AmbientResolver & resolver,
     const Hash & idHash,
-    const std::vector<Edge> & cidasksWalk,
+    const std::vector<Edge> & envWalk,
     TracingDecisionGraph * dg = nullptr);
 
 } // namespace nix

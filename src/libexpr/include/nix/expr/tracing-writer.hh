@@ -122,7 +122,7 @@ class TracingWriter
        envWalk is kept 1:1-aligned with `envAsksEdges`:
        every Asks edge inserted into `envAsksEdges` is paired with
        a d1 edge inserted at the SAME index. This invariant lets the
-       walker's `cidasksWalk` — which grows once per dispatched Asks
+       walker's `envWalk` — which grows once per dispatched Asks
        edge via `commitEdge` — match the writer's d1 walk
        edge-for-edge, so `scopeStateIdAt(subject, scope, walk, K)`
        computes the same value on both sides. Per-arg-completion
@@ -578,7 +578,7 @@ public:
      * TracingObject::queryApply, AmbientResolver::apply. Without
      * this split, multiple body-level cb-applies collapse into a
      * single Asks edge in the recorded trie, but the walker
-     * advances its cumulative `cidasksWalk` once per dispatched
+     * advances its cumulative `envWalk` once per dispatched
      * Asks edge (= principle 6) — leaving writer and walker at
      * different walk indices when they each compute the
      * apply-result's argStateId, producing different queryHashes.

@@ -549,7 +549,7 @@ void TracingWriter::closeAsksEdge(bool finalize)
        (or a later closeAsksEdge) inserts an Asks(Q, fromFactSet, RS) row
        for this transition into Q's namespace. Skip-on-empty is
        deliberate: an edge with no requests has nothing to advance, so
-       neither writer's envWalk nor walker's cidasksWalk grows
+       neither writer's envWalk nor walker's envWalk grows
        for it (= principles 4 + 7).
 
        1:1 alignment: push the staged d1 edge alongside the
@@ -580,7 +580,7 @@ void TracingWriter::openApplyBoundary(const nlohmann::json & applyQueryPayload)
        apply (= `dispatchApplyLive`). Re-dispatch is validation, not a
        new cb-apply event — each re-dispatch would otherwise add a
        redundant ε edge to envWalk, breaking the 1:1 alignment
-       with walker.cidasksWalk at warm. */
+       with walker.envWalk at warm. */
     if (suppressApplyBoundary > 0) {
         tracingCacheLog("openApplyBoundary: SUPPRESSED (in dispatchApplyLive)");
         /* Insert the apply Request payload into the CAS pool even when

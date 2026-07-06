@@ -793,17 +793,17 @@ void registerAmbientResolverProxy(
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(
     AmbientResolver & resolver,
     const Hash & idHash,
-    const std::vector<Edge> & cidasksWalk,
+    const std::vector<Edge> & envWalk,
     TracingDecisionGraph * dg)
 {
     /* Linear scan over each registered (subject, scope) x K in
-       cidasksWalk. The hasSubjectStampSite gate turned out to be a
+       envWalk. The hasSubjectStampSite gate turned out to be a
        tautology (cold stamped every CID walker ever resolves), so
        running the scan unconditionally is equivalent. */
     (void) dg;
     for (auto & entry : resolver.liveProxies) {
-        for (size_t k = 0; k <= cidasksWalk.size(); ++k) {
-            auto scopeStateId = scopeStateIdAt(entry.subject, entry.scope, cidasksWalk, k);
+        for (size_t k = 0; k <= envWalk.size(); ++k) {
+            auto scopeStateId = scopeStateIdAt(entry.subject, entry.scope, envWalk, k);
             if (scopeStateId == idHash)
                 return entry.obj;
         }

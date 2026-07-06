@@ -91,17 +91,17 @@ class TracingReplayEvaluator : public Evaluator
         deduplicated by the edge's content-equal fact set so re-
         traversing a shared prefix doesn't double-fold. Mirrors the
         writer's `envWalk` — both grow per Asks edge ever
-        committed, so `scopeStateIdAt(subject, scope, cidasksWalk, K)`
+        committed, so `scopeStateIdAt(subject, scope, envWalk, K)`
         on the walker matches the writer's `scopeStateIdAt` at the
         same edge K. This alignment is what makes per-fact `from`
         encodings reproducible at warm — without it, cell-chain
         scopeStateId computation lands at the wrong edge index (= cb-385's
         original failure mode) and per-arg `from` lookups miss. */
-    std::vector<Edge> cidasksWalk;
+    std::vector<Edge> envWalk;
     /** Dedup committed edges by their elementHash-set fingerprint
         (= XOR-fold of fact element hashes within the edge). When
         a later walk re-traverses an Asks edge already in
-        cidasksWalk (= shared prefix), commitEdge is a no-op. */
+        envWalk (= shared prefix), commitEdge is a no-op. */
     std::unordered_set<Hash> committedEdgeFingerprints;
 
     /* Walks across the same process invocation re-dispatch the same
@@ -179,7 +179,7 @@ public:
         identity alignment principle #3 requires. */
     const std::vector<Edge> & getCidasksWalk() const
     {
-        return cidasksWalk;
+        return envWalk;
     }
 
     /** Access the shared TracingWriter. Used by TracingReplayObject's

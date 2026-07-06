@@ -82,7 +82,7 @@ class ReplayCallbackArg : public Object
        cb-apply-diff-args's fix). Cold's insertLocalResponse writes
        with writer.envFactSetHash at the matching moment; walker at
        ReplayCallbackArg construction time receives its own outer
-       cur which — by lockstep growth of walker.cidasksWalk with
+       cur which — by lockstep growth of walker.envWalk with
        writer.envWalk under Path 3 — equals cold's writer cur. */
     Hash outerContext;
     TracingDecisionGraph & decisionGraph;

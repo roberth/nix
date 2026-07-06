@@ -41,11 +41,11 @@ class TracingReplayObject : public Object
        finalised-on-ensureInner side-channel that other code paths
        still inspect; not used for evolvedQueryFrom under the
        option-2 encoding (which routes through the evaluator's
-       cumulative cidasksWalk). */
+       cumulative envWalk). */
     std::shared_ptr<ApplyContext> applyContext;
     /* When apply-result, the ApplyResultSubject identifying it
        structurally + the inherited scope (= argStateId(Q)). Used together
-       with the evaluator's cidasksWalk to compute the evolved scopeStateId
+       with the evaluator's envWalk to compute the evolved scopeStateId
        at lookup time via the same formula the writer's TracingObject
        uses. */
     std::optional<Subject> applyResultSubject;

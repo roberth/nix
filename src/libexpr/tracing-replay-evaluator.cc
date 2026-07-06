@@ -47,19 +47,19 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        beyond the genuine cb-apply events the recorder already
        captured. Suppress for the walk's duration so writer's
        envWalk stays in 1:1 alignment with walker's
-       cidasksWalk. */
+       envWalk. */
     TracingWriter::SuppressApplyBoundary suppressBoundary(writer);
 
     /* Register callback so suppressed openApplyBoundary calls (=
        inner cb-apply boundaries fired inside dispatchApplyLive's
        cb-fn execution) synthesise a phantom ε obs in walker's
-       cidasksWalk. Cold's writer would have inserted these as ε
+       envWalk. Cold's writer would have inserted these as ε
        edges into envWalk; without this walker's walk-index
        falls short of cold's edgeIndex for later flushes referencing
        seed(1) at post-inner-apply positions. */
 
     /* Per-walk resolution context. The cumulative cidasks walk
-       (= `this->cidasksWalk`) lives on the evaluator so it
+       (= `this->envWalk`) lives on the evaluator so it
        persists across walk calls — required for cell-chain
        scopeStateId computation to land at the writer's `d1EdgeIndex` (=
        cumulative across logResults). */
@@ -68,10 +68,10 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         {},
     };
     /* Per-edge buffer: dispatch() appends ambient facts here; the
-       walk-loop promotes the buffer to a cumulative cidasksWalk
+       walk-loop promotes the buffer to a cumulative envWalk
        edge on commit (via commitEdge) or discards it on reject.
        Without the buffer, rejected-edge facts would pollute
-       cidasksWalk and throw off the cell-chain scopeStateId computations. */
+       envWalk and throw off the cell-chain scopeStateId computations. */
     std::vector<Observation> pendingEdgeObservations;
 
     auto commitEdge = [&]() {
@@ -109,11 +109,11 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
             if (committedEdgeFingerprints.insert(fingerprint).second) {
                 Edge edge;
                 edge.observations = std::move(obs);
-                cidasksWalk.push_back(std::move(edge));
-                tracingCacheLog("dispatch: committed edge, cidasksWalk=%zu (obs=%zu)",
-                                cidasksWalk.size(), cidasksWalk.back().observations.size());
+                envWalk.push_back(std::move(edge));
+                tracingCacheLog("dispatch: committed edge, envWalk=%zu (obs=%zu)",
+                                envWalk.size(), envWalk.back().observations.size());
             } else {
-                tracingCacheLog("dispatch: edge already in cidasksWalk (shared prefix), skip");
+                tracingCacheLog("dispatch: edge already in envWalk (shared prefix), skip");
             }
         };
 
@@ -392,7 +392,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
     }
     if (!walkHit) {
         /* Walker missed. Rejected-edge obs are NOT committed to
-           cidasksWalk: they represent wrong paths whose responses
+           envWalk: they represent wrong paths whose responses
            cold never recorded, so folding them into seed CDIs shifts
            subject_at_k to values cold never stamped. Per Asks-paradigm
            navigation invariant, CDIs are pure functions of the
@@ -454,8 +454,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
 
     /* Walk the proxy's argCell chain looking for a cell whose
        liveObject's scopeStateId matches idStr at some k under
-       walker's own cidasksWalk. */
-    std::vector<Edge> extendedWalkForMatch = cidasksWalk;
+       walker's own envWalk. */
+    std::vector<Edge> extendedWalkForMatch = envWalk;
     auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr;
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
@@ -533,7 +533,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    intermediate rounds — the search is a single call.
 
                    Handles the permuted-order case (cb-385's 5-round
-                   evolution): where walker's cidasksWalk carries the
+                   evolution): where walker's envWalk carries the
                    same observations as cold's envWalk but the
                    edge boundaries differ, only the fixed point is
                    grouping-invariant and thus safe to compare. */
@@ -553,7 +553,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                 tracingCacheLog(
                     "resolve %s: cell[%d] subject=%s miss across %zu edges (+collected)",
                     idStr.substr(0, 12), cellDepth,
-                    describe(*subj), cidasksWalk.size() + 1);
+                    describe(*subj), envWalk.size() + 1);
             } else {
                 tracingCacheLog("resolve %s: cell[%d] live has no subject", idStr.substr(0, 12), cellDepth);
             }
@@ -613,7 +613,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
            tree from the CAS pool"). The forbidden thing is treating
            an OUTER-direction id as if it were a local. */
         if (auto resolver = inner->getAmbientResolver()) {
-            if (auto live = tryResolveAmbientResolverProxy(*resolver, idHash, cidasksWalk, &decisionGraph)) {
+            if (auto live = tryResolveAmbientResolverProxy(*resolver, idHash, envWalk, &decisionGraph)) {
                 tracingCacheLog(
                     "resolve %s: not in pool — found live-proxy registration",
                     idStr.substr(0, 12));
@@ -1004,12 +1004,12 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     {
         Subject seedSubject{PositionalSeed{sidecarDepth}};
         Hash evolvedLeafStateHash = scopeStateIdAt(
-            seedSubject, sidecarScope, cidasksWalk, cidasksWalk.size());
+            seedSubject, sidecarScope, envWalk, envWalk.size());
         auto evolvedLeafStateHashHex = evolvedLeafStateHash.to_string(HashFormat::Base16, false);
         ctx.memo[evolvedLeafStateHashHex] = replayLocal;
         tracingCacheLog(
             "dispatchApplyLive: memoised RLO at leaf cid %s (walk.size=%zu, seqCtx=%s)",
-            evolvedLeafStateHashHex.substr(0, 12), cidasksWalk.size(),
+            evolvedLeafStateHashHex.substr(0, 12), envWalk.size(),
             seqCtx.to_string(HashFormat::Base16, false).substr(0, 12));
 
         if (auto * fnSubj = fnObj->getSubject()) {
@@ -1019,13 +1019,13 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
             }};
             Hash applyArgAncestryForStateHash = fnObj->getArgAncestry();
             Hash evolvedApplyResultStateHash = scopeStateIdAt(
-                applyResultSubj, applyArgAncestryForStateHash, cidasksWalk, cidasksWalk.size());
+                applyResultSubj, applyArgAncestryForStateHash, envWalk, envWalk.size());
             auto evolvedApplyResultCidHex =
                 evolvedApplyResultStateHash.to_string(HashFormat::Base16, false);
             ctx.memo[evolvedApplyResultCidHex] = replayLocal;
             tracingCacheLog(
                 "dispatchApplyLive: memoised RLO at applyResult cid %s (walk.size=%zu)",
-                evolvedApplyResultCidHex.substr(0, 12), cidasksWalk.size());
+                evolvedApplyResultCidHex.substr(0, 12), envWalk.size());
         }
     }
     return ambientResult;
@@ -1387,7 +1387,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     }};
 
     /* Walker mirror of TracingEvaluator::apply's option 2 evolution.
-       Uses walker.cidasksWalk (the cumulative committed walk), which
+       Uses walker.envWalk (the cumulative committed walk), which
        under the 1:1 alignment restructure matches writer.envWalk
        edge-for-edge once all prior cb-applies' chains have been
        dispatched. */
@@ -1418,7 +1418,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        side-channel that other paths still inspect (e.g. tests that
        check applyContext->finalized). Pre-population of observations
        from the Requests pool is no longer needed — evolvedQueryFrom
-       reads the evaluator's cidasksWalk instead. */
+       reads the evaluator's envWalk instead. */
     if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
         if (auto ctx = argAmb->getApplyContext())
             obj->withApplyContextOnly(std::move(ctx));
