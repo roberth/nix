@@ -33,14 +33,15 @@ Within Env, atoms take the participant-specific form:
   protocol: the filesystem only speaks "read this file."
 - **env vars** — `GetEnvRequest` / `GetEnvResponse`. Narrow
   protocol: only "get value of this var."
-- **outer evaluator** (via `AmbientObject`) — `Query` / `Result`
-  payload inside an `AmbientOutgoingRequest` / `Response`
-  wrapper. Full evaluator surface; the wrapper adds a
-  "outgoing from inner" direction tag.
+- **outer evaluator** (via `OuterObject`) — `Query` / `Result`
+  payload inside an `OuterValueRequest` / `Response`
+  wrapper. Full evaluator surface; the wrapper tags the payload
+  as being about an outer-owned value.
 
 At Ambient, atoms are `Query` / `Result` payload inside an
-`AmbientIncomingRequest` / `Response` wrapper — same full
-evaluator surface, direction tag reads "incoming to inner."
+`InnerValueRequest` / `Response` wrapper — same full
+evaluator surface, wrapper tags the payload as being about an
+inner-owned callback-arg value.
 
 Every atom is content-addressed by SHA-256 of its serialized
 payload.
@@ -79,12 +80,12 @@ hash and optionally the bytes read.
 **GetEnvRequest** / **GetEnvResponse** — env-var protocol. One
 question shape: "get value of this variable name."
 
-**AmbientOutgoingRequest** / **AmbientOutgoingResponse** —
-outer-evaluator protocol (via `AmbientObject`; see §10). Full
-evaluator surface: payload is a `Query` / `Result`, wrapped with
-a direction tag "outgoing from inner." Same evaluator surface as
-the Query interaction — introduced here because the wrapper is
-what the walker records and dispatches at Env.
+**OuterValueRequest** / **OuterValueResponse** —
+outer-evaluator protocol (via `OuterObject`; see §10). Full
+evaluator surface: payload is a `Query` / `Result`, wrapped to
+tag it as a query about an outer-owned value. Same evaluator
+surface as the Query interaction — introduced here because the
+wrapper is what the walker records and dispatches at Env.
 
 **Request** / **Response** — the collective terms for atoms in
 any of the three families above. The walker treats them
@@ -223,25 +224,24 @@ recomputed).
 ### 10. What the Ambient interaction is
 
 `builtins.cache` nests a cached inner evaluator inside an outer
-one. Two directions cross this cache boundary and both are
-"ambient" — happening at the outer/inner interface:
+one. Two categories of value cross the cache boundary and each
+gets probed the other way around:
 
-- **Outgoing (inner → outer)** happens whenever the inner
-  interpretation reads a value the outer passed in as an
-  argument. The inner asks that outer-supplied value questions
-  through `AmbientObject`. This direction is recorded as part of
-  the Env interaction (see §3, `AmbientOutgoingRequest/Response`)
-  — the outer evaluator counts as one of the inner's
-  environment participants.
-- **Incoming (outer → inner)** happens whenever the outer
-  invokes an inner-supplied callback with an argument that
-  originated inside the inner. The outer's callback body then
-  probes the inner-supplied argument. This direction is the
-  **Ambient interaction proper** and is what §§10–18 cover.
+- **Outer-owned values** — Values the outer evaluator produced,
+  passed to the inner as arguments. The inner reads them through
+  `OuterObject`. Queries about these are `OuterValueRequest`
+  atoms and belong to the Env interaction (see §3) — the outer
+  evaluator is one of the inner's environment participants.
+- **Inner-owned callback-arg values** — Values the inner
+  evaluator produced, that the outer receives when it invokes an
+  inner-supplied callback. The outer's callback body reads them
+  through the callback-arg objects (`TracingCallbackArg` /
+  `ReplayCallbackArg`). Queries about these are
+  `InnerValueRequest` atoms and belong to the **Ambient
+  interaction proper**, which is what §§10–18 cover.
 
-At the wire level both directions wrap the same `Query` /
-`Result` payload; the direction tag is what distinguishes
-`AmbientOutgoingRequest` from `AmbientIncomingRequest`.
+Both wrappers carry the same `Query` / `Result` payload; what
+distinguishes them is which side owns the value being queried.
 
 Vocabulary that carries over unchanged from Query/Env:
 
@@ -253,11 +253,11 @@ Ambient-specific vocabulary is what §11 onward defines.
 
 ### 11. Ambient atoms and edges
 
-**AmbientIncomingRequest** / **AmbientIncomingResponse** — the
-atom family at the Ambient interaction. Payload is a `Query` /
-`Result` (full evaluator surface); the wrapper adds a direction
-tag "incoming to inner." When the walker records or dispatches an
-ambient atom it goes through this wrapper.
+**InnerValueRequest** / **InnerValueResponse** — the atom family
+at the Ambient interaction. Payload is a `Query` / `Result` (full
+evaluator surface); the wrapper tags the payload as being about
+an inner-owned callback-arg value. When the walker records or
+dispatches an ambient atom it goes through this wrapper.
 
 **Ambient Asks edge** — a row in `AmbientAsks(fromFactSet) →
 (requestSet, toFactSet)`. Same shape as an Env Asks edge but
@@ -354,7 +354,7 @@ id. Its value depends on what observations have flowed into the
 outer arg states before entry.
 
 **inheritedScope / callArgAncestry** — argAncestry stored on
-specific objects: `argAncestry` on `AmbientObject` / callback-arg
+specific objects: `argAncestry` on `OuterObject` / callback-arg
 proxies is the ancestry inherited from the enclosing scope;
 `callArgAncestry` on `AmbientResolver` is the ancestry of the
 cache call itself, sampled at cb-apply fire time.
@@ -380,10 +380,10 @@ reconstructed from `LocalResponses`. Serves the outer's probes
 from recorded data; throws an ambient-interaction divergence exception
 if the outer's probes don't match what was recorded.
 
-**AmbientObject** — outer-evaluator-side proxy for an
+**OuterObject** — outer-evaluator-side proxy for an
 inner-supplied value in the callback body. Distinct from
 TracingCallbackArg (which is the *writer's* view of the arg);
-AmbientObject is what the *outer evaluator* sees when it holds
+OuterObject is what the *outer evaluator* sees when it holds
 the arg during the callback body.
 
 ### 16. Cell navigation
