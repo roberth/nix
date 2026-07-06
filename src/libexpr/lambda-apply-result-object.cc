@@ -34,7 +34,7 @@ void LambdaApplyResultObject::recordD2(const trace::QueryVariant & query, const 
        boundary's facts vector), matching the walker's stamping at
        `walkFacts.size()` after the synthetic-side primop pushed
        the apply Fact. */
-    writer.logDepth2Observation(query, result, applyResultSubject, applyScope, depth2ApplyId);
+    writer.logAmbientObservation(query, result, applyResultSubject, applyScope, depth2ApplyId);
 }
 
 std::shared_ptr<Object> LambdaApplyResultObject::maybeGetAttr(const std::string & name)

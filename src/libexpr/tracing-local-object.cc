@@ -207,7 +207,7 @@ void TracingLocalObject::recordObservation(const trace::QueryVariant & query, co
     /* Route through the depth-2 entry point: the outer is probing
        an inner-supplied local. The `depth2ApplyId` groups this fact
        into the cb apply's AmbientAsks edge at flush. */
-    writer.logDepth2Observation(query, result, subject, inheritedScope, depth2ApplyId);
+    writer.logAmbientObservation(query, result, subject, inheritedScope, depth2ApplyId);
 }
 
 std::shared_ptr<Object> TracingLocalObject::queryApply(std::shared_ptr<Object> argObj)

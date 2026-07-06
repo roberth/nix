@@ -14,7 +14,7 @@
  *    apply-results whose evolved argStateId participates in the d=1 walk.
  *
  *  - LambdaApplyResultObject's methods record d=2 observations via
- *    `writer.logDepth2Observation`. They are grouped with the
+ *    `writer.logAmbientObservation`. They are grouped with the
  *    enclosing cb-apply boundary's recursive apply Fact (= the same
  *    boundary `logDepth2ApplyFact` appended to). At flushPendingAmbient
  *    finalize the writer's d=2 loop stamps each observation with

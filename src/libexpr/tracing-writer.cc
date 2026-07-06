@@ -529,7 +529,7 @@ void TracingWriter::flushPendingAmbient(bool finalize)
     }
 
     /* Don't clear pendingApplyBoundaries — finalized entries stay
-       so `logDepth2Observation` can find them on late probes
+       so `logAmbientObservation` can find them on late probes
        (option (b)). */
 }
 

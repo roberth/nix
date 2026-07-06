@@ -167,7 +167,7 @@ class TracingWriter
     std::vector<PendingRequest> pendingRequests;
 
     /* Deferred cb-apply boundaries. markApplyBoundary pushes a new
-       entry with empty facts; logDepth2Observation appends probes to
+       entry with empty facts; logAmbientObservation appends probes to
        the most recently-pushed boundary whose applyId matches.
        flushPendingAmbient processes each boundary's d=2 chain (=
        just its own facts), computes the terminal cumulative
@@ -204,7 +204,7 @@ class TracingWriter
         Hash boundaryOuterCtx;
         /* Option (b) — late d2 obs support. Once a boundary's first
            finalize pass runs, it stays in `pendingApplyBoundaries`
-           with `finalized=true` so a later `logDepth2Observation`
+           with `finalized=true` so a later `logAmbientObservation`
            with the same applyId can find it and process the probe
            incrementally instead of dropping it. State preserved
            across re-processings:
@@ -434,7 +434,7 @@ public:
      * depth-1 path; the additional `applyId` (= the cb apply's
      * resultId) groups this fact into a depth-2 sub-trace at flush.
      */
-    void logDepth2Observation(
+    void logAmbientObservation(
         const trace::QueryVariant & query,
         const trace::ResultVariant & result,
         cidasks::Subject subject,
@@ -465,7 +465,7 @@ public:
                     std::move(inheritedScope), applyId});
                 if (it->finalized)
                     tracingCacheLog(
-                        "logDepth2Observation: late probe queued for finalized applyId=%s (now %zu facts, %zu processed)",
+                        "logAmbientObservation: late probe queued for finalized applyId=%s (now %zu facts, %zu processed)",
                         applyId.to_string(HashFormat::Base16, false).substr(0, 12),
                         it->facts.size(), it->lastProcessedCount);
                 return;
@@ -473,7 +473,7 @@ public:
         }
         /* No matching boundary at all — true invariant violation. */
         tracingCacheLog(
-            "logDepth2Observation: no matching boundary for applyId=%s",
+            "logAmbientObservation: no matching boundary for applyId=%s",
             applyId.to_string(HashFormat::Base16, false).substr(0, 12));
     }
 
