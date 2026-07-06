@@ -1,5 +1,5 @@
 #include "nix/expr/tracing-evaluator.hh"
-#include "nix/expr/ambient-object.hh"
+#include "nix/expr/outer-object.hh"
 #include "nix/expr/expr-from-object.hh"
 #include "nix/expr/tracing-callback-apply-result.hh"
 #include "nix/expr/tracing-decision-graph.hh"
@@ -349,7 +349,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        TracingCallbackArg-fn (= recursive cb-apply): the arg crosses the cb-apply
        boundary as `PositionalSeed{depth+1}` regardless of its
        outside-the-boundary Subject. Same convention as
-       `AmbientObject::queryApply` and the walker's
+       `OuterObject::queryApply` and the walker's
        `<replay-local-lambda>` primop. */
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
     auto argIdHash = Hash::parseNonSRIUnprefixed(argStateHashStr, HashAlgorithm::SHA256);
@@ -507,7 +507,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withArgCell(std::move(cell));
     obj->withApplyResultSubject(std::move(resultSubject), applyArgAncestry);
-    if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
+    if (auto * argAmb = dynamic_cast<OuterObject *>(arg.get_ptr().get())) {
         if (auto ctx = argAmb->getApplyContext())
             obj->withApplyContext(std::move(ctx));
     }

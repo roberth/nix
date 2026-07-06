@@ -191,14 +191,14 @@ public:
      *  - `InterpreterObject` / `TracingObject` / `TracingReplayObject`:
      *    return the underlying `RootValue` directly (= same as
      *    `defeatCache`).
-     *  - `AmbientObject`: returns a thunk wrapping an `ExprFromObject`
+     *  - `OuterObject`: returns a thunk wrapping an `ExprFromObject`
      *    proxy that, when forced, dispatches through the resolver. Its
      *    `defeatCache` throws ("you can't bypass a cache you ARE").
      *  - `ReplayCallbackArg`: returns a primop replay that, when
      *    applied, materialises the next-level cached representation.
      *    Its `defeatCache` could also throw under the same principle.
      *
-     * The `resolver` argument is needed to construct `AmbientObject`'s
+     * The `resolver` argument is needed to construct `OuterObject`'s
      * proxy thunk; pass `nullptr` if the caller doesn't have one (= and
      * accept that virtual-object subclasses may throw).
      *
@@ -262,7 +262,7 @@ public:
 
     /**
      * If this Object is a cache-boundary proxy with a content-defined
-     * identity — AmbientObject, TracingCallbackArg, TracingObject,
+     * identity — OuterObject, TracingCallbackArg, TracingObject,
      * TracingReplayObject — return its state hash hex. Returns nullopt for
      * regular Objects (InterpreterObject and friends). Used to build
      * apply Q hashes (`TracingReplayEvaluator::apply`) and to match
@@ -278,7 +278,7 @@ public:
     }
 
     /**
-     * The proxy's static structural identifier — for AmbientObject
+     * The proxy's static structural identifier — for OuterObject
      * and TracingCallbackArg, the Subject they carry. Used by the
      * walker to evolve scope state ids in lockstep with the recorder
      * (stateHashAt against the running walk). Returns null
@@ -301,9 +301,9 @@ public:
 
     /**
      * Invoke a covariant-callback apply on this Object with the given
-     * arg. Only meaningful for AmbientObject (which dispatches to its
+     * arg. Only meaningful for OuterObject (which dispatches to its
      * applyFn closure); default throws for any other Object type.
-     * Callers no longer need to dynamic_cast<AmbientObject*> just to
+     * Callers no longer need to dynamic_cast<OuterObject*> just to
      * call queryApply.
      */
     virtual std::shared_ptr<Object> queryApply(std::shared_ptr<Object> /*argObj*/)

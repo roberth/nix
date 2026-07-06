@@ -109,10 +109,10 @@ ref<Object> Interpreter::apply(ref<Object> fn, ref<Object> arg)
 {
     /* `toValueOrProxy` is the right method here: for concrete Objects
        it returns the underlying forced Value (= same as `defeatCache`);
-       for `AmbientObject` it returns a thunk wrapping an `ExprFromObject`
+       for `OuterObject` it returns a thunk wrapping an `ExprFromObject`
        proxy that defers materialisation. This replaces the old try/catch
        defeatCache pattern — `defeatCache` was the wrong name for the
-       virtual-value case, since AmbientObjects can't be "defeated"
+       virtual-value case, since OuterObjects can't be "defeated"
        (they ARE the cache). */
     auto fnValue = fn->toValueOrProxy(*evalState, ambientResolver);
     auto argValue = arg->toValueOrProxy(*evalState, ambientResolver);

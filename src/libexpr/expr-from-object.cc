@@ -1,5 +1,5 @@
 #include "nix/expr/expr-from-object.hh"
-#include "nix/expr/ambient-object.hh"
+#include "nix/expr/outer-object.hh"
 #include "nix/expr/subject-id.hh"
 #include "nix/expr/environment.hh"
 #include "nix/expr/eval.hh"
@@ -35,7 +35,7 @@ namespace nix {
  *   `from=<apply_qH>` Facts can chase identity back.
  */
 /* Pure-storage registry mapping state hashs to live outer
-   Objects (values the inner reads through AmbientObject). The Local
+   Objects (values the inner reads through OuterObject). The Local
    direction (inner values the outer reads via callback) doesn't go
    through this registry at all on replay — those are served by
    ReplayCallbackArg standins from LocalResponseMap. Local
@@ -173,7 +173,7 @@ struct AmbientApply
 
     /** Same as run, but the fnObj is provided directly instead of
         being resolved via the registry. Used by makeCachedFnPrimOp's
-        applyFn closure when the seed AmbientObject itself is being
+        applyFn closure when the seed OuterObject itself is being
         applied (= fnId is the seed's state hash, which boundary discipline
         keeps unregistered to avoid sibling collisions; the closure
         captures outerArgObj instead). */
@@ -277,7 +277,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
         throw Error("ambient apply requires outerState");
 
     /* Scope-graph cell for the cb arg, rooted at the caller's
-       effective argAncestry (which AmbientObject::queryApply passes in
+       effective argAncestry (which OuterObject::queryApply passes in
        because a resolved fn may be an InterpreterObject without a
        proxy parent chain). The cell carries only topology. */
     auto localCell = ArgCell::make(callerScope, argObj);
@@ -388,7 +388,7 @@ std::pair<AmbientId, AmbientId> AmbientApply::runOn(
                the synthetic apply-result subject as
                `ApplyResultSubject{fn=this.subject, arg=PositionalSeed{depth+1}}`
                with `argAncestry` — matching what the writer's recording
-               produced when AmbientObject::queryApply built the apply
+               produced when OuterObject::queryApply built the apply
                result's subject. Without these fields the synthetic
                falls back to PostulatedIdempotentRead encoding which disagrees
                with the recorder's encoding, breaking CAS reads of
@@ -452,7 +452,7 @@ static PrimOp * makeCachedFnPrimOp(
                         /* Scope-graph cell for this seed. Parent = the
                            fn proxy's cell (so curried applies chain
                            through depth 0, 1, ... naturally).
-                           cell.liveObject is set to the AmbientObject
+                           cell.liveObject is set to the OuterObject
                            we're about to construct (below) so chain
                            navigation returns the proxy. */
                         auto parentCell = effectiveArgCell(*fnObj);
@@ -528,7 +528,7 @@ static PrimOp * makeCachedFnPrimOp(
                                fires after evolvedQueryFrom because
                                parentHash must be computed first to
                                build the query). The cb-arg
-                               AmbientObject's own state hash uses
+                               OuterObject's own state hash uses
                                subjectHashAfter with empty walk
                                (= content-only) anyway, so dropping
                                these pushes is consistent throughout. */
@@ -554,7 +554,7 @@ static PrimOp * makeCachedFnPrimOp(
                                cb-arg seed unregistered in
                                AmbientRegistry. When the SEED ITSELF is
                                applied (= inner does `args 5` on the
-                               seed AmbientObject), fnId == rootId.
+                               seed OuterObject), fnId == rootId.
                                `resolver->apply` would try
                                `resolveOuter(rootId)` and throw
                                "unknown value id". Route through
@@ -570,12 +570,12 @@ static PrimOp * makeCachedFnPrimOp(
                             auto [argId, resultId] = resolver->apply(fnId, std::move(argObj), std::move(callerScope));
                             return resultId;
                         };
-                        /* lazy-paths: pin AmbientObject's path SourceRoot
+                        /* lazy-paths: pin OuterObject's path SourceRoot
                            on the outer EvalState's `rootFSRoot` so the
                            SourceRoot outlives the Values the outer
                            evaluator builds from any returned RootedPaths. */
                         auto contraArg =
-                            make_ref<AmbientObject>(std::move(argId), std::move(queryFn), state.rootFSRoot, std::move(applyFn));
+                            make_ref<OuterObject>(std::move(argId), std::move(queryFn), state.rootFSRoot, std::move(applyFn));
                         /* Wire seedCell.liveObject to contraArg now
                            that it exists. This is the deliberate
                            shared_ptr cycle documented on
@@ -598,7 +598,7 @@ static PrimOp * makeCachedFnPrimOp(
 
 /**
  * Create a PrimOp for an ambient function (from the outer evaluator).
- * Calls dispatch through AmbientObject::queryApply without an inner evaluator.
+ * Calls dispatch through OuterObject::queryApply without an inner evaluator.
  */
 static PrimOp * makeAmbientFnPrimOp(std::shared_ptr<Object> fnObj, std::shared_ptr<AmbientResolver> resolver)
 {
@@ -687,7 +687,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
     }
 
     case nFunction: {
-        /* Dispatch on obj's dynamic type. An AmbientObject wraps an
+        /* Dispatch on obj's dynamic type. An OuterObject wraps an
            outer value reached via ambient query; its apply must
            route through queryApply (makeAmbientFnPrimOp). A concrete
            fn with an inner evaluator goes through innerEval->apply
@@ -709,7 +709,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
             break;
         }
         PrimOp * primOp;
-        if (dynamic_cast<AmbientObject *>(obj.get())) {
+        if (dynamic_cast<OuterObject *>(obj.get())) {
             primOp = makeAmbientFnPrimOp(obj, ambientResolver);
         } else if (innerEvaluator) {
             primOp = makeCachedFnPrimOp(obj, innerEvaluator, ambientResolver);

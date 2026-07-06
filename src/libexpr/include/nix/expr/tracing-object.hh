@@ -48,7 +48,7 @@ class TracingObject : public Object
     Hash applyArgAncestry{HashAlgorithm::SHA256};
 
     /* Per-invocation observation context shared with the cb-arg
-       AmbientObject's queryFn and propagated to derived children
+       OuterObject's queryFn and propagated to derived children
        via shared_ptr. */
     std::shared_ptr<ApplyContext> applyContext;
 

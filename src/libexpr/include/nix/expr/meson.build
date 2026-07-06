@@ -8,7 +8,7 @@ config_pub_h = configure_file(
 )
 
 headers = [ config_pub_h ] + files(
-  'ambient-object.hh',
+  'outer-object.hh',
   'attr-path.hh',
   'subject-id.hh',
   'attr-set.hh',

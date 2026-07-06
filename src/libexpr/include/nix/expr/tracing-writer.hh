@@ -239,7 +239,7 @@ class TracingWriter
        elide redundant boundary firings during walker re-dispatch of a
        recorded apply (= `dispatchApplyLive`): walker's
        `fnObj->queryApply(replayLocal)` re-routes through
-       `AmbientObject::queryApply` → `applyFn` → `AmbientApply::run`,
+       `OuterObject::queryApply` → `applyFn` → `AmbientApply::run`,
        which would normally fire `openApplyBoundary` — but that path
        represents validation of an already-recorded apply event, not a
        NEW event. Letting it fire inflates `envWalk` with ε edges

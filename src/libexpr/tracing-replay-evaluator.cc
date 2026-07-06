@@ -1,6 +1,6 @@
 #include "nix/expr/tracing-replay-evaluator.hh"
 #include "nix/expr/interpreter-object.hh"
-#include "nix/expr/ambient-object.hh"
+#include "nix/expr/outer-object.hh"
 #include "nix/expr/arg-cell.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/expr-from-object.hh"
@@ -40,7 +40,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
     /* The entire walk is VALIDATION of recorded state — any apply
        queries triggered through `fnObj->queryApply(...)` during
        dispatch (resolveApplyId, navigatePath's Apply step,
-       dispatchApplyLive) re-route through `AmbientObject::queryApply
+       dispatchApplyLive) re-route through `OuterObject::queryApply
        → applyFn → AmbientApply::run` and would each fire a fresh
        `openApplyBoundary` on the writer if not suppressed. Each fresh
        boundary inflates `envWalk` with a redundant ε edge
@@ -580,7 +580,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
            inserting `{kind: "localArg", applyResultId: ...}` at the
            argId), and any derived value has a producer Request. Only
            outer-seed state hashes minted by makeCachedFnPrimOp.impl — e.g.
-           a nested AmbientObject for the int the callback body passes
+           a nested OuterObject for the int the callback body passes
            to inner_lambda in cb-higher-order's `g 10` — reach here.
 
            Live-proxy fallback: the `<replay-local-lambda>` primop
@@ -684,9 +684,9 @@ bool TracingReplayEvaluator::isLocalArgId(const Hash & idHash)
    recorded responses out of LocalResponseMap by qH(query{from=hex(id)}),
    matching what TracingCallbackArg wrote during recording. */
 /* Mixed direction: fn is Outer (resolved through the producer chain to
-   an AmbientObject); arg may be Local (ReplayCallbackArg) or Outer (resolved
+   an OuterObject); arg may be Local (ReplayCallbackArg) or Outer (resolved
    through chain). Invokes the apply live against fn and arg to
-   materialise the apply result; AmbientObject::queryApply registers the
+   materialise the apply result; OuterObject::queryApply registers the
    result in outerValues. */
 std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx)
@@ -937,7 +937,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
 
     /* Invoke outer's f LIVE via the Object-level apply entry. Object-
        level apply preserves the ReplayCallbackArg replayLocal as an Object through
-       the bridging chain (= AmbientObject::queryApply → applyFn →
+       the bridging chain (= OuterObject::queryApply → applyFn →
        resolver->apply → runOn sees argObj as the ReplayCallbackArg, NOT as an
        InterpreterObject wrapping a primop Value). That is what lets
        Change B's TracingCallbackArg-skip kick in and lets outer's `g 5` fire the
@@ -1306,7 +1306,7 @@ ref<Object> TracingReplayEvaluator::getInternalPrimOp(const std::string & name)
 ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 {
     /* fn and arg must be cache-boundary proxies whose identity is
-       content-defined: AmbientObject (outer values reached by the
+       content-defined: OuterObject (outer values reached by the
        inner), TracingObject / TracingReplayObject (cached values
        reached by the outer). No counter fallback — per the
        Principles section, identity outside the CLI is grounded in
@@ -1325,20 +1325,20 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto fnStateHashStr = getId(*fn);
     auto argStateHashStr = getId(*arg);
 
-    /* Outer-direction applies (= fn is an AmbientObject) must NEVER
+    /* Outer-direction applies (= fn is an OuterObject) must NEVER
        be replayed from cache — the outer value's behaviour is the
        *only* thing that can change between cold and warm, so its
        apply-result must always go through live dispatch. The
        registry intercepts and the TracingReplayObject wrapper's
        lookupResult both serve recorded responses; both are wrong
        for outer-direction. Skip both: invoke fn->queryApply(arg)
-       directly, return whatever the AmbientObject yields.
-       AmbientObject's own queryFn/applyFn closures handle live
+       directly, return whatever the OuterObject yields.
+       OuterObject's own queryFn/applyFn closures handle live
        dispatch + the outer-side validation chain. */
-    if (auto * fnAmb = dynamic_cast<AmbientObject *>(fn.get_ptr().get())) {
+    if (auto * fnAmb = dynamic_cast<OuterObject *>(fn.get_ptr().get())) {
         (void) fnAmb;
         tracingCacheLog(
-            "walker apply: outer-direction (fn is AmbientObject) — live dispatch, no registry");
+            "walker apply: outer-direction (fn is OuterObject) — live dispatch, no registry");
         auto result = fn->queryApply(arg.get_ptr());
         if (!result)
             throw Error("TracingReplayEvaluator::apply: outer-direction queryApply returned null");
@@ -1418,7 +1418,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        check applyContext->finalized). Pre-population of observations
        from the Requests pool is no longer needed — evolvedQueryFrom
        reads the evaluator's envWalk instead. */
-    if (auto * argAmb = dynamic_cast<AmbientObject *>(arg.get_ptr().get())) {
+    if (auto * argAmb = dynamic_cast<OuterObject *>(arg.get_ptr().get())) {
         if (auto ctx = argAmb->getApplyContext())
             obj->withApplyContextOnly(std::move(ctx));
     }

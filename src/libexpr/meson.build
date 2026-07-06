@@ -131,7 +131,7 @@ foreach header : [ 'imported-drv-to-derivation.nix', 'fetchurl.nix' ]
 endforeach
 
 sources = files(
-  'ambient-object.cc',
+  'outer-object.cc',
   'subject-id.cc',
   'attr-path.cc',
   'attr-set.cc',

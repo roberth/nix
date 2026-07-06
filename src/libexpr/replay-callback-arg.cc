@@ -470,17 +470,17 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                 auto localChainCursor = std::make_shared<Hash>(*initialChainCursor);
                 /* Compose the recursive apply result's subject to
                    match what the recorder built at cold via
-                   `AmbientObject::queryApply` (= ambient-object.cc
+                   `OuterObject::queryApply` (= outer-object.cc
                    line ~280):
                      ApplyResultSubject{
-                       fn  = this AmbientObject's subject,
+                       fn  = this OuterObject's subject,
                        arg = PositionalSeed{localCell.depth},
                      }
                    where `localCell.depth = callerScope.depth + 1`.
 
                    This lambda primop fires on the ReplayCallbackArg that
                    represents the fn of the nested apply; its
-                   `subject` IS the recorder's "this AmbientObject's
+                   `subject` IS the recorder's "this OuterObject's
                    subject". The arg subject is PositionalSeed{depth+1}
                    at applyArgAncestry, with `depth` threaded in through the
                    localArg sidecar. The ReplayCallbackArg's construction (in

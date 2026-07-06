@@ -1,7 +1,7 @@
 #pragma once
 /**
  * @file
- * AmbientObject — Object backed by an ambient query callback.
+ * OuterObject — Object backed by an ambient query callback.
  *
  * A value from the ambient (outer) evaluator, accessed by the local
  * (inner) evaluator through ambient queries. Each Object method issues
@@ -45,7 +45,7 @@ using AmbientQueryFn = std::function<AmbientQueryResult(
 /**
  * Callback type for ambient function application.
  * Takes the function's Object id, the argument Object, and the
- * calling AmbientObject's effective argCell cell (the chain
+ * calling OuterObject's effective argCell cell (the chain
  * root from which the new local cell's depth descends). Returns
  * the result Object id.
  *
@@ -53,7 +53,7 @@ using AmbientQueryFn = std::function<AmbientQueryResult(
  * chain (e.g. seed.items[0]), and `resolve(fnId)` may return an
  * InterpreterObject without a proxy parent chain — so the
  * callee can't infer depth from the resolved fn. The caller
- * (AmbientObject::queryApply) knows its own proxy graph
+ * (OuterObject::queryApply) knows its own proxy graph
  * position and threads the effective cell through.
  */
 using AmbientApplyFn = std::function<AmbientId(
@@ -64,7 +64,7 @@ using AmbientApplyFn = std::function<AmbientId(
  * Each method composes a Query, issues it via the callback, and
  * interprets the Result.
  */
-class AmbientObject : public Object
+class OuterObject : public Object
 {
     Subject subject; ///< Static structural identifier (positional/derived/apply)
     /* Inherited argAncestry: XOR of outer-argAncestry state hashes (chiefly the cached
@@ -72,12 +72,12 @@ class AmbientObject : public Object
        content-identity-via-asks.md. Set at the cb-apply boundary;
        propagated to children. Zero hash if no inheritance. */
     Hash argAncestry;
-    /* Per-apply observation context. Set on cb-arg seed AmbientObjects
+    /* Per-apply observation context. Set on cb-arg seed OuterObjects
        by makeCachedFnPrimOp.impl at the apply boundary; the queryFn
        closure routes observations through this context so the
        apply-result wrapping can compute its evolved state hash via
        stateHashAfter against the accumulated walk. Null on
-       non-cb-arg AmbientObjects. */
+       non-cb-arg OuterObjects. */
     std::shared_ptr<ApplyContext> applyContext;
     AmbientQueryFn queryFn;   ///< Callback to issue ambient queries
     AmbientApplyFn applyFn;   ///< Callback for function application (may be null)
@@ -104,7 +104,7 @@ class AmbientObject : public Object
     trace::ResultWHNF & whnf();
 
 public:
-    AmbientObject(Subject subject, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
+    OuterObject(Subject subject, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn = {});
 
     /** This proxy's structural identity (positional / derived /
         apply-result), per the subject-id design. */
@@ -117,7 +117,7 @@ public:
 
     /** Set the proxy's argCell. Call right after construction at
         boundary sites. Returns *this for chaining. */
-    AmbientObject & withArgCell(std::shared_ptr<const ArgCell> argScope_)
+    OuterObject & withArgCell(std::shared_ptr<const ArgCell> argScope_)
     {
         argCell = std::move(argScope_);
         return *this;
@@ -125,16 +125,16 @@ public:
 
     /** Set the proxy's inherited argAncestry (outer-argAncestry state hashes).
         Children created by this proxy inherit this argAncestry. */
-    AmbientObject & withInheritedScope(const Hash & h)
+    OuterObject & withInheritedScope(const Hash & h)
     {
         argAncestry = h;
         return *this;
     }
 
     /** Attach a per-apply observation context. Used on cb-arg seed
-        AmbientObjects at the cb-apply boundary; the queryFn closure
+        OuterObjects at the cb-apply boundary; the queryFn closure
         routes observations into this context. */
-    AmbientObject & withApplyContext(std::shared_ptr<ApplyContext> ctx)
+    OuterObject & withApplyContext(std::shared_ptr<ApplyContext> ctx)
     {
         applyContext = std::move(ctx);
         return *this;
@@ -167,7 +167,7 @@ public:
 
     /**
      * Issue a QueryApply. The resolver registers the arg and creates
-     * the lazy application. Returns an AmbientObject wrapping the result.
+     * the lazy application. Returns an OuterObject wrapping the result.
      */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 

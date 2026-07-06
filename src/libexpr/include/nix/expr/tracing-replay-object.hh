@@ -37,7 +37,7 @@ class TracingReplayObject : public Object
     /* Per-cb-apply observation context for the apply that produced
        this object. Set on apply-result wrappers by
        TracingReplayEvaluator::apply when the arg was a cb-arg
-       AmbientObject carrying one. Retained for the
+       OuterObject carrying one. Retained for the
        finalised-on-ensureInner side-channel that other code paths
        still inspect; not used for evolvedQueryFrom under the
        option-2 encoding (which routes through the evaluator's

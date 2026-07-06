@@ -49,7 +49,7 @@ struct ExprFromObject : ExprProxy
      *
      * When null, functions are either absent or ambient (from the
      * outer evaluator). Ambient functions get an `<ambient-fn>`
-     * PrimOp that dispatches via AmbientObject::queryApply().
+     * PrimOp that dispatches via OuterObject::queryApply().
      */
     std::shared_ptr<Evaluator> innerEvaluator;
 

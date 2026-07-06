@@ -1,4 +1,4 @@
-#include "nix/expr/ambient-object.hh"
+#include "nix/expr/outer-object.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/expr-from-object.hh"
 #include "nix/expr/object-type.hh"
@@ -26,7 +26,7 @@ static void stampPerArgFieldsAmbient(Q & q, const Subject & subject, const Hash 
     q.fromStateHashes = std::move(fromStateHashes);
 }
 
-AmbientObject::AmbientObject(
+OuterObject::OuterObject(
     Subject subject_, AmbientQueryFn queryFn, ref<SourceRoot> ambientRootFSRoot, AmbientApplyFn applyFn)
     : subject(std::move(subject_))
     , argAncestry(HashAlgorithm::SHA256)
@@ -36,7 +36,7 @@ AmbientObject::AmbientObject(
 {
 }
 
-std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
+std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
 {
     auto stateHash = subjectHashAfter(subject, argAncestry, {});
     trace::QueryGetAttr q{name, std::string{}};
@@ -52,7 +52,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
         .kind = DerivedSubject::Kind::GetAttr,
         .name = name,
     }};
-    auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
+    auto child = std::make_shared<OuterObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     /* Inherit argAncestry so the child's `from` fields include
@@ -61,7 +61,7 @@ std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
     return child;
 }
 
-trace::ResultWHNF & AmbientObject::whnf()
+trace::ResultWHNF & OuterObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
@@ -76,7 +76,7 @@ trace::ResultWHNF & AmbientObject::whnf()
     return *cachedWHNF;
 }
 
-std::vector<std::string> AmbientObject::getAttrNames()
+std::vector<std::string> OuterObject::getAttrNames()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
@@ -85,7 +85,7 @@ std::vector<std::string> AmbientObject::getAttrNames()
     return p->names;
 }
 
-std::string AmbientObject::getStringIgnoreContext()
+std::string OuterObject::getStringIgnoreContext()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFString>(&w.payload);
@@ -94,12 +94,12 @@ std::string AmbientObject::getStringIgnoreContext()
     return p->value;
 }
 
-std::string AmbientObject::getStringWithoutContext()
+std::string OuterObject::getStringWithoutContext()
 {
     return getStringIgnoreContext();
 }
 
-std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
+std::pair<std::string, NixStringContext> OuterObject::getStringWithContext()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFString>(&w.payload);
@@ -111,7 +111,7 @@ std::pair<std::string, NixStringContext> AmbientObject::getStringWithContext()
     return {p->value, std::move(ctx)};
 }
 
-RootedPath AmbientObject::getPath()
+RootedPath OuterObject::getPath()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFPath>(&w.payload);
@@ -125,7 +125,7 @@ RootedPath AmbientObject::getPath()
     return RootedPath{ambientRootFSRoot, CanonPath(p->path)};
 }
 
-bool AmbientObject::getBool(std::string_view)
+bool OuterObject::getBool(std::string_view)
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFBool>(&w.payload);
@@ -134,7 +134,7 @@ bool AmbientObject::getBool(std::string_view)
     return p->value;
 }
 
-NixInt AmbientObject::getInt(std::string_view)
+NixInt OuterObject::getInt(std::string_view)
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFInt>(&w.payload);
@@ -143,7 +143,7 @@ NixInt AmbientObject::getInt(std::string_view)
     return NixInt{p->value};
 }
 
-NixFloat AmbientObject::getFloat(std::string_view)
+NixFloat OuterObject::getFloat(std::string_view)
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
@@ -152,7 +152,7 @@ NixFloat AmbientObject::getFloat(std::string_view)
     return p->value;
 }
 
-size_t AmbientObject::getListSize()
+size_t OuterObject::getListSize()
 {
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFList>(&w.payload);
@@ -161,7 +161,7 @@ size_t AmbientObject::getListSize()
     return p->size;
 }
 
-std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
+std::shared_ptr<Object> OuterObject::getListElem(size_t index)
 {
     auto stateHash = subjectHashAfter(subject, argAncestry, {});
     trace::QueryGetListElem q{std::string{}, index};
@@ -174,29 +174,29 @@ std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
         .kind = DerivedSubject::Kind::GetListElem,
         .index = index,
     }};
-    auto child = std::make_shared<AmbientObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
+    auto child = std::make_shared<OuterObject>(std::move(childSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     child->withInheritedScope(argAncestry);
     return child;
 }
 
-ObjectType AmbientObject::getTypeLazy()
+ObjectType OuterObject::getTypeLazy()
 {
     return getType();
 }
 
-ObjectType AmbientObject::getType()
+ObjectType OuterObject::getType()
 {
     return stringToObjectType(whnf().type);
 }
 
-RootValue AmbientObject::defeatCache()
+RootValue OuterObject::defeatCache()
 {
     throw Error("ambient defeatCache: not supported on virtual values");
 }
 
-RootValue AmbientObject::toValueOrProxy(EvalState & state, std::shared_ptr<AmbientResolver> resolver)
+RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<AmbientResolver> resolver)
 {
     /* The virtual-value path: build a thunk that, when forced, evaluates
        an `ExprFromObject` proxy against this Object — same construction
@@ -208,7 +208,7 @@ RootValue AmbientObject::toValueOrProxy(EvalState & state, std::shared_ptr<Ambie
     return allocRootValue(thunk);
 }
 
-std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
+std::optional<FunctionInfo> OuterObject::getFunctionInfo()
 {
     auto stateHash = subjectHashAfter(subject, argAncestry, {});
     trace::QueryGetFunctionInfo q{std::string{}};
@@ -220,17 +220,17 @@ std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
     return FunctionInfo{.formals = r->formals, .ellipsis = r->ellipsis};
 }
 
-PosIdx AmbientObject::getPos()
+PosIdx OuterObject::getPos()
 {
     return noPos;
 }
 
-std::optional<std::vector<std::string>> AmbientObject::getAttrPath()
+std::optional<std::vector<std::string>> OuterObject::getAttrPath()
 {
     return std::nullopt;
 }
 
-std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj)
+std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
 {
     if (!applyFn)
         throw Error("ambient apply: no apply callback");
@@ -255,7 +255,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
         .fn = std::make_shared<const Subject>(subject),
         .arg = std::make_shared<const Subject>(std::move(argId)),
     }};
-    auto result = std::make_shared<AmbientObject>(std::move(resultSubject), queryFn, ambientRootFSRoot, applyFn);
+    auto result = std::make_shared<OuterObject>(std::move(resultSubject), queryFn, ambientRootFSRoot, applyFn);
     /* Apply-result argAncestry cell rooted at the caller's argAncestry. */
     auto cell = ArgCell::make(callerScope, std::move(argForScope));
     result->withArgCell(std::move(cell));

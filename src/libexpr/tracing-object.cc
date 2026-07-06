@@ -1,5 +1,5 @@
 #include "nix/expr/tracing-object.hh"
-#include "nix/expr/ambient-object.hh"
+#include "nix/expr/outer-object.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/trace-types.hh"
@@ -377,7 +377,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto cell = ArgCell::make(argCell, argObj);
     child->withArgCell(std::move(cell));
     child->withApplyResultSubject(std::move(resultSubject), applyArgAncestryLocal);
-    if (auto * argAmb = dynamic_cast<AmbientObject *>(argObj.get())) {
+    if (auto * argAmb = dynamic_cast<OuterObject *>(argObj.get())) {
         if (auto ctx = argAmb->getApplyContext())
             child->withApplyContext(std::move(ctx));
     } else if (applyContext) {

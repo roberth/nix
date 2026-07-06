@@ -180,7 +180,7 @@ Hash stateHashConverged(
     traps. For non-derived subjects this delegates to `stateHashAt`.
     For `DerivedSubject` it returns the producer query's hash:
     `qH(QueryGetAttr{name, from = root_cdi, fromStateHashes, path})` for
-    `GetAttr`, similarly for `GetListElem`. Used by `AmbientObject`,
+    `GetAttr`, similarly for `GetListElem`. Used by `OuterObject`,
     `TracingCallbackArg`, etc. to expose a single-`Hash` identity
     handle even though derived values don't have state hashes proper. */
 Hash subjectHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk, size_t edgeIndex);
@@ -282,7 +282,7 @@ std::string describe(const Subject & subject);
 
     A fresh instance is created at each cb-apply boundary and shared
     by every Object participating in that single invocation: the
-    cb-arg side AmbientObject's queryFn pushes observations the inner
+    cb-arg side OuterObject's queryFn pushes observations the inner
     makes on the outer arg; the apply-result side TracingObject /
     TracingReplayObject pushes observations made via the wrapper or
     its derived children. Both directions land in `observations` in
