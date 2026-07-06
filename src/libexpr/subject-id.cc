@@ -171,7 +171,7 @@ trace::QueryApply makeApplyResultQuery(
     return q;
 }
 
-Hash scopeStateIdAtWithHook(
+Hash stateHashAtStamping(
     const Subject & subject,
     const Hash & argAncestry,
     const std::vector<Edge> & walk,

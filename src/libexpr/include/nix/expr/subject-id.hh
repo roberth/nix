@@ -191,7 +191,7 @@ Hash structuralAddress(const Subject & subject, const Hash & argAncestry, const 
 Hash structuralAddressAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
 
 /** Per-subject observation trie fold step, as consumed by Path 3
-    stamping / navigation. Emitted by `scopeStateIdAtWithHook`
+    stamping / navigation. Emitted by `stateHashAtStamping`
     whenever an observation matches the subject's running state
     and folds into it. The tuple `(curBefore, obsFromHash,
     obsElementHash) → curAfter` is uniquely identifying — cold
@@ -208,7 +208,7 @@ struct EvolutionStep {
     Cold's writer passes a callback that inserts each step into
     `SubjectEvolutionEdges` (Path 3 stamping). Used only at cold
     record time — walker doesn't call this variant. */
-Hash scopeStateIdAtWithHook(
+Hash stateHashAtStamping(
     const Subject & subject,
     const Hash & argAncestry,
     const std::vector<Edge> & walk,

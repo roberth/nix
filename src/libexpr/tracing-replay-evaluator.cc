@@ -521,7 +521,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
                    grouping-independent by construction: walker's
                    convergence value depends only on the SET of
                    observations, not on edge boundaries. Cold's
-                   `scopeStateIdAtWithHook` stamps SubjectEvolutionEdges
+                   `stateHashAtStamping` stamps SubjectEvolutionEdges
                    trie rows in the same order-invariant way when the
                    subject's stamp state coincides with the fixed
                    point — so both sides reach the same hash on the

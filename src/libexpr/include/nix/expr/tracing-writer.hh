@@ -270,7 +270,7 @@ private:
 
 public:
     /* Path 3 stamp: insert one SubjectEvolutionEdges row. Called
-       from cold's scopeStateIdAtWithHook hook callback at
+       from cold's stateHashAtStamping hook callback at
        fact-`from` construction sites. Immediate write (not
        buffered) — Path 3 emissions per scopeStateIdAt call are
        bounded by the walk length × observations per edge and are

@@ -182,7 +182,7 @@ struct TracingDecisionGraph::State
     SQLiteStmt insertAmbientAsks, selectAmbientAsks;
 
     /* Path 3 (subject observation trie) — populated by cold's
-       scopeStateIdAtWithHook fold callback; consumed by
+       stateHashAtStamping fold callback; consumed by
        walker's inline trie navigation in resolveCdiId. */
     SQLiteStmt insertSubjectEvolutionEdge, selectSubjectEvolutionEdge;
 

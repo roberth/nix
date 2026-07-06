@@ -75,7 +75,7 @@ void TracingWriter::flushAmbient(bool finalize)
             /* Path 3: stamp SubjectEvolutionEdges via hook. */
             Hash rootSelfHash = scopeStateIdAt(
                 root, Hash(HashAlgorithm::SHA256), {}, 0);
-            auto cid = scopeStateIdAtWithHook(
+            auto cid = stateHashAtStamping(
                 root, pf.argAncestry, envWalk, d1EdgeIndex,
                 [&](const EvolutionStep & step) {
                     insertSubjectEvolutionEdge(
@@ -338,7 +338,7 @@ void TracingWriter::flushAmbient(bool finalize)
                 /* Path 3: stamp SubjectEvolutionEdges via hook. */
                 Hash rootSelfHash = scopeStateIdAt(
                     root, Hash(HashAlgorithm::SHA256), {}, 0);
-                auto cid = scopeStateIdAtWithHook(
+                auto cid = stateHashAtStamping(
                     root, pf.argAncestry, walk, /*edgeIndex=*/ i,
                     [&](const EvolutionStep & step) {
                         insertSubjectEvolutionEdge(

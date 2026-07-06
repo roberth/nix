@@ -421,7 +421,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     /* Path 3: stamp SubjectEvolutionEdges via hook. */
     Hash resultSelfHash = scopeStateIdAt(
         resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
-    auto applyArgAncestryStateHash = scopeStateIdAtWithHook(
+    auto applyArgAncestryStateHash = stateHashAtStamping(
         resultSubject, applyArgAncestry, d1Walk, d1Walk.size(),
         [&](const EvolutionStep & step) {
             writer.insertSubjectEvolutionEdge(

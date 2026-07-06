@@ -89,7 +89,7 @@ std::string TracingObject::evolvedQueryFrom() const
            content hash as the trie root key. */
         Hash subjectSelfHash = scopeStateIdAt(
             *applyResultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
-        auto evolved = scopeStateIdAtWithHook(
+        auto evolved = stateHashAtStamping(
             *applyResultSubject, applyArgAncestry, walk, walk.size(),
             [&](const EvolutionStep & step) {
                 writer.insertSubjectEvolutionEdge(
