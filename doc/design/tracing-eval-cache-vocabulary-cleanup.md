@@ -943,10 +943,27 @@ This plan does **not**:
 - Change behaviour. No renamed identifier introduces a new codepath.
 - Change file locations except for the deletions in §5.1 and the split
   in §5.2. Header/source pairs remain paired.
-- Alter the SQLite schema or on-disk formats. Table and column names
-  stay for backwards compatibility with existing caches.
-- Address the JSON trace-file format or CLI flags. Those are
-  user-visible and get a separate deprecation pass if we touch them.
+- Alter the SQLite table names or column layout. Those are stable
+  schema and stay.
+- Address CLI flags. Those are user-visible and get a separate
+  deprecation pass if we touch them.
+
+**Was originally a non-goal, now retracted:** the JSON wire format
+of trace payloads (keys like `fromCIDs`, string tags like
+`ContentLeaf`). The tracing eval-cache is unreleased and its
+on-disk representation is throwaway — existing caches are
+regenerated on the next run. That means JSON key names, string
+tags, and hash-string prefixes can all move to the new vocabulary
+too. Renamed as follow-up commits:
+
+- `fromCIDs` JSON key → `fromStateHashes`
+- `ContentLeaf` variant type + methods (`contentHash()`,
+  `isContent()`) → `StateHashLeaf` (`stateHash()`, `isStateHash()`)
+- `resolveCdiId` method → `resolveStateHash`
+- `initCid` local → `initStateHash`
+- `apply-scope:` hash-string prefix → `apply-argAncestry:` (was
+  changed inadvertently during the bare-`scope` sweep in step 6b;
+  the accidental result matches the new discipline and stays)
 
 ## Appendix A: quick-reference table
 
