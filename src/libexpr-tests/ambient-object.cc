@@ -113,7 +113,7 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
     /* Child scopeStateId is the producer query's queryHash. With Subject-based
        construction the AmbientObject derives this from DerivedSubject
        at construction time. */
-    auto childCdi = structuralAddressAfter(
+    auto childCdi = subjectHashAfter(
         Subject{DerivedSubject{
             .parent = std::make_shared<const Subject>(testSubject(0)),
             .kind = DerivedSubject::Kind::GetAttr,
@@ -145,7 +145,7 @@ TEST(AmbientObjectTest, GetAttrMissing)
 TEST(AmbientObjectTest, GetListElem)
 {
     auto seed = testId(0);
-    auto childCdi = structuralAddressAfter(
+    auto childCdi = subjectHashAfter(
         Subject{DerivedSubject{
             .parent = std::make_shared<const Subject>(testSubject(0)),
             .kind = DerivedSubject::Kind::GetListElem,

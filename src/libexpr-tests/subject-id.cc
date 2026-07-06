@@ -66,8 +66,8 @@ TEST(CidAsks, DerivedSubjectIncludesParentInitial)
     auto x = getAttrOn(seed(0), "x");
     auto y = getAttrOn(seed(0), "y");
     auto xOn1 = getAttrOn(seed(1), "x");
-    EXPECT_NE(structuralAddressAfter(x, noScope(), {}), structuralAddressAfter(y, noScope(), {}));
-    EXPECT_NE(structuralAddressAfter(x, noScope(), {}), structuralAddressAfter(xOn1, noScope(), {}));
+    EXPECT_NE(subjectHashAfter(x, noScope(), {}), subjectHashAfter(y, noScope(), {}));
+    EXPECT_NE(subjectHashAfter(x, noScope(), {}), subjectHashAfter(xOn1, noScope(), {}));
 }
 
 TEST(CidAsks, ApplyResultDistinguishesFnAndArg)
@@ -150,14 +150,14 @@ TEST(CidAsks, DerivedAdvancesWhenParentAdvances)
     auto child = getAttrOn(parent, "x");
 
     auto parentInitial = stateHashAfter(parent, noScope(), {});
-    auto childInitial = structuralAddressAfter(child, noScope(), {});
+    auto childInitial = subjectHashAfter(child, noScope(), {});
 
     // A fact on the parent.
     trace::QueryGetWHNF q{hex(parentInitial)};
     trace::ResultWHNF r{"set", trace::WHNFAttrs{{"x"}}};
     Edge e{.observations = {observationFromQR(q, r)}};
 
-    auto childAfter = structuralAddressAfter(child, noScope(), {e});
+    auto childAfter = subjectHashAfter(child, noScope(), {e});
     EXPECT_NE(childInitial, childAfter);  // address changes because parent's CDI did
 }
 
@@ -171,14 +171,14 @@ TEST(CidAsks, DerivedDoesNotAdvanceOnFactsTargetedAtItself)
     auto parent = seed(0);
     auto child = getAttrOn(parent, "x");
 
-    auto childInitial = structuralAddressAfter(child, noScope(), {});
+    auto childInitial = subjectHashAfter(child, noScope(), {});
 
     // A fact whose `from` matches the child's address (not the root's).
     trace::QueryGetWHNF q{hex(childInitial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{7}};
     Edge e{.observations = {observationFromQR(q, r)}};
 
-    EXPECT_EQ(structuralAddressAfter(child, noScope(), {e}), childInitial);
+    EXPECT_EQ(subjectHashAfter(child, noScope(), {e}), childInitial);
 }
 
 /* ---- inheritance: outer-scope CDIs make sibling content ids distinct ---- */
@@ -203,7 +203,7 @@ TEST(CidAsks, InheritanceDistinguishesDerivedAcrossScopes)
     auto scopeA = scopeFor("A");
     auto scopeB = scopeFor("B");
 
-    EXPECT_NE(structuralAddressAfter(child, scopeA, {}), structuralAddressAfter(child, scopeB, {}));
+    EXPECT_NE(subjectHashAfter(child, scopeA, {}), subjectHashAfter(child, scopeB, {}));
 }
 
 TEST(CidAsks, InheritancePropagatesIntoDerivedQueryPayload)
@@ -221,8 +221,8 @@ TEST(CidAsks, InheritancePropagatesIntoDerivedQueryPayload)
     auto parentInB = stateHashAfter(parent, scopeB, {});
     EXPECT_NE(parentInA, parentInB);
 
-    auto childInA = structuralAddressAfter(child, scopeA, {});
-    auto childInB = structuralAddressAfter(child, scopeB, {});
+    auto childInA = subjectHashAfter(child, scopeA, {});
+    auto childInB = subjectHashAfter(child, scopeB, {});
     EXPECT_NE(childInA, childInB);
 }
 
@@ -235,7 +235,7 @@ TEST(CidAsks, InheritanceWithEmptyScopeMatchesUnscoped)
     auto child = getAttrOn(s, "x");
 
     EXPECT_EQ(stateHashAfter(s, noScope(), {}), stateHashAfter(s, Hash(HashAlgorithm::SHA256), {}));
-    EXPECT_EQ(structuralAddressAfter(child, noScope(), {}), structuralAddressAfter(child, Hash(HashAlgorithm::SHA256), {}));
+    EXPECT_EQ(subjectHashAfter(child, noScope(), {}), subjectHashAfter(child, Hash(HashAlgorithm::SHA256), {}));
 }
 
 TEST(CidAsks, InheritanceDistinguishesApplyResultAcrossScopes)

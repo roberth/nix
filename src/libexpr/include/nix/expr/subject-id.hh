@@ -188,7 +188,7 @@ Hash structuralAddress(const Subject & subject, const Hash & argAncestry, const 
 /** Convenience: `structuralAddress` at the walk's tail (= edgeIndex
     = walk.size()). Mirrors `stateHashAfter` but defined for all
     subject forms. */
-Hash structuralAddressAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
+Hash subjectHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
 
 /** Per-subject observation trie fold step, as consumed by Path 3
     stamping / navigation. Emitted by `stateHashAtStamping`

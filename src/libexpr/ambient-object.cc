@@ -38,7 +38,7 @@ AmbientObject::AmbientObject(
 
 std::shared_ptr<Object> AmbientObject::maybeGetAttr(const std::string & name)
 {
-    auto scopeStateId = structuralAddressAfter(subject, argAncestry, {});
+    auto scopeStateId = subjectHashAfter(subject, argAncestry, {});
     trace::QueryGetAttr q{name, std::string{}};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
     auto qr = queryFn(scopeStateId, q, subject, argAncestry);
@@ -65,7 +65,7 @@ trace::ResultWHNF & AmbientObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    auto scopeStateId = structuralAddressAfter(subject, argAncestry, {});
+    auto scopeStateId = subjectHashAfter(subject, argAncestry, {});
     trace::QueryGetWHNF q{std::string{}};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
     auto qr = queryFn(scopeStateId, q, subject, argAncestry);
@@ -163,7 +163,7 @@ size_t AmbientObject::getListSize()
 
 std::shared_ptr<Object> AmbientObject::getListElem(size_t index)
 {
-    auto scopeStateId = structuralAddressAfter(subject, argAncestry, {});
+    auto scopeStateId = subjectHashAfter(subject, argAncestry, {});
     trace::QueryGetListElem q{std::string{}, index};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
     auto qr = queryFn(scopeStateId, q, subject, argAncestry);
@@ -210,7 +210,7 @@ RootValue AmbientObject::toValueOrProxy(EvalState & state, std::shared_ptr<Ambie
 
 std::optional<FunctionInfo> AmbientObject::getFunctionInfo()
 {
-    auto scopeStateId = structuralAddressAfter(subject, argAncestry, {});
+    auto scopeStateId = subjectHashAfter(subject, argAncestry, {});
     trace::QueryGetFunctionInfo q{std::string{}};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
     auto qr = queryFn(scopeStateId, q, subject, argAncestry);
@@ -250,7 +250,7 @@ std::shared_ptr<Object> AmbientObject::queryApply(std::shared_ptr<Object> argObj
        for queryFn lookups agree. */
     int localDepth = callerScope ? callerScope->depth + 1 : 0;
     Subject argSubject{PositionalSeed{localDepth}};
-    applyFn(structuralAddressAfter(subject, argAncestry, {}), std::move(argObj), callerScope);
+    applyFn(subjectHashAfter(subject, argAncestry, {}), std::move(argObj), callerScope);
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(subject),
         .arg = std::make_shared<const Subject>(std::move(argSubject)),

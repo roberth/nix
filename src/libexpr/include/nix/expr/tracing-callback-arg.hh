@@ -50,7 +50,7 @@ class TracingCallbackArg : public Object
 
     /** This local's argAncestry state id, scoped via argAncestry. Computed
         on demand from `subject` + `argAncestry`. */
-    AmbientId localId() const { return structuralAddressAfter(subject, argAncestry, {}); }
+    AmbientId localId() const { return subjectHashAfter(subject, argAncestry, {}); }
 
     /* The argCell cell this local belongs to. Navigation children
        share the parent's cell. Used for argAncestry-graph topology only;

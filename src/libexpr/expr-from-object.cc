@@ -529,7 +529,7 @@ static PrimOp * makeCachedFnPrimOp(
                                parentHash must be computed first to
                                build the query). The cb-arg
                                AmbientObject's own argStateId uses
-                               structuralAddressAfter with empty walk
+                               subjectHashAfter with empty walk
                                (= content-only) anyway, so dropping
                                these pushes is consistent throughout. */
                             return qr;

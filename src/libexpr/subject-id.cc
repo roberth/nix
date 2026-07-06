@@ -271,7 +271,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                     /* X is treated as argAncestry-saturated. Callers pass
                        hashes that already encode the relevant argAncestry
                        — `AmbientObject::getCdi()` returns
-                       structuralAddressAfter with argAncestry
+                       subjectHashAfter with argAncestry
                        baked in; ReplayCallbackArg's localId is
                        stateHashAfter(PositionalSeed{D}, callArgAncestry, {})
                        which is also argAncestry-saturated. Re-XORing argAncestry
@@ -405,7 +405,7 @@ Hash structuralAddress(
     return stateHashAt(subject, argAncestry, walk, edgeIndex);
 }
 
-Hash structuralAddressAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
+Hash subjectHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk)
 {
     return structuralAddress(subject, argAncestry, walk, walk.size());
 }
