@@ -149,7 +149,7 @@ void registerAmbientResolverProxy(
     matching its registered `(subject, argAncestry)` against the given
     `idHash` at any edge boundary of `envWalk`. Returns nullptr
     if no registration matches at any edge. Used by
-    `TracingReplayEvaluator::resolveCdiId` as a fallback after
+    `TracingReplayEvaluator::resolveStateHash` as a fallback after
     cell-chain and Requests-pool resolution fail, before the
     "outer-seed by elimination" miss path. Iterating every edge
     boundary is necessary because the env fact's `from` is the

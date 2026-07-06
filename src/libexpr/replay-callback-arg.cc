@@ -382,7 +382,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
        walker dispatches env facts whose `from` references the cb-arg
        seed's initial state hash (= what the inner-side queryFn closure
        captured at cold); without this registration the walker's
-       resolveCdiId falls through "outer-seed by elimination" and the
+       resolveStateHash falls through "outer-seed by elimination" and the
        fact's dispatch fails. May be nullptr in unit-test paths that
        construct a ReplayCallbackArg without a resolver — registration is
        skipped then. */
@@ -417,7 +417,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
                 /* Publish the live arg under the cb-arg seed's
                    structural identity so the OUTER walker's
-                   `resolveCdiId` can resolve env facts whose `from`
+                   `resolveStateHash` can resolve env facts whose `from`
                    is the seed's subject-id-evolved state hash at any
                    walk-edge index. Registration carries the
                    subject + argAncestry (= `PositionalSeed{applyDepth+1}`

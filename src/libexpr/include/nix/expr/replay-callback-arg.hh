@@ -15,7 +15,7 @@
  * deterministic frozen image of the recorded arg.
  *
  * This is what makes covariant-callback caching actually validate:
- * with this object in place, `resolveCdiId` for an apply tag
+ * with this object in place, `resolveStateHash` for an apply tag
  * can invoke `fn->queryApply(replayArg)` live, and downstream
  * apply-result Facts get dispatched against the live outer's
  * response. If the outer changed (different lambda body) the

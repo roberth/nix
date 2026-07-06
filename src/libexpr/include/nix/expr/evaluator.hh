@@ -267,7 +267,7 @@ public:
      * regular Objects (InterpreterObject and friends). Used to build
      * apply Q hashes (`TracingReplayEvaluator::apply`) and to match
      * `cell->liveObject` against a recorded state hash
-     * (`TracingReplayEvaluator::resolveCdiId`'s cell-chain branch).
+     * (`TracingReplayEvaluator::resolveStateHash`'s cell-chain branch).
      *
      * Virtual rather than dynamic_cast so callers don't have to
      * enumerate the proxy types.

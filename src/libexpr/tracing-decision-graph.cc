@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS AmbientAsks (
 -- fold step encountered during stateHashAt so walker can
 -- navigate subject's evolution as an edge-by-edge trie rather than
 -- iterating K positions on its own walk. Consumed by walker at
--- resolveCdiId's cell-loop K > 0 navigation.
+-- resolveStateHash's cell-loop K > 0 navigation.
 --
 -- Row semantics: `(subjectHash, curHash, obs*)` uniquely identifies
 -- a fold step at cold record time. `nextCurHash` is what subject's
@@ -183,7 +183,7 @@ struct TracingDecisionGraph::State
 
     /* (subject-evolution fast-path) — populated by cold's
        stateHashAtStamping fold callback; consumed by
-       walker's inline trie navigation in resolveCdiId. */
+       walker's inline trie navigation in resolveStateHash. */
     SQLiteStmt insertSubjectEvolutionEdge, selectSubjectEvolutionEdge;
 
     /* In-memory caches of parsed sets and payloads. Populated lazily on
@@ -1323,7 +1323,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
 
             /* Two-pass dispatch within an edge: successful dispatches
                populate the walker's pendingEdgeObservations, which
-               resolveCdiId consults for intra-edge subject state hash
+               resolveStateHash consults for intra-edge subject state hash
                evolution. First-pass failures (dispatch returned the
                zero sentinel) get retried in a second pass after the
                successful obs have been buffered — this catches the

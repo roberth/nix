@@ -171,7 +171,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
     reach the same value from any two walks carrying the same
     observations, regardless of edge boundaries. Semantically
     equivalent to iterating the observation-permutation loop in
-    `TracingReplayEvaluator::resolveCdiId` to its fixed point. */
+    `TracingReplayEvaluator::resolveStateHash` to its fixed point. */
 Hash stateHashConverged(
     const Subject & subject, const Hash & argAncestry, const std::vector<Edge> & walk);
 

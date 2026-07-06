@@ -208,7 +208,7 @@ struct AmbientResolver : std::enable_shared_from_this<AmbientResolver>
 
     /* Outer-direction proxies registered live by the ReplayCallbackArg's
        `<replay-local-lambda>` primop (= `registerAmbientResolverProxy`).
-       Keyed by `(subject, argAncestry)` so the walker's `resolveCdiId`
+       Keyed by `(subject, argAncestry)` so the walker's `resolveStateHash`
        can match the registered seed's subject-id-evolved state hash at any
        walk-edge index, not just the initial one. List rather than
        map because subject equality isn't trivially hashable;

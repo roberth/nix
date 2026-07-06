@@ -138,7 +138,7 @@ void TracingWriter::flushAmbient(bool finalize)
            initial state. The primary insert above uses the evolved
            `envWalk` state, so when any observations have
            accumulated before this flush, the primary reqHash diverges
-           from the fn CID and walker's `resolveCdiId` pool lookup
+           from the fn CID and walker's `resolveStateHash` pool lookup
            misses. The secondary insert closes that gap: walker looks up
            fn CID → hits payload → `resolveProducerChild` navigates
            `parent.maybeGetAttr(name)` live. Variant 1 has empty walk at

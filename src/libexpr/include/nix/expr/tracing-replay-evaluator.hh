@@ -29,8 +29,8 @@ class TracingReplayEvaluator : public Evaluator
      * Per-walk resolution context.
      *
      * Threaded through walk → dispatch → getCurrentResponse →
-     * dispatchAmbientQuery → resolveCdiId. Holds the proxy
-     * whose method triggered this walk (so resolveCdiId can
+     * dispatchAmbientQuery → resolveStateHash. Holds the proxy
+     * whose method triggered this walk (so resolveStateHash can
      * walk the parent / argCell chain on the proxy graph) plus a
      * per-walk memo of ids already resolved. Lives only for the
      * duration of one walk call — no cross-call leakage as
@@ -44,7 +44,7 @@ class TracingReplayEvaluator : public Evaluator
             (evalFile, evalExpr) where no proxy exists yet. */
         std::shared_ptr<Object> currentProxy;
         /** Memoise id → resolved Object within this single walk so
-            recursive resolveCdiId calls don't redo work. */
+            recursive resolveStateHash calls don't redo work. */
         std::map<std::string, std::shared_ptr<Object>> memo;
 
         /** Per-applyReqHash dispatch counter within this walk. Used
@@ -128,7 +128,7 @@ class TracingReplayEvaluator : public Evaluator
         resolved recursively. Per-walk memoisation in ctx.memo
         prevents redundant work within the same walk. Returns
         nullptr if the id can't be resolved. */
-    std::shared_ptr<Object> resolveCdiId(const std::string & idStr, ResolutionContext & ctx);
+    std::shared_ptr<Object> resolveStateHash(const std::string & idStr, ResolutionContext & ctx);
 
     /** True iff the id resolves as a Local — either it has no
         producer Request in the pool (a TracingCallbackArg's content

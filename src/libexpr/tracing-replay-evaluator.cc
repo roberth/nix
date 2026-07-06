@@ -342,7 +342,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         parentAnchor = parentTR->getTriePos().factSetHash;
     }
     /* Track rejected-edge obs across all attempts. Committed on walk
-       MISS so subsequent walk calls' resolveCdiId sees the obs
+       MISS so subsequent walk calls' resolveStateHash sees the obs
        walker produced during the failed traversal — those obs carry
        real (req, resp) pairs from cold's recorded responses, and
        future resolves at deeper edgeIndex may need them. Only
@@ -443,7 +443,7 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
    producer's query on the parent. QueryApply payloads invoke the
    live apply against a (frozen) ReplayCallbackArg arg. localArg
    sidecars chase to the apply. */
-std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string & idStr, ResolutionContext & ctx)
+std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::string & idStr, ResolutionContext & ctx)
 {
     /* Per-walk memo. */
     if (auto it = ctx.memo.find(idStr); it != ctx.memo.end()) {
@@ -639,7 +639,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveCdiId(const std::string &
     if (reqJson.contains("kind") && reqJson["kind"] == "localArg") {
         tracingCacheLog("resolve %s: localArg sidecar", idStr.substr(0, 12));
         auto applyResultIdHex = reqJson["applyResultId"].get<std::string>();
-        resolveCdiId(applyResultIdHex, ctx);
+        resolveStateHash(applyResultIdHex, ctx);
         if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
             return it->second;
         return nullptr;
@@ -691,7 +691,7 @@ bool TracingReplayEvaluator::isLocalArgId(const Hash & idHash)
 std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx)
 {
-    auto fnObj = resolveCdiId(params["fn"].get<std::string>(), ctx);
+    auto fnObj = resolveStateHash(params["fn"].get<std::string>(), ctx);
     if (!fnObj) {
         tracingCacheLog("replay: apply %s: cannot resolve fn %s", idStr, params["fn"]);
         return nullptr;
@@ -788,7 +788,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            whose discrimination was frozen at edgeIndex=0. */
         argObj = replayObj;
     } else {
-        argObj = resolveCdiId(argIdStr, ctx);
+        argObj = resolveStateHash(argIdStr, ctx);
     }
     if (!argObj)
         return nullptr;
@@ -840,7 +840,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         applyReqHash.to_string(HashFormat::Base16, false)
         + "|" + std::to_string(applySeq));
     auto fnIdStr = params["fn"].get<std::string>();
-    auto fnObj = resolveCdiId(fnIdStr, ctx);
+    auto fnObj = resolveStateHash(fnIdStr, ctx);
     if (!fnObj) {
         tracingCacheLog(
             "dispatchApplyLive: cannot resolve fn %s for applyReqHash=%s",
@@ -992,7 +992,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        recorded `from = fromStateHashes[0]` which is the FIRST root's cid;
        for `applyResult(getAttr(seed(1), "cb"), seed(N))` that first
        root is seed(1). So walker's dispatch of `getWHNF from=X`
-       calls resolveCdiId(X = seed(1)_evolved) — memoising a
+       calls resolveStateHash(X = seed(1)_evolved) — memoising a
        correction here would break other seed(1) resolutions.
 
        Instead memoise at BOTH the LEAF (arg root) and at the
@@ -1130,7 +1130,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
        cb_arg ReplayCallbackArg, then navigate. The producer query records the
        path-to-parent in `path`; navigation uses both. */
     auto roots = resolveRoots(params,
-        [&](const std::string & cid) { return resolveCdiId(cid, ctx); });
+        [&](const std::string & cid) { return resolveStateHash(cid, ctx); });
     if (roots.empty())
         return nullptr;
     auto parent = navigatePath(roots, parsePathFromParams(params));
@@ -1176,7 +1176,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
        recorded path. The query body (= leaf op like getAttr "x")
        then runs on the navigated child. */
     auto roots = resolveRoots(params,
-        [&](const std::string & cid) { return resolveCdiId(cid, ctx); });
+        [&](const std::string & cid) { return resolveStateHash(cid, ctx); });
     if (roots.empty())
         return std::nullopt;
     auto obj = navigatePath(roots, parsePathFromParams(params));
