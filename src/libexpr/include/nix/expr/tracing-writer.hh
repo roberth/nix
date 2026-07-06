@@ -2,7 +2,7 @@
 /**
  * @file
  * Trace writer that logs evaluation events to a JSON sink and the
- * v13 decision-graph index.
+ * decision-graph index.
  */
 
 #include "nix/expr/subject-id.hh"
@@ -22,7 +22,7 @@ namespace nix {
 class Object;
 
 /**
- * Serialize a JSON value to CBOR as a std::string (for v13 payload storage).
+ * Serialize a JSON value to CBOR as a std::string (for payload storage).
  */
 inline std::string jsonToCborString(const nlohmann::json & j)
 {
@@ -46,7 +46,7 @@ inline nlohmann::json cborStringToJson(const std::string & s)
  */
 struct TriePosition
 {
-    Hash resultNodeHash;          // v13 ResultHash for this result
+    Hash resultNodeHash;          // ResultHash for this result
     std::string queryHashStr;     // hex of the queryHash that produced it
     /* Walker-side: the cur the walk landed on when committing
        this terminal. Used by child Q lookups as a candidate startCur
@@ -59,15 +59,15 @@ struct TriePosition
 
 /**
  * Trace writer: logs evaluation events to a JSON sink and records
- * them in the v13 decision graph.
+ * them in the decision graph.
  */
 class TracingWriter
 {
     TraceSink & sink;
-    /* v13 decision-graph index. nullptr disables decision-graph
+    /* decision-graph index. nullptr disables decision-graph
        recording (sink-only mode). */
     TracingDecisionGraph * decisionGraph;
-    /* v13 global factSet, accumulating monotonically across the
+    /* global factSet, accumulating monotonically across the
        session per the design doc. Sampled at each logResult and
        fed into decisionGraph->record(). Only d>0 (Request, Response)
        Facts are added; d=0 Q→R pairs are not (the walk dispatch
@@ -370,9 +370,9 @@ public:
 
     /**
      * Log a response (file read, env lookup, etc.) — a d>0
-     * Request/Response pair. Appended to v13 factSet for the next
+     * Request/Response pair. Appended to factSet for the next
      * Result's recording, and the Request/Response payloads land
-     * in v13's atomic pools.
+     * in atomic pools.
      */
     template<typename Req>
     void logResponse(const trace::Response<Req> & resp)
@@ -680,7 +680,7 @@ public:
 
     /**
      * Log a d=0 Result. Records (Q, current factSet) -> Result in
-     * the v13 decision graph and returns a TriePosition for use by
+     * the decision graph and returns a TriePosition for use by
      * child queries.
      */
     template<typename R>
@@ -765,16 +765,16 @@ public:
     }
 
     /**
-     * used to advance the temporal cursor after a hit. v13 has no
+     * used to advance the temporal cursor after a hit. currently has no
      * temporal cursor; this is a no-op.
      */
     void syncAfterHash(const Hash & /*resultNodeHash*/)
     {
-        // No-op under v13.
+        // No-op.
     }
 
     /**
-     * Whether v13 decision-graph recording is enabled.
+     * Whether decision-graph recording is enabled.
      */
     bool hasIndex() const
     {

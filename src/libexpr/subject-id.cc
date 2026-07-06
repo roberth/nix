@@ -286,14 +286,14 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                 }
             };
 
-            /* Walk the chain and accumulate the XOR-fold of v13-fact
+            /* Walk the chain and accumulate the XOR-fold of env-layer fact
                element hashes from observations that point at THIS
                subject. An observation in `walk[k]` points at this
                subject iff `obs.fromHash` (= the recorder-stamped
                subject pointer carried in the `from` field of the
                query that produced the fact) equals this subject's
                running state hash at step k. The result is the
-               contribution to state hash that comes from v13 facts
+               contribution to state hash that comes from env-layer facts
                about self. */
             Hash selfFactFold = Hash(HashAlgorithm::SHA256);
             std::string foldTrace;

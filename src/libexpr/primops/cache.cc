@@ -18,7 +18,7 @@ namespace nix {
 
 /**
  * TracingWriter requires a TraceSink reference but builtins.cache only
- * needs the v13 decision graph for persistence. Refactoring so trie
+ * needs the decision graph for persistence. Refactoring so trie
  * recording works without a TraceSink would let this go away.
  */
 class NullTraceSink final : public TraceSink

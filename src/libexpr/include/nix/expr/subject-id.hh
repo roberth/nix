@@ -100,7 +100,7 @@ struct Subject
 
 /** A single observation reduced to the two hashes stateHashAt needs.
     `fromHash` is the state hash the query was issued against;
-    `elementHash` is SHA-256(reqHash || respHash) — the v13 H_element.
+    `elementHash` is SHA-256(reqHash || respHash) — H_element (SHA-256 of the request+response bytes).
     Named `Observation` to match the doc's per-Asks-edge "facts about V"
     membership language (= each element is one observed (req, resp)
     against a subject identified by `fromHash`); distinct from the

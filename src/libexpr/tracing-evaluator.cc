@@ -501,7 +501,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     }
 
     TriePosition triePos{
-        .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel; v13 doesn't key off this
+        .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel; not keyed off this
         .queryHashStr = applyArgAncestryStateHashHex,
     };
     auto obj = TracingObject::create(result, writer, v, triePos);

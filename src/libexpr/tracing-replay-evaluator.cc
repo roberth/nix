@@ -1220,16 +1220,16 @@ std::optional<std::pair<std::string, TriePosition>>
 TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentProxy)
 {
     auto queryHash = TracingDecisionGraph::computeQueryHash(query);
-    auto v13 = walk(queryHash, std::move(currentProxy));
-    if (!v13)
+    auto walkResult = walk(queryHash, std::move(currentProxy));
+    if (!walkResult)
         return std::nullopt;
-    tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
+    tracingCacheLog("replay hit: %s", Q::tag);
     return std::make_pair(
-        v13->payload,
+        walkResult->payload,
         TriePosition{
-            .resultNodeHash = v13->resultNodeHash,
+            .resultNodeHash = walkResult->resultNodeHash,
             .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
-            .factSetHash = v13->terminalCur,
+            .factSetHash = walkResult->terminalCur,
         });
 }
 

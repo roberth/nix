@@ -15,7 +15,7 @@ namespace nix {
 class Environment;
 
 /**
- * Evaluator that replays cached results from the v13 decision graph.
+ * Evaluator that replays cached results from the decision graph.
  * On cache miss, defers to the inner evaluator.
  */
 class TracingReplayEvaluator : public Evaluator
@@ -201,7 +201,7 @@ public:
     std::optional<std::string> getCurrentResponse(const std::string & requestCbor, ResolutionContext & ctx);
 
     /**
-     * v13 walk lookup. Returns (resultPayload, resultHash) on hit,
+     * walk lookup. Returns (resultPayload, resultHash) on hit,
      * nullopt on miss. `currentProxy` is the cache-boundary proxy
      * whose method triggered this walk — its parent/argCell chain
      * grounds ambient id resolution during dispatch. Null for

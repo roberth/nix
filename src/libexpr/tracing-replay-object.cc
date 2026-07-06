@@ -154,10 +154,10 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
     }
     try {
         auto j = cborStringToJson(walkResult->payload);
-        tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
+        tracingCacheLog("replay hit: %s", Q::tag);
         return std::make_pair(j.template get<R>(), walkResult->resultNodeHash);
     } catch (const nlohmann::json::exception & e) {
-        tracingCacheLog("replay: v13 payload parse failed: %s", e.what());
+        tracingCacheLog("replay: payload parse failed: %s", e.what());
         return std::nullopt;
     }
 }
@@ -180,7 +180,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
     }
     try {
         auto j = cborStringToJson(walkResult->payload);
-        tracingCacheLog("replay hit (v13 walk): %s", Q::tag);
+        tracingCacheLog("replay hit: %s", Q::tag);
         return std::make_pair(
             j.template get<R>(),
             TriePosition{
@@ -189,7 +189,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
                 .factSetHash = walkResult->terminalCur,
             });
     } catch (const nlohmann::json::exception & e) {
-        tracingCacheLog("replay: v13 payload parse failed: %s", e.what());
+        tracingCacheLog("replay: payload parse failed: %s", e.what());
         return std::nullopt;
     }
 }

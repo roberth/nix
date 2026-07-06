@@ -3,7 +3,7 @@
  * @file
  * SQLite-based decision-graph index for the tracing evaluation cache.
  *
- * Implements doc/design/tracing-eval-cache.md (v13 schema; see also
+ * Implements doc/design/tracing-eval-cache.md (schema described in &; see also
  * doc/outdated/tracing-decision-graph-data-model.md for the
  * superseded Phase-1 sketch). Two layers:
  *
