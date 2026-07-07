@@ -306,7 +306,7 @@ void TracingWriter::flushAmbient(bool finalize)
     Hash priorEpsilonAccum(HashAlgorithm::SHA256);
     /* Per-applyReqHash sequence counter within THIS finalize pass.
        cb-repeated's two `(cb X) + (cb Y)` produce boundaries that
-       share the same applyReqHash (PositionalSeed abstracts over
+       share the same applyReqHash (Arg abstracts over
        literal arg). Each boundary's InnerValueResponse inserts use the pair
        (applyReqHash, seq) as the context — the sequence
        discriminates the two applies. Walker's dispatchApplyLive
@@ -378,7 +378,7 @@ void TracingWriter::flushAmbient(bool finalize)
             decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
             /* Context = hash(applyReqHash || per-applyReqHash sequence)
                so multiple applies sharing an applyReqHash (via
-               PositionalSeed abstraction — cb-repeated's `(cb 10) +
+               Arg abstraction — cb-repeated's `(cb 10) +
                (cb 20)`) get distinct InnerValueResponse rows. Walker's dispatchApplyLive
                tracks the symmetric counter in ctx.perApplyReqDispatchCount. */
             decisionGraph->insertInnerValueResponse(queryHash, seqCtx, responsePayload);

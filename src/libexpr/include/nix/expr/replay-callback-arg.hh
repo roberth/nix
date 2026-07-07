@@ -45,10 +45,10 @@ class ReplayCallbackArg : public Object
        when a child's structural component depends on a parent's
        evolving state hash.
 
-       For root (cb-apply) locals the subject is `PositionalSeed{depth}`
+       For root (cb-apply) locals the subject is `Arg{depth}`
        with the recorded callArgAncestry (per the localArg sidecar), so the
        walker reproduces the recorder's
-       `stateHashAfter(PositionalSeed{D}, callArgAncestry, {})` directly.
+       `stateHashAfter(Arg{D}, callArgAncestry, {})` directly.
 
        For children minted by maybeGetAttr/getListElem the subject is
        `DerivedSubject{parent.subject, ...}` — `stateHashAt`
@@ -126,7 +126,7 @@ class ReplayCallbackArg : public Object
        OuterResolver::apply boundary. `applyArgAncestry` = the resolver's
        callArgAncestry. Used by the lambda primop to compose nested
        apply-result subjects matching the recorder's encoding (=
-       `ApplyResultSubject{fn=this.subject, arg=PositionalSeed{depth+1}}`
+       `ApplyResultSubject{fn=this.subject, arg=Arg{depth+1}}`
        at `applyArgAncestry`). Inherited unchanged through derived
        children (= the nested apply's positional depth is one
        deeper than the cb-arg's, regardless of attr/list navigation
@@ -202,7 +202,7 @@ public:
     /** Set the cb-arg apply context (depth + argAncestry) so the lambda
         primop on this ReplayCallbackArg (or its derived children) can compose the
         nested apply-result's synthetic subject as
-        `ApplyResultSubject{fn=this.subject, arg=PositionalSeed{depth+1}}`
+        `ApplyResultSubject{fn=this.subject, arg=Arg{depth+1}}`
         with the proper argAncestry. Sourced from the writer's localArg
         sidecar at the ReplayCallbackArg's localId. Derived children inherit
         the parent's applyContext via the same setter. */

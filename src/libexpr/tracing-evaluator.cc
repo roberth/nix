@@ -347,7 +347,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        literal `mk*` Objects per the variant contract).
 
        TracingCallbackArg-fn (= recursive cb-apply): the arg crosses the cb-apply
-       boundary as `PositionalSeed{depth+1}` regardless of its
+       boundary as `Arg{depth+1}` regardless of its
        outside-the-boundary Subject. Same convention as
        `OuterObject::queryApply` and the walker's
        `<replay-local-lambda>` primop. */
@@ -363,7 +363,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     if (fnIsTlo) {
         auto callerScope = effectiveArgCell(*fn);
         int localDepth = callerScope ? callerScope->depth + 1 : 0;
-        argId = Subject{PositionalSeed{localDepth}};
+        argId = Subject{Arg{localDepth}};
         argArgAncestryForApply = Hash{HashAlgorithm::SHA256};
     } else {
         argId = arg->getSubject()

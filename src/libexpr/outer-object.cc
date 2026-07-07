@@ -242,14 +242,14 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
     auto callerScope = effectiveArgCell(*this);
     auto argForScope = argObj;
     /* Each value crossing into a cb-apply boundary starts fresh as
-       a PositionalSeed at the apply's reverse-De-Bruijn depth — no
+       a Arg at the apply's reverse-De-Bruijn depth — no
        inherited Subject is propagated, so observations at the
        boundary are predictable regardless of where the arg came
        from. Must match what `OuterApply::run` computes for argId
        downstream so the registry's resultId and this proxy's state hash
        for queryFn lookups agree. */
     int localDepth = callerScope ? callerScope->depth + 1 : 0;
-    Subject argId{PositionalSeed{localDepth}};
+    Subject argId{Arg{localDepth}};
     applyFn(subjectHashAfter(subject, argAncestry, {}), std::move(argObj), callerScope);
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(subject),

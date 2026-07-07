@@ -116,7 +116,7 @@ public:
        AmbientResults across dispatches. `walk()` uses this signal to
        BYPASS the `dispatchedSoFar` set-membership filter when otherwise
        useful is empty, allowing multiple cb-apply invocations of the
-       same reqHash (cb-repeated's `(cb 10) + (cb 20)` PositionalSeed
+       same reqHash (cb-repeated's `(cb 10) + (cb 20)` Arg
        collision) to advance through cold's recorded Asks graph via
        distinct nextCurs. */
     bool isApplyRequest(const RequestHash & h);

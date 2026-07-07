@@ -1298,7 +1298,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
            apply-request bypass — allowing an already-in-dispatchedSoFar
            cb-apply to re-dispatch via `dispatchApplyLive`'s per-request
            seq counter, which returns distinct AmbientResults per
-           invocation. cb-repeated's `(cb 10) + (cb 20)` PositionalSeed
+           invocation. cb-repeated's `(cb 10) + (cb 20)` Arg
            collision needs the bypass to reach cold's second boundary;
            cb-xor-evolution-repeated-cb-apply's primary-pass edge works,
            so the fallback doesn't fire there. */

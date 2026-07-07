@@ -420,7 +420,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    `resolveStateHash` can resolve env facts whose `from`
                    is the seed's subject-id-evolved state hash at any
                    walk-edge index. Registration carries the
-                   subject + argAncestry (= `PositionalSeed{applyDepth+1}`
+                   subject + argAncestry (= `Arg{applyDepth+1}`
                    at `applyArgAncestry`), matching what
                    `makeCachedFnPrimOp`'s impl uses for its
                    `argId` / `callArgAncestry` at cold; the walker
@@ -430,7 +430,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    against outer's actual Value. */
                 if (resolverSaved) {
                     Subject argId{
-                        PositionalSeed{*applyDepthSaved + 1}};
+                        Arg{*applyDepthSaved + 1}};
                     auto outerArgObj = std::make_shared<InterpreterObject>(
                         state, allocRootValue(args[0]));
                     registerAmbientResolverProxy(
@@ -474,21 +474,21 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    line ~280):
                      ApplyResultSubject{
                        fn  = this OuterObject's subject,
-                       arg = PositionalSeed{localCell.depth},
+                       arg = Arg{localCell.depth},
                      }
                    where `localCell.depth = callerScope.depth + 1`.
 
                    This lambda primop fires on the ReplayCallbackArg that
                    represents the fn of the nested apply; its
                    `subject` IS the recorder's "this OuterObject's
-                   subject". The arg subject is PositionalSeed{depth+1}
+                   subject". The arg subject is Arg{depth+1}
                    at applyArgAncestry, with `depth` threaded in through the
                    localArg sidecar. The ReplayCallbackArg's construction (in
                    dispatchApplyLive) requires the sidecar to carry
                    depth+argAncestry, so the optionals are always set
                    here. */
                 Subject argId{
-                    PositionalSeed{*applyDepthSaved + 1}};
+                    Arg{*applyDepthSaved + 1}};
                 Subject syntheticSubject{ApplyResultSubject{
                     .fn = std::make_shared<const Subject>(subjectSaved),
                     .arg = std::make_shared<const Subject>(std::move(argId)),
@@ -523,7 +523,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                         subjectSaved, applyArgAncestry, *walkFactsSaved, edgeIndex)
                         .to_string(HashFormat::Base16, false);
                     Subject argSubjLocal{
-                        PositionalSeed{*applyDepthSaved + 1}};
+                        Arg{*applyDepthSaved + 1}};
                     auto argSubjHex = stateHashAt(
                         argSubjLocal, applyArgAncestry, *walkFactsSaved, edgeIndex)
                         .to_string(HashFormat::Base16, false);

@@ -707,7 +707,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     if (isLocalArgId(argHash)) {
         /* The cb apply's local arg. Read the localArg sidecar to
            source the cb-arg's structural subject (depth + argAncestry)
-           and construct the ReplayCallbackArg with `PositionalSeed{depth}`
+           and construct the ReplayCallbackArg with `Arg{depth}`
            — matching the recorder's TracingCallbackArg subject.
 
            Do NOT use `PostulatedIdempotentRead{localId}` here.
@@ -721,7 +721,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            "no recorded response for getType on local". Both
            sibling cb-applies share the same first probe's stamped
            reqHash regardless of subject (= at edgeIndex=0,
-           PositionalSeed and PostulatedIdempotentRead both yield `localId`),
+           Arg and PostulatedIdempotentRead both yield `localId`),
            which is why this bug stayed latent until cb-sibling
            landed: it's the first test that needs the ReplayCallbackArg's
            state hash to *evolve* via subsequent probes for downstream
@@ -742,7 +742,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                     auto sidecarDepth = sidecarJson["depth"].get<int>();
                     auto sidecarScope = Hash::parseNonSRIUnprefixed(
                         sidecarJson["argAncestry"].get<std::string>(), HashAlgorithm::SHA256);
-                    Subject rootSubject{PositionalSeed{sidecarDepth}};
+                    Subject rootSubject{Arg{sidecarDepth}};
                     Hash fallthroughApplyReqHash2{HashAlgorithm::SHA256};
                     try {
                         fallthroughApplyReqHash2 = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
@@ -781,7 +781,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
         }
         /* Missing or malformed sidecar = the recorder didn't supply
            the depth/argAncestry needed to reconstruct the cb-arg's
-           PositionalSeed Subject. Signal resolution failure so the
+           Arg Subject. Signal resolution failure so the
            caller falls through to inner re-eval. The previous
            PostulatedIdempotentRead fallback violated principle 8's corollary
            (= observation-driven evolution) and produced a ReplayCallbackArg
@@ -890,7 +890,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        Per-call discipline: each cb-apply Fact dispatch creates its
        own ReplayCallbackArg; no ctx.memo lookup. */
     /* Read the writer's localArg sidecar at argHash. depth+argAncestry are
-       required: the structural subject (= PositionalSeed{depth} at
+       required: the structural subject (= Arg{depth} at
        argAncestry) evolves with observations on cb_arg the same way the
        writer did, which is what makes the synthetic's apply-result
        CAS reads find the recorded facts. */
@@ -904,7 +904,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     auto sidecarScope = Hash::parseNonSRIUnprefixed(
         sidecarJson["argAncestry"].get<std::string>(), HashAlgorithm::SHA256);
 
-    Subject rootSubject{PositionalSeed{sidecarDepth}};
+    Subject rootSubject{Arg{sidecarDepth}};
     /* Sibling-discriminating walkFacts seed: inject walker's
        currentProxy's applyContext observations into the ReplayCallbackArg's initial
        walk. Without this, ReplayCallbackArg's per-arg fields are computed against
@@ -999,9 +999,9 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        applyResult subject's evolved cid, so any downstream lookup
        via those cids finds THIS invocation's ReplayCallbackArg. Compute the
        applyResult subject's evolved cid using fnObj's subject +
-       PositionalSeed{sidecarDepth} as arg. */
+       Arg{sidecarDepth} as arg. */
     {
-        Subject argId{PositionalSeed{sidecarDepth}};
+        Subject argId{Arg{sidecarDepth}};
         Hash evolvedLeafStateHash = stateHashAt(
             argId, sidecarScope, envWalk, envWalk.size());
         auto evolvedLeafStateHashHex = evolvedLeafStateHash.to_string(HashFormat::Base16, false);

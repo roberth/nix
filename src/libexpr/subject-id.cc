@@ -30,13 +30,13 @@ Hash fromStateHashOf(const trace::QueryVariant & query)
 }
 
 /* Subject leaf equality — used by the path builder to dedupe roots
-   (= two derivation chains rooted at the same PositionalSeed or
+   (= two derivation chains rooted at the same Arg or
    PostulatedIdempotentRead share one entry in fromStateHashes). Only meaningful
    for leaf forms; the builder only compares leaves. */
 static bool sameLeaf(const Subject & a, const Subject & b)
 {
-    if (auto * ap = std::get_if<PositionalSeed>(&a.data)) {
-        if (auto * bp = std::get_if<PositionalSeed>(&b.data))
+    if (auto * ap = std::get_if<Arg>(&a.data)) {
+        if (auto * bp = std::get_if<Arg>(&b.data))
             return ap->depth == bp->depth;
         return false;
     }
@@ -54,7 +54,7 @@ PathAndRoots pathAndRootsFromSubject(const Subject & subject)
        DerivedSubject pushes a step onto its parent's path.
        ApplyResultSubject emits a single Apply step whose sub-paths
        carry their own (absolute-index) root references. Leaf
-       subjects (PositionalSeed, PostulatedIdempotentRead) deduplicate
+       subjects (Arg, PostulatedIdempotentRead) deduplicate
        against previously-collected roots so shared cb_args (= fn
        and arg derived from the same outer arg) collapse to one
        fromStateHashes entry. */
@@ -82,7 +82,7 @@ PathAndRoots pathAndRootsFromSubject(const Subject & subject)
             return std::visit(
                 [&](const auto & alt) -> std::pair<trace::PathExpr, size_t> {
                     using T = std::decay_t<decltype(alt)>;
-                    if constexpr (std::is_same_v<T, PositionalSeed>
+                    if constexpr (std::is_same_v<T, Arg>
                                   || std::is_same_v<T, PostulatedIdempotentRead>) {
                         size_t idx = findOrInsert(s);
                         return {{}, idx};
@@ -220,7 +220,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
        Inheritance: `argAncestry` is the XOR of outer-argAncestry state hashes (chiefly
        the cached call's state hash(Q) at the cb-apply boundary). Passing
        zero gives the pure structural id. Leaf subjects
-       (PositionalSeed, PostulatedIdempotentRead) XOR `argAncestry` into their
+       (Arg, PostulatedIdempotentRead) XOR `argAncestry` into their
        base hash. Composite subjects (DerivedSubject,
        ApplyResultSubject) propagate `argAncestry` recursively through
        their constituents' state hashes; the structural derivation
@@ -239,7 +239,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
             /* The subject's id at edge step `k`, BEFORE this subject's
                selfFactFold gets XOR'd in. Naming note: not pure
                De-Bruijn-style "structural" for all variants. For
-               PositionalSeed / PostulatedIdempotentRead it IS k-invariant
+               Arg / PostulatedIdempotentRead it IS k-invariant
                pure position. For ApplyResultSubject it depends on `k`
                because it composes the constituents' *fully evolved*
                state hashes (= constituents' stateHashAt at the
@@ -247,7 +247,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                varies with k via constituent evolution even before
                this subject's selfFactFold contributes. */
             auto subjectIdAt = [&](size_t k) -> Hash {
-                if constexpr (std::is_same_v<T, PositionalSeed>) {
+                if constexpr (std::is_same_v<T, Arg>) {
                     auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
                     return TracingDecisionGraph::xorHashes(base, argAncestry);
                 } else if constexpr (std::is_same_v<T, DerivedSubject>) {
@@ -273,7 +273,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                        — `OuterObject::getCdi()` returns
                        subjectHashAfter with argAncestry
                        baked in; ReplayCallbackArg's localId is
-                       stateHashAfter(PositionalSeed{D}, callArgAncestry, {})
+                       stateHashAfter(Arg{D}, callArgAncestry, {})
                        which is also argAncestry-saturated. Re-XORing argAncestry
                        here would either double-XOR (= argAncestry-saturated
                        inputs) or under-XOR (= un-scoped inputs) — the
@@ -415,8 +415,8 @@ std::string describe(const Subject & subject)
     return std::visit(
         [](const auto & alt) -> std::string {
             using T = std::decay_t<decltype(alt)>;
-            if constexpr (std::is_same_v<T, PositionalSeed>) {
-                return "seed(" + std::to_string(alt.depth) + ")";
+            if constexpr (std::is_same_v<T, Arg>) {
+                return "arg(" + std::to_string(alt.depth) + ")";
             } else if constexpr (std::is_same_v<T, DerivedSubject>) {
                 std::string kind =
                     alt.kind == DerivedSubject::Kind::GetAttr ? "getAttr" : "getListElem";

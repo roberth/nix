@@ -7,7 +7,7 @@ namespace nix::cidasks {
 
 static Subject seed(int depth)
 {
-    return Subject{PositionalSeed{depth}};
+    return Subject{Arg{depth}};
 }
 
 static Subject getAttrOn(const Subject & parent, std::string name)
@@ -44,7 +44,7 @@ static Hash noScope()
 
 /* ---- structural-id sanity ---- */
 
-TEST(CidAsks, PositionalSeedInitialIdIsDeterministic)
+TEST(CidAsks, ArgInitialSubjectHashIsDeterministic)
 {
     auto a = stateHashAfter(seed(0), noScope(), {});
     auto b = stateHashAfter(seed(0), noScope(), {});
@@ -188,7 +188,7 @@ static Hash scopeFor(const std::string & q)
     return hashString(HashAlgorithm::SHA256, "Q:" + q);
 }
 
-TEST(CidAsks, InheritanceDistinguishesPositionalSeedsAcrossScopes)
+TEST(CidAsks, InheritanceDistinguishesArgsAcrossArgAncestries)
 {
     auto s = seed(0);
     auto scopeA = scopeFor("A");

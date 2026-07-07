@@ -29,10 +29,10 @@ struct Subject;
 
 /** A cb arg at a static apply-stack depth N (reverse De Bruijn).
     The leaf of every Subject tree. */
-struct PositionalSeed
+struct Arg
 {
     int depth;
-    auto operator<=>(const PositionalSeed &) const = default;
+    auto operator<=>(const Arg &) const = default;
 };
 
 /** A value derived from a parent subject via a producer query
@@ -95,7 +95,7 @@ struct PostulatedIdempotentRead
 
 struct Subject
 {
-    std::variant<PositionalSeed, DerivedSubject, ApplyResultSubject, PostulatedIdempotentRead> data;
+    std::variant<Arg, DerivedSubject, ApplyResultSubject, PostulatedIdempotentRead> data;
 };
 
 /** A single observation reduced to the two hashes stateHashAt needs.
@@ -130,7 +130,7 @@ Observation observationFromQR(const trace::QueryVariant & query, const trace::Re
     `argAncestry` gives the pure structural state hash, equivalent to
     no inheritance.
 
-    Inheritance applies at the leaf: `PositionalSeed` and
+    Inheritance applies at the leaf: `Arg` and
     `PostulatedIdempotentRead` XOR `argAncestry` into their base hash.
     `DerivedSubject` and `ApplyResultSubject` propagate `argAncestry`
     via their constituents' (recursively state-hash-aware) state hashes,
@@ -146,7 +146,7 @@ Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std
 
     **Argument-level only.** Per the design (Principle 3, per-arg
     centralization), only argument-level subjects bear state hashes:
-    `PositionalSeed` (cb_arg seed, evolves via own-loop),
+    `Arg` (cb_arg seed, evolves via own-loop),
     `ApplyResultSubject` (composes constituent argument state hashes), and
     `PostulatedIdempotentRead` (escape hatch). `DerivedSubject` does not
     have a state hash — observations on derived values fold into the cb_arg
@@ -244,7 +244,7 @@ trace::PathExpr pathFromSubject(const Subject & subject);
 /** Multi-root path expression for a Subject. The path navigates from
     the natural root (= `roots[0]`); Apply steps inside the path
     reference other roots by absolute index via `fnRootIndex` /
-    `argRootIndex`. Roots are leaves of the subject tree: PositionalSeeds
+    `argRootIndex`. Roots are leaves of the subject tree: Args
     or PostulatedIdempotentReads. Same-leaf occurrences (= e.g. fn and arg
     both deriving from the same cb_arg) collapse to one entry by Subject
     equality. Function characterization needs this so that observations

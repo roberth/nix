@@ -284,13 +284,13 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
     /* Each new value that crosses INTO a cb-apply boundary is
        treated uniformly as a value — no inherited Subject is
        propagated. Identity at this boundary starts fresh as
-       PositionalSeed at the apply's static (reverse-De-Bruijn)
+       Arg at the apply's static (reverse-De-Bruijn)
        depth; the body's own observations on the arg evolve the state hash
        within the Asks structure. This keeps observations at the
        boundary maximally predictable — two cb calls observing the
        same way through their args reach the same trie position
        regardless of where the arg's source came from. */
-    Subject argId{PositionalSeed{localCell->depth}};
+    Subject argId{Arg{localCell->depth}};
     /* Sample resolver->callArgAncestry at fire time. TracingEvaluator::apply
        leaves callArgAncestry at the current sibling's siblingScope (no
        restore), so this sample reflects the CURRENT sibling context
@@ -386,7 +386,7 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
             {"applyResultId", resultId.to_string(HashFormat::Base16, false)},
             /* Depth + argAncestry let the replay-side lambda primop compose
                the synthetic apply-result subject as
-               `ApplyResultSubject{fn=this.subject, arg=PositionalSeed{depth+1}}`
+               `ApplyResultSubject{fn=this.subject, arg=Arg{depth+1}}`
                with `argAncestry` — matching what the writer's recording
                produced when OuterObject::queryApply built the apply
                result's subject. Without these fields the synthetic
@@ -462,7 +462,7 @@ static PrimOp * makeCachedFnPrimOp(
                            Sibling cb apply invocations share the same
                            Subject and discriminate via their observation
                            factsets, not via state-creep. */
-                        Subject argId{PositionalSeed{seedCell->depth}};
+                        Subject argId{Arg{seedCell->depth}};
                         /* Inherit the resolver's callArgAncestry (= state hash(Q)
                            of this cached call). Sibling cached calls
                            with different Qs get distinct rootIds and
@@ -774,14 +774,14 @@ void registerAmbientResolverProxy(
        boundary-trace-only caveat as the previous state hash-keyed version.
 
        `Subject` has no `operator==`; the primop only ever
-       registers `PositionalSeed{depth}` here, so structural
+       registers `Arg{depth}` here, so structural
        equality reduces to comparing the depth field. Asserting on
        the variant tag keeps this collapse honest if a future caller
        passes a different variant. */
-    auto * newSeed = std::get_if<PositionalSeed>(&subject.data);
-    assert(newSeed && "registerAmbientResolverProxy: subject must be a PositionalSeed");
+    auto * newSeed = std::get_if<Arg>(&subject.data);
+    assert(newSeed && "registerAmbientResolverProxy: subject must be a Arg");
     for (auto & entry : resolver.liveProxies) {
-        auto * existingSeed = std::get_if<PositionalSeed>(&entry.subject.data);
+        auto * existingSeed = std::get_if<Arg>(&entry.subject.data);
         if (existingSeed && existingSeed->depth == newSeed->depth && entry.argAncestry == argAncestry) {
             entry.obj = std::move(obj);
             return;
