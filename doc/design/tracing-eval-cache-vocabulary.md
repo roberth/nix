@@ -40,8 +40,12 @@ At Ambient, the payload is a `Query` / `Result` inside an
 surface, wrapper tags the payload as being about an inner-owned
 callback-arg value.
 
-Every payload is content-addressed by SHA-256 of its serialized
-bytes.
+Every payload is identified by SHA-256 of its serialized bytes.
+Hashes throughout the cache are always of payloads — structured
+records of what was asked or answered — never of the Nix values a
+payload might reference. Deep-hashing values would force
+evaluation and defeat laziness; the cache observes probes
+instead.
 
 ---
 
@@ -56,11 +60,11 @@ identity (Merkle chain).
 
 **Result** — the value the evaluator returns for a Query.
 
-**queryHash** — content hash of a Query payload. Its identity in
-the Queries pool.
+**queryHash** — SHA-256 of a Query payload. Its identity in the
+Queries pool.
 
-**resultHash** — content hash of a Result payload. Its identity in
-the Results pool.
+**resultHash** — SHA-256 of a Result payload. Its identity in the
+Results pool.
 
 ---
 
@@ -89,8 +93,8 @@ any of the three families above. The walker treats them uniformly,
 hashing each into a `requestHash` / `responseHash` pair (see §5)
 regardless of participant.
 
-**requestHash** / **responseHash** — content hashes of the
-respective payloads.
+**requestHash** / **responseHash** — SHA-256 of the respective
+payloads.
 
 **Fact** — one `(Request, Response)` pair. The unit of "the
 environment behaved this way at this moment"; the walker records
@@ -181,9 +185,9 @@ against any other recording producing the same shared set.
 ### 8. RequestSet trie
 
 **RequestSet trie** — the storage layout for RequestSets. Each
-node is content-addressed by SHA-256 of its payload; identical
-subtrees are shared across recordings via `INSERT OR IGNORE` on
-the node hash.
+node is keyed by SHA-256 of its payload bytes; identical subtrees
+are shared across recordings via `INSERT OR IGNORE` on the node
+hash.
 
 **leaf node** — up to `TRIE_SPLIT_THRESHOLD` request hashes stored
 inline.
@@ -288,15 +292,34 @@ observations under different outer contexts.
 
 ## Subject-identity machinery
 
-A callback body can run many times — the same `\cb -> ...`
-applied to different args (`(cb 10) + (cb 20)`), or nested
-inside cached calls whose enclosing argAncestry differs. Across
-all of them, `PositionalSeed{depth=1}` is the *same* argId:
-identity doesn't depend on invocations (Appendix A). But each
-invocation observes different values and produces different
-Facts, so state must vary. The machinery below holds both
-invariants at once: §12 fixes the Subject; §§13–14 characterize
-its state per-invocation via state hash and argAncestry (with
+Cached functions run many times. The simple case is the outer
+calling the inner directly:
+
+```nix
+builtins.cache { import = ./call-nixpkgs.nix; }
+               { system = "x86_64-linux"; }
+```
+
+The inner probes the outer's arg through `OuterObject`; each
+probe becomes an Env-layer Fact. Different arg values that the
+inner touches produce different Facts (probes get different
+answers), and the walker's Ask branches diverge to distinct
+Terminals; arg parts the inner never probes don't affect the
+walk. No subject-identity machinery needed — the walker
+distinguishes invocations by *what the inner asked and how the
+outer answered*, never by any deep hash of the arg's value
+(which would force evaluation and defeat laziness).
+
+Callbacks are harder. When the inner supplies a callback and the
+outer runs it — `(cb 10) + (cb 20)`, or nesting inside another
+cached call whose enclosing argAncestry differs — the outer's
+probes on the callback arg see values that vary per invocation,
+but the arg's identity to the walker (`PositionalSeed{depth=1}`)
+names the *slot*, not the *value*. Every invocation shares the
+same argId (Appendix A: identity doesn't depend on invocations);
+each still produces distinct Facts. The machinery below closes
+that gap: §12 fixes the Subject; §§13–14 characterize its state
+per-invocation via state hash and argAncestry (with
 `callArgAncestry` sampled at each cb-apply, disambiguated in
 storage by `InnerValueResponse.contextHash`); §§15–16 wire this
 through the Object graph; §17 caches step-by-step transitions.
@@ -335,9 +358,11 @@ ObservationSets.
   by `getAttr`/`getListElem` on a parent Subject.
 - **ApplyResultSubject{fn, arg}** — the result of applying one
   Subject to another.
-- **PostulatedIdempotentRead{hash}** — a subject whose source can
-  be re-read as if content-addressed (file, expression string,
-  literal); the carried hash identifies the source.
+- **PostulatedIdempotentRead{hash}** — a subject whose source
+  (file, expression string, literal) is re-read on demand at
+  replay; the `hash` is of the source bytes. "Postulated"
+  because we assume re-reading the source yields the same value
+  — we never verify by inspecting the value.
 
 Same structural shape → same Subject. A Subject is the value form
 of an **argId**.
