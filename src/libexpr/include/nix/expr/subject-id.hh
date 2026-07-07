@@ -175,19 +175,33 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
 Hash stateHashConverged(
     const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk);
 
-/** Compute a content-addressed structural identifier for any
-    `subject` — including `DerivedSubject`, where `stateHashAt`
-    traps. For non-derived subjects this delegates to `stateHashAt`.
-    For `DerivedSubject` it returns the producer query's hash:
-    `qH(QueryGetAttr{name, from = root_cdi, fromStateHashes, path})` for
-    `GetAttr`, similarly for `GetListElem`. Used by `OuterObject`,
-    `TracingCallbackArg`, etc. to expose a single-`Hash` identity
-    handle even though derived values don't have state hashes proper. */
+/** The producer query hash for a `DerivedSubject` — the queryHash of
+    the `QueryGetAttr` / `QueryGetListElem` that would produce this
+    derived value from its parent chain. This is not a state hash
+    (derived values don't have one); it's a payload hash serving as
+    the Queries-pool key. Callers that already know their subject is
+    derived use this directly; polymorphic callers dispatch via
+    `stateHashAtSubject`. */
+Hash producerQueryHashAt(
+    const DerivedSubject & derived,
+    const Hash & argAncestry,
+    const std::vector<ObservationSet> & walk,
+    size_t edgeIndex);
+
+Hash producerQueryHashAfter(
+    const DerivedSubject & derived,
+    const Hash & argAncestry,
+    const std::vector<ObservationSet> & walk);
+
+/** Polymorphic dispatcher. For `DerivedSubject`, delegates to
+    `producerQueryHashAt`; for every other variant, delegates to
+    `stateHashAt`. Used by callers (`OuterObject`,
+    `TracingCallbackArg`, etc.) that hold a Subject of unknown
+    variant and need a single Hash handle regardless of shape. */
 Hash stateHashAtSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk, size_t edgeIndex);
 
-/** Convenience: `stateHashAtSubject` at the walk's tail (= edgeIndex
-    = walk.size()). Mirrors `stateHashAfter` but defined for all
-    subject forms. */
+/** Convenience: `stateHashAtSubject` at the walk's tail
+    (= edgeIndex = walk.size()). */
 Hash stateHashAfterSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk);
 
 /** Per-subject observation trie fold step, as consumed by the subject-evolution fast-path

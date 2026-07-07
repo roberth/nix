@@ -394,7 +394,7 @@ stable.
 **stateHashAt(subject, argAncestry, history, step)** — the state
 hash of an arg-level subject before step `step` folds in. Traps
 on `DerivedSubject` — derived values have no own observations to
-fold; use `stateHashAtSubject` instead.
+fold; their key is a producer query hash, not a state hash.
 
 **stateHashAfter(subject, argAncestry, history)** — `stateHashAt`
 at `step = history.size()`.
@@ -405,15 +405,21 @@ regardless of how observations were grouped into edges. Used by
 the replay walker as a fallback when step-by-step navigation
 misses.
 
+**producerQueryHashAt(derivedSubject, argAncestry, history,
+step)** — the queryHash of the `QueryGetAttr` /
+`QueryGetListElem` that would produce this derived value from
+its parent chain at step `step`. Not a state hash (derived
+values don't have one); it's a payload hash serving as the
+Queries-pool key.
+
+**producerQueryHashAfter(derivedSubject, argAncestry, history)** —
+`producerQueryHashAt` at `step = history.size()`.
+
 **stateHashAtSubject(subject, argAncestry, history, step)** —
-polymorphic dispatch: returns a hash for any Subject variant.
-Arg-level: delegates to `stateHashAt(...)`. Derived: returns the
-producer QueryGetAttr's queryHash — the Queries-pool key of the
-query that would produce the derived value at step `step`. Two
-different kinds of hash unified in one call. Task #55 plans to
-split this into `stateHashAt` (arg-level only) and
-`producerQueryHashAt` (derived only), after which
-`stateHashAtSubject` disappears.
+polymorphic dispatcher. For `DerivedSubject`, delegates to
+`producerQueryHashAt`; every other variant delegates to
+`stateHashAt`. Kept as a convenience for callers holding a
+Subject of unknown variant.
 
 **stateHashAfterSubject(subject, argAncestry, history)** —
 `stateHashAtSubject` at `step = history.size()`.

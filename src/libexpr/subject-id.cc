@@ -372,36 +372,49 @@ Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const
     return stateHashAt(subject, argAncestry, hypWalk, hypWalk.size());
 }
 
+Hash producerQueryHashAt(
+    const DerivedSubject & derived,
+    const Hash & argAncestry,
+    const std::vector<ObservationSet> & walk,
+    size_t edgeIndex)
+{
+    auto [pathToParent, parentRoots] = pathAndRootsFromSubject(*derived.parent);
+    std::vector<trace::QueryLeaf> fromStateHashes;
+    fromStateHashes.reserve(parentRoots.size());
+    for (auto & root : parentRoots) {
+        auto rootStateHash = stateHashAt(root, argAncestry, walk, edgeIndex);
+        fromStateHashes.emplace_back(hashHex(rootStateHash));
+    }
+    auto fromLeaf = fromStateHashes.empty() ? trace::QueryLeaf("") : fromStateHashes[0];
+    nlohmann::json qj;
+    if (derived.kind == DerivedSubject::Kind::GetAttr) {
+        trace::QueryGetAttr q{derived.name, fromLeaf};
+        q.path = pathToParent;
+        q.fromStateHashes = fromStateHashes;
+        qj = q;
+    } else {
+        trace::QueryGetListElem q{fromLeaf, derived.index};
+        q.path = pathToParent;
+        q.fromStateHashes = fromStateHashes;
+        qj = q;
+    }
+    return hashString(HashAlgorithm::SHA256, qj.dump());
+}
+
+Hash producerQueryHashAfter(
+    const DerivedSubject & derived, const Hash & argAncestry, const std::vector<ObservationSet> & walk)
+{
+    return producerQueryHashAt(derived, argAncestry, walk, walk.size());
+}
+
 Hash stateHashAtSubject(
     const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk, size_t edgeIndex)
 {
-    /* For non-derived subjects, the structural address IS the state hash.
-       For DerivedSubject, stateHashAt traps; we compute the
-       producer query hash (= what a `from = root_cdi` flush would
-       hash for a query naming this derived value) directly. */
-    if (auto * d = std::get_if<DerivedSubject>(&subject.data)) {
-        auto [pathToParent, parentRoots] = pathAndRootsFromSubject(*d->parent);
-        std::vector<trace::QueryLeaf> fromStateHashes;
-        fromStateHashes.reserve(parentRoots.size());
-        for (auto & root : parentRoots) {
-            auto cid = stateHashAt(root, argAncestry, walk, edgeIndex);
-            fromStateHashes.emplace_back(hashHex(cid));
-        }
-        auto fromLeaf = fromStateHashes.empty() ? trace::QueryLeaf("") : fromStateHashes[0];
-        nlohmann::json qj;
-        if (d->kind == DerivedSubject::Kind::GetAttr) {
-            trace::QueryGetAttr q{d->name, fromLeaf};
-            q.path = pathToParent;
-            q.fromStateHashes = fromStateHashes;
-            qj = q;
-        } else {
-            trace::QueryGetListElem q{fromLeaf, d->index};
-            q.path = pathToParent;
-            q.fromStateHashes = fromStateHashes;
-            qj = q;
-        }
-        return hashString(HashAlgorithm::SHA256, qj.dump());
-    }
+    /* Polymorphic dispatch: DerivedSubjects have no own state hash,
+       so we key them by their producer query's hash instead. Every
+       other variant delegates to the strict `stateHashAt`. */
+    if (auto * derived = std::get_if<DerivedSubject>(&subject.data))
+        return producerQueryHashAt(*derived, argAncestry, walk, edgeIndex);
     return stateHashAt(subject, argAncestry, walk, edgeIndex);
 }
 
