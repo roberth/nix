@@ -288,12 +288,19 @@ observations under different outer contexts.
 
 ## Subject-identity machinery
 
-Each Ambient Fact needs to point at an evolving value. §§12–17
-define the terms: Subject (§12), the situational hashes
-characterizing subject state (§13–14), the object types that
-carry subjects through the callback body (§15–16), and the
-fast-path storage that avoids recomputing state at every step
-(§17). Storage lives in §18.
+A callback body can run many times — the same `\cb -> ...`
+applied to different args (`(cb 10) + (cb 20)`), or nested
+inside cached calls whose enclosing argAncestry differs. Across
+all of them, `PositionalSeed{depth=1}` is the *same* argId:
+identity doesn't depend on invocations (Appendix A). But each
+invocation observes different values and produces different
+Facts, so state must vary. The machinery below holds both
+invariants at once: §12 fixes the Subject; §§13–14 characterize
+its state per-invocation via state hash and argAncestry (with
+`callArgAncestry` sampled at each cb-apply, disambiguated in
+storage by `InnerValueResponse.contextHash`); §§15–16 wire this
+through the Object graph; §17 caches step-by-step transitions.
+Storage lives in §18.
 
 ### 12. Subject identity
 
