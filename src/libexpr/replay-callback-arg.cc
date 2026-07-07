@@ -56,7 +56,7 @@ static Hash stampPerArgFields(
     return fromStateHash;
 }
 
-/* Look up the recorded payload for `query` in LocalResponseMap.
+/* Look up the recorded payload for `query` in InnerValueResponse.
    The map is keyed by requestHash and that's sound at ambient layer
    because reqHash is `SHA-256(query{from = subject-id-evolved state hash})`
    — a pure function of (subject, argAncestry, prior chain facts). Two
@@ -73,7 +73,7 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, c
         Q::tag, query.from.isStateHash() ? query.from.stateHash().substr(0, 12) : "<?>",
         reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
         outerContext.to_string(HashFormat::Base16, false).substr(0, 12));
-    auto payload = dg.getLocalResponsePayload(reqHash, outerContext);
+    auto payload = dg.getInnerValueResponsePayload(reqHash, outerContext);
     if (!payload)
         throw Error("ReplayCallbackArg: no recorded response for %s on local %s",
             Q::tag, query.from.isStateHash() ? query.from.stateHash() : "<ambient>");
@@ -453,7 +453,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    `stampPerArgFields` would compute its `from` at a
                    later edge index than the writer's
                    `flushAmbient` stamped, breaking the
-                   LocalResponseMap lookup.
+                   InnerValueResponse lookup.
 
                    localWalkFacts copies just the ReplayCallbackArg's
                    surface-probe portion (= entries pushed before

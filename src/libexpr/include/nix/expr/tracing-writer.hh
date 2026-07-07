@@ -198,7 +198,7 @@ class TracingWriter
         /* Walker's outer env cur at THIS apply-boundary's dispatch
            moment (= fromFactSetHashAtBoundary XOR priorEpsilonAccum
            at first-finalize time). Stored for late-obs re-processing
-           so re-emitted LocalResponseMap inserts use the same
+           so re-emitted InnerValueResponse inserts use the same
            context as the first-finalize inserts. Zero (empty hash)
            until first finalize populates it. */
         Hash boundaryOuterCtx;
@@ -228,7 +228,7 @@ class TracingWriter
         size_t pos = 0;
         /* Facts up to (but not including) this index have been
            processed in a previous finalize pass — their Request /
-           LocalResponse / AmbientAsks entries are already in the
+           InnerValueResponse / AmbientAsks entries are already in the
            DB. Re-entrant finalize passes only need to insert the
            tail `facts[lastProcessedCount..]`. */
         size_t lastProcessedCount = 0;
@@ -387,7 +387,7 @@ public:
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
         decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
         if (storeAllResponsePayloads)
-            decisionGraph->insertLocalResponse(queryHash, Hash(HashAlgorithm::SHA256), responsePayload);
+            decisionGraph->insertInnerValueResponse(queryHash, Hash(HashAlgorithm::SHA256), responsePayload);
         /* Dedupe by (request, response) pair, not request alone.
            Idempotent observations (same request, same response —
            e.g. file reads, env reads) collapse to one entry; sibling
@@ -412,7 +412,7 @@ public:
      *
      * Under Phase 4 of state hash, ambient facts are
      * buffered here rather than eagerly inserted into envFactSet and
-     * the Requests pool / LocalResponseMap — the `from` field of the query
+     * the Requests pool / InnerValueResponse — the `from` field of the query
      * may be a placeholder (counter-derived local id) whose final
      * Buffered until flushAmbient() at logResult time
      * inserts into the pool at the query payload's natural reqHash. */
@@ -669,7 +669,7 @@ public:
 
     /**
      * When true, every file-read / env-var response payload gets
-     * persisted into the decisionGraph's LocalResponseMap too —
+     * persisted into the decisionGraph's InnerValueResponse too —
      * useful for offline debugging when JSON traces aren't
      * available. Default false: walker never reads env layer payloads
      * from there (= live-dispatches against the env instead), so
@@ -746,7 +746,7 @@ public:
         /* Populate per-edge response table AFTER `record()` so
            Patricia-split-added Asks rows are covered too. Enumerate
            ALL Asks rows for Q (not just `envAsksEdges`), and use
-           LRM (`getLocalResponsePayload`) as the source of truth so
+           InnerValueResponse (`getInnerValueResponsePayload`) as the source of truth so
            coordinates whose reqhashes came from a prior sibling's
            dispatch (cumulative-dependency principle) also get
            covered. */

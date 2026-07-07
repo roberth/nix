@@ -70,9 +70,9 @@ TEST_F(TracingDecisionGraphTest, AtomInsertIsIdempotent)
     EXPECT_EQ(*g.getRequestPayload(h), "payload");
 }
 
-TEST_F(TracingDecisionGraphTest, LocalResponseMap_KeyedByRequestHash_FunctionAtDepth2)
+TEST_F(TracingDecisionGraphTest, InnerValueResponse_KeyedByRequestHash_FunctionAtAmbient)
 {
-    /* `LocalResponseMap` is keyed by requestHash. This is sound at
+    /* `InnerValueResponse` is keyed by requestHash. This is sound at
        depth-2 (the only place the walker reads it) because the
        depth-2 reqHash is `SHA-256(query{from = cidasks-evolved
        scopeStateId})` — a pure function of (subject, scope, prior facts in
@@ -93,10 +93,10 @@ TEST_F(TracingDecisionGraphTest, LocalResponseMap_KeyedByRequestHash_FunctionAtD
 
     auto reqHash = sha("shared-request");
     auto ctxHash = sha("shared-context");
-    g.insertLocalResponse(reqHash, ctxHash, "first-payload");
-    g.insertLocalResponse(reqHash, ctxHash, "second-payload");
+    g.insertInnerValueResponse(reqHash, ctxHash, "first-payload");
+    g.insertInnerValueResponse(reqHash, ctxHash, "second-payload");
 
-    EXPECT_EQ(g.getLocalResponsePayload(reqHash, ctxHash).value_or(""), "first-payload");
+    EXPECT_EQ(g.getInnerValueResponsePayload(reqHash, ctxHash).value_or(""), "first-payload");
 }
 
 /* EdgeResponses table + its tests deleted: the table had no

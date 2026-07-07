@@ -48,10 +48,10 @@ class TracingReplayEvaluator : public Evaluator
         std::map<std::string, std::shared_ptr<Object>> memo;
 
         /** Per-applyReqHash dispatch counter within this walk. Used
-            to compute the LocalResponseMap context: same applyReqHash
+            to compute the InnerValueResponse context: same applyReqHash
             dispatched multiple times (cb-repeated's PositionalSeed-
             abstracted (cb 10)/(cb 20) sharing one applyReqHash) gets
-            distinct LRM lookup keys via seq=0, seq=1, ... Symmetric
+            distinct InnerValueResponse lookup keys via seq=0, seq=1, ... Symmetric
             with cold's per-boundary counter in the finalize pass. */
         std::unordered_map<Hash, size_t> perApplyReqDispatchCount;
 

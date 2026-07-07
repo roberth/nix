@@ -262,8 +262,10 @@ Ambient-specific vocabulary is what §11 onward defines.
 **InnerValueRequest** / **InnerValueResponse** — the payload
 types at the Ambient interaction. Payload is a `Query` / `Result`
 (full evaluator surface); the wrapper tags the payload as being
-about an inner-owned callback-arg value. When the walker records
-or dispatches an ambient Fact it goes through this wrapper.
+about an inner-owned callback-arg value. Persisted responses live
+in the `InnerValueResponse` table below. C++ wire wrappers are
+`InnerValueRequestPayload` / `InnerValueResponsePayload` —
+`Payload` suffix keeps the atom names free for the storage layer.
 
 **AmbientAsk** — a row in `AmbientAsk(fromFactSet) →
 (requestSet, toFactSet)`. Same shape as an Env Ask but keyed
@@ -271,12 +273,12 @@ on factSet alone (no `Q`) and storing the transition
 explicitly as `toFactSet` — at replay the walker can't
 dispatch an inner-owned value live, since it no longer exists.
 
-**LocalResponses** — a persistent map
-`(requestHash, contextHash) → responsePayload` used by the
-replay walker to serve probes into a reconstructed frozen image
-of a callback arg. `contextHash` is the walker's Env-interaction
-`cur` at the time the response was recorded, disambiguating
-same-request observations under different outer contexts.
+**InnerValueResponse** — a persistent table
+`(requestHash, contextHash) → payload` used by the replay walker
+to serve probes into a reconstructed frozen image of a callback
+arg. `contextHash` is the walker's Env-interaction `cur` at the
+time the response was recorded, disambiguating same-request
+observations under different outer contexts.
 
 ### 12. Subject identity
 
@@ -387,9 +389,10 @@ inner-supplied value at the boundary; records the outer's probes
 on it as Ambient-interaction Facts.
 
 **ReplayCallbackArg** — replay-side counterpart. Frozen image
-reconstructed from `LocalResponses`. Serves the outer's probes
-from recorded data; throws an ambient-interaction divergence exception
-if the outer's probes don't match what was recorded.
+reconstructed from `InnerValueResponse` rows. Serves the outer's
+probes from recorded data; throws an ambient-interaction
+divergence exception if the outer's probes don't match what was
+recorded.
 
 **OuterObject** — the outer evaluator's view of the callback
 arg while running the callback body. Peer to `TracingCallbackArg`
@@ -448,8 +451,8 @@ only at record time.
 Extends the base schema (§9):
 
 ```
-LocalResponses(requestHash BLOB, contextHash BLOB, payload BLOB,
-               PRIMARY KEY (requestHash, contextHash)) WITHOUT ROWID
+InnerValueResponse(requestHash BLOB, contextHash BLOB, payload BLOB,
+                   PRIMARY KEY (requestHash, contextHash)) WITHOUT ROWID
 AmbientAsk(fromFactSetHash BLOB, requestSetHash BLOB, toFactSetHash BLOB,
            PRIMARY KEY (fromFactSetHash, requestSetHash)) WITHOUT ROWID
 SubjectEvolutionEdge(argIdHash BLOB, curBefore BLOB, obsFromHash BLOB,

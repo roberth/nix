@@ -123,7 +123,7 @@ public:
     std::optional<std::string> getQueryPayload(const QueryHash & h);
     std::optional<std::string> getResultPayload(const ResultHash & h);
 
-    /* LocalResponseMap: response payload pool, keyed by the *request*
+    /* InnerValueResponse: response payload pool, keyed by the *request*
        hash. ambient REPLAY ONLY: `ReplayCallbackArg` reads these back to
        serve probes into a reconstructed LocalObject value tree — this
        is the design's "ambient walker is the only consumer" contract from
@@ -134,7 +134,7 @@ public:
        (same seed(N) pre-observation state hash → same reqhash → different
        responses from arg-dependent env), so env dispatch MUST NOT
        read this map. See `cross-session-seed-collision` memory. */
-    /* Context-widened LocalResponseMap: PK is (requestHash, contextHash).
+    /* Context-widened InnerValueResponse: PK is (requestHash, contextHash).
        contextHash is walker's/writer's outer env fact-set state at the
        moment the response was recorded / is being consulted. Same
        request under different outer contexts stores/retrieves distinct
@@ -143,8 +143,8 @@ public:
        by discriminating on outer chain state (which differs between
        two cb-applies within the same body: post-first-apply-boundary
        vs before). */
-    void insertLocalResponse(const RequestHash & requestHash, const Hash & contextHash, std::string_view payload);
-    std::optional<std::string> getLocalResponsePayload(const RequestHash & requestHash, const Hash & contextHash);
+    void insertInnerValueResponse(const RequestHash & requestHash, const Hash & contextHash, std::string_view payload);
+    std::optional<std::string> getInnerValueResponsePayload(const RequestHash & requestHash, const Hash & contextHash);
 
 
     /* ─────────────────────────────────────────────────────────────────

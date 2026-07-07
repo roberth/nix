@@ -61,7 +61,7 @@ CREATE TABLE IF NOT EXISTS Results (
 -- env then produces the same response, so (request → response) is
 -- a function. First-writer-wins is sound, and the walker can look
 -- the payload up by reqHash directly.
-CREATE TABLE IF NOT EXISTS LocalResponseMap (
+CREATE TABLE IF NOT EXISTS InnerValueResponse (
     requestHash BLOB NOT NULL,
     contextHash BLOB NOT NULL,
     payload     BLOB NOT NULL,
@@ -168,8 +168,8 @@ struct TracingDecisionGraph::State
     SQLite db;
 
     /* Storage layer */
-    SQLiteStmt insertRequest, insertQuery, insertResult, insertLocalResponse;
-    SQLiteStmt selectRequest, selectQuery, selectResult, selectLocalResponse;
+    SQLiteStmt insertRequest, insertQuery, insertResult, insertInnerValueResponse;
+    SQLiteStmt selectRequest, selectQuery, selectResult, selectInnerValueResponse;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
     SQLiteStmt countAsks, countTerminals;
@@ -195,7 +195,7 @@ struct TracingDecisionGraph::State
     std::unordered_map<Hash, std::optional<std::vector<TracingDecisionGraph::Fact>>> factSetCache;
     std::unordered_map<Hash, std::optional<std::string>> requestPayloadCache;
     std::unordered_map<Hash, std::optional<std::string>> resultPayloadCache;
-    /* LocalResponse uses (requestHash, contextHash) key; explicit
+    /* InnerValueResponse uses (requestHash, contextHash) key; explicit
        implementation bypasses the ATOM_CACHED macro. No in-memory
        cache — SQLite indexed lookup is fast enough for the walker's
        hot path here (measured hit rate is low per query). */
@@ -394,16 +394,16 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO Queries(queryHash, payload) VALUES (?, ?)");
     state->insertResult.create(state->db,
         "INSERT OR IGNORE INTO Results(resultHash, payload) VALUES (?, ?)");
-    state->insertLocalResponse.create(state->db,
-        "INSERT OR IGNORE INTO LocalResponseMap(requestHash, contextHash, payload) VALUES (?, ?, ?)");
+    state->insertInnerValueResponse.create(state->db,
+        "INSERT OR IGNORE INTO InnerValueResponse(requestHash, contextHash, payload) VALUES (?, ?, ?)");
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
     state->selectQuery.create(state->db,
         "SELECT payload FROM Queries WHERE queryHash = ?");
     state->selectResult.create(state->db,
         "SELECT payload FROM Results WHERE resultHash = ?");
-    state->selectLocalResponse.create(state->db,
-        "SELECT payload FROM LocalResponseMap WHERE requestHash = ? AND contextHash = ?");
+    state->selectInnerValueResponse.create(state->db,
+        "SELECT payload FROM InnerValueResponse WHERE requestHash = ? AND contextHash = ?");
     /* Drop obsolete tables from earlier schema versions. */
     state->db.exec("DROP TABLE IF EXISTS FactSets;");
     state->db.exec("DROP TABLE IF EXISTS EdgeResponses;");
@@ -486,11 +486,11 @@ ATOM_INSERT_CACHED(Result, resultPayloadCache)
 #undef ATOM_INSERT_CACHED
 #undef ATOM_INSERT_PLAIN
 
-void TracingDecisionGraph::insertLocalResponse(
+void TracingDecisionGraph::insertInnerValueResponse(
     const Hash & requestHash, const Hash & contextHash, std::string_view payload)
 {
     auto state(_state->lock());
-    auto use = state->insertLocalResponse.use();
+    auto use = state->insertInnerValueResponse.use();
     dg_bindBlob(use, dg_hashToBlob(requestHash));
     dg_bindBlob(use, dg_hashToBlob(contextHash));
     dg_bindBlob(use, payload);
@@ -531,11 +531,11 @@ ATOM_GET_CACHED(Result, resultPayloadCache)
 #undef ATOM_GET_CACHED
 #undef ATOM_GET_PLAIN
 
-std::optional<std::string> TracingDecisionGraph::getLocalResponsePayload(
+std::optional<std::string> TracingDecisionGraph::getInnerValueResponsePayload(
     const Hash & requestHash, const Hash & contextHash)
 {
     auto state(_state->lock());
-    auto query = state->selectLocalResponse.use();
+    auto query = state->selectInnerValueResponse.use();
     dg_bindBlob(query, dg_hashToBlob(requestHash));
     dg_bindBlob(query, dg_hashToBlob(contextHash));
     if (!query.next())
@@ -1365,19 +1365,19 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                (Q, nextCur) — i.e., the dispatched responses lead to
                a position where the recording continues or terminates. */
             if (!hasAnyEdge(q, nextCur)) {
-                /* Direction (2) LRM fallback (fallback-pass only): if
+                /* Direction (2) InnerValueResponse fallback (fallback-pass only): if
                    live's XOR-fold gave a nextCur with no recorded edge,
-                   check whether cold's LRM stored a response at
+                   check whether cold's InnerValueResponse stored a response at
                    (req, cur) for any useful request. If substitution
                    yields a valid nextCur, use it. Gated to pass==1 so
                    normal cache invalidation (live's diverged response
                    leads walker to miss and fall through) stays live-first
                    in the primary pass; only when NO primary edge worked
-                   do we speculate via LRM. This closes cb-repeated's
+                   do we speculate via InnerValueResponse. This closes cb-repeated's
                    walker-bug case (state-hash collision on apply-result
                    subjects) without masking outer-body-change misses on
                    the primary pass. */
-                /* No LRM substitution here — correctness principle:
+                /* No InnerValueResponse substitution here — correctness principle:
                    substituting cold's stored response for walker's
                    live response would mask env-change invalidation,
                    which cb-with-scope-and-tryeval and cb-list-args
@@ -1387,7 +1387,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                        correct (interpreter re-eval or DISALLOW error)
                    (b) walker-side compute bug (cb-repeated's
                        state-hash collapse) → fix the walker, not paper over
-                       with LRM substitution. */
+                       with InnerValueResponse substitution. */
                 tracingCacheLog("walk Q=%s rs=%s useful=%zu nextCur=%s NO RECORDED EDGE -> try next",
                                 q.to_string(HashFormat::Base16, false).substr(0, 12),
                                 requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12),

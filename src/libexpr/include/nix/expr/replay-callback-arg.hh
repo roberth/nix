@@ -10,7 +10,7 @@
  * TracingCallbackArg so the outer's accesses land in the inner's
  * factSet as Facts. On replay the inner isn't running, so its arg
  * isn't reconstructable as a live Object — but its CONTENT was
- * persisted in LocalResponseMap. ReplayCallbackArg reads that
+ * persisted in InnerValueResponse. ReplayCallbackArg reads that
  * content back so the outer can invoke its callback against a
  * deterministic frozen image of the recorded arg.
  *
@@ -76,10 +76,10 @@ class ReplayCallbackArg : public Object
     std::shared_ptr<Hash> chainCursor;
     /* Walker's outer env fact-set state at the moment this ReplayCallbackArg
        was constructed (= walker's cur before entering this cb-apply
-       boundary). Used as the LocalResponseMap lookup context so two
+       boundary). Used as the InnerValueResponse lookup context so two
        cb-applies of the same abstract fn+arg within one cached body
        resolve to their respective recorded responses (cb-repeated-
-       cb-apply-diff-args's fix). Cold's insertLocalResponse writes
+       cb-apply-diff-args's fix). Cold's insertInnerValueResponse writes
        with writer.envFactSetHash at the matching moment; walker at
        ReplayCallbackArg construction time receives its own outer
        cur which — by lockstep growth of walker.envWalk with
@@ -113,7 +113,7 @@ class ReplayCallbackArg : public Object
        re-fires the ReplayCallbackArg's surface probes and pushes a fresh fact
        past where the recorder stopped recording — the next lookup at
        `walkFacts.size() > recorded_size` then misses
-       LocalResponseMap and the walker fails. */
+       InnerValueResponse and the walker fails. */
     std::optional<trace::ResultWHNF> cachedWHNF;
     /** Read recorded WHNF for this proxy (= one QueryGetWHNF read +
         chain advance). Memoized; subsequent calls return the same
@@ -190,7 +190,7 @@ public:
         the recorder's first finalize pass for this boundary saw
         probes=0 (= the inner body didn't force the local) and the
         actual probes only arrived later — by then those probes
-        were inserted into `LocalResponseMap` but NOT into
+        were inserted into `InnerValueResponse` but NOT into
         `AmbientAsks` (= extending the chain would corrupt
         dispatchApplyLive's AmbientResult and break the env
         per-Q cur propagation). The cb-apply local can still

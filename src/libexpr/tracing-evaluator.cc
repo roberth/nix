@@ -489,7 +489,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        method calls (`getType`, `getInt`, etc.) record ambient
        observations on the enclosing cb-apply boundary instead of
        env main-trie Terminals. The walker's `<replay-local-lambda>`
-       primop reads these from LocalResponseMap via the same
+       primop reads these from InnerValueResponse via the same
        per-arg-stamped reqHash; the AmbientAsks edges enable its
        synthetic's `advanceChainAndAppendFact` to keep
        `chainCursor` aligned with the cold AmbientResult. */

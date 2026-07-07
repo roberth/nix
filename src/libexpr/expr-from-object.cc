@@ -38,7 +38,7 @@ namespace nix {
    Objects (values the inner reads through OuterObject). The Local
    direction (inner values the outer reads via callback) doesn't go
    through this registry at all on replay — those are served by
-   ReplayCallbackArg standins from LocalResponseMap. Local
+   ReplayCallbackArg standins from InnerValueResponse. Local
    registration on the recording side was previously here as a write-
    only map; dropped because nothing read it back. */
 struct OuterRegistry
@@ -374,7 +374,7 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
        The sidecar carries `localType` so the replay-side walker
        can detect non-reconstructible locals (functions) without
        forcing them. ReplayCallbackArg can serve scalar/structural
-       responses from LocalResponseMap, but a function local has
+       responses from InnerValueResponse, but a function local has
        no recorded body to apply against a divergent argument — so
        the walker bails on dispatch in that case and the env layer
        fallback (= live re-eval) handles it. */
@@ -545,7 +545,7 @@ static PrimOp * makeCachedFnPrimOp(
                            OuterResolver::apply) so downstream
                            Facts with `from=<apply_qH>` can have
                            their response payloads located via the
-                           LocalResponseMap on replay. */
+                           InnerValueResponse on replay. */
                         OuterApplyFn applyFn = [resolver, outerArgObj, rootId](
                             OuterId fnId,
                             std::shared_ptr<Object> argObj,

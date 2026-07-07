@@ -216,13 +216,13 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         }
         auto currentResp = getCurrentResponse(*requestPayload, ctx);
         if (!currentResp) {
-            /* DISALLOW-mode LRM fallback (on dispatch failure only,
+            /* DISALLOW-mode InnerValueResponse fallback (on dispatch failure only,
                not mismatch): under `_NIX_DISALLOW_CACHE_INTERPRET_INNER=1`
                the cache must serve every recorded value, so a
                `resolveRoots` failure here is a walker routing bug
                (currentProxy can't reach the sibling's contraArg to
                dispatch a cross-sibling `from`), not a legitimate env
-               change. Fall back to LRM which under within-session
+               change. Fall back to InnerValueResponse which under within-session
                soundness has cold's actual response for this reqhash.
                Only substitute on FAILURE — not on live/stored mismatch
                — so observation-driven divergence (cb-sibling-
@@ -232,10 +232,10 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
             static const bool disallowInner =
                 getEnv("_NIX_DISALLOW_CACHE_INTERPRET_INNER").value_or("") == "1";
             if (disallowInner && isAmbient) {
-                if (auto storedResp = decisionGraph.getLocalResponsePayload(requestHash, Hash(HashAlgorithm::SHA256))) {
+                if (auto storedResp = decisionGraph.getInnerValueResponsePayload(requestHash, Hash(HashAlgorithm::SHA256))) {
                     auto storedH = TracingDecisionGraph::computeResponseHash(*storedResp);
                     tracingCacheLog(
-                        "dispatch DISALLOW-mode LRM fallback req=%s -> resp=%s (%s)",
+                        "dispatch DISALLOW-mode InnerValueResponse fallback req=%s -> resp=%s (%s)",
                         requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         storedH.to_string(HashFormat::Base16, false).substr(0, 12),
                         queryDescription);
@@ -263,7 +263,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
            under `_NIX_DISALLOW_CACHE_INTERPRET_INNER=1`, breaks
            observation-driven sibling discrimination
            (cb-sibling-discrimination-via-observation): a wrong-sibling
-           live response substituted with the FIRST-WRITER LRM entry
+           live response substituted with the FIRST-WRITER InnerValueResponse entry
            routes both siblings to the same recorded terminal, giving
            `200` instead of `100 + 1000 = 1100`. Only substitute on
            DISPATCH FAILURE (see the block above), not on mismatch. */
@@ -598,7 +598,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
            OUTER values ("ambient responses are capability-mediated,
            not cached" — primop doc §Replay semantics); the previous
            fallback materialised an ReplayCallbackArg and let its methods read out
-           of LocalResponseMap, which was correct for INNER locals but
+           of InnerValueResponse, which was correct for INNER locals but
            wrong here: it served the recorded outer response regardless
            of whether the live outer would produce it, silently masking
            outer-body change (cb-higher-order step 3 returning stale 6
@@ -609,7 +609,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
            `resolveApplyId` with explicit `isLocalArgId`
            discrimination materialises their ReplayCallbackArg. Serving inner
            locals from the reconstructed value tree backed by
-           LocalResponseMap is per design (= ambient layer Replay's
+           InnerValueResponse is per design (= ambient layer Replay's
            "walker reconstructs the LocalObject as a live Nix Value
            tree from the CAS pool"). The forbidden thing is treating
            an OUTER-direction id as if it were a local. */
@@ -681,7 +681,7 @@ bool TracingReplayEvaluator::isLocalArgId(const Hash & idHash)
    inner-side TracingCallbackArg's content-hash whose facts were emitted
    with from=hex(id) but whose id itself isn't a producer Request.
    Materialise a ReplayCallbackArg keyed by it; its methods read
-   recorded responses out of LocalResponseMap by qH(query{from=hex(id)}),
+   recorded responses out of InnerValueResponse by qH(query{from=hex(id)}),
    matching what TracingCallbackArg wrote during recording. */
 /* Mixed direction: fn is Outer (resolved through the producer chain to
    an OuterObject); arg may be Local (ReplayCallbackArg) or Outer (resolved
@@ -717,7 +717,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            `stampPerArgFields` reads back `localId` instead of the
            subject-id-evolved state hash the recorder stamped its facts
            against. The recorded reqHashes then can't be found in
-           LocalResponseMap → cb-sibling fails with
+           InnerValueResponse → cb-sibling fails with
            "no recorded response for getType on local". Both
            sibling cb-applies share the same first probe's stamped
            reqHash regardless of subject (= at edgeIndex=0,
@@ -811,7 +811,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     const Hash & walkerCur,
     ResolutionContext & ctx)
 {
-    /* LRM context symmetric with cold's finalize:
+    /* InnerValueResponse context symmetric with cold's finalize:
        hash(applyReqHash || per-applyReqHash sequence).
 
        Speculative-retry safe: assign seq PER UNIQUE walkerCur, not
@@ -909,7 +909,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        currentProxy's applyContext observations into the ReplayCallbackArg's initial
        walk. Without this, ReplayCallbackArg's per-arg fields are computed against
        an empty walk — so sibling A's ReplayCallbackArg and sibling B's ReplayCallbackArg have
-       identical CDIs at their initial `.x` / `.f` probes, and LRM's
+       identical CDIs at their initial `.x` / `.f` probes, and InnerValueResponse's
        first-writer-wins returns whichever sibling recorded first,
        yielding cross-sibling data mixing (cb-sibling-b's int-1000
        result = sibling A's x=1 folded with sibling B's f×1000).

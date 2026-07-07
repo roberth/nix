@@ -19,7 +19,7 @@
  *    boundary `logAmbientApplyFact` appended to). At flushAmbient
  *    finalize the writer's ambient loop stamps each observation with
  *    `from = hex(stateHashAt(applyResultSubject, argAncestry, walk, i))`,
- *    inserts the response payload into `LocalResponseMap` keyed by
+ *    inserts the response payload into `InnerValueResponse` keyed by
  *    the resulting reqHash, and inserts an `AmbientAsks` edge.
  *
  * The walker's `<replay-local-lambda>` primop, when its synthetic

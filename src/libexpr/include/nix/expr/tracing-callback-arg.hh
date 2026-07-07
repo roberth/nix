@@ -7,7 +7,7 @@
  * writer's `logIncomingAmbientInteraction`, then delegates to the
  * wrapped Object.
  *
- * Responses *are* stored to the decisionGraph's LocalResponseMap
+ * Responses *are* stored to the decisionGraph's InnerValueResponse
  * here (this is the case the dispatcher can't recompute from live
  * state at replay time — the inner isn't running).
  */

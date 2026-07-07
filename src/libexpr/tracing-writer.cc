@@ -125,9 +125,9 @@ void TracingWriter::flushAmbient(bool finalize)
             resultJson.dump());
 
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-        /* env fact LRM insert at empty-hash context: kept for
+        /* env fact InnerValueResponse insert at empty-hash context: kept for
            DISALLOW-mode fallback lookups. */
-        decisionGraph->insertLocalResponse(queryHash, Hash(HashAlgorithm::SHA256), responsePayload);
+        decisionGraph->insertInnerValueResponse(queryHash, Hash(HashAlgorithm::SHA256), responsePayload);
 
         /* Secondary index for producer queries (getAttr / getListElem):
            insert the SAME query payload under the initial-walk reqHash
@@ -307,7 +307,7 @@ void TracingWriter::flushAmbient(bool finalize)
     /* Per-applyReqHash sequence counter within THIS finalize pass.
        cb-repeated's two `(cb X) + (cb Y)` produce boundaries that
        share the same applyReqHash (PositionalSeed abstracts over
-       literal arg). Each boundary's LRM inserts use the pair
+       literal arg). Each boundary's InnerValueResponse inserts use the pair
        (applyReqHash, seq) as the context — the sequence
        discriminates the two applies. Walker's dispatchApplyLive
        tracks the same counter symmetrically. */
@@ -319,7 +319,7 @@ void TracingWriter::flushAmbient(bool finalize)
             boundary.applyRequestHash.to_string(HashFormat::Base16, false)
             + "|" + std::to_string(applySeq));
 
-        /* Helper: stamp the i-th fact and emit Request/LocalResponse
+        /* Helper: stamp the i-th fact and emit Request/InnerValueResponse
            into the pool. AmbientAsks is inserted iff `withAmbientAsks`
            is true. Returns (cumulativeFactSet, walk-edge-to-append).
            Used both for first-finalize processing (with AmbientAsks)
@@ -379,9 +379,9 @@ void TracingWriter::flushAmbient(bool finalize)
             /* Context = hash(applyReqHash || per-applyReqHash sequence)
                so multiple applies sharing an applyReqHash (via
                PositionalSeed abstraction — cb-repeated's `(cb 10) +
-               (cb 20)`) get distinct LRM rows. Walker's dispatchApplyLive
+               (cb 20)`) get distinct InnerValueResponse rows. Walker's dispatchApplyLive
                tracks the symmetric counter in ctx.perApplyReqDispatchCount. */
-            decisionGraph->insertLocalResponse(queryHash, seqCtx, responsePayload);
+            decisionGraph->insertInnerValueResponse(queryHash, seqCtx, responsePayload);
 
             auto toFactSet = TracingDecisionGraph::xorFactIntoHash(
                 cumulativeFactSet, queryHash, responseHash);
@@ -407,7 +407,7 @@ void TracingWriter::flushAmbient(bool finalize)
                dispatched at warm. Equals
                `boundary.fromFactSetHashAtBoundary XOR priorEpsilonAccum`
                (= state at openApplyBoundary time + all prior ε
-               contributions). Used as the LocalResponseMap key
+               contributions). Used as the InnerValueResponse key
                discriminator so ambient chain facts within different
                apply boundaries store under distinct rows, letting
                cb-repeated's two applies with the same abstract
@@ -510,7 +510,7 @@ void TracingWriter::flushAmbient(bool finalize)
             for (size_t i = 0; i < boundary.lastProcessedCount; ++i) {
                 /* Re-stamp prior facts to rebuild walk; inserts are
                    idempotent (INSERT OR IGNORE) so the duplicate
-                   Request/LocalResponse calls are harmless. */
+                   Request/InnerValueResponse calls are harmless. */
                 auto [nextCfs, edge] = stampAndEmit(i, walk, cumulativeFactSet, /*withAmbientAsks=*/ false, boundary.boundaryOuterCtx);
                 cumulativeFactSet = nextCfs;
                 walk.push_back(std::move(edge));
