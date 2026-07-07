@@ -80,18 +80,6 @@ TEST(TraceTypes, AmbientOutgoingRequestRoundTrip)
     EXPECT_EQ(q->from, "0");
 }
 
-TEST(TraceTypes, AmbientOutgoingResponseRoundTrip)
-{
-    OuterValueResponse resp{ResultString{"hello"}};
-    json j;
-    to_json(j, resp);
-    OuterValueResponse resp2{ResultString{}};
-    from_json(j, resp2);
-    auto * r = std::get_if<ResultString>(&resp2.result);
-    ASSERT_NE(r, nullptr);
-    EXPECT_EQ(r->value, "hello");
-}
-
 TEST(TraceTypes, AmbientOutgoingResponseWrapperRoundTrip)
 {
     Response<OuterValueRequest> traced{
@@ -112,8 +100,8 @@ TEST(TraceTypes, AmbientOutgoingResponseWrapperRoundTrip)
 TEST(TraceTypes, AmbientQueryParseTraceEntry)
 {
     Response<OuterValueRequest> original{
-        .request = {QueryGetString{"42"}},
-        .response = {ResultString{"hello"}},
+        .request = {QueryGetAttr{"key", "42"}},
+        .response = {ResultMaybeType{std::optional<std::string>{"nAttrs"}}},
     };
     json j;
     to_json(j, original);
@@ -122,12 +110,9 @@ TEST(TraceTypes, AmbientQueryParseTraceEntry)
     ASSERT_TRUE(parsed.has_value());
     auto * resp = std::get_if<Response<OuterValueRequest>>(&*parsed);
     ASSERT_NE(resp, nullptr);
-    auto * q = std::get_if<QueryGetString>(&resp->request.query);
+    auto * q = std::get_if<QueryGetAttr>(&resp->request.query);
     ASSERT_NE(q, nullptr);
     EXPECT_EQ(q->from, "42");
-    auto * r = std::get_if<ResultString>(&resp->response.result);
-    ASSERT_NE(r, nullptr);
-    EXPECT_EQ(r->value, "hello");
 }
 
 // ---------------------------------------------------------------------------
@@ -179,27 +164,6 @@ TEST(TraceTypes, QueryWrapperRoundTrip)
     EXPECT_EQ(q.v, q2.v);
 }
 
-TEST(TraceTypes, ResultStringRoundTrip)
-{
-    ResultString r{"hello"};
-    json j;
-    to_json(j, r);
-    ResultString r2;
-    from_json(j, r2);
-    EXPECT_EQ(r.value, r2.value);
-}
-
-TEST(TraceTypes, ResultStringWithContextRoundTrip)
-{
-    ResultStringWithContext r{"hello", {"ctx1", "ctx2"}};
-    json j;
-    to_json(j, r);
-    ResultStringWithContext r2;
-    from_json(j, r2);
-    EXPECT_EQ(r.value, r2.value);
-    EXPECT_EQ(r.context, r2.context);
-}
-
 TEST(TraceTypes, ResultMaybeTypePresent)
 {
     ResultMaybeType r{std::optional<std::string>{"attrs"}};
@@ -221,26 +185,6 @@ TEST(TraceTypes, ResultMaybeTypeAbsent)
     EXPECT_FALSE(r2.type.has_value());
 }
 
-TEST(TraceTypes, ResultFloatRoundTrip)
-{
-    ResultFloat r{3.14};
-    json j;
-    to_json(j, r);
-    ResultFloat r2;
-    from_json(j, r2);
-    EXPECT_DOUBLE_EQ(r.value, r2.value);
-}
-
-TEST(TraceTypes, ResultListSizeRoundTrip)
-{
-    ResultListSize r{42};
-    json j;
-    to_json(j, r);
-    ResultListSize r2;
-    from_json(j, r2);
-    EXPECT_EQ(r.size, r2.size);
-}
-
 TEST(TraceTypes, QueryGetListElemRoundTrip)
 {
     QueryGetListElem q{"99", 5};
@@ -252,24 +196,14 @@ TEST(TraceTypes, QueryGetListElemRoundTrip)
     EXPECT_EQ(q.index, q2.index);
 }
 
-TEST(TraceTypes, QueryGetFloatRoundTrip)
-{
-    QueryGetFloat q{"77"};
-    json j;
-    to_json(j, q);
-    QueryGetFloat q2;
-    from_json(j, q2);
-    EXPECT_EQ(q.from, q2.from);
-}
-
 TEST(TraceTypes, ResultWrapperRoundTrip)
 {
-    Result<ResultInt> r{.result = ResultInt{42}, .v = 7};
+    Result<ResultType> r{.result = ResultType{"int"}, .v = 7};
     json j;
     to_json(j, r);
-    Result<ResultInt> r2;
+    Result<ResultType> r2;
     from_json(j, r2);
-    EXPECT_EQ(r.result.value, r2.result.value);
+    EXPECT_EQ(r.result.type, r2.result.type);
     EXPECT_EQ(r.v, r2.v);
 }
 
@@ -282,17 +216,11 @@ TEST(TraceTypes, QueryTagConstants)
     EXPECT_EQ(QueryExpr::tag, "expr");
     EXPECT_EQ(QueryImport::tag, "import");
     EXPECT_EQ(QueryGetAttr::tag, "getAttr");
-    EXPECT_EQ(QueryGetString::tag, "getString");
-    EXPECT_EQ(QueryGetStringWithContext::tag, "getStringWithContext");
-    EXPECT_EQ(QueryGetAttrNames::tag, "getAttrNames");
-    EXPECT_EQ(QueryGetType::tag, "getType");
-    EXPECT_EQ(QueryGetBool::tag, "getBool");
-    EXPECT_EQ(QueryGetInt::tag, "getInt");
-    EXPECT_EQ(QueryGetFloat::tag, "getFloat");
     EXPECT_EQ(QueryGetListOfStrings::tag, "getListOfStrings");
-    EXPECT_EQ(QueryGetListSize::tag, "getListSize");
     EXPECT_EQ(QueryGetListElem::tag, "getListElem");
-    EXPECT_EQ(QueryGetPath::tag, "getPath");
+    EXPECT_EQ(QueryGetWHNF::tag, "getWHNF");
+    EXPECT_EQ(QueryGetFunctionInfo::tag, "getFunctionInfo");
+    EXPECT_EQ(QueryApply::tag, "apply");
     EXPECT_EQ(FileReadRequest::tag, "fileRead");
     EXPECT_EQ(GetEnvRequest::tag, "getEnv");
 }
@@ -466,49 +394,6 @@ TEST(TraceTypes, ParseResultMaybeType)
     EXPECT_EQ(*r->result.type, "int");
 }
 
-TEST(TraceTypes, ParseResultFloat)
-{
-    Result<ResultFloat> original{
-        .result = {.value = 3.14},
-        .v = 7,
-    };
-    auto j = json(original);
-    auto parsed = parseTraceEntry(j);
-    ASSERT_TRUE(parsed.has_value());
-    auto * r = std::get_if<Result<ResultFloat>>(&*parsed);
-    ASSERT_NE(r, nullptr);
-    EXPECT_DOUBLE_EQ(r->result.value, 3.14);
-}
-
-TEST(TraceTypes, ParseResultListSize)
-{
-    Result<ResultListSize> original{
-        .result = {.size = 42},
-        .v = 3,
-    };
-    auto j = json(original);
-    auto parsed = parseTraceEntry(j);
-    ASSERT_TRUE(parsed.has_value());
-    auto * r = std::get_if<Result<ResultListSize>>(&*parsed);
-    ASSERT_NE(r, nullptr);
-    EXPECT_EQ(r->result.size, 42u);
-}
-
-TEST(TraceTypes, ParseResultStringWithContext)
-{
-    Result<ResultStringWithContext> original{
-        .result = {.value = "hello", .context = {"ctx1", "ctx2"}},
-        .v = 4,
-    };
-    auto j = json(original);
-    auto parsed = parseTraceEntry(j);
-    ASSERT_TRUE(parsed.has_value());
-    auto * r = std::get_if<Result<ResultStringWithContext>>(&*parsed);
-    ASSERT_NE(r, nullptr);
-    EXPECT_EQ(r->result.value, "hello");
-    EXPECT_EQ(r->result.context, (std::vector<std::string>{"ctx1", "ctx2"}));
-}
-
 TEST(TraceTypes, ParseUnrecognizedReturnsNullopt)
 {
     auto j = json{{"unknown", "data"}};
@@ -547,14 +432,6 @@ TEST(TraceTypes, FullTraceRoundTrip)
         Result<ResultMaybeType>{
             .result = {.type = "int"},
             .v = 1,
-        },
-        Query<QueryGetInt>{
-            .query = {.from = "1"},
-            .v = 2,
-        },
-        Result<ResultInt>{
-            .result = {.value = 42},
-            .v = 2,
         },
     };
 

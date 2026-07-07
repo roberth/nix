@@ -97,13 +97,10 @@ static void queryVariantFromJson(const nlohmann::json & j, QueryVariant & query)
     };
 
     if (tryParse.template operator()<QueryExpr>() || tryParse.template operator()<QueryImport>()
-        || tryParse.template operator()<QueryGetAttr>() || tryParse.template operator()<QueryGetString>()
-        || tryParse.template operator()<QueryGetStringWithContext>()
-        || tryParse.template operator()<QueryGetAttrNames>() || tryParse.template operator()<QueryGetType>()
-        || tryParse.template operator()<QueryGetBool>() || tryParse.template operator()<QueryGetInt>()
-        || tryParse.template operator()<QueryGetFloat>() || tryParse.template operator()<QueryGetListOfStrings>()
-        || tryParse.template operator()<QueryGetListSize>() || tryParse.template operator()<QueryGetListElem>()
-        || tryParse.template operator()<QueryGetPath>() || tryParse.template operator()<QueryGetFunctionInfo>()
+        || tryParse.template operator()<QueryGetAttr>()
+        || tryParse.template operator()<QueryGetListOfStrings>()
+        || tryParse.template operator()<QueryGetListElem>()
+        || tryParse.template operator()<QueryGetFunctionInfo>()
         || tryParse.template operator()<QueryGetWHNF>() || tryParse.template operator()<QueryApply>())
         return;
 
@@ -136,21 +133,7 @@ static void resultVariantFromJson(const nlohmann::json & j, ResultVariant & resu
         return;
     if (tryParse((ResultMaybeType *) nullptr))
         return;
-    if (tryParse((ResultString *) nullptr))
-        return;
-    if (tryParse((ResultInt *) nullptr))
-        return;
-    if (tryParse((ResultFloat *) nullptr))
-        return;
-    if (tryParse((ResultBool *) nullptr))
-        return;
-    if (tryParse((ResultPath *) nullptr))
-        return;
     if (tryParse((ResultListOfStrings *) nullptr))
-        return;
-    if (tryParse((ResultStringWithContext *) nullptr))
-        return;
-    if (tryParse((ResultListSize *) nullptr))
         return;
     throw nlohmann::json::parse_error::create(302, 0, "could not parse ambient result", &j);
 }
@@ -226,67 +209,6 @@ void from_json(const nlohmann::json & j, ResultMaybeType & r)
         r.type = v.get<std::string>();
 }
 
-void to_json(nlohmann::json & j, const ResultString & r)
-{
-    j = nlohmann::json{{"value", r.value}};
-}
-
-void from_json(const nlohmann::json & j, ResultString & r)
-{
-    j.at("value").get_to(r.value);
-}
-
-void to_json(nlohmann::json & j, const ResultStringWithContext & r)
-{
-    j = nlohmann::json{{"value", r.value}, {"context", r.context}};
-}
-
-void from_json(const nlohmann::json & j, ResultStringWithContext & r)
-{
-    j.at("value").get_to(r.value);
-    j.at("context").get_to(r.context);
-}
-
-void to_json(nlohmann::json & j, const ResultInt & r)
-{
-    j = nlohmann::json{{"value", r.value}};
-}
-
-void from_json(const nlohmann::json & j, ResultInt & r)
-{
-    j.at("value").get_to(r.value);
-}
-
-void to_json(nlohmann::json & j, const ResultFloat & r)
-{
-    j = nlohmann::json{{"value", r.value}};
-}
-
-void from_json(const nlohmann::json & j, ResultFloat & r)
-{
-    j.at("value").get_to(r.value);
-}
-
-void to_json(nlohmann::json & j, const ResultBool & r)
-{
-    j = nlohmann::json{{"value", r.value}};
-}
-
-void from_json(const nlohmann::json & j, ResultBool & r)
-{
-    j.at("value").get_to(r.value);
-}
-
-void to_json(nlohmann::json & j, const ResultPath & r)
-{
-    j = nlohmann::json{{"path", r.path}};
-}
-
-void from_json(const nlohmann::json & j, ResultPath & r)
-{
-    j.at("path").get_to(r.path);
-}
-
 void to_json(nlohmann::json & j, const ResultListOfStrings & r)
 {
     j = nlohmann::json{{"values", r.values}};
@@ -295,16 +217,6 @@ void to_json(nlohmann::json & j, const ResultListOfStrings & r)
 void from_json(const nlohmann::json & j, ResultListOfStrings & r)
 {
     j.at("values").get_to(r.values);
-}
-
-void to_json(nlohmann::json & j, const ResultListSize & r)
-{
-    j = nlohmann::json{{"size", r.size}};
-}
-
-void from_json(const nlohmann::json & j, ResultListSize & r)
-{
-    j.at("size").get_to(r.size);
 }
 
 /* ResultWHNF: `type` is the discriminator; `payload`'s variant
@@ -535,90 +447,6 @@ void from_json(const nlohmann::json & j, QueryGetAttr & q)
     parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
-void to_json(nlohmann::json & j, const QueryGetString & q)
-{
-    j = nlohmann::json{{"query", QueryGetString::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
-}
-
-void from_json(const nlohmann::json & j, QueryGetString & q)
-{
-    j.at("params").at("from").get_to(q.from);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
-}
-
-void to_json(nlohmann::json & j, const QueryGetStringWithContext & q)
-{
-    j = nlohmann::json{{"query", QueryGetStringWithContext::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
-}
-
-void from_json(const nlohmann::json & j, QueryGetStringWithContext & q)
-{
-    j.at("params").at("from").get_to(q.from);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
-}
-
-void to_json(nlohmann::json & j, const QueryGetAttrNames & q)
-{
-    j = nlohmann::json{{"query", QueryGetAttrNames::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
-}
-
-void from_json(const nlohmann::json & j, QueryGetAttrNames & q)
-{
-    j.at("params").at("from").get_to(q.from);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
-}
-
-void to_json(nlohmann::json & j, const QueryGetType & q)
-{
-    j = nlohmann::json{{"query", QueryGetType::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
-}
-
-void from_json(const nlohmann::json & j, QueryGetType & q)
-{
-    j.at("params").at("from").get_to(q.from);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
-}
-
-void to_json(nlohmann::json & j, const QueryGetBool & q)
-{
-    j = nlohmann::json{{"query", QueryGetBool::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
-}
-
-void from_json(const nlohmann::json & j, QueryGetBool & q)
-{
-    j.at("params").at("from").get_to(q.from);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
-}
-
-void to_json(nlohmann::json & j, const QueryGetInt & q)
-{
-    j = nlohmann::json{{"query", QueryGetInt::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
-}
-
-void from_json(const nlohmann::json & j, QueryGetInt & q)
-{
-    j.at("params").at("from").get_to(q.from);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
-}
-
-void to_json(nlohmann::json & j, const QueryGetFloat & q)
-{
-    j = nlohmann::json{{"query", QueryGetFloat::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
-}
-
-void from_json(const nlohmann::json & j, QueryGetFloat & q)
-{
-    j.at("params").at("from").get_to(q.from);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
-}
-
 void to_json(nlohmann::json & j, const QueryGetListOfStrings & q)
 {
     j = nlohmann::json{{"query", QueryGetListOfStrings::tag}, {"params", {{"from", q.from}}}};
@@ -626,18 +454,6 @@ void to_json(nlohmann::json & j, const QueryGetListOfStrings & q)
 }
 
 void from_json(const nlohmann::json & j, QueryGetListOfStrings & q)
-{
-    j.at("params").at("from").get_to(q.from);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
-}
-
-void to_json(nlohmann::json & j, const QueryGetListSize & q)
-{
-    j = nlohmann::json{{"query", QueryGetListSize::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
-}
-
-void from_json(const nlohmann::json & j, QueryGetListSize & q)
 {
     j.at("params").at("from").get_to(q.from);
     parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
@@ -653,18 +469,6 @@ void from_json(const nlohmann::json & j, QueryGetListElem & q)
 {
     j.at("params").at("from").get_to(q.from);
     j.at("params").at("index").get_to(q.index);
-}
-
-void to_json(nlohmann::json & j, const QueryGetPath & q)
-{
-    j = nlohmann::json{{"query", QueryGetPath::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
-}
-
-void from_json(const nlohmann::json & j, QueryGetPath & q)
-{
-    j.at("params").at("from").get_to(q.from);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetFunctionInfo & q)
@@ -806,27 +610,9 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
             return r;
         if (auto r = tryParseQuery<QueryGetAttr>(type, j))
             return r;
-        if (auto r = tryParseQuery<QueryGetString>(type, j))
-            return r;
-        if (auto r = tryParseQuery<QueryGetStringWithContext>(type, j))
-            return r;
-        if (auto r = tryParseQuery<QueryGetAttrNames>(type, j))
-            return r;
-        if (auto r = tryParseQuery<QueryGetType>(type, j))
-            return r;
-        if (auto r = tryParseQuery<QueryGetBool>(type, j))
-            return r;
-        if (auto r = tryParseQuery<QueryGetInt>(type, j))
-            return r;
-        if (auto r = tryParseQuery<QueryGetFloat>(type, j))
-            return r;
         if (auto r = tryParseQuery<QueryGetListOfStrings>(type, j))
             return r;
-        if (auto r = tryParseQuery<QueryGetListSize>(type, j))
-            return r;
         if (auto r = tryParseQuery<QueryGetListElem>(type, j))
-            return r;
-        if (auto r = tryParseQuery<QueryGetPath>(type, j))
             return r;
         if (auto r = tryParseQuery<QueryGetWHNF>(type, j))
             return r;
@@ -850,49 +636,10 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
             from_json(j, e);
             return e;
         }
-        if (r.contains("size")) {
-            Result<ResultListSize> e;
-            from_json(j, e);
-            return e;
-        }
         if (r.contains("values")) {
             Result<ResultListOfStrings> e;
             from_json(j, e);
             return e;
-        }
-        if (r.contains("path")) {
-            Result<ResultPath> e;
-            from_json(j, e);
-            return e;
-        }
-        // String with context before plain string
-        if (r.contains("value") && r.contains("context")) {
-            Result<ResultStringWithContext> e;
-            from_json(j, e);
-            return e;
-        }
-        if (r.contains("value")) {
-            auto & val = r["value"];
-            if (val.is_string()) {
-                Result<ResultString> e;
-                from_json(j, e);
-                return e;
-            }
-            if (val.is_boolean()) {
-                Result<ResultBool> e;
-                from_json(j, e);
-                return e;
-            }
-            if (val.is_number_integer()) {
-                Result<ResultInt> e;
-                from_json(j, e);
-                return e;
-            }
-            if (val.is_number_float()) {
-                Result<ResultFloat> e;
-                from_json(j, e);
-                return e;
-            }
         }
         if (r.contains("hasInfo")) {
             Result<ResultFunctionInfo> e;
@@ -918,22 +665,8 @@ constexpr size_t resultTypeIndex()
         return 0;
     else if constexpr (std::is_same_v<T, ResultMaybeType>)
         return 1;
-    else if constexpr (std::is_same_v<T, ResultString>)
-        return 2;
-    else if constexpr (std::is_same_v<T, ResultInt>)
-        return 3;
-    else if constexpr (std::is_same_v<T, ResultFloat>)
-        return 4;
-    else if constexpr (std::is_same_v<T, ResultBool>)
-        return 5;
-    else if constexpr (std::is_same_v<T, ResultPath>)
-        return 6;
     else if constexpr (std::is_same_v<T, ResultListOfStrings>)
-        return 7;
-    else if constexpr (std::is_same_v<T, ResultStringWithContext>)
-        return 8;
-    else if constexpr (std::is_same_v<T, ResultListSize>)
-        return 9;
+        return 2;
     else
         return ~size_t(0);
 }

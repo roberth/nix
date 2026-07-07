@@ -190,53 +190,10 @@ struct ResultMaybeType
     std::optional<std::string> type;
 };
 
-/** Result containing a string value. */
-struct ResultString
-{
-    std::string value;
-};
-
-/** Result containing a string value with context. */
-struct ResultStringWithContext
-{
-    std::string value;
-    std::vector<std::string> context;
-};
-
-/** Result containing an integer value. */
-struct ResultInt
-{
-    int64_t value;
-};
-
-/** Result containing a float value. */
-struct ResultFloat
-{
-    double value;
-};
-
-/** Result containing a boolean value. */
-struct ResultBool
-{
-    bool value;
-};
-
-/** Result containing a path. */
-struct ResultPath
-{
-    std::string path;
-};
-
 /** Result containing a list of strings. */
 struct ResultListOfStrings
 {
     std::vector<std::string> values;
-};
-
-/** Result containing a list size. */
-struct ResultListSize
-{
-    size_t size;
 };
 
 /** Payload alternatives for `ResultWHNF`. One per Nix object type
@@ -425,83 +382,6 @@ struct QueryGetAttr
 };
 DECLARE_QUERY_RESULT(QueryGetAttr, ResultMaybeType)
 
-/** Get the string value (ignoring context). */
-struct QueryGetString
-{
-    static constexpr std::string_view tag = "getString";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
-    auto operator<=>(const QueryGetString &) const = default;
-};
-DECLARE_QUERY_RESULT(QueryGetString, ResultString)
-
-/** Get string with context. */
-struct QueryGetStringWithContext
-{
-    static constexpr std::string_view tag = "getStringWithContext";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
-    auto operator<=>(const QueryGetStringWithContext &) const = default;
-};
-DECLARE_QUERY_RESULT(QueryGetStringWithContext, ResultStringWithContext)
-
-/** Get attribute names from an attrset. */
-struct QueryGetAttrNames
-{
-    static constexpr std::string_view tag = "getAttrNames";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
-    auto operator<=>(const QueryGetAttrNames &) const = default;
-};
-DECLARE_QUERY_RESULT(QueryGetAttrNames, ResultListOfStrings)
-
-/** Get the type of a value. */
-struct QueryGetType
-{
-    static constexpr std::string_view tag = "getType";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
-    auto operator<=>(const QueryGetType &) const = default;
-};
-DECLARE_QUERY_RESULT(QueryGetType, ResultType)
-
-/** Get a boolean value. */
-struct QueryGetBool
-{
-    static constexpr std::string_view tag = "getBool";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
-    auto operator<=>(const QueryGetBool &) const = default;
-};
-DECLARE_QUERY_RESULT(QueryGetBool, ResultBool)
-
-/** Get an integer value. */
-struct QueryGetInt
-{
-    static constexpr std::string_view tag = "getInt";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
-    auto operator<=>(const QueryGetInt &) const = default;
-};
-DECLARE_QUERY_RESULT(QueryGetInt, ResultInt)
-
-/** Get a float value. */
-struct QueryGetFloat
-{
-    static constexpr std::string_view tag = "getFloat";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
-    auto operator<=>(const QueryGetFloat &) const = default;
-};
-DECLARE_QUERY_RESULT(QueryGetFloat, ResultFloat)
-
 /** Get a list of strings (no context). */
 struct QueryGetListOfStrings
 {
@@ -512,17 +392,6 @@ struct QueryGetListOfStrings
     auto operator<=>(const QueryGetListOfStrings &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetListOfStrings, ResultListOfStrings)
-
-/** Get the number of list elements. */
-struct QueryGetListSize
-{
-    static constexpr std::string_view tag = "getListSize";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
-    auto operator<=>(const QueryGetListSize &) const = default;
-};
-DECLARE_QUERY_RESULT(QueryGetListSize, ResultListSize)
 
 /** Get a list element by index. */
 struct QueryGetListElem
@@ -535,17 +404,6 @@ struct QueryGetListElem
     auto operator<=>(const QueryGetListElem &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetListElem, ResultType)
-
-/** Get a path value. */
-struct QueryGetPath
-{
-    static constexpr std::string_view tag = "getPath";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
-    auto operator<=>(const QueryGetPath &) const = default;
-};
-DECLARE_QUERY_RESULT(QueryGetPath, ResultPath)
 
 /** Force a value to WHNF and read its type + type-determined payload
     in one shot. Used by the cache-layer Objects to combine what would
@@ -658,17 +516,8 @@ using Queries = ApplyWrapper<
     QueryExpr,
     QueryImport,
     QueryGetAttr,
-    QueryGetString,
-    QueryGetStringWithContext,
-    QueryGetAttrNames,
-    QueryGetType,
-    QueryGetBool,
-    QueryGetInt,
-    QueryGetFloat,
     QueryGetListOfStrings,
-    QueryGetListSize,
     QueryGetListElem,
-    QueryGetPath,
     QueryGetFunctionInfo,
     QueryGetWHNF,
     QueryApply>;
@@ -681,14 +530,7 @@ using Results = ApplyWrapper<
     F,
     ResultType,
     ResultMaybeType,
-    ResultString,
-    ResultInt,
-    ResultFloat,
-    ResultBool,
-    ResultPath,
     ResultListOfStrings,
-    ResultStringWithContext,
-    ResultListSize,
     ResultFunctionInfo,
     ResultWHNF>;
 
@@ -700,17 +542,8 @@ using QueryVariant = std::variant<
     QueryExpr,
     QueryImport,
     QueryGetAttr,
-    QueryGetString,
-    QueryGetStringWithContext,
-    QueryGetAttrNames,
-    QueryGetType,
-    QueryGetBool,
-    QueryGetInt,
-    QueryGetFloat,
     QueryGetListOfStrings,
-    QueryGetListSize,
     QueryGetListElem,
-    QueryGetPath,
     QueryGetFunctionInfo,
     QueryGetWHNF,
     QueryApply>;
@@ -718,14 +551,7 @@ using QueryVariant = std::variant<
 using ResultVariant = std::variant<
     ResultType,
     ResultMaybeType,
-    ResultString,
-    ResultInt,
-    ResultFloat,
-    ResultBool,
-    ResultPath,
     ResultListOfStrings,
-    ResultStringWithContext,
-    ResultListSize,
     ResultFunctionInfo,
     ResultWHNF>;
 
