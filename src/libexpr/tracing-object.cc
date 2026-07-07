@@ -87,13 +87,13 @@ std::string TracingObject::evolvedQueryFrom() const
            so walker can navigate subject's evolution edge-by-edge
            rather than iterating K. Uses the subject's Merkle
            content hash as the trie root key. */
-        Hash argIdHash = stateHashAt(
+        Hash argSubjectHash = stateHashAt(
             *applyResultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
         auto evolved = stateHashAtStamping(
             *applyResultSubject, applyArgAncestry, walk, walk.size(),
             [&](const EvolutionStep & step) {
                 writer.insertSubjectEvolutionEdge(
-                    argIdHash, step.curBefore,
+                    argSubjectHash, step.curBefore,
                     step.obsFromHash, step.obsElementHash,
                     step.curAfter);
             });
@@ -332,7 +332,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     writer.openApplyBoundary(applyBoundaryJson);
 
     auto fnIdHash = Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256);
-    auto argIdHash = Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256);
+    auto argSubjectHash = Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256);
 
     /* Build ApplyResultSubject from fn/arg via polymorphic
        `getSubject()`. fn = `this`: when this TracingObject is itself
@@ -346,14 +346,14 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
         ? *getSubject()
         : Subject{PostulatedIdempotentRead{fnIdHash}};
     Hash applyArgAncestryLocal = getSubject() ? getArgAncestry() : applyArgAncestry;
-    Subject argId = argObj->getSubject()
+    Subject argSubject = argObj->getSubject()
         ? *argObj->getSubject()
-        : Subject{PostulatedIdempotentRead{argIdHash}};
+        : Subject{PostulatedIdempotentRead{argSubjectHash}};
     if (argObj->getSubject())
         applyArgAncestryLocal = argObj->getArgAncestry();
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),
-        .arg = std::make_shared<const Subject>(std::move(argId)),
+        .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
 
     /* apply-result state hash is content-only — see commentary in
@@ -363,7 +363,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
 
     /* Record the apply Request payload at the subject-id hash so dispatch
        and the legacy QueryApply{fn, arg} payload coincide. The legacy
-       fnId/argId fields remain for the dispatcher's resolveStateHash
+       fnId/argSubject fields remain for the dispatcher's resolveStateHash
        chain. */
     trace::QueryApply applyQ{*fnIdOpt, *argIdOpt};
     auto v = writer.getSink().logQuery(applyQ);

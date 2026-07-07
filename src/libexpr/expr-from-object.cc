@@ -29,7 +29,7 @@ namespace nix {
  *   queryHash(QueryGetAttr{name="f", from=hex(P)}). On replay the
  *   walker recovers P from the Requests pool and re-dispatches the
  *   producer query, yielding the same child by Merkle identity.
- * - Apply results: queryHash(QueryApply{fn=hex(fnId), arg=hex(argId)})
+ * - Apply results: queryHash(QueryApply{fn=hex(fnId), arg=hex(argSubject)})
  *   under which the resolver registers the outer's mkApp Object.
  *   The apply Request is also inserted into the pool so downstream
  *   `from=<apply_qH>` Facts can chase identity back.
@@ -129,8 +129,8 @@ struct OuterQuery
    enough to span multiple apply calls within one cb body — when the
    inner passes the same argObj to the outer multiple times, the
    outer's cycle detection must see ONE Value, not many. Keyed by
-   Object* identity (NOT argId): two distinct argObjs can share the
-   same argId hash (e.g. a frozen ReplayCallbackArg built by the
+   Object* identity (NOT argSubject): two distinct argObjs can share the
+   same argSubject hash (e.g. a frozen ReplayCallbackArg built by the
    walker's apply branch and a live InterpreterObject from a fall-back
    inner rerun both arg at depth-marker), and they correctly resolve
    to distinct thunks here. */
@@ -233,9 +233,9 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
     }
 
     /** Apply an outer fn (resolved from fnId) to a local argObj.
-     *  Returns a pair: (argId, resultId). argId is the local arg
+     *  Returns a pair: (argSubject, resultId). argSubject is the local arg
      *  Hash assigned to argObj; resultId is the producer queryHash
-     *  of QueryApply{fn=fnId, arg=argId}, under which the
+     *  of QueryApply{fn=fnId, arg=argSubject}, under which the
      *  resulting Object is registered as an outer value. The
      *  caller (applyFn closure) records the QueryApply Fact with
      *  the same arg id. */
@@ -290,14 +290,14 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
        boundary maximally predictable — two cb calls observing the
        same way through their args reach the same trie position
        regardless of where the arg's source came from. */
-    Subject argId{Arg{localCell->depth}};
+    Subject argSubject{Arg{localCell->depth}};
     /* Sample resolver->callArgAncestry at fire time. TracingEvaluator::apply
        leaves callArgAncestry at the current sibling's siblingScope (no
        restore), so this sample reflects the CURRENT sibling context
        walker is operating under. Do not freeze at closure-creation
        time — the argAncestry evolves, and freezing would emit stale hashes. */
     Hash argAncestry = resolverHandle->callArgAncestry;
-    auto argStateHash = stateHashAfter(argId, argAncestry, {});
+    auto argStateHash = stateHashAfter(argSubject, argAncestry, {});
     tracingCacheLog("OuterApply::run: argAncestry=%s argStateHash=%s",
                     argAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
                     argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));
@@ -323,7 +323,7 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
 
     /* Wrap the argObj in TracingCallbackArg so the outer's
        accesses on it during the apply land in the inner trace
-       with `from=hex(argId)`. Inherit callArgAncestry so sibling cached
+       with `from=hex(argSubject)`. Inherit callArgAncestry so sibling cached
        calls' local-args have distinct state hashes.
 
        Skip the TracingCallbackArg wrap when argObj is a ReplayCallbackArg. At warm
@@ -342,13 +342,13 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
     auto wrappedArg = (innerWriter && outerRootFSRoot
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
-              argObj, argId, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell,
+              argObj, argSubject, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell,
               resolverHandle->callArgAncestry, resultId))
         : argObj;
 
     /* Bridge local arg via ExprFromObject. The cache memoises by
        argObj identity so cycle detection sees one Value per logical
-       arg (see BridgedThunkCache for why pointer-identity, not argId). */
+       arg (see BridgedThunkCache for why pointer-identity, not argSubject). */
     auto * argThunk = bridgedLocals.getOrCreate(argObj.get(), [&]() {
         auto * v = outerState->allocValue();
         auto * expr = new ExprFromObject(wrappedArg, innerEvaluator, resolverHandle);
@@ -362,7 +362,7 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
     resultVal->mkApp(*fnVal, argThunk);
     auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
 
-    /* Result id is queryHash(QueryApply{fn=fnId, arg=argId})
+    /* Result id is queryHash(QueryApply{fn=fnId, arg=argSubject})
        (already computed above for ambientApplyId plumbing). */
     registry.registerOuterAt(resultId, std::move(resultObj));
 
@@ -462,14 +462,14 @@ static PrimOp * makeCachedFnPrimOp(
                            Sibling cb apply invocations share the same
                            Subject and discriminate via their observation
                            factsets, not via state-creep. */
-                        Subject argId{Arg{seedCell->depth}};
+                        Subject argSubject{Arg{seedCell->depth}};
                         /* Inherit the resolver's callArgAncestry (= state hash(Q)
                            of this cached call). Sibling cached calls
                            with different Qs get distinct rootIds and
                            therefore distinct subject-derived content
                            ids throughout this cb-apply boundary. */
                         Hash callArgAncestry = resolver->callArgAncestry;
-                        auto rootId = stateHashAfter(argId, callArgAncestry, {});
+                        auto rootId = stateHashAfter(argSubject, callArgAncestry, {});
                         /* Per-apply observation context. Captures the
                            outer's probes on the cb arg as they fire
                            through queryFn; the apply-result wrapper
@@ -481,7 +481,7 @@ static PrimOp * makeCachedFnPrimOp(
                            the same cached call (`inner.f 5` vs
                            `inner.f 2`), per the ambient layer design. */
                         auto applyContext = std::make_shared<ApplyContext>(
-                            ApplyContext{argId, callArgAncestry, {}});
+                            ApplyContext{argSubject, callArgAncestry, {}});
                         /* Boundary-trace-only discipline: do NOT
                            register outerArgObj under rootId in the
                            shared resolver. Sibling cb apply invocations
@@ -539,7 +539,7 @@ static PrimOp * makeCachedFnPrimOp(
                            ("apply" is not a value type). The
                            apply-result Object is still registered in
                            the resolver under
-                           queryHash(QueryApply{fn=fnId, arg=argId}),
+                           queryHash(QueryApply{fn=fnId, arg=argSubject}),
                            and the QueryApply Request itself is
                            inserted into the pool (see
                            OuterResolver::apply) so downstream
@@ -563,11 +563,11 @@ static PrimOp * makeCachedFnPrimOp(
                                `queryOn` shortcut for direct arg
                                queries. */
                             if (fnId == rootId) {
-                                auto [argId, resultId] = resolver->applyOn(
+                                auto [argSubject, resultId] = resolver->applyOn(
                                     outerArgObj, fnId, std::move(argObj), std::move(callerScope));
                                 return resultId;
                             }
-                            auto [argId, resultId] = resolver->apply(fnId, std::move(argObj), std::move(callerScope));
+                            auto [argSubject, resultId] = resolver->apply(fnId, std::move(argObj), std::move(callerScope));
                             return resultId;
                         };
                         /* lazy-paths: pin OuterObject's path SourceRoot
@@ -575,7 +575,7 @@ static PrimOp * makeCachedFnPrimOp(
                            SourceRoot outlives the Values the outer
                            evaluator builds from any returned RootedPaths. */
                         auto contraArg =
-                            make_ref<OuterObject>(std::move(argId), std::move(queryFn), state.rootFSRoot, std::move(applyFn));
+                            make_ref<OuterObject>(std::move(argSubject), std::move(queryFn), state.rootFSRoot, std::move(applyFn));
                         /* Wire seedCell.liveObject to contraArg now
                            that it exists. This is the deliberate
                            shared_ptr cycle documented on

@@ -423,18 +423,18 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    subject + argAncestry (= `Arg{applyDepth+1}`
                    at `applyArgAncestry`), matching what
                    `makeCachedFnPrimOp`'s impl uses for its
-                   `argId` / `callArgAncestry` at cold; the walker
+                   `argSubject` / `callArgAncestry` at cold; the walker
                    iterates `envWalk` to find the matching edge.
                    Wraps args[0] in an `InterpreterObject` so the
                    walker can call getType / getInt / etc. live
                    against outer's actual Value. */
                 if (resolverSaved) {
-                    Subject argId{
+                    Subject argSubject{
                         Arg{*applyDepthSaved + 1}};
                     auto outerArgObj = std::make_shared<InterpreterObject>(
                         state, allocRootValue(args[0]));
                     registerAmbientResolverProxy(
-                        *resolverSaved, std::move(argId),
+                        *resolverSaved, std::move(argSubject),
                         *applyArgAncestrySaved, std::move(outerArgObj));
                 }
                 /* Each primop firing replays the ReplayCallbackArg's chain
@@ -487,11 +487,11 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    dispatchApplyLive) requires the sidecar to carry
                    depth+argAncestry, so the optionals are always set
                    here. */
-                Subject argId{
+                Subject argSubject{
                     Arg{*applyDepthSaved + 1}};
                 Subject syntheticSubject{ApplyResultSubject{
                     .fn = std::make_shared<const Subject>(subjectSaved),
-                    .arg = std::make_shared<const Subject>(std::move(argId)),
+                    .arg = std::make_shared<const Subject>(std::move(argSubject)),
                 }};
 
                 /* Apply argAncestry: Merkle(fn.argAncestry, arg.argAncestry). The arg

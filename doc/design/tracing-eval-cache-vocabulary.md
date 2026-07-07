@@ -323,11 +323,11 @@ argAncestry differs — the callback arg is inner-owned. At replay
 the inner isn't running; its closures are gone; the arg no
 longer exists to be probed, so probes have to be served from
 storage (`InnerValueResponse`) instead of dispatched live.
-`PositionalSeed{depth=1}` names the slot; per-invocation
+`Arg{depth=1}` names the slot; per-invocation
 distinction has to come from what the outer *did* with the arg —
-the observations it made. Every invocation shares
-the same argId (Appendix A: identity doesn't depend on
-invocations); each still produces distinct Facts. The machinery
+the observations it made. Every invocation shares the same
+Subject (immutable by construction; independent of history,
+argAncestry, invocation); each still produces distinct Facts. The machinery
 below closes that gap: §12 fixes the Subject; §§13–14
 characterize its state per-invocation via state hash and
 argAncestry (with `callArgAncestry` sampled at each cb-apply,
@@ -362,8 +362,8 @@ ObservationSets.
 
 **Subject** — a structural identifier for a value. Four variants:
 
-- **PositionalSeed{depth}** — a callback arg at a static
-  apply-stack depth (reverse De Bruijn).
+- **Arg{depth}** — a callback arg at a static apply-stack depth
+  (reverse De Bruijn).
 - **DerivedSubject{parent, kind, name/index}** — a value reached
   by `getAttr`/`getListElem` on a parent Subject.
 - **ApplyResultSubject{fn, arg}** — the result of applying one
@@ -374,15 +374,13 @@ ObservationSets.
   because we assume re-reading the source yields the same value
   — we never verify by inspecting the value.
 
-Same structural shape → same Subject. A Subject is the value form
-of an **argId**.
+Same structural shape → same Subject. Subject values are
+immutable — a Subject is stable by construction, independent of
+history, argAncestry, or invocation.
 
-**argId** — a subject's stable identity, in either form: the
-Subject value or its SHA-256 hash (`argIdHash`). `Id`-suffixed
-names don't depend on observations, ancestry, or invocations.
-
-**argIdHash** — an argId in `Hash` form. Local variables that
-hold a subject's base hash use this suffix.
+**subjectHash** — SHA-256 of a Subject payload. Also stable by
+construction. Used as a Merkle key when a Subject is referenced
+by hash.
 
 ### 13. State hash — the subject's evolving identity
 
@@ -391,15 +389,15 @@ combines the Subject, the enclosing argAncestry, and the
 observations folded in so far. Evolves as observations accumulate;
 situational, not stable.
 
-**stateHashAt(argId, argAncestry, history, step)** — the state
+**stateHashAt(subject, argAncestry, history, step)** — the state
 hash of an arg-level subject before step `step` folds in. Traps
 on `DerivedSubject` — derived values have no own observations to
 fold; use `subjectHashAt` instead.
 
-**stateHashAfter(argId, argAncestry, history)** — `stateHashAt`
+**stateHashAfter(subject, argAncestry, history)** — `stateHashAt`
 at `step = history.size()`.
 
-**stateHashConverged(argId, argAncestry, observations)** — state
+**stateHashConverged(subject, argAncestry, observations)** — state
 hash computed over an unordered observation set: same result
 regardless of how observations were grouped into edges. Used by
 the replay walker as a fallback when step-by-step navigation
@@ -514,9 +512,9 @@ InnerValueResponse(requestHash BLOB, contextHash BLOB, payload BLOB,
                    PRIMARY KEY (requestHash, contextHash)) WITHOUT ROWID
 AmbientAsk(fromFactSetHash BLOB, requestSetHash BLOB, toFactSetHash BLOB,
            PRIMARY KEY (fromFactSetHash, requestSetHash)) WITHOUT ROWID
-SubjectEvolutionEdge(argIdHash BLOB, curBefore BLOB, obsFromHash BLOB,
-                     obsElemHash BLOB, curAfter BLOB,
-                     PRIMARY KEY (argIdHash, curBefore, obsFromHash, obsElemHash))
+SubjectEvolutionEdge(subjectHash BLOB, curHash BLOB, obsFromHash BLOB,
+                     obsElementHash BLOB, nextCurHash BLOB,
+                     PRIMARY KEY (subjectHash, curHash, obsFromHash, obsElementHash))
                      WITHOUT ROWID
 ```
 
@@ -529,16 +527,18 @@ caches.
 
 Two rules the vocabulary above obeys:
 
-1. **`Id` marks stable identity.** A `*Id` name promises the value
-   does not depend on observations, history, argAncestry, or
-   invocations. `argId`, `argIdHash`, `PositionalArgId` (proposed
-   for `PositionalSeed`) — all stable. `stateHash`, `argAncestry`,
-   `factSetHash` — situational, therefore never `*Id`.
+1. **Stable vs situational is carried by the type name, not by a
+   suffix.** `Subject` and `subjectHash` are stable by
+   construction — an immutable algebraic value and its hash.
+   `stateHash*`, `argAncestry`, `callArgAncestry`, `factSetHash`
+   are situational — their values track observations, ancestry,
+   invocations. No `Id` marker is required or used.
 
 2. **`Hash` is neutral.** It says only "the value is a `Hash`."
    Distinctive prefixes clarify what the hash is *of* — `queryHash`
-   of a query payload, `resultHash` of a result, `stateHash` of a
-   subject's state at a history position.
+   of a query payload, `resultHash` of a result, `subjectHash` of
+   a Subject payload, `stateHash` of characterizing observations
+   at a Subject.
 
 ## Appendix B: what this dictionary does not cover
 

@@ -495,7 +495,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                    also reached by trie navigation, so the loop's
                    K dimension is unnecessary here. */
                 if (!found) {
-                    Hash argIdHash = stateHashAt(
+                    Hash argSubjectHash = stateHashAt(
                         *subj, Hash(HashAlgorithm::SHA256), {}, 0);
                     Hash cur = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
                     for (const auto & edge : extendedWalkForMatch) {
@@ -503,7 +503,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                         Hash edgeAcc(HashAlgorithm::SHA256);
                         for (const auto & obs : edge.observations) {
                             auto next = decisionGraph.getSubjectEvolutionEdge(
-                                argIdHash, cur, obs.fromHash, obs.elementHash);
+                                argSubjectHash, cur, obs.fromHash, obs.elementHash);
                             if (next)
                                 edgeAcc = TracingDecisionGraph::xorHashes(edgeAcc, obs.elementHash);
                         }
@@ -575,10 +575,10 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
     if (!reqPayload) {
         /* "Not in pool" means the id has no recorded provenance — no
            producer Request and no localArg sidecar. Such ids are
-           OUTER-direction by elimination: an inner local's argId is
+           OUTER-direction by elimination: an inner local's argSubject is
            always sidecar-registered by OuterResolver::apply (=
            inserting `{kind: "localArg", applyResultId: ...}` at the
-           argId), and any derived value has a producer Request. Only
+           argSubject), and any derived value has a producer Request. Only
            outer-arg state hashes minted by makeCachedFnPrimOp.impl — e.g.
            a nested OuterObject for the int the callback body passes
            to inner_lambda in cb-higher-order's `g 10` — reach here.
@@ -1001,9 +1001,9 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        applyResult subject's evolved cid using fnObj's subject +
        Arg{sidecarDepth} as arg. */
     {
-        Subject argId{Arg{sidecarDepth}};
+        Subject argSubject{Arg{sidecarDepth}};
         Hash evolvedLeafStateHash = stateHashAt(
-            argId, sidecarScope, envWalk, envWalk.size());
+            argSubject, sidecarScope, envWalk, envWalk.size());
         auto evolvedLeafStateHashHex = evolvedLeafStateHash.to_string(HashFormat::Base16, false);
         ctx.memo[evolvedLeafStateHashHex] = replayLocal;
         tracingCacheLog(
@@ -1014,7 +1014,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         if (auto * fnSubj = fnObj->getSubject()) {
             Subject applyResultSubj{ApplyResultSubject{
                 .fn = std::make_shared<const Subject>(*fnSubj),
-                .arg = std::make_shared<const Subject>(std::move(argId)),
+                .arg = std::make_shared<const Subject>(std::move(argSubject)),
             }};
             Hash applyArgAncestryForStateHash = fnObj->getArgAncestry();
             Hash evolvedApplyResultStateHash = stateHashAt(
@@ -1349,7 +1349,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        (TracingReplayObject from evalFile, TracingCallbackArg's
        counterparts, or an opaque state hash). Each call constructs a
        fresh wrapper. Sibling cb apply invocations share the same
-       (fnId, argId) at the boundary by construction (= the arg's
+       (fnId, argSubject) at the boundary by construction (= the arg's
        state hash is the same positional arg across siblings), so a
        cross-invocation registry keyed by the apply Request hash
        would last-write-wins and conflate sibling invocations'
@@ -1365,15 +1365,15 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        back to PostulatedIdempotentRead only when no Subject is exposed
        (= atom whose state hash is fully determined at construction). */
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
-    auto argIdHash = Hash::parseNonSRIUnprefixed(argStateHashStr, HashAlgorithm::SHA256);
+    auto argSubjectHash = Hash::parseNonSRIUnprefixed(argStateHashStr, HashAlgorithm::SHA256);
 
     Subject fnSubj = fn->getSubject()
         ? *fn->getSubject()
         : Subject{PostulatedIdempotentRead{fnIdHash}};
 
-    Subject argId = arg->getSubject()
+    Subject argSubject = arg->getSubject()
         ? *arg->getSubject()
-        : Subject{PostulatedIdempotentRead{argIdHash}};
+        : Subject{PostulatedIdempotentRead{argSubjectHash}};
 
     /* Apply boundary's argAncestry combines fn's and arg's inherited scopes
        symmetrically but non-commutatively — mirrors the writer's
@@ -1382,7 +1382,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),
-        .arg = std::make_shared<const Subject>(std::move(argId)),
+        .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
 
     /* Walker mirror of TracingEvaluator::apply's option 2 evolution.

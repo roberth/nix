@@ -273,10 +273,10 @@ void TracingWriter::flushAmbient(bool finalize)
        walker can pick the right chain by knowing the apply Fact's
        reqHash — no ambiguity when multiple cb-applies are recorded.
        via-Asks discrimination via inherited state hash propagation still
-       flows through: different inherited state hashes → different argId →
+       flows through: different inherited state hashes → different argSubject →
        different applyReqHash → different chain root. Same-shape
        collapse still holds for identical cb-applies (= same fnId,
-       same argId, same observations → same applyReqHash → same
+       same argSubject, same observations → same applyReqHash → same
        chain). The loss is atom sharing across cb-applies whose
        chains happen to coincide but whose applyReqHashes differ — a
        storage trade-off, not correctness. */

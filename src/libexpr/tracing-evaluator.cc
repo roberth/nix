@@ -352,23 +352,23 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        `OuterObject::queryApply` and the walker's
        `<replay-local-lambda>` primop. */
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
-    auto argIdHash = Hash::parseNonSRIUnprefixed(argStateHashStr, HashAlgorithm::SHA256);
+    auto argSubjectHash = Hash::parseNonSRIUnprefixed(argStateHashStr, HashAlgorithm::SHA256);
 
     Subject fnSubj = fn->getSubject()
         ? *fn->getSubject()
         : Subject{PostulatedIdempotentRead{fnIdHash}};
 
-    Subject argId;
+    Subject argSubject;
     Hash argArgAncestryForApply{HashAlgorithm::SHA256};
     if (fnIsTlo) {
         auto callerScope = effectiveArgCell(*fn);
         int localDepth = callerScope ? callerScope->depth + 1 : 0;
-        argId = Subject{Arg{localDepth}};
+        argSubject = Subject{Arg{localDepth}};
         argArgAncestryForApply = Hash{HashAlgorithm::SHA256};
     } else {
-        argId = arg->getSubject()
+        argSubject = arg->getSubject()
             ? *arg->getSubject()
-            : Subject{PostulatedIdempotentRead{argIdHash}};
+            : Subject{PostulatedIdempotentRead{argSubjectHash}};
         argArgAncestryForApply = arg->getArgAncestry();
     }
 
@@ -378,7 +378,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),
-        .arg = std::make_shared<const Subject>(std::move(argId)),
+        .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
 
     Hash enclosingApplyId(HashAlgorithm::SHA256);
@@ -396,7 +396,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         auto fnSubjHex = fnSubjHash.to_string(HashFormat::Base16, false);
         auto argSubjHex = argSubjHash.to_string(HashFormat::Base16, false);
         tracingCacheLog(
-            "writer logAmbientApplyFact: fnSubj=%s argId=%s applyArgAncestry=%s fnHex=%s argHex=%s",
+            "writer logAmbientApplyFact: fnSubj=%s argSubject=%s applyArgAncestry=%s fnHex=%s argHex=%s",
             describe(*ars.fn),
             describe(*ars.arg),
             applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),

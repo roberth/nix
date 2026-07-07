@@ -191,7 +191,7 @@ Hash stateHashAtStamping(
        edge-scoped semantics — cur updates at edge boundaries,
        not per-observation. */
     Hash result = stateHashAt(subject, argAncestry, walk, edgeIndex);
-    Hash argIdHash = stateHashAt(subject, Hash(HashAlgorithm::SHA256), {}, 0);
+    Hash argSubjectHash = stateHashAt(subject, Hash(HashAlgorithm::SHA256), {}, 0);
     Hash selfFactFold = Hash(HashAlgorithm::SHA256);
     for (size_t k = 0; k < edgeIndex && k < walk.size(); ++k) {
         Hash myScopeStateIdAtK = TracingDecisionGraph::xorHashes(
@@ -207,7 +207,7 @@ Hash stateHashAtStamping(
             }
         }
     }
-    (void) argIdHash;  /* Reserved for stamping the subject's Merkle key. */
+    (void) argSubjectHash;  /* Reserved for stamping the subject's Merkle key. */
     return result;
 }
 

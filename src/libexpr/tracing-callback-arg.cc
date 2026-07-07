@@ -223,7 +223,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        on the apply result continue to be recorded in the ambient layer
        trace with an evolved state hash (per the subject-id design). */
     auto argCdiHex = argObj->getStateHashHex();
-    Subject argId = argObj->getSubject()
+    Subject argSubject = argObj->getSubject()
         ? *argObj->getSubject()
         : Subject{PostulatedIdempotentRead{
               argCdiHex
@@ -232,7 +232,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
     auto result = inner->queryApply(argObj);
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(subject),
-        .arg = std::make_shared<const Subject>(std::move(argId)),
+        .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
     return std::make_shared<TracingCallbackArg>(
         std::move(result), std::move(resultSubject), writer, rootFSRoot, argCell, argAncestry, ambientApplyId);
