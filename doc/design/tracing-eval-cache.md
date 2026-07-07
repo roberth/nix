@@ -1,27 +1,27 @@
-# Tracing eval cache (v13)
+# Tracing eval cache
 
-This document describes the tracing eval cache as it is currently
-shipped on the `eval-cache-v13` branch. It supersedes three earlier
-data-model attempts (v12 trie, v12.5 flat-CBOR sets, and a Phase-1
-sketch that diverged from the eventual implementation) whose design
-docs have been removed from the tree; consult git history for those.
+Design doc for the tracing eval-cache. Vocabulary is defined in
+[`tracing-eval-cache-vocabulary.md`](./tracing-eval-cache-vocabulary.md);
+this document is the reference for *why*, referring to those terms.
+For git history: earlier data-model attempts (trie, flat-CBOR sets,
+Phase-1 sketch) have been removed.
 
 ## What it is
 
 A persistent cache for `nix eval` / `nix build` / any other
-`EvalCommand`-derived CLI. When the evaluator reaches a result for
-some query `Q` — `evalFile`, `getAttr`, `apply`, `getString`, etc. —
+`EvalCommand`-derived CLI. When the evaluator reaches a Result for
+some Query `Q` — `evalFile`, `getAttr`, `apply`, `getString`, etc. —
 the cache stores a *trace* of the environment reads that led to that
-result. On a subsequent invocation, the cache replays `Q` by walking
+Result. On a subsequent invocation, the cache replays `Q` by walking
 the trace against the current environment: each recorded file-read or
 env-var lookup is re-issued and its current response compared against
 what was recorded. If everything matches, the cache returns the
-stored result without invoking the inner evaluator.
+stored Result without invoking the inner evaluator.
 
 The cache treats the inner evaluator as a black box. It doesn't try
 to predict, parse, or instrument Nix expressions — it just observes
-`(request → response)` pairs at the environment boundary and
-remembers which results those pairs preceded.
+`(Request → Response)` pairs at the environment boundary and
+remembers which Results those pairs preceded.
 
 Enable with `--option tracing-eval-cache true` plus the
 `tracing-eval-cache` experimental feature flag. Storage path is
@@ -30,49 +30,49 @@ Enable with `--option tracing-eval-cache true` plus the
 cache is non-destructive: misses fall through to the inner evaluator
 and the answer is correct either way.
 
-## Vocabulary
+## Vocabulary recap
 
-The cache distinguishes two layers of interaction:
+Full definitions in
+[`tracing-eval-cache-vocabulary.md`](./tracing-eval-cache-vocabulary.md).
+The essentials for this doc:
 
-- **`Query` / `Result`** — what the outside world (the user, a higher
-  layer) asks the evaluator. `evalFile path`, `getAttr name on object
-  O`, `apply f x`. Each has a content-addressed `queryHash` (operation
-  + parameters + parent's `queryHash` for Merkle provenance) and
-  `resultHash`.
-- **`Request` / `Response`** — what the evaluator asks the
-  environment during evaluation. `read /home/me/file.nix`, `getEnv
-  HOME`. Each has its own `requestHash` and `responseHash`.
+- **Query interaction** — `Query` / `Result` between the caller and
+  the evaluator. Each hashed by SHA-256 of its serialized payload
+  (`queryHash`, `resultHash`); Query payloads carry a `from` field
+  for Merkle provenance.
+- **Env interaction** — `Request` / `Response` between the evaluator
+  and its environment (filesystem, env vars, outer evaluator).
+- **Fact** = `(requestHash, responseHash)`; **FactSet** = a set of
+  Facts, hashed by XOR-fold; **RequestSet** = a set of Request
+  hashes, hashed by canonical Merkle over a sorted-dedup member
+  list.
 
-A **`Fact`** is a `(requestHash, responseHash)` pair — the atomic
-unit of "the environment behaved this way at this moment." A
-**`FactSet`** is a set of Facts; a **`RequestSet`** is a set of
-Request hashes. The cache identifies sets by their content hash and
-relies on those identities heavily, so the set hashing scheme matters
+Set identity by hash is load-bearing, so the hashing schemes matter
 (more below).
 
-A trace through the cache for `Q` is a chain:
+A trace through the cache for `Q` is a chain of Ask edges ending at
+a Terminal:
 
 ```
 (Q, ∅)
-   │ asks: dispatch this RequestSet's Requests, observe Responses
+   │ Ask edge: dispatch this RequestSet's Requests, observe Responses
    ▼
-(Q, FactSet')
-   │ asks: dispatch this RequestSet's Requests
+(Q, cur')
+   │ Ask edge: dispatch this RequestSet's Requests
    ▼
    ...
-(Q, FactSet_final) ── terminal ──▶ Result R
+(Q, cur_final) ── Terminal ──▶ resultHash
 ```
 
-Every trace starts at the empty FactSet `∅`. Phase 1 records a single
-`asks` edge per first-time recording covering all remaining
-Requests; Patricia split (below) factors shared prefixes when later
-recordings overlap.
+Every trace starts at `cur = ∅`. First-time recordings insert a
+single Ask edge covering all remaining Requests; Patricia split
+(below) factors shared prefixes when later recordings overlap.
 
 ## Storage layer
 
-Six SQLite tables, all in one file. All are append-only via
+Six SQLite tables (Query + Env layers). All append-only via
 `INSERT OR IGNORE`; reads use prepared statements with a per-hash
-in-process cache.
+in-process cache. Ambient adds three more (see the vocab §18).
 
 ```
 Requests(requestHash BLOB PRIMARY KEY, payload BLOB)
@@ -81,10 +81,10 @@ Results (resultHash  BLOB PRIMARY KEY, payload BLOB)
 
 RequestSetNodes(nodeHash BLOB PRIMARY KEY, payload BLOB) WITHOUT ROWID
 
-Asks     (queryHash BLOB, factSetHash BLOB, requestSetHash BLOB,
-          PRIMARY KEY (queryHash, factSetHash, requestSetHash)) WITHOUT ROWID
-Terminals(queryHash BLOB, factSetHash BLOB, resultHash BLOB,
-          PRIMARY KEY (queryHash, factSetHash, resultHash))     WITHOUT ROWID
+Ask     (queryHash BLOB, factSetHash BLOB, requestSetHash BLOB,
+         PRIMARY KEY (queryHash, factSetHash, requestSetHash)) WITHOUT ROWID
+Terminal(queryHash BLOB, factSetHash BLOB, resultHash BLOB,
+         PRIMARY KEY (queryHash, factSetHash, resultHash))     WITHOUT ROWID
 ```
 
 `WITHOUT ROWID` on edge tables collapses the data into the primary-key
@@ -98,16 +98,16 @@ Notable absences (intentional):
   never come back into play. We keep request payloads — walk needs
   the path to dispatch — but not response payloads.
 - **No `FactSets` table.** FactSet members are reconstructed
-  incrementally in-process during `record()` and `walk()`. The hash
-  itself is identity (the `factSetHash` columns above); the members
-  don't need to live on disk. Earlier sketches persisted them and
-  paid 94% of the DB size for it.
+  incrementally in-process during `record()` and `walk()`. The
+  XOR-fold hash *is* the identity (the `factSetHash` columns
+  above); members don't need to live on disk. Earlier sketches
+  persisted them and paid 94% of the DB size for it.
 
 ### RequestSet trie
 
 `RequestSetNodes` is the storage for the RequestSet pool: each row is
-one trie node, content-addressed by `SHA-256(payload)`. A node is one
-of:
+one trie node, keyed by SHA-256 of its serialized node payload. A
+node is one of:
 
 ```
 Leaf:     [0x00] hash_1 hash_2 ... hash_n           (n ≤ TRIE_SPLIT_THRESHOLD)
@@ -115,17 +115,17 @@ Internal: [0x01] (bucket_idx_byte || child_hash)+   (sparse, sorted by bucket)
 ```
 
 Bucket index at depth `d` for an element hash `h` is the `TRIE_RADIX_BITS`
-bits of `h` starting at bit `d * TRIE_RADIX_BITS` (MSB first). The
-constants live in `src/libexpr/tracing-decision-graph.cc`:
-`TRIE_RADIX_BITS = 4` (16-way fanout), `TRIE_SPLIT_THRESHOLD = 16`.
-SHA-256 outputs are uniformly random, so buckets balance in
-expectation — no content-defined chunking needed.
+bits of `h` starting at bit `d * TRIE_RADIX_BITS` (MSB first). Constants
+in `src/libexpr/tracing-decision-graph.cc`: `TRIE_RADIX_BITS = 4`
+(16-way fanout), `TRIE_SPLIT_THRESHOLD = 16`. SHA-256 outputs are
+uniformly random, so buckets balance in expectation — no
+content-defined chunking needed.
 
 This shape buys two things:
 
 1. **Structural sharing.** Two RequestSets that overlap share the
-   subtree rows for the overlap, automatically via content
-   addressing of the node payloads. At K=10000 nixpkgs-attr
+   subtree rows for the overlap, automatically via node-hash
+   equality on the shared payloads. At K=10000 nixpkgs-attr
    recordings, total DB size is 41 MB; without trie sharing it would
    be ~2 GB of mostly-duplicate RS blobs.
 2. **Cheap symmetric difference between any two roots.** Descend
@@ -160,7 +160,7 @@ next use, no security impact.
 ## Recording
 
 `TracingEnvironment` wraps the inner environment (currently
-`SystemEnvironment`). Every `getFileHash`, `getEnv`, and ambient
+`SystemEnvironment`). Every `getFileHash`, `getEnv`, and Env
 interaction on the wrapped accessor flows through it:
 
 ```
@@ -181,77 +181,77 @@ TracingEnvironment::getFileHash(path):
 
 ```cpp
 // per-process state in TracingWriter:
-vector<Fact>              v13FactSet;          // insertion order
-SetHash                   v13FactSetHash;      // XOR-fold, incremental
+vector<Fact>              envFactSet;          // insertion order
+SetHash                   envFactSetHash;      // XOR-fold, incremental
 unordered_set<Hash>       seenRequests;        // dedup
 unordered_map<Hash, Hash> responseFor;         // request → response
-TrieBuilder               allRequestsTrie;     // canonical RS hash, incremental
+TrieBuilder               sessionRequestsTrie; // canonical RS hash, incremental
 ```
 
-Each new fact (one not already in `seenRequests`) is XOR'd into
-`v13FactSetHash`, mapped in `responseFor`, and inserted into
-`allRequestsTrie` (O(log N) — one path-copy from leaf to root, split
-on leaf-overflow).
+Each new Fact (one not already in `seenRequests`) is XOR'd into
+`envFactSetHash`, mapped in `responseFor`, and inserted into
+`sessionRequestsTrie` (O(log N) — one path-copy from leaf to root,
+split on leaf-overflow).
 
-When the evaluator finishes a query and produces a result,
+When the evaluator finishes a Query and produces a Result,
 `TracingEvaluator` (the recording counterpart to
 `TracingReplayEvaluator`) calls `writer.logResult(value, result,
 queryHandle)`. That handler:
 
 1. Inserts `(resultHash, resultPayload)` into `Results`.
-2. Pushes any unpersisted nodes from `allRequestsTrie` into
+2. Pushes any unpersisted nodes from `sessionRequestsTrie` into
    `RequestSetNodes`.
-3. Primes the in-process FactSet cache with the current `v13FactSet`
-   under `v13FactSetHash`.
-4. Calls `decisionGraph.record(queryHash, v13FactSetHash, resultHash,
-   responseFor, seenRequests, allRequestsTrie.rootHash())` — the
-   fastest of three overloads, which uses the precomputed RS hash to
-   skip the per-call trie rebuild.
+3. Installs the current `envFactSet` under `envFactSetHash` via
+   `installFactSet`.
+4. Calls `decisionGraph.record(queryHash, envFactSetHash,
+   resultHash, responseFor, seenRequests,
+   sessionRequestsTrie.rootHash())` — the fastest overload, using
+   the precomputed RS hash to skip the per-call trie rebuild.
 
 ### `record()` algorithm
 
-`record(Q, factSetHash, result, responseFor, allRequests,
-allRequestsRsHash)` integrates the recording into the decision graph.
-It tracks a local `curRequests` (set of requests "consumed" so far)
-and computes a current cur hash via XOR-fold:
+`record(Q, factSetHash, result, responseFor, sessionRequests,
+sessionRequestsRsHash)` integrates the recording into the decision
+graph. It tracks a local `dispatchedSoFar` (Requests consumed so far)
+and a running `cur` (XOR-fold hash):
 
 ```
-cur          = ∅
-curRequests  = {}
-while curRequests ≠ allRequests:
+cur              = ∅
+dispatchedSoFar  = {}
+while dispatchedSoFar ≠ sessionRequests:
     # Eager Patricia split pass: any existing edge whose useful
     # dispatch partially overlaps `remaining` gets split.
-    for rs in Asks(Q, cur):
-        useful = members(rs) \ curRequests
-        shared = useful ∩ (allRequests \ curRequests)
+    for rs in Ask(Q, cur):
+        useful = members(rs) \ dispatchedSoFar
+        shared = useful ∩ (sessionRequests \ dispatchedSoFar)
         if ∅ ⊊ shared ⊊ useful:
             patricia_split(Q, cur, rs, shared)
 
     # Find a followable edge: usefulDispatch ⊆ remaining
-    if some edge e in Asks(Q, cur) has useful(e) ⊆ remaining:
-        consume useful(e) into cur, curRequests
-    elif curRequests = ∅ and allRequestsRsHash provided:
+    if some edge e in Ask(Q, cur) has useful(e) ⊆ remaining:
+        consume useful(e) into cur, dispatchedSoFar
+    elif dispatchedSoFar = ∅ and sessionRequestsRsHash provided:
         # Fast path for first-time recording: jump straight to factSet
-        insert Asks(Q, ∅, allRequestsRsHash)
+        insert Ask(Q, ∅, sessionRequestsRsHash)
         cur = factSetHash; break
     else:
         # Slow path: insert a new whole-remaining edge
-        insert Asks(Q, cur, insertRequestSet(remaining))
-        consume remaining into cur, curRequests
+        insert Ask(Q, cur, insertRequestSet(remaining))
+        consume remaining into cur, dispatchedSoFar
 
-insert Terminals(Q, factSetHash, result)
+insert Terminal(Q, factSetHash, result)
 ```
 
-The fast path is what makes per-record cost `O(1)` for fresh queries
-in a session-long mapAttrs trace. Without it, the writer would
-re-sort and re-trie the whole growing factSet on every `record()`,
-giving cold-record cost `O(K² · F · log)`.
+The fast path makes per-record cost `O(1)` for fresh Queries in a
+session-long mapAttrs trace. Without it, the writer would re-sort
+and re-trie the whole growing factSet on every `record()`, giving
+cold-record cost `O(K² · F · log)`.
 
-`useful` dispatch is the per-edge subset of requests not already in
+`useful` dispatch is the per-edge subset of Requests not already in
 `cur` — a Patricia-split tail edge keeps its original whole-set RS
-reference (including the shared-prefix Requests that the
-intermediate cur now contains), but the "useful" part is just what
-the tail adds.
+reference (including the shared-prefix Requests the intermediate
+cur now contains), but the "useful" part is just what the tail
+adds.
 
 ### Patricia split
 
@@ -264,27 +264,26 @@ Before:
    (Q, cur) ── RS_existing ──▶ FactSet_existing
 
 After:
-   (Q, cur)         ── RS_shared    ──▶ FactSet_intermediate
-                          (new content-addressed RS node = the shared part)
+   (Q, cur)          ── RS_shared    ──▶ FactSet_intermediate
+                           (new RS node keyed by SHA-256 of the shared part)
    (Q, intermediate) ── RS_existing ──▶ FactSet_existing  (re-pointed)
    (Q, intermediate) ── RS_new      ──▶ FactSet_new       (added later)
 ```
 
-Three properties of how this is implemented in
-`dg_recordImpl`:
+Three properties of how this is implemented in `dg_recordImpl`:
 
 - Both tail edges keep their original `RS_*` references — the
   RequestSet pool already stores them, so no duplication. Only
-  `RS_shared` is a freshly inserted node, and it dedupes against any
-  other recording that produced the same intersection.
+  `RS_shared` is a freshly inserted node, deduping against any
+  other recording that produced the same intersection via
+  `INSERT OR IGNORE` on the node hash.
 - `FactSet_intermediate` is `FactSet ∪ Facts(shared)`, computed via
-  XOR extension. If two recordings observed the same Responses for
-  the shared Requests, they land at the same intermediate by content
-  addressing; if not, they end up at different intermediates and
+  XOR extension. Two recordings that observed the same Responses for
+  the shared Requests land at the same intermediate by hash equality;
+  divergent Responses land them at different intermediates and they
   coexist as sibling paths.
-- The split removes the old `Asks(Q, cur, RS_existing)` row via
-  `removeAsks` (which exists in the schema specifically for this
-  case).
+- The split removes the old `Ask(Q, cur, RS_existing)` row via
+  `removeAsks` (in the schema specifically for this case).
 
 ## Replay
 
@@ -292,21 +291,21 @@ Three properties of how this is implemented in
 each Query, it consults the cache; on a hit it returns a
 `TracingReplayObject` whose method calls are answered from the cache
 too (recursively, by descending into child Queries' recorded
-results); on a miss it activates the inner evaluator. The replay
-object only "activates inner" lazily — for a hit chain that
-doesn't reach into the package's value tree at all, the inner is
-never constructed.
+Results); on a miss it activates the inner evaluator. The replay
+object activates inner lazily — for a hit chain that doesn't reach
+into the package's value tree at all, the inner is never
+constructed.
 
-The cache-side primitive is `v13Walk(queryHash)`. It tries two paths
-in order.
+The cache-side primitive is `walk(queryHash)`. It tries two paths in
+order.
 
-### Fast path: trie diff against `lastQFactsHash`
+### Fast path: trie diff against `envCur`
 
 `TracingReplayEvaluator` maintains:
 
 ```cpp
-unordered_map<Hash, Hash>  dispatchCache;   // request → response, per-process
-SetHash                    lastQFactsHash;  // cur the last successful walk landed at
+unordered_map<Hash, Hash>  responseFor;     // request → response, per-process
+SetHash                    envCur;          // cur the last successful walk landed at
 TrieBuilder                dispatchedTrie;  // cumulative requests dispatched
 ```
 
@@ -315,140 +314,137 @@ for Q_k usually only differs in a handful of new Requests — Q_k's
 evaluation imports a new package, reads a few extra files, etc.
 Instead of walking the chain from ∅, fast-path:
 
-1. Look at `Asks(Q_k, ∅)`. If exactly one outgoing edge, take its
+1. Look at `Ask(Q_k, ∅)`. If exactly one outgoing edge, take its
    RS root hash `edgeRsHash`.
 2. `dispatchedTrie.diff(decisionGraph, edgeRsHash, onlyInThis,
-   onlyInOther)`. This is a parallel descent of the in-memory
-   `dispatchedTrie` and the stored trie rooted at `edgeRsHash`.
-   Subtrees with matching content hashes collapse to no-ops via
+   onlyInOther)`. A parallel descent of the in-memory
+   `dispatchedTrie` and the stored trie rooted at `edgeRsHash`;
+   subtrees with matching node hashes collapse to no-ops via
    short-circuit at the recursive descent. Result: the symmetric
    difference in `O(|delta| · branching)`.
 3. For each request in `onlyInOther` (added by Q_k): dispatch it
-   (memoised in `dispatchCache`), XOR `H_element(req, resp)` into a
-   candidate cur starting from `lastQFactsHash`.
-4. For each request in `onlyInThis` (we dispatched it for an earlier
-   Q but Q_k's RS doesn't include it): look up the cached response,
-   XOR `H_element(req, resp)` into the candidate cur — XOR is its
-   own inverse, so the "out" operation is the same XOR.
-5. Check `Terminals(Q_k, candidateCur)`. Hit → commit (extend
-   `dispatchedTrie` with `onlyInOther`, update `lastQFactsHash`),
-   return the result. Miss → fall through to slow walk.
+   (memoised in `responseFor`), XOR `H_element(req, resp)` into a
+   candidate cur starting from `envCur`.
+4. For each request in `onlyInThis` (dispatched for an earlier Q but
+   not in Q_k's RS): look up the cached response, XOR
+   `H_element(req, resp)` into the candidate cur — XOR is its own
+   inverse, so the "out" operation is the same XOR.
+5. Check `Terminal(Q_k, candidateCur)`. Hit → commit (extend
+   `dispatchedTrie` with `onlyInOther`, update `envCur`), return
+   the Result. Miss → fall through to slow walk.
 
 In the sequential mapAttrs case, `onlyInThis` is empty and
 `onlyInOther` is a handful per Q. Per-Q warm cost drops from
 `O(|Q.RS|)` to `O(|delta| · log N)`. Across the whole session:
-linear in total facts.
+linear in total Facts.
 
-### Navigation invariant: IDs flow *into* lookups as keys, never *out*
-of lookups
+### Navigation invariant: hashes flow *into* lookups as keys, never *out*
 
-The whole point of the Asks/Terminals machinery is that hash values
-— `factSetHash` (`cur`), `queryHash` (`Q`), request-set hashes — are
-*produced* by the walker via hashing. They serve as *keys* to
-look up content (request sets, terminals) in the trie. They are
-never outputs of a lookup — the walker never asks a table "what's
-the ID for X?" or "what does this ID belong to?"
+The whole point of the Ask/Terminal machinery is that hash values —
+`factSetHash` (`cur`), `queryHash` (`Q`), RequestSet hashes — are
+*produced* by the walker via hashing. They serve as *keys* to look
+up content (RequestSets, Terminals) in the trie. They are never
+outputs of a lookup — the walker never asks a table "what's the hash
+for X?" or "what does this hash belong to?"
 
 Concretely, the pattern is:
 
 1. Walker holds a `cur` (its current hashed state, produced by
    prior hashing steps).
 2. Walker uses cur as a key: `getAsks(Q, cur)` returns *content*
-   stored at that key — the request sets outgoing from cur.
-3. Walker dispatches each request against the live environment,
+   stored at that key — the RequestSets outgoing from cur.
+3. Walker dispatches each Request against the live environment,
    XOR-folds each `H_element(req, resp)` into cur to produce a new
    hashed state.
-4. New state is a fresh output of hashing. Walker then uses it as
-   the next key in step 2.
-5. If no edge exists at a computed key, the walker misses cleanly
-   — it does not invent a substitute key or search for a subject
-   that could have hashed to that key.
+4. New state is a fresh output of hashing. Walker uses it as the
+   next key in step 2.
+5. If no edge exists at a computed key, the walker misses cleanly —
+   it does not invent a substitute key or search for a state that
+   could have hashed to that key.
 
-This is the property that makes the cache sound under environmental
-change: a divergent response naturally lands the walker at a computed
-key that has no recorded content, and the miss is a graceful
-fall-back. There is no "which state matches this hash?" step
-because that question would treat IDs as outputs of lookups.
+This is what makes the cache sound under environmental change: a
+divergent response naturally lands the walker at a computed key
+that has no recorded content, and the miss is a graceful fall-back.
+There is no "which state matches this hash?" step because that
+question would treat hashes as outputs of lookups.
 
-> **Every query in the chain must be indexed by the** ***old*** **hash
-> — the walker's state** ***before*** **making that query's own
+> **Every Query in the chain must be indexed by the** ***old*** **hash
+> — the walker's state** ***before*** **making that Query's own
 > observation, not after.** The walker starts each step at some `cur`
 > (produced by prior hashing) and uses it to look up what to do next.
-> If a query were indexed by the *post-observation* hash — the state
-> you get *after* folding in this query's own response — the walker
+> If a Query were indexed by the *post-observation* hash — the state
+> you get *after* folding in this Query's own response — the walker
 > couldn't look anything up without first knowing the response,
 > which is exactly what it's asking for. That's chicken-and-egg. The
 > old hash is what makes replay possible; the observation turns it
 > into the new hash, which then becomes the old hash for the *next*
-> query.
+> Query.
 >
 > This applies to every table that produces a next observation from
-> a lookup: `Asks` (edge from cur), `AmbientAsks` (d=2 chain-advance
-> from fromFactSet), and every reqhash construction whose `from` field
-> is the walker's pre-observation state (d=1 request payloads and
-> cb-apply `from` fields alike). `Terminals` doesn't fit this pattern
-> — a Terminal is the *end* of the chain and produces a result, not a
-> next observation, so it's queried at the cur the walker *lands* at
-> after all observations for that Q with no ambiguity about "which K".
+> a lookup: `Ask` (edge from cur), `AmbientAsk` (chain-advance from
+> fromFactSet), and every requestHash construction whose `from` field
+> is the walker's pre-observation state (Env request payloads and
+> cb-apply `from` fields alike). `Terminal` doesn't fit this pattern
+> — a Terminal is the *end* of the chain and produces a Result, not a
+> next observation, so it's queried at the cur the walker *lands*
+> at after all observations for that Q.
 >
 > Practical check for every call-site: if you're writing
-> `scopeStateIdAt(subject, scope, walk, walk.size())` at query-key
-> time, you're using the new hash — reverse it to `walk[0..K)` where
-> `K` is the state **before** this query's own observation folds in.
+> `stateHashAt(subject, argAncestry, history, history.size())` at
+> Query-key time, you're using the new hash — reverse it to
+> `history[0..step)` where `step` is the state **before** this
+> Query's own observation folds in.
 
 ### Slow path: `decisionGraph.walk(Q, dispatch)`
 
 Walks the chain from ∅, one edge at a time. At each `(Q, cur)`:
 
 1. `getAsks(Q, cur)` for outgoing edges. If empty: miss.
-2. For each edge's RS: compute `usefulDispatch(rs, curRequests)`.
+2. For each edge's RS: compute `usefulDispatch(rs, dispatchedSoFar)`.
    Dispatch the useful Requests (via `dispatch` callback — memoised
-   in `dispatchCache`), XOR-fold their `H_element` into a candidate
+   in `responseFor`), XOR-fold their `H_element` into a candidate
    `nextCur`.
 3. Validate: `hasAnyEdge(Q, nextCur)`? That is, is there some
-   `Asks(Q, nextCur, *)` or `Terminals(Q, nextCur, *)` row? If yes,
+   `Ask(Q, nextCur, *)` or `Terminal(Q, nextCur, *)` row? If yes,
    advance `cur = nextCur` and continue. If no, this branch of the
    recording isn't reachable from the current env — try the next
    outgoing edge.
-4. If `Terminals(Q, cur)` exists, return that result.
+4. If `Terminal(Q, cur)` exists, return that Result.
 
 The existence check is per-`Q` rather than per-FactSet — what
-matters is that *this* query reached this position in some recorded
-trace, not just that some other query happened to land at the same
+matters is that *this* Query reached this position in some recorded
+trace, not just that some other Query happened to land at the same
 FactSet hash.
 
 ### Replay-object methods
 
 `TracingReplayObject::maybeGetAttr("foo")` etc. each go through
-`lookupResult<Q, R>` which calls `v13Walk(QueryGetAttr{"foo",
-parentTriePosition})`. The Merkle parent's `queryHashStr` flows into
-the child query's hash, so the cache key reflects "getAttr foo on
-*this specific* recorded result," not just "getAttr foo on
-anything." If `v13Walk` misses, the replay object lazily constructs
-its inner counterpart and forwards the call. Some methods that the
-cache can't model (`getStringWithoutContext`, `getPath`, `defeatCache`)
-always fall through to inner.
+`lookupResult<Q, R>` which calls `walk(QueryGetAttr{"foo",
+parentTriePosition})`. The Merkle parent's `queryHash` flows into
+the child Query's hash, so the cache key reflects "getAttr foo on
+*this specific* recorded Result," not just "getAttr foo on
+anything." If `walk` misses, the replay object lazily constructs its
+inner counterpart and forwards the call. Methods the cache can't
+model (`getStringWithoutContext`, `getPath`, `defeatCache`) always
+fall through to inner.
 
-`apply(fn, arg)` is the awkward case: the function and argument may
-be virtual values that don't correspond to a recorded Object. The
-writer assigns them virtual-root IDs; replay tracks an `ambientState`
-mapping ID → live Object so that ambient interactions (`getType`,
-`getAttr`, `getString`, …) dispatched during the recorded apply can
-be answered against the runtime value the caller actually passed in.
-The ambient-query bridge in
-`TracingReplayEvaluator::dispatchAmbientQuery` handles the per-tag
-cases (`getType`, `getAttr` returning a virtual child id,
-`getStringWithContext` etc).
+`apply(fn, arg)` is the awkward case: when `fn` or `arg` came from a
+prior cache boundary and no live Object is around to probe. The
+Ambient interaction handles this — inner-owned callback args are
+proxied by `ReplayCallbackArg` (see the vocab §15), and their
+recorded responses are served from the `InnerValueResponse` table.
+`TracingReplayEvaluator::dispatchAmbientQuery` is the per-tag
+bridge; details live in
+[`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md).
 
-**Nondeterminism.** If the box genuinely produces different
+**Nondeterminism.** If the environment genuinely produces different
 Responses to the same Request, the FactSet hashes for the two
 recordings diverge naturally (different XOR inputs → different
 hashes). The data model can store both — multiple Terminals exist
 for the same Q at different factSets — but which one a walk lands
-at depends on what the live env returns at dispatch time. The
-cache makes no attempt to detect or arbitrate genuine
-nondeterminism; it's a model-level concern Phase 2 sketched
-policies for and left open.
+at depends on what the live env returns at dispatch time. The cache
+makes no attempt to detect or arbitrate genuine nondeterminism; it's
+a model-level concern that remains open.
 
 ## Integration
 
@@ -465,31 +461,18 @@ EvalCommand::getEvalState                  // src/libcmd/command.cc
     └── shares the single TracingWriter across all of the above
 ```
 
-The recording path and the replay path use the *same* writer; the
-writer's job is to be the canonical sink for both. A successful
-replay still feeds the writer (so its v13FactSet, allRequestsTrie,
-etc. stay in sync) — that's important if a later miss falls through
-to inner and produces a fresh `record()`.
+The recording path and the replay path use the *same* writer; it's
+the canonical sink for both. A successful replay still feeds the
+writer (so its `envFactSet`, `sessionRequestsTrie`, etc. stay in
+sync) — important if a later miss falls through to inner and
+produces a fresh `record()`.
 
-`builtins.cache` lives in `src/libexpr/primops/cache.cc`. It
-creates a nested evaluator stack
-(`TracingReplayEvaluator → TracingEvaluator → Interpreter`) that
-shares the outer `TracingDecisionGraph` and persists its
-recordings to the same SQLite file. Ambient interactions with the
-outer-provided arg are recorded via an `AmbientResolver` that
-identifies derived values by their producer query's `queryHash`
-(so the replay walker can resolve them by recursive lookup
-against the `Requests` pool), while seed roots use
-`hashString("seed:"|"local:" + counter)` strings. The full primop
-design — including the `<cached-fn>`/`<ambient-fn>` PrimOp split,
-the input-traced env-chain nesting that lets the outer's
-`TracingEnvironment` see inner file reads as its own Facts, and
-the content-tracing relationship that keeps the inner cacheable
-across outer contexts — is documented in
+`builtins.cache` lives in `src/libexpr/primops/cache.cc`. It creates
+a nested evaluator stack (`TracingReplayEvaluator → TracingEvaluator
+→ Interpreter`) sharing the outer `TracingDecisionGraph` and
+persisting its recordings to the same SQLite file. Full primop
+design in
 [`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md).
-Covariant-callback replay (the inner calling back into the outer
-via the ambient channel) currently falls through to inner
-re-evaluation; cache hits for that case are a planned follow-up.
 
 ## Concurrency and durability
 
@@ -497,9 +480,9 @@ Single-writer-process model — a `nix eval` invocation holds the
 SQLite connection for its lifetime. Multiple concurrent `nix`
 processes can read+write the same DB; SQLite WAL mode handles the
 coexistence, but the in-process caches (`responseFor`,
-`dispatchedTrie`, etc.) are per-process and don't synchronise. That's
-fine: every persistent write is `INSERT OR IGNORE` on a
-content-addressed key, so concurrent recorders either land identical
+`dispatchedTrie`, etc.) are per-process and don't synchronise.
+That's fine: every persistent write is `INSERT OR IGNORE` on a
+hash-derived key, so concurrent recorders either land identical
 rows (no conflict) or land genuinely different rows (no conflict).
 
 `SQLite::isCache()` sets `PRAGMA synchronous = OFF` and `PRAGMA
@@ -520,8 +503,8 @@ them transparently:
    recorded chain. `hasAnyEdge` returns false at the divergent
    position; walk gives up. Fall through.
 3. **Fast path lookup miss.** `dispatchedTrie.diff` produces a delta;
-   we compute candidateCur; `Terminals(Q, candidateCur)` is absent.
-   We fall through to slow walk (which may itself hit or miss).
+   we compute candidateCur; `Terminal(Q, candidateCur)` is absent.
+   Fall through to slow walk (which may itself hit or miss).
 4. **TracingReplayObject can't model the call** (e.g.
    `getStringWithoutContext`, `getPath`). Fall through to inner via
    `ensureInner()`.
@@ -577,8 +560,8 @@ Unit tests at `src/libexpr-tests/tracing-decision-graph.cc` cover:
 Test-only APIs:
 
 - `insertFactSet(members)` — caller-side construction of a FactSet
-  by value. Production uses `primeFactSetCache` plus the
-  incrementally-maintained `v13FactSetHash` in `TracingWriter`.
+  by value. Production uses `installFactSet` plus the incrementally
+  maintained `envFactSetHash` in `TracingWriter`.
 - `removeAsks(...)` — used by Patricia split internally, and by
   unit tests directly.
 
@@ -592,27 +575,15 @@ Performance harness under `tests/perf/tracing-cache/`:
 
 ## Open work
 
-- **Phase 2 from the legacy design doc**: passive-replay-before-insert
-  (skip records whose factSet is a redundant superset of an existing
-  Terminal) and a distance-to-any-R navigation heuristic. The K²
-  motivations that drove Phase 2 are gone — the writer-side
-  `TrieBuilder` and the replay-side fast-path closed them within
-  Phase 1 — but the cross-session amortisation and post-Patricia-split
-  divergence handling Phase 2 was designed for remain valid future
-  work.
-- **`builtins.cache` covariant callbacks ship validated.** See
-  [`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md).
-  The inner records outer accesses on the callback arg via
-  `TracingLocalObject`; on replay the dispatcher invokes the apply
-  live (`resolveAmbientId` `tag == "apply"` branch) using a
-  `ReplayLocalObject` frozen image of the recorded arg. Outer
-  lambda body changes are caught — no Responses-pool fallback in
-  the dispatcher. Storage cost: one Responses-pool entry per
-  ambient interaction (bounded by the apply-result fanout) plus
-  one localArg sidecar Request per apply.
+- **Cross-session amortisation and post-Patricia-split divergence
+  handling** — passive-replay-before-insert (skip records whose
+  factSet is a redundant superset of an existing Terminal) and a
+  distance-to-any-R navigation heuristic. The K² motivations are
+  gone; the semantics remain valid future work.
 - **Eviction / compaction**: none. The DB grows with the workload.
-  At 41 MB per 10k recorded attrs, that's tolerable for a while.
-- **Wiring `nix-env -qa`** through the cache. Currently bypasses.
+  At 41 MB per 10k recorded attrs, tolerable for a while.
+- **Wiring `nix-env -qa`** through the cache. Currently bypasses
+  `EvalCommand`.
 
 ## Source map
 
@@ -624,15 +595,17 @@ Performance harness under `tests/perf/tracing-cache/`:
   hot path
 - `src/libexpr/tracing-environment.cc` — `TracingEnvironment` and
   `TracingSourceAccessor` (file-read capture)
-- `src/libexpr/tracing-replay-evaluator.cc` — `v13Walk` including
-  the trie-diff fast path
+- `src/libexpr/tracing-replay-evaluator.cc` — `walk` including the
+  trie-diff fast path
 - `src/libexpr/tracing-replay-object.cc` — per-method lookup &
   fall-through to inner
 - `src/libcmd/command.cc` — wiring into `EvalCommand`
 - `src/libexpr/primops/cache.cc` — the `builtins.cache` primop
 - `src/libexpr/expr-from-object.cc` — `ExprFromObject`,
-  `AmbientResolver`, `makeCachedFnPrimOp` / `makeAmbientFnPrimOp`
-- `src/libexpr/ambient-object.cc` — `AmbientObject` (outer value
-  reached via ambient query)
+  `OuterResolver`, `makeCachedFnPrimOp` / `makeAmbientFnPrimOp`
+- `src/libexpr/outer-object.cc` — `OuterObject` (outer-owned value
+  the inner probes via Env)
+- `src/libexpr/subject-id.cc` — Subject variants, state hash /
+  argAncestry / evolution machinery
 - `tests/perf/tracing-cache/` — perf scripts and validation sweeps
 - `tests/functional/builtins-cache.sh` — `builtins.cache` functional tests
