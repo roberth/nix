@@ -292,38 +292,48 @@ observations under different outer contexts.
 
 ## Subject-identity machinery
 
-Cached functions run many times. The simple case is the outer
-calling the inner directly:
+Cached functions run many times. Two cases; both put multiple
+values through the same syntactic slot, so position alone can't
+tell the values apart — something else has to.
+
+The simple case is the outer calling the inner directly:
 
 ```nix
 builtins.cache { import = ./call-nixpkgs.nix; }
                { system = "x86_64-linux"; }
 ```
 
-The inner probes the outer's arg through `OuterObject`; each
-probe becomes an Env-layer Fact. Different arg values that the
-inner touches produce different Facts (probes get different
-answers), and the walker's Ask branches diverge to distinct
-Terminals; arg parts the inner never probes don't affect the
-walk. No subject-identity machinery needed — the walker
-distinguishes invocations by *what the inner asked and how the
-outer answered*, never by any deep hash of the arg's value
-(which would force evaluation and defeat laziness).
+Two invocations with different args land at the same syntactic
+slot. Position alone can't tell them apart — a slot name is
+just a slot name — and the inner sees each arg as an opaque
+`OuterObject` with no way to look inside. Discrimination lives
+in *observations*: the inner probes the arg, the outer's
+answers carry the value's content one probe at a time, and
+different args produce different Facts. Different Fact chains
+→ different walks → different Terminals. At replay the walker
+dispatches recorded probes back to the outer live and matches
+responses against the recording to confirm the hit. The Ambient
+machinery in §§12–17 doesn't fire here — it's for the callback
+case, where inner-owned values can't be re-probed live.
 
-Callbacks are harder. When the inner supplies a callback and the
-outer runs it — `(cb 10) + (cb 20)`, or nesting inside another
-cached call whose enclosing argAncestry differs — the outer's
-probes on the callback arg see values that vary per invocation,
-but the arg's identity to the walker (`PositionalSeed{depth=1}`)
-names the *slot*, not the *value*. Every invocation shares the
-same argId (Appendix A: identity doesn't depend on invocations);
-each still produces distinct Facts. The machinery below closes
-that gap: §12 fixes the Subject; §§13–14 characterize its state
-per-invocation via state hash and argAncestry (with
-`callArgAncestry` sampled at each cb-apply, disambiguated in
-storage by `InnerValueResponse.contextHash`); §§15–16 wire this
-through the Object graph; §17 caches step-by-step transitions.
-Storage lives in §18.
+Callbacks are the case §§12–17 exist for. When the inner
+supplies a callback and the outer runs it — `(cb 10) + (cb 20)`,
+or nesting inside another cached call whose enclosing
+argAncestry differs — the callback arg is inner-owned. At replay
+the inner isn't running; its closures are gone; the arg no
+longer exists to be probed, so probes have to be served from
+storage (`InnerValueResponse`) instead of dispatched live.
+`PositionalSeed{depth=1}` names the slot; per-invocation
+distinction has to come from what the outer *did* with the arg —
+the observations it made. Every invocation shares
+the same argId (Appendix A: identity doesn't depend on
+invocations); each still produces distinct Facts. The machinery
+below closes that gap: §12 fixes the Subject; §§13–14
+characterize its state per-invocation via state hash and
+argAncestry (with `callArgAncestry` sampled at each cb-apply,
+disambiguated in storage by `InnerValueResponse.contextHash`);
+§§15–16 wire this through the Object graph; §17 caches
+step-by-step transitions. Storage lives in §18.
 
 ### 12. Subject identity
 
