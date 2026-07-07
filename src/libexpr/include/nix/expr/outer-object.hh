@@ -50,7 +50,7 @@ using OuterQueryFn = std::function<OuterQueryResult(
  * the result Object id.
  *
  * Why pass `callerScope`: the cb is reached via a navigation
- * chain (e.g. seed.items[0]), and `resolve(fnId)` may return an
+ * chain (e.g. arg.items[0]), and `resolve(fnId)` may return an
  * InterpreterObject without a proxy parent chain — so the
  * callee can't infer depth from the resolved fn. The caller
  * (OuterObject::queryApply) knows its own proxy graph
@@ -72,7 +72,7 @@ class OuterObject : public Object
        content-identity-via-asks.md. Set at the cb-apply boundary;
        propagated to children. Zero hash if no inheritance. */
     Hash argAncestry;
-    /* Per-apply observation context. Set on cb-arg seed OuterObjects
+    /* Per-apply observation context. Set on cb-arg arg OuterObjects
        by makeCachedFnPrimOp.impl at the apply boundary; the queryFn
        closure routes observations through this context so the
        apply-result wrapping can compute its evolved state hash via
@@ -131,7 +131,7 @@ public:
         return *this;
     }
 
-    /** Attach a per-apply observation context. Used on cb-arg seed
+    /** Attach a per-apply observation context. Used on cb-arg arg
         OuterObjects at the cb-apply boundary; the queryFn closure
         routes observations into this context. */
     OuterObject & withApplyContext(std::shared_ptr<ApplyContext> ctx)
@@ -141,7 +141,7 @@ public:
     }
 
     /** Read this proxy's apply context (= null unless this is a
-        cb-arg seed). */
+        cb-arg arg). */
     std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }

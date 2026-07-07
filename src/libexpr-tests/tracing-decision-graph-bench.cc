@@ -33,15 +33,15 @@ static Hash sha(std::string_view s)
 }
 
 /* Build a fresh FactSet with `nFacts` distinct (Request, Response)
-   pairs derived from a seed string. */
+   pairs derived from a arg string. */
 static TracingDecisionGraph::SetHash makeFactSet(
-    TracingDecisionGraph & g, std::string_view seed, size_t nFacts)
+    TracingDecisionGraph & g, std::string_view arg, size_t nFacts)
 {
     std::vector<TracingDecisionGraph::Fact> facts;
     facts.reserve(nFacts);
     for (size_t i = 0; i < nFacts; ++i) {
-        auto req = sha(fmt("%s-req-%d", seed, i));
-        auto resp = sha(fmt("%s-resp-%d", seed, i));
+        auto req = sha(fmt("%s-req-%d", arg, i));
+        auto resp = sha(fmt("%s-resp-%d", arg, i));
         facts.push_back({req, resp});
     }
     return g.insertFactSet(std::move(facts));
@@ -62,7 +62,7 @@ static void BM_InsertFactSet(benchmark::State & state)
         std::vector<TracingDecisionGraph::Fact> facts;
         facts.reserve(nFacts);
         for (size_t i = 0; i < nFacts; ++i) {
-            /* Vary the seed each iteration to avoid measuring INSERT-OR-IGNORE
+            /* Vary the arg each iteration to avoid measuring INSERT-OR-IGNORE
                dedup of a single set; we want to measure inserting *novel*
                sets of the given size. */
             auto req = sha(fmt("bench-%d-req-%d", state.iterations(), i));
@@ -89,7 +89,7 @@ static void BM_RecordFreshFactSet(benchmark::State & state)
     /* Pre-allocate one Q so we measure record's work, not Query insert. */
     auto q = sha("bench-Q");
 
-    /* Each iteration uses a fresh seed → distinct FactSet → record
+    /* Each iteration uses a fresh arg → distinct FactSet → record
        inserts |FactSet| new Asks edges plus Terminals. */
     size_t iter = 0;
     for (auto _ : state) {

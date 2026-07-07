@@ -6,7 +6,7 @@
  *
  * - ValueHandle: JSON trace correlation handle (TraceSink)
  * - OuterId:   OuterResolver registry handle, a content Hash.
- *                Seed roots use the empty-set hash (their
+ *                Arg roots use the empty-set hash (their
  *                state hash at apply time, since no
  *                observations have happened yet); derived values
  *                use the producer query's queryHash.
@@ -52,7 +52,7 @@ using ValueHandle = StrongId<ValueHandleTag, uint64_t>;
 
 /** OuterResolver registry handle for outer/local values.
  *
- *  A content Hash. Seed roots are `hashString("seed:N")` /
+ *  A content Hash. Arg roots are `hashString("arg:N")` /
  *  `hashString("local:N")` for an interpreter-side counter N;
  *  derived values are the producer query's `queryHash`. Both go
  *  through the same map. */

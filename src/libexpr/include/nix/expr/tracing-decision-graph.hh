@@ -131,9 +131,9 @@ public:
        argument requires the reqhash to be a pure function of
        (subject, argAncestry, prior facts in the chain); across writer
        sessions with different outer args, that assumption can fail
-       (same seed(N) pre-observation state hash → same reqhash → different
+       (same arg(N) pre-observation state hash → same reqhash → different
        responses from arg-dependent env), so env dispatch MUST NOT
-       read this map. See `cross-session-seed-collision` memory. */
+       read this map. See `cross-session-arg-collision` memory. */
     /* Context-widened InnerValueResponse: PK is (requestHash, contextHash).
        contextHash is walker's/writer's outer env fact-set state at the
        moment the response was recorded / is being consulted. Same

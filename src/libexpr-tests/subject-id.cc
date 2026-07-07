@@ -5,7 +5,7 @@
 
 namespace nix::cidasks {
 
-static Subject seed(int depth)
+static Subject argAt(int depth)
 {
     return Subject{Arg{depth}};
 }
@@ -46,15 +46,15 @@ static Hash noScope()
 
 TEST(CidAsks, ArgInitialSubjectHashIsDeterministic)
 {
-    auto a = stateHashAfter(seed(0), noScope(), {});
-    auto b = stateHashAfter(seed(0), noScope(), {});
+    auto a = stateHashAfter(argAt(0), noScope(), {});
+    auto b = stateHashAfter(argAt(0), noScope(), {});
     EXPECT_EQ(a, b);
 }
 
 TEST(CidAsks, DifferentDepthsHaveDifferentInitialIds)
 {
-    auto a = stateHashAfter(seed(0), noScope(), {});
-    auto b = stateHashAfter(seed(1), noScope(), {});
+    auto a = stateHashAfter(argAt(0), noScope(), {});
+    auto b = stateHashAfter(argAt(1), noScope(), {});
     EXPECT_NE(a, b);
 }
 
@@ -63,18 +63,18 @@ TEST(CidAsks, DerivedSubjectIncludesParentInitial)
     /* Derived subjects don't have CDIs — only structural addresses
        (= producer query hashes). Same property holds: different
        names / different parents → different addresses. */
-    auto x = getAttrOn(seed(0), "x");
-    auto y = getAttrOn(seed(0), "y");
-    auto xOn1 = getAttrOn(seed(1), "x");
+    auto x = getAttrOn(argAt(0), "x");
+    auto y = getAttrOn(argAt(0), "y");
+    auto xOn1 = getAttrOn(argAt(1), "x");
     EXPECT_NE(subjectHashAfter(x, noScope(), {}), subjectHashAfter(y, noScope(), {}));
     EXPECT_NE(subjectHashAfter(x, noScope(), {}), subjectHashAfter(xOn1, noScope(), {}));
 }
 
 TEST(CidAsks, ApplyResultDistinguishesFnAndArg)
 {
-    auto fn0 = seed(0);
-    auto fn1 = seed(1);
-    auto arg = seed(2);
+    auto fn0 = argAt(0);
+    auto fn1 = argAt(1);
+    auto arg = argAt(2);
     EXPECT_NE(stateHashAfter(applyResult(fn0, arg), noScope(), {}), stateHashAfter(applyResult(fn1, arg), noScope(), {}));
 }
 
@@ -82,10 +82,10 @@ TEST(CidAsks, ApplyResultDistinguishesFnAndArg)
 
 TEST(CidAsks, ObservationOnSeedAdvancesContentId)
 {
-    auto s = seed(0);
+    auto s = argAt(0);
     auto initial = stateHashAfter(s, noScope(), {});
 
-    // A getInt fact whose from matches the seed's initial id.
+    // A getInt fact whose from matches the arg's initial id.
     trace::QueryGetWHNF q{hex(initial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{42}};
     ObservationSet e{.observations = {observationFromQR(q, r)}};
@@ -101,8 +101,8 @@ TEST(CidAsks, ObservationOnSeedAdvancesContentId)
 
 TEST(CidAsks, FactOnUnrelatedSubjectDoesNotAdvance)
 {
-    auto s0 = seed(0);
-    auto s1 = seed(1);
+    auto s0 = argAt(0);
+    auto s1 = argAt(1);
     auto s1Initial = stateHashAfter(s1, noScope(), {});
 
     // Fact whose from matches s1, not s0.
@@ -118,14 +118,14 @@ TEST(CidAsks, SameShapeCollapse)
 {
     // Two seeds at the same depth — same initial id (= same-shape collapse).
     // They cannot be distinguished without their own observations.
-    auto a = seed(0);
-    auto b = seed(0);
+    auto a = argAt(0);
+    auto b = argAt(0);
     EXPECT_EQ(stateHashAfter(a, noScope(), {}), stateHashAfter(b, noScope(), {}));
 }
 
 TEST(CidAsks, XorCommutativityWithinEdge)
 {
-    auto s = seed(0);
+    auto s = argAt(0);
     auto initial = stateHashAfter(s, noScope(), {});
 
     trace::QueryGetWHNF q1{hex(initial)};
@@ -146,7 +146,7 @@ TEST(CidAsks, XorCommutativityWithinEdge)
 
 TEST(CidAsks, DerivedAdvancesWhenParentAdvances)
 {
-    auto parent = seed(0);
+    auto parent = argAt(0);
     auto child = getAttrOn(parent, "x");
 
     auto parentInitial = stateHashAfter(parent, noScope(), {});
@@ -168,7 +168,7 @@ TEST(CidAsks, DerivedDoesNotAdvanceOnFactsTargetedAtItself)
        A hypothetical fact with from=derived_address therefore does
        NOT advance derived's address — only facts on the root do
        (via the root's CDI evolving), which the prior test covers. */
-    auto parent = seed(0);
+    auto parent = argAt(0);
     auto child = getAttrOn(parent, "x");
 
     auto childInitial = subjectHashAfter(child, noScope(), {});
@@ -190,7 +190,7 @@ static Hash scopeFor(const std::string & q)
 
 TEST(CidAsks, InheritanceDistinguishesArgsAcrossArgAncestries)
 {
-    auto s = seed(0);
+    auto s = argAt(0);
     auto scopeA = scopeFor("A");
     auto scopeB = scopeFor("B");
 
@@ -199,7 +199,7 @@ TEST(CidAsks, InheritanceDistinguishesArgsAcrossArgAncestries)
 
 TEST(CidAsks, InheritanceDistinguishesDerivedAcrossScopes)
 {
-    auto child = getAttrOn(seed(0), "x");
+    auto child = getAttrOn(argAt(0), "x");
     auto scopeA = scopeFor("A");
     auto scopeB = scopeFor("B");
 
@@ -212,7 +212,7 @@ TEST(CidAsks, InheritancePropagatesIntoDerivedQueryPayload)
        content id used in the query payload. So child's id differs
        between scopes even though the structural derivation
        (getAttr "x") is identical. */
-    auto parent = seed(0);
+    auto parent = argAt(0);
     auto child = getAttrOn(parent, "x");
     auto scopeA = scopeFor("A");
     auto scopeB = scopeFor("B");
@@ -231,7 +231,7 @@ TEST(CidAsks, InheritanceWithEmptyScopeMatchesUnscoped)
     /* noScope() is the zero Hash; XORing with zero is a no-op, so
        scope=noScope() must give identical results to "no scope" usage
        in the legacy tests. */
-    auto s = seed(0);
+    auto s = argAt(0);
     auto child = getAttrOn(s, "x");
 
     EXPECT_EQ(stateHashAfter(s, noScope(), {}), stateHashAfter(s, Hash(HashAlgorithm::SHA256), {}));
@@ -240,8 +240,8 @@ TEST(CidAsks, InheritanceWithEmptyScopeMatchesUnscoped)
 
 TEST(CidAsks, InheritanceDistinguishesApplyResultAcrossScopes)
 {
-    auto fn = seed(0);
-    auto arg = seed(1);
+    auto fn = argAt(0);
+    auto arg = argAt(1);
     auto result = applyResult(fn, arg);
     auto scopeA = scopeFor("A");
     auto scopeB = scopeFor("B");
@@ -254,7 +254,7 @@ TEST(CidAsks, ObservationOnScopedSeedRequiresMatchingScopedFromHash)
     /* Sanity check that the recording/walker symmetry under
        inheritance: a fact whose `from` matches the *scoped* content id
        contributes; one whose `from` matches the unscoped id doesn't. */
-    auto s = seed(0);
+    auto s = argAt(0);
     auto scope = scopeFor("Q1");
 
     auto scopedInitial = stateHashAfter(s, scope, {});

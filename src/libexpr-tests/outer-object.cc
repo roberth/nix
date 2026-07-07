@@ -69,47 +69,47 @@ static OuterQueryFn mockResolver(std::map<std::string, trace::ResultVariant> res
 
 TEST(AmbientObjectTest, GetType)
 {
-    auto seed = testId(0);
+    auto arg = testId(0);
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
-        mockResolver({{"getWHNF:" + ambientHex(seed), trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
+        mockResolver({{"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
         stubAmbientRoot());
     EXPECT_EQ(obj->getType(), nInt);
 }
 
 TEST(AmbientObjectTest, GetInt)
 {
-    auto seed = testId(0);
+    auto arg = testId(0);
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
-        mockResolver({{"getWHNF:" + ambientHex(seed), trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
+        mockResolver({{"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
         stubAmbientRoot());
     EXPECT_EQ(obj->getInt().value, 42);
 }
 
 TEST(AmbientObjectTest, GetString)
 {
-    auto seed = testId(0);
+    auto arg = testId(0);
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
-        mockResolver({{"getWHNF:" + ambientHex(seed), trace::ResultWHNF{"string", trace::WHNFString{"hello", {}}}}}),
+        mockResolver({{"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"string", trace::WHNFString{"hello", {}}}}}),
         stubAmbientRoot());
     EXPECT_EQ(obj->getStringIgnoreContext(), "hello");
 }
 
 TEST(AmbientObjectTest, GetBool)
 {
-    auto seed = testId(0);
+    auto arg = testId(0);
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
-        mockResolver({{"getWHNF:" + ambientHex(seed), trace::ResultWHNF{"bool", trace::WHNFBool{true}}}}),
+        mockResolver({{"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"bool", trace::WHNFBool{true}}}}),
         stubAmbientRoot());
     EXPECT_TRUE(obj->getBool());
 }
 
 TEST(AmbientObjectTest, GetAttrReturnsChild)
 {
-    auto seed = testId(0);
+    auto arg = testId(0);
     /* Child scopeStateId is the producer query's queryHash. With Subject-based
        construction the OuterObject derives this from DerivedSubject
        at construction time. */
@@ -125,7 +125,7 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         mockResolver({
-            {"getAttr:" + ambientHex(seed), trace::ResultMaybeType{std::optional<std::string>{"int"}}},
+            {"getAttr:" + ambientHex(arg), trace::ResultMaybeType{std::optional<std::string>{"int"}}},
             {"getWHNF:" + childHex, trace::ResultWHNF{"int", trace::WHNFInt{99}}},
         }),
         stubAmbientRoot());
@@ -136,15 +136,15 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
 
 TEST(AmbientObjectTest, GetAttrMissing)
 {
-    auto seed = testId(0);
+    auto arg = testId(0);
     auto obj = std::make_shared<OuterObject>(
-        testSubject(0), mockResolver({{"getAttr:" + ambientHex(seed), trace::ResultMaybeType{std::nullopt}}}), stubAmbientRoot());
+        testSubject(0), mockResolver({{"getAttr:" + ambientHex(arg), trace::ResultMaybeType{std::nullopt}}}), stubAmbientRoot());
     EXPECT_EQ(obj->maybeGetAttr("missing"), nullptr);
 }
 
 TEST(AmbientObjectTest, GetListElem)
 {
-    auto seed = testId(0);
+    auto arg = testId(0);
     auto childCdi = subjectHashAfter(
         Subject{DerivedSubject{
             .parent = std::make_shared<const Subject>(testSubject(0)),
@@ -157,7 +157,7 @@ TEST(AmbientObjectTest, GetListElem)
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         mockResolver({
-            {"getListElem:" + ambientHex(seed), trace::ResultType{"string"}},
+            {"getListElem:" + ambientHex(arg), trace::ResultType{"string"}},
             {"getWHNF:" + childHex, trace::ResultWHNF{"string", trace::WHNFString{"world", {}}}},
         }),
         stubAmbientRoot());
@@ -168,11 +168,11 @@ TEST(AmbientObjectTest, GetListElem)
 
 TEST(AmbientObjectTest, GetAttrNames)
 {
-    auto seed = testId(0);
+    auto arg = testId(0);
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         mockResolver({
-            {"getWHNF:" + ambientHex(seed), trace::ResultWHNF{"set", trace::WHNFAttrs{{"a", "b", "c"}}}},
+            {"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"set", trace::WHNFAttrs{{"a", "b", "c"}}}},
         }),
         stubAmbientRoot());
     auto names = obj->getAttrNames();

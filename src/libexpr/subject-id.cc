@@ -229,7 +229,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
        without a second XOR at this level.
 
        For positional seeds, only direct observations matter:
-       facts in earlier edges whose `from` equals the seed's
+       facts in earlier edges whose `from` equals the arg's
        precondition state hash at that edge contribute to its
        evolution. */
     return std::visit(

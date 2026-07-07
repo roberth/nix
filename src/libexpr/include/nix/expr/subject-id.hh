@@ -146,7 +146,7 @@ Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std
 
     **Argument-level only.** Per the design (Principle 3, per-arg
     centralization), only argument-level subjects bear state hashes:
-    `Arg` (cb_arg seed, evolves via own-loop),
+    `Arg` (cb_arg arg, evolves via own-loop),
     `ApplyResultSubject` (composes constituent argument state hashes), and
     `PostulatedIdempotentRead` (escape hatch). `DerivedSubject` does not
     have a state hash — observations on derived values fold into the cb_arg
@@ -274,8 +274,8 @@ inline Hash combineArgAncestries(const Hash & fnArgAncestry, const Hash & argArg
 }
 
 /** Short readable representation of a Subject — for tracing logs.
-    Example: `seed(2)`, `getAttr(seed(2), "left")`,
-    `applyResult(seed(0), seed(1))`, `opaque(ab12cd...)`. */
+    Example: `arg(2)`, `getAttr(arg(2), "left")`,
+    `applyResult(arg(0), arg(1))`, `opaque(ab12cd...)`. */
 std::string describe(const Subject & subject);
 
 /** Per-cb-apply observation context.

@@ -21,7 +21,7 @@ namespace nix {
  * Stateful resolver mapping ambient ids to outer/local Objects.
  *
  * Ambient ids are SHA-256 hashes:
- * - Seed roots: hashString("seed:N") for outer values entering the
+ * - Arg roots: hashString("arg:N") for outer values entering the
  *   inner; hashString("local:N") for local values reaching back to
  *   the outer through a covariant callback.
  * - Derived ids: the producer query's queryHash. A child Object
@@ -79,7 +79,7 @@ struct OuterQuery
     /** Dispatch a query against the given outer Object directly,
         bypassing the resolver's id → Object lookup. Boundary-trace-
         only discipline (per the design doc): each cb apply's queryFn
-        captures its own outer arg and calls this directly for seed
+        captures its own outer arg and calls this directly for arg
         observations, so sibling cb invocations don't collide on the
         shared `outerValues` map. */
     OuterQueryResult on(std::shared_ptr<Object> obj, const trace::QueryVariant & q) const
@@ -132,7 +132,7 @@ struct OuterQuery
    Object* identity (NOT argId): two distinct argObjs can share the
    same argId hash (e.g. a frozen ReplayCallbackArg built by the
    walker's apply branch and a live InterpreterObject from a fall-back
-   inner rerun both seed at depth-marker), and they correctly resolve
+   inner rerun both arg at depth-marker), and they correctly resolve
    to distinct thunks here. */
 struct BridgedThunkCache
 {
@@ -173,8 +173,8 @@ struct OuterApply
 
     /** Same as run, but the fnObj is provided directly instead of
         being resolved via the registry. Used by makeCachedFnPrimOp's
-        applyFn closure when the seed OuterObject itself is being
-        applied (= fnId is the seed's state hash, which boundary discipline
+        applyFn closure when the arg OuterObject itself is being
+        applied (= fnId is the arg's state hash, which boundary discipline
         keeps unregistered to avoid sibling collisions; the closure
         captures outerArgObj instead). */
     std::pair<OuterId, OuterId> runOn(
@@ -209,7 +209,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
     /* Outer-direction proxies registered live by the ReplayCallbackArg's
        `<replay-local-lambda>` primop (= `registerAmbientResolverProxy`).
        Keyed by `(subject, argAncestry)` so the walker's `resolveStateHash`
-       can match the registered seed's subject-id-evolved state hash at any
+       can match the registered arg's subject-id-evolved state hash at any
        walk-edge index, not just the initial one. List rather than
        map because subject equality isn't trivially hashable;
        n_registrations is small (= one per cb-apply boundary the
@@ -233,7 +233,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
     }
 
     /** Apply an outer fn (resolved from fnId) to a local argObj.
-     *  Returns a pair: (argId, resultId). argId is the local seed
+     *  Returns a pair: (argId, resultId). argId is the local arg
      *  Hash assigned to argObj; resultId is the producer queryHash
      *  of QueryApply{fn=fnId, arg=argId}, under which the
      *  resulting Object is registered as an outer value. The
@@ -250,7 +250,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
 
     /** Apply variant where fnObj is provided directly (= callers
         with a captured reference, like makeCachedFnPrimOp's
-        applyFn closure for seed-self applies). */
+        applyFn closure for arg-self applies). */
     std::pair<OuterId, OuterId> applyOn(
         std::shared_ptr<Object> fnObj, OuterId fnId,
         std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
@@ -449,7 +449,7 @@ static PrimOp * makeCachedFnPrimOp(
                     [fnObj, innerEval, resolver](EvalState & state, const PosIdx pos, Value ** args, Value & v) {
                         // Do NOT force args[0] — it may be self-referential.
                         auto outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
-                        /* Scope-graph cell for this seed. Parent = the
+                        /* Scope-graph cell for this arg. Parent = the
                            fn proxy's cell (so curried applies chain
                            through depth 0, 1, ... naturally).
                            cell.liveObject is set to the OuterObject
@@ -457,7 +457,7 @@ static PrimOp * makeCachedFnPrimOp(
                            navigation returns the proxy. */
                         auto parentCell = effectiveArgCell(*fnObj);
                         auto seedCell = ArgCell::make(parentCell, /*liveObject set below*/ nullptr);
-                        /* state hash fix: this seed's Subject is the positional
+                        /* state hash fix: this arg's Subject is the positional
                            handle at this static apply-stack depth.
                            Sibling cb apply invocations share the same
                            Subject and discriminate via their observation
@@ -491,7 +491,7 @@ static PrimOp * makeCachedFnPrimOp(
                            and queryFn closures would all resolve to the
                            latest outer arg. Instead each invocation's
                            queryFn captures its own outerArgObj and uses
-                           it directly for seed (rootId) queries. */
+                           it directly for arg (rootId) queries. */
                         auto & innerEnv = *innerEval->getEvalState().environment;
                         OuterQueryFn queryFn = [resolver, outerArgObj, rootId,
                                                   &innerEnv, applyContext](
@@ -518,7 +518,7 @@ static PrimOp * makeCachedFnPrimOp(
                                are NOT pushed into applyContext.observations.
                                They would be noise from the apply-result
                                wrapper's perspective (their `fromHash` is
-                               the cb-arg seed's state hash, not the wrapper's,
+                               the cb-arg arg's state hash, not the wrapper's,
                                so the subject-id own-loop on the wrapper
                                doesn't fold them in) but the walk's size
                                growing from these silent pushes would
@@ -551,16 +551,16 @@ static PrimOp * makeCachedFnPrimOp(
                             std::shared_ptr<Object> argObj,
                             std::shared_ptr<const ArgCell> callerScope) {
                             /* Boundary-trace-only discipline keeps the
-                               cb-arg seed unregistered in
+                               cb-arg arg unregistered in
                                OuterRegistry. When the SEED ITSELF is
                                applied (= inner does `args 5` on the
-                               seed OuterObject), fnId == rootId.
+                               arg OuterObject), fnId == rootId.
                                `resolver->apply` would try
                                `resolveOuter(rootId)` and throw
                                "unknown value id". Route through
                                `applyOn` with the captured outerArgObj
                                instead — same path as queryFn's
-                               `queryOn` shortcut for direct seed
+                               `queryOn` shortcut for direct arg
                                queries. */
                             if (fnId == rootId) {
                                 auto [argId, resultId] = resolver->applyOn(
@@ -770,7 +770,7 @@ void registerAmbientResolverProxy(
        boundaries register different subjects (= different
        `applyDepth+1` values), so collisions across boundaries
        within one cache call are non-existent unless sibling
-       cb-applies share the same cb-arg seed depth — same
+       cb-applies share the same cb-arg arg depth — same
        boundary-trace-only caveat as the previous state hash-keyed version.
 
        `Subject` has no `operator==`; the primop only ever

@@ -122,7 +122,7 @@ class TracingReplayEvaluator : public Evaluator
     std::optional<std::string> dispatchAmbientQuery(const nlohmann::json & reqJson, ResolutionContext & ctx);
 
     /** Resolve a recorded ambient id (hex of a Hash) to a live
-        Object. Seed ids are found by walking ctx.currentProxy's
+        Object. Arg ids are found by walking ctx.currentProxy's
         parent / argCell chain on the proxy graph; derived ids are
         looked up by their producer Request in the Requests pool and
         resolved recursively. Per-walk memoisation in ctx.memo

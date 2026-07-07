@@ -129,10 +129,10 @@ Hash getAmbientResolverCallScope(const OuterResolver & resolver);
 /** Register a live outer-direction proxy under a subject-id `subject` +
     `argAncestry` in the resolver's outer-values map. Used by the
     `<replay-local-lambda>` primop at warm replay to publish the
-    live arg it received (args[0]) under the cb-arg seed's
+    live arg it received (args[0]) under the cb-arg arg's
     structural identity, so the OUTER walker can resolve env facts
-    whose `from` references the seed's state hash — at ANY walk-edge
-    index, since the env fact's `from` is the seed's subject-id-evolved
+    whose `from` references the arg's state hash — at ANY walk-edge
+    index, since the env fact's `from` is the arg's subject-id-evolved
     state hash at flush time and the walker doesn't know that index a
     priori. At cold these queries' answers came from the queryFn
     closure that captured the live outer arg; at warm this
@@ -151,9 +151,9 @@ void registerAmbientResolverProxy(
     if no registration matches at any edge. Used by
     `TracingReplayEvaluator::resolveStateHash` as a fallback after
     cell-chain and Requests-pool resolution fail, before the
-    "outer-seed by elimination" miss path. Iterating every edge
+    "outer-arg by elimination" miss path. Iterating every edge
     boundary is necessary because the env fact's `from` is the
-    seed's state hash at the writer's flush-time `envWalk` index
+    arg's state hash at the writer's flush-time `envWalk` index
     (= post-observations evolution), which differs from the
     initial state hash we registered under. */
 std::shared_ptr<Object> tryResolveAmbientResolverProxy(

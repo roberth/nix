@@ -427,9 +427,9 @@ public:
      *
      * The walker uses this to consult outer-direction proxies
      * registered live by the `<replay-local-lambda>` primop when
-     * resolving an inner-side cb-arg seed state hash that has no recorded
+     * resolving an inner-side cb-arg arg state hash that has no recorded
      * provenance — closes the gap where the warm walker dispatches
-     * env facts on the apply's argObj and the cb-arg seed has
+     * env facts on the apply's argObj and the cb-arg arg has
      * neither a producer Request nor a localArg sidecar.
      */
     virtual std::shared_ptr<struct OuterResolver> getAmbientResolver()

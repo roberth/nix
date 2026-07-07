@@ -56,7 +56,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        envWalk. Cold's writer would have inserted these as ε
        edges into envWalk; without this walker's walk-index
        falls short of cold's edgeIndex for later flushes referencing
-       seed(1) at post-inner-apply positions. */
+       arg(1) at post-inner-apply positions. */
 
     /* Per-walk resolution context. The cumulative subject-id walk
        (= `this->envWalk`) lives on the evaluator so it
@@ -393,7 +393,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
     if (!walkHit) {
         /* Walker missed. Rejected-edge obs are NOT committed to
            envWalk: they represent wrong paths whose responses
-           cold never recorded, so folding them into seed CDIs shifts
+           cold never recorded, so folding them into arg CDIs shifts
            subject_at_k to values cold never stamped. Per Asks-paradigm
            navigation invariant, CDIs are pure functions of the
            committed factset; rejected paths are not in that factset. */
@@ -435,7 +435,7 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
 /* Resolve a recorded ambient id (hex of a Hash) to a live Object.
    First check the per-walk memo (ctx.memo) for already-resolved ids.
    Then walk the proxy graph (ctx.currentProxy.parent → …) looking
-   for an argCell cell whose id matches — this is the seed-lookup
+   for an argCell cell whose id matches — this is the arg-lookup
    case, grounded in the proxy whose method triggered this walk
    rather than in any evaluator-global state.
    Then fall through to producer-Request resolution: find idStr in
@@ -579,17 +579,17 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
            always sidecar-registered by OuterResolver::apply (=
            inserting `{kind: "localArg", applyResultId: ...}` at the
            argId), and any derived value has a producer Request. Only
-           outer-seed state hashes minted by makeCachedFnPrimOp.impl — e.g.
+           outer-arg state hashes minted by makeCachedFnPrimOp.impl — e.g.
            a nested OuterObject for the int the callback body passes
            to inner_lambda in cb-higher-order's `g 10` — reach here.
 
            Live-proxy fallback: the `<replay-local-lambda>` primop
-           registers the args[0] it receives under the cb-arg seed's
+           registers the args[0] it receives under the cb-arg arg's
            initial state hash when fired (= registerAmbientResolverProxy in
            replay-callback-arg.cc). If we find a matching registration
            here, the OUTER walker resolves to that live proxy and
            dispatches the env fact live against outer's actual value
-           — capability-mediated, not cached. This closes the seed-
+           — capability-mediated, not cached. This closes the arg-
            resolution gap that otherwise kills cb-higher-order's
            DISALLOW_PARSE warm-replay steps.
 
@@ -623,7 +623,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
             }
         }
         tracingCacheLog(
-            "resolve %s: not in pool — no provenance (outer-seed by elimination); returning null",
+            "resolve %s: not in pool — no provenance (outer-arg by elimination); returning null",
             idStr.substr(0, 12));
         return nullptr;
     }
@@ -905,7 +905,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         sidecarJson["argAncestry"].get<std::string>(), HashAlgorithm::SHA256);
 
     Subject rootSubject{Arg{sidecarDepth}};
-    /* Sibling-discriminating walkFacts seed: inject walker's
+    /* Sibling-discriminating walkFacts arg: inject walker's
        currentProxy's applyContext observations into the ReplayCallbackArg's initial
        walk. Without this, ReplayCallbackArg's per-arg fields are computed against
        an empty walk — so sibling A's ReplayCallbackArg and sibling B's ReplayCallbackArg have
@@ -987,13 +987,13 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        BOTH the arg leaf's evolved CID (invariant across invocations
        in the outer walk — kept for chaseLocalArgSidecar-alignment)
        AND at the fn leaf's evolved CID at THIS invocation (which
-       DOES differ per invocation because seed(1)_evolved captures
+       DOES differ per invocation because arg(1)_evolved captures
        the outer walk's per-boundary ε folds). Cold's outer probe
        recorded `from = fromStateHashes[0]` which is the FIRST root's cid;
-       for `applyResult(getAttr(seed(1), "cb"), seed(N))` that first
-       root is seed(1). So walker's dispatch of `getWHNF from=X`
-       calls resolveStateHash(X = seed(1)_evolved) — memoising a
-       correction here would break other seed(1) resolutions.
+       for `applyResult(getAttr(arg(1), "cb"), arg(N))` that first
+       root is arg(1). So walker's dispatch of `getWHNF from=X`
+       calls resolveStateHash(X = arg(1)_evolved) — memoising a
+       correction here would break other arg(1) resolutions.
 
        Instead memoise at BOTH the LEAF (arg root) and at the
        applyResult subject's evolved cid, so any downstream lookup
@@ -1350,7 +1350,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        counterparts, or an opaque state hash). Each call constructs a
        fresh wrapper. Sibling cb apply invocations share the same
        (fnId, argId) at the boundary by construction (= the arg's
-       state hash is the same positional seed across siblings), so a
+       state hash is the same positional arg across siblings), so a
        cross-invocation registry keyed by the apply Request hash
        would last-write-wins and conflate sibling invocations'
        per-call observation state — exactly the anti-pattern the

@@ -380,9 +380,9 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
     /* Capture the resolver so the primop can register the live arg
        it receives (args[0]) as an outer-direction proxy. The OUTER
        walker dispatches env facts whose `from` references the cb-arg
-       seed's initial state hash (= what the inner-side queryFn closure
+       arg's initial state hash (= what the inner-side queryFn closure
        captured at cold); without this registration the walker's
-       resolveStateHash falls through "outer-seed by elimination" and the
+       resolveStateHash falls through "outer-arg by elimination" and the
        fact's dispatch fails. May be nullptr in unit-test paths that
        construct a ReplayCallbackArg without a resolver — registration is
        skipped then. */
@@ -415,10 +415,10 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                      outerContextSaved,
                      resolverSaved](
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
-                /* Publish the live arg under the cb-arg seed's
+                /* Publish the live arg under the cb-arg arg's
                    structural identity so the OUTER walker's
                    `resolveStateHash` can resolve env facts whose `from`
-                   is the seed's subject-id-evolved state hash at any
+                   is the arg's subject-id-evolved state hash at any
                    walk-edge index. Registration carries the
                    subject + argAncestry (= `Arg{applyDepth+1}`
                    at `applyArgAncestry`), matching what
@@ -495,7 +495,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                 }};
 
                 /* Apply argAncestry: Merkle(fn.argAncestry, arg.argAncestry). The arg
-                   crosses the boundary as a fresh positional seed
+                   crosses the boundary as a fresh positional arg
                    (argAncestry=0); fn carries applyArgAncestrySaved (= callArgAncestry
                    from sidecar). Used for stamping the apply Fact AND
                    for the synthetic's downstream probes — both

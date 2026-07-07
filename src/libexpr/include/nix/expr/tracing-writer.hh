@@ -186,7 +186,7 @@ class TracingWriter
            closeAsksEdge(false) drained pre-boundary env chunk). This
            makes the walker dispatch the ε edge BEFORE the body's
            env facts that follow, so the lambda-ReplayCallbackArg's primop
-           fires and seedCell extension happens in time for seed(N+1)
+           fires and seedCell extension happens in time for arg(N+1)
            probes to resolve. */
         size_t insertionIndex;
         /* prevQFactSetHash AT openApplyBoundary time = cur the
