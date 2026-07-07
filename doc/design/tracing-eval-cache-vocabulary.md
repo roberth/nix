@@ -335,16 +335,17 @@ disambiguated in storage by `InnerValueResponse.contextHash`);
 §§15–16 wire this through the Object graph; §17 caches
 step-by-step transitions. Storage lives in §18.
 
-### 12. Subject identity
+### 12. Subject
 
-Values inside a callback body need a stable name — the value's
-content changes as **observations** accumulate, but its identity
-should stay pinned. That name is a **Subject**.
+Every Ambient Fact is *about* something — an inner-owned value
+being probed. That thing needs a name that stays fixed while
+its content varies across observations. The name is a
+**Subject**.
 
 **Observation** — a Fact viewed through the subject-identity
 lens. Just `(fromHash, elementHash)`:
-- `fromHash` — the state hash the subject had when it emitted
-  this observation.
+- `fromHash` — the state hash at the Subject when this Fact was
+  emitted.
 - `elementHash` — `SHA-256(requestHash || responseHash)`, same
   as the Fact's contribution to the XOR-fold.
 
@@ -360,7 +361,7 @@ ObservationSet { std::vector<Observation> observations; }` in
 `subject-id.hh`. A **history** is a sequence of
 ObservationSets.
 
-**Subject** — a structural identifier for a value. Four variants:
+**Subject** — a structural name for a value. Four variants:
 
 - **Arg{depth}** — a callback arg at a static apply-stack depth
   (reverse De Bruijn).
@@ -382,12 +383,13 @@ history, argAncestry, or invocation.
 construction. Used as a Merkle key when a Subject is referenced
 by hash.
 
-### 13. State hash — the subject's evolving identity
+### 13. State hash — situational characterization
 
-**state hash** — a subject's identity at a history position:
-combines the Subject, the enclosing argAncestry, and the
-observations folded in so far. Evolves as observations accumulate;
-situational, not stable.
+**state hash** — the situational characterization at a Subject
+at a history position: SHA-256 of a serialization combining the
+Subject, the enclosing argAncestry, and the observations folded
+in so far. Evolves as observations accumulate; situational, not
+stable.
 
 **stateHashAt(subject, argAncestry, history, step)** — the state
 hash of an arg-level subject before step `step` folds in. Traps
@@ -492,12 +494,12 @@ fast-path caches the individual fold-step transitions.
 **SubjectEvolutionEdge** — a persistent table (schema in §18)
 with one row per single-observation fold step. Populated by the
 writer via a callback during `stateHashAtStamping`; consumed by
-the replay walker to navigate a subject's evolution in O(1) per
-step.
+the replay walker to navigate step-by-step through observations
+at a Subject in O(1) per step.
 
 **EvolutionStep** — one row's worth of data as a struct in
-`subject-id.hh`: `curBefore` (subject's state hash before this
-observation folds in), the observation's `fromHash` and
+`subject-id.hh`: `curBefore` (state hash at the Subject before
+this observation folds in), the observation's `fromHash` and
 `elementHash`, and `curAfter` (state hash after). Emitted by
 `stateHashAtStamping` to a callback; the writer's callback
 persists each into `SubjectEvolutionEdge`.
