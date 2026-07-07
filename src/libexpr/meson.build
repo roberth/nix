@@ -135,7 +135,7 @@ sources = files(
   'subject-id.cc',
   'attr-path.cc',
   'attr-set.cc',
-  'coarse-eval-cache-cursor-object.cc',
+  'coarse-eval-cache-object.cc',
   'coarse-eval-cache.cc',
   'environment.cc',
   'environment/system.cc',

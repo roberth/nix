@@ -12,7 +12,7 @@ headers = [ config_pub_h ] + files(
   'attr-path.hh',
   'subject-id.hh',
   'attr-set.hh',
-  'coarse-eval-cache-cursor-object.hh',
+  'coarse-eval-cache-object.hh',
   'coarse-eval-cache.hh',
   'counter.hh',
   'environment.hh',

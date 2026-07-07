@@ -240,7 +240,7 @@ public:
      * Get the attribute path used to reach this object.
      * Returns nullopt if the path is unknown (e.g., not tracked).
      * Returns empty vector for root objects.
-     * Implemented by ProvenanceObject and CoarseEvalCacheCursorObject.
+     * Implemented by ProvenanceObject and CoarseEvalCacheObject.
      */
     virtual std::optional<std::vector<std::string>> getAttrPath()
     {

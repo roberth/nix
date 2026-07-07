@@ -10,7 +10,7 @@
 #include <variant>
 
 namespace nix {
-class CoarseEvalCacheCursorObject;
+class CoarseEvalCacheObject;
 class Object;
 } // namespace nix
 
@@ -41,7 +41,7 @@ class EvalCache : public std::enable_shared_from_this<EvalCache>
 {
     friend class AttrCursor;
     friend struct CachedEvalError;
-    friend class nix::CoarseEvalCacheCursorObject;
+    friend class nix::CoarseEvalCacheObject;
 
     std::shared_ptr<AttrDb> db;
     EvalState & state;
@@ -121,7 +121,7 @@ class AttrCursor : public std::enable_shared_from_this<AttrCursor>
 {
     friend class EvalCache;
     friend struct CachedEvalError;
-    friend class nix::CoarseEvalCacheCursorObject;
+    friend class nix::CoarseEvalCacheObject;
 
     ref<EvalCache> root;
     using Parent = std::optional<std::pair<ref<AttrCursor>, Symbol>>;

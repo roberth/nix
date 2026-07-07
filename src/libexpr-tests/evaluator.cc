@@ -164,7 +164,7 @@ protected:
 
         // CoarseEvalCache is designed for flake initialization via getRoot(EvalCache),
         // so evalExpr() falls back to Interpreter without caching. We manually create
-        // cache instances here to test CoarseEvalCacheCursorObject's caching behavior.
+        // cache instances here to test CoarseEvalCacheObject's caching behavior.
         auto & state = *evalStateForTestSetupOnly;
         auto e = state.parseExprFromString(expr, state.rootedPath(CanonPath::root));
         auto v = state.allocValue();

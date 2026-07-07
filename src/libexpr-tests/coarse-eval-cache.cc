@@ -2,7 +2,7 @@
 #include <memory>
 
 #include "nix/expr/coarse-eval-cache.hh"
-#include "nix/expr/coarse-eval-cache-cursor-object.hh"
+#include "nix/expr/coarse-eval-cache-object.hh"
 #include "nix/expr/eval-cache.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/interpreter.hh"
@@ -56,7 +56,7 @@ protected:
 TEST_F(CoarseEvalCacheTest, WrapEvalCacheAsObject)
 {
     auto evalCache = createEvalCache("{ foo = \"bar\"; nested = { x = 42; }; }");
-    auto obj = std::make_shared<CoarseEvalCacheCursorObject>(evalCache->getRoot());
+    auto obj = std::make_shared<CoarseEvalCacheObject>(evalCache->getRoot());
 
     // Verify we can navigate through the Object interface
     auto foo = obj->maybeGetAttr("foo");

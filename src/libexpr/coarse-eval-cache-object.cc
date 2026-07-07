@@ -1,4 +1,4 @@
-#include "nix/expr/coarse-eval-cache-cursor-object.hh"
+#include "nix/expr/coarse-eval-cache-object.hh"
 #include "nix/expr/environment/system.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/interpreter-object.hh"
@@ -7,20 +7,20 @@
 
 namespace nix {
 
-CoarseEvalCacheCursorObject::CoarseEvalCacheCursorObject(ref<eval_cache::AttrCursor> cursor)
+CoarseEvalCacheObject::CoarseEvalCacheObject(ref<eval_cache::AttrCursor> cursor)
     : cursor(cursor)
 {
 }
 
-std::shared_ptr<Object> CoarseEvalCacheCursorObject::maybeGetAttr(const std::string & name)
+std::shared_ptr<Object> CoarseEvalCacheObject::maybeGetAttr(const std::string & name)
 {
     auto attr = cursor->maybeGetAttr(name);
     if (!attr)
         return nullptr;
-    return std::make_shared<CoarseEvalCacheCursorObject>(ref(attr));
+    return std::make_shared<CoarseEvalCacheObject>(ref(attr));
 }
 
-std::vector<std::string> CoarseEvalCacheCursorObject::getAttrNames()
+std::vector<std::string> CoarseEvalCacheObject::getAttrNames()
 {
     // getAttrs() already throws if not an attrset
     auto attrs = cursor->getAttrs();
@@ -31,18 +31,18 @@ std::vector<std::string> CoarseEvalCacheCursorObject::getAttrNames()
     return result;
 }
 
-std::string CoarseEvalCacheCursorObject::getStringIgnoreContext()
+std::string CoarseEvalCacheObject::getStringIgnoreContext()
 {
     // Use getString() which uses the cache and throws if not a string
     return cursor->getString();
 }
 
-std::pair<std::string, NixStringContext> CoarseEvalCacheCursorObject::getStringWithContext()
+std::pair<std::string, NixStringContext> CoarseEvalCacheObject::getStringWithContext()
 {
     return cursor->getStringWithContext();
 }
 
-std::string CoarseEvalCacheCursorObject::getStringWithoutContext()
+std::string CoarseEvalCacheObject::getStringWithoutContext()
 {
     auto [str, context] = getStringWithContext();
     if (!context.empty())
@@ -55,7 +55,7 @@ std::string CoarseEvalCacheCursorObject::getStringWithoutContext()
     return str;
 }
 
-RootedPath CoarseEvalCacheCursorObject::getPath()
+RootedPath CoarseEvalCacheObject::getPath()
 {
     // Paths are not cached by EvalCache, so we need to force evaluation
     // But first check the lazy type to avoid forcing if it's definitely not a path
@@ -72,7 +72,7 @@ RootedPath CoarseEvalCacheCursorObject::getPath()
     return v.rootedPath();
 }
 
-bool CoarseEvalCacheCursorObject::getBool(std::string_view errorCtx)
+bool CoarseEvalCacheObject::getBool(std::string_view errorCtx)
 {
     try {
         return cursor->getBool();
@@ -83,7 +83,7 @@ bool CoarseEvalCacheCursorObject::getBool(std::string_view errorCtx)
     }
 }
 
-NixInt CoarseEvalCacheCursorObject::getInt(std::string_view errorCtx)
+NixInt CoarseEvalCacheObject::getInt(std::string_view errorCtx)
 {
     try {
         return cursor->getInt();
@@ -94,7 +94,7 @@ NixInt CoarseEvalCacheCursorObject::getInt(std::string_view errorCtx)
     }
 }
 
-NixFloat CoarseEvalCacheCursorObject::getFloat(std::string_view errorCtx)
+NixFloat CoarseEvalCacheObject::getFloat(std::string_view errorCtx)
 {
     try {
         // Floats are not cached by EvalCache, so we need to force evaluation
@@ -109,7 +109,7 @@ NixFloat CoarseEvalCacheCursorObject::getFloat(std::string_view errorCtx)
     }
 }
 
-size_t CoarseEvalCacheCursorObject::getListSize()
+size_t CoarseEvalCacheObject::getListSize()
 {
     // General lists caching is unimplemented for CoarseEvalCache, so we need to force evaluation
     auto & v = cursor->forceValue();
@@ -118,7 +118,7 @@ size_t CoarseEvalCacheCursorObject::getListSize()
     return v.listSize();
 }
 
-std::shared_ptr<Object> CoarseEvalCacheCursorObject::getListElem(size_t index)
+std::shared_ptr<Object> CoarseEvalCacheObject::getListElem(size_t index)
 {
     // General lists caching is unimplemented for CoarseEvalCache, so we need to force evaluation
     auto & v = cursor->forceValue();
@@ -131,17 +131,17 @@ std::shared_ptr<Object> CoarseEvalCacheCursorObject::getListElem(size_t index)
 }
 
 // Override default: uses cached value directly
-std::vector<std::string> CoarseEvalCacheCursorObject::getListOfStringsNoCtx()
+std::vector<std::string> CoarseEvalCacheObject::getListOfStringsNoCtx()
 {
     return cursor->getListOfStrings();
 }
 
-ObjectType CoarseEvalCacheCursorObject::getTypeLazy()
+ObjectType CoarseEvalCacheObject::getTypeLazy()
 {
     return cursor->getTypeLazy();
 }
 
-ObjectType CoarseEvalCacheCursorObject::getType()
+ObjectType CoarseEvalCacheObject::getType()
 {
     auto type = cursor->getTypeLazy();
     if (type != nThunk)
@@ -150,13 +150,13 @@ ObjectType CoarseEvalCacheCursorObject::getType()
     return cursor->forceValue().type();
 }
 
-RootValue CoarseEvalCacheCursorObject::defeatCache()
+RootValue CoarseEvalCacheObject::defeatCache()
 {
     // Force evaluation and return the actual Value, bypassing the lossy cache
     return allocRootValue(&cursor->forceValue());
 }
 
-std::optional<FunctionInfo> CoarseEvalCacheCursorObject::getFunctionInfo()
+std::optional<FunctionInfo> CoarseEvalCacheObject::getFunctionInfo()
 {
     // Functions are not cached, so we need to force evaluation
     auto & v = cursor->forceValue();
@@ -175,7 +175,7 @@ std::optional<FunctionInfo> CoarseEvalCacheCursorObject::getFunctionInfo()
     return info;
 }
 
-std::optional<std::vector<std::string>> CoarseEvalCacheCursorObject::getAttrPath()
+std::optional<std::vector<std::string>> CoarseEvalCacheObject::getAttrPath()
 {
     auto attrPath = cursor->getAttrPath();
     std::vector<std::string> result;

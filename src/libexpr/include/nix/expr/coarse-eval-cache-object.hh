@@ -12,12 +12,12 @@ namespace nix {
 /**
  * Object implementation that wraps an AttrCursor.
  */
-class CoarseEvalCacheCursorObject : public Object
+class CoarseEvalCacheObject : public Object
 {
     ref<eval_cache::AttrCursor> cursor;
 
 public:
-    explicit CoarseEvalCacheCursorObject(ref<eval_cache::AttrCursor> cursor);
+    explicit CoarseEvalCacheObject(ref<eval_cache::AttrCursor> cursor);
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
 
