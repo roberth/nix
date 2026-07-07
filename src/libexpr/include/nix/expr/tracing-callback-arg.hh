@@ -50,7 +50,7 @@ class TracingCallbackArg : public Object
 
     /** This local's state hash, scoped via argAncestry. Computed
         on demand from `subject` + `argAncestry`. */
-    OuterId localId() const { return subjectHashAfter(subject, argAncestry, {}); }
+    OuterId localId() const { return stateHashAfterSubject(subject, argAncestry, {}); }
 
     /* The argCell cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;

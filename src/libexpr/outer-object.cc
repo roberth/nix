@@ -38,7 +38,7 @@ OuterObject::OuterObject(
 
 std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
 {
-    auto stateHash = subjectHashAfter(subject, argAncestry, {});
+    auto stateHash = stateHashAfterSubject(subject, argAncestry, {});
     trace::QueryGetAttr q{name, std::string{}};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
     auto qr = queryFn(stateHash, q, subject, argAncestry);
@@ -65,7 +65,7 @@ trace::ResultWHNF & OuterObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    auto stateHash = subjectHashAfter(subject, argAncestry, {});
+    auto stateHash = stateHashAfterSubject(subject, argAncestry, {});
     trace::QueryGetWHNF q{std::string{}};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
     auto qr = queryFn(stateHash, q, subject, argAncestry);
@@ -163,7 +163,7 @@ size_t OuterObject::getListSize()
 
 std::shared_ptr<Object> OuterObject::getListElem(size_t index)
 {
-    auto stateHash = subjectHashAfter(subject, argAncestry, {});
+    auto stateHash = stateHashAfterSubject(subject, argAncestry, {});
     trace::QueryGetListElem q{std::string{}, index};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
     auto qr = queryFn(stateHash, q, subject, argAncestry);
@@ -210,7 +210,7 @@ RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<OuterRe
 
 std::optional<FunctionInfo> OuterObject::getFunctionInfo()
 {
-    auto stateHash = subjectHashAfter(subject, argAncestry, {});
+    auto stateHash = stateHashAfterSubject(subject, argAncestry, {});
     trace::QueryGetFunctionInfo q{std::string{}};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
     auto qr = queryFn(stateHash, q, subject, argAncestry);
@@ -250,7 +250,7 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
        for queryFn lookups agree. */
     int localDepth = callerScope ? callerScope->depth + 1 : 0;
     Subject argSubject{Arg{localDepth}};
-    applyFn(subjectHashAfter(subject, argAncestry, {}), std::move(argObj), callerScope);
+    applyFn(stateHashAfterSubject(subject, argAncestry, {}), std::move(argObj), callerScope);
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(subject),
         .arg = std::make_shared<const Subject>(std::move(argSubject)),

@@ -153,7 +153,7 @@ Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std
     root's own-loop and the derived value is referenced via
     `(root_cdi, path)`. Passing a `DerivedSubject` traps; callers
     that want a content-addressed identifier for any Subject
-    (including derived) should use `subjectHashAt` instead. */
+    (including derived) should use `stateHashAtSubject` instead. */
 Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk, size_t edgeIndex);
 
 /** Grouping-independent converged fold. Flattens `walk` into a
@@ -183,12 +183,12 @@ Hash stateHashConverged(
     `GetAttr`, similarly for `GetListElem`. Used by `OuterObject`,
     `TracingCallbackArg`, etc. to expose a single-`Hash` identity
     handle even though derived values don't have state hashes proper. */
-Hash subjectHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk, size_t edgeIndex);
+Hash stateHashAtSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk, size_t edgeIndex);
 
-/** Convenience: `subjectHashAt` at the walk's tail (= edgeIndex
+/** Convenience: `stateHashAtSubject` at the walk's tail (= edgeIndex
     = walk.size()). Mirrors `stateHashAfter` but defined for all
     subject forms. */
-Hash subjectHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk);
+Hash stateHashAfterSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk);
 
 /** Per-subject observation trie fold step, as consumed by the subject-evolution fast-path
     stamping / navigation. Emitted by `stateHashAtStamping`

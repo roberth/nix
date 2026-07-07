@@ -529,7 +529,7 @@ static PrimOp * makeCachedFnPrimOp(
                                parentHash must be computed first to
                                build the query). The cb-arg
                                OuterObject's own state hash uses
-                               subjectHashAfter with empty walk
+                               stateHashAfterSubject with empty walk
                                (= content-only) anyway, so dropping
                                these pushes is consistent throughout. */
                             return qr;

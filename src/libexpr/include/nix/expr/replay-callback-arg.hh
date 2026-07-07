@@ -155,7 +155,7 @@ public:
         EvalState * state = nullptr)
         : subject(std::move(subject_))
         , argAncestry(std::move(scope_))
-        , localId(subjectHashAt(subject, argAncestry, *walkFacts_, 0))
+        , localId(stateHashAtSubject(subject, argAncestry, *walkFacts_, 0))
         , walkFacts(std::move(walkFacts_))
         , chainCursor(std::move(chainCursor_))
         , outerContext(std::move(outerContext_))
