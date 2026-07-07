@@ -555,5 +555,4 @@ Two rules the vocabulary above obeys:
 - The design rationale (why XOR-fold, why Patricia split, why
   subject-evolution edges) — see `tracing-eval-cache.md`.
 - Historical vocabulary and the transitions from it — see git
-  history and the (throwaway) `tracing-eval-cache-vocabulary-cleanup.md`
-  plan.
+  history.
