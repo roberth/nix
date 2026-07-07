@@ -300,7 +300,7 @@ yields the delta by which the FactSet's hash changes when this
 set is consumed — mathematically the same operation as
 `XOR-fold` in §4, but scoped to one step. `struct
 ObservationSet { std::vector<Observation> observations; }` in
-`subject-id.hh`. A **walk** (§13) is a sequence of
+`subject-id.hh`. A **history** is a sequence of
 ObservationSets.
 
 **Subject** — a structural identifier for a value. Four variants:
@@ -327,30 +327,30 @@ hold a subject's base hash use this suffix.
 
 ### 13. State hash — the subject's evolving identity
 
-**state hash** — a subject's identity at a walk position:
+**state hash** — a subject's identity at a history position:
 combines the Subject, the enclosing argAncestry, and the
 observations folded in so far. Evolves as observations accumulate;
 situational, not stable.
 
-**stateHashAt(argId, argAncestry, walk, k)** — the state hash of
-an arg-level subject at the precondition of edge `k`. Traps on
-`DerivedSubject` — derived values have no own observations to
+**stateHashAt(argId, argAncestry, history, step)** — the state
+hash of an arg-level subject before step `step` folds in. Traps
+on `DerivedSubject` — derived values have no own observations to
 fold; use `subjectHashAt` instead.
 
-**stateHashAfter(argId, argAncestry, walk)** — `stateHashAt` at
-`k = walk.size()`.
+**stateHashAfter(argId, argAncestry, history)** — `stateHashAt`
+at `step = history.size()`.
 
 **stateHashConverged(argId, argAncestry, observations)** — state
 hash computed over an unordered observation set: same result
 regardless of how observations were grouped into edges. Used by
-the replay walker as a fallback when walk-order navigation
+the replay walker as a fallback when step-by-step navigation
 misses.
 
-**subjectHashAt(subject, argAncestry, walk, k)** — returns a
-hash for any Subject variant. Arg-level: `stateHashAt(...)`.
+**subjectHashAt(subject, argAncestry, history, step)** — returns
+a hash for any Subject variant. Arg-level: `stateHashAt(...)`.
 Derived: the producer QueryGetAttr's queryHash — the Queries-pool
-key of the query that would produce the derived value at k. Two
-different kinds of hash unified in one call.
+key of the query that would produce the derived value at step
+`step`. Two different kinds of hash unified in one call.
 
 **fromStateHashOf(query)** — reads the `from` field of a query
 and returns it as a `Hash`. Every observation a subject emits
@@ -419,9 +419,9 @@ proxy's cell, or null for non-proxy Objects.
 
 ### 17. Subject-evolution fast-path
 
-The state hash of a subject at some walk position is a pure
-function of `(subject, argAncestry, walk, k)`, but naive
-evaluation is O(walk.size()) per query. The subject-evolution
+The state hash of a subject at some history position is a pure
+function of `(subject, argAncestry, history, step)`, but naive
+evaluation is O(history.size()) per query. The subject-evolution
 fast-path caches the individual fold-step transitions.
 
 **SubjectEvolutionEdge** — a persistent table (schema in §18)
@@ -468,7 +468,7 @@ caches.
 Two rules the vocabulary above obeys:
 
 1. **`Id` marks stable identity.** A `*Id` name promises the value
-   does not depend on observations, walks, argAncestry, or
+   does not depend on observations, history, argAncestry, or
    invocations. `argId`, `argIdHash`, `PositionalArgId` (proposed
    for `PositionalSeed`) — all stable. `stateHash`, `argAncestry`,
    `factSetHash` — situational, therefore never `*Id`.
@@ -476,7 +476,7 @@ Two rules the vocabulary above obeys:
 2. **`Hash` is neutral.** It says only "the value is a `Hash`."
    Distinctive prefixes clarify what the hash is *of* — `queryHash`
    of a query payload, `resultHash` of a result, `stateHash` of a
-   subject's state at a walk position.
+   subject's state at a history position.
 
 ## Appendix B: what this dictionary does not cover
 
