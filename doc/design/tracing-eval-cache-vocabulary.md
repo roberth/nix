@@ -244,7 +244,7 @@ side owns a value, the other side is what probes it:
   through the callback-arg objects (`TracingCallbackArg` /
   `ReplayCallbackArg`). Queries about these are
   `InnerValueRequest`s and belong to the **Ambient interaction
-  proper**, which is what §§11–18 cover.
+  proper** (§11).
 
 Both wrappers carry the same `Query` / `Result` payload; what
 distinguishes them is which side owns the value being queried.
@@ -255,7 +255,11 @@ Vocabulary that carries over unchanged from Query/Env:
 - `Request`, `Response`, `Fact`, `element hash`, XOR-fold.
 - `RequestSet`, `factSetHash`.
 
-Ambient-specific vocabulary is what §11 onward defines.
+Ambient-specific payload types and edges are defined in §11. The
+subject-identity machinery those Facts hang off — Subject, state
+hash, argAncestry, callback-arg objects, cell navigation, the
+subject-evolution fast-path — is a separate concern, defined
+starting at §12. Storage for both lives in §18.
 
 ### 11. Ambient payload types and edges
 
@@ -279,6 +283,17 @@ to serve probes into a reconstructed frozen image of a callback
 arg. `contextHash` is the walker's Env-interaction `cur` at the
 time the response was recorded, disambiguating same-request
 observations under different outer contexts.
+
+---
+
+## Subject-identity machinery
+
+Each Ambient Fact needs to point at an evolving value. §§12–17
+define the terms: Subject (§12), the situational hashes
+characterizing subject state (§13–14), the object types that
+carry subjects through the callback body (§15–16), and the
+fast-path storage that avoids recomputing state at every step
+(§17). Storage lives in §18.
 
 ### 12. Subject identity
 
@@ -446,9 +461,11 @@ via a callback. Structurally equivalent to `stateHashAt`; used
 only at record time.
 
 
-### 18. Ambient storage tables (additions)
+### 18. Storage tables (Ambient and subject-id additions)
 
-Extends the base schema (§9):
+Extends the base schema (§9). Ambient (§11) contributes the first
+two rows; the subject-evolution fast-path (§17) contributes the
+third.
 
 ```
 InnerValueResponse(requestHash BLOB, contextHash BLOB, payload BLOB,
