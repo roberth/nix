@@ -519,7 +519,12 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     size_t edgeIndex = walkFactsSaved->size();
                     Hash applyArgAncestry = mergedApplyScope;
 
-                    auto fnSubjHex = stateHashAt(
+                    /* Polymorphic dispatch: subjectSaved can be a
+                       DerivedSubject when the outer accesses a fn-typed
+                       attribute of the callback arg (e.g. `arg.someFn 42`).
+                       Mirrors the writer's ambient stamping in
+                       TracingEvaluator::apply. */
+                    auto fnSubjHex = stateHashAtSubject(
                         subjectSaved, applyArgAncestry, *walkFactsSaved, edgeIndex)
                         .to_string(HashFormat::Base16, false);
                     Subject argSubjLocal{
