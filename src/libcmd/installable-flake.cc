@@ -201,7 +201,7 @@ std::pair<Value *, PosIdx> InstallableFlake::toValueCached(EvalState & state)
            inner cache writer/state at this flake-installable boundary,
            but the resolver still needs to exist for the queryFn to
            route ambient queries against the (non-cached) outer arg. */
-        auto resolver = makeAmbientResolver(&state, evaluator, nullptr);
+        auto resolver = makeOuterResolver(&state, evaluator, nullptr);
         auto * expr = new ExprFromObject(attr, evaluator.get_ptr(), resolver);
         state.mkThunk_(*v, expr);
         return {v, attr->getPos()};

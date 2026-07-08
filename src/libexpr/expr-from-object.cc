@@ -738,7 +738,7 @@ void ExprFromObjectAttr::eval(EvalState & state, Env & env, Value & v)
     ExprFromObject(std::move(childObj), innerEvaluator, outerResolver).eval(state, env, v);
 }
 
-std::shared_ptr<OuterResolver> makeAmbientResolver(
+std::shared_ptr<OuterResolver> makeOuterResolver(
     EvalState * outerState, std::shared_ptr<Evaluator> innerEvaluator, TracingWriter * innerWriter)
 {
     auto resolver = std::make_shared<OuterResolver>();

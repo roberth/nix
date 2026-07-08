@@ -58,7 +58,7 @@ struct ExprFromObject : ExprProxy
      * Propagated to child ExprFromObjects so nested function results
      * can dispatch calls regardless of which PrimOp variant created them.
      *
-     * Created via makeAmbientResolver(outerState, innerEvaluator).
+     * Created via makeOuterResolver(outerState, innerEvaluator).
      */
     std::shared_ptr<struct OuterResolver> outerResolver;
 
@@ -112,7 +112,7 @@ struct ExprFromObjectAttr : ExprProxy
  *   bridges argObj directly.
  */
 class TracingWriter;
-std::shared_ptr<OuterResolver> makeAmbientResolver(
+std::shared_ptr<OuterResolver> makeOuterResolver(
     EvalState * outerState,
     std::shared_ptr<Evaluator> innerEvaluator,
     TracingWriter * innerWriter = nullptr);

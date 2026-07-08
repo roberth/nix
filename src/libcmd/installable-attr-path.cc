@@ -69,7 +69,7 @@ std::pair<Value *, PosIdx> InstallableAttrPath::toValueCached(EvalState & state)
        crashes makeCachedFnPrimOp's queryFn if the result is a function
        and gets applied (e.g. via --apply or curried use). Pass a no-op
        resolver to route ambient queries against the outer arg. */
-    auto resolver = makeAmbientResolver(&state, evaluator, nullptr);
+    auto resolver = makeOuterResolver(&state, evaluator, nullptr);
     auto * expr = new ExprFromObject(obj, evaluator.get_ptr(), resolver);
     state.mkThunk_(*v, expr);
     return {v, obj->getPos()};

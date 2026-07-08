@@ -68,7 +68,7 @@ libexpr components that the primop wires together. Reading tour:
   `ExprFromObject` bridges an inner `ref<Object>` into an outer
   `Value` and creates `<cached-fn>` PrimOps for `nFunction` values.
   `ExprFromObjectAttr` is the lazy thunk used for attrset children.
-  `makeAmbientResolver(outerState, replayEval, writer)` constructs
+  `makeOuterResolver(outerState, replayEval, writer)` constructs
   the shared `OuterResolver`.
 - `src/libexpr/include/nix/expr/interpreter.hh` — `Interpreter`
   carries `std::shared_ptr<OuterResolver> outerResolver`, the slot
@@ -143,7 +143,7 @@ Inside `prim_cache`:
      misses fall through to fresh recording.
 
 4. **Set up the shared `OuterResolver`.**
-   `makeAmbientResolver(&state, replayEval, writer.get())` and
+   `makeOuterResolver(&state, replayEval, writer.get())` and
    assign to `interpreter->outerResolver`. The writer arg is what
    the callback-arg objects use to wrap covariant-callback args;
    `nullptr` would keep the wrap off. The same resolver instance
@@ -484,7 +484,7 @@ listed. What remains:
 - `src/libexpr/outer-object.cc` — `OuterObject` (outer-owned value
   the inner probes via Env).
 - `src/libexpr/expr-from-object.cc` — `ExprFromObject`,
-  `OuterResolver`, `makeAmbientResolver`, `makeCachedFnPrimOp`.
+  `OuterResolver`, `makeOuterResolver`, `makeCachedFnPrimOp`.
 - `src/libexpr/tracing-callback-arg.cc` /
   `replay-callback-arg.cc` — `TracingCallbackArg` /
   `ReplayCallbackArg` (writer/replay sides of covariant callbacks).

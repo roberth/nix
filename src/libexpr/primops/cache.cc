@@ -145,7 +145,7 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
 
     // Shared resolver for ambient interactions; threads through every
     // <cached-fn>/<outer-fn> PrimOp this call produces.
-    auto resolver = makeAmbientResolver(&state, replayEval.get_ptr(), writer.get());
+    auto resolver = makeOuterResolver(&state, replayEval.get_ptr(), writer.get());
     interpreter->outerResolver = resolver;
     /* Inherited scope for subject-id: uniquely identifies this cached
        call so sibling cached calls (different import / expr) get
