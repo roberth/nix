@@ -79,5 +79,5 @@ run_eval "after flag revert (back to data1/flagA)"
 
 echo
 db="$dir/decision-graph.sqlite"
-echo "v13 db: $(sqlite3 "$db" "SELECT 'asks=' || COUNT(*) FROM Asks UNION ALL SELECT 'terminals=' || COUNT(*) FROM Terminals UNION ALL SELECT 'factsets=' || COUNT(*) FROM FactSets UNION ALL SELECT 'requests=' || COUNT(*) FROM Requests UNION ALL SELECT 'responses=' || COUNT(*) FROM Responses UNION ALL SELECT 'results=' || COUNT(*) FROM Results" | paste -sd ' ' -)"
+echo "v13 db: $(sqlite3 "$db" "SELECT 'asks=' || COUNT(*) FROM Ask UNION ALL SELECT 'terminals=' || COUNT(*) FROM Terminal UNION ALL SELECT 'factsets=' || COUNT(*) FROM Requests UNION ALL SELECT 'requests=' || COUNT(*) FROM Requests UNION ALL SELECT 'responses=' || COUNT(*) FROM Results UNION ALL SELECT 'results=' || COUNT(*) FROM Results" | paste -sd ' ' -)"
 echo "v12 db: $(sqlite3 "$dir/index.sqlite" "SELECT 'queries=' || COUNT(*) FROM Queries UNION ALL SELECT 'results=' || COUNT(*) FROM Results UNION ALL SELECT 'shortcuts=' || COUNT(*) FROM Shortcuts UNION ALL SELECT 'bindings=' || COUNT(*) FROM Bindings" | paste -sd ' ' -)"

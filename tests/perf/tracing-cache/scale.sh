@@ -79,11 +79,11 @@ db_stats() {
     size_kb=$(stat -c%s "$db" 2>/dev/null || echo 0)
     size_kb=$((size_kb / 1024))
     rows=$(sqlite3 "$db" "
-        SELECT 'asks=' || (SELECT COUNT(*) FROM Asks) ||
-               ' terms=' || (SELECT COUNT(*) FROM Terminals) ||
-               ' facts=' || (SELECT COUNT(*) FROM FactSets) ||
+        SELECT 'ask=' || (SELECT COUNT(*) FROM Ask) ||
+               ' terminal=' || (SELECT COUNT(*) FROM Terminal) ||
                ' reqs=' || (SELECT COUNT(*) FROM Requests) ||
-               ' resps=' || (SELECT COUNT(*) FROM Responses);
+               ' results=' || (SELECT COUNT(*) FROM Results) ||
+               ' queries=' || (SELECT COUNT(*) FROM Queries);
     ")
     printf ">>> %-22s db=%6dKB %s\n" "$label" "$size_kb" "$rows"
 }

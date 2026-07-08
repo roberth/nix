@@ -46,21 +46,21 @@ sqlite3 "$db" <<'SQL'
 .headers on
 
 SELECT 'Requests' AS table_name, COUNT(*) AS rows FROM Requests
-UNION ALL SELECT 'Responses', COUNT(*) FROM Responses
+UNION ALL SELECT 'Responses', COUNT(*) FROM Results
 UNION ALL SELECT 'Queries', COUNT(*) FROM Queries
 UNION ALL SELECT 'Results', COUNT(*) FROM Results
 UNION ALL SELECT 'RequestSets', COUNT(*) FROM RequestSets
-UNION ALL SELECT 'FactSets', COUNT(*) FROM FactSets
-UNION ALL SELECT 'Asks', COUNT(*) FROM Asks
-UNION ALL SELECT 'Terminals', COUNT(*) FROM Terminals
+UNION ALL SELECT 'FactSets', COUNT(*) FROM Requests
+UNION ALL SELECT 'Asks', COUNT(*) FROM Ask
+UNION ALL SELECT 'Terminals', COUNT(*) FROM Terminal
 ORDER BY table_name;
 SQL
 
 echo
 echo "=== Sanity checks ==="
-asks=$(sqlite3 "$db" "SELECT COUNT(*) FROM Asks")
-terminals=$(sqlite3 "$db" "SELECT COUNT(*) FROM Terminals")
-factsets=$(sqlite3 "$db" "SELECT COUNT(*) FROM FactSets")
+asks=$(sqlite3 "$db" "SELECT COUNT(*) FROM Ask")
+terminals=$(sqlite3 "$db" "SELECT COUNT(*) FROM Terminal")
+factsets=$(sqlite3 "$db" "SELECT COUNT(*) FROM Requests")
 
 if [[ "$terminals" -lt 1 ]]; then
     echo "FAIL: expected at least 1 Terminal, got $terminals"

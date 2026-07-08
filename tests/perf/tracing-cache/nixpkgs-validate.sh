@@ -134,8 +134,8 @@ echo "Phases log: $PHASES_OUT"
 echo
 echo "=== Final DB stats ==="
 sqlite3 "$dir/decision-graph.sqlite" \
-    "SELECT 'asks=' || COUNT(*) FROM Asks
-     UNION ALL SELECT 'terminals=' || COUNT(*) FROM Terminals
+    "SELECT 'asks=' || COUNT(*) FROM Ask
+     UNION ALL SELECT 'terminals=' || COUNT(*) FROM Terminal
      UNION ALL SELECT 'requestSetNodes=' || COUNT(*) FROM RequestSetNodes
      UNION ALL SELECT 'queries=' || COUNT(*) FROM Queries
      UNION ALL SELECT 'requests=' || COUNT(*) FROM Requests

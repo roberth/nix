@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Measure cold vs warm cache behavior with v13's walk() integrated.
+# Measure cold vs warm cache behavior with tracing-eval-cache's walk() integrated.
 # Runs the same eval twice — first cold (writes recording), second
-# warm (should hit v13's walk()). Reports both timings and v13 DB
+# warm (should hit tracing-eval-cache's walk()). Reports both timings and tracing-eval-cache DB
 # row counts after each pass.
 set -euo pipefail
 
-dir="$(mktemp -d -t nix-v13-cold-warm-XXXXXX)"
+dir="$(mktemp -d -t nix-tracing-eval-cache-cold-warm-XXXXXX)"
 trap 'rm -rf "$dir"' EXIT
 
 export NIX_TRACING_CACHE_DIR="$dir"
@@ -29,17 +29,16 @@ expr='let x = { a = 1; b = "hello"; c = [1 2 3]; }; in x.a + (builtins.stringLen
 
 report_db() {
     local db="$dir/decision-graph.sqlite"
-    [[ -f "$db" ]] || { echo "  (v13 db not present)"; return; }
+    [[ -f "$db" ]] || { echo "  (db not present)"; return; }
     local counts
     counts=$(sqlite3 "$db" "
-        SELECT 'asks=' || COUNT(*) FROM Asks UNION ALL
-        SELECT 'terminals=' || COUNT(*) FROM Terminals UNION ALL
-        SELECT 'factsets=' || COUNT(*) FROM FactSets UNION ALL
+        SELECT 'ask=' || COUNT(*) FROM Ask UNION ALL
+        SELECT 'terminal=' || COUNT(*) FROM Terminal UNION ALL
         SELECT 'requests=' || COUNT(*) FROM Requests UNION ALL
-        SELECT 'responses=' || COUNT(*) FROM Responses UNION ALL
-        SELECT 'results=' || COUNT(*) FROM Results
+        SELECT 'results=' || COUNT(*) FROM Results UNION ALL
+        SELECT 'queries=' || COUNT(*) FROM Queries
     " | paste -sd ' ' -)
-    echo "  v13 db: $counts"
+    echo "  db: $counts"
 }
 
 timed_eval() {
