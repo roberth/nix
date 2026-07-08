@@ -122,10 +122,6 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
             tryPush({std::move(obs)});
     };
 
-    auto discardEdge = [&]() {
-        pendingEdgeObservations.clear();
-    };
-
     /* Dispatcher: turns a Request hash into the current Response
        hash. Memoised in responseFor for stable requests (file
        reads, env vars) where same request always gives same

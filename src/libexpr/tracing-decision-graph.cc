@@ -1397,7 +1397,6 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                     onEdgeAttempt(/*committed=*/ false, useful);
                 continue; // wrong branch
             }
-committed:;
 
             tracingCacheLog("history Q=%s rs=%s useful=%zu cur=%s -> nextCur=%s",
                             q.to_string(HashFormat::Base16, false).substr(0, 12),
