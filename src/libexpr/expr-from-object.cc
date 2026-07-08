@@ -38,7 +38,7 @@ namespace nix {
    Objects (values the inner reads through OuterObject). The Local
    direction (inner values the outer reads via callback) doesn't go
    through this registry at all on replay — those are served by
-   ReplayCallbackArg standins from InnerValueResponse. Local
+   ReplayCallbackArg proxies reading from InnerValueResponse. Local
    registration on the recording side was previously here as a write-
    only map; dropped because nothing read it back. */
 struct OuterRegistry
@@ -335,8 +335,9 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
        no new information to capture (the writer isn't recording here at
        warm) and (2) convert the ReplayCallbackArg's primop into the
        `<cached-fn>(TracingCallbackArg)` cascade that bypasses the
-       standin-primop-fires discipline (see tracing-eval-cache-primop.md's
-       "Standin identity is preserved through the wrapping chain"). At
+       callback-arg-lambda-primop-fires discipline (see
+       tracing-eval-cache-primop.md's "The callback-arg-lambda primop
+       must fire when the outer applies it"). At
        cold, argObj is an `InterpreterObject` of a real inner Value and
        the cast returns null, leaving the TracingCallbackArg wrap path
        unchanged. */

@@ -153,7 +153,7 @@ Inside `prim_cache`:
 5. **Seed `callArgAncestry`.** Compute a per-cache-call contribution
    (hash of `"cache-import:"|"cache-expr:"` plus the source
    identifier) XOR-folded with `state.inheritedCallScope`. Propagate
-   the result via `setAmbientResolverCallScope` and
+   the result via `setAmbientResolverCallArgAncestry` and
    `innerState->inheritedCallScope`. Sibling cached calls get
    distinct state hashes at their cb-apply boundaries because their
    contributions differ; nested calls accumulate.
@@ -250,44 +250,43 @@ Covariant callback replay uses the callback-arg proxies —
 the inner-supplied arg, `ReplayCallbackArg` serves the recorded
 response instead of dispatching live (see the vocab §15).
 
-**Standin identity is preserved through the wrapping chain.** A
-`ReplayCallbackArg` for an inner-supplied lambda materialises via
-`toValueOrProxy` as a primop `Value`. When the outer applies that
-lambda, the primop must fire — its `impl` is the mechanism that
-consults `AmbientAsk` for the recorded apply and either reproduces
-the result or throws divergence. Three sites cooperate to keep the
-standin reachable:
+**The callback-arg-lambda primop must fire when the outer applies
+it.** A `ReplayCallbackArg` for an inner-supplied lambda
+materialises via `toValueOrProxy` as a primop `Value`. Its `impl`
+is the mechanism that consults `AmbientAsk` for the recorded apply
+and either reproduces the result or throws divergence. Three sites
+cooperate to keep that primop reachable through the wrapping chain:
 
 - `dispatchApplyLive` invokes the apply at Object level
   (`fnObj->queryApply(replayLocal)`) rather than constructing an
-  Interpreter-level `mkApp` — the latter loses the standin's
-  Object identity through the Value wrapper.
+  Interpreter-level `mkApp` — the latter loses the
+  `ReplayCallbackArg`'s Object identity through the Value wrapper.
 - `runOn` skips the `TracingCallbackArg` wrap when `argObj` is
   already a `ReplayCallbackArg`. The wrap's purpose is recording
-  outer's probes on inner-supplied locals at cold; a standin at
-  warm already encapsulates the recorded contract, and re-wrapping
-  it would route the outer's `g arg` through
-  `<cached-fn>(TracingCallbackArg)` — bypassing the standin's
-  primop.
+  outer's probes on inner-supplied locals at cold; a
+  `ReplayCallbackArg` at warm already encapsulates the recorded
+  contract, and re-wrapping it would route the outer's `g arg`
+  through `<cached-fn>(TracingCallbackArg)` — bypassing the
+  `ReplayCallbackArg`'s primop.
 - `ExprFromObject::eval`'s `nFunction` case detects
   `ReplayCallbackArg` and returns its primop `Value` directly.
 
-Without any one of these three, the standin's primop never fires
-and the walker either serves a wrong Ambient result (warm-replay
-bug) or cascades into repeated fresh re-evaluations
-(outer-change bug).
+Without any one of these, the primop never fires and the walker
+either serves a wrong Ambient result (warm-replay bug) or
+cascades into repeated fresh re-evaluations (outer-change bug).
 
 **Recording lambda apply-results goes to `InnerValueResponse`, not
 to the main-trie Terminal.** When `TracingEvaluator::apply`
-detects an inner-supplied lambda being applied at cold (the
-recursive-cb-apply case), the result wrapper's method calls
-record into `InnerValueResponse` at the local-synthetic subject's
-state hash, matching the key the walker's standin primop reads at
-warm. The walker's `<replay-callback-arg-lambda>` primop consults
-`AmbientAsk` for the apply Fact's chain-advance and reads the
-per-probe responses from `InnerValueResponse` for the follow-up
-observations. Recording and reading go through the same subject-id
-evolution formula on both sides.
+detects an inner-supplied lambda being applied at cold — the
+recursive cb-apply case — the result wrapper's method calls
+record into `InnerValueResponse` at the state hash of an
+`ApplyResultSubject` whose fn is the callback-arg's Subject and
+whose arg is the passed value's Subject. The walker's
+`<replay-callback-arg-lambda>` primop reads at that same key:
+consults `AmbientAsk` for the apply Fact's chain-advance and
+reads the per-probe responses from `InnerValueResponse` for the
+follow-up observations. Recording and reading go through the same
+subject-id evolution formula on both sides.
 
 ### Ambient responses are capability-mediated, not cached
 
