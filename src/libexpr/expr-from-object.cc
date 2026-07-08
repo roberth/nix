@@ -748,7 +748,7 @@ std::shared_ptr<OuterResolver> makeAmbientResolver(
     return resolver;
 }
 
-void setAmbientResolverCallScope(OuterResolver & resolver, Hash callArgAncestry)
+void setAmbientResolverCallArgAncestry(OuterResolver & resolver, Hash callArgAncestry)
 {
     resolver.callArgAncestry = std::move(callArgAncestry);
 }

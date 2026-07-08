@@ -120,7 +120,7 @@ std::shared_ptr<OuterResolver> makeAmbientResolver(
 /** Set the resolver's cached-call argAncestry — used by subject-id to make
     sibling cached calls' state hashes distinct via inheritance.
     Should be unique per cached call (e.g. hash of import path). */
-void setAmbientResolverCallScope(OuterResolver & resolver, Hash callArgAncestry);
+void setAmbientResolverCallArgAncestry(OuterResolver & resolver, Hash callArgAncestry);
 
 /** Get the resolver's current callArgAncestry for RAII save/restore around
     per-cb-invocation argAncestry overrides. */

@@ -467,7 +467,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         std::shared_ptr<OuterResolver> resolver;
         Hash oldScope{HashAlgorithm::SHA256};
         ~CallScopeGuard() {
-            if (resolver) setAmbientResolverCallScope(*resolver, oldScope);
+            if (resolver) setAmbientResolverCallArgAncestry(*resolver, oldScope);
         }
     } guard;
     if (!fnIsTlo && !fnIsApplyResult) {
@@ -485,7 +485,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
             auto siblingScope = TracingDecisionGraph::xorHashes(
                 TracingDecisionGraph::xorHashes(guard.oldScope, applyArgAncestryStateHash),
                 writer.getV13FactSetHash());
-            setAmbientResolverCallScope(*resolver, siblingScope);
+            setAmbientResolverCallArgAncestry(*resolver, siblingScope);
         }
     }
 
