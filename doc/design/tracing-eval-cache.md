@@ -512,26 +512,30 @@ them transparently:
 The fall-through is always to the inner evaluator, which produces a
 correct answer regardless. The cost is just the missed cache benefit.
 
-## Performance
+## Performance goals
 
-The two K² scaling problems that earlier iterations of this cache hit:
+- **No linear search over the corpus.** Lookups on the recorded
+  data go through hashed keys — `getAsks(Q, cur)`, `getTerminal(Q,
+  cur)`, RequestSet-trie node lookup, request-pool lookup — never
+  iterate the full recording set. This holds on both cold and warm
+  paths.
+- **No unbounded backtracking.** The walker consumes recorded
+  Facts against the live environment; on a Fact mismatch it fails
+  cleanly at the divergent position rather than searching for an
+  alternative interpretation. Missed states have no recorded content
+  at their key; the miss is the answer.
+- **Session-cumulative work proportional to observed change**, not
+  to the total workload. The writer's incremental `sessionRequestsTrie`
+  and `envFactSetHash` avoid re-hashing the growing FactSet per
+  recording. The walker's `dispatchedTrie` fast path avoids
+  re-walking the chain per Q — subsequent Qs in the same session pay
+  for the delta from the previous walk, not from ∅.
+- **Structural storage sharing.** RequestSets that overlap share
+  their common trie subtrees automatically via node-hash equality.
+  DB growth is driven by unique Requests, not by K × |RS|.
 
-| K (nixpkgs attrs) | cold-record | warm-replay | DB |
-|---|---|---|---|
-| 1,000 | 65s (0.9s cache overhead) | 0.42s | 7.4 MB |
-| 5,000 | 159s (7.2s) | 1.24s | 23 MB |
-| 10,000 | 263s (16s) | **2.19s** | 41 MB |
-
-Both numbers are linear in K. Cold-record overhead is bounded by the
-incremental writer-side state (each new fact costs O(log N) trie
-insert, each `record()` is O(1) for the fresh-Q case via the
-precomputed RS hash). Warm-replay is bounded by the per-Q delta size
-times trie depth via the fast path.
-
-For comparison: `nix-env -qa` on the same nixpkgs takes 113s to
-enumerate 108k packages — it does not currently go through the
-tracing cache (constructs `EvalState` directly, bypassing
-`EvalCommand`). Wiring it through would be a separate piece of work.
+Perf sweeps that check these hold across scaling regimes are in
+`tests/perf/tracing-cache/`.
 
 ### Cache directory layout
 
