@@ -1,44 +1,44 @@
-# Higher-order callback replay — apply-result observation encoding
+# Higher-order callback replay
 
-A focused design proposal for closing the cb-higher-order family of
-failures (`cb-higher-order`, `cb-higher-order-nested`,
-`cb-stats-higher-order-baseline`) without violating the via-Asks
-principles. Companion to
+Diagnostic reference for the cb-higher-order failure pattern
+(`cb-higher-order`, `cb-higher-order-nested`,
+`cb-stats-higher-order-baseline`) and the architectural fix that
+closed it. Companion to
 [`tracing-eval-cache-subject-id.md`](./tracing-eval-cache-subject-id.md)
 and [`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md).
 
 The cb-sibling failures (`cb-sibling-discrimination-via-observation`,
-`cb-sibling-b-depends-on-a`) are **out of scope** here — they landed
-via separate work described in
-[`tracing-eval-cache-per-arg-completion.md`](./tracing-eval-cache-per-arg-completion.md#snapshot-padded-retry-committed-9184b703e).
-The proposal in this doc is independent of that work and the two
-compose.
+`cb-sibling-b-depends-on-a`) are out of scope here — they landed
+via separate work. The proposal in this doc is independent of that
+work and the two compose.
+
+The fix described below has shipped. The doc is retained as
+reference for similar patterns that may surface in future work.
 
 ## The failure
 
 `cb-higher-order` records `{f}: f (x: x+1)` against the outer
-`{f = g: g 5}`. Cold returns 6 (correct). Warm replay falls through
-to inner re-evaluation; under `_NIX_DISALLOW_PARSE=1` the test fails.
+`{f = g: g 5}`. Cold returns 6 (correct). Warm replay used to fall
+through to inner re-evaluation; under `_NIX_DISALLOW_PARSE=1` the
+test failed.
 
-The trigger is the d=1 walker dispatching the inner's ambient
-observation `QueryGetType{from=hex(outerApplyResultCdi)}` (= "inner
-observed type=int on outer's f-applied-to-innerLam result"). To
-serve this observation live, the walker calls
-`resolveApplyId` → `fn.queryApply(arg)` → `InterpreterObject(mkApp)`
-and forces via `getType`. Forcing runs outer's `g 5` natively where
-`g` is a `<replay-local-lambda>` primop materialised from the
-innerLam standin (`ReplayLocalObject`, via `toValueOrProxy`).
+The trigger was the Env walker dispatching an Ambient observation
+`QueryGetType{from = outerApplyResult's state hash}` — "inner
+observed type=int on outer's f-applied-to-innerLam result." To
+serve this observation live, the walker calls the outer's apply,
+which forces `getType`. Forcing runs outer's `g 5` natively where
+`g` is a `<replay-callback-arg-lambda>` primop materialised from
+the inner-supplied lambda's `ReplayCallbackArg`.
 
-The primop's impl currently materialises the synthetic apply-result
-as a `ReplayLocalObject` (= reads responses from `LocalResponseMap`,
-the depth-2 ambient atom store). That store is keyed by
-`requestHash = SHA-256(query{from=hex(syntheticCdi)})` where
-`syntheticCdi = qH(QueryApply{fn=hex(RLO.subject.cdi),
-arg=hex(PositionalSeed{depth+1}.cdi)})` — the cidasks formula for
-`ApplyResultSubject{RLO, contraArg}`. **The writer never recorded
-responses under that key.** The lookup misses; the standin's
-`getType` throws "no recorded response"; `dispatchApplyLive` catches
-the divergence and returns nullopt; the walker fails.
+The primop's impl materialises the synthetic apply-result as a
+`ReplayCallbackArg` that reads from the `InnerValueResponse` table.
+That table is keyed by `requestHash = SHA-256(query{from = a
+composed state hash})` where the composed hash is
+`queryHash(QueryApply{fn = RCA subject's state hash, arg =
+Arg{depth+1}'s state hash})` — the subject-id formula for
+`ApplyResultSubject{RCA, contraArg}`. The writer never recorded
+responses under that key; the lookup missed; the standin's
+`getType` threw; the surrounding walker fell through.
 
 ## What the writer actually records
 
@@ -46,269 +46,180 @@ At cold, the inner observes the apply-result *twice over two
 separate writer-side recording paths*. Both observations are real;
 both go into the trie; they live under different subjects.
 
-**Path 1 — d=1 ambient observation, via outer's apply-result
-`AmbientObject`.** Inner forces `f x` through the `<ambient-fn>`
-primop, which calls `f_amb.queryApply(argObj)`. The returned
-`AmbientObject` carries subject
-`ApplyResultSubject{f_amb.subject, innerLam.subject}` (= "outer's
-f applied to inner's lambda"). When inner subsequently forces
-`getType` on it via the bridge, the ambient query records a d=1
-fact with `from = hex(outerApplyResultCdi)`. This is what the
-walker's d=1 chain dispatches.
+**Path 1 — Ambient observation via the outer's apply-result
+`OuterObject`.** Inner forces `f x` through the `<cached-fn>`
+primop, which calls `f_outer.queryApply(argObj)`. The returned
+`OuterObject` carries subject
+`ApplyResultSubject{f_outer.subject, innerLam.subject}` — outer's
+`f` applied to inner's lambda. When inner subsequently forces
+`getType` on it via the bridge, the ambient query records an
+observation with `from = outerApplyResult's state hash`. This is
+what the walker's Env chain dispatches.
 
-**Path 2 — sub-Q terminals on the local apply's `TracingObject`.**
-Outer's `g 5`, evaluated under outer's `f` body, triggers
-`<cached-fn>`.impl → `innerEval->apply(TLO, contraArg_g5)`. This
-goes through `TracingEvaluator::apply`, which:
+**Path 2 — sub-Query terminals on the local apply's
+`TracingObject`.** Outer's `g 5`, evaluated under outer's `f`
+body, triggers `<cached-fn>.impl → innerEval->apply(TCA,
+contraArg_g5)`. This goes through `TracingEvaluator::apply`, which:
 
-- emits `logDepth2ApplyFact(applyQ_g5, applyReqHash_g5)` (already
-  in tree, lands in boundary #1's d=2 chain — the recursive apply
-  Fact itself),
-- calls `markApplyBoundary(applyQ_g5)` (pushes boundary #2),
-- delegates to `inner->apply(TLO, contraArg)` which returns an
-  `InterpreterObject` wrapping `mkApp(TLO.toValueOrProxy(...),
-  contraArg.toValueOrProxy(...))`,
-- wraps the result in a `TracingObject` (call it `tracing_obj_g5`)
-  with `applyResultSubject = ApplyResultSubject{TLO.subject,
-  contraArg_g5.subject}` (= the **local-synthetic subject** — what
-  the walker's primop computes).
+- emits `logAmbientApplyFact` (the recursive apply Fact itself);
+- calls `openApplyBoundary`;
+- delegates to `inner->apply(TCA, contraArg)` which returns an
+  `InterpreterObject` wrapping the applied result;
+- wraps the result in a `TracingObject` with
+  `applyResultSubject = ApplyResultSubject{TCA.subject,
+  contraArg_g5.subject}` — the **local-synthetic subject**, matching
+  what the walker's primop computes.
 
-Back in `<cached-fn>`.impl, the bridging line is
+Back in `<cached-fn>.impl`, the bridging line calls
 `ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state,
-state.baseEnv, v);`. `ExprFromObject::eval` calls
-`tracing_obj_g5.getType()`, `.getInt()`, etc. Each call routes
-through `TracingObject::<method>` → `writer.logQuery + logResult`,
-which inserts:
+state.baseEnv, v)`. `ExprFromObject::eval` calls `tracing_obj.getType()`,
+`.getInt()`, etc. Each call routes through
+`TracingObject::<method>` → `writer.logQuery + logResult`, which
+inserts:
 
-- a `Request` payload for `QueryGetType{from=hex(localSyntheticCdi)}`
-  (and its `getInt`/`getAttrNames`/… counterparts),
-- a `Terminal(Q, v13FactSetHash)` row at the current cumulative
-  factset.
+- a `Request` payload for
+  `QueryGetType{from = local-synthetic subject's state hash}`
+  (and its `getInt` / `getAttrNames` / … counterparts);
+- a `Terminal(queryHash, envFactSetHash)` row at the current
+  cumulative factset.
 
-These are **sub-Q terminals in the main trie**, indexed by the
-local-synthetic subject's CDI — exactly the key the walker's
+These are **sub-Query terminals in the main trie**, indexed by the
+local-synthetic subject's state hash — exactly the key the walker's
 primop computes for its synthetic standin. The data the warm
-walker needs is already in the cache; the missing piece is the
-*lookup path* — `ReplayLocalObject` reads from `LocalResponseMap`,
-not from the main trie.
+walker needs was already in the cache; the missing piece was the
+*lookup path*, since `ReplayCallbackArg` read from
+`InnerValueResponse`, not from the main trie.
 
-## Step 1 empirical findings (= simpler than the memo first claimed)
+## Where the walker was going wrong
 
-After running `cb-higher-order` cold with `_NIX_TRACING_CACHE_LOGGING=1`
-and inspecting the resulting SQLite trie, the diagnosis is
-confirmed at the recording layer:
+Cold recording put the diagnostic data under the right key. The
+walker was already trying to look it up. The failure was a
+re-entrancy issue in the Ambient dispatcher, not a missing-data
+issue.
 
-- `localSyntheticCdi_g5 = 2ae5ce38951569df…` (= `qH(QueryApply{
-  fn=hex(PostulatedIdempotentRead{TLO.cdi}.structural), arg=hex(PositionalSeed{3}.cdi)})`).
-- `Q=qH(QueryGetType{from=hex(localSyntheticCdi_g5)}) = 6f80070d00ef…`
-  has a recorded `Terminals(Q, factSet=3ea4764803…)` row with
-  result payload `ResultType{"int"}`.
-- `Q=qH(QueryGetInt{...}) = e2d973c22fe2…` has a recorded
-  Terminal with result payload `ResultInt{6}`.
+Mechanism: all Queries at the same `logResult` inherit the same
+`envAsksEdges` chain — the cumulative subject-id chain at
+`logResult` time. So the getType Query's recorded chain included
+the apply Fact (the cb-apply Fact, recorded as a synthetic Env
+Fact whose response hash was the cold Ambient result).
 
-So the writer's recording IS in the right place under the right
-key. **The walker is already trying to look those Q's up.** From
-the warm trace:
+When the getType's nested walker dispatched that apply Fact,
+`dispatchApplyLive` was invoked **recursively** — already in
+flight from the outer walk. The cycle break short-circuited to
+`applyRequestHash` instead of the cold-recorded Ambient result.
+The walker's `cur` diverged from cold; no recorded Terminal at
+the divergent `cur`; miss; fall through to inner re-evaluation.
 
-```
-walker apply: fn=opaque(985c457c7504...) arg=seed(3) -> applyCdi=2ae5ce38951569df
-walker lookup: getType Q=6f80070d00ef
-```
+The cycle break is **load-bearing** — without it, the recursion is
+unbounded — but the value it was returning was wrong.
 
-The walker's existing `IR.apply` flow already does what the memo
-was proposing — `<cached-fn>` is created when `ExprFromObject(TLO).eval`
-fires for the bridged TLO (= constructed at warm by the
-`<ambient-fn>` flow's `runOn` inside `dispatchApplyLive`'s force);
-that `<cached-fn>`'s impl calls `innerEval->apply(TLO, contraArg)`
-= `IR.apply`; `IR.apply` constructs a `TracingReplayObject` with
-`applyResultSubject = ApplyResultSubject{PostulatedIdempotentRead{TLO.cdi},
-PositionalSeed{depth+1}}` (= the local-synthetic subject). The
-proposed elaborate primop rewrite, `ctx.memo` plumbing, and
-`AmbientResolver` threading are all **not actually needed** —
-they would re-implement plumbing that already exists.
+## Architectural diagnosis: the lambda primop was bypassed at warm
 
-## The actual failure mode
-
-The walker's `v13Walk(Q=6f80070d00ef)` for the synthetic's getType
-**fails** with a re-entrancy issue, not a missing-data issue.
-Trace:
-
-```
-walk Q=6f80070d00ef cur=7869c739639b outgoing=1
-...
-dispatchApplyLive: re-entry for applyReqHash=ce25f821df1e — return chain root
-walk Q=6f80070d00ef rs=e86989d3d181 useful=1 nextCur=0099e133e5c0 NO RECORDED EDGE -> try next
-walk Q=6f80070d00ef NO EDGE COMMITTED at cur=7869c739639b -> miss
-```
-
-Mechanism. All Q's at the same `logResult` inherit the same
-`perQAsksEdges` chain (= the cumulative cidasks chain at logResult
-time). So Q=6f80070d00ef's recorded chain includes the apply Fact
-`ce25f821df1e` (= boundary #1's cb-apply Fact, recorded as a
-synthetic d=1 Fact whose responseHash is the cold AmbientResult
-`04160569b935`).
-
-When the synthetic's nested `v13Walk(Q=6f80070d00ef)` dispatches
-that apply Fact, `dispatchApplyLive` is invoked **recursively** —
-already in flight from the outer `Q=4ed6c1c8bdac` walk. The
-cycle-break short-circuits to `applyReqHash` instead of the
-cold-recorded `AmbientResult`. The walker's cur diverges from
-cold (= `0099e133e5c0` vs cold's `3ea476480316`); no recorded
-Terminal at the divergent cur; miss; fall through to inner
-re-eval.
-
-The cycle break is **load-bearing** for cb-higher-order — without
-it, the recursion is unbounded. But the value it returns is wrong.
-
-## Architectural diagnosis: the lambda primop is bypassed at warm
-
-The principled gap is not in `dispatchApplyLive`'s re-entry
-handling, nor in resolving inner contraArg CDIs, nor in the
-shape of AmbientResult. It's that **the standin's
-`<replay-local-lambda>` primop never fires when outer's body
-applies its argument** — and per the design's lambda-LO section,
-firing the primop is *the entire mechanism* by which warm
+The principled gap was not in `dispatchApplyLive`'s re-entry
+handling, nor in resolving inner contraArg state hashes, nor in
+the shape of the Ambient result. It was that **the standin's
+`<replay-callback-arg-lambda>` primop never fired when outer's
+body applied its argument** — and per the design's lambda-callback
+section, firing the primop is *the entire mechanism* by which warm
 reproduces the cb-apply's recursive applies.
 
 ### The design's intent
 
-From [`tracing-eval-cache-subject-id.md`](./tracing-eval-cache-subject-id.md#atom-storage):
+From
+[`tracing-eval-cache-subject-id.md`](./tracing-eval-cache-subject-id.md):
 
-> Lambda LocalObjects don't need their body stored. A lambda's
-> atom is just `(localId, kind=lambda)`; the walker reconstructs
-> it as a primop Value whose `impl`, when applied, consults the
-> `AmbientAsks` trie for a recorded edge matching the live arg's
-> evolved content id, and either reproduces the recorded apply
-> result from CAS atoms or throws a depth-2 divergence signal
-> that the surrounding walker catches as a miss.
+> Lambda callback-args don't need their body stored. A lambda's
+> atom is just `(subjectHash, kind=lambda)`; the walker
+> reconstructs it as a primop `Value` whose `impl`, when applied,
+> consults the `AmbientAsk` trie for a recorded edge matching the
+> live arg's evolved state hash, and either reproduces the recorded
+> apply result from stored atoms or throws an ambient-interaction
+> divergence exception that the surrounding walker catches as a
+> miss.
 
 So when outer's `g 5` (in cb-higher-order's `f = g: g 5` body)
-encounters the standin lambda, the lambda's primop is supposed
-to fire and:
-1. Consult AmbientAsks with the live arg's evolved CDI.
-2. Either reproduce the recorded apply-result, or throw
-   divergence.
+encountered the standin lambda, the lambda's primop was supposed to
+fire and: (1) consult AmbientAsk with the live arg's evolved state
+hash, and (2) either reproduce the recorded apply-result or throw
+divergence. Both branches are clean from the surrounding walker's
+perspective.
 
-Both branches are clean from the surrounding walker's
-perspective: a match = the apply produces the cold value; a
-divergence = the apply Fact's dispatch throws and
-`dispatchApplyLive` catches it.
+### What actually happened at warm
 
-### What actually happens at warm
+In `dispatchApplyLive`, the standin was constructed and its
+`toValueOrProxy` returned a `<replay-callback-arg-lambda>` primop
+`Value`. This primop was passed to outer as the `arg` of the
+mkApp. When outer's `<cached-fn>(f).queryApply` was invoked, the
+ambient apply routed through `OuterResolver::apply` → `runOn`,
+which wrapped `argObj` (an `InterpreterObject` of the primop
+`Value`) in a `TracingCallbackArg` — the writer-side wrapper for
+recording covariant-callback args.
 
-In `dispatchApplyLive`, the standin is constructed and its
-`toValueOrProxy` returns a `<replay-local-lambda>` primop Value.
-This primop Value is passed to outer as the `arg` of the mkApp.
-When outer's `<ambient-fn>(f).queryApply` is invoked, the
-ambient apply routes through `AmbientResolver::apply` → `runOn`,
-which wraps `argObj` (= `InterpreterObject` of the primop
-Value) in a `TracingLocalObject` (= the writer-side wrapper for
-recording covariant-callback args).
+This TCA then bridged via `ExprFromObject`. When outer's `g 5`
+forced `g`, `ExprFromObject(TCA).eval` hit the `nFunction` case,
+which fell through to **`makeCachedFnPrimOp(TCA, innerEval,
+resolver)`** — *not* the original `<replay-callback-arg-lambda>`
+primop. The `<cached-fn>` primop was applied to `5`; its impl
+called `innerEval->apply(TCA, contraArg_g5)`; the replay
+evaluator's apply returned a `TracingReplayObject` whose `getType`
+walked the main trie via `walk()`.
 
-This `TLO` then bridges via `ExprFromObject`. When outer's
-`g 5` forces `g`, `ExprFromObject(TLO).eval` hits the nFunction
-case, which falls through to **`makeCachedFnPrimOp(TLO,
-innerEval, resolver)`** — *not* the original
-`<replay-local-lambda>` primop. The `<cached-fn>` primop is
-applied to `5`; its impl calls `innerEval->apply(TLO,
-contraArg_g5)` = `IR.apply`; `IR.apply` returns a
-`TracingReplayObject` whose `getType` walks the main trie via
-`v13Walk`.
+So outer's body never invoked the standin's primop. Instead it
+routed through the `<cached-fn>` → replay-evaluator-apply →
+`TracingReplayObject` path, which is the cache-mediated path for
+*recorded* values (main-trie `Ask` / `Terminal` lookups), not the
+standin's AmbientAsk-driven path.
 
-So outer's body never invokes the standin's primop. Instead it
-routes through the `<cached-fn>` → `IR.apply` → `TracingReplayObject`
-path, which is the cache-mediated path for *recorded* values
-(= main trie `Asks`/`Terminals` lookups), not the
-standin's d=2 AmbientAsks-driven path.
+The two paths converge at the apply-result's state hash (same
+`local-synthetic` value), so the sub-Query `Terminal` lookups for
+synthetic.getType / synthetic.getInt *did* find the recorded data —
+which is why simple cb-higher-order warm replay appeared
+tantalisingly close to working. But the chain-advance the lambda
+primop was supposed to do for the recursive apply Fact never
+happened, so the standin's chain cursor never reached the recorded
+Ambient result, and `dispatchApplyLive`'s returned value was wrong.
 
-The two paths converge at the apply-result CDI (= same
-`localSyntheticCdi`), so the sub-Q `Terminals` lookups for
-synthetic.getType / synthetic.getInt *do* find the recorded
-data — that's why simple cb-higher-order warm replay (= the
-no-divergence case) appears tantalisingly close to working.
-But the chain-advance the lambda primop was supposed to do for
-the recursive apply Fact never happens, so the standin's
-`chainCursor` doesn't reach the recorded AmbientResult, and
-the `dispatchApplyLive`'s returned value is wrong. **All the
-"offline AmbientResult" and "supplementary objects" workarounds
-I sketched in this memo's prior versions were trying to paper
-over this single architectural mismatch.**
+### The principled fix
 
-### What a principled fix looks like
+The standin's primop `Value` must reach outer's body **without being
+wrapped in a `TracingCallbackArg` first**, so outer's `g 5` fires
+the primop directly. Sketched directions:
 
-The standin's primop value should reach outer's body **without
-being wrapped in `TLO` first**, so that outer's `g 5` fires the
-primop directly. Sketched directions, none of them small:
+1. **`runOn` detects "argObj wraps a standin's primop"** and skips
+   the callback-arg wrap, passing argObj through unchanged. Needs a
+   way to identify "this argObj is from a standin."
+2. **`ReplayCallbackArg::toValueOrProxy` returns something other
+   than a raw primop** — an `OuterObject`-like wrapper that
+   participates in the existing OuterObject-bypass path in `runOn`.
+   Effectively re-uses the outer-direction machinery for the
+   standin. Blurs the Env/Ambient boundary.
+3. **`ExprFromObject::eval`'s nFunction case detects "TCA inner is
+   a standin's primop"** and returns the primop directly rather
+   than constructing `<cached-fn>(TCA)`. Symmetric to existing
+   nFunction sub-cases for OuterObject and ReplayCallbackArg. The
+   smallest of the three.
 
-1. **`runOn` detects "argObj wraps a standin's primop"** and
-   skips the TLO wrap, passing argObj through unchanged. Needs
-   a way to identify "this argObj is from a standin" — possibly
-   a marker on `ReplayLocalObject` or a virtual on Object.
-
-2. **`RLO::toValueOrProxy` returns something other than a raw
-   primop** — e.g., an `AmbientObject`-like wrapper that
-   participates in the existing AmbientObject-bypass path in
-   `runOn`. Effectively re-using the outer-direction machinery
-   for the standin. Plausible but blurs the d=1/d=2 boundary.
-
-3. **`ExprFromObject(TLO).eval`'s nFunction case detects "TLO
-   inner is a standin's primop"** and returns the primop
-   directly rather than constructing `<cached-fn>(TLO)`.
-   Symmetric to existing nFunction sub-cases for AmbientObject
-   and RLO. Probably the smallest of the three.
-
-All three preserve the recording-side use of TLO (= cold
-recording still wraps `argObj` so the writer captures probes);
+All three preserve the recording-side use of TracingCallbackArg —
+cold recording still wraps `argObj` so the writer captures probes —
 the change is purely walker-side, gating the wrap or its
 consequences on whether we're dispatching a standin's primop.
 
-### Why this isn't covered by the existing TLO checks
+## What NOT to reimplement
 
-`ExprFromObject::eval`'s nFunction case already special-cases
-`ReplayLocalObject`:
+Rejected in earlier iterations and documented here as reference:
 
-```cpp
-if (dynamic_cast<ReplayLocalObject *>(obj.get())) {
-    auto val = obj->toValueOrProxy(state, ambientResolver);
-    v = **val;
-    break;
-}
-```
-
-But this only triggers when `obj` IS an `RLO`. At warm, by the
-time we get to `ExprFromObject(TLO).eval`, `obj` is a `TLO`
-wrapping an `InterpreterObject` wrapping the standin's primop
-Value. The `dynamic_cast<RLO>` fails because we're three layers
-out from the RLO. Either the TLO needs to forward the cast (=
-ugly), or the wrapping needs to not happen in the first place.
-
-## What I am NOT proposing
-
-Earlier drafts of this memo proposed:
-- "Offline AmbientResult chain walk" in both re-entry and
-  non-re-entry paths of `dispatchApplyLive`. **Violates
-  principle 6** (= walker advances in lockstep with cur); the
-  standin's chainCursor stops short of the terminal because the
-  primop is bypassed, and computing the terminal offline papers
-  over that without fixing it.
-- "Supplementary-objects stack" on the writer for inner
-  contraArg CDI resolution via try-every-k iteration. Adds a
-  parallel lookup mechanism rather than fixing the proxy chain
-  to extend properly. Same shape of papering-over.
-- Various `dispatchApplyLive` throw → nullopt conversions and
-  `RLO::defeatCache` delegations to handle cascading
-  fall-throughs at outer-change. Local patches to symptoms;
-  don't address the cascade's root cause (= the standin escape
-  through TLO wrapping).
-
-These workarounds were implemented and reverted in this
-session's commits. The reverts are documented; the workarounds
-are what to NOT re-implement.
-
-## Status
-
-**Green.** cb-higher-order step 2 (warm replay) passes at HEAD.
-The architectural change described above landed. The diagnostic
-content of this memo (= what the writer records, where the walker
-reaches, why the chains diverge) is retained as reference for
-similar patterns that may surface in future work.
+- **"Offline Ambient result chain walk"** in both re-entry and
+  non-re-entry paths of `dispatchApplyLive`. Violates the walker's
+  lockstep-with-`cur` discipline — the standin's chain cursor
+  stops short of the terminal because the primop is bypassed, and
+  computing the terminal offline papers over that without fixing
+  it.
+- **Supplementary-objects stack on the writer** for inner
+  contraArg state hash resolution via try-every-step iteration.
+  Adds a parallel lookup mechanism rather than fixing the proxy
+  chain to extend properly. Same shape of papering-over.
+- **`dispatchApplyLive` throw → nullopt conversions** and
+  `ReplayCallbackArg::defeatCache` delegations to handle cascading
+  fall-throughs at outer-change. Local patches to symptoms; don't
+  address the cascade's root cause, which is the standin escape
+  through the TracingCallbackArg wrapping.
