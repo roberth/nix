@@ -270,6 +270,16 @@ struct PathAndRoots
     std::vector<Subject> roots;
 };
 
+/** Decompose a Subject into (path from roots to subject, list of
+    roots). **Roots are guaranteed to be leaf variants** — `Arg` or
+    `PostulatedIdempotentRead` — by construction: the builder recurses
+    through `DerivedSubject` and `ApplyResultSubject` without adding
+    them to `roots`, so callers can safely pass each root to the strict
+    `stateHashAt` without the DerivedSubject trap. This is a
+    load-bearing invariant for five call sites (outer-object.cc,
+    tracing-writer.cc x2, replay-callback-arg.cc, tracing-writer.cc's
+    apply-flush) — do not change the builder to emit non-leaves as
+    roots without adjusting them. */
 PathAndRoots pathAndRootsFromSubject(const Subject & subject);
 
 /** Combine fn's and arg's inherited scopes into an apply boundary's

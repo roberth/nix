@@ -64,6 +64,15 @@ PathAndRoots pathAndRootsFromSubject(const Subject & subject)
 
         size_t findOrInsert(const Subject & leaf)
         {
+            /* Leaves-only invariant: pathAndRootsFromSubject's public
+               contract guarantees `roots` contains only Arg or
+               PostulatedIdempotentRead. Enforce here so a future
+               builder change that accidentally adds a Derived or
+               ApplyResult to roots fires clearly rather than
+               trapping in a caller's strict stateHashAt. */
+            assert((std::holds_alternative<Arg>(leaf.data)
+                    || std::holds_alternative<PostulatedIdempotentRead>(leaf.data))
+                   && "pathAndRootsFromSubject: root must be a leaf variant");
             for (size_t i = 0; i < roots.size(); ++i)
                 if (sameLeaf(roots[i], leaf))
                     return i;
