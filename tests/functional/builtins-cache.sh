@@ -254,6 +254,17 @@ echo '{f}: f { foo = a: a * 2; }' > "$TEST_ROOT/cb-attr-apply.nix"
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply.nix; }) { f = g: g.foo 10; }') == 20 ]]
 [[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply.nix; }) { f = g: g.foo 10; }') == 20 ]]
 
+# Nested attr chain — outer callback navigates multiple levels before
+# applying (g.deep.inner.fn 7). Each level's proxy carries a
+# DerivedSubject; walker's cell-chain match code path iterates the
+# proxy's ArgCell ancestors and computed state hashes for each.
+# Strict stateHashAt would trap on the Derived subjects in that
+# chain. Regression for the fix at tracing-replay-evaluator.cc's
+# resolveStateHash cell-chain match.
+echo '{f}: f { deep = { inner = { fn = a: a * 3; }; }; }' > "$TEST_ROOT/cb-attr-apply-nested.nix"
+[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply-nested.nix; }) { f = g: g.deep.inner.fn 7; }') == 21 ]]
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply-nested.nix; }) { f = g: g.deep.inner.fn 7; }') == 21 ]]
+
 # Path values forwarded through the cache boundary
 echo '{ p }: p' > "$TEST_ROOT/path-fn.nix"
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/path-fn.nix; }) { p = '"$TEST_ROOT"'; }') == /*/builtins-cache ]]

@@ -333,6 +333,11 @@ Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std
 
 Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history)
 {
+    /* For DerivedSubject, the hash is the producer query hash and
+       has no own-loop to converge — return the polymorphic dispatch
+       result directly rather than trapping in the arg-level fold. */
+    if (std::holds_alternative<DerivedSubject>(subject.data))
+        return stateHashAtSubject(subject, argAncestry, history, history.size());
     /* Flatten history into deduped observation pool keyed by
        (fromHash, elementHash). Order within `history` is discarded —
        the greedy partition below only reads `fromHash` for state-

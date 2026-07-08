@@ -479,7 +479,13 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                    own hashed state (initial state hash) IS the lookup
                    key. */
                 {
-                    auto initialStateHash = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
+                    /* Polymorphic dispatch: cell->liveObject's Subject
+                       can be a DerivedSubject (e.g. an OuterObject
+                       reached via maybeGetAttr on a parent proxy;
+                       navigation children inherit the parent's ArgCell
+                       and their liveObject can carry any variant).
+                       Strict stateHashAt would trap. */
+                    auto initialStateHash = stateHashAtSubject(*subj, argAncestry, extendedWalkForMatch, 0);
                     if (initialStateHash.to_string(HashFormat::Base16, false) == idStr) {
                         found = true;
                     }
@@ -495,9 +501,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                    also reached by trie navigation, so the loop's
                    K dimension is unnecessary here. */
                 if (!found) {
-                    Hash argSubjectHash = stateHashAt(
+                    Hash argSubjectHash = stateHashAtSubject(
                         *subj, Hash(HashAlgorithm::SHA256), {}, 0);
-                    Hash cur = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
+                    Hash cur = stateHashAtSubject(*subj, argAncestry, extendedWalkForMatch, 0);
                     for (const auto & edge : extendedWalkForMatch) {
                         if (found) break;
                         Hash edgeAcc(HashAlgorithm::SHA256);
