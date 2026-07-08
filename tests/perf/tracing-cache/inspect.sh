@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Run a real Nix eval with tracing-eval-cache enabled, then dump v13's
+# Run a real Nix eval with tracing-eval-cache enabled, then dump the tracing eval cache's
 # decision-graph SQLite to confirm record() is actually receiving data.
 set -euo pipefail
 
-dir="$(mktemp -d -t nix-v13-inspect-XXXXXX)"
+dir="$(mktemp -d -t nix-tracing-cache-inspect-XXXXXX)"
 trap 'rm -rf "$dir"' EXIT
 
 export NIX_TRACING_CACHE_DIR="$dir"
@@ -34,10 +34,10 @@ echo "=== Eval ==="
     --option tracing-eval-cache true
 
 echo
-echo "=== v13 decision-graph DB contents ==="
+echo "=== the tracing eval cache decision-graph DB contents ==="
 db="$dir/decision-graph.sqlite"
 if [[ ! -f "$db" ]]; then
-    echo "FAIL: v13 DB not created"
+    echo "FAIL: the tracing eval cache DB not created"
     exit 1
 fi
 
@@ -46,13 +46,11 @@ sqlite3 "$db" <<'SQL'
 .headers on
 
 SELECT 'Requests' AS table_name, COUNT(*) AS rows FROM Requests
-UNION ALL SELECT 'Responses', COUNT(*) FROM Results
 UNION ALL SELECT 'Queries', COUNT(*) FROM Queries
 UNION ALL SELECT 'Results', COUNT(*) FROM Results
-UNION ALL SELECT 'RequestSets', COUNT(*) FROM RequestSets
-UNION ALL SELECT 'FactSets', COUNT(*) FROM Requests
-UNION ALL SELECT 'Asks', COUNT(*) FROM Ask
-UNION ALL SELECT 'Terminals', COUNT(*) FROM Terminal
+UNION ALL SELECT 'RequestSetNodes', COUNT(*) FROM RequestSetNodes
+UNION ALL SELECT 'Ask', COUNT(*) FROM Ask
+UNION ALL SELECT 'Terminal', COUNT(*) FROM Terminal
 ORDER BY table_name;
 SQL
 
@@ -60,14 +58,14 @@ echo
 echo "=== Sanity checks ==="
 asks=$(sqlite3 "$db" "SELECT COUNT(*) FROM Ask")
 terminals=$(sqlite3 "$db" "SELECT COUNT(*) FROM Terminal")
-factsets=$(sqlite3 "$db" "SELECT COUNT(*) FROM Requests")
+results=$(sqlite3 "$db" "SELECT COUNT(*) FROM Results")
 
 if [[ "$terminals" -lt 1 ]]; then
     echo "FAIL: expected at least 1 Terminal, got $terminals"
     exit 1
 fi
-if [[ "$factsets" -lt 1 ]]; then
-    echo "FAIL: expected at least 1 FactSet, got $factsets"
+if [[ "$results" -lt 1 ]]; then
+    echo "FAIL: expected at least 1 Result payload, got $results"
     exit 1
 fi
-echo "OK: Terminals=$terminals, Asks=$asks, FactSets=$factsets"
+echo "OK: Terminal=$terminals, Ask=$asks, Results=$results"

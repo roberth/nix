@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Stress test v13 on a more substantial Nix expression: imports,
+# Stress test the tracing eval cache on a more substantial Nix expression: imports,
 # conditionals, recursion, attribute-set traversal. Measures cold +
 # warm timings and counts hits.
 set -euo pipefail
 
-dir="$(mktemp -d -t v13-complex-XXXXXX)"
+dir="$(mktemp -d -t tracing-cache-complex-XXXXXX)"
 trap 'rm -rf "$dir"' EXIT
 
 export NIX_TRACING_CACHE_DIR="$dir"
@@ -63,10 +63,10 @@ EOF
 
 count_logs() {
     local stderr_file="$1"
-    local v13hits misses
-    v13hits=$(grep -c "replay hit (v13 walk)" "$stderr_file" || true)
+    local hits misses
+    hits=$(grep -c "replay hit:" "$stderr_file" || true)
     misses=$(grep -c "replay miss" "$stderr_file" || true)
-    echo "v13_hits=${v13hits:-0} misses=${misses:-0}"
+    echo "hits=${hits:-0} misses=${misses:-0}"
 }
 
 run_eval() {
@@ -105,5 +105,4 @@ run_eval "warm after config edit"
 
 echo
 db="$dir/decision-graph.sqlite"
-echo "v13 db: $(sqlite3 "$db" "SELECT 'asks=' || COUNT(*) FROM Ask UNION ALL SELECT 'terminals=' || COUNT(*) FROM Terminal UNION ALL SELECT 'factsets=' || COUNT(*) FROM Requests UNION ALL SELECT 'requests=' || COUNT(*) FROM Requests UNION ALL SELECT 'responses=' || COUNT(*) FROM Results UNION ALL SELECT 'results=' || COUNT(*) FROM Results" | paste -sd ' ' -)"
-echo "v12 db: $(sqlite3 "$dir/index.sqlite" "SELECT 'queries=' || COUNT(*) FROM Queries UNION ALL SELECT 'results=' || COUNT(*) FROM Results UNION ALL SELECT 'shortcuts=' || COUNT(*) FROM Shortcuts" | paste -sd ' ' -)"
+echo "db: $(sqlite3 "$db" "SELECT 'ask=' || COUNT(*) FROM Ask UNION ALL SELECT 'terminal=' || COUNT(*) FROM Terminal UNION ALL SELECT 'requests=' || COUNT(*) FROM Requests UNION ALL SELECT 'results=' || COUNT(*) FROM Results UNION ALL SELECT 'queries=' || COUNT(*) FROM Queries" | paste -sd ' ' -)"

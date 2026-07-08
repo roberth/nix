@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stress the v13 cache across a growing number of recorded queries.
+# Stress the tracing eval cache across a growing number of recorded queries.
 # At checkpoints, measure (a) warm time on a known-cached attribute,
 # (b) DB row counts, and (c) on-disk size. Detects soft regressions:
 # warm latency should be roughly constant in cache size for a fixed
@@ -7,7 +7,7 @@
 # what else is recorded.
 set -euo pipefail
 
-dir="$(mktemp -d -t v13-scale-XXXXXX)"
+dir="$(mktemp -d -t tracing-cache-scale-XXXXXX)"
 trap 'rm -rf "$dir"' EXIT
 
 NIXPKGS="${NIXPKGS:-$HOME/nixpkgs}"
@@ -52,7 +52,7 @@ run_attr() {
     local attr="$1"
     local label="$2"
     local stderr_file
-    stderr_file="$(mktemp -t v13-scale-stderr-XXXXXX)"
+    stderr_file="$(mktemp -t tracing-cache-scale-stderr-XXXXXX)"
     local started_ms ended_ms wall_ms
     started_ms=$(date +%s%3N)
     "$NIX_BIN_DIR/nix" eval \

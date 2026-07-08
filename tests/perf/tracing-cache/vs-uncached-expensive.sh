@@ -4,7 +4,7 @@
 # construction. Should let the cache earn its keep.
 set -euo pipefail
 
-dir="$(mktemp -d -t v13-expensive-XXXXXX)"
+dir="$(mktemp -d -t tracing-cache-expensive-XXXXXX)"
 trap 'rm -rf "$dir"' EXIT
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -84,5 +84,5 @@ NIX_TRACING_CACHE_DIR="$warm_dir" "$NIX_BIN_DIR/nix" eval \
     --extra-experimental-features 'nix-command' \
     --expr "import $dir/proj/expensive.nix" --json \
     >/dev/null 2>/dev/null
-run_n_times "cache ON  (warm v13 hits, n=5)" "true" "$warm_dir" 5
+run_n_times "cache ON  (warm the tracing eval cache hits, n=5)" "true" "$warm_dir" 5
 rm -rf "$warm_dir"

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Cold/warm timings on an eval that actually reads files — exercises
-# the v13 Request/Response insertion path and v13 walk()'s dispatch.
+# the tracing eval cache Request/Response insertion path and walk()'s dispatch.
 set -euo pipefail
 
-dir="$(mktemp -d -t nix-v13-reads-XXXXXX)"
+dir="$(mktemp -d -t nix-tracing-cache-reads-XXXXXX)"
 trap 'rm -rf "$dir"' EXIT
 
 export NIX_TRACING_CACHE_DIR="$dir"
@@ -36,17 +36,16 @@ in data + flag"
 
 report_db() {
     local db="$dir/decision-graph.sqlite"
-    [[ -f "$db" ]] || { echo "  (v13 db not present)"; return; }
+    [[ -f "$db" ]] || { echo "  (db not present)"; return; }
     local counts
     counts=$(sqlite3 "$db" "
-        SELECT 'asks=' || COUNT(*) FROM Ask UNION ALL
-        SELECT 'terminals=' || COUNT(*) FROM Terminal UNION ALL
-        SELECT 'factsets=' || COUNT(*) FROM Requests UNION ALL
+        SELECT 'ask=' || COUNT(*) FROM Ask UNION ALL
+        SELECT 'terminal=' || COUNT(*) FROM Terminal UNION ALL
         SELECT 'requests=' || COUNT(*) FROM Requests UNION ALL
-        SELECT 'responses=' || COUNT(*) FROM Results UNION ALL
-        SELECT 'results=' || COUNT(*) FROM Results
+        SELECT 'results=' || COUNT(*) FROM Results UNION ALL
+        SELECT 'queries=' || COUNT(*) FROM Queries
     " | paste -sd ' ' -)
-    echo "  v13 db: $counts"
+    echo "  db: $counts"
 }
 
 timed_eval() {

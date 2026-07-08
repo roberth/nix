@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # A/B compare: same eval workload with tracing-eval-cache OFF vs ON.
 # OFF = no caching (re-evaluate every time).
-# ON  = v13 walk serves warm runs.
+# ON  = walk serves warm runs.
 set -euo pipefail
 
-dir="$(mktemp -d -t v13-vs-uncached-XXXXXX)"
+dir="$(mktemp -d -t tracing-cache-vs-uncached-XXXXXX)"
 trap 'rm -rf "$dir"' EXIT
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -100,9 +100,9 @@ echo "Each row: same eval, $((7)) runs, reported as min/median/max in ms"
 echo "----------------------------------------------------------------------"
 run_n_times "cache OFF (uncached)"   "false" 7
 echo
-echo "cache ON (v13 hits all warm runs):"
+echo "cache ON (the tracing eval cache hits all warm runs):"
 # Pre-warm one cache dir, then time the warm runs against it.
-warm_dir=$(mktemp -d -t v13-warm-XXXXXX)
+warm_dir=$(mktemp -d -t tracing-cache-warm-XXXXXX)
 # Cold run to populate.
 NIX_TRACING_CACHE_DIR="$warm_dir" "$NIX_BIN_DIR/nix" eval \
     --impure --option tracing-eval-cache true \
@@ -123,5 +123,5 @@ for i in 1 2 3 4 5 6 7; do
 done
 IFS=$'\n' sorted=($(printf '%s\n' "${times[@]}" | sort -n))
 unset IFS
-printf "%-30s  min=%4dms  median=%4dms  max=%4dms  (n=%d)\n" "warm v13 hits" "${sorted[0]}" "${sorted[3]}" "${sorted[6]}" 7
+printf "%-30s  min=%4dms  median=%4dms  max=%4dms  (n=%d)\n" "warm the tracing eval cache hits" "${sorted[0]}" "${sorted[3]}" "${sorted[6]}" 7
 rm -rf "$warm_dir"

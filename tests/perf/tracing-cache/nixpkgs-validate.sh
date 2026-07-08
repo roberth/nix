@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Validate v13 against nixpkgs at scale.
+# Validate the tracing eval cache against nixpkgs at scale.
 #
 # Walks across several recent nixpkgs commits and across edited variants
-# of a leaf file, measuring cold/warm wallclock and v13 hit counts each
+# of a leaf file, measuring cold/warm wallclock and the tracing eval cache hit counts each
 # time. The cache persists across all phases — we are looking for both
 # raw speedup *and* graceful behavior as the cache grows and is
 # perturbed.
 set -euo pipefail
 
 # Hermetic cache dir.
-dir="$(mktemp -d -t nix-v13-nixpkgs-XXXXXX)"
+dir="$(mktemp -d -t nix-tracing-cache-nixpkgs-XXXXXX)"
 trap 'rm -rf "$dir"' EXIT
 
 NIXPKGS="${NIXPKGS:-$HOME/nixpkgs}"
@@ -42,7 +42,7 @@ export LD_LIBRARY_PATH
 run_eval() {
     local label="$1"
     local stderr_file
-    stderr_file="$(mktemp -t v13-stderr-XXXXXX)"
+    stderr_file="$(mktemp -t tracing-cache-stderr-XXXXXX)"
     local started_ms ended_ms wallclock_ms
     started_ms=$(date +%s%3N)
     _NIX_TRACING_CACHE_LOGGING=1 \

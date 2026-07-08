@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Count v13 walk hits vs misses across the standard synthetic
+# Count walk hits vs misses across the standard synthetic
 # workload, with verbose logging properly captured from stderr.
 set -euo pipefail
 
-dir="$(mktemp -d -t v13-hitrate-XXXXXX)"
+dir="$(mktemp -d -t tracing-cache-hitrate-XXXXXX)"
 trap 'rm -rf "$dir"' EXIT
 
 export NIX_TRACING_CACHE_DIR="$dir"
@@ -35,11 +35,14 @@ echo "flagA" > "$dir/proj/flag.txt"
 
 count_logs() {
     local stderr_file="$1"
-    local v13hits v12hits misses
-    v13hits=$(grep -c "replay hit (v13 walk)" "$stderr_file" || true)
-    v12hits=$(grep -cE "replay hit \((sets|trie|shortcut)" "$stderr_file" || true)
+    local hits misses fallbacks
+    # Current log format from tracing-replay-object.cc:
+    #   "replay hit: <QueryTag>"     — walker found a Terminal
+    #   "replay fallback: <method>"  — walker missed, fell through to inner
+    hits=$(grep -c "replay hit:" "$stderr_file" || true)
+    fallbacks=$(grep -c "replay fallback:" "$stderr_file" || true)
     misses=$(grep -c "replay miss" "$stderr_file" || true)
-    echo "v13_walk_hits=${v13hits:-0} v12_hits=${v12hits:-0} misses=${misses:-0}"
+    echo "hits=${hits:-0} misses=${misses:-0} fallbacks=${fallbacks:-0}"
 }
 
 run_eval() {
@@ -79,5 +82,4 @@ run_eval "after flag revert (back to data1/flagA)"
 
 echo
 db="$dir/decision-graph.sqlite"
-echo "v13 db: $(sqlite3 "$db" "SELECT 'asks=' || COUNT(*) FROM Ask UNION ALL SELECT 'terminals=' || COUNT(*) FROM Terminal UNION ALL SELECT 'factsets=' || COUNT(*) FROM Requests UNION ALL SELECT 'requests=' || COUNT(*) FROM Requests UNION ALL SELECT 'responses=' || COUNT(*) FROM Results UNION ALL SELECT 'results=' || COUNT(*) FROM Results" | paste -sd ' ' -)"
-echo "v12 db: $(sqlite3 "$dir/index.sqlite" "SELECT 'queries=' || COUNT(*) FROM Queries UNION ALL SELECT 'results=' || COUNT(*) FROM Results UNION ALL SELECT 'shortcuts=' || COUNT(*) FROM Shortcuts UNION ALL SELECT 'bindings=' || COUNT(*) FROM Bindings" | paste -sd ' ' -)"
+echo "db: $(sqlite3 "$db" "SELECT 'ask=' || COUNT(*) FROM Ask UNION ALL SELECT 'terminal=' || COUNT(*) FROM Terminal UNION ALL SELECT 'requests=' || COUNT(*) FROM Requests UNION ALL SELECT 'results=' || COUNT(*) FROM Results UNION ALL SELECT 'queries=' || COUNT(*) FROM Queries" | paste -sd ' ' -)"

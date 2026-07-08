@@ -58,7 +58,7 @@ run_one() {
     local cache_dir="$3"
     local opt="$4"   # cache flag value
     local err
-    err="$(mktemp -t v13-thresh-XXXXXX)"
+    err="$(mktemp -t tracing-cache-thresh-XXXXXX)"
     local started_ms ended_ms wall_ms
     started_ms=$(date +%s%3N)
     NIX_TRACING_CACHE_DIR="$cache_dir" \
@@ -83,7 +83,7 @@ echo "K  off-wall  cold-wall  warm-wall  warm-speedup  db-final"
 echo "----  --------  ---------  ---------  ------------  --------"
 
 for k in 1 2 5 10 20 50 100 200 500 1000; do
-    dir="$(mktemp -d -t v13-thresh-cache-XXXXXX)"
+    dir="$(mktemp -d -t tracing-cache-thresh-cache-XXXXXX)"
     trap 'rm -rf "$dir"' EXIT INT TERM
     # 1. Baseline: cache off (so we can compare warm-speedup later).
     s=$(date +%s%3N) ; \

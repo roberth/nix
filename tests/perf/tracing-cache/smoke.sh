@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Smoke-test the v13 decision-graph instantiation alongside v12 in a
-# hermetic cache directory. Verifies both DBs land in the cache dir
-# without colliding on filename.
+# Smoke-test the tracing eval cache's decision-graph SQLite creation in
+# a hermetic cache directory.
 set -euo pipefail
 
-dir="$(mktemp -d -t nix-v13-smoke-XXXXXX)"
+dir="$(mktemp -d -t nix-tracing-cache-smoke-XXXXXX)"
 trap 'rm -rf "$dir"' EXIT
 
 export NIX_TRACING_CACHE_DIR="$dir"
@@ -37,10 +36,9 @@ echo
 echo "Files in cache dir:"
 ls -la "$dir"
 
-# Assert v13 DB is present (v12 was stripped).
 if [[ ! -f "$dir/decision-graph.sqlite" ]]; then
-    echo "FAIL: v13 decision-graph.sqlite is missing"
+    echo "FAIL: decision-graph.sqlite is missing"
     exit 1
 fi
 echo
-echo "OK: v13 decision-graph SQLite database created"
+echo "OK: decision-graph SQLite database created"
