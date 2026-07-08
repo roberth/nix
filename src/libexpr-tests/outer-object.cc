@@ -113,7 +113,7 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
     /* Child scopeStateId is the producer query's queryHash. With Subject-based
        construction the OuterObject derives this from DerivedSubject
        at construction time. */
-    auto childCdi = stateHashAfterSubject(
+    auto childStateHash = stateHashAfterSubject(
         Subject{DerivedSubject{
             .parent = std::make_shared<const Subject>(testSubject(0)),
             .kind = DerivedSubject::Kind::GetAttr,
@@ -121,7 +121,7 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
         }},
         Hash(HashAlgorithm::SHA256),
         {});
-    auto childHex = ambientHex(childCdi);
+    auto childHex = ambientHex(childStateHash);
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         mockResolver({
@@ -145,7 +145,7 @@ TEST(AmbientObjectTest, GetAttrMissing)
 TEST(AmbientObjectTest, GetListElem)
 {
     auto arg = testId(0);
-    auto childCdi = stateHashAfterSubject(
+    auto childStateHash = stateHashAfterSubject(
         Subject{DerivedSubject{
             .parent = std::make_shared<const Subject>(testSubject(0)),
             .kind = DerivedSubject::Kind::GetListElem,
@@ -153,7 +153,7 @@ TEST(AmbientObjectTest, GetListElem)
         }},
         Hash(HashAlgorithm::SHA256),
         {});
-    auto childHex = ambientHex(childCdi);
+    auto childHex = ambientHex(childStateHash);
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         mockResolver({

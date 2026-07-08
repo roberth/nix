@@ -270,7 +270,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                 } else if constexpr (std::is_same_v<T, PostulatedIdempotentRead>) {
                     /* X is treated as argAncestry-saturated. Callers pass
                        hashes that already encode the relevant argAncestry
-                       — `OuterObject::getCdi()` returns
+                       — `OuterObject::getStateHash()` returns
                        stateHashAfterSubject with argAncestry
                        baked in; ReplayCallbackArg's localId is
                        stateHashAfter(Arg{D}, callArgAncestry, {})

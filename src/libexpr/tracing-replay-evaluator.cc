@@ -393,9 +393,9 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
     if (!walkHit) {
         /* Walker missed. Rejected-edge obs are NOT committed to
            envWalk: they represent wrong paths whose responses
-           cold never recorded, so folding them into arg CDIs shifts
+           cold never recorded, so folding them into arg state hashes shifts
            subject_at_k to values cold never stamped. Per Asks-paradigm
-           navigation invariant, CDIs are pure functions of the
+           navigation invariant, state hashes are pure functions of the
            committed factset; rejected paths are not in that factset. */
         tracingCacheStats().misses++;
         return std::nullopt;
@@ -479,8 +479,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                    own hashed state (initial state hash) IS the lookup
                    key. */
                 {
-                    auto initialCdi = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
-                    if (initialCdi.to_string(HashFormat::Base16, false) == idStr) {
+                    auto initialStateHash = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
+                    if (initialStateHash.to_string(HashFormat::Base16, false) == idStr) {
                         found = true;
                     }
                 }
@@ -909,12 +909,12 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        currentProxy's applyContext observations into the ReplayCallbackArg's initial
        walk. Without this, ReplayCallbackArg's per-arg fields are computed against
        an empty walk — so sibling A's ReplayCallbackArg and sibling B's ReplayCallbackArg have
-       identical CDIs at their initial `.x` / `.f` probes, and InnerValueResponse's
+       identical state hashes at their initial `.x` / `.f` probes, and InnerValueResponse's
        first-writer-wins returns whichever sibling recorded first,
        yielding cross-sibling data mixing (cb-sibling-b's int-1000
        result = sibling A's x=1 folded with sibling B's f×1000).
        Injecting the current sibling's applyContext obs makes the
-       ReplayCallbackArg's CDIs reflect the SPECIFIC sibling context walker is
+       ReplayCallbackArg's state hashes reflect the SPECIFIC sibling context walker is
        operating under. */
     auto seededWalkFacts = std::make_shared<std::vector<ObservationSet>>();
     if (auto * proxyTR = dynamic_cast<TracingReplayObject *>(ctx.currentProxy.get())) {
@@ -984,9 +984,9 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         ambientResult.to_string(HashFormat::Base16, false).substr(0, 12));
 
     /* Correctness-first cb-repeated fix: memoise the ReplayCallbackArg at
-       BOTH the arg leaf's evolved CID (invariant across invocations
+       BOTH the arg leaf's evolved state hash (invariant across invocations
        in the outer walk — kept for chaseLocalArgSidecar-alignment)
-       AND at the fn leaf's evolved CID at THIS invocation (which
+       AND at the fn leaf's evolved state hash at THIS invocation (which
        DOES differ per invocation because arg(1)_evolved captures
        the outer walk's per-boundary ε folds). Cold's outer probe
        recorded `from = fromStateHashes[0]` which is the FIRST root's cid;

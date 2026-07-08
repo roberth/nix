@@ -798,7 +798,7 @@ std::shared_ptr<Object> tryResolveAmbientResolverProxy(
 {
     /* Linear scan over each registered (subject, argAncestry) x K in
        envWalk. The hasSubjectStampSite gate turned out to be a
-       tautology (cold stamped every CID walker ever resolves), so
+       tautology (cold stamped every state hash walker ever resolves), so
        running the scan unconditionally is equivalent. */
     (void) dg;
     for (auto & entry : resolver.liveProxies) {

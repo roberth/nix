@@ -109,7 +109,7 @@ public:
         ambient layer trace. */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 
-    OuterId getCdi() const { return localId(); }
+    OuterId getStateHash() const { return localId(); }
 
     std::optional<std::string> getStateHashHex() const override
     {

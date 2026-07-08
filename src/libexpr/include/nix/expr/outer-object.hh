@@ -171,7 +171,7 @@ public:
      */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 
-    OuterId getCdi() const
+    OuterId getStateHash() const
     {
         /* state hash at the empty factset, with this proxy's inherited
            argAncestry applied. For multi-edge use, callers must pass the
@@ -181,7 +181,7 @@ public:
 
     std::optional<std::string> getStateHashHex() const override
     {
-        return getCdi().to_string(HashFormat::Base16, false);
+        return getStateHash().to_string(HashFormat::Base16, false);
     }
 };
 

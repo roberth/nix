@@ -131,16 +131,16 @@ void TracingWriter::flushAmbient(bool finalize)
 
         /* Secondary index for producer queries (getAttr / getListElem):
            insert the SAME query payload under the initial-walk reqHash
-           (from = parent root's CID at walk={}, K=0). OuterApply
-           computes fn CIDs as `stateHashAfterSubject(DerivedSubject, scope,
-           {})` — always at empty walk — so the fn CID equals the reqHash
+           (from = parent root's state hash at walk={}, K=0). OuterApply
+           computes fn state hashes as `stateHashAfterSubject(DerivedSubject, scope,
+           {})` — always at empty walk — so the fn state hash equals the reqHash
            of the getAttr/getListElem query IF the from field is at
            initial state. The primary insert above uses the evolved
            `envWalk` state, so when any observations have
            accumulated before this flush, the primary reqHash diverges
-           from the fn CID and walker's `resolveStateHash` pool lookup
+           from the fn state hash and walker's `resolveStateHash` pool lookup
            misses. The secondary insert closes that gap: walker looks up
-           fn CID → hits payload → `resolveProducerChild` navigates
+           fn state hash → hits payload → `resolveProducerChild` navigates
            `parent.maybeGetAttr(name)` live. Variant 1 has empty walk at
            flush so primary == secondary (idempotent no-op); variant 2
            has evolved walk so this is the ONLY reqHash under which

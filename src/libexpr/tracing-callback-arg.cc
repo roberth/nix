@@ -222,12 +222,12 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        The result wrapper carries an ApplyResultSubject so accesses
        on the apply result continue to be recorded in the ambient layer
        trace with an evolved state hash (per the subject-id design). */
-    auto argCdiHex = argObj->getStateHashHex();
+    auto argSubjectHashHex = argObj->getStateHashHex();
     Subject argSubject = argObj->getSubject()
         ? *argObj->getSubject()
         : Subject{PostulatedIdempotentRead{
-              argCdiHex
-                  ? Hash::parseNonSRIUnprefixed(*argCdiHex, HashAlgorithm::SHA256)
+              argSubjectHashHex
+                  ? Hash::parseNonSRIUnprefixed(*argSubjectHashHex, HashAlgorithm::SHA256)
                   : Hash{HashAlgorithm::SHA256}}};
     auto result = inner->queryApply(argObj);
     Subject resultSubject{ApplyResultSubject{

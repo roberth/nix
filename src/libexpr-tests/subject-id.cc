@@ -60,7 +60,7 @@ TEST(CidAsks, DifferentDepthsHaveDifferentInitialIds)
 
 TEST(CidAsks, DerivedSubjectIncludesParentInitial)
 {
-    /* Derived subjects don't have CDIs — only structural addresses
+    /* Derived subjects don't have state hashes — only structural addresses
        (= producer query hashes). Same property holds: different
        names / different parents → different addresses. */
     auto x = getAttrOn(argAt(0), "x");
@@ -158,7 +158,7 @@ TEST(CidAsks, DerivedAdvancesWhenParentAdvances)
     ObservationSet e{.observations = {observationFromQR(q, r)}};
 
     auto childAfter = stateHashAfterSubject(child, noScope(), {e});
-    EXPECT_NE(childInitial, childAfter);  // address changes because parent's CDI did
+    EXPECT_NE(childInitial, childAfter);  // address changes because parent's state hash did
 }
 
 TEST(CidAsks, DerivedDoesNotAdvanceOnFactsTargetedAtItself)
@@ -167,7 +167,7 @@ TEST(CidAsks, DerivedDoesNotAdvanceOnFactsTargetedAtItself)
        stamped at `from = root_cdi`, never `from = derived_address`.
        A hypothetical fact with from=derived_address therefore does
        NOT advance derived's address — only facts on the root do
-       (via the root's CDI evolving), which the prior test covers. */
+       (via the root's state hash evolving), which the prior test covers. */
     auto parent = argAt(0);
     auto child = getAttrOn(parent, "x");
 
@@ -181,7 +181,7 @@ TEST(CidAsks, DerivedDoesNotAdvanceOnFactsTargetedAtItself)
     EXPECT_EQ(stateHashAfterSubject(child, noScope(), {e}), childInitial);
 }
 
-/* ---- inheritance: outer-scope CDIs make sibling content ids distinct ---- */
+/* ---- inheritance: outer-scope state hashes make sibling content ids distinct ---- */
 
 static Hash scopeFor(const std::string & q)
 {
