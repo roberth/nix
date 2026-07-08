@@ -1,73 +1,68 @@
 # Tracing eval cache performance + correctness benches
 
-Bench harnesses for the sets-based tracing eval cache (see
-`doc/tracing-sets-index-data-model.md`). These are developer tools, not
-automated tests — they require pointing at a built `nix` binary and a
-target git repository.
+Bench harnesses for the tracing eval cache — the persistent
+walk-based cache described in `doc/design/tracing-eval-cache.md`.
+These are developer tools, not automated tests: they need a built
+`nix` binary and (for the scale-testing scripts) a nixpkgs checkout.
 
-## Isolating the cache without changing $HOME
+## Environment
 
-The bench scripts redirect `$HOME` for hermetic cache isolation,
-which also isolates other Nix state (`~/.nix-defexpr`,
-`~/.nix-profile`, etc.). If you want to share your main Nix state
-but isolate only the tracing cache, set `NIX_TRACING_CACHE_DIR=/some/dir`
-in your environment — it overrides the default `~/.cache/nix/eval-tracing-index-v2`
-without touching `$HOME`.
+- `NIX_BIN_DIR` — directory containing the `nix` binary to test
+  (defaults to `$repo_root/build/src/nix`).
+- `NIX_TRACING_CACHE_DIR` — override for the cache directory. When
+  set, the DB lives at `$NIX_TRACING_CACHE_DIR/decision-graph.sqlite`;
+  otherwise at `$XDG_CACHE_HOME/nix/eval-tracing-decision-graph/index.sqlite`.
+- `NIXPKGS` — path to a nixpkgs checkout, for scripts that traverse
+  attribute sets (`scale.sh`, `scaling-threshold.sh`,
+  `nixpkgs-validate.sh`, `multi-branch-bench.sh`,
+  `git-history-bench.sh`).
 
-## Common environment
+## Runnable without nixpkgs
 
-All scripts expect:
+- `smoke.sh` — verifies the SQLite DB gets created for a trivial eval.
+- `synthetic.sh` — correctness across file edits and reverts (uses
+  direct SQLite for row-count stats; the `nix eval-cache stats`
+  subcommand it originally used is removed and listed under Future
+  Work in `doc/design/tracing-eval-cache-primop.md`).
+- `cold-warm.sh` — cold vs three warm runs of the same trivial eval;
+  timings + Ask / Terminal / Requests / Results / Queries row counts.
+- `hit-rate.sh` — file-edit-driven workload; counts `replay hit` /
+  `replay miss` / `replay fallback` log lines per pass.
+- `complex-workload.sh` — larger eval with lib import, conditionals,
+  attribute traversal; three warm runs plus edit passes.
+- `with-reads.sh` — cold/warm timings on an eval that reads files.
+- `inspect.sh` — dumps the current DB's row counts by table.
 
-- `NIX_BIN_DIR` — directory containing the `nix` binary to test (e.g.
-  `$nix_repo/build/src/nix`).
-- `NIX_LIB_DIR` — directory containing libraries the `nix` binary needs
-  on `LD_LIBRARY_PATH` (e.g. `$nix_repo/build/src/lib*`).
+## Requires nixpkgs
 
-If both are unset the scripts will try to derive them from `$NIX_REPO`
-(defaults to `$PWD/../../..` from this directory, i.e. the nix repo
-this file lives in).
+- `scale.sh` — walks a wide list of nixpkgs attrs, checkpointing
+  warm-latency on an anchor at K=5/10/20/40/80.
+- `scaling-threshold.sh` — K=1..1000 sweep to find soft-regression
+  thresholds.
+- `nixpkgs-validate.sh` — end-to-end correctness across nixpkgs
+  commits and attribute variants.
+- `multi-branch-bench.sh`, `git-history-bench.sh` — cross-branch /
+  cross-commit cache reuse.
+- `vs-uncached.sh`, `vs-uncached-expensive.sh` — cache-on vs cache-off
+  timing.
 
-## Scripts
+## Baseline (2026-07-09)
 
-### `synthetic.sh` — correctness on file edits and reverts
+Trivial workloads on the sandbox, wall-clock per eval:
 
-Builds a small fixture (two file reads + string concat), evals it cold,
-mutates files, re-evals, and asserts the cache returns the correct value
-across cold/warm/edit/revert scenarios. Exits non-zero on any incorrect
-result.
+| Script | Cold | Warm |
+|---|---|---|
+| `cold-warm.sh` (arithmetic + string ops) | 23 ms | 19-25 ms |
+| `hit-rate.sh` (two file reads) | 22 ms | 22-25 ms |
+| `complex-workload.sh` (import + conditional) | 21 ms | 20-23 ms |
 
-```
-bash synthetic.sh [work_dir]
-```
+At these scales the walk hits are dominated by process startup
+(~20 ms) so warm doesn't beat cold visibly on wallclock; the useful
+signal is that hits fire (hit-rate reports 3 hits on warm-same;
+complex-workload reports 15 hits on warm-1). The scaling-behaviour
+tests that quantify walker cost per Q require a nixpkgs checkout.
 
-### `git-history-bench.sh` — cross-commit cache reuse
-
-Walks N commits of a git repo, checks each out in place on a clone
-(shared paths so the cache's `inputHashes` match across commits),
-evaluates a fixed expression with the tracing eval cache enabled and
-shared. Reports per-commit timing, cache size, and Bindings delta.
-
-```
-bash git-history-bench.sh [repo_path] [n_commits] [expr]
-```
-
-### `multi-branch-bench.sh` — cross-branch cache reuse
-
-Evals a fixed expression against a sequence of git branches, sharing
-the cache. Reports per-branch result hash, timing, cache size, and
-Bindings delta.
-
-```
-bash multi-branch-bench.sh [repo_path] [expr]
-```
-
-## Interpreting results
-
-- **Bindings delta** is the most informative metric: it tells you how
-  many *new* per-query bindings the cache had to record. Zero means a
-  full cache hit (the entire eval reused prior recordings).
-- **Cache size** in KB reveals storage growth. The legacy temporal
-  trie tables dominate; sets-based contributes ~14% by current
-  measurements.
-- **Timing** includes the `nix` binary's startup overhead (~50ms),
-  so warm-hit timings cluster at 60-80ms.
+Design goals the harness validates against are in
+`doc/design/tracing-eval-cache.md` under "Performance goals" —
+no linear search, no unbounded backtracking, session-cumulative
+work proportional to observed change, structural storage sharing.
