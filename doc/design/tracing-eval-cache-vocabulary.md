@@ -119,7 +119,7 @@ Members are persisted in the `RequestSetNodes` trie.
 
 **XOR-fold** — the FactSet identity function: `H(S) = XOR over
 element hashes of members`. Commutative, associative, self-inverse.
-Extension `H(S ∪ {e})` is O(1) given `e ∉ S`.
+Extension against a known-disjoint element is a single in-place XOR.
 
 ### 5. Edges
 
@@ -493,15 +493,16 @@ proxy's cell, or null for non-proxy Objects.
 ### 17. Subject-evolution fast-path
 
 The state hash of a subject at some history position is a pure
-function of `(subject, argAncestry, history, step)`, but naive
-evaluation is O(history.size()) per query. The subject-evolution
-fast-path caches the individual fold-step transitions.
+function of `(subject, argAncestry, history, step)`, but computing
+it from scratch re-runs the fold from step 0 every time. The
+subject-evolution fast-path caches the individual fold-step
+transitions so a walker can hop directly to any step.
 
 **SubjectEvolutionEdge** — a persistent table (schema in §18)
 with one row per single-observation fold step. Populated by the
 writer via a callback during `stateHashAtStamping`; consumed by
-the replay walker to navigate step-by-step through observations
-at a Subject in O(1) per step.
+the replay walker to navigate step-by-step through observations at
+a Subject without re-running the fold.
 
 **EvolutionStep** — one row's worth of data as a struct in
 `subject-id.hh`: `curBefore` (state hash at the Subject before

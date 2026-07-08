@@ -497,7 +497,7 @@ AmbientAsk(fromFactSetHash BLOB, requestSetHash BLOB,
            PRIMARY KEY (fromFactSetHash, requestSetHash)) WITHOUT ROWID
 ```
 
-No `Q` column — Ambient keys edges on `factSet` alone.
+No `queryHash` column — Ambient keys edges on `factSet` alone.
 Inheritance discriminates *across cached calls* by folding the
 cached call's identity into `callArgAncestry`, which enters
 every downstream Subject's state hash at the cb-apply boundary;
@@ -571,7 +571,7 @@ exactly as at Env layer.
 Ambient has no role in stale-cache detection — that's owned
 entirely by the Env layer's input tracing. A changed file or
 environment variable surfaces as a divergent Response at Env
-dispatch; the Env-layer walker's `(Q, factSet)` lookup finds no
+dispatch; the Env-layer walker's `(queryHash, factSet)` lookup finds no
 Ask edge at the new factSet and falls through. The Ambient
 query lives at a specific factSet position in the Env-layer
 trie; if the Env walker doesn't reach that position, Ambient is

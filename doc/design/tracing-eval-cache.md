@@ -10,13 +10,13 @@ Phase-1 sketch) have been removed.
 
 A persistent cache for `nix eval` / `nix build` / any other
 `EvalCommand`-derived CLI. When the evaluator reaches a Result for
-some Query `Q` — `evalFile`, `getAttr`, `apply`, `getString`, etc. —
+some Query — `evalFile`, `getAttr`, `apply`, `getString`, etc. —
 the cache stores a *trace* of the environment reads that led to that
-Result. On a subsequent invocation, the cache replays `Q` by walking
-the trace against the current environment: each recorded file-read or
-env-var lookup is re-issued and its current response compared against
-what was recorded. If everything matches, the cache returns the
-stored Result without invoking the inner evaluator.
+Result. On a subsequent invocation, the cache replays the Query by
+walking the trace against the current environment: each recorded
+file-read or env-var lookup is re-issued and its current response
+compared against what was recorded. If everything matches, the cache
+returns the stored Result without invoking the inner evaluator.
 
 The cache treats the inner evaluator as a black box. It doesn't try
 to predict, parse, or instrument Nix expressions — it just observes
@@ -50,18 +50,18 @@ The essentials for this doc:
 Set identity by hash is load-bearing, so the hashing schemes matter
 (more below).
 
-A trace through the cache for `Q` is a chain of Ask edges ending at
-a Terminal:
+A trace through the cache for a Query is a chain of Ask edges ending
+at a Terminal:
 
 ```
-(Q, ∅)
+(queryHash, ∅)
    │ Ask edge: dispatch this RequestSet's Requests, observe Responses
    ▼
-(Q, cur')
+(queryHash, cur')
    │ Ask edge: dispatch this RequestSet's Requests
    ▼
    ...
-(Q, cur_final) ── Terminal ──▶ resultHash
+(queryHash, cur_final) ── Terminal ──▶ resultHash
 ```
 
 Every trace starts at `cur = ∅`. First-time recordings insert a
@@ -130,9 +130,9 @@ This shape buys two things:
    be ~2 GB of mostly-duplicate RS blobs.
 2. **Cheap symmetric difference between any two roots.** Descend
    both tries in parallel; any subtree where the two roots agree on
-   the hash collapses to a no-op. Cost is `O(|symmetric diff| ·
-   branching)`, not `O(|either set|)`. This is what the replay-side
-   fast path (below) keys off.
+   the hash collapses to a no-op. Cost tracks the size of the
+   difference, not the size of either input set. This is what the
+   replay-side fast path (below) keys off.
 
 ### FactSet hashing
 
@@ -146,8 +146,9 @@ H(S ∪ {e})           = H(S) XOR H_element(e)   when e ∉ S
 ```
 
 Properties: commutative (order-independent), associative,
-identity-with-zero, self-inverse on XOR. Extension is O(1) given the
-disjointness invariant `e ∉ S`. Note this only gives the canonical
+identity-with-zero, self-inverse on XOR. Extension against a
+known-disjoint element is a single in-place XOR. Note this only
+gives the canonical
 `H(A ∪ B) = H(A) XOR H(B)` when `A ∩ B = ∅`; the general
 `H(A) XOR H(B) = H(A △ B)` (symmetric difference) is what falls out
 of XOR over hashes.
@@ -190,8 +191,8 @@ TrieBuilder               sessionRequestsTrie; // canonical RS hash, incremental
 
 Each new Fact (one not already in `seenRequests`) is XOR'd into
 `envFactSetHash`, mapped in `responseFor`, and inserted into
-`sessionRequestsTrie` (O(log N) — one path-copy from leaf to root,
-split on leaf-overflow).
+`sessionRequestsTrie` — one path-copy from leaf to root, split on
+leaf-overflow.
 
 When the evaluator finishes a Query and produces a Result,
 `TracingEvaluator` (the recording counterpart to
@@ -210,7 +211,7 @@ queryHandle)`. That handler:
 
 ### `record()` algorithm
 
-`record(Q, factSetHash, result, responseFor, sessionRequests,
+`record(queryHash, factSetHash, result, responseFor, sessionRequests,
 sessionRequestsRsHash)` integrates the recording into the decision
 graph. It tracks a local `dispatchedSoFar` (Requests consumed so far)
 and a running `cur` (XOR-fold hash):
@@ -221,31 +222,31 @@ dispatchedSoFar  = {}
 while dispatchedSoFar ≠ sessionRequests:
     # Eager Patricia split pass: any existing edge whose useful
     # dispatch partially overlaps `remaining` gets split.
-    for rs in Ask(Q, cur):
+    for rs in Ask(queryHash, cur):
         useful = members(rs) \ dispatchedSoFar
         shared = useful ∩ (sessionRequests \ dispatchedSoFar)
         if ∅ ⊊ shared ⊊ useful:
-            patricia_split(Q, cur, rs, shared)
+            patricia_split(queryHash, cur, rs, shared)
 
     # Find a followable edge: usefulDispatch ⊆ remaining
-    if some edge e in Ask(Q, cur) has useful(e) ⊆ remaining:
+    if some edge e in Ask(queryHash, cur) has useful(e) ⊆ remaining:
         consume useful(e) into cur, dispatchedSoFar
     elif dispatchedSoFar = ∅ and sessionRequestsRsHash provided:
         # Fast path for first-time recording: jump straight to factSet
-        insert Ask(Q, ∅, sessionRequestsRsHash)
+        insert Ask(queryHash, ∅, sessionRequestsRsHash)
         cur = factSetHash; break
     else:
         # Slow path: insert a new whole-remaining edge
-        insert Ask(Q, cur, insertRequestSet(remaining))
+        insert Ask(queryHash, cur, insertRequestSet(remaining))
         consume remaining into cur, dispatchedSoFar
 
-insert Terminal(Q, factSetHash, result)
+insert Terminal(queryHash, factSetHash, result)
 ```
 
-The fast path makes per-record cost `O(1)` for fresh Queries in a
-session-long mapAttrs trace. Without it, the writer would re-sort
-and re-trie the whole growing factSet on every `record()`, giving
-cold-record cost `O(K² · F · log)`.
+The fast path uses the precomputed RS hash so the writer does not
+re-hash the growing FactSet per recording. Without it the writer
+would re-sort and re-trie the whole FactSet on every `record()`,
+which was the O(n²) failure mode in earlier prototypes.
 
 `useful` dispatch is the per-edge subset of Requests not already in
 `cur` — a Patricia-split tail edge keeps its original whole-set RS
@@ -261,13 +262,13 @@ split:
 
 ```
 Before:
-   (Q, cur) ── RS_existing ──▶ FactSet_existing
+   (queryHash, cur) ── RS_existing ──▶ FactSet_existing
 
 After:
-   (Q, cur)          ── RS_shared    ──▶ FactSet_intermediate
+   (queryHash, cur)          ── RS_shared    ──▶ FactSet_intermediate
                            (new RS node keyed by SHA-256 of the shared part)
-   (Q, intermediate) ── RS_existing ──▶ FactSet_existing  (re-pointed)
-   (Q, intermediate) ── RS_new      ──▶ FactSet_new       (added later)
+   (queryHash, intermediate) ── RS_existing ──▶ FactSet_existing  (re-pointed)
+   (queryHash, intermediate) ── RS_new      ──▶ FactSet_new       (added later)
 ```
 
 Three properties of how this is implemented in `dg_recordImpl`:
@@ -282,7 +283,7 @@ Three properties of how this is implemented in `dg_recordImpl`:
   the shared Requests land at the same intermediate by hash equality;
   divergent Responses land them at different intermediates and they
   coexist as sibling paths.
-- The split removes the old `Ask(Q, cur, RS_existing)` row via
+- The split removes the old `Ask(queryHash, cur, RS_existing)` row via
   `removeAsks` (in the schema specifically for this case).
 
 ## Replay
@@ -309,39 +310,37 @@ SetHash                    envCur;          // cur the last successful walk land
 TrieBuilder                dispatchedTrie;  // cumulative requests dispatched
 ```
 
-In a session that just walked Q_{k-1} successfully, the next walk
-for Q_k usually only differs in a handful of new Requests — Q_k's
-evaluation imports a new package, reads a few extra files, etc.
-Instead of walking the chain from ∅, fast-path:
+In a session that just walked a previous Query successfully, the
+next Query usually only differs in a handful of new Requests — it
+imports a new package, reads a few extra files, etc. Instead of
+walking the chain from ∅, fast-path:
 
-1. Look at `Ask(Q_k, ∅)`. If exactly one outgoing edge, take its
-   RS root hash `edgeRsHash`.
+1. Look at the Query's outgoing edge at `cur = ∅`. If exactly one
+   edge, take its RS root hash `edgeRsHash`.
 2. `dispatchedTrie.diff(decisionGraph, edgeRsHash, onlyInThis,
    onlyInOther)`. A parallel descent of the in-memory
    `dispatchedTrie` and the stored trie rooted at `edgeRsHash`;
    subtrees with matching node hashes collapse to no-ops via
-   short-circuit at the recursive descent. Result: the symmetric
-   difference in `O(|delta| · branching)`.
-3. For each request in `onlyInOther` (added by Q_k): dispatch it
-   (memoised in `responseFor`), XOR `H_element(req, resp)` into a
-   candidate cur starting from `envCur`.
-4. For each request in `onlyInThis` (dispatched for an earlier Q but
-   not in Q_k's RS): look up the cached response, XOR
-   `H_element(req, resp)` into the candidate cur — XOR is its own
-   inverse, so the "out" operation is the same XOR.
-5. Check `Terminal(Q_k, candidateCur)`. Hit → commit (extend
-   `dispatchedTrie` with `onlyInOther`, update `envCur`), return
-   the Result. Miss → fall through to slow walk.
+   short-circuit at the recursive descent.
+3. For each request in `onlyInOther` (added by this Query): dispatch
+   it (memoised in `responseFor`), XOR `H_element(req, resp)` into
+   a candidate cur starting from `envCur`.
+4. For each request in `onlyInThis` (dispatched for an earlier
+   Query but not in this one's RS): look up the cached response,
+   XOR `H_element(req, resp)` into the candidate cur — XOR is its
+   own inverse, so the "out" operation is the same XOR.
+5. Check `Terminal(queryHash, candidateCur)`. Hit → commit (extend
+   `dispatchedTrie` with `onlyInOther`, update `envCur`), return the
+   Result. Miss → fall through to slow walk.
 
-In the sequential mapAttrs case, `onlyInThis` is empty and
-`onlyInOther` is a handful per Q. Per-Q warm cost drops from
-`O(|Q.RS|)` to `O(|delta| · log N)`. Across the whole session:
-linear in total Facts.
+The design goal is that session-cumulative warm cost tracks the
+delta between successive Queries' RequestSets, not the size of
+either RequestSet.
 
 ### Navigation invariant: hashes flow *into* lookups as keys, never *out*
 
 The whole point of the Ask/Terminal machinery is that hash values —
-`factSetHash` (`cur`), `queryHash` (`Q`), RequestSet hashes — are
+`factSetHash` (`cur`), `queryHash` (`queryHash`), RequestSet hashes — are
 *produced* by the walker via hashing. They serve as *keys* to look
 up content (RequestSets, Terminals) in the trie. They are never
 outputs of a lookup — the walker never asks a table "what's the hash
@@ -351,7 +350,7 @@ Concretely, the pattern is:
 
 1. Walker holds a `cur` (its current hashed state, produced by
    prior hashing steps).
-2. Walker uses cur as a key: `getAsks(Q, cur)` returns *content*
+2. Walker uses cur as a key: `getAsks(queryHash, cur)` returns *content*
    stored at that key — the RequestSets outgoing from cur.
 3. Walker dispatches each Request against the live environment,
    XOR-folds each `H_element(req, resp)` into cur to produce a new
@@ -387,7 +386,7 @@ question would treat hashes as outputs of lookups.
 > cb-apply `from` fields alike). `Terminal` doesn't fit this pattern
 > — a Terminal is the *end* of the chain and produces a Result, not a
 > next observation, so it's queried at the cur the walker *lands*
-> at after all observations for that Q.
+> at after all observations for that queryHash.
 >
 > Practical check for every call-site: if you're writing
 > `stateHashAt(subject, argAncestry, history, history.size())` at
@@ -395,23 +394,23 @@ question would treat hashes as outputs of lookups.
 > `history[0..step)` where `step` is the state **before** this
 > Query's own observation folds in.
 
-### Slow path: `decisionGraph.walk(Q, dispatch)`
+### Slow path: `decisionGraph.walk(queryHash, dispatch)`
 
-Walks the chain from ∅, one edge at a time. At each `(Q, cur)`:
+Walks the chain from ∅, one edge at a time. At each `(queryHash, cur)`:
 
-1. `getAsks(Q, cur)` for outgoing edges. If empty: miss.
+1. `getAsks(queryHash, cur)` for outgoing edges. If empty: miss.
 2. For each edge's RS: compute `usefulDispatch(rs, dispatchedSoFar)`.
    Dispatch the useful Requests (via `dispatch` callback — memoised
    in `responseFor`), XOR-fold their `H_element` into a candidate
    `nextCur`.
-3. Validate: `hasAnyEdge(Q, nextCur)`? That is, is there some
-   `Ask(Q, nextCur, *)` or `Terminal(Q, nextCur, *)` row? If yes,
+3. Validate: `hasAnyEdge(queryHash, nextCur)`? That is, is there some
+   `Ask(queryHash, nextCur, *)` or `Terminal(queryHash, nextCur, *)` row? If yes,
    advance `cur = nextCur` and continue. If no, this branch of the
    recording isn't reachable from the current env — try the next
    outgoing edge.
-4. If `Terminal(Q, cur)` exists, return that Result.
+4. If `Terminal(queryHash, cur)` exists, return that Result.
 
-The existence check is per-`Q` rather than per-FactSet — what
+The existence check is per-`queryHash` rather than per-FactSet — what
 matters is that *this* Query reached this position in some recorded
 trace, not just that some other Query happened to land at the same
 FactSet hash.
@@ -419,7 +418,7 @@ FactSet hash.
 ### Replay-object methods
 
 `TracingReplayObject::maybeGetAttr("foo")` etc. each go through
-`lookupResult<Q, R>` which calls `walk(QueryGetAttr{"foo",
+`lookupResult<queryHash, R>` which calls `walk(QueryGetAttr{"foo",
 parentTriePosition})`. The Merkle parent's `queryHash` flows into
 the child Query's hash, so the cache key reflects "getAttr foo on
 *this specific* recorded Result," not just "getAttr foo on
@@ -441,7 +440,7 @@ bridge; details live in
 Responses to the same Request, the FactSet hashes for the two
 recordings diverge naturally (different XOR inputs → different
 hashes). The data model can store both — multiple Terminals exist
-for the same Q at different factSets — but which one a walk lands
+for the same queryHash at different factSets — but which one a walk lands
 at depends on what the live env returns at dispatch time. The cache
 makes no attempt to detect or arbitrate genuine nondeterminism; it's
 a model-level concern that remains open.
@@ -495,15 +494,15 @@ eval cache that's the right trade.
 There are four categories of cache "miss" and the system handles
 them transparently:
 
-1. **Q never recorded.** `getAsks(Q, ∅)` is empty. Fall through to
+1. **queryHash never recorded.** `getAsks(queryHash, ∅)` is empty. Fall through to
    inner. The recording layer captures the fresh evaluation as a new
-   `(Q, factSet, result)`.
-2. **Q recorded, but the live env differs.** Walk dispatches and the
+   `(queryHash, factSet, result)`.
+2. **queryHash recorded, but the live env differs.** Walk dispatches and the
    XOR of live response hashes lands at a `cur` not present in any
    recorded chain. `hasAnyEdge` returns false at the divergent
    position; walk gives up. Fall through.
 3. **Fast path lookup miss.** `dispatchedTrie.diff` produces a delta;
-   we compute candidateCur; `Terminal(Q, candidateCur)` is absent.
+   we compute candidateCur; `Terminal(queryHash, candidateCur)` is absent.
    Fall through to slow walk (which may itself hit or miss).
 4. **TracingReplayObject can't model the call** (e.g.
    `getStringWithoutContext`, `getPath`). Fall through to inner via
@@ -514,25 +513,26 @@ correct answer regardless. The cost is just the missed cache benefit.
 
 ## Performance goals
 
-- **No linear search over the corpus.** Lookups on the recorded
-  data go through hashed keys — `getAsks(Q, cur)`, `getTerminal(Q,
-  cur)`, RequestSet-trie node lookup, request-pool lookup — never
-  iterate the full recording set. This holds on both cold and warm
-  paths.
+- **No linear search, anywhere.** Every lookup on recorded data
+  goes through hashed keys — `getAsks(queryHash, cur)`,
+  `getTerminal(queryHash, cur)`, RequestSet-trie node lookup,
+  request-pool lookup. Cold and warm alike.
 - **No unbounded backtracking.** The walker consumes recorded
   Facts against the live environment; on a Fact mismatch it fails
   cleanly at the divergent position rather than searching for an
   alternative interpretation. Missed states have no recorded content
   at their key; the miss is the answer.
 - **Session-cumulative work proportional to observed change**, not
-  to the total workload. The writer's incremental `sessionRequestsTrie`
-  and `envFactSetHash` avoid re-hashing the growing FactSet per
-  recording. The walker's `dispatchedTrie` fast path avoids
-  re-walking the chain per Q — subsequent Qs in the same session pay
-  for the delta from the previous walk, not from ∅.
+  to the total recorded state. The writer's incremental
+  `sessionRequestsTrie` and `envFactSetHash` avoid re-hashing the
+  growing FactSet per recording. The walker's `dispatchedTrie` fast
+  path avoids re-walking the chain from ∅ per Query — subsequent
+  Queries in the same session pay for the delta from the previous
+  walk.
 - **Structural storage sharing.** RequestSets that overlap share
   their common trie subtrees automatically via node-hash equality.
-  DB growth is driven by unique Requests, not by K × |RS|.
+  Storage grows with the count of unique Requests, not with the
+  number of Queries times the average RequestSet size.
 
 Perf sweeps that check these hold across scaling regimes are in
 `tests/perf/tracing-cache/`.
@@ -556,7 +556,7 @@ misses still write one.
 Unit tests at `src/libexpr-tests/tracing-decision-graph.cc` cover:
 
 - Atomic pool round-trips, set canonicity, set extension
-- Edge insert/get/remove, per-Q isolation
+- Edge insert/get/remove, per-queryHash isolation
 - `record()` + `walk()` end-to-end including divergent responses,
   Patricia split, edge-following on supersets, multi-element
   RequestSets

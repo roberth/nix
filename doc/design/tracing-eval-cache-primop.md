@@ -179,7 +179,7 @@ Inside `prim_cache`:
 ## Recording semantics
 
 The inner evaluator's `TracingEvaluator` records the cached
-expression's Q exactly once per fresh evaluation. Which Q depends
+expression's queryHash exactly once per fresh evaluation. Which queryHash depends
 on which path forced the value:
 
 - `replayEval->evalFile(...)` / `evalExpr(...)` records
@@ -189,7 +189,7 @@ on which path forced the value:
   `innerEvaluator->apply(fnObj, outerArgObj)`, which records
   `QueryApply{fn, arg}` at the inner level.
 
-Each recording produces its own `(Q, factSet, result)` row via
+Each recording produces its own `(queryHash, factSet, result)` row via
 `decisionGraph.record(...)`. The `factSet` contains:
 
 - File reads from the inner evaluator (via
@@ -223,10 +223,10 @@ No new `TracingWriter` methods are needed.
 
 When `replayEval->evalFile(...)` (or `evalExpr`, or `apply`) runs:
 
-1. `lookup(Q)` calls `walk(queryHash)`.
+1. `lookup(queryHash)` calls `walk(queryHash)`.
 2. Fast path: `dispatchedTrie.diff` against the `RequestSet`
-   reachable from `(Q, ∅)`. If the delta resolves and
-   `Terminal(Q, candidateCur)` matches, hit.
+   reachable from `(queryHash, ∅)`. If the delta resolves and
+   `Terminal(queryHash, candidateCur)` matches, hit.
 3. Otherwise, fall back to `decisionGraph.walk(queryHash, dispatch)`.
 4. The `dispatch` callback in `TracingReplayEvaluator` reads each
    Request payload, calls `getCurrentResponse`, and returns the
@@ -241,7 +241,7 @@ When `replayEval->evalFile(...)` (or `evalExpr`, or `apply`) runs:
 5. On a hit, the result payload comes back; `lookup` wraps it in a
    `TracingReplayObject`. The outer caller forces attrs/strings/…
    via that TracingReplayObject, which defers to its own
-   `lookupResult<Q, R>` per-method (using the recorded queryHash as
+   `lookupResult<queryHash, R>` per-method (using the recorded queryHash as
    the parent in child Queries' Merkle chain).
 
 Covariant callback replay uses the callback-arg proxies —
@@ -291,7 +291,7 @@ method (`.getInt()`, etc.) and serialising the answer.
 
 A successful replay still feeds the recording-side writer state
 (`envFactSet`, `sessionRequestsTrie`, `envCur`) so a *later* miss
-on a different Q in the same session falls into a coherent
+on a different queryHash in the same session falls into a coherent
 recording chain.
 
 ## Lifetime and ownership
@@ -321,7 +321,7 @@ keeps everything else alive.
 
 Items that were closed by the shipped implementation
 (cross-process concurrent recording, `QueryApply` semantics,
-positional-queue replacement, apply-Q teardown) are no longer
+positional-queue replacement, apply-queryHash teardown) are no longer
 listed. What remains:
 
 1. **Seed-counter collisions across writers, and the general
@@ -387,14 +387,14 @@ listed. What remains:
    construction today, but plugin primops and any native path that
    bypasses `TracingEnvironment` would be gaps to watch.
 
-5. **Storage-layer leverage.** The base cache's perf work killed
-   O(n²) behaviours from earlier prototypes; the primop needs the
-   same discipline. `resolveStateHash` memoises within a walk; the
-   apply-Request dispatcher invokes the outer apply once and
+5. **Storage-layer leverage.** The base cache's design goals — no
+   linear search, no unbounded backtracking, session-cumulative
+   work proportional to observed change — apply to the primop's
+   new touchpoints too. `resolveStateHash` memoises within a walk;
+   the apply-Request dispatcher invokes the outer apply once and
    reuses the result across all child-query dispatches; the
-   producer-by-child index is built once per walk. Any new
-   touchpoint should be audited against this criterion before
-   landing.
+   producer-by-child index is built once per walk. Audit each new
+   touchpoint against these goals before landing.
 
 ## Future work
 
@@ -415,7 +415,7 @@ listed. What remains:
   cross-invocation seed drift (see open question 1). When two
   evaluations produce semantically identical ambient values via
   different apply-boundary sequences, the seed counters disagree
-  and cross-invocation Q hashes drift even though the values
+  and cross-invocation queryHash hashes drift even though the values
   match. A unification algorithm at replay time would let the
   cache hit anyway. Caught case: unconditionally lazy functions
   (`\arg: e` where `e`'s evaluation never reaches into `arg`) —
