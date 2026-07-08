@@ -150,10 +150,10 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     /* Inherited scope for subject-id: uniquely identifies this cached
        call so sibling cached calls (different import / expr) get
        distinct scope state ids throughout the cb-apply boundary.
-       XOR-fold with `state.inheritedCallScope` to accumulate
+       XOR-fold with `state.inheritedCallArgAncestry` to accumulate
        across enclosing cached calls (= per via-asks
        `state hash(LocalObject) = ... ⊕ state hash(Q) ⊕ state hash(Q_outer) ⊕
-       ...`). For a top-level cached call, `inheritedCallScope`
+       ...`). For a top-level cached call, `inheritedCallArgAncestry`
        is 0 and this reduces to the own contribution. The inner
        EvalState (= cached body's evaluator) carries the combined
        value forward so deeper-nested cached calls accumulate
@@ -162,9 +162,9 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
         ? hashString(HashAlgorithm::SHA256, "cache-import:" + importPath->path.abs())
         : hashString(HashAlgorithm::SHA256, "cache-expr:" + *expr + ":" + baseDir->path.abs());
     auto effectiveCallScope = TracingDecisionGraph::xorHashes(
-        state.inheritedCallScope, ownContribution);
+        state.inheritedCallArgAncestry, ownContribution);
     setAmbientResolverCallArgAncestry(*resolver, effectiveCallScope);
-    innerState->inheritedCallScope = effectiveCallScope;
+    innerState->inheritedCallArgAncestry = effectiveCallScope;
 
     // Convert paths to use the inner accessor (TracingSourceAccessor)
     // so file reads are recorded as dependencies for invalidation.

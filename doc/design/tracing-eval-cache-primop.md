@@ -152,9 +152,9 @@ Inside `prim_cache`:
 
 5. **Seed `callArgAncestry`.** Compute a per-cache-call contribution
    (hash of `"cache-import:"|"cache-expr:"` plus the source
-   identifier) XOR-folded with `state.inheritedCallScope`. Propagate
+   identifier) XOR-folded with `state.inheritedCallArgAncestry`. Propagate
    the result via `setAmbientResolverCallArgAncestry` and
-   `innerState->inheritedCallScope`. Sibling cached calls get
+   `innerState->inheritedCallArgAncestry`. Sibling cached calls get
    distinct state hashes at their cb-apply boundaries because their
    contributions differ; nested calls accumulate.
 
@@ -476,7 +476,7 @@ listed. What remains:
 
 - `src/libexpr/primops/cache.cc` — `prim_cache` body.
 - `src/libexpr/include/nix/expr/eval.hh` —
-  `EvalState::rootDecisionGraph`, `cacheState`, `inheritedCallScope`.
+  `EvalState::rootDecisionGraph`, `cacheState`, `inheritedCallArgAncestry`.
 - `src/libcmd/command.cc` — sets `evalState->rootDecisionGraph`
   during `getEvalState()`.
 - `src/libexpr/tracing-replay-evaluator.cc` —

@@ -563,12 +563,12 @@ public:
        XOR-fold of all ancestor cached-call contributions per
        via-asks's `state hash(LocalObject) = ... ⊕ state hash(Q) ⊕
        state hash(Q_outer) ⊕ ...` formula). When `builtins.cache` runs,
-       the new resolver's callArgAncestry = `inheritedCallScope XOR
+       the new resolver's callArgAncestry = `inheritedCallArgAncestry XOR
        own contribution`, and the inner EvalState created for the
        cached body inherits that combined value as its own
-       `inheritedCallScope`. Top-level (= user-facing) state
+       `inheritedCallArgAncestry`. Top-level (= user-facing) state
        starts at zero. */
-    Hash inheritedCallScope{HashAlgorithm::SHA256};
+    Hash inheritedCallArgAncestry{HashAlgorithm::SHA256};
 
     /**
      * State for builtins.cache calls (see src/libexpr/primops/cache.cc).
