@@ -30,11 +30,11 @@
  * the primop pushed the recursive apply Fact). Lookup keys agree by
  * the subject-id formula on both sides; the response payload comes
  * back; the synthetic's `advanceChainAndAppendFact` consumes the
- * matching AmbientAsks edge.
+ * matching AmbientAsk edge.
  *
- * Closes the env main-trie bypass diagnosed in
- * `tracing-eval-cache-higher-order-replay.md` — the recordings land
- * exactly where the walker's lambda-LO mechanism reads from.
+ * The recordings land exactly where the walker's callback-arg-lambda
+ * primop reads from — see tracing-eval-cache-primop.md's "Recording
+ * lambda apply-results goes to InnerValueResponse" bullet.
  */
 
 #include "nix/expr/arg-cell.hh"

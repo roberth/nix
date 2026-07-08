@@ -228,6 +228,18 @@ Specific commitments of the present design.
    resulting state hashes or `factSetHash`. Edges advance one at
    a time; within an edge, requests may be probed concurrently.
 
+   *Recorder/walker alignment obligation.* The writer's
+   subject-id history advances in 1:1 lockstep with its
+   `envAsksEdges`: every Ask edge added on the writer side is
+   paired with a subject-id edge at the same index (ε boundaries
+   insert into both; trailing closes append to both). The walker
+   pushes to its subject-id history for every Ask edge it
+   traverses — even when the edge contributes no observations to
+   a given Subject. Without this alignment, the writer's
+   flush-time state hash for a Subject at edge `k` and the
+   walker's re-computation at the same `k` disagree, and every
+   Query keyed on the disagreeing hash misses.
+
 8. **Same-shape collapse is automatic.** Two Subjects with
    identical observation histories evaluate to identical state
    hashes by the function. The trie's Patricia split factors

@@ -276,10 +276,9 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                        stateHashAfter(Arg{D}, callArgAncestry, {})
                        which is also argAncestry-saturated. Re-XORing argAncestry
                        here would either double-XOR (= argAncestry-saturated
-                       inputs) or under-XOR (= un-scoped inputs) — the
-                       per-arg-completion doc (= option 1) avoids
-                       both by treating PostulatedIdempotentRead as a
-                       pre-computed-state hash atom. */
+                       inputs) or under-XOR (= un-scoped inputs); treating
+                       PostulatedIdempotentRead as a pre-computed state hash
+                       atom (return alt.hash unchanged) avoids both. */
                     return alt.hash;
                 } else {
                     throw Error("stateHashAt: unknown subject variant");

@@ -250,6 +250,45 @@ Covariant callback replay uses the callback-arg proxies —
 the inner-supplied arg, `ReplayCallbackArg` serves the recorded
 response instead of dispatching live (see the vocab §15).
 
+**Standin identity is preserved through the wrapping chain.** A
+`ReplayCallbackArg` for an inner-supplied lambda materialises via
+`toValueOrProxy` as a primop `Value`. When the outer applies that
+lambda, the primop must fire — its `impl` is the mechanism that
+consults `AmbientAsk` for the recorded apply and either reproduces
+the result or throws divergence. Three sites cooperate to keep the
+standin reachable:
+
+- `dispatchApplyLive` invokes the apply at Object level
+  (`fnObj->queryApply(replayLocal)`) rather than constructing an
+  Interpreter-level `mkApp` — the latter loses the standin's
+  Object identity through the Value wrapper.
+- `runOn` skips the `TracingCallbackArg` wrap when `argObj` is
+  already a `ReplayCallbackArg`. The wrap's purpose is recording
+  outer's probes on inner-supplied locals at cold; a standin at
+  warm already encapsulates the recorded contract, and re-wrapping
+  it would route the outer's `g arg` through
+  `<cached-fn>(TracingCallbackArg)` — bypassing the standin's
+  primop.
+- `ExprFromObject::eval`'s `nFunction` case detects
+  `ReplayCallbackArg` and returns its primop `Value` directly.
+
+Without any one of these three, the standin's primop never fires
+and the walker either serves a wrong Ambient result (warm-replay
+bug) or cascades into repeated fresh re-evaluations
+(outer-change bug).
+
+**Recording lambda apply-results goes to `InnerValueResponse`, not
+to the main-trie Terminal.** When `TracingEvaluator::apply`
+detects an inner-supplied lambda being applied at cold (the
+recursive-cb-apply case), the result wrapper's method calls
+record into `InnerValueResponse` at the local-synthetic subject's
+state hash, matching the key the walker's standin primop reads at
+warm. The walker's `<replay-callback-arg-lambda>` primop consults
+`AmbientAsk` for the apply Fact's chain-advance and reads the
+per-probe responses from `InnerValueResponse` for the follow-up
+observations. Recording and reading go through the same subject-id
+evolution formula on both sides.
+
 ### Ambient responses are capability-mediated, not cached
 
 The decisive design point, easy to get wrong: every ambient response

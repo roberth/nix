@@ -330,15 +330,16 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
        replay, the ReplayCallbackArg reaching `runOn` already encapsulates
        the recorded contract for the cb-arg crossing — the ReplayCallbackArg's
        primop and its synthetic apply-result handle the per-probe
-       AmbientAsks lookups directly. Wrapping the ReplayCallbackArg in TracingCallbackArg
-       would (1) add a redundant recording layer with no new
-       information to capture (the writer isn't recording here at
+       AmbientAsk lookups directly. Wrapping the ReplayCallbackArg in
+       TracingCallbackArg would (1) add a redundant recording layer with
+       no new information to capture (the writer isn't recording here at
        warm) and (2) convert the ReplayCallbackArg's primop into the
-       `<cached-fn>(TracingCallbackArg)` cascade that bypasses the design's
-       lambda-LO mechanism — exactly the bypass diagnosed in
-       `tracing-eval-cache-higher-order-replay.md`. At cold, argObj
-       is an `InterpreterObject` of a real inner Value and the cast
-       returns null, leaving the TracingCallbackArg wrap path unchanged. */
+       `<cached-fn>(TracingCallbackArg)` cascade that bypasses the
+       standin-primop-fires discipline (see tracing-eval-cache-primop.md's
+       "Standin identity is preserved through the wrapping chain"). At
+       cold, argObj is an `InterpreterObject` of a real inner Value and
+       the cast returns null, leaving the TracingCallbackArg wrap path
+       unchanged. */
     auto wrappedArg = (innerWriter && outerRootFSRoot
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
