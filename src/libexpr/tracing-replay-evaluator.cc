@@ -475,13 +475,18 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                    own hashed state (initial state hash) IS the lookup
                    key. */
                 {
-                    /* Polymorphic dispatch: cell->liveObject's Subject
-                       can be a DerivedSubject (e.g. an OuterObject
-                       reached via maybeGetAttr on a parent proxy;
-                       navigation children inherit the parent's ArgCell
-                       and their liveObject can carry any variant).
-                       Strict stateHashAt would trap. */
-                    auto initialStateHash = stateHashAtSubject(*subj, argAncestry, extendedWalkForMatch, 0);
+                    /* No functional test in the current suite reaches
+                       this loop with a DerivedSubject subj (verified by
+                       instrumentation this session). The strict
+                       stateHashAt would trap on Derived, so if the
+                       assumption ever breaks — e.g. a future proxy
+                       type registers a Derived-subject liveObject at
+                       an ArgCell — we need to know. Assert to catch
+                       that inversion; swap to stateHashAtSubject
+                       under a real repro. */
+                    assert(!std::holds_alternative<DerivedSubject>(subj->data)
+                           && "resolveStateHash: DerivedSubject in cell-chain match — see task #68 investigation");
+                    auto initialStateHash = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
                     if (initialStateHash.to_string(HashFormat::Base16, false) == idStr) {
                         found = true;
                     }
@@ -497,9 +502,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                    also reached by trie navigation, so the loop's
                    K dimension is unnecessary here. */
                 if (!found) {
-                    Hash argSubjectHash = stateHashAtSubject(
+                    Hash argSubjectHash = stateHashAt(
                         *subj, Hash(HashAlgorithm::SHA256), {}, 0);
-                    Hash cur = stateHashAtSubject(*subj, argAncestry, extendedWalkForMatch, 0);
+                    Hash cur = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
                     for (const auto & edge : extendedWalkForMatch) {
                         if (found) break;
                         Hash edgeAcc(HashAlgorithm::SHA256);
