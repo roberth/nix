@@ -51,27 +51,27 @@ std::string TracingReplayObject::evolvedQueryFrom() const
     if (applyResultSubject && inner) {
         if (auto * innerT = dynamic_cast<TracingObject *>(inner->get_ptr().get())) {
             if (auto innerCtx = innerT->getApplyContext()) {
-                std::vector<ObservationSet> walk;
-                walk.reserve(innerCtx->observations.size());
+                std::vector<ObservationSet> history;
+                history.reserve(innerCtx->observations.size());
                 for (auto & obs : innerCtx->observations) {
                     ObservationSet edge;
                     edge.observations.push_back(obs);
-                    walk.push_back(std::move(edge));
+                    history.push_back(std::move(edge));
                 }
-                auto evolved = stateHashAt(*applyResultSubject, applyArgAncestry, walk, walk.size());
+                auto evolved = stateHashAt(*applyResultSubject, applyArgAncestry, history, history.size());
                 return evolved.to_string(HashFormat::Base16, false);
             }
         }
     }
     if (applyResultSubject && applyContext) {
-        std::vector<ObservationSet> walk;
-        walk.reserve(applyContext->observations.size());
+        std::vector<ObservationSet> history;
+        history.reserve(applyContext->observations.size());
         for (auto & obs : applyContext->observations) {
             ObservationSet edge;
             edge.observations.push_back(obs);
-            walk.push_back(std::move(edge));
+            history.push_back(std::move(edge));
         }
-        auto evolved = stateHashAt(*applyResultSubject, applyArgAncestry, walk, walk.size());
+        auto evolved = stateHashAt(*applyResultSubject, applyArgAncestry, history, history.size());
         auto hex = evolved.to_string(HashFormat::Base16, false);
         return hex;
     }
@@ -91,14 +91,14 @@ std::vector<std::string> TracingReplayObject::parentHashCandidates() const
            sibling attrs in those warmups recorded at this prefix
            regardless of which warmup wrote them. */
         if (postWHNFObservationCount && *postWHNFObservationCount < applyContext->observations.size()) {
-            std::vector<ObservationSet> walk;
-            walk.reserve(*postWHNFObservationCount);
+            std::vector<ObservationSet> history;
+            history.reserve(*postWHNFObservationCount);
             for (size_t i = 0; i < *postWHNFObservationCount; ++i) {
                 ObservationSet edge;
                 edge.observations.push_back(applyContext->observations[i]);
-                walk.push_back(std::move(edge));
+                history.push_back(std::move(edge));
             }
-            auto snap = stateHashAt(*applyResultSubject, applyArgAncestry, walk, walk.size());
+            auto snap = stateHashAt(*applyResultSubject, applyArgAncestry, history, history.size());
             auto snapHex = snap.to_string(HashFormat::Base16, false);
             if (snapHex != out.front())
                 out.push_back(snapHex);
@@ -233,7 +233,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
             if (deepFromHex != parentHash) {
                 trace::QueryGetAttr deepQuery{name, deepFromHex};
                 if (auto deep = lookupStructuralChild<trace::QueryGetAttr, trace::ResultMaybeType>(deepQuery)) {
-                    /* Deeper hit validated (walk's chain traversal
+                    /* Deeper hit validated (history's chain traversal
                        returned success). Use it — this is a
                        sibling-specific recording. */
                     auto deepQueryHash = TracingDecisionGraph::computeQueryHash(deepQuery);

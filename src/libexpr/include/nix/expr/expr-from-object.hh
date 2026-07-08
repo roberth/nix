@@ -131,9 +131,9 @@ Hash getAmbientResolverCallScope(const OuterResolver & resolver);
     `<replay-local-lambda>` primop at warm replay to publish the
     live arg it received (args[0]) under the cb-arg arg's
     structural identity, so the OUTER walker can resolve env facts
-    whose `from` references the arg's state hash — at ANY walk-edge
-    index, since the env fact's `from` is the arg's subject-id-evolved
-    state hash at flush time and the walker doesn't know that index a
+    whose `from` references the arg's state hash — at ANY history
+    step, since the env fact's `from` is the arg's subject-id-evolved
+    state hash at flush time and the walker doesn't know that step a
     priori. At cold these queries' answers came from the queryFn
     closure that captured the live outer arg; at warm this
     registration is the equivalent live channel. Single-entry

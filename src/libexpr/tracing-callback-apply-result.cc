@@ -30,7 +30,7 @@ void TracingCallbackApplyResult::recordD2(const trace::QueryVariant & query, con
        under the enclosing cb-apply boundary so that the ambient chain
        has [recursiveApplyFact, this_obs, next_obs, ...] in the
        order they're appended. flushAmbient's ambient loop
-       stamps each `from` at `edgeIndex = i` (= position in the
+       stamps each `from` at `step = i` (= position in the
        boundary's facts vector), matching the walker's stamping at
        `walkFacts.size()` after the synthetic-side primop pushed
        the apply Fact. */

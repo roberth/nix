@@ -36,14 +36,14 @@ static Hash stampPerArgFields(
     const Subject & subject,
     const Hash & argAncestry,
     const std::vector<ObservationSet> & walkFacts,
-    size_t edgeIndex)
+    size_t step)
 {
     auto par = pathAndRootsFromSubject(subject);
     std::vector<trace::QueryLeaf> fromStateHashes;
     fromStateHashes.reserve(par.roots.size());
     Hash fromStateHash(HashAlgorithm::SHA256);
     for (size_t i = 0; i < par.roots.size(); ++i) {
-        auto cid = stateHashAt(par.roots[i], argAncestry, walkFacts, edgeIndex);
+        auto cid = stateHashAt(par.roots[i], argAncestry, walkFacts, step);
         if (i == 0)
             fromStateHash = cid;
         fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
@@ -87,14 +87,14 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, c
    recorder wrote at this point in the chain, (b) is looked up as a
    singleton-requestSet edge from `*chainCursor → toFactSet`, and
    (c) on a match advances the shared chain cursor and appends the
-   fact to the shared walk so subsequent probes compose against the
+   fact to the shared history so subsequent probes compose against the
    correctly evolved state hashes. On mismatch we throw a divergence signal
    which the surrounding walker layer turns into a miss → env layer
    fallback handles re-eval. */
 /* Append the just-probed fact to `walkFacts` so the next probe's
    `stampPerArgFields` sees its own-loop contribution. Whether or not
    validation against AmbientAsks runs, the per-arg state hash evolution
-   relies on the walk extending in lockstep with the recorder — so
+   relies on the history extending in lockstep with the recorder — so
    this needs to fire on every probe, not just validated ones. */
 template<typename Q>
 static void appendFactToWalk(
@@ -119,7 +119,7 @@ static void advanceChainAndAppendFact(
 {
     auto reqHash = TracingDecisionGraph::computeQueryHash(query);
     tracingCacheLog(
-        "walk: probe %s from=%s reqHash=%s cursor=%s walkSize=%zu",
+        "history: probe %s from=%s reqHash=%s cursor=%s walkSize=%zu",
         Q::tag, fromStateHash.to_string(HashFormat::Base16, false).substr(0, 12),
         reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
         chainCursor.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -176,7 +176,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     /* Child Subject is DerivedSubject of THIS subject — `stateHashAt`
        on the child will recompute parent's state hash at the child's
        current edge index, so any further parent observations are
-       reflected automatically. Pass shared walk/cursor. */
+       reflected automatically. Pass shared history/cursor. */
     Subject childSubject{DerivedSubject{
         .parent = std::make_shared<const Subject>(subject),
         .kind = DerivedSubject::Kind::GetAttr,
@@ -419,7 +419,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    structural identity so the OUTER walker's
                    `resolveStateHash` can resolve env facts whose `from`
                    is the arg's subject-id-evolved state hash at any
-                   walk-edge index. Registration carries the
+                   history-edge index. Registration carries the
                    subject + argAncestry (= `Arg{applyDepth+1}`
                    at `applyArgAncestry`), matching what
                    `makeCachedFnPrimOp`'s impl uses for its
@@ -508,7 +508,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    apply Fact's elementHash. Mirrors the writer's ambient
                    stamping in flushAmbient: subject =
                    ApplyResultSubject{fn, arg} = syntheticSubject;
-                   argAncestry = mergedApplyScope; edgeIndex =
+                   argAncestry = mergedApplyScope; step =
                    walkFactsSaved->size() (= the apply Fact's position
                    in the writer's boundary facts list, AFTER the
                    ReplayCallbackArg's surface probes).
@@ -516,7 +516,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    Walker's env dispatch of ε reads this updated
                    chainCursor as the AmbientResult. */
                 {
-                    size_t edgeIndex = walkFactsSaved->size();
+                    size_t step = walkFactsSaved->size();
                     Hash applyArgAncestry = mergedApplyScope;
 
                     /* Polymorphic dispatch: subjectSaved can be a
@@ -525,12 +525,12 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                        Mirrors the writer's ambient stamping in
                        TracingEvaluator::apply. */
                     auto fnSubjHex = stateHashAtSubject(
-                        subjectSaved, applyArgAncestry, *walkFactsSaved, edgeIndex)
+                        subjectSaved, applyArgAncestry, *walkFactsSaved, step)
                         .to_string(HashFormat::Base16, false);
                     Subject argSubjLocal{
                         Arg{*applyDepthSaved + 1}};
                     auto argSubjHex = stateHashAt(
-                        argSubjLocal, applyArgAncestry, *walkFactsSaved, edgeIndex)
+                        argSubjLocal, applyArgAncestry, *walkFactsSaved, step)
                         .to_string(HashFormat::Base16, false);
 
                     /* Generic stamping via syntheticSubject. */
@@ -539,7 +539,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     fromStateHashes.reserve(roots.size());
                     for (auto & root : roots) {
                         auto cid = stateHashAt(
-                            root, applyArgAncestry, *walkFactsSaved, edgeIndex);
+                            root, applyArgAncestry, *walkFactsSaved, step);
                         fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
                     }
 
@@ -552,10 +552,10 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     auto stampedReqHash = hashString(HashAlgorithm::SHA256, stampedJson.dump());
 
                     tracingCacheLog(
-                        "walker primop applyFact: subject=%s applyArgAncestry=%s edgeIndex=%zu fnHex=%s argHex=%s stampedReqHash=%s",
+                        "walker primop applyFact: subject=%s applyArgAncestry=%s step=%zu fnHex=%s argHex=%s stampedReqHash=%s",
                         describe(syntheticSubject),
                         applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
-                        edgeIndex,
+                        step,
                         fnSubjHex.substr(0, 12),
                         argSubjHex.substr(0, 12),
                         stampedReqHash.to_string(HashFormat::Base16, false).substr(0, 12));
@@ -578,7 +578,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                         *localChainCursor, elementHash);
                 }
 
-                /* Synthetic shares the LOCAL walk/cursor so its
+                /* Synthetic shares the LOCAL history/cursor so its
                    probes don't pollute the ReplayCallbackArg's persistent
                    state. Scope = mergedApplyScope — matches writer's
                    `TracingCallbackApplyResult` which carries this same
@@ -592,7 +592,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    apply-result observations live in the ambient chain
                    (= same boundary as the recursive apply Fact above),
                    so the synthetic's `getType` / `getInt` etc. must
-                   walk one AmbientAsks edge per probe to (a) keep
+                   history one AmbientAsks edge per probe to (a) keep
                    `chainCursor` aligned with the cold AmbientResult
                    (= principle 6 lockstep) and (b) detect divergence
                    when the outer's behaviour changed. The ReplayCallbackArg's

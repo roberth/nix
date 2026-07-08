@@ -281,7 +281,7 @@ public:
      * The proxy's static structural identifier — for OuterObject
      * and TracingCallbackArg, the Subject they carry. Used by the
      * walker to evolve scope state ids in lockstep with the recorder
-     * (stateHashAt against the running walk). Returns null
+     * (stateHashAt against the running history). Returns null
      * for non-proxy Objects.
      */
     virtual const Subject * getSubject() const

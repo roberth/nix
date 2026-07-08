@@ -136,7 +136,7 @@ CREATE TABLE IF NOT EXISTS AmbientAsk (
 -- (per-subject observation trie). Cold-side stamps each
 -- fold step encountered during stateHashAt so walker can
 -- navigate subject's evolution as an edge-by-edge trie rather than
--- iterating K positions on its own walk. Consumed by walker at
+-- iterating K positions on its own history. Consumed by walker at
 -- resolveStateHash's cell-loop K > 0 navigation.
 --
 -- Row semantics: `(subjectHash, curHash, obs*)` uniquely identifies
@@ -705,7 +705,7 @@ TracingDecisionGraph::insertFactSet(std::vector<Fact> members)
 {
     /* FactSets are not persisted; only the hash is meaningful as a key
        into Asks/Terminals. The members are kept in-process so the
-       caller (record / walk) can still inspect them within one
+       caller (record / history) can still inspect them within one
        invocation. */
     auto canonical = dg_sortAndDedup(std::move(members));
     SetHash setHash = emptySetHash();
@@ -1266,12 +1266,12 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
        too) guarantees the XOR-extension below isn't fed a fact
        that's already folded into cur. */
     std::unordered_set<RequestHash> dispatchedSoFar;
-    tracingCacheLog("walk Q=%s startCur=%s",
+    tracingCacheLog("history Q=%s startCur=%s",
                     q.to_string(HashFormat::Base16, false).substr(0, 12),
                     cur.to_string(HashFormat::Base16, false).substr(0, 12));
     for (;;) {
         if (auto term = getTerminal(q, cur)) {
-            tracingCacheLog("walk Q=%s TERMINAL at cur=%s",
+            tracingCacheLog("history Q=%s TERMINAL at cur=%s",
                             q.to_string(HashFormat::Base16, false).substr(0, 12),
                             cur.to_string(HashFormat::Base16, false).substr(0, 12));
             return WalkHit{*term, cur};
@@ -1279,13 +1279,13 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
 
         auto outgoing = getAsks(q, cur);
         if (outgoing.empty()) {
-            tracingCacheLog("walk Q=%s NO OUTGOING at cur=%s -> miss",
+            tracingCacheLog("history Q=%s NO OUTGOING at cur=%s -> miss",
                             q.to_string(HashFormat::Base16, false).substr(0, 12),
                             cur.to_string(HashFormat::Base16, false).substr(0, 12));
             return std::nullopt; // no path forward, no terminal
         }
 
-        tracingCacheLog("walk Q=%s cur=%s outgoing=%zu",
+        tracingCacheLog("history Q=%s cur=%s outgoing=%zu",
                         q.to_string(HashFormat::Base16, false).substr(0, 12),
                         cur.to_string(HashFormat::Base16, false).substr(0, 12),
                         outgoing.size());
@@ -1330,7 +1330,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                case where an earlier-in-edge fact's `from` references a
                state hash that only becomes resolvable after a later-in-edge
                fact contributes to the fold. Bounded to two passes; a
-               genuine dispatch failure stays zero and the walk's
+               genuine dispatch failure stays zero and the history's
                hasAnyEdge validation catches the divergent nextCur. */
             Hash nextCur = cur;
             EdgeContext edgeCtx{q, cur, requestSetHash};
@@ -1388,7 +1388,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                    (b) walker-side compute bug (cb-repeated's
                        state-hash collapse) → fix the walker, not paper over
                        with InnerValueResponse substitution. */
-                tracingCacheLog("walk Q=%s rs=%s useful=%zu nextCur=%s NO RECORDED EDGE -> try next",
+                tracingCacheLog("history Q=%s rs=%s useful=%zu nextCur=%s NO RECORDED EDGE -> try next",
                                 q.to_string(HashFormat::Base16, false).substr(0, 12),
                                 requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                                 useful.size(),
@@ -1399,7 +1399,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
             }
 committed:;
 
-            tracingCacheLog("walk Q=%s rs=%s useful=%zu cur=%s -> nextCur=%s",
+            tracingCacheLog("history Q=%s rs=%s useful=%zu cur=%s -> nextCur=%s",
                             q.to_string(HashFormat::Base16, false).substr(0, 12),
                             requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                             useful.size(),
@@ -1416,7 +1416,7 @@ committed:;
         } /* end two-pass loop */
 
         if (!advanced) {
-            tracingCacheLog("walk Q=%s NO EDGE COMMITTED at cur=%s -> miss",
+            tracingCacheLog("history Q=%s NO EDGE COMMITTED at cur=%s -> miss",
                             q.to_string(HashFormat::Base16, false).substr(0, 12),
                             cur.to_string(HashFormat::Base16, false).substr(0, 12));
             return std::nullopt;

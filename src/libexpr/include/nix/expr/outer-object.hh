@@ -76,7 +76,7 @@ class OuterObject : public Object
        by makeCachedFnPrimOp.impl at the apply boundary; the queryFn
        closure routes observations through this context so the
        apply-result wrapping can compute its evolved state hash via
-       stateHashAfter against the accumulated walk. Null on
+       stateHashAfter against the accumulated history. Null on
        non-cb-arg OuterObjects. */
     std::shared_ptr<ApplyContext> applyContext;
     OuterQueryFn queryFn;   ///< Callback to issue ambient queries
@@ -175,7 +175,7 @@ public:
     {
         /* state hash at the empty factset, with this proxy's inherited
            argAncestry applied. For multi-edge use, callers must pass the
-           relevant walk via stateHashAt instead. */
+           relevant history via stateHashAt instead. */
         return stateHashAfterSubject(subject, argAncestry, {});
     }
 

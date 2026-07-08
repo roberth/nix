@@ -210,7 +210,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
        `<replay-local-lambda>` primop (= `registerAmbientResolverProxy`).
        Keyed by `(subject, argAncestry)` so the walker's `resolveStateHash`
        can match the registered arg's subject-id-evolved state hash at any
-       walk-edge index, not just the initial one. List rather than
+       history-edge index, not just the initial one. List rather than
        map because subject equality isn't trivially hashable;
        n_registrations is small (= one per cb-apply boundary the
        primop fires at). */
@@ -309,7 +309,7 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
     auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
     auto argStateHashStr = argStateHash.to_string(HashFormat::Base16, false);
 
-    /* cb-apply boundary: record the apply's synthetic walk-advance
+    /* cb-apply boundary: record the apply's synthetic history-advance
        edge (= ε) now that we have fnIdStr and argStateHashStr. See parallel
        call in TracingEvaluator::apply for the principle. */
     if (innerWriter) {
@@ -520,7 +520,7 @@ static PrimOp * makeCachedFnPrimOp(
                                wrapper's perspective (their `fromHash` is
                                the cb-arg arg's state hash, not the wrapper's,
                                so the subject-id own-loop on the wrapper
-                               doesn't fold them in) but the walk's size
+                               doesn't fold them in) but the history's size
                                growing from these silent pushes would
                                diverge writer (queryFn fires before
                                evolvedQueryFrom because inner.method()
@@ -529,7 +529,7 @@ static PrimOp * makeCachedFnPrimOp(
                                parentHash must be computed first to
                                build the query). The cb-arg
                                OuterObject's own state hash uses
-                               stateHashAfterSubject with empty walk
+                               stateHashAfterSubject with empty history
                                (= content-only) anyway, so dropping
                                these pushes is consistent throughout. */
                             return qr;

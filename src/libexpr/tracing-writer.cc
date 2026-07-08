@@ -45,7 +45,7 @@ void TracingWriter::flushAmbient(bool finalize)
 
     /* Depth-1: this flush's ambient facts form ONE edge appended to
        the persistent `envWalk` chain (= principles 3/5/7). Each
-       fact's `from` substitutes against `envWalk[walk.size()]`
+       fact's `from` substitutes against `envWalk[history.size()]`
        — the precondition for the new edge — so per-arg roots evolve
        across logResults.
 
@@ -130,10 +130,10 @@ void TracingWriter::flushAmbient(bool finalize)
         decisionGraph->insertInnerValueResponse(queryHash, Hash(HashAlgorithm::SHA256), responsePayload);
 
         /* Secondary index for producer queries (getAttr / getListElem):
-           insert the SAME query payload under the initial-walk reqHash
-           (from = parent root's state hash at walk={}, K=0). OuterApply
+           insert the SAME query payload under the initial-history reqHash
+           (from = parent root's state hash at history={}, K=0). OuterApply
            computes fn state hashes as `stateHashAfterSubject(DerivedSubject, scope,
-           {})` — always at empty walk — so the fn state hash equals the reqHash
+           {})` — always at empty history — so the fn state hash equals the reqHash
            of the getAttr/getListElem query IF the from field is at
            initial state. The primary insert above uses the evolved
            `envWalk` state, so when any observations have
@@ -141,9 +141,9 @@ void TracingWriter::flushAmbient(bool finalize)
            from the fn state hash and walker's `resolveStateHash` pool lookup
            misses. The secondary insert closes that gap: walker looks up
            fn state hash → hits payload → `resolveProducerChild` navigates
-           `parent.maybeGetAttr(name)` live. Variant 1 has empty walk at
+           `parent.maybeGetAttr(name)` live. Variant 1 has empty history at
            flush so primary == secondary (idempotent no-op); variant 2
-           has evolved walk so this is the ONLY reqHash under which
+           has evolved history so this is the ONLY reqHash under which
            walker finds the fn's producer. */
         if ((queryTag == "getAttr" || queryTag == "getListElem") && !roots.empty()) {
             std::vector<trace::QueryLeaf> initialFromStateHashes;
@@ -165,7 +165,7 @@ void TracingWriter::flushAmbient(bool finalize)
                 HashAlgorithm::SHA256, initialQueryJson.dump());
             if (initialReqHash != queryHash) {
                 tracingCacheLog(
-                    "  secondary insert at initial-walk reqHash=%s from=%s",
+                    "  secondary insert at initial-history reqHash=%s from=%s",
                     initialReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
                     initialFromHex.substr(0, 12));
                 decisionGraph->insertRequest(
@@ -258,7 +258,7 @@ void TracingWriter::flushAmbient(bool finalize)
            fold into envFactSet and append a synthetic edge to
            envWalk (fromHash=Hash(0), elementHash=factHash) —
            the apply boundary contributes to cur but not to any
-           subject's own-fold (= phantom edge for walk-index sync).
+           subject's own-fold (= phantom edge for history-index sync).
         5. Add applyReqHash to pendingNewRequests so the trailing
            closeAsksEdge's perQAsksEdge close picks it up.
 
@@ -321,11 +321,11 @@ void TracingWriter::flushAmbient(bool finalize)
 
         /* Helper: stamp the i-th fact and emit Request/InnerValueResponse
            into the pool. AmbientAsks is inserted iff `withAmbientAsks`
-           is true. Returns (cumulativeFactSet, walk-edge-to-append).
+           is true. Returns (cumulativeFactSet, history-edge-to-append).
            Used both for first-finalize processing (with AmbientAsks)
            and for late-d2-obs re-processing (without AmbientAsks —
            see commentary at the "late probe" branch below). */
-        auto stampAndEmit = [&](size_t i, const std::vector<ObservationSet> & walk,
+        auto stampAndEmit = [&](size_t i, const std::vector<ObservationSet> & history,
                                 Hash cumulativeFactSet, bool withAmbientAsks,
                                 Hash boundaryOuterCtx = Hash(HashAlgorithm::SHA256))
             -> std::pair<Hash, ObservationSet>
@@ -339,7 +339,7 @@ void TracingWriter::flushAmbient(bool finalize)
                 Hash rootSelfHash = stateHashAt(
                     root, Hash(HashAlgorithm::SHA256), {}, 0);
                 auto cid = stateHashAtStamping(
-                    root, pf.argAncestry, walk, /*edgeIndex=*/ i,
+                    root, pf.argAncestry, history, /*step=*/ i,
                     [&](const EvolutionStep & step) {
                         insertSubjectEvolutionEdge(
                             rootSelfHash, step.curBefore,
@@ -415,13 +415,13 @@ void TracingWriter::flushAmbient(bool finalize)
             Hash boundaryOuterCtx = TracingDecisionGraph::xorHashes(
                 boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
             boundary.boundaryOuterCtx = boundaryOuterCtx;
-            std::vector<ObservationSet> walk;
-            walk.reserve(group.size());
+            std::vector<ObservationSet> history;
+            history.reserve(group.size());
             Hash cumulativeFactSet = boundary.applyRequestHash;
             for (size_t i = 0; i < group.size(); ++i) {
-                auto [nextCfs, edge] = stampAndEmit(i, walk, cumulativeFactSet, /*withAmbientAsks=*/ true, boundaryOuterCtx);
+                auto [nextCfs, edge] = stampAndEmit(i, history, cumulativeFactSet, /*withAmbientAsks=*/ true, boundaryOuterCtx);
                 cumulativeFactSet = nextCfs;
-                walk.push_back(std::move(edge));
+                history.push_back(std::move(edge));
             }
             auto ambientResult = cumulativeFactSet;
             tracingCacheLog(
@@ -472,7 +472,7 @@ void TracingWriter::flushAmbient(bool finalize)
                fromFactSetHashAtBoundary, and subsequent `finalize`
                pushes edges indexed at a pre-boundary state that walker
                can't reach from its post-boundary cur. cb-repeated
-               variant 2's Q=6063a6243f6c walk misses at cur=99566783ffd7
+               variant 2's Q=6063a6243f6c history misses at cur=99566783ffd7
                because cold indexed its edges at pre-boundary state
                3dc1fe6c5b76 = 99566783ffd7 XOR factHash_boundary0. */
             prevQFactSetHash = envFactSetHash;
@@ -504,21 +504,21 @@ void TracingWriter::flushAmbient(bool finalize)
                Validation against AmbientAsks is skipped for boundaries
                whose chain is empty at chainStart — see
                `ReplayCallbackArg::withChainStart`. */
-            std::vector<ObservationSet> walk;
-            walk.reserve(group.size());
+            std::vector<ObservationSet> history;
+            history.reserve(group.size());
             Hash cumulativeFactSet = boundary.applyRequestHash;
             for (size_t i = 0; i < boundary.lastProcessedCount; ++i) {
-                /* Re-stamp prior facts to rebuild walk; inserts are
+                /* Re-stamp prior facts to rebuild history; inserts are
                    idempotent (INSERT OR IGNORE) so the duplicate
                    Request/InnerValueResponse calls are harmless. */
-                auto [nextCfs, edge] = stampAndEmit(i, walk, cumulativeFactSet, /*withAmbientAsks=*/ false, boundary.boundaryOuterCtx);
+                auto [nextCfs, edge] = stampAndEmit(i, history, cumulativeFactSet, /*withAmbientAsks=*/ false, boundary.boundaryOuterCtx);
                 cumulativeFactSet = nextCfs;
-                walk.push_back(std::move(edge));
+                history.push_back(std::move(edge));
             }
             for (size_t i = boundary.lastProcessedCount; i < group.size(); ++i) {
-                auto [nextCfs, edge] = stampAndEmit(i, walk, cumulativeFactSet, /*withAmbientAsks=*/ false, boundary.boundaryOuterCtx);
+                auto [nextCfs, edge] = stampAndEmit(i, history, cumulativeFactSet, /*withAmbientAsks=*/ false, boundary.boundaryOuterCtx);
                 cumulativeFactSet = nextCfs;
-                walk.push_back(std::move(edge));
+                history.push_back(std::move(edge));
             }
             tracingCacheLog(
                 "late-ambient process: applyId=%s tail=%zu..%zu (probes now %zu)",
@@ -584,7 +584,7 @@ void TracingWriter::openApplyBoundary(const nlohmann::json & applyQueryPayload)
     if (suppressApplyBoundary > 0) {
         tracingCacheLog("openApplyBoundary: SUPPRESSED (in dispatchApplyLive)");
         /* Insert the apply Request payload into the CAS pool even when
-           suppressed so walker's ambient-asks walk can look it up.
+           suppressed so walker's ambient-asks history can look it up.
            Hook-based ε obs push in walker (iter <=91) is now redundant
            after writer prev-post-boundary alignment + walker retry loop. */
         auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQueryPayload.dump());

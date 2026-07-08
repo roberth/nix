@@ -300,8 +300,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        openApplyBoundary closes the preceding observations as one
        Asks edge (β1) and then records a synthetic single-observation
        Asks edge (ε) carrying just the apply Request — both sides
-       advance their cumulative subject-id walk by one for ε, so the
-       apply-result's state hash is computed at a walk index the walker
+       advance their cumulative subject-id history by one for ε, so the
+       apply-result's state hash is computed at a history step the walker
        can reach via the recorded chain. */
     nlohmann::json applyQ = trace::QueryApply{fnStateHashStr, argStateHashStr};
 

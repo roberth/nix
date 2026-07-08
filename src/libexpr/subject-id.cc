@@ -145,7 +145,7 @@ Observation observationFromQR(const trace::QueryVariant & query, const trace::Re
 
 trace::QueryApply makeApplyResultQuery(
     const Subject & applyResultSubject, const Hash & argAncestry,
-    const std::vector<ObservationSet> & walk, size_t edgeIndex)
+    const std::vector<ObservationSet> & history, size_t step)
 {
     if (!std::holds_alternative<ApplyResultSubject>(applyResultSubject.data))
         throw Error("makeApplyResultQuery: subject is not an ApplyResultSubject");
@@ -161,7 +161,7 @@ trace::QueryApply makeApplyResultQuery(
     trace::QueryApply q;
     q.fromStateHashes.reserve(par.roots.size());
     for (auto & root : par.roots) {
-        auto cid = stateHashAt(root, argAncestry, walk, edgeIndex);
+        auto cid = stateHashAt(root, argAncestry, history, step);
         q.fromStateHashes.emplace_back(hashHex(cid));
     }
     q.fnPath = *applyStep.fnPath;
@@ -174,15 +174,15 @@ trace::QueryApply makeApplyResultQuery(
 Hash stateHashAtStamping(
     const Subject & subject,
     const Hash & argAncestry,
-    const std::vector<ObservationSet> & walk,
-    size_t edgeIndex,
+    const std::vector<ObservationSet> & history,
+    size_t step,
     const std::function<void(const EvolutionStep &)> & hook)
 {
     /* Mirrors stateHashAt's fold logic, emitting one
        EvolutionStep per matched observation. Subject-evolution walker will
        navigate via a table stamped from these emissions.
 
-       Within a single walk edge, all observations are matched
+       Within a single history edge, all observations are matched
        against the edge-entry state hash (not the accumulated
        one). This means multiple observations in the same edge
        fold into the SAME curBefore; the emitted `curAfter` is
@@ -190,15 +190,15 @@ Hash stateHashAtStamping(
        edge-cumulative fold. Subject-evolution walker will replicate this
        edge-scoped semantics — cur updates at edge boundaries,
        not per-observation. */
-    Hash result = stateHashAt(subject, argAncestry, walk, edgeIndex);
+    Hash result = stateHashAt(subject, argAncestry, history, step);
     Hash argSubjectHash = stateHashAt(subject, Hash(HashAlgorithm::SHA256), {}, 0);
     Hash selfFactFold = Hash(HashAlgorithm::SHA256);
-    for (size_t k = 0; k < edgeIndex && k < walk.size(); ++k) {
+    for (size_t k = 0; k < step && k < history.size(); ++k) {
         Hash myScopeStateIdAtK = TracingDecisionGraph::xorHashes(
-            stateHashAt(subject, argAncestry, walk, k), Hash(HashAlgorithm::SHA256));
-        /* Above is `stateHashAt(subject, argAncestry, walk, k)` —
+            stateHashAt(subject, argAncestry, history, k), Hash(HashAlgorithm::SHA256));
+        /* Above is `stateHashAt(subject, argAncestry, history, k)` —
            subject's state at edge k's precondition. */
-        for (auto & obs : walk[k].observations) {
+        for (auto & obs : history[k].observations) {
             if (obs.fromHash == myScopeStateIdAtK) {
                 Hash curAfter = TracingDecisionGraph::xorHashes(myScopeStateIdAtK, obs.elementHash);
                 if (hook)
@@ -211,10 +211,10 @@ Hash stateHashAtStamping(
     return result;
 }
 
-Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk, size_t edgeIndex)
+Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step)
 {
     /* Compute subject's state hash at the precondition of the
-       `edgeIndex`-th edge by replaying the first `edgeIndex` edges'
+       `step`-th edge by replaying the first `step` edges'
        effects on the subject's running state hash.
 
        Inheritance: `argAncestry` is the XOR of outer-argAncestry state hashes (chiefly
@@ -263,8 +263,8 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                        Constituents may be Derived → route through
                        stateHashAtSubject (which dispatches Derived to
                        the producer-query-hash path). */
-                    auto fnAtK = stateHashAtSubject(*alt.fn, argAncestry, walk, k);
-                    auto argAtK = stateHashAtSubject(*alt.arg, argAncestry, walk, k);
+                    auto fnAtK = stateHashAtSubject(*alt.fn, argAncestry, history, k);
+                    auto argAtK = stateHashAtSubject(*alt.arg, argAncestry, history, k);
                     nlohmann::json qj = trace::QueryApply{hashHex(fnAtK), hashHex(argAtK)};
                     return hashString(HashAlgorithm::SHA256, qj.dump());
                 } else if constexpr (std::is_same_v<T, PostulatedIdempotentRead>) {
@@ -288,7 +288,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
 
             /* Walk the chain and accumulate the XOR-fold of env-layer fact
                element hashes from observations that point at THIS
-               subject. An observation in `walk[k]` points at this
+               subject. An observation in `history[k]` points at this
                subject iff `obs.fromHash` (= the recorder-stamped
                subject pointer carried in the `from` field of the
                query that produced the fact) equals this subject's
@@ -297,9 +297,9 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                about self. */
             Hash selfFactFold = Hash(HashAlgorithm::SHA256);
             std::string foldTrace;
-            for (size_t k = 0; k < edgeIndex && k < walk.size(); ++k) {
+            for (size_t k = 0; k < step && k < history.size(); ++k) {
                 Hash myScopeStateIdAtK = TracingDecisionGraph::xorHashes(subjectIdAt(k), selfFactFold);
-                for (auto & obs : walk[k].observations) {
+                for (auto & obs : history[k].observations) {
                     bool matches = (obs.fromHash == myScopeStateIdAtK);
                     foldTrace += "\n    k=" + std::to_string(k)
                         + " myId=" + hashHex(myScopeStateIdAtK).substr(0, 12)
@@ -311,14 +311,14 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                 }
             }
 
-            auto result = TracingDecisionGraph::xorHashes(subjectIdAt(edgeIndex), selfFactFold);
+            auto result = TracingDecisionGraph::xorHashes(subjectIdAt(step), selfFactFold);
             tracingCacheLog(
-                "stateHashAt: subject=%s argAncestry=%s walk.size=%zu edgeIndex=%zu\n"
-                "  subjectIdAt(edgeIndex)=%s selfFactFold=%s result=%s%s",
+                "stateHashAt: subject=%s argAncestry=%s history.size=%zu step=%zu\n"
+                "  subjectIdAt(step)=%s selfFactFold=%s result=%s%s",
                 describe(subject),
                 hashHex(argAncestry).substr(0, 12),
-                walk.size(), edgeIndex,
-                hashHex(subjectIdAt(edgeIndex)).substr(0, 12),
+                history.size(), step,
+                hashHex(subjectIdAt(step)).substr(0, 12),
                 hashHex(selfFactFold).substr(0, 12),
                 hashHex(result).substr(0, 12),
                 foldTrace);
@@ -327,20 +327,20 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
         subject.data);
 }
 
-Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk)
+Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history)
 {
-    return stateHashAt(subject, argAncestry, walk, walk.size());
+    return stateHashAt(subject, argAncestry, history, history.size());
 }
 
-Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk)
+Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history)
 {
-    /* Flatten walk into deduped observation pool keyed by
-       (fromHash, elementHash). Order within `walk` is discarded —
+    /* Flatten history into deduped observation pool keyed by
+       (fromHash, elementHash). Order within `history` is discarded —
        the greedy partition below only reads `fromHash` for state-
        match and XOR-folds `elementHash`, both order-insensitive. */
     std::vector<Observation> flat;
     std::set<std::pair<Hash, Hash>> seen;
-    for (auto & edge : walk)
+    for (auto & edge : history)
         for (auto & obs : edge.observations) {
             auto key = std::make_pair(obs.fromHash, obs.elementHash);
             if (seen.insert(key).second) flat.push_back(obs);
@@ -375,14 +375,14 @@ Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const
 Hash producerQueryHashAt(
     const DerivedSubject & derived,
     const Hash & argAncestry,
-    const std::vector<ObservationSet> & walk,
-    size_t edgeIndex)
+    const std::vector<ObservationSet> & history,
+    size_t step)
 {
     auto [pathToParent, parentRoots] = pathAndRootsFromSubject(*derived.parent);
     std::vector<trace::QueryLeaf> fromStateHashes;
     fromStateHashes.reserve(parentRoots.size());
     for (auto & root : parentRoots) {
-        auto rootStateHash = stateHashAt(root, argAncestry, walk, edgeIndex);
+        auto rootStateHash = stateHashAt(root, argAncestry, history, step);
         fromStateHashes.emplace_back(hashHex(rootStateHash));
     }
     auto fromLeaf = fromStateHashes.empty() ? trace::QueryLeaf("") : fromStateHashes[0];
@@ -402,25 +402,25 @@ Hash producerQueryHashAt(
 }
 
 Hash producerQueryHashAfter(
-    const DerivedSubject & derived, const Hash & argAncestry, const std::vector<ObservationSet> & walk)
+    const DerivedSubject & derived, const Hash & argAncestry, const std::vector<ObservationSet> & history)
 {
-    return producerQueryHashAt(derived, argAncestry, walk, walk.size());
+    return producerQueryHashAt(derived, argAncestry, history, history.size());
 }
 
 Hash stateHashAtSubject(
-    const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk, size_t edgeIndex)
+    const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step)
 {
     /* Polymorphic dispatch: DerivedSubjects have no own state hash,
        so we key them by their producer query's hash instead. Every
        other variant delegates to the strict `stateHashAt`. */
     if (auto * derived = std::get_if<DerivedSubject>(&subject.data))
-        return producerQueryHashAt(*derived, argAncestry, walk, edgeIndex);
-    return stateHashAt(subject, argAncestry, walk, edgeIndex);
+        return producerQueryHashAt(*derived, argAncestry, history, step);
+    return stateHashAt(subject, argAncestry, history, step);
 }
 
-Hash stateHashAfterSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk)
+Hash stateHashAfterSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history)
 {
-    return stateHashAtSubject(subject, argAncestry, walk, walk.size());
+    return stateHashAtSubject(subject, argAncestry, history, history.size());
 }
 
 std::string describe(const Subject & subject)

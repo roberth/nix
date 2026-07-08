@@ -338,13 +338,13 @@ public:
        the path). `onEdgeAttempt` (if set) is called once per
        Asks-edge attempt, AFTER the edge's useful requests have
        been dispatched, with `committed=true` if the resulting
-       factset reaches a continuation and `false` if walk is
+       factset reaches a continuation and `false` if history is
        rejecting this branch. Used by the subject-id-aware caller to
        promote per-edge dispatched facts into a `ObservationSet`
        on commit (= principle 5/7) or discard them on reject. */
     /* Hit: returns (resultHash, terminalCur). The terminalCur is the
-       factSet the walk landed on when committing the terminal — child
-       Q lookups use it as their candidate startCur, so a child's walk
+       factSet the history landed on when committing the terminal — child
+       Q lookups use it as their candidate startCur, so a child's history
        starts from its parent's structural anchor. */
     struct WalkHit { ResultHash resultHash; SetHash terminalCur; };
     /* ObservationSet context passed to dispatch: identifies the specific Asks
@@ -360,9 +360,9 @@ public:
         const QueryHash & q,
         const std::function<ResponseHash(const RequestHash &, const EdgeContext &)> & dispatch,
         const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt = {},
-        /* Starting cur for the walk. Defaults to ∅. Callers that
+        /* Starting cur for the history. Defaults to ∅. Callers that
            have a structural anchor (= parent TracingReplayObject's terminalCur) can
-           hand it in so the walk starts at that lookup position. */
+           hand it in so the history starts at that lookup position. */
         const SetHash & startCur = SetHash(HashAlgorithm::SHA256));
 
     /* Backward-compat overload: dispatch takes only the request. Used

@@ -136,13 +136,13 @@ Observation observationFromQR(const trace::QueryVariant & query, const trace::Re
     via their constituents' (recursively state-hash-aware) state hashes,
     so the structural derivation incorporates inheritance naturally
     via the constituents' `from`-field values. */
-Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk);
+Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history);
 
 /** Compute the state hash of `subject` at the precondition of the
-    edge at index `edgeIndex` in `walk`, inheriting `argAncestry`.
-    `edgeIndex == 0` means the initial precondition (= empty
-    factset); `edgeIndex == walk.size()` means the postcondition of
-    the whole walk (equivalent to `stateHashAfter`).
+    edge at index `step` in `history`, inheriting `argAncestry`.
+    `step == 0` means the initial precondition (= empty
+    factset); `step == history.size()` means the postcondition of
+    the whole history (equivalent to `stateHashAfter`).
 
     **Argument-level only.** Per the design (Principle 3, per-arg
     centralization), only argument-level subjects bear state hashes:
@@ -154,18 +154,18 @@ Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std
     `(root_cdi, path)`. Passing a `DerivedSubject` traps; callers
     that want a content-addressed identifier for any Subject
     (including derived) should use `stateHashAtSubject` instead. */
-Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk, size_t edgeIndex);
+Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step);
 
-/** Grouping-independent converged fold. Flattens `walk` into a
+/** Grouping-independent converged fold. Flattens `history` into a
     deduplicated observation pool (by (fromHash, elementHash)) and
     repeatedly partitions it by state-match: at each round, all
     observations whose `fromHash` equals `subject`'s current state
     are pulled out as a synthetic edge and appended to a growing
-    hypothetical walk; the round terminates when no observation
+    hypothetical history; the round terminates when no observation
     matches. Returns `subject`'s state at the tail of that
-    hypothetical walk — a fixed point of the greedy convergence.
+    hypothetical history — a fixed point of the greedy convergence.
 
-    The result depends only on the SET of observations in `walk`,
+    The result depends only on the SET of observations in `history`,
     not on how they are grouped into edges. This is the alignment
     property the search→asks project needs: recorder and replayer
     reach the same value from any two walks carrying the same
@@ -173,7 +173,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
     equivalent to iterating the observation-permutation loop in
     `TracingReplayEvaluator::resolveStateHash` to its fixed point. */
 Hash stateHashConverged(
-    const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk);
+    const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history);
 
 /** The producer query hash for a `DerivedSubject` — the queryHash of
     the `QueryGetAttr` / `QueryGetListElem` that would produce this
@@ -185,24 +185,24 @@ Hash stateHashConverged(
 Hash producerQueryHashAt(
     const DerivedSubject & derived,
     const Hash & argAncestry,
-    const std::vector<ObservationSet> & walk,
-    size_t edgeIndex);
+    const std::vector<ObservationSet> & history,
+    size_t step);
 
 Hash producerQueryHashAfter(
     const DerivedSubject & derived,
     const Hash & argAncestry,
-    const std::vector<ObservationSet> & walk);
+    const std::vector<ObservationSet> & history);
 
 /** Polymorphic dispatcher. For `DerivedSubject`, delegates to
     `producerQueryHashAt`; for every other variant, delegates to
     `stateHashAt`. Used by callers (`OuterObject`,
     `TracingCallbackArg`, etc.) that hold a Subject of unknown
     variant and need a single Hash handle regardless of shape. */
-Hash stateHashAtSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk, size_t edgeIndex);
+Hash stateHashAtSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step);
 
-/** Convenience: `stateHashAtSubject` at the walk's tail
-    (= edgeIndex = walk.size()). */
-Hash stateHashAfterSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & walk);
+/** Convenience: `stateHashAtSubject` at the history's tail
+    (= step = history.size()). */
+Hash stateHashAfterSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history);
 
 /** Per-subject observation trie fold step, as consumed by the subject-evolution fast-path
     stamping / navigation. Emitted by `stateHashAtStamping`
@@ -225,17 +225,17 @@ struct EvolutionStep {
 Hash stateHashAtStamping(
     const Subject & subject,
     const Hash & argAncestry,
-    const std::vector<ObservationSet> & walk,
-    size_t edgeIndex,
+    const std::vector<ObservationSet> & history,
+    size_t step,
     const std::function<void(const EvolutionStep &)> & hook);
 
 /** Build the per-arg-encoded `QueryApply` payload for an apply-result
-    subject at a given walk edge index. The returned query's JSON
-    hash equals `stateHashAt(applyResult, argAncestry, walk, edgeIndex)`,
+    subject at a given history edge index. The returned query's JSON
+    hash equals `stateHashAt(applyResult, argAncestry, history, step)`,
     so callers can use the same value as both the Requests-pool key
     (= reqHash) and the apply-result's state hash (= what's recorded as
     `from` on downstream facts). Threads cb_arg root state hashes at
-    `edgeIndex` into `fromStateHashes[]`, copies the Apply step's
+    `step` into `fromStateHashes[]`, copies the Apply step's
     `fnPath`/`argPath`/root indices into the top-level query, and
     leaves `fn`/`arg` populated only if the caller passes them for
     the legacy direct payload's readability — the per-arg fields
@@ -243,8 +243,8 @@ Hash stateHashAtStamping(
 trace::QueryApply makeApplyResultQuery(
     const Subject & applyResultSubject,
     const Hash & argAncestry,
-    const std::vector<ObservationSet> & walk,
-    size_t edgeIndex);
+    const std::vector<ObservationSet> & history,
+    size_t step);
 
 /** Convenience: extract a query's `from` field as a Hash, if it has
     one. Apply queries don't have a `from`; throws. */
@@ -311,7 +311,7 @@ std::string describe(const Subject & subject);
     current state of `observations` on every `evolvedQueryFrom` call.
     Derived children of the wrapper share the same shared_ptr to the
     same ApplyContext so the chain `wrapper.getAttr("foo").getInt()`
-    accumulates all three observations into one walk.
+    accumulates all three observations into one history.
 
     `argSubject`/`argAncestry` identify the cb arg's structural Subject and
     its inherited argAncestry (= per the subject-id Inheritance section, the

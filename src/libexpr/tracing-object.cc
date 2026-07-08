@@ -76,12 +76,12 @@ ref<TracingObject> TracingObject::create(
 std::string TracingObject::evolvedQueryFrom() const
 {
     if (applyResultSubject && applyContext) {
-        std::vector<ObservationSet> walk;
-        walk.reserve(applyContext->observations.size());
+        std::vector<ObservationSet> history;
+        history.reserve(applyContext->observations.size());
         for (auto & obs : applyContext->observations) {
             ObservationSet edge;
             edge.observations.push_back(obs);
-            walk.push_back(std::move(edge));
+            history.push_back(std::move(edge));
         }
         /* Subject-evolution fast-path: emit fold-step stamps into SubjectEvolutionEdges
            so walker can navigate subject's evolution edge-by-edge
@@ -90,7 +90,7 @@ std::string TracingObject::evolvedQueryFrom() const
         Hash argSubjectHash = stateHashAt(
             *applyResultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
         auto evolved = stateHashAtStamping(
-            *applyResultSubject, applyArgAncestry, walk, walk.size(),
+            *applyResultSubject, applyArgAncestry, history, history.size(),
             [&](const EvolutionStep & step) {
                 writer.insertSubjectEvolutionEdge(
                     argSubjectHash, step.curBefore,

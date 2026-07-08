@@ -41,7 +41,7 @@ class TracingObject : public Object
        inherited argAncestry (= state hash(Q) at the cb-apply boundary). Child
        queries on this wrapper emit at
        `stateHashAt(applyResultSubject, applyArgAncestry, writer.envWalk,
-       walk.size())` — the per-arg evolved state hash the design's
+       history.size())` — the per-arg evolved state hash the design's
        principle #3 requires for sibling discrimination. Null on
        non-apply-result wrappers (= navigation children). */
     std::optional<Subject> applyResultSubject;

@@ -48,9 +48,9 @@ struct TriePosition
 {
     Hash resultNodeHash;          // ResultHash for this result
     std::string queryHashStr;     // hex of the queryHash that produced it
-    /* Walker-side: the cur the walk landed on when committing
+    /* Walker-side: the cur the history landed on when committing
        this terminal. Used by child Q lookups as a candidate startCur
-       (= structurally-anchored lookup position) so a child walk
+       (= structurally-anchored lookup position) so a child history
        starts from its parent's reached factSet rather than from
        session-leaky envCur. Empty hash on TracingReplayObjects synthesized
        outside the walker (recording side). */
@@ -70,7 +70,7 @@ class TracingWriter
     /* global factSet, accumulating monotonically across the
        session per the design doc. Sampled at each logResult and
        fed into decisionGraph->record(). Only d>0 (Request, Response)
-       Facts are added; d=0 Q→R pairs are not (the walk dispatch
+       Facts are added; d=0 Q→R pairs are not (the history dispatch
        can't fetch them).
 
        The factSet hash is maintained incrementally via XOR-fold on
@@ -123,8 +123,8 @@ class TracingWriter
        every Asks edge inserted into `envAsksEdges` is paired with
        a env edge inserted at the SAME index. This invariant lets the
        walker's `envWalk` — which grows once per dispatched Asks
-       edge via `commitEdge` — match the writer's env walk
-       edge-for-edge, so `stateHashAt(subject, argAncestry, walk, K)`
+       edge via `commitEdge` — match the writer's env history
+       edge-for-edge, so `stateHashAt(subject, argAncestry, history, K)`
        computes the same value on both sides. Per-arg-completion
        option 2 depends on this alignment. */
     std::vector<ObservationSet> envWalk;
@@ -264,7 +264,7 @@ private:
        Re-inserted under at late-d2-obs re-process time so the
        updated `envAsksEdges` (with corrected downstream
        `fromFactSetHash`) lands as additional Asks rows under each
-       prior Q — letting the walker's chain walk for those Q's use
+       prior Q — letting the walker's chain history for those Q's use
        the post-re-open propagation. */
     std::unordered_set<Hash> recordedQHashes;
 
@@ -273,7 +273,7 @@ public:
        from cold's stateHashAtStamping hook callback at
        fact-`from` construction sites. Immediate write (not
        buffered) — Subject-evolution emissions per stateHashAt call are
-       bounded by the walk length × observations per edge and are
+       bounded by the history length × observations per edge and are
        infrequent enough that buffering isn't necessary. */
     void insertSubjectEvolutionEdge(
         const Hash & subjectHash, const Hash & curHash,
@@ -293,10 +293,10 @@ public:
     {
     }
 
-    /** Cumulative subject-id walk over env layer ambient observations.
+    /** Cumulative subject-id history over env layer ambient observations.
         One edge per logResult-triggered flush. Exposed so writer-side
         apply-result wrappers (TracingObject with applyResultSubject)
-        can compute `stateHashAt(subject, argAncestry, walk, walk.size())`
+        can compute `stateHashAt(subject, argAncestry, history, history.size())`
         — the per-arg evolved state hash the design's principle #3 requires
         for child queries on those wrappers. Walker's parallel handle
         is TracingReplayEvaluator::getCidasksWalk. */
@@ -580,7 +580,7 @@ public:
      * single Asks edge in the recorded trie, but the walker
      * advances its cumulative `envWalk` once per dispatched
      * Asks edge (= principle 6) — leaving writer and walker at
-     * different walk indices when they each compute the
+     * different history indices when they each compute the
      * apply-result's state hash, producing different queryHashes.
      *
      * Skip-on-empty per the principle 4 + 7 read: an Asks edge
@@ -607,7 +607,7 @@ public:
      *
      * The `fromHash` of the synthetic env apply Fact's
      * envWalk observation is `Hash(0)` — the apply boundary
-     * is a walk-advance marker, not a fact about any subject, so
+     * is a history-advance marker, not a fact about any subject, so
      * it doesn't fold into any subject's own-loop.
      */
     void openApplyBoundary(const nlohmann::json & applyQueryPayload);
@@ -733,7 +733,7 @@ public:
 
         /* If we have per-Q edges, skip the whole-remaining shortcut
            so the walker walks them one by one (= each commit advances
-           ctx.edgeIndex). Pass `allRequestHashes` (= query hashes),
+           ctx.step). Pass `allRequestHashes` (= query hashes),
            not `seenRequests` (= fact hashes for XOR dedup); record()'s
            slow path iterates this for its trailing remaining-edge. */
         if (envAsksEdges.empty())

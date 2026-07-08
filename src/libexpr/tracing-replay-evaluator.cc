@@ -37,7 +37,7 @@ TracingReplayEvaluator::TracingReplayEvaluator(
 std::optional<TracingReplayEvaluator::WalkResult>
 TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy)
 {
-    /* The entire walk is VALIDATION of recorded state — any apply
+    /* The entire history is VALIDATION of recorded state — any apply
        queries triggered through `fnObj->queryApply(...)` during
        dispatch (resolveApplyId, navigatePath's Apply step,
        dispatchApplyLive) re-route through `OuterObject::queryApply
@@ -45,7 +45,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        `openApplyBoundary` on the writer if not suppressed. Each fresh
        boundary inflates `envWalk` with a redundant ε edge
        beyond the genuine cb-apply events the recorder already
-       captured. Suppress for the walk's duration so writer's
+       captured. Suppress for the history's duration so writer's
        envWalk stays in 1:1 alignment with walker's
        envWalk. */
     TracingWriter::SuppressApplyBoundary suppressBoundary(writer);
@@ -54,13 +54,13 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        inner cb-apply boundaries fired inside dispatchApplyLive's
        cb-fn execution) synthesise a phantom ε obs in walker's
        envWalk. Cold's writer would have inserted these as ε
-       edges into envWalk; without this walker's walk-index
-       falls short of cold's edgeIndex for later flushes referencing
+       edges into envWalk; without this walker's history-index
+       falls short of cold's step for later flushes referencing
        arg(1) at post-inner-apply positions. */
 
-    /* Per-walk resolution context. The cumulative subject-id walk
+    /* Per-history resolution context. The cumulative subject-id history
        (= `this->envWalk`) lives on the evaluator so it
-       persists across walk calls — required for cell-chain
+       persists across history calls — required for cell-chain
        state hash computation to land at the writer's `d1EdgeIndex` (=
        cumulative across logResults). */
     ResolutionContext ctx{
@@ -68,7 +68,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         {},
     };
     /* Per-edge buffer: dispatch() appends ambient facts here; the
-       walk-loop promotes the buffer to a cumulative envWalk
+       history-loop promotes the buffer to a cumulative envWalk
        edge on commit (via commitEdge) or discards it on reject.
        Without the buffer, rejected-edge facts would pollute
        envWalk and throw off the cell-chain state hash computations. */
@@ -131,7 +131,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        reads, env vars) where same request always gives same
        response. Ambient queries are NOT memoised because the same
        request hash can dispatch to different responses depending on
-       which proxy (cb invocation) the walk is grounded in — sibling
+       which proxy (cb invocation) the history is grounded in — sibling
        cb apply invocations of the same fn share a request hash but
        must see their own arg's live value, not a memoised sibling's. */
     auto dispatch = [&](const Hash & requestHash, const TracingDecisionGraph::EdgeContext & edgeCtx) -> Hash {
@@ -277,7 +277,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
            dispatch. */
         writer.noteEnvObservation(requestHash, h);
         /* Buffer ambient facts for this in-flight Asks edge; the
-           walk-loop commits them via onEdgeCommitted on success. */
+           history-loop commits them via onEdgeCommitted on success. */
         /* Decode for diffing: render the full request + response JSON
            bytes that feed `req` and `resp`. SHA256(reqJson.dump()) = req;
            SHA256(currentResp) = h. Diffing these strings between cold and
@@ -329,7 +329,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
     /* Walk with two anchor candidates in order:
        1. Parent TracingReplayObject's terminalCur — the structural-anchor
           lookup position. Child Q's recording was made starting from
-          parent's reached factSet, so anchoring the child walk there
+          parent's reached factSet, so anchoring the child history there
           matches the recording's frame.
        2. From ∅ — needed when no parent anchor exists (top-level Q
           like evalFile/evalExpr, no TracingReplayObject) and as a backstop
@@ -341,11 +341,11 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
     if (auto * parentTR = dynamic_cast<TracingReplayObject *>(ctx.currentProxy.get())) {
         parentAnchor = parentTR->getTriePos().factSetHash;
     }
-    /* Track rejected-edge obs across all attempts. Committed on walk
-       MISS so subsequent walk calls' resolveStateHash sees the obs
+    /* Track rejected-edge obs across all attempts. Committed on history
+       MISS so subsequent history calls' resolveStateHash sees the obs
        walker produced during the failed traversal — those obs carry
        real (req, resp) pairs from cold's recorded responses, and
-       future resolves at deeper edgeIndex may need them. Only
+       future resolves at deeper step may need them. Only
        preserve on final miss; on hit, the winning edges are already
        committed and the rejected ones represent wrong branches whose
        obs would contaminate the correct chain. */
@@ -387,7 +387,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         if (ctx.dispatchedApplyReqsThisWalk.empty()) break;
         ctx.applySeqRetryOffset++;
         tracingCacheLog(
-            "walk retry: bumping applySeqRetryOffset -> %zu",
+            "history retry: bumping applySeqRetryOffset -> %zu",
             ctx.applySeqRetryOffset);
     }
     if (!walkHit) {
@@ -433,10 +433,10 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
 }
 
 /* Resolve a recorded ambient id (hex of a Hash) to a live Object.
-   First check the per-walk memo (ctx.memo) for already-resolved ids.
-   Then walk the proxy graph (ctx.currentProxy.parent → …) looking
+   First check the per-history memo (ctx.memo) for already-resolved ids.
+   Then history the proxy graph (ctx.currentProxy.parent → …) looking
    for an argCell cell whose id matches — this is the arg-lookup
-   case, grounded in the proxy whose method triggered this walk
+   case, grounded in the proxy whose method triggered this history
    rather than in any evaluator-global state.
    Then fall through to producer-Request resolution: find idStr in
    the Requests pool, resolve the parent recursively, dispatch the
@@ -445,7 +445,7 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
    sidecars chase to the apply. */
 std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::string & idStr, ResolutionContext & ctx)
 {
-    /* Per-walk memo. */
+    /* Per-history memo. */
     if (auto it = ctx.memo.find(idStr); it != ctx.memo.end()) {
         tracingCacheLog("resolve %s -> memo hit", idStr.substr(0, 12));
         return it->second;
@@ -720,7 +720,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            InnerValueResponse → cb-sibling fails with
            "no recorded response for getType on local". Both
            sibling cb-applies share the same first probe's stamped
-           reqHash regardless of subject (= at edgeIndex=0,
+           reqHash regardless of subject (= at step=0,
            Arg and PostulatedIdempotentRead both yield `localId`),
            which is why this bug stayed latent until cb-sibling
            landed: it's the first test that needs the ReplayCallbackArg's
@@ -768,7 +768,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                     } catch (const std::exception &) {
                         /* idStr should be a valid hex hash here; if not,
                            leave chainCursor at its default
-                           (emptySetHash) — the walk will fail safely. */
+                           (emptySetHash) — the history will fail safely. */
                     }
                     rlo->withApplyContext(sidecarDepth, sidecarScope);
                     replayObj = rlo;
@@ -785,7 +785,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            caller falls through to inner re-eval. The previous
            PostulatedIdempotentRead fallback violated principle 8's corollary
            (= observation-driven evolution) and produced a ReplayCallbackArg
-           whose discrimination was frozen at edgeIndex=0. */
+           whose discrimination was frozen at step=0. */
         argObj = replayObj;
     } else {
         argObj = resolveStateHash(argIdStr, ctx);
@@ -907,8 +907,8 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     Subject rootSubject{Arg{sidecarDepth}};
     /* Sibling-discriminating walkFacts arg: inject walker's
        currentProxy's applyContext observations into the ReplayCallbackArg's initial
-       walk. Without this, ReplayCallbackArg's per-arg fields are computed against
-       an empty walk — so sibling A's ReplayCallbackArg and sibling B's ReplayCallbackArg have
+       history. Without this, ReplayCallbackArg's per-arg fields are computed against
+       an empty history — so sibling A's ReplayCallbackArg and sibling B's ReplayCallbackArg have
        identical state hashes at their initial `.x` / `.f` probes, and InnerValueResponse's
        first-writer-wins returns whichever sibling recorded first,
        yielding cross-sibling data mixing (cb-sibling-b's int-1000
@@ -985,10 +985,10 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
 
     /* Correctness-first cb-repeated fix: memoise the ReplayCallbackArg at
        BOTH the arg leaf's evolved state hash (invariant across invocations
-       in the outer walk — kept for chaseLocalArgSidecar-alignment)
+       in the outer history — kept for chaseLocalArgSidecar-alignment)
        AND at the fn leaf's evolved state hash at THIS invocation (which
        DOES differ per invocation because arg(1)_evolved captures
-       the outer walk's per-boundary ε folds). Cold's outer probe
+       the outer history's per-boundary ε folds). Cold's outer probe
        recorded `from = fromStateHashes[0]` which is the FIRST root's cid;
        for `applyResult(getAttr(arg(1), "cb"), arg(N))` that first
        root is arg(1). So walker's dispatch of `getWHNF from=X`
@@ -1007,7 +1007,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         auto evolvedLeafStateHashHex = evolvedLeafStateHash.to_string(HashFormat::Base16, false);
         ctx.memo[evolvedLeafStateHashHex] = replayLocal;
         tracingCacheLog(
-            "dispatchApplyLive: memoised ReplayCallbackArg at leaf cid %s (walk.size=%zu, seqCtx=%s)",
+            "dispatchApplyLive: memoised ReplayCallbackArg at leaf cid %s (history.size=%zu, seqCtx=%s)",
             evolvedLeafStateHashHex.substr(0, 12), envWalk.size(),
             seqCtx.to_string(HashFormat::Base16, false).substr(0, 12));
 
@@ -1023,7 +1023,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
                 evolvedApplyResultStateHash.to_string(HashFormat::Base16, false);
             ctx.memo[evolvedApplyResultCidHex] = replayLocal;
             tracingCacheLog(
-                "dispatchApplyLive: memoised ReplayCallbackArg at applyResult cid %s (walk.size=%zu)",
+                "dispatchApplyLive: memoised ReplayCallbackArg at applyResult cid %s (history.size=%zu)",
                 evolvedApplyResultCidHex.substr(0, 12), envWalk.size());
         }
     }
@@ -1386,12 +1386,12 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     }};
 
     /* Walker mirror of TracingEvaluator::apply's option 2 evolution.
-       Uses walker.envWalk (the cumulative committed walk), which
+       Uses walker.envWalk (the cumulative committed history), which
        under the 1:1 alignment restructure matches writer.envWalk
        edge-for-edge once all prior cb-applies' chains have been
        dispatched. */
-    auto & walk = writer.getD1CidasksWalk();
-    auto applyArgAncestryStateHash = stateHashAt(resultSubject, applyArgAncestry, walk, walk.size());
+    auto & history = writer.getD1CidasksWalk();
+    auto applyArgAncestryStateHash = stateHashAt(resultSubject, applyArgAncestry, history, history.size());
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);

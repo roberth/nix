@@ -68,7 +68,7 @@ class TracingReplayObject : public Object
     /**
      * Cascading lookup for leaf results. Returns the parsed R plus
      * the recorded resultHash so callers can push an observation
-     * onto the per-invocation walk for chain symmetry with the writer.
+     * onto the per-invocation history for chain symmetry with the writer.
      */
     template<typename Q, typename R>
     std::optional<std::pair<R, Hash>> lookupResult(const Q & query) const;

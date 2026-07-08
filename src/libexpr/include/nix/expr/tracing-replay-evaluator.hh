@@ -26,28 +26,28 @@ class TracingReplayEvaluator : public Evaluator
     Environment & validationEnv;
 
     /**
-     * Per-walk resolution context.
+     * Per-history resolution context.
      *
-     * Threaded through walk → dispatch → getCurrentResponse →
+     * Threaded through history → dispatch → getCurrentResponse →
      * dispatchAmbientQuery → resolveStateHash. Holds the proxy
-     * whose method triggered this walk (so resolveStateHash can
-     * walk the parent / argCell chain on the proxy graph) plus a
-     * per-walk memo of ids already resolved. Lives only for the
-     * duration of one walk call — no cross-call leakage as
+     * whose method triggered this history (so resolveStateHash can
+     * history the parent / argCell chain on the proxy graph) plus a
+     * per-history memo of ids already resolved. Lives only for the
+     * duration of one history call — no cross-call leakage as
      * happened with the previous evaluator-global ambientState.
      */
     struct ResolutionContext
     {
-        /** The proxy whose method triggered this walk. Resolution
+        /** The proxy whose method triggered this history. Resolution
             walks this proxy's parent chain looking for matching
             argCell cells. Null for top-level entry points
             (evalFile, evalExpr) where no proxy exists yet. */
         std::shared_ptr<Object> currentProxy;
-        /** Memoise id → resolved Object within this single walk so
+        /** Memoise id → resolved Object within this single history so
             recursive resolveStateHash calls don't redo work. */
         std::map<std::string, std::shared_ptr<Object>> memo;
 
-        /** Per-applyReqHash dispatch counter within this walk. Used
+        /** Per-applyReqHash dispatch counter within this history. Used
             to compute the InnerValueResponse context: same applyReqHash
             dispatched multiple times (cb-repeated's Arg-
             abstracted (cb 10)/(cb 20) sharing one applyReqHash) gets
@@ -70,23 +70,23 @@ class TracingReplayEvaluator : public Evaluator
         std::unordered_map<std::string, size_t> assignedApplySeq;
 
         /** Set of applyReqHashes dispatched via `dispatchApplyLive`
-            during THIS walk attempt. On miss, walker uses this to
+            during THIS history attempt. On miss, walker uses this to
             decide whether to increment `applySeqRetryOffset` and retry
             with a different applySeq. */
         std::unordered_set<Hash> dispatchedApplyReqsThisWalk;
 
-        /** Retry-driven applySeq offset. Fresh walk starts at 0
+        /** Retry-driven applySeq offset. Fresh history starts at 0
             (matches cold's first-boundary seq). Walk miss with cb-apply
             dispatched bumps this and retries: fresh ctx state re-runs
-            walk with next boundary's respHash. Bounded by walk's
+            history with next boundary's respHash. Bounded by history's
             retry-count max. cb-repeated variant 2 pattern: .b's WHNF
             needs offset=1, .c's WHNF needs offset=2 — each rediscovered
-            per walk without leaking into sibling Q's fresh contexts. */
+            per history without leaking into sibling Q's fresh contexts. */
         size_t applySeqRetryOffset = 0;
 
     };
 
-    /** Cumulative walk across all walk calls in this session.
+    /** Cumulative history across all history calls in this session.
         Each successfully committed Asks edge appends one entry,
         deduplicated by the edge's content-equal fact set so re-
         traversing a shared prefix doesn't double-fold. Mirrors the
@@ -100,7 +100,7 @@ class TracingReplayEvaluator : public Evaluator
     std::vector<ObservationSet> envWalk;
     /** Dedup committed edges by their elementHash-set fingerprint
         (= XOR-fold of fact element hashes within the edge). When
-        a later walk re-traverses an Asks edge already in
+        a later history re-traverses an Asks edge already in
         envWalk (= shared prefix), commitEdge is a no-op. */
     std::unordered_set<Hash> committedEdgeFingerprints;
 
@@ -125,8 +125,8 @@ class TracingReplayEvaluator : public Evaluator
         Object. Arg ids are found by walking ctx.currentProxy's
         parent / argCell chain on the proxy graph; derived ids are
         looked up by their producer Request in the Requests pool and
-        resolved recursively. Per-walk memoisation in ctx.memo
-        prevents redundant work within the same walk. Returns
+        resolved recursively. Per-history memoisation in ctx.memo
+        prevents redundant work within the same history. Returns
         nullptr if the id can't be resolved. */
     std::shared_ptr<Object> resolveStateHash(const std::string & idStr, ResolutionContext & ctx);
 
@@ -171,11 +171,11 @@ public:
         TracingWriter & writer,
         TracingDecisionGraph & decisionGraph);
 
-    /** Cumulative subject-id walk on the walker, mirroring the writer's
+    /** Cumulative subject-id history on the walker, mirroring the writer's
         `envWalk`. Exposed so apply-result wrappers
         (TracingReplayObject with applyResultSubject) can compute
-        `stateHashAt(subject, argAncestry, walk, walk.size())` and match the
-        writer's evolved state hash at the same walk index — the per-arg
+        `stateHashAt(subject, argAncestry, history, history.size())` and match the
+        writer's evolved state hash at the same history index — the per-arg
         identity alignment principle #3 requires. */
     const std::vector<ObservationSet> & getCidasksWalk() const
     {
@@ -184,7 +184,7 @@ public:
 
     /** Access the shared TracingWriter. Used by TracingReplayObject's
         `evolvedQueryFrom` to read the writer's `envWalk`
-        directly — single source of truth for the cumulative walk on
+        directly — single source of truth for the cumulative history on
         both writer and walker sides, so option-2 encoding can't drift
         between the two. */
     TracingWriter & getWriter() const
@@ -201,9 +201,9 @@ public:
     std::optional<std::string> getCurrentResponse(const std::string & requestCbor, ResolutionContext & ctx);
 
     /**
-     * walk lookup. Returns (resultPayload, resultHash) on hit,
+     * history lookup. Returns (resultPayload, resultHash) on hit,
      * nullopt on miss. `currentProxy` is the cache-boundary proxy
-     * whose method triggered this walk — its parent/argCell chain
+     * whose method triggered this history — its parent/argCell chain
      * grounds ambient id resolution during dispatch. Null for
      * top-level entry points (evalFile/evalExpr) that have no
      * proxy yet.

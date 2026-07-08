@@ -11,14 +11,14 @@
  *  - TracingObject's getType/getInt/etc. record sub-Q `Terminals`
  *    rows in the main trie via `writer.logQuery + logResult`. That's
  *    env storage — appropriate for cached-fn results and other
- *    apply-results whose evolved state hash participates in the env walk.
+ *    apply-results whose evolved state hash participates in the env history.
  *
  *  - TracingCallbackApplyResult's methods record ambient observations via
  *    `writer.logAmbientObservation`. They are grouped with the
  *    enclosing cb-apply boundary's recursive apply Fact (= the same
  *    boundary `logAmbientApplyFact` appended to). At flushAmbient
  *    finalize the writer's ambient loop stamps each observation with
- *    `from = hex(stateHashAt(applyResultSubject, argAncestry, walk, i))`,
+ *    `from = hex(stateHashAt(applyResultSubject, argAncestry, history, i))`,
  *    inserts the response payload into `InnerValueResponse` keyed by
  *    the resulting reqHash, and inserts an `AmbientAsks` edge.
  *

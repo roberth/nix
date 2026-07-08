@@ -19,7 +19,7 @@
  * can invoke `fn->queryApply(replayArg)` live, and downstream
  * apply-result Facts get dispatched against the live outer's
  * response. If the outer changed (different lambda body) the
- * response differs from the recorded → walk falls through. Without
+ * response differs from the recorded → history falls through. Without
  * it the dispatcher would just serve the recorded response, hiding
  * outer-side changes from the validation chain.
  */
@@ -39,7 +39,7 @@ class ReplayCallbackArg : public Object
 {
     /* Full structural identity. Combined with `argAncestry` and the shared
        `walkFacts`, `stateHashAt` computes this proxy's state hash
-       at any walk position. The recorder's subject-id substitution at
+       at any history position. The recorder's subject-id substitution at
        flush uses the same evaluation, so walker and recorder agree
        on per-probe `from` fields without snapshot/lazy hacks — even
        when a child's structural component depends on a parent's
@@ -61,14 +61,14 @@ class ReplayCallbackArg : public Object
        legacy id-string consumers (e.g. defeatCache's recursive
        apply construction). */
     OuterId localId;
-    /* Shared walk across all proxies in one cb apply. Each validated
+    /* Shared history across all proxies in one cb apply. Each validated
        probe appends a Fact (one fact per edge, matching the writer's
        multi-edge AmbientAsks structure). `stateHashAt` reads this
        to compute each proxy's evolved state hash.
 
        Backed as a shared single-fact-edge sequence: each entry is
-       wrapped in a single-fact ObservationSet so the walk's edge indices match
-       the recorder's flush walk. */
+       wrapped in a single-fact ObservationSet so the history's edge indices match
+       the recorder's flush history. */
     std::shared_ptr<std::vector<ObservationSet>> walkFacts;
     /* Shared chain cursor across all proxies in one cb apply. Each
        validated probe advances `*chainCursor` to the matched edge's
@@ -142,7 +142,7 @@ class ReplayCallbackArg : public Object
 public:
     /* Constructor for derived children. Subject is built by the
        parent's maybeGetAttr / getListElem as `DerivedSubject{parent,
-       ...}`. Inherits parent's shared walk/cursor so the child's
+       ...}`. Inherits parent's shared history/cursor so the child's
        state hash evaluation rides on the same per-cb-apply chain. */
     ReplayCallbackArg(
         Subject subject_,
@@ -181,7 +181,7 @@ public:
         chain is rooted at its applyReqHash (= the natural hash of
         the cb-apply payload) — different cb-applies' chains live in
         disjoint subtrees of AmbientAsks. The walker passes the
-        apply_qH it's resolving here so the ReplayCallbackArg's per-probe walk
+        apply_qH it's resolving here so the ReplayCallbackArg's per-probe history
         starts at the right root.
 
         Side-effect: if the chain at this root is empty (= no
