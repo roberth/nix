@@ -297,12 +297,18 @@ object activates inner lazily — for a hit chain that doesn't reach
 into the package's value tree at all, the inner is never
 constructed.
 
-The cache-side primitive is `walk(queryHash)`. It tries two paths in
-order.
+The cache-side primitive is `walk(queryHash)`. Currently there is
+only one path: the walk-from-∅ described under "Slow path" below.
+The subsection that follows describes a fast-path design that has
+not been implemented; the code has no `envCur`, no
+`dispatchedTrie`, and no diff routine on `TrieBuilder`.
 
-### Fast path: trie diff against `envCur`
+### Candidate design: trie diff against `envCur`
 
-`TracingReplayEvaluator` maintains:
+Not present in the code today. Recorded here as a design worth
+trying if the walk-from-∅ cost per Query becomes the bottleneck.
+
+The idea: `TracingReplayEvaluator` would maintain
 
 ```cpp
 unordered_map<Hash, Hash>  responseFor;     // request → response, per-process
@@ -313,7 +319,7 @@ TrieBuilder                dispatchedTrie;  // cumulative requests dispatched
 In a session that just walked a previous Query successfully, the
 next Query usually only differs in a handful of new Requests — it
 imports a new package, reads a few extra files, etc. Instead of
-walking the chain from ∅, fast-path:
+walking the chain from ∅, the design would:
 
 1. Look at the Query's outgoing edge at `cur = ∅`. If exactly one
    edge, take its RS root hash `edgeRsHash`.
@@ -331,11 +337,12 @@ walking the chain from ∅, fast-path:
    own inverse, so the "out" operation is the same XOR.
 5. Check `Terminal(queryHash, candidateCur)`. Hit → commit (extend
    `dispatchedTrie` with `onlyInOther`, update `envCur`), return the
-   Result. Miss → fall through to slow walk.
+   Result. Miss → fall through to walk-from-∅.
 
-The design goal is that session-cumulative warm cost tracks the
+The goal would be that session-cumulative warm cost tracks the
 delta between successive Queries' RequestSets, not the size of
-either RequestSet.
+either RequestSet. Whether it's worth landing depends on measured
+walk-from-∅ cost on realistic workloads.
 
 ### Navigation invariant: hashes flow *into* lookups as keys, never *out*
 
@@ -394,7 +401,7 @@ question would treat hashes as outputs of lookups.
 > `history[0..step)` where `step` is the state **before** this
 > Query's own observation folds in.
 
-### Slow path: `decisionGraph.walk(queryHash, dispatch)`
+### Walk from ∅: `decisionGraph.walk(queryHash, dispatch)`
 
 Walks the chain from ∅, one edge at a time. At each `(queryHash, cur)`:
 

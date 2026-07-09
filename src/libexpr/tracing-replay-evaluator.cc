@@ -351,11 +351,25 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
             rejectedObs.push_back(std::move(obs));
         pendingEdgeObservations.clear();
     };
-    /* applySeq-bump retry loop for cb-repeated-style variants where the
-       same applyReqHash's boundaries need distinct AmbientResults across
-       sibling Qs. Per-ctx `applySeqRetryOffset` starts at 0; miss-with-
-       cb-apply-dispatched bumps it. Bounded to 5 retries (accommodates
-       variant 4's map over 5-element list, empirical max seen). */
+    /* applySeq-bump retry loop.
+
+       Sibling cb-apply invocations at the same lexical position
+       carry matching requestHashes at the writer, per the
+       "Matching until divergence" section of subject-id.md.
+       Under `dispatchApplyLive`, each recorded invocation needs
+       its own ReplayCallbackArg seeded with the invocation's
+       specific state — but the walker doesn't know up front
+       which invocation any given cur corresponds to. Retrying
+       with an incremented `applySeqRetryOffset` cycles through
+       seq assignments until one produces a walk that reaches a
+       Terminal.
+
+       Bounded to 5 retries (empirical: variant 4's `map cb
+       [1..5]` needs 5 assignments). This is a workaround, not a
+       design invariant — the retry counts the number of sibling
+       invocations the walker had to guess through, and the
+       goal is to make the seq assignment deterministic from the
+       walker's traversal position instead. */
     std::optional<TracingDecisionGraph::WalkHit> walkHit;
     for (int retry = 0; retry < 5; ++retry) {
         if (retry > 0) {

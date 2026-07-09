@@ -1291,17 +1291,19 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                         outgoing.size());
 
         bool advanced = false;
-        /* Direction (2) cb-repeated: two-pass edge iteration. Primary
-           pass uses the standard `useful` set (filtered by dispatchedSoFar).
-           If all primary-pass edges either skip (empty useful) or fail
+        /* Two-pass edge iteration. Primary pass uses the standard
+           `useful` set (filtered by dispatchedSoFar). If all
+           primary-pass edges either skip (empty useful) or fail
            the `hasAnyEdge` validation, a fallback pass tries the
-           apply-request bypass — allowing an already-in-dispatchedSoFar
-           cb-apply to re-dispatch via `dispatchApplyLive`'s per-request
-           seq counter, which returns distinct AmbientResults per
-           invocation. cb-repeated's `(cb 10) + (cb 20)` Arg
-           collision needs the bypass to reach cold's second boundary;
-           cb-xor-evolution-repeated-cb-apply's primary-pass edge works,
-           so the fallback doesn't fire there. */
+           apply-request bypass — re-dispatching an
+           already-in-dispatchedSoFar cb-apply via
+           `dispatchApplyLive`'s per-request seq counter, which
+           returns distinct AmbientResults per invocation. Written
+           for sibling cb-apply matches (see the "Matching until
+           divergence" section of subject-id.md) — the bypass
+           papers over the pattern by guessing at replay time.
+           Candidate for removal once the writer's edge layout
+           makes the walker's traversal deterministic. */
         for (int pass = 0; pass < 2 && !advanced; ++pass) {
         for (const auto & requestSetHash : outgoing) {
             auto requestSetOpt = getRequestSet(requestSetHash);
@@ -1321,17 +1323,26 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
             if (useful.empty())
                 continue; // degenerate edge — all its requests already in cur
 
-            /* Two-pass dispatch within an edge: successful dispatches
-               populate the walker's pendingEdgeObservations, which
-               resolveStateHash consults for intra-edge subject state hash
-               evolution. First-pass failures (dispatch returned the
-               zero sentinel) get retried in a second pass after the
-               successful obs have been buffered — this catches the
-               case where an earlier-in-edge fact's `from` references a
-               state hash that only becomes resolvable after a later-in-edge
-               fact contributes to the fold. Bounded to two passes; a
-               genuine dispatch failure stays zero and the history's
-               hasAnyEdge validation catches the divergent nextCur. */
+            /* Bounded intra-edge dispatch retry.
+
+               Some dispatches return the zero sentinel because
+               their `from` field can't be resolved yet — the
+               subject the walker needs is only registered as a
+               proxy after a *different* observation in this edge
+               fires its outer callback path (via
+               `<replay-local-lambda>` → `registerAmbientResolverProxy`).
+               So the first pass records who failed, subsequent
+               passes retry them; a pass that makes no progress
+               ends the loop.
+
+               This is a workaround, not a design invariant: the
+               retry compensates for the writer bundling observations
+               with dispatch-side-effect ordering dependencies into
+               one Ask edge. A proper split at the writer would
+               make each pass a single-shot dispatch.
+
+               Bounded to 4 passes to prevent runaway loops when a
+               genuinely-unresolvable dispatch never converges. */
             Hash nextCur = cur;
             EdgeContext edgeCtx{q, cur, requestSetHash};
             std::vector<std::pair<RequestHash, ResponseHash>> results;
@@ -1343,10 +1354,6 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                     failedIndices.push_back(i);
                 results.emplace_back(useful[i], resp);
             }
-            /* Iteratively retry failed dispatches: each pass may resolve
-               a new subset of previously-failing `from` values as more
-               obs land in pendingEdgeObservations. Bounded to prevent
-               runaway loops when a dispatch stays genuinely unresolvable. */
             for (int pass = 0; pass < 4 && !failedIndices.empty(); ++pass) {
                 std::vector<size_t> stillFailed;
                 for (size_t idx : failedIndices) {
@@ -1363,31 +1370,19 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
 
             /* Validate that some recording for THIS query reaches
                (Q, nextCur) — i.e., the dispatched responses lead to
-               a position where the recording continues or terminates. */
+               a position where the recording continues or terminates.
+
+               We deliberately do NOT substitute a stored response
+               from InnerValueResponse when the live-XOR-fold nextCur
+               lacks a recorded edge. A stored-vs-live mismatch is
+               the walker's only signal for legitimate env change
+               (tested by cb-with-scope-and-tryeval and cb-list-args
+               under DISALLOW-mode expected-error semantics). If the
+               walker-side computation collapses distinct siblings
+               onto the same nextCur, the fix belongs on the
+               subject-id side — not by papering over the divergence
+               with a stored-response substitution. */
             if (!hasAnyEdge(q, nextCur)) {
-                /* Direction (2) InnerValueResponse fallback (fallback-pass only): if
-                   live's XOR-fold gave a nextCur with no recorded edge,
-                   check whether cold's InnerValueResponse stored a response at
-                   (req, cur) for any useful request. If substitution
-                   yields a valid nextCur, use it. Gated to pass==1 so
-                   normal cache invalidation (live's diverged response
-                   leads walker to miss and fall through) stays live-first
-                   in the primary pass; only when NO primary edge worked
-                   do we speculate via InnerValueResponse. This closes cb-repeated's
-                   walker-bug case (state-hash collision on apply-result
-                   subjects) without masking outer-body-change misses on
-                   the primary pass. */
-                /* No InnerValueResponse substitution here — correctness principle:
-                   substituting cold's stored response for walker's
-                   live response would mask env-change invalidation,
-                   which cb-with-scope-and-tryeval and cb-list-args
-                   depend on for their DISALLOW-mode expected-error
-                   semantics. Walker's diverging live is either:
-                   (a) genuinely reflecting an env change → MISS is
-                       correct (interpreter re-eval or DISALLOW error)
-                   (b) walker-side compute bug (cb-repeated's
-                       state-hash collapse) → fix the walker, not paper over
-                       with InnerValueResponse substitution. */
                 tracingCacheLog("history Q=%s rs=%s useful=%zu nextCur=%s NO RECORDED EDGE -> try next",
                                 q.to_string(HashFormat::Base16, false).substr(0, 12),
                                 requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12),

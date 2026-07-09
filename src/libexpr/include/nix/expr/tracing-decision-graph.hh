@@ -16,9 +16,8 @@
  *      `Terminals(Q, factSet) -> result`. The entry point is
  *      pinned to (Q, empty FactSet); no entry-point index needed.
  *
- * Phase 1 only: intersectionless recording and replay with Patricia
- * split. Phase 2 (passive-replay-before-insert, distance-to-any-R
- * heuristic) is a separate follow-up.
+ * See the "Open work" section of `doc/design/tracing-eval-cache.md`
+ * for candidate follow-ups.
  */
 
 #include "nix/util/hash.hh"
@@ -110,39 +109,32 @@ public:
     std::optional<std::string> getRequestPayload(const RequestHash & h);
 
     /* True if the request payload names a cb-apply
-       (`"query":"apply"`). cb-apply is special in walker's dispatch
-       loop: `dispatchApplyLive` fires the fn fresh each invocation via
-       a per-request seq counter, so the same reqHash returns distinct
-       AmbientResults across dispatches. `walk()` uses this signal to
-       BYPASS the `dispatchedSoFar` set-membership filter when otherwise
-       useful is empty, allowing multiple cb-apply invocations of the
-       same reqHash (cb-repeated's `(cb 10) + (cb 20)` Arg
-       collision) to advance through cold's recorded Asks graph via
-       distinct nextCurs. */
+       (`"query":"apply"`). Consumed only by walk()'s apply-bypass
+       fallback pass, which is a candidate for removal once the
+       walker no longer needs to guess sibling cb-apply positions.
+       If that path goes, this method goes with it. */
     bool isApplyRequest(const RequestHash & h);
     std::optional<std::string> getQueryPayload(const QueryHash & h);
     std::optional<std::string> getResultPayload(const ResultHash & h);
 
-    /* InnerValueResponse: response payload pool, keyed by the *request*
-       hash. ambient REPLAY ONLY: `ReplayCallbackArg` reads these back to
-       serve probes into a reconstructed LocalObject value tree — this
-       is the design's "ambient walker is the only consumer" contract from
-       `content-identity-via-asks.md` ("Atom storage"). The soundness
-       argument requires the reqhash to be a pure function of
-       (subject, argAncestry, prior facts in the chain); across writer
-       sessions with different outer args, that assumption can fail
-       (same arg(N) pre-observation state hash → same reqhash → different
-       responses from arg-dependent env), so env dispatch MUST NOT
-       read this map. See `cross-session-arg-collision` memory. */
-    /* Context-widened InnerValueResponse: PK is (requestHash, contextHash).
-       contextHash is walker's/writer's outer env fact-set state at the
-       moment the response was recorded / is being consulted. Same
-       request under different outer contexts stores/retrieves distinct
-       payloads — deterministic lookup, no speculation needed. Fixes
-       cb-repeated-cb-apply-diff-args's abstract-arg reqHash collision
-       by discriminating on outer chain state (which differs between
-       two cb-applies within the same body: post-first-apply-boundary
-       vs before). */
+    /* InnerValueResponse: response payload pool used by Ambient
+       replay only. `ReplayCallbackArg` reads these back to serve
+       probes into a reconstructed LocalObject value tree — the
+       "ambient walker is the only consumer" contract (design doc
+       §Atom storage). Env dispatch MUST NOT read this map, since
+       cross-context matching-until-divergence would give the same
+       requestHash under differing outer args and env responses
+       must come from the live environment.
+
+       PK is (requestHash, contextHash): contextHash is the
+       walker's/writer's outer env fact-set state at record time.
+       That allows matching requestHashes under different outer
+       contexts to store distinct payloads — necessary for cases
+       like `{ cb }: (cb 10) + (cb 20)` where both invocations
+       hit the same requestHash for the callback arg's initial
+       probes but the outer contexts differ (post- vs
+       pre-first-apply-boundary). See the "Matching until
+       divergence" section of tracing-eval-cache-subject-id.md. */
     void insertInnerValueResponse(const RequestHash & requestHash, const Hash & contextHash, std::string_view payload);
     std::optional<std::string> getInnerValueResponsePayload(const RequestHash & requestHash, const Hash & contextHash);
 

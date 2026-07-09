@@ -348,7 +348,7 @@ component membership and any new compounding it introduces.
 - Boundary consumers: SQL PK / equality lookups in `Ask`,
   `Terminal`, `AmbientAsk`.
 - Set algebra is *intended* at every boundary — two recordings
-  with the same set of (req, resp) pairs are meant to collide.
+  with the same set of (req, resp) pairs are meant to match.
 - Compounding: none — every fold operand is a fresh SHA-256 atom.
   Dedupe is the caller's responsibility (via `std::set` /
   `sort+dedup` / subject-id-evolved `requestHash` uniqueness).
@@ -427,10 +427,81 @@ Vocab §§10–11 define the Ambient interaction. This section is the
 subject-identity view of it: what happens to Subjects and their
 state hashes when the outer probes an inner-supplied callback arg.
 
+### Matching until divergence
+
+The Merkle chain from state hash to requestHash makes this
+property mechanical rather than incidental. Recording flush
+(principle 5) substitutes each observation's `from` field with
+the state hash of the referenced Subject at that edge's
+precondition FactSet. The requestHash is the SHA-256 seal of
+the resulting payload. Therefore:
+
+- Matching state hash at a Subject → matching `from` field →
+  matching requestHash for any observation on that Subject
+  with the same query parameters.
+- Diverging state hash (a distinguishing observation
+  XOR-folded into cur) → diverging `from` field → diverging
+  requestHash on the very next observation that reads it.
+
+The property this makes true — which the walker and the
+recorder alike must internalise before the rest of the design
+makes sense:
+
+> **Two evaluation events whose observations match up to some
+> point are characterized identically at that point — same
+> state hashes at every referenced Subject, and therefore same
+> requestHashes on any observation emitted there. They are
+> characterized distinctly only once their observations
+> diverge.**
+
+This is not a quirk. It is what characterization from
+observations means. The recorder does not manufacture
+distinctions the inner did not observe; the walker does not
+speculate that two matching events must "really" be different.
+
+Three cases where the property is load-bearing:
+
+1. **Warm replay of the same expression against the same env.**
+   Every state hash the walker computes matches the writer's,
+   so every requestHash sealed over those state hashes matches
+   too, every lookup keyed on `(queryHash, cur)` lines up, and
+   the walker traces the recording bit-for-bit. This is the
+   fast-hit case the cache exists for.
+
+2. **Sibling cb-apply invocations at the same lexical position
+   within one cached call.** For example, both applies in
+   `{ cb }: (cb 10) + (cb 20)`. At the moment of each apply,
+   the inner has passed an arg but not forced it — the state
+   hashes at every referenced Subject are identical, so the
+   `QueryApply` payloads are identical, so both apply Facts
+   carry the same requestHash `H_apply`. Divergence emerges
+   through the ambient chain that follows each apply:
+   `(cb 10)`'s probes reveal `10`, `(cb 20)`'s probes reveal
+   `20`, their `elementHash`es differ, their Ambient factSets
+   diverge, and their `AmbientResult`s land the env-layer
+   walker at distinct env curs. The writer's storage becomes
+   one Ask edge from `cur_pre` to `cur_after_first_apply`
+   carrying `H_apply`, and a second Ask edge from
+   `cur_after_first_apply` to `cur_after_second_apply`
+   carrying the same `H_apply`. Same requestHash, different
+   `(queryHash, fromCur)` key → different edge rows → no
+   ambiguity at replay. The walker at `cur_pre` dispatches
+   `H_apply`, ambient chain unfolds, cur advances; from
+   `cur_after_first_apply` the walker dispatches `H_apply`
+   again and naturally hits the second edge.
+
+3. **Two applications of the same cached function whose
+   arguments turn out to be observably equivalent** — same
+   import target, same probe responses. Their FactSets match,
+   so their state hashes match, so their Terminals coincide;
+   the walker gets a hit on the second application from the
+   first recording. That's the intended sharing between
+   function applications.
+
 ### Inheritance of state hashes across the boundary
 
 A Subject's `stateHashAt` characterizes evolution *within one arg*.
-The value's full characterization in a particular evaluation
+The characterization of a value in a particular evaluation
 context is that state hash composed with the state hashes of its
 enclosing scopes — and at the cb-apply boundary, the outermost
 enclosing scope is the cached call itself, contributed via
@@ -448,23 +519,22 @@ Two cb invocations from different cached calls (different
 enclosing cache boundaries) have different `callArgAncestry`
 values, so their callback-arg characterizations diverge from the
 very first probe even though their `Arg{depth}` Subjects are
-structurally identical. Their Ambient probes carry different
-`from` fields and land in disjoint regions of the Ambient trie.
-
-Two cb invocations from the *same* cached call with otherwise
-identical Env-layer observations up to the apply have identical
-characterizations — correctly: they share the same FactSet
-position, meaning the inner evaluator's state at the apply is
-literally the same. The arg was passed but not yet forced;
-there's no information by which the two executions can differ
-at that moment. Divergence can only arise once the outer starts
-probing — and the Ambient trie captures that by observation
-evolution.
+identical. Their Ambient probes carry different `from` fields
+— and therefore different requestHashes — and land in disjoint
+regions of the Ambient trie. "Matching until divergence" still
+applies: the state hashes diverge at the boundary itself,
+because `callArgAncestry` is already different, and the
+Merkle chain carries that through into every subsequent
+requestHash.
 
 Inheriting outer-scope contributions ripples through every
 observation, so atom sharing across cached calls is reduced.
-Deliberate trade-off: storage cost in exchange for
-collision-free disambiguation of callback-arg identity.
+That reduction is the cost of correctness, not a chosen
+trade-off: without the inheritance, callback-arg characterizations
+from different cached calls with structurally identical
+`Arg{depth}` Subjects would collide, and the walker would serve
+a Terminal recorded under one call's context in place of
+another's.
 
 ### Ambient response storage
 
@@ -475,14 +545,16 @@ own hash. That's not a CAS pool — it's a keyed table, and the
 Ambient walker is the only consumer.
 
 The `contextHash` disambiguates same-Request observations under
-different outer contexts. Without it, two recordings that
-reach the same `requestHash` under different outer args could
-overwrite each other's responses; with it, each outer context
-gets its own entry. (Historically the table was keyed on
-`requestHash` alone and had a first-writer-wins collision on
-`cb-repeated`'s `(cb 10) + (cb 20)` case — same abstract
-`requestHash`, distinct outer contexts, wrong replay. Adding
-`contextHash` closed that gap.)
+different outer contexts. The two invocations in
+`{ cb }: (cb 10) + (cb 20)` share `requestHash` for the callback
+arg's initial probes (matching-until-divergence, above), but
+their outer contexts differ — one is pre-first-apply-boundary,
+the other post. Without `contextHash` the table keyed on
+`requestHash` alone would give a first-writer-wins entry: the
+second recording's response would overwrite the first's, so
+the walker at replay would serve the wrong Terminal for one of
+the two contexts. With `contextHash` each outer context gets
+its own entry and matching-`requestHash` observations coexist.
 
 The pool stores the callback-arg's value structure too: small
 atoms covering attrset entries, list elements, scalars.
