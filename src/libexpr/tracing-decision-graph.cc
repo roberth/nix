@@ -1349,14 +1349,18 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                         outgoing.size());
 
         bool advanced = false;
-        /* Two-pass edge iteration. Primary pass uses standard
-           `useful` set (dispatchedSoFar-filtered). If nothing
-           advances, fallback pass re-includes apply requests
-           already in dispatchedSoFar so sibling cb-apply
-           invocations sharing applyReqHash (matching-until-divergence)
-           get re-dispatched. This is not walk-restart backtracking
-           — it's a conditional edge-selection strategy that picks
-           between two well-defined `useful` set computations. */
+        /* Two-pass edge-selection strategy. Primary pass uses the
+           standard `useful` set (dispatchedSoFar-filtered). If
+           nothing advances the walk, a fallback pass re-includes
+           apply requests that are already in dispatchedSoFar so
+           sibling cb-apply invocations sharing applyReqHash under
+           matching-until-divergence get re-dispatched. This is
+           not walk-restart backtracking — it's a conditional
+           `useful`-set membership computation whose fallback is
+           deterministically the second option. Eliminating the
+           fallback outright requires the writer to record each
+           sibling's Ask edge at a distinct fromCur (deeper
+           edge-layout change tracked separately). */
         for (int pass = 0; pass < 2 && !advanced; ++pass) {
         for (const auto & requestSetHash : outgoing) {
             auto requestSetOpt = getRequestSet(requestSetHash);
