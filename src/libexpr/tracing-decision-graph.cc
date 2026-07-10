@@ -1369,20 +1369,30 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
             for (const auto & pr : results)
                 nextCur = dg_xorHash(nextCur, dg_factElementHash(pr.first, pr.second));
 
-            /* Validate that some recording for THIS query reaches
-               (Q, nextCur) — i.e., the dispatched responses lead to
-               a position where the recording continues or terminates.
+            /* Patricia-trie branch resolution — not backtracking.
 
-               We deliberately do NOT substitute a stored response
-               from InnerValueResponse when the live-XOR-fold nextCur
-               lacks a recorded edge. A stored-vs-live mismatch is
-               the walker's only signal for legitimate env change
-               (tested by cb-with-scope-and-tryeval and cb-list-args
-               under DISALLOW-mode expected-error semantics). If the
-               walker-side computation collapses distinct siblings
-               onto the same nextCur, the fix belongs on the
-               subject-id side — not by papering over the divergence
-               with a stored-response substitution. */
+               When multiple recordings share (Q, cur) but diverge
+               afterwards (Patricia split), the walker learns which
+               branch belongs to this session by dispatching each
+               candidate's requests and checking whether the resulting
+               nextCur has downstream recorded. This is the
+               trie-navigation step: "which child of this node
+               matches my live key?" It parallels a normal Patricia
+               trie's per-node prefix compare, except here the "key"
+               is the live-XOR-fold and comparison happens by
+               dispatch. On a single-edge node the loop resolves in
+               one step; multi-edge nodes exist by design because
+               v13 preserves cross-session merges without a
+               session-tag column on Ask rows.
+
+               No stored-response substitution: a stored-vs-live
+               mismatch is the walker's only signal for legitimate
+               env change (tested by cb-with-scope-and-tryeval and
+               cb-list-args under DISALLOW-mode expected-error
+               semantics). If walker-side computation collapses
+               distinct siblings onto the same nextCur, the fix
+               belongs on the subject-id side — not by papering
+               over the divergence with a stored response. */
             if (!hasAnyEdge(q, nextCur)) {
                 tracingCacheLog("history Q=%s rs=%s useful=%zu nextCur=%s NO RECORDED EDGE -> try next",
                                 q.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -1391,7 +1401,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                                 nextCur.to_string(HashFormat::Base16, false).substr(0, 12));
                 if (onEdgeAttempt)
                     onEdgeAttempt(/*committed=*/ false, useful);
-                continue; // wrong branch
+                continue; // Patricia-trie branch resolution (see below)
             }
 
             tracingCacheLog("history Q=%s rs=%s useful=%zu cur=%s -> nextCur=%s",
