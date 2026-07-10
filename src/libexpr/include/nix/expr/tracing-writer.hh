@@ -195,6 +195,15 @@ class TracingWriter
            finalize, this gets XOR-propagated by prior ε's element
            hashes. */
         Hash fromFactSetHashAtBoundary;
+        /* The OUTER writer's env cur at the moment inner emitted
+           this cb-apply Fact. Captured at openApplyBoundary from
+           `outerWriter->getV13FactSetHash()`. Under lockstep
+           replay this is the value the outer walker sees as its
+           own env cur when it dispatches this same cb-apply Fact,
+           i.e. `walkerCur` at `dispatchApplyLive`. Used together
+           with `fromFactSetHashAtBoundary` to compute the
+           InnerValueResponse contextHash. */
+        Hash outerEnvCurAtOpen;
         /* Walker's outer env cur at THIS apply-boundary's dispatch
            moment (= fromFactSetHashAtBoundary XOR priorEpsilonAccum
            at first-finalize time). Stored for late-obs re-processing
@@ -292,6 +301,14 @@ public:
         , envFactSetHash(TracingDecisionGraph::emptySetHash())
     {
     }
+
+    /** The outer evaluator's writer, if this writer is inside a
+        nested `builtins.cache` call. Its `getV13FactSetHash()` is
+        the value the walker sees as `walkerCur` when it dispatches
+        this writer's recorded cb-apply Fact at replay under
+        lockstep. Set by cache.cc from the outer's TracingReplayEvaluator.
+        Null on the top-level (non-nested) writer. */
+    TracingWriter * outerWriter = nullptr;
 
     /** Cumulative subject-id history over env layer ambient observations.
         One edge per logResult-triggered flush. Exposed so writer-side

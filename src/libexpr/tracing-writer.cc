@@ -323,18 +323,26 @@ void TracingWriter::flushAmbient(bool finalize)
        (applyReqHash, seq) as the context — the sequence
        discriminates the two applies. Walker's dispatchApplyLive
        tracks the same counter symmetrically. */
+    /* Interim: seqCtx retained pending completion of the vocab-§11
+       alignment. The design's contextHash is the walker's Env cur
+       at record time (matching walker.getV13FactSetHash at RCA
+       read time). Landing that alignment requires the walker's
+       per-probe cur to match writer's per-probe cur, which needs
+       further plumbing on the RCA read path. Until then seqCtx
+       preserves current behavior. */
     std::unordered_map<Hash, size_t> perApplySeqCounter;
     for (auto & boundary : pendingApplyBoundaries) {
         auto & group = boundary.facts;
         size_t applySeq = perApplySeqCounter[boundary.applyRequestHash]++;
-        Hash seqCtx = hashString(HashAlgorithm::SHA256,
+        Hash boundaryContextHash = hashString(HashAlgorithm::SHA256,
             boundary.applyRequestHash.to_string(HashFormat::Base16, false)
             + "|" + std::to_string(applySeq));
         if (provenanceEnabled())
-            recordProvenance(seqCtx, "contextHash-writer-seqCtx",
+            recordProvenance(boundaryContextHash, "contextHash-writer-seqCtx-interim",
                              {{"applyRequestHash", boundary.applyRequestHash.to_string(HashFormat::Base16, false)},
-                              {"applySeq", applySeq},
                               {"applyId", boundary.applyId.to_string(HashFormat::Base16, false)},
+                              {"applySeq", applySeq},
+                              {"outerEnvCurAtOpen", boundary.outerEnvCurAtOpen.to_string(HashFormat::Base16, false)},
                               {"fromFactSetHashAtBoundary",
                                   boundary.fromFactSetHashAtBoundary.to_string(HashFormat::Base16, false)}});
 
@@ -415,7 +423,7 @@ void TracingWriter::flushAmbient(bool finalize)
                Arg abstraction — cb-repeated's `(cb 10) +
                (cb 20)`) get distinct InnerValueResponse rows. Walker's dispatchApplyLive
                tracks the symmetric counter in ctx.perApplyReqDispatchCount. */
-            decisionGraph->insertInnerValueResponse(queryHash, seqCtx, responsePayload);
+            decisionGraph->insertInnerValueResponse(queryHash, boundaryContextHash, responsePayload);
 
             auto toFactSet = TracingDecisionGraph::xorFactIntoHash(
                 cumulativeFactSet, queryHash, responseHash);
@@ -659,12 +667,16 @@ void TracingWriter::openApplyBoundary(const nlohmann::json & applyQueryPayload)
        puts ε BEFORE its body's env facts in walker dispatch order,
        so the lambda-ReplayCallbackArg's seedCell extension fires before
        arg(N+1) probes try to resolve. */
+    Hash outerEnvCurAtOpen = outerWriter
+        ? outerWriter->getV13FactSetHash()
+        : Hash(HashAlgorithm::SHA256);
     pendingApplyBoundaries.push_back({
         applyReqHash,
         applyReqHash,
         {},
         envAsksEdges.size(),  // insertionIndex AFTER pre-boundary chunk
         prevQFactSetHash,      // fromFactSetHashAtBoundary
+        outerEnvCurAtOpen,     // captured for InnerValueResponse contextHash
         Hash(HashAlgorithm::SHA256)  // boundaryOuterCtx (populated at first finalize)
     });
     tracingCacheLog("openApplyBoundary: buffered (applyReqHash=%s, pendingBoundaries=%zu, insertionIndex=%zu)",

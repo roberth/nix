@@ -7,6 +7,7 @@
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-environment.hh"
 #include "nix/expr/trace-file.hh"
+#include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-cache-stats.hh"
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-replay-evaluator.hh"
@@ -103,6 +104,16 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
         sink = std::make_shared<NullTraceSink>();
     }
     auto writer = std::make_shared<TracingWriter>(*sink, decisionGraph);
+    // Plumb the outer evaluator's writer so this inner writer can
+    // capture the outer's env cur at each cb-apply boundary. Under
+    // lockstep replay both sides see the same value: writer captures
+    // outerWriter->getV13FactSetHash() at openApplyBoundary; walker
+    // reads writer.outerWriter->getV13FactSetHash() at
+    // dispatchApplyLive for the RCA's outerContext.
+    if (auto outerEvalShared = state.evaluatorCompat.lock()) {
+        if (auto * outerEval = dynamic_cast<TracingReplayEvaluator *>(outerEvalShared.get()))
+            writer->outerWriter = &outerEval->getWriter();
+    }
 
     // Wrap the *outer* environment, not a fresh SystemEnvironment, so
     // file reads bubble up through the outer accessor chain

@@ -774,14 +774,14 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                         it2 != ctx.perApplyReqDispatchCount.end() && it2->second > 0) {
                         fallthroughSeq2 = it2->second - 1;
                     }
-                    Hash fallthroughSeqCtx2 = hashString(HashAlgorithm::SHA256,
+                    Hash fallbackContextHash = hashString(HashAlgorithm::SHA256,
                         fallthroughApplyReqHash2.to_string(HashFormat::Base16, false)
                         + "|" + std::to_string(fallthroughSeq2));
                     auto rlo = std::make_shared<ReplayCallbackArg>(
                         std::move(rootSubject), sidecarScope,
                         std::make_shared<std::vector<ObservationSet>>(),
                         std::make_shared<Hash>(HashAlgorithm::SHA256),
-                        fallthroughSeqCtx2, decisionGraph, inner->getEvalState().rootFSRoot,
+                        fallbackContextHash, decisionGraph, inner->getEvalState().rootFSRoot,
                         &inner->getEvalState());
                     rlo->withAmbientAsksValidation();
                     try {
@@ -837,18 +837,8 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         recordProvenance(applyReqHash, "dispatchApplyLive-entry",
                          {{"walkerCur", walkerCur.to_string(HashFormat::Base16, false)},
                           {"params", params}});
-    /* InnerValueResponse context symmetric with cold's finalize:
-       hash(applyReqHash || per-applyReqHash sequence).
-
-       Speculative-retry safe: assign seq PER UNIQUE walkerCur, not
-       per bare dispatch call. Walker's walk() can dispatch the same
-       apply Request multiple times at the SAME cur (via apply-bypass
-       retry for alternate branches). Under bare `++`, retries inflate
-       seq beyond cold's per-boundary count. Keying on walkerCur
-       aligns walker's seq with cold's: distinct cold boundaries fire
-       at distinct outer curs, so walker's dispatch at each cold-
-       boundary's cur gets the matching seq, and retries at that same
-       cur reuse the assigned seq. */
+    /* Interim: seqCtx retained to match writer's interim scheme
+       pending the vocab-§11 alignment. */
     std::string curKey =
         applyReqHash.to_string(HashFormat::Base16, false)
         + "|" + walkerCur.to_string(HashFormat::Base16, false);
@@ -862,23 +852,9 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
                  + ctx.perApplyReqDispatchCount[applyReqHash]++;
         ctx.assignedApplySeq[curKey] = applySeq;
     }
-    /* EXPERIMENT: contextHash = walkerCur to match writer's
-       boundaryOuterCtx (see vocab §11). Kept seqCtx computed for
-       comparison in provenance data. */
-    Hash seqCtx = hashString(HashAlgorithm::SHA256,
+    Hash boundaryContextHash = hashString(HashAlgorithm::SHA256,
         applyReqHash.to_string(HashFormat::Base16, false)
         + "|" + std::to_string(applySeq));
-    Hash contextHashExperiment = walkerCur;
-    if (provenanceEnabled()) {
-        recordProvenance(seqCtx, "contextHash-walker-seqCtx",
-                         {{"applyRequestHash", applyReqHash.to_string(HashFormat::Base16, false)},
-                          {"applySeq", applySeq},
-                          {"walkerCur", walkerCur.to_string(HashFormat::Base16, false)},
-                          {"applySeqRetryOffset", ctx.applySeqRetryOffset}});
-        recordProvenance(contextHashExperiment, "contextHash-walker-walkerCur",
-                         {{"applyRequestHash", applyReqHash.to_string(HashFormat::Base16, false)},
-                          {"seqCtx-would-have-been", seqCtx.to_string(HashFormat::Base16, false)}});
-    }
     auto fnIdStr = params["fn"].get<std::string>();
     auto fnObj = resolveStateHash(fnIdStr, ctx);
     if (!fnObj) {
@@ -970,7 +946,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         std::move(rootSubject), sidecarScope,
         seededWalkFacts,
         std::make_shared<Hash>(HashAlgorithm::SHA256),
-        seqCtx, decisionGraph, inner->getEvalState().rootFSRoot,
+        boundaryContextHash, decisionGraph, inner->getEvalState().rootFSRoot,
         &inner->getEvalState());
     replayLocal->withApplyContext(sidecarDepth, sidecarScope);
     replayLocal->withAmbientAsksValidation().withChainStart(applyReqHash);
@@ -1047,9 +1023,9 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         auto evolvedLeafStateHashHex = evolvedLeafStateHash.to_string(HashFormat::Base16, false);
         ctx.memo[evolvedLeafStateHashHex] = replayLocal;
         tracingCacheLog(
-            "dispatchApplyLive: memoised ReplayCallbackArg at leaf cid %s (history.size=%zu, seqCtx=%s)",
+            "dispatchApplyLive: memoised ReplayCallbackArg at leaf cid %s (history.size=%zu, boundaryContextHash=%s)",
             evolvedLeafStateHashHex.substr(0, 12), envWalk.size(),
-            seqCtx.to_string(HashFormat::Base16, false).substr(0, 12));
+            boundaryContextHash.to_string(HashFormat::Base16, false).substr(0, 12));
 
         if (auto * fnSubj = fnObj->getSubject()) {
             Subject applyResultSubj{ApplyResultSubject{
