@@ -489,7 +489,18 @@ void TracingWriter::flushAmbient(bool finalize)
 
             auto factHash = TracingDecisionGraph::xorFactIntoHash(
                 Hash(HashAlgorithm::SHA256), boundary.applyRequestHash, ambientResult);
-            if (seenRequests.insert(factHash).second) {
+            /* Dedup gate: `seenRequests` tracks (applyRequestHash,
+               ambientResult) pairs. Under matching-until-divergence
+               with XOR-evolution, same-shape sibling boundaries
+               produce identical (applyRequestHash, ambientResult),
+               so `seenRequests.insert(factHash).second` returns
+               false for the second sibling. When that happens, we
+               must NOT propagate the ε contribution downstream
+               either — otherwise XORing the same factHash twice
+               cancels the first boundary's contribution and the
+               walker's cur at recorded edges drifts. */
+            bool isNewFact = seenRequests.insert(factHash).second;
+            if (isNewFact) {
                 envFactSet.push_back({boundary.applyRequestHash, ambientResult});
                 envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
                     envFactSetHash, boundary.applyRequestHash, ambientResult);
@@ -519,10 +530,12 @@ void TracingWriter::flushAmbient(bool finalize)
                             envAsksEdges.size());
             ++shift;
 
-            for (size_t i = pos + 1; i < envAsksEdges.size(); ++i)
-                envAsksEdges[i].fromFactSetHash = TracingDecisionGraph::xorHashes(
-                    envAsksEdges[i].fromFactSetHash, factHash);
-            priorEpsilonAccum = TracingDecisionGraph::xorHashes(priorEpsilonAccum, factHash);
+            if (isNewFact) {
+                for (size_t i = pos + 1; i < envAsksEdges.size(); ++i)
+                    envAsksEdges[i].fromFactSetHash = TracingDecisionGraph::xorHashes(
+                        envAsksEdges[i].fromFactSetHash, factHash);
+                priorEpsilonAccum = TracingDecisionGraph::xorHashes(priorEpsilonAccum, factHash);
+            }
             /* Keep prevQFactSetHash aligned with envFactSetHash after
                the boundary XOR-fold. Without this, subsequent Q's
                `openApplyBoundary` captures a stale (pre-boundary)

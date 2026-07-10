@@ -1349,31 +1349,12 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                         outgoing.size());
 
         bool advanced = false;
-        /* Two-pass edge-selection strategy. Primary pass uses the
-           standard `useful` set (dispatchedSoFar-filtered). If
-           nothing advances the walk, a fallback pass re-includes
-           apply requests that are already in dispatchedSoFar so
-           sibling cb-apply invocations sharing applyReqHash under
-           matching-until-divergence get re-dispatched. This is
-           not walk-restart backtracking — it's a conditional
-           `useful`-set membership computation whose fallback is
-           deterministically the second option. Eliminating the
-           fallback outright requires the writer to record each
-           sibling's Ask edge at a distinct fromCur (deeper
-           edge-layout change tracked separately). */
-        for (int pass = 0; pass < 2 && !advanced; ++pass) {
         for (const auto & requestSetHash : outgoing) {
             auto requestSetOpt = getRequestSet(requestSetHash);
             if (!requestSetOpt)
                 continue;
 
             auto useful = usefulDispatch(*requestSetOpt, dispatchedSoFar);
-            if (pass == 1 && useful.empty()) {
-                for (const auto & req : *requestSetOpt) {
-                    if (dispatchedSoFar.count(req) && isApplyRequest(req))
-                        useful.push_back(req);
-                }
-            }
             if (useful.empty())
                 continue;
 
@@ -1420,14 +1401,23 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                             cur.to_string(HashFormat::Base16, false).substr(0, 12),
                             nextCur.to_string(HashFormat::Base16, false).substr(0, 12));
             cur = nextCur;
-            for (const auto & req : useful)
-                dispatchedSoFar.insert(req);
+            for (const auto & req : useful) {
+                /* Apply requests are excluded from dispatchedSoFar
+                   because sibling cb-apply invocations under
+                   matching-until-divergence share applyReqHash but
+                   need per-cur re-dispatch via dispatchApplyLive's
+                   design contextHash to yield each sibling's
+                   AmbientResult. Env-layer requests are stable
+                   (same request → same response), so once dispatched
+                   they don't need re-dispatch. */
+                if (!isApplyRequest(req))
+                    dispatchedSoFar.insert(req);
+            }
             if (onEdgeAttempt)
                 onEdgeAttempt(/*committed=*/ true, useful);
             advanced = true;
             break;
         }
-        } /* end two-pass loop */
 
         if (!advanced) {
             tracingCacheLog("history Q=%s NO EDGE COMMITTED at cur=%s -> miss",
