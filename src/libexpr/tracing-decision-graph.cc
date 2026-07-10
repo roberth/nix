@@ -1,5 +1,6 @@
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-cache-log.hh"
+#include "nix/expr/tracing-cache-provenance.hh"
 #include "nix/store/sqlite.hh"
 #include <sqlite3.h>
 #include "nix/util/environment-variables.hh"
@@ -458,26 +459,42 @@ void TracingDecisionGraph::waitForWrites()
    Storage layer: atoms
    ───────────────────────────────────────────────────────────────────── */
 
+/* The payload here is raw CBOR — not UTF-8-safe, so we don't
+   embed it verbatim in provenance details (nlohmann's JSON
+   serializer will throw on non-UTF-8 bytes). Callers who have
+   the pre-encoded JSON form should record provenance at their
+   own level with the JSON payload. This macro just records the
+   kind + size. */
 #define ATOM_INSERT_CACHED(NAME, CACHE)                                          \
     void TracingDecisionGraph::insert##NAME(const Hash & h, std::string_view p) \
     {                                                                            \
-        auto state(_state->lock());                                              \
-        auto use = state->insert##NAME.use();                                    \
-        dg_bindBlob(use, dg_hashToBlob(h));                                      \
-        dg_bindBlob(use, p);                                                     \
-        use.exec();                                                              \
-        /* Mirror INSERT OR IGNORE: only the first payload wins. */              \
-        state->CACHE.try_emplace(h, std::optional{std::string(p)});              \
+        {                                                                        \
+            auto state(_state->lock());                                          \
+            auto use = state->insert##NAME.use();                                \
+            dg_bindBlob(use, dg_hashToBlob(h));                                  \
+            dg_bindBlob(use, p);                                                 \
+            use.exec();                                                          \
+            /* Mirror INSERT OR IGNORE: only the first payload wins. */          \
+            state->CACHE.try_emplace(h, std::optional{std::string(p)});          \
+        }                                                                        \
+        if (provenanceEnabled())                                                 \
+            recordProvenance(h, #NAME "Hash",                                    \
+                             {{"payload_len", p.size()}});                       \
     }
 
 #define ATOM_INSERT_PLAIN(NAME)                                                  \
     void TracingDecisionGraph::insert##NAME(const Hash & h, std::string_view p) \
     {                                                                            \
-        auto state(_state->lock());                                              \
-        auto use = state->insert##NAME.use();                                    \
-        dg_bindBlob(use, dg_hashToBlob(h));                                      \
-        dg_bindBlob(use, p);                                                     \
-        use.exec();                                                              \
+        {                                                                        \
+            auto state(_state->lock());                                          \
+            auto use = state->insert##NAME.use();                                \
+            dg_bindBlob(use, dg_hashToBlob(h));                                  \
+            dg_bindBlob(use, p);                                                 \
+            use.exec();                                                          \
+        }                                                                        \
+        if (provenanceEnabled())                                                 \
+            recordProvenance(h, #NAME "Hash",                                    \
+                             {{"payload_len", p.size()}});                       \
     }
 
 ATOM_INSERT_CACHED(Request, requestPayloadCache)
@@ -489,12 +506,30 @@ ATOM_INSERT_CACHED(Result, resultPayloadCache)
 void TracingDecisionGraph::insertInnerValueResponse(
     const Hash & requestHash, const Hash & contextHash, std::string_view payload)
 {
-    auto state(_state->lock());
-    auto use = state->insertInnerValueResponse.use();
-    dg_bindBlob(use, dg_hashToBlob(requestHash));
-    dg_bindBlob(use, dg_hashToBlob(contextHash));
-    dg_bindBlob(use, payload);
-    use.exec();
+    {
+        auto state(_state->lock());
+        auto use = state->insertInnerValueResponse.use();
+        dg_bindBlob(use, dg_hashToBlob(requestHash));
+        dg_bindBlob(use, dg_hashToBlob(contextHash));
+        dg_bindBlob(use, payload);
+        use.exec();
+    }
+    tracingCacheLog(
+        "insertInnerValueResponse req=%s ctx=%s payload_len=%zu",
+        describeHash(requestHash).c_str(),
+        describeHash(contextHash).c_str(),
+        payload.size());
+    if (provenanceEnabled()) {
+        static std::atomic<size_t> insertSeq{0};
+        auto seq = insertSeq++;
+        auto keyHash = hashString(HashAlgorithm::SHA256,
+            "InnerValueResponseInsert:" + std::to_string(seq));
+        recordProvenance(keyHash, "InnerValueResponse-insert-call",
+            {{"seq", seq},
+             {"requestHash", requestHash.to_string(HashFormat::Base16, false)},
+             {"contextHash", contextHash.to_string(HashFormat::Base16, false)},
+             {"payload_len", payload.size()}});
+    }
 }
 
 #define ATOM_GET_CACHED(NAME, CACHE)                                            \
@@ -534,13 +569,36 @@ ATOM_GET_CACHED(Result, resultPayloadCache)
 std::optional<std::string> TracingDecisionGraph::getInnerValueResponsePayload(
     const Hash & requestHash, const Hash & contextHash)
 {
-    auto state(_state->lock());
-    auto query = state->selectInnerValueResponse.use();
-    dg_bindBlob(query, dg_hashToBlob(requestHash));
-    dg_bindBlob(query, dg_hashToBlob(contextHash));
-    if (!query.next())
-        return std::nullopt;
-    return query.getBlob(0);
+    std::optional<std::string> result;
+    {
+        auto state(_state->lock());
+        auto query = state->selectInnerValueResponse.use();
+        dg_bindBlob(query, dg_hashToBlob(requestHash));
+        dg_bindBlob(query, dg_hashToBlob(contextHash));
+        if (query.next())
+            result = query.getBlob(0);
+    }
+    tracingCacheLog(
+        "getInnerValueResponsePayload req=%s ctx=%s -> %s",
+        describeHash(requestHash).c_str(),
+        describeHash(contextHash).c_str(),
+        result ? "HIT" : "MISS");
+    if (provenanceEnabled()) {
+        static std::atomic<size_t> lookupSeq{0};
+        auto seq = lookupSeq++;
+        /* Hash the seq to get a unique registry key per lookup site.
+           We can't index by (reqHash, ctxHash) — those repeat for
+           different lookups within the same session — so we use an
+           incrementing counter as a synthetic key. */
+        auto keyHash = hashString(HashAlgorithm::SHA256,
+            "lookup:" + std::to_string(seq));
+        recordProvenance(keyHash, "getInnerValueResponsePayload-call",
+            {{"seq", seq},
+             {"requestHash", requestHash.to_string(HashFormat::Base16, false)},
+             {"contextHash", contextHash.to_string(HashFormat::Base16, false)},
+             {"hit", result.has_value()}});
+    }
+    return result;
 }
 
 /* ─────────────────────────────────────────────────────────────────────

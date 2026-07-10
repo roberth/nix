@@ -1,6 +1,7 @@
 #include "nix/expr/tracing-writer.hh"
 #include "nix/expr/subject-id.hh"
 #include "nix/expr/tracing-cache-log.hh"
+#include "nix/expr/tracing-cache-provenance.hh"
 #include "nix/expr/tracing-cache-stats.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 
@@ -123,6 +124,17 @@ void TracingWriter::flushAmbient(bool finalize)
             "  respHash=%s respJSON=%s",
             responseHash.to_string(HashFormat::Base16, false).substr(0, 12),
             resultJson.dump());
+        /* Record BEFORE insertRequest so the richer d1 provenance
+           beats the generic RequestHash from insertRequest. */
+        if (provenanceEnabled()) {
+            recordProvenance(queryHash, "requestHash-d1",
+                             {{"queryJson", queryJson},
+                              {"subject", describe(pf.subject)},
+                              {"argAncestry", pf.argAncestry.to_string(HashFormat::Base16, false)}});
+            recordProvenance(responseHash, "responseHash-d1",
+                             {{"resultJson", resultJson},
+                              {"queryHash", queryHash.to_string(HashFormat::Base16, false)}});
+        }
 
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
         /* env fact InnerValueResponse insert at empty-hash context: kept for
@@ -318,6 +330,13 @@ void TracingWriter::flushAmbient(bool finalize)
         Hash seqCtx = hashString(HashAlgorithm::SHA256,
             boundary.applyRequestHash.to_string(HashFormat::Base16, false)
             + "|" + std::to_string(applySeq));
+        if (provenanceEnabled())
+            recordProvenance(seqCtx, "contextHash-writer-seqCtx",
+                             {{"applyRequestHash", boundary.applyRequestHash.to_string(HashFormat::Base16, false)},
+                              {"applySeq", applySeq},
+                              {"applyId", boundary.applyId.to_string(HashFormat::Base16, false)},
+                              {"fromFactSetHashAtBoundary",
+                                  boundary.fromFactSetHashAtBoundary.to_string(HashFormat::Base16, false)}});
 
         /* Helper: stamp the i-th fact and emit Request/InnerValueResponse
            into the pool. AmbientAsks is inserted iff `withAmbientAsks`
@@ -374,6 +393,21 @@ void TracingWriter::flushAmbient(bool finalize)
             auto queryHash = hashString(HashAlgorithm::SHA256, queryJson.dump());
             auto responsePayload = jsonToCborString(resultJson);
             auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
+            /* Record BEFORE insertRequest so the richer ambient
+               provenance beats the generic RequestHash from the
+               insertRequest macro. */
+            if (provenanceEnabled()) {
+                recordProvenance(queryHash, "requestHash-ambient",
+                                 {{"queryJson", queryJson},
+                                  {"subject", describe(pf.subject)},
+                                  {"argAncestry", pf.argAncestry.to_string(HashFormat::Base16, false)},
+                                  {"applyId", boundary.applyId.to_string(HashFormat::Base16, false)},
+                                  {"boundaryFactIndex", i},
+                                  {"fromHex", fromHex}});
+                recordProvenance(responseHash, "responseHash-ambient",
+                                 {{"resultJson", resultJson},
+                                  {"queryHash", queryHash.to_string(HashFormat::Base16, false)}});
+            }
 
             decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
             /* Context = hash(applyReqHash || per-applyReqHash sequence)
@@ -605,6 +639,14 @@ void TracingWriter::openApplyBoundary(const nlohmann::json & applyQueryPayload)
        Fact at warm replay. */
     auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQueryPayload.dump());
     auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
+    /* Record BEFORE insertRequest so the richer applyRequestHash
+       provenance beats the generic RequestHash entry from the
+       insertRequest macro (first-registration-wins). */
+    if (provenanceEnabled())
+        recordProvenance(applyReqHash, "applyRequestHash",
+                         {{"applyQueryPayload", applyQueryPayload},
+                          {"prevQFactSetHash", prevQFactSetHash.to_string(HashFormat::Base16, false)},
+                          {"envFactSetHash", envFactSetHash.to_string(HashFormat::Base16, false)}});
     decisionGraph->insertRequest(applyReqHash, applyPayloadCbor);
 
     /* Buffer the boundary. The synthetic env apply Fact's respHash

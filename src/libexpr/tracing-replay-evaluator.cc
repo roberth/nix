@@ -12,6 +12,7 @@
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/environment.hh"
 #include "nix/expr/tracing-cache-log.hh"
+#include "nix/expr/tracing-cache-provenance.hh"
 #include "nix/util/logging.hh"
 #include "nix/util/util.hh"
 #include "nix/expr/object-type.hh"
@@ -832,6 +833,10 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
     const Hash & walkerCur,
     ResolutionContext & ctx)
 {
+    if (provenanceEnabled())
+        recordProvenance(applyReqHash, "dispatchApplyLive-entry",
+                         {{"walkerCur", walkerCur.to_string(HashFormat::Base16, false)},
+                          {"params", params}});
     /* InnerValueResponse context symmetric with cold's finalize:
        hash(applyReqHash || per-applyReqHash sequence).
 
@@ -857,9 +862,23 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
                  + ctx.perApplyReqDispatchCount[applyReqHash]++;
         ctx.assignedApplySeq[curKey] = applySeq;
     }
+    /* EXPERIMENT: contextHash = walkerCur to match writer's
+       boundaryOuterCtx (see vocab §11). Kept seqCtx computed for
+       comparison in provenance data. */
     Hash seqCtx = hashString(HashAlgorithm::SHA256,
         applyReqHash.to_string(HashFormat::Base16, false)
         + "|" + std::to_string(applySeq));
+    Hash contextHashExperiment = walkerCur;
+    if (provenanceEnabled()) {
+        recordProvenance(seqCtx, "contextHash-walker-seqCtx",
+                         {{"applyRequestHash", applyReqHash.to_string(HashFormat::Base16, false)},
+                          {"applySeq", applySeq},
+                          {"walkerCur", walkerCur.to_string(HashFormat::Base16, false)},
+                          {"applySeqRetryOffset", ctx.applySeqRetryOffset}});
+        recordProvenance(contextHashExperiment, "contextHash-walker-walkerCur",
+                         {{"applyRequestHash", applyReqHash.to_string(HashFormat::Base16, false)},
+                          {"seqCtx-would-have-been", seqCtx.to_string(HashFormat::Base16, false)}});
+    }
     auto fnIdStr = params["fn"].get<std::string>();
     auto fnObj = resolveStateHash(fnIdStr, ctx);
     if (!fnObj) {
