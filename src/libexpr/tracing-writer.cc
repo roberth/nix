@@ -418,12 +418,27 @@ void TracingWriter::flushAmbient(bool finalize)
             }
 
             decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-            /* Context = hash(applyReqHash || per-applyReqHash sequence)
-               so multiple applies sharing an applyReqHash (via
-               Arg abstraction — cb-repeated's `(cb 10) +
-               (cb 20)`) get distinct InnerValueResponse rows. Walker's dispatchApplyLive
-               tracks the symmetric counter in ctx.perApplyReqDispatchCount. */
+            /* Insert at TWO contextHashes so both walker paths hit:
+               - Interim `boundaryContextHash` (seqCtx = SHA-256(applyReqHash
+                 || applySeq)) for the walker's resolveApplyId
+                 fallback which reconstructs seqCtx via
+                 perApplyReqDispatchCount.
+               - Design `designContextHash` (SHA-256(outerCur ||
+                 walkerCur)) for dispatchApplyLive's RCA, which
+                 both writer and walker compute from the same
+                 lockstep-reproducible inputs (per vocab §11).
+               The two-writes overhead is O(number of ambient probes),
+               bounded and cheap. Once the fallback path is
+               migrated to compute the design formula, the interim
+               row insert can be dropped. */
             decisionGraph->insertInnerValueResponse(queryHash, boundaryContextHash, responsePayload);
+            Hash designContextHash = hashString(HashAlgorithm::SHA256,
+                "InnerValueResponse-ctx:"
+                + boundary.outerEnvCurAtOpen.to_string(HashFormat::Base16, false)
+                + "|"
+                + boundaryOuterCtx.to_string(HashFormat::Base16, false));
+            if (designContextHash != boundaryContextHash)
+                decisionGraph->insertInnerValueResponse(queryHash, designContextHash, responsePayload);
 
             auto toFactSet = TracingDecisionGraph::xorFactIntoHash(
                 cumulativeFactSet, queryHash, responseHash);

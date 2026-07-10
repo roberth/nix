@@ -352,47 +352,25 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
             rejectedObs.push_back(std::move(obs));
         pendingEdgeObservations.clear();
     };
-    /* applySeq-bump retry loop.
-
-       Sibling cb-apply invocations at the same lexical position
-       carry matching requestHashes at the writer, per
-       "matching until divergence". Under `dispatchApplyLive`,
-       each recorded invocation needs its own ReplayCallbackArg
-       seeded with the invocation's specific state — but the
-       walker doesn't know up front which invocation any given
-       cur corresponds to. Retrying with an incremented
-       `applySeqRetryOffset` cycles through seq assignments until
-       one produces a walk that reaches a Terminal.
-
-       Interim: retained pending a design where the walker's
-       traversal position deterministically identifies the
-       intended sibling without any guessing. */
+    /* Two structural attempts:
+       (1) parent-anchored — walk from the parent TracingReplayObject's
+           terminalCur, the lockstep continuation of the enclosing
+           traversal.
+       (2) walk-from-∅ fallback — used when (1) misses or when there
+           is no parent anchor. */
     std::optional<TracingDecisionGraph::WalkHit> walkHit;
-    for (int retry = 0; retry < 5; ++retry) {
-        if (retry > 0) {
-            ctx.assignedApplySeq.clear();
-            ctx.perApplyReqDispatchCount.clear();
-            ctx.dispatchedApplyReqsThisWalk.clear();
-            ctx.memo.clear();
-            pendingEdgeObservations.clear();
-            rejectedObs.clear();
-        }
+    walkHit = decisionGraph.walk(queryHash, dispatch,
+        [&](bool committed, const std::vector<Hash> & useful) {
+            if (committed) commitEdge();
+            else commitRejected(useful);
+        },
+        parentAnchor);
+    if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
         walkHit = decisionGraph.walk(queryHash, dispatch,
             [&](bool committed, const std::vector<Hash> & useful) {
                 if (committed) commitEdge();
                 else commitRejected(useful);
-            },
-            parentAnchor);
-        if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
-            walkHit = decisionGraph.walk(queryHash, dispatch,
-                [&](bool committed, const std::vector<Hash> & useful) {
-                    if (committed) commitEdge();
-                    else commitRejected(useful);
-                });
-        }
-        if (walkHit) break;
-        if (ctx.dispatchedApplyReqsThisWalk.empty()) break;
-        ctx.applySeqRetryOffset++;
+            });
     }
     if (!walkHit) {
         /* Walker missed. Rejected-edge obs are NOT committed to
@@ -830,24 +808,28 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         recordProvenance(applyReqHash, "dispatchApplyLive-entry",
                          {{"walkerCur", walkerCur.to_string(HashFormat::Base16, false)},
                           {"params", params}});
-    /* Interim: seqCtx retained to match writer's interim scheme
-       pending the vocab-§11 alignment. */
-    std::string curKey =
-        applyReqHash.to_string(HashFormat::Base16, false)
-        + "|" + walkerCur.to_string(HashFormat::Base16, false);
-    ctx.dispatchedApplyReqsThisWalk.insert(applyReqHash);
-    size_t applySeq;
-    if (auto it = ctx.assignedApplySeq.find(curKey);
-        it != ctx.assignedApplySeq.end()) {
-        applySeq = it->second;
-    } else {
-        applySeq = ctx.applySeqRetryOffset
-                 + ctx.perApplyReqDispatchCount[applyReqHash]++;
-        ctx.assignedApplySeq[curKey] = applySeq;
-    }
+    /* Design contextHash (vocab §11): SHA-256(outerCur || walkerCur).
+       Under lockstep, walker's outerCur here equals writer's
+       `outerEnvCurAtOpen` at boundary open, and walkerCur equals
+       writer's `boundaryOuterCtx` (fromFactSetHashAtBoundary XOR
+       priorEpsilonAccum). Writer inserts InnerValueResponse rows
+       at this contextHash in addition to the interim seqCtx-based
+       ones, so this lookup is deterministic without a per-cur
+       seq counter. */
+    Hash outerCurAtDispatch = writer.outerWriter
+        ? writer.outerWriter->getV13FactSetHash()
+        : Hash(HashAlgorithm::SHA256);
     Hash boundaryContextHash = hashString(HashAlgorithm::SHA256,
-        applyReqHash.to_string(HashFormat::Base16, false)
-        + "|" + std::to_string(applySeq));
+        "InnerValueResponse-ctx:"
+        + outerCurAtDispatch.to_string(HashFormat::Base16, false)
+        + "|"
+        + walkerCur.to_string(HashFormat::Base16, false));
+    /* Track dispatched apply-reqs so the outer retry loop knows
+       whether to bump applySeqRetryOffset. Kept for the interim
+       fallback path in resolveApplyId (see the corresponding
+       comment there). */
+    ctx.dispatchedApplyReqsThisWalk.insert(applyReqHash);
+    ctx.perApplyReqDispatchCount[applyReqHash]++;
     auto fnIdStr = params["fn"].get<std::string>();
     auto fnObj = resolveStateHash(fnIdStr, ctx);
     if (!fnObj) {
