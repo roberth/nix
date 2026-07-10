@@ -1349,79 +1349,36 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                         outgoing.size());
 
         bool advanced = false;
-        /* Two-pass edge iteration. Primary pass uses the standard
-           `useful` set (filtered by dispatchedSoFar). If all
-           primary-pass edges either skip (empty useful) or fail
-           the `hasAnyEdge` validation, a fallback pass tries the
-           apply-request bypass — re-dispatching an
-           already-in-dispatchedSoFar cb-apply via
-           `dispatchApplyLive`'s per-request seq counter, which
-           returns distinct AmbientResults per invocation. Written
-           for sibling cb-apply matches (see the "Matching until
-           divergence" section of subject-id.md) — the bypass
-           papers over the pattern by guessing at replay time.
-           Candidate for removal once the writer's edge layout
-           makes the walker's traversal deterministic. */
+        /* Two passes: primary uses the standard `useful` set
+           (dispatchedSoFar-filtered). If nothing advances the walk,
+           fallback pass re-includes apply requests already in
+           dispatchedSoFar so sibling cb-apply invocations sharing
+           applyReqHash (matching-until-divergence) get re-dispatched
+           and yield each sibling's AmbientResult via
+           dispatchApplyLive's per-cur seq counter. */
         for (int pass = 0; pass < 2 && !advanced; ++pass) {
         for (const auto & requestSetHash : outgoing) {
             auto requestSetOpt = getRequestSet(requestSetHash);
             if (!requestSetOpt)
                 continue;
 
-            /* Primary pass: standard useful set (dispatchedSoFar-filtered).
-               Fallback pass: augment with in-dispatchedSoFar apply reqs. */
             auto useful = usefulDispatch(*requestSetOpt, dispatchedSoFar);
             if (pass == 1 && useful.empty()) {
                 for (const auto & req : *requestSetOpt) {
-                    if (dispatchedSoFar.count(req) && isApplyRequest(req)) {
+                    if (dispatchedSoFar.count(req) && isApplyRequest(req))
                         useful.push_back(req);
-                    }
                 }
             }
             if (useful.empty())
-                continue; // degenerate edge — all its requests already in cur
+                continue;
 
-            /* Bounded intra-edge dispatch retry.
-
-               Some dispatches return the zero sentinel because
-               their `from` field can't be resolved yet — the
-               subject the walker needs is only registered as a
-               proxy after a *different* observation in this edge
-               fires its outer callback path (via
-               `<replay-local-lambda>` → `registerAmbientResolverProxy`).
-               So the first pass records who failed, subsequent
-               passes retry them; a pass that makes no progress
-               ends the loop.
-
-               This is a workaround, not a design invariant: the
-               retry compensates for the writer bundling observations
-               with dispatch-side-effect ordering dependencies into
-               one Ask edge. A proper split at the writer would
-               make each pass a single-shot dispatch.
-
-               Bounded to 4 passes to prevent runaway loops when a
-               genuinely-unresolvable dispatch never converges. */
             Hash nextCur = cur;
             EdgeContext edgeCtx{q, cur, requestSetHash};
             std::vector<std::pair<RequestHash, ResponseHash>> results;
             results.reserve(useful.size());
-            std::vector<size_t> failedIndices;
             for (size_t i = 0; i < useful.size(); ++i) {
                 auto resp = dispatch(useful[i], edgeCtx);
-                if (resp == Hash(HashAlgorithm::SHA256))
-                    failedIndices.push_back(i);
                 results.emplace_back(useful[i], resp);
-            }
-            for (int pass = 0; pass < 4 && !failedIndices.empty(); ++pass) {
-                std::vector<size_t> stillFailed;
-                for (size_t idx : failedIndices) {
-                    auto resp = dispatch(useful[idx], edgeCtx);
-                    results[idx].second = resp;
-                    if (resp == Hash(HashAlgorithm::SHA256))
-                        stillFailed.push_back(idx);
-                }
-                if (stillFailed.size() == failedIndices.size()) break;
-                failedIndices = std::move(stillFailed);
             }
             for (const auto & pr : results)
                 nextCur = dg_xorHash(nextCur, dg_factElementHash(pr.first, pr.second));

@@ -355,22 +355,18 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
     /* applySeq-bump retry loop.
 
        Sibling cb-apply invocations at the same lexical position
-       carry matching requestHashes at the writer, per the
-       "Matching until divergence" section of subject-id.md.
-       Under `dispatchApplyLive`, each recorded invocation needs
-       its own ReplayCallbackArg seeded with the invocation's
-       specific state — but the walker doesn't know up front
-       which invocation any given cur corresponds to. Retrying
-       with an incremented `applySeqRetryOffset` cycles through
-       seq assignments until one produces a walk that reaches a
-       Terminal.
+       carry matching requestHashes at the writer, per
+       "matching until divergence". Under `dispatchApplyLive`,
+       each recorded invocation needs its own ReplayCallbackArg
+       seeded with the invocation's specific state — but the
+       walker doesn't know up front which invocation any given
+       cur corresponds to. Retrying with an incremented
+       `applySeqRetryOffset` cycles through seq assignments until
+       one produces a walk that reaches a Terminal.
 
-       Bounded to 5 retries (empirical: variant 4's `map cb
-       [1..5]` needs 5 assignments). This is a workaround, not a
-       design invariant — the retry counts the number of sibling
-       invocations the walker had to guess through, and the
-       goal is to make the seq assignment deterministic from the
-       walker's traversal position instead. */
+       Interim: retained pending a design where the walker's
+       traversal position deterministically identifies the
+       intended sibling without any guessing. */
     std::optional<TracingDecisionGraph::WalkHit> walkHit;
     for (int retry = 0; retry < 5; ++retry) {
         if (retry > 0) {
@@ -397,9 +393,6 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         if (walkHit) break;
         if (ctx.dispatchedApplyReqsThisWalk.empty()) break;
         ctx.applySeqRetryOffset++;
-        tracingCacheLog(
-            "history retry: bumping applySeqRetryOffset -> %zu",
-            ctx.applySeqRetryOffset);
     }
     if (!walkHit) {
         /* Walker missed. Rejected-edge obs are NOT committed to
