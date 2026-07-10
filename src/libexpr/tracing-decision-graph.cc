@@ -1369,21 +1369,21 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
             for (const auto & pr : results)
                 nextCur = dg_xorHash(nextCur, dg_factElementHash(pr.first, pr.second));
 
-            /* Patricia-trie branch resolution — not backtracking.
+            /* Trie navigation per design (see
+               `doc/design/tracing-eval-cache.md`, "Walk from ∅",
+               step 3): "Validate: hasAnyEdge(queryHash, nextCur)? ...
+               If yes, advance cur = nextCur and continue. If no,
+               this branch of the recording isn't reachable from
+               the current env — try the next outgoing edge."
 
-               When multiple recordings share (Q, cur) but diverge
-               afterwards (Patricia split), the walker learns which
-               branch belongs to this session by dispatching each
-               candidate's requests and checking whether the resulting
-               nextCur has downstream recorded. This is the
-               trie-navigation step: "which child of this node
-               matches my live key?" It parallels a normal Patricia
-               trie's per-node prefix compare, except here the "key"
-               is the live-XOR-fold and comparison happens by
-               dispatch. On a single-edge node the loop resolves in
-               one step; multi-edge nodes exist by design because
-               v13 preserves cross-session merges without a
-               session-tag column on Ask rows.
+               Failed candidates never advance cur — no state is
+               undone. Single-edge nodes resolve in one step;
+               multi-edge nodes exist because v13 preserves
+               cross-session merges (Patricia split) without a
+               session-tag column on Ask rows. Under lockstep the
+               dispatched Requests are idempotent (same request →
+               same response), so re-dispatch across candidates is
+               observationally identical to a single dispatch.
 
                No stored-response substitution: a stored-vs-live
                mismatch is the walker's only signal for legitimate
