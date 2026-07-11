@@ -459,19 +459,23 @@ void TracingWriter::flushAmbient(bool finalize)
 
         if (!boundary.finalized) {
             /* First finalize for this boundary. Process all facts
-               accumulated so far, insert env apply Fact, ε edge, and
-               propagate the factHash to downstream envAsksEdges.
+               accumulated so far. If any were made, insert the
+               boundary Ask carrying the applyRequest, fold the
+               (applyRequestHash, AmbientResult) Fact into
+               envFactSet, and propagate that factHash to downstream
+               envAsksEdges.
 
                `boundaryOuterCtx` = the walker's outer env cur at the
                moment this boundary's cb-apply Request will be
                dispatched at warm. Equals
                `boundary.fromFactSetHashAtBoundary XOR priorEpsilonAccum`
-               (= state at openApplyBoundary time + all prior ε
-               contributions). Used as the InnerValueResponse key
-               discriminator so ambient chain facts within different
-               apply boundaries store under distinct rows, letting
-               cb-repeated's two applies with the same abstract
-               reqHash resolve to their respective responses. */
+               (= state at openApplyBoundary time + all prior
+               boundary Ask contributions). Used as the
+               InnerValueResponse key discriminator so ambient chain
+               facts within different apply boundaries store under
+               distinct rows, letting cb-repeated's two applies with
+               the same abstract reqHash resolve to their respective
+               responses. */
             Hash boundaryOuterCtx = TracingDecisionGraph::xorHashes(
                 boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
             boundary.boundaryOuterCtx = boundaryOuterCtx;
@@ -490,6 +494,16 @@ void TracingWriter::flushAmbient(bool finalize)
                 group.size(),
                 ambientResult.to_string(HashFormat::Base16, false).substr(0, 12));
 
+            /* Unobserved cb-apply: the outer's callback body ran
+               without probing the inner-supplied arg (group is empty).
+               No content crossed the boundary → no Ambient Fact to
+               record → no boundary Ask needed. Leave
+               `boundary.finalized` false so a later flush with
+               newly-arrived probes re-enters this branch and records
+               the boundary once observations exist. */
+            if (group.empty())
+                continue;
+
             auto factHash = TracingDecisionGraph::xorFactIntoHash(
                 Hash(HashAlgorithm::SHA256), boundary.applyRequestHash, ambientResult);
             /* Dedup gate: `seenRequests` tracks (applyRequestHash,
@@ -498,10 +512,11 @@ void TracingWriter::flushAmbient(bool finalize)
                produce identical (applyRequestHash, ambientResult),
                so `seenRequests.insert(factHash).second` returns
                false for the second sibling. When that happens, we
-               must NOT propagate the ε contribution downstream
-               either — otherwise XORing the same factHash twice
-               cancels the first boundary's contribution and the
-               walker's cur at recorded edges drifts. */
+               must NOT propagate the boundary contribution
+               downstream either — otherwise XORing the same
+               factHash twice cancels the first boundary's
+               contribution and the walker's cur at recorded edges
+               drifts. */
             bool isNewFact = seenRequests.insert(factHash).second;
             if (isNewFact) {
                 envFactSet.push_back({boundary.applyRequestHash, ambientResult});
@@ -518,16 +533,16 @@ void TracingWriter::flushAmbient(bool finalize)
                 factHash,
             });
 
-            auto epsilonReqSet = decisionGraph->insertRequestSet({boundary.applyRequestHash});
+            auto boundaryAskRequestSet = decisionGraph->insertRequestSet({boundary.applyRequestHash});
             size_t pos = boundary.insertionIndex + shift;
-            Hash epsilonFromHash = TracingDecisionGraph::xorHashes(
+            Hash boundaryAskFromHash = TracingDecisionGraph::xorHashes(
                 boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
             envAsksEdges.insert(envAsksEdges.begin() + pos,
-                {epsilonFromHash, epsilonReqSet});
+                {boundaryAskFromHash, boundaryAskRequestSet});
             envWalk.insert(envWalk.begin() + pos, std::move(applyEdge));
-            tracingCacheLog("finalize: ε Asks edge inserted at pos=%zu from=%s (insertionIndex=%zu shift=%zu perQ=%zu)",
+            tracingCacheLog("finalize: boundary Ask inserted at pos=%zu from=%s (insertionIndex=%zu shift=%zu perQ=%zu)",
                             pos,
-                            epsilonFromHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                            boundaryAskFromHash.to_string(HashFormat::Base16, false).substr(0, 12),
                             boundary.insertionIndex,
                             shift,
                             envAsksEdges.size());
