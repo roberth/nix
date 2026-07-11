@@ -132,19 +132,16 @@ static void advanceChainAndAppendFact(
         if (std::find(requestSet->begin(), requestSet->end(), reqHash) == requestSet->end())
             continue;
         appendFactToWalk(query, fromStateHash, responseJson, walkFacts);
-        /* Direction (2) cb-repeated fix: advance chainCursor by
-           XOR-folding the live (reqHash, responseHash) rather than
-           reading cold's `toFactSet`. Cold's AmbientAsks schema
-           `(from, rs) → to` with INSERT OR IGNORE loses chain B when
-           two apply invocations (same applyReqHash, distinct responses
-           per seqCtx) share a (from, rs) key — see iteration 40 log.
-           XOR-fold lets walker compute each invocation's unique
-           chainCursor from the same `from` position without schema
-           widening. Live and cold agree when cold's stored
+        /* Advance chainCursor by XOR-folding the live
+           (reqHash, responseHash) rather than reading cold's
+           `toFactSet`. Cold's AmbientAsks schema `(from, rs) → to`
+           with INSERT OR IGNORE loses chain B when two apply
+           invocations share a (from, rs) key: XOR-fold lets the
+           walker compute each invocation's unique chainCursor from
+           the same `from` position without schema widening. Live
+           and cold agree when cold's stored
            `toFactSet == from XOR H(reqHash, respHash)` (writer's
-           ambient stampAndEmit at tracing-writer.cc:349-351), so this
-           substitution is exact for tests that don't repeat the same
-           applyReqHash — no observable change there. */
+           ambient stampAndEmit), so the substitution is exact. */
         auto responsePayload = jsonToCborString(responseJson);
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
         chainCursor = TracingDecisionGraph::xorFactIntoHash(

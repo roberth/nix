@@ -817,10 +817,9 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        Under lockstep, walker's outerCur here equals writer's
        `outerEnvCurAtOpen` at boundary open, and walkerCur equals
        writer's `boundaryOuterCtx` (fromFactSetHashAtBoundary XOR
-       priorEpsilonAccum). Writer inserts InnerValueResponse rows
-       at this contextHash in addition to the interim seqCtx-based
-       ones, so this lookup is deterministic without a per-cur
-       seq counter. */
+       priorApplyFactAccum). The writer inserts one InnerValueResponse
+       row per (queryHash, designContextHash), so this lookup lands
+       on the row the writer wrote. */
     Hash outerCurAtDispatch = writer.outerWriter
         ? writer.outerWriter->getV13FactSetHash()
         : Hash(HashAlgorithm::SHA256);
