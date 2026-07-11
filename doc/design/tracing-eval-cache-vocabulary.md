@@ -168,15 +168,15 @@ Extension against a known-disjoint element is a single in-place XOR.
 ### Edges
 
 **Ask** — a row in `Ask(queryHash, factSetHash) →
-requestSetHash`. "At walker state `(Q, cur)`, the next step is
-to dispatch this RequestSet's Requests."
+requestSetHash`. "At walker state `(queryHash, cur)`, the next
+step is to dispatch this RequestSet's Requests."
 
 **Terminal** — a row in `Terminal(queryHash, factSetHash) →
-resultHash`. A recording that reached `(Q, cur)` produced this
-Result. The Terminal *points at* a `resultHash`; the Result
+resultHash`. A recording that reached `(queryHash, cur)` produced
+this Result. The Terminal *points at* a `resultHash`; the Result
 payload itself lives in the Results pool independently. Multiple
-Terminals at the same `(Q, cur)` are allowed — same walker
-state, different Result — if recorded evaluations diverge
+Terminals at the same `(queryHash, cur)` are allowed — same
+walker state, different Result — if recorded evaluations diverge
 (nondeterminism policy is out of scope here). A Terminal ends a
 walk.
 
@@ -185,9 +185,10 @@ Responses aren't already known at `cur`. The walker only
 dispatches the useful subset; the rest is skipped as
 already-known.
 
-**hasAnyEdge** — a cheap existence check on `(Q, cur)`: does any
-Ask or Terminal row exist at that key? Used by the walker to
-reject branches that no recording ever passed through.
+**hasAnyEdge** — a cheap existence check on
+`(queryHash, cur)`: does any Ask or Terminal row exist at that
+key? Used by the walker to reject branches that no recording ever
+passed through.
 
 ### Walker state
 
@@ -206,8 +207,9 @@ Terminal.
 **dispatch** — the walker's per-Request callback. Given a
 Request, returns a Response by asking the live environment.
 
-**walk(Q, dispatch, ..., startCur)** — the walker's top-level
-entry. Returns a `WalkHit` on a Terminal reach, `nullopt` on miss.
+**walk(queryHash, dispatch, ..., startCur)** — the walker's
+top-level entry. Returns a `WalkHit` on a Terminal reach,
+`nullopt` on miss.
 
 **WalkHit** — `{resultHash, terminalCur}`. `resultHash` is the
 recorded Result the walk landed on; `terminalCur` is the `cur` at
@@ -215,9 +217,9 @@ that Terminal (usable as a child query's `startCur`).
 
 ### Recording
 
-**record(Q, factSet, result, ...)** — writes an `(Ask, ...,
-Terminal)` chain into the decision graph for a completed
-recording.
+**record(queryHash, factSet, result, ...)** — writes an
+`(Ask, ..., Terminal)` chain into the decision graph for a
+completed recording.
 
 **Patricia split** — when a new recording's remaining Requests
 partially overlap an existing Ask's `useful` Requests
@@ -323,7 +325,7 @@ in the `InnerValueResponse` table below. C++ wire wrappers are
 
 **AmbientAsk** — a row in `AmbientAsk(fromFactSet) →
 (requestSet, toFactSet)`. Same shape as an Env Ask but keyed
-on factSet alone (no `Q`) and storing the transition
+on factSet alone (no `queryHash`) and storing the transition
 explicitly as `toFactSet` — at replay the walker can't
 dispatch an inner-owned value live, since it no longer exists.
 
