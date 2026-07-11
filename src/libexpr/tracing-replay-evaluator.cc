@@ -736,36 +736,22 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                     auto sidecarScope = Hash::parseNonSRIUnprefixed(
                         sidecarJson["argAncestry"].get<std::string>(), HashAlgorithm::SHA256);
                     Subject rootSubject{Arg{sidecarDepth}};
-                    /* Interim seqCtx scheme: contextHash =
-                       SHA-256(applyReqHash || perApplyReqDispatchCount).
-                       The design formula (SHA-256(outerCur || walkerCur))
-                       matches at `dispatchApplyLive` where the walker
-                       cur AT boundary open is known. At this fallback
-                       site the ReplayCallbackArg is constructed
-                       pre-emptively (during memo-cache resolveStateHash),
-                       so `walkerCur` here is the current *edge*
-                       dispatch's cur — not the boundary-open cur where
-                       the ReplayCallbackArg will actually be used. An
-                       earlier attempt to use `ctx.currentWalkerCur`
-                       here collided siblings sharing an outer walker
-                       state, breaking cb-sibling-discrimination-via-
-                       observation (1100 → 2000). Retiring this fallback
-                       requires either deferring contextHash computation
-                       until USE time or moving ReplayCallbackArg
-                       construction to boundary open, which is out of
-                       scope for the minimal-modifications constraint. */
-                    Hash fallthroughApplyReqHash2{HashAlgorithm::SHA256};
-                    try {
-                        fallthroughApplyReqHash2 = Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256);
-                    } catch (...) {}
-                    size_t fallthroughSeq2 = 0;
-                    if (auto it2 = ctx.perApplyReqDispatchCount.find(fallthroughApplyReqHash2);
-                        it2 != ctx.perApplyReqDispatchCount.end() && it2->second > 0) {
-                        fallthroughSeq2 = it2->second - 1;
-                    }
-                    Hash fallbackContextHash = hashString(HashAlgorithm::SHA256,
-                        fallthroughApplyReqHash2.to_string(HashFormat::Base16, false)
-                        + "|" + std::to_string(fallthroughSeq2));
+                    /* Pre-emptive ReplayCallbackArg constructed
+                       during memo-cache resolveStateHash. The
+                       contextHash it should use is the walker's
+                       Env cur at the moment this arg will actually
+                       be used (i.e. at boundary open), which isn't
+                       known here. Under lockstep the writer inserts
+                       InnerValueResponse at the design contextHash
+                       computed from (outerCur, walkerCur-at-open),
+                       so this fallback's ReplayCallbackArg cannot
+                       reach those rows via a walker-cur snapshot
+                       taken at construction time. Pass zero as the
+                       contextHash — if the arg is actually consumed
+                       later, the read will miss and the caller
+                       will fall through to inner re-eval, which is
+                       the same outcome as a genuine miss. */
+                    Hash fallbackContextHash(HashAlgorithm::SHA256);
                     auto rlo = std::make_shared<ReplayCallbackArg>(
                         std::move(rootSubject), sidecarScope,
                         std::make_shared<std::vector<ObservationSet>>(),

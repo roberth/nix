@@ -303,19 +303,20 @@ void TracingWriter::flushAmbient(bool finalize)
        AmbientResult doesn't match what a per-call walker would
        reproduce.
 
-       Chronological ε insertion: each boundary's ε perQAsksEdge is
-       INSERTED at boundary.insertionIndex (= captured at
+       Chronological cb-apply Ask insertion: each observed cb-apply's
+       Ask is INSERTED at boundary.insertionIndex (= captured at
        openApplyBoundary time, AFTER closeAsksEdge(false) drained the
        pre-boundary env chunk), not appended at the end. This puts
-       ε BEFORE its body's env facts in walker dispatch order. Each
-       insertion shifts subsequent indices by 1, tracked via `shift`.
-       Each ε's elementHash propagates into all subsequent
-       envAsksEdges' fromFactSetHash (= walker's cur advances by
-       ε at that position). priorEpsilonAccum accumulates earlier
-       ε contributions so each new ε's own fromFactSetHash reflects
-       all prior ε contributions to its left. */
+       the cb-apply Ask BEFORE its body's env facts in walker
+       dispatch order. Each insertion shifts subsequent indices by 1,
+       tracked via `shift`. Each cb-apply's elementHash propagates
+       into all subsequent envAsksEdges' fromFactSetHash (= walker's
+       cur advances by that Fact at that position).
+       `priorApplyFactAccum` accumulates earlier cb-apply Fact
+       contributions so each new cb-apply Ask's own fromFactSetHash
+       reflects all prior cb-apply contributions to its left. */
     size_t shift = 0;
-    Hash priorEpsilonAccum(HashAlgorithm::SHA256);
+    Hash priorApplyFactAccum(HashAlgorithm::SHA256);
     /* Per-applyReqHash sequence counter within THIS finalize pass.
        cb-repeated's two `(cb X) + (cb Y)` produce boundaries that
        share the same applyReqHash (Arg abstracts over
@@ -420,28 +421,17 @@ void TracingWriter::flushAmbient(bool finalize)
             }
 
             decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-            /* Insert at TWO contextHashes so both walker paths hit:
-               - Interim `boundaryContextHash` (seqCtx = SHA-256(applyReqHash
-                 || applySeq)) for the walker's resolveApplyId
-                 fallback which reconstructs seqCtx via
-                 perApplyReqDispatchCount.
-               - Design `designContextHash` (SHA-256(outerCur ||
-                 walkerCur)) for dispatchApplyLive's RCA, which
-                 both writer and walker compute from the same
-                 lockstep-reproducible inputs (per the vocab's
-                 "Ambient payload types and edges" section).
-               The two-writes overhead is O(number of ambient probes),
-               bounded and cheap. Once the fallback path is
-               migrated to compute the design formula, the interim
-               row insert can be dropped. */
-            decisionGraph->insertInnerValueResponse(queryHash, boundaryContextHash, responsePayload);
+            /* Design contextHash: SHA-256(outerCur || walkerCur).
+               Writer and walker compute the same value from
+               lockstep-reproducible inputs, so the row inserted here
+               is looked up by dispatchApplyLive at replay under the
+               same key. */
             Hash designContextHash = hashString(HashAlgorithm::SHA256,
                 "InnerValueResponse-ctx:"
                 + boundary.outerEnvCurAtOpen.to_string(HashFormat::Base16, false)
                 + "|"
                 + boundaryOuterCtx.to_string(HashFormat::Base16, false));
-            if (designContextHash != boundaryContextHash)
-                decisionGraph->insertInnerValueResponse(queryHash, designContextHash, responsePayload);
+            decisionGraph->insertInnerValueResponse(queryHash, designContextHash, responsePayload);
 
             auto toFactSet = TracingDecisionGraph::xorFactIntoHash(
                 cumulativeFactSet, queryHash, responseHash);
@@ -468,7 +458,7 @@ void TracingWriter::flushAmbient(bool finalize)
                `boundaryOuterCtx` = the walker's outer env cur at the
                moment this boundary's cb-apply Request will be
                dispatched at warm. Equals
-               `boundary.fromFactSetHashAtBoundary XOR priorEpsilonAccum`
+               `boundary.fromFactSetHashAtBoundary XOR priorApplyFactAccum`
                (= state at openApplyBoundary time + all prior
                boundary Ask contributions). Used as the
                InnerValueResponse key discriminator so ambient chain
@@ -477,7 +467,7 @@ void TracingWriter::flushAmbient(bool finalize)
                the same abstract reqHash resolve to their respective
                responses. */
             Hash boundaryOuterCtx = TracingDecisionGraph::xorHashes(
-                boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
+                boundary.fromFactSetHashAtBoundary, priorApplyFactAccum);
             boundary.boundaryOuterCtx = boundaryOuterCtx;
             std::vector<ObservationSet> history;
             history.reserve(group.size());
@@ -536,7 +526,7 @@ void TracingWriter::flushAmbient(bool finalize)
             auto boundaryAskRequestSet = decisionGraph->insertRequestSet({boundary.applyRequestHash});
             size_t pos = boundary.insertionIndex + shift;
             Hash boundaryAskFromHash = TracingDecisionGraph::xorHashes(
-                boundary.fromFactSetHashAtBoundary, priorEpsilonAccum);
+                boundary.fromFactSetHashAtBoundary, priorApplyFactAccum);
             envAsksEdges.insert(envAsksEdges.begin() + pos,
                 {boundaryAskFromHash, boundaryAskRequestSet});
             envWalk.insert(envWalk.begin() + pos, std::move(applyEdge));
@@ -552,7 +542,7 @@ void TracingWriter::flushAmbient(bool finalize)
                 for (size_t i = pos + 1; i < envAsksEdges.size(); ++i)
                     envAsksEdges[i].fromFactSetHash = TracingDecisionGraph::xorHashes(
                         envAsksEdges[i].fromFactSetHash, factHash);
-                priorEpsilonAccum = TracingDecisionGraph::xorHashes(priorEpsilonAccum, factHash);
+                priorApplyFactAccum = TracingDecisionGraph::xorHashes(priorApplyFactAccum, factHash);
             }
             /* Keep prevQFactSetHash aligned with envFactSetHash after
                the boundary XOR-fold. Without this, subsequent Q's

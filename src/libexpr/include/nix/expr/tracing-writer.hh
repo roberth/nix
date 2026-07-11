@@ -205,7 +205,7 @@ class TracingWriter
            InnerValueResponse contextHash. */
         Hash outerEnvCurAtOpen;
         /* Walker's outer env cur at THIS apply-boundary's dispatch
-           moment (= fromFactSetHashAtBoundary XOR priorEpsilonAccum
+           moment (= fromFactSetHashAtBoundary XOR priorApplyFactAccum
            at first-finalize time). Stored for late-obs re-processing
            so re-emitted InnerValueResponse inserts use the same
            context as the first-finalize inserts. Zero (empty hash)
