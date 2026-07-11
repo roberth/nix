@@ -322,20 +322,20 @@ next Query usually only differs in a handful of new Requests — it
 imports a new package, reads a few extra files, etc. Instead of
 walking the chain from ∅, the design would:
 
-1. Look at the Query's outgoing edge at `cur = ∅`. If exactly one
-   edge, take its RS root hash `edgeRsHash`.
-2. `dispatchedTrie.diff(decisionGraph, edgeRsHash, onlyInThis,
+1. Look at the Query's outgoing Ask at `cur = ∅` and take its
+   RequestSet root hash `askRequestSetHash`.
+2. `dispatchedTrie.diff(decisionGraph, askRequestSetHash, onlyInThis,
    onlyInOther)`. A parallel descent of the in-memory
-   `dispatchedTrie` and the stored trie rooted at `edgeRsHash`;
-   subtrees with matching node hashes collapse to no-ops via
-   short-circuit at the recursive descent.
+   `dispatchedTrie` and the stored trie rooted at
+   `askRequestSetHash`; subtrees with matching node hashes collapse
+   to no-ops via short-circuit at the recursive descent.
 3. For each request in `onlyInOther` (added by this Query): dispatch
    it (memoised in `responseFor`), XOR `H_element(req, resp)` into
    a candidate cur starting from `envCur`.
 4. For each request in `onlyInThis` (dispatched for an earlier
-   Query but not in this one's RS): look up the cached response,
-   XOR `H_element(req, resp)` into the candidate cur — XOR is its
-   own inverse, so the "out" operation is the same XOR.
+   Query but not in this one's RequestSet): look up the cached
+   response, XOR `H_element(req, resp)` into the candidate cur —
+   XOR is its own inverse, so the "out" operation is the same XOR.
 5. Check `Terminal(queryHash, candidateCur)`. Hit → commit (extend
    `dispatchedTrie` with `onlyInOther`, update `envCur`), return the
    Result. Miss → fall through to walk-from-∅.
