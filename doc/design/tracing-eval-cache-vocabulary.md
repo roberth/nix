@@ -12,6 +12,25 @@ Env are always present and are defined first; Ambient is specific
 to `builtins.cache` callbacks and is defined in
 [The Ambient message pairing](#the-ambient-message-pairing) onward.
 
+Above both models sits a property of the black-box interpreter
+model itself: state creep.
+
+---
+
+## State creep
+
+**State creep** is the phenomenon that in the black-box
+interpreter model, any observation must be assumed to affect every
+subsequent result. The evaluator's internal state is opaque; the
+cache has no way to prove which subset of past observations a
+given result actually depended on, so it conservatively treats
+every preceding observation as a precondition of every subsequent
+one.
+
+State creep is over-approximation — the cache key widens beyond
+the strict minimum — but never invalidates incorrectly. Both
+interaction models are designed around it.
+
 ---
 
 ## Interaction models
