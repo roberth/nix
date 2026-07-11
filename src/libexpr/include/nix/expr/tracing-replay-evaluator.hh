@@ -47,43 +47,6 @@ class TracingReplayEvaluator : public Evaluator
             recursive resolveStateHash calls don't redo work. */
         std::map<std::string, std::shared_ptr<Object>> memo;
 
-        /** Per-applyReqHash dispatch counter within this history. Used
-            to compute the InnerValueResponse context: same applyReqHash
-            dispatched multiple times (cb-repeated's Arg-
-            abstracted (cb 10)/(cb 20) sharing one applyReqHash) gets
-            distinct InnerValueResponse lookup keys via seq=0, seq=1, ... Symmetric
-            with cold's per-boundary counter in the finalize pass. */
-        std::unordered_map<Hash, size_t> perApplyReqDispatchCount;
-
-        /** Per-(applyReqHash, walkerCur) → assigned seq. Fixes
-            speculative-retry-inflation: walker's walk() can dispatch
-            the same apply Request MULTIPLE times at the SAME cur
-            (via apply-bypass fallback trying alternate branches).
-            Under bare `perApplyReqDispatchCount++`, each retry gets
-            a new seq, blowing past cold's actual per-boundary count.
-            Assigning seq based on the UNIQUE walkerCur observed keeps
-            walker's seq aligned with cold's per-boundary count:
-            first unique cur → seq 0 (matches cold's boundary 0), etc.
-            Retries at the same cur reuse the previously-assigned seq.
-            Keyed as hex-concatenation of the two hashes for stable
-            hashing. */
-        std::unordered_map<std::string, size_t> assignedApplySeq;
-
-        /** Set of applyReqHashes dispatched via `dispatchApplyLive`
-            during THIS history attempt. On miss, walker uses this to
-            decide whether to increment `applySeqRetryOffset` and retry
-            with a different applySeq. */
-        std::unordered_set<Hash> dispatchedApplyReqsThisWalk;
-
-        /** Retry-driven applySeq offset. Fresh history starts at 0
-            (matches cold's first-boundary seq). Walk miss with cb-apply
-            dispatched bumps this and retries: fresh ctx state re-runs
-            history with next boundary's respHash. Bounded by history's
-            retry-count max. cb-repeated variant 2 pattern: .b's WHNF
-            needs offset=1, .c's WHNF needs offset=2 — each rediscovered
-            per history without leaking into sibling Q's fresh contexts. */
-        size_t applySeqRetryOffset = 0;
-
     };
 
     /** Cumulative history across all history calls in this session.

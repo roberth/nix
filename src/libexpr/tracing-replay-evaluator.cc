@@ -829,12 +829,6 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         + outerCurAtDispatch.to_string(HashFormat::Base16, false)
         + "|"
         + walkerCur.to_string(HashFormat::Base16, false));
-    /* Track dispatched apply-reqs so the outer retry loop knows
-       whether to bump applySeqRetryOffset. Kept for the interim
-       fallback path in resolveApplyId (see the corresponding
-       comment there). */
-    ctx.dispatchedApplyReqsThisWalk.insert(applyReqHash);
-    ctx.perApplyReqDispatchCount[applyReqHash]++;
     auto fnIdStr = params["fn"].get<std::string>();
     auto fnObj = resolveStateHash(fnIdStr, ctx);
     if (!fnObj) {

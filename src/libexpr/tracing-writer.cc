@@ -317,37 +317,8 @@ void TracingWriter::flushAmbient(bool finalize)
        reflects all prior cb-apply contributions to its left. */
     size_t shift = 0;
     Hash priorApplyFactAccum(HashAlgorithm::SHA256);
-    /* Per-applyReqHash sequence counter within THIS finalize pass.
-       cb-repeated's two `(cb X) + (cb Y)` produce boundaries that
-       share the same applyReqHash (Arg abstracts over
-       literal arg). Each boundary's InnerValueResponse inserts use the pair
-       (applyReqHash, seq) as the context — the sequence
-       discriminates the two applies. Walker's dispatchApplyLive
-       tracks the same counter symmetrically. */
-    /* Interim: seqCtx retained pending completion of the
-       Ambient-payload-types alignment (see the vocab's "Ambient
-       payload types and edges" section). The design's contextHash
-       is the walker's Env cur
-       at record time (matching walker.getV13FactSetHash at RCA
-       read time). Landing that alignment requires the walker's
-       per-probe cur to match writer's per-probe cur, which needs
-       further plumbing on the RCA read path. Until then seqCtx
-       preserves current behavior. */
-    std::unordered_map<Hash, size_t> perApplySeqCounter;
     for (auto & boundary : pendingApplyBoundaries) {
         auto & group = boundary.facts;
-        size_t applySeq = perApplySeqCounter[boundary.applyRequestHash]++;
-        Hash boundaryContextHash = hashString(HashAlgorithm::SHA256,
-            boundary.applyRequestHash.to_string(HashFormat::Base16, false)
-            + "|" + std::to_string(applySeq));
-        if (provenanceEnabled())
-            recordProvenance(boundaryContextHash, "contextHash-writer-seqCtx-interim",
-                             {{"applyRequestHash", boundary.applyRequestHash.to_string(HashFormat::Base16, false)},
-                              {"applyId", boundary.applyId.to_string(HashFormat::Base16, false)},
-                              {"applySeq", applySeq},
-                              {"outerEnvCurAtOpen", boundary.outerEnvCurAtOpen.to_string(HashFormat::Base16, false)},
-                              {"fromFactSetHashAtBoundary",
-                                  boundary.fromFactSetHashAtBoundary.to_string(HashFormat::Base16, false)}});
 
         /* Helper: stamp the i-th fact and emit Request/InnerValueResponse
            into the pool. AmbientAsks is inserted iff `withAmbientAsks`
