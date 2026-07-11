@@ -573,14 +573,14 @@ public:
      * logResult). With `finalize=false` (= intermediate flushes),
      * only env layer facts are drained; ambient layer facts and buffered
      * `pendingApplyBoundaries` stay buffered for later. With
-     * `finalize=true` (= logResult), pendingApplyBoundaries are
+     * `processApplies=true` (= logResult), pendingApplyBoundaries are
      * also processed: for each, the ambient chain group is built,
      * its terminal `cumulativeFactSet` is the AmbientResult, and
      * the env synthetic apply Fact `(applyReqHash, AmbientResult)`
      * is folded into envFactSet / envWalk / pendingNewRequests
      * just like an ordinary env layer ambient observation.
      */
-    void flushAmbient(bool finalize = false);
+    void flushAmbient(bool processApplies = false);
 
     /**
      * End the current Asks edge at a cb-apply boundary inside a
@@ -604,7 +604,7 @@ public:
      * with no ambient observations doesn't move subject-id state, so
      * walker's commitEdge is a no-op for it. Same on the writer.
      */
-    void closeAsksEdge(bool finalize = false);
+    void closeAsksEdge(bool processApplies = false);
 
     /**
      * Mark a cb-apply boundary in the recording. Closes the
@@ -718,7 +718,7 @@ public:
            happens only here at logResult, since intermediate
            splitFlushes can be interleaved with the apply's body
            and the ambient chain may not be complete yet. */
-        closeAsksEdge(/*finalize=*/ true);
+        closeAsksEdge(/*processApplies=*/ true);
 
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);

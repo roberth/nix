@@ -9,7 +9,7 @@
 
 namespace nix {
 
-void TracingWriter::flushAmbient(bool finalize)
+void TracingWriter::flushAmbient(bool processApplies)
 {
     if (!decisionGraph)
         return;
@@ -33,7 +33,7 @@ void TracingWriter::flushAmbient(bool finalize)
        envFactSet immediately; we build a single edge per flush appended
        to envWalk for subject-id own-fold evolution. Depth-2 facts
        group by cb-apply id and are NOT folded into envFactSet — they
-       live only in AmbientAsks rows, processed at `finalize=true`
+       live only in AmbientAsks rows, processed at `processApplies=true`
        (= logResult) when each cb-apply's chain is known to be complete. */
 
     auto rewriteFromInQuery = [](nlohmann::json & queryJson, const std::string & fromHex) {
@@ -223,7 +223,7 @@ void TracingWriter::flushAmbient(bool finalize)
        paired with the perQAsksEdge so the 1:1 alignment holds. */
     pendingDepth1Facts.clear();
 
-    if (!finalize) {
+    if (!processApplies) {
         /* Intermediate flush: ambient layer facts stay buffered until
            their apply boundary is finalised at logResult. The cb-apply
            boundary's ambient chain may not be complete yet (= outer is
@@ -582,17 +582,17 @@ void TracingWriter::flushAmbient(bool finalize)
        (option (b)). */
 }
 
-void TracingWriter::closeAsksEdge(bool finalize)
+void TracingWriter::closeAsksEdge(bool processApplies)
 {
     if (!decisionGraph)
         return;
 
     /* Process pending ambient observations into one new Asks edge
        transition (= advances envFactSetHash and envWalk when
-       observations are present). At finalize=true this also computes
+       observations are present). At processApplies=true this also computes
        AmbientResults for each buffered cb-apply boundary and folds
        the synthetic env apply Facts in. */
-    flushAmbient(finalize);
+    flushAmbient(processApplies);
 
     /* Materialise the perQAsksEdge boundary so the trailing logResult
        (or a later closeAsksEdge) inserts an Asks(Q, fromFactSet, RS) row
@@ -646,7 +646,7 @@ void TracingWriter::openApplyBoundary(const nlohmann::json & applyQueryPayload)
        (= β1). The intermediate flush only drains env layer facts; any
        ambient layer facts from prior unfinalised cb-applies (= nested case)
        stay buffered, waiting for their own boundary's finalize. */
-    closeAsksEdge(/*finalize=*/ false);
+    closeAsksEdge(/*processApplies=*/ false);
 
     /* Insert the apply Request payload into the CAS pool now — its
        hash is known immediately, payload doesn't depend on AmbientResult.
