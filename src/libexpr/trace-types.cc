@@ -68,7 +68,7 @@ void from_json(const nlohmann::json & j, GetEnvResponse & r)
 }
 
 // ---------------------------------------------------------------------------
-// Ambient interaction serialization
+// Ambient message pairing serialization
 // ---------------------------------------------------------------------------
 
 // Shared helpers: both outgoing and incoming wrap QueryVariant/ResultVariant.

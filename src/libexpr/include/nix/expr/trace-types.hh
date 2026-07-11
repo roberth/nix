@@ -556,9 +556,9 @@ using ResultVariant = std::variant<
     ResultWHNF>;
 
 // ---------------------------------------------------------------------------
-// Ambient interaction trace types
+// Ambient message pairing trace types
 //
-// These embed interaction tracing events into the Environment trace.
+// These embed content tracing events into the Environment trace.
 // Outgoing: local evaluator queries the ambient (outer) evaluator.
 // Incoming: ambient evaluator accesses local values during a callback.
 // ---------------------------------------------------------------------------

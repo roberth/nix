@@ -6,8 +6,8 @@ model) and
 [`tracing-eval-cache-vocabulary.md`](./tracing-eval-cache-vocabulary.md)
 (term glossary). Terminology from those docs — Query/Result vs
 Request/Response, FactSet, RequestSet trie, the Env and Ambient
-interactions, Subject, state hash, argAncestry, the walker — is
-assumed below.
+message pairings, Subject, state hash, argAncestry, the walker —
+is assumed below.
 
 ## Goal and non-goals
 
@@ -53,6 +53,22 @@ Out of scope:
 - `TeeTracingWriter` replacing the per-call `NullTraceSink`
   workaround.
 
+## Tracing model: input tracing over the outer↔inner boundary
+
+Of the two evaluator-evaluator interaction models defined in the
+[vocabulary](./tracing-eval-cache-vocabulary.md), `builtins.cache`
+uses **input tracing** for its inner evaluator, not content tracing.
+
+From a high-level perspective, with all evaluation taken together,
+all environment-level inputs need to be tracked and checked
+regardless of tracing model. Content tracing could achieve
+early cut-off (as in Build Systems à la Carte), and while we
+believe this could be moderately useful, it requires value-level
+interactions to be traced not just by the inner evaluator's Query
+layer but also by the outer evaluator's Env layer, each time the
+outer produces a trace. Input tracing avoids that per-outer-trace
+cost.
+
 ## Anatomy: the pieces the primop is made of
 
 The primop's body is thin — most of the machinery lives in shared
@@ -82,8 +98,9 @@ libexpr components that the primop wires together. Reading tour:
   records Facts uniformly at the Env layer: file reads, env-var
   lookups, and outer-value probes all XOR-fold into `envFactSetHash`
   and land in `sessionRequestsTrie`. Ambient records via
-  `logAmbientObservation` and `logAmbientApplyFact` (see the vocab
-  §11 for InnerValueResponse storage and AmbientAsk edges).
+  `logAmbientObservation` and `logAmbientApplyFact` (see the vocab's
+  [Ambient payload types and edges](./tracing-eval-cache-vocabulary.md#ambient-payload-types-and-edges)
+  for InnerValueResponse storage and AmbientAsk edges).
 - `src/libexpr/tracing-callback-arg.cc` / `replay-callback-arg.cc` —
   `TracingCallbackArg` and `ReplayCallbackArg` handle the covariant
   callback case: the writer records the outer's probes on an
@@ -248,7 +265,8 @@ Covariant callback replay uses the callback-arg proxies —
 `ReplayCallbackArg` is the frozen image reconstructed from
 `InnerValueResponse` storage; when the outer's callback body probes
 the inner-supplied arg, `ReplayCallbackArg` serves the recorded
-response instead of dispatching live (see the vocab §15).
+response instead of dispatching live (see the vocab's
+[Callback arg objects](./tracing-eval-cache-vocabulary.md#callback-arg-objects)).
 
 **The callback-arg-lambda primop must fire when the outer applies
 it.** A `ReplayCallbackArg` for an inner-supplied lambda

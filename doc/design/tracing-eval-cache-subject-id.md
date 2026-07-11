@@ -7,10 +7,10 @@ Companion to
 [`tracing-eval-cache.md`](./tracing-eval-cache.md) (base cache
 model) and
 [`tracing-eval-cache-vocabulary.md`](./tracing-eval-cache-vocabulary.md)
-(term glossary). This doc is the "why" behind the machinery
-defined in §§12–17 of the vocab (Subject, state hash, argAncestry,
+(term glossary). This doc is the "why" behind the subject-identity
+machinery of the vocab (Subject, state hash, argAncestry,
 callback-arg objects, cell navigation, evolution edges) and the
-Ambient interaction described in §§10–11.
+Ambient message pairing.
 
 ## Foundational principles
 
@@ -105,7 +105,8 @@ Specific commitments of the present design.
    compute the same function from the same inputs.
 
 2. **Subjects are static structural names.** Four variants
-   composing recursively (see vocab §12):
+   composing recursively (see the vocab's
+   [Subject](./tracing-eval-cache-vocabulary.md#subject)):
    - **`Arg{depth}`** — a callback arg at a static apply-stack
      depth (reverse De Bruijn).
    - **`DerivedSubject{parent, kind, name/index}`** — a value
@@ -207,7 +208,9 @@ Specific commitments of the present design.
    state-hash computation are the current walk state (`envWalk`
    for the Env layer; the Subject-evolution walker for
    Ambient/Subject-identity) and the Subjects it holds via its
-   `currentProxy` chain (see vocab §16). For any known Subject
+   `currentProxy` chain (see the vocab's
+   [Cell navigation](./tracing-eval-cache-vocabulary.md#cell-navigation)).
+   For any known Subject
    `S`, the walker *produces* `S`'s state hash at any history
    position `k` by hashing (`stateHashAt(S, argAncestry, history,
    k)`). State hashes are outputs of hashing, then used as keys
@@ -421,9 +424,11 @@ component membership and any new compounding it introduces.
   would arrive XOR-derived and would compound with G's algebra —
   keep it banned.
 
-## Ambient interaction: how Subject identity crosses the boundary
+## Ambient message pairing: how Subject identity crosses the boundary
 
-Vocab §§10–11 define the Ambient interaction. This section is the
+The vocab's
+[The Ambient message pairing](./tracing-eval-cache-vocabulary.md#the-ambient-message-pairing)
+defines the Ambient message pairing. This section is the
 subject-identity view of it: what happens to Subjects and their
 state hashes when the outer probes an inner-supplied callback arg.
 
@@ -505,7 +510,8 @@ The characterization of a value in a particular evaluation
 context is that state hash composed with the state hashes of its
 enclosing scopes — and at the cb-apply boundary, the outermost
 enclosing scope is the cached call itself, contributed via
-`callArgAncestry` (see vocab §14).
+`callArgAncestry` (see the vocab's
+[argAncestry](./tracing-eval-cache-vocabulary.md#argancestry)).
 
 For a callback-arg value:
 
@@ -538,9 +544,11 @@ another's.
 
 ### Ambient response storage
 
-`InnerValueResponse` (vocab §11) is a persistent table
+`InnerValueResponse` (see the vocab's
+[Ambient payload types and edges](./tracing-eval-cache-vocabulary.md#ambient-payload-types-and-edges))
+is a persistent table
 `(requestHash, contextHash) → payload` keyed on the walker's
-Env-interaction `cur` at record time, not on the response's
+Env `cur` at record time, not on the response's
 own hash. That's not a CAS pool — it's a keyed table, and the
 Ambient walker is the only consumer.
 
@@ -568,7 +576,7 @@ reconstructs it as a primop `Value` whose `impl`, when applied,
 consults the `AmbientAsk` trie for a recorded edge matching the
 live arg's evolved state hash, and either reproduces the
 recorded apply result from stored atoms or throws an
-ambient-interaction divergence exception that the surrounding
+Ambient divergence exception that the surrounding
 walker catches as a miss. The lambda's "application behavior"
 is encoded in the recorded `AmbientAsk` edges and
 `InnerValueResponse` payloads, not in a stored body.

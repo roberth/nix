@@ -323,8 +323,10 @@ void TracingWriter::flushAmbient(bool finalize)
        (applyReqHash, seq) as the context — the sequence
        discriminates the two applies. Walker's dispatchApplyLive
        tracks the same counter symmetrically. */
-    /* Interim: seqCtx retained pending completion of the vocab-§11
-       alignment. The design's contextHash is the walker's Env cur
+    /* Interim: seqCtx retained pending completion of the
+       Ambient-payload-types alignment (see the vocab's "Ambient
+       payload types and edges" section). The design's contextHash
+       is the walker's Env cur
        at record time (matching walker.getV13FactSetHash at RCA
        read time). Landing that alignment requires the walker's
        per-probe cur to match writer's per-probe cur, which needs
@@ -426,7 +428,8 @@ void TracingWriter::flushAmbient(bool finalize)
                - Design `designContextHash` (SHA-256(outerCur ||
                  walkerCur)) for dispatchApplyLive's RCA, which
                  both writer and walker compute from the same
-                 lockstep-reproducible inputs (per vocab §11).
+                 lockstep-reproducible inputs (per the vocab's
+                 "Ambient payload types and edges" section).
                The two-writes overhead is O(number of ambient probes),
                bounded and cheap. Once the fallback path is
                migrated to compute the design formula, the interim

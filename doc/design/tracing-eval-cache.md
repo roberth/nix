@@ -36,12 +36,13 @@ Full definitions in
 [`tracing-eval-cache-vocabulary.md`](./tracing-eval-cache-vocabulary.md).
 The essentials for this doc:
 
-- **Query interaction** — `Query` / `Result` between the caller and
-  the evaluator. Each hashed by SHA-256 of its serialized payload
+- **Query message pairing** — `Query` / `Result` between the caller
+  and the evaluator. Each hashed by SHA-256 of its serialized payload
   (`queryHash`, `resultHash`); Query payloads carry a `from` field
   for Merkle provenance.
-- **Env interaction** — `Request` / `Response` between the evaluator
-  and its environment (filesystem, env vars, outer evaluator).
+- **Env message pairing** — `Request` / `Response` between the
+  evaluator and its environment (filesystem, env vars, outer
+  evaluator).
 - **Fact** = `(requestHash, responseHash)`; **FactSet** = a set of
   Facts, hashed by XOR-fold; **RequestSet** = a set of Request
   hashes, hashed by canonical Merkle over a sorted-dedup member
@@ -50,29 +51,30 @@ The essentials for this doc:
 Set identity by hash is load-bearing, so the hashing schemes matter
 (more below).
 
-A trace through the cache for a Query is a chain of Ask edges ending
+A trace through the cache for a Query is a chain of Asks ending
 at a Terminal:
 
 ```
 (queryHash, ∅)
-   │ Ask edge: dispatch this RequestSet's Requests, observe Responses
+   │ Ask: dispatch this RequestSet's Requests, observe Responses
    ▼
 (queryHash, cur')
-   │ Ask edge: dispatch this RequestSet's Requests
+   │ Ask: dispatch this RequestSet's Requests
    ▼
    ...
 (queryHash, cur_final) ── Terminal ──▶ resultHash
 ```
 
 Every trace starts at `cur = ∅`. First-time recordings insert a
-single Ask edge covering all remaining Requests; Patricia split
-(below) factors shared prefixes when later recordings overlap.
+single Ask covering all remaining Requests; Patricia split (below)
+factors shared prefixes when later recordings overlap.
 
 ## Storage layer
 
 Six SQLite tables (Query + Env layers). All append-only via
 `INSERT OR IGNORE`; reads use prepared statements with a per-hash
-in-process cache. Ambient adds three more (see the vocab §18).
+in-process cache. Ambient adds three more (see the vocab's
+[Storage tables (Ambient and subject-id additions)](./tracing-eval-cache-vocabulary.md#storage-tables-ambient-and-subject-id-additions)).
 
 ```
 Requests(requestHash BLOB PRIMARY KEY, payload BLOB)
@@ -87,9 +89,8 @@ Terminal(queryHash BLOB, factSetHash BLOB, resultHash BLOB,
          PRIMARY KEY (queryHash, factSetHash, resultHash))     WITHOUT ROWID
 ```
 
-`WITHOUT ROWID` on edge tables collapses the data into the primary-key
-B-tree, halving on-disk size vs the default heap + duplicate-PK
-layout.
+`WITHOUT ROWID` on the Ask and Terminal tables halves on-disk size
+vs the default layout.
 
 Notable absences (intentional):
 
@@ -127,7 +128,7 @@ This shape buys two things:
    subtree rows for the overlap, automatically via node-hash
    equality on the shared payloads. At K=10000 nixpkgs-attr
    recordings, total DB size is 41 MB; without trie sharing it would
-   be ~2 GB of mostly-duplicate RS blobs.
+   be ~2 GB of mostly-duplicate RequestSet payloads.
 2. **Cheap symmetric difference between any two roots.** Descend
    both tries in parallel; any subtree where the two roots agree on
    the hash collapses to a no-op. Cost tracks the size of the
@@ -162,7 +163,7 @@ next use, no security impact.
 
 `TracingEnvironment` wraps the inner environment (currently
 `SystemEnvironment`). Every `getFileHash`, `getEnv`, and Env
-interaction on the wrapped accessor flows through it:
+message-pairing event on the wrapped accessor flows through it:
 
 ```
 TracingEnvironment::getFileHash(path):
@@ -186,7 +187,7 @@ vector<Fact>              envFactSet;          // insertion order
 SetHash                   envFactSetHash;      // XOR-fold, incremental
 unordered_set<Hash>       seenRequests;        // dedup
 unordered_map<Hash, Hash> responseFor;         // request → response
-TrieBuilder               sessionRequestsTrie; // canonical RS hash, incremental
+TrieBuilder               sessionRequestsTrie; // canonical requestSetHash, incremental
 ```
 
 Each new Fact (one not already in `seenRequests`) is XOR'd into
@@ -207,7 +208,7 @@ queryHandle)`. That handler:
 4. Calls `decisionGraph.record(queryHash, envFactSetHash,
    resultHash, responseFor, seenRequests,
    sessionRequestsTrie.rootHash())` — the fastest overload, using
-   the precomputed RS hash to skip the per-call trie rebuild.
+   the precomputed requestSetHash to skip the per-call trie rebuild.
 
 ### `record()` algorithm
 
@@ -220,71 +221,71 @@ and a running `cur` (XOR-fold hash):
 cur              = ∅
 dispatchedSoFar  = {}
 while dispatchedSoFar ≠ sessionRequests:
-    # Eager Patricia split pass: any existing edge whose useful
+    # Eager Patricia split pass: any existing Ask whose useful
     # dispatch partially overlaps `remaining` gets split.
-    for rs in Ask(queryHash, cur):
-        useful = members(rs) \ dispatchedSoFar
+    for requestSet in Ask(queryHash, cur):
+        useful = members(requestSet) \ dispatchedSoFar
         shared = useful ∩ (sessionRequests \ dispatchedSoFar)
         if ∅ ⊊ shared ⊊ useful:
-            patricia_split(queryHash, cur, rs, shared)
+            patricia_split(queryHash, cur, requestSet, shared)
 
-    # Find a followable edge: usefulDispatch ⊆ remaining
-    if some edge e in Ask(queryHash, cur) has useful(e) ⊆ remaining:
-        consume useful(e) into cur, dispatchedSoFar
+    # Find a followable Ask: usefulDispatch ⊆ remaining
+    if some Ask a in Ask(queryHash, cur) has useful(a) ⊆ remaining:
+        consume useful(a) into cur, dispatchedSoFar
     elif dispatchedSoFar = ∅ and sessionRequestsRsHash provided:
         # Fast path for first-time recording: jump straight to factSet
         insert Ask(queryHash, ∅, sessionRequestsRsHash)
         cur = factSetHash; break
     else:
-        # Slow path: insert a new whole-remaining edge
+        # Slow path: insert a new whole-remaining Ask
         insert Ask(queryHash, cur, insertRequestSet(remaining))
         consume remaining into cur, dispatchedSoFar
 
 insert Terminal(queryHash, factSetHash, result)
 ```
 
-The fast path uses the precomputed RS hash so the writer does not
-re-hash the growing FactSet per recording. Without it the writer
-would re-sort and re-trie the whole FactSet on every `record()`,
-which was the O(n²) failure mode in earlier prototypes.
+The fast path uses the precomputed requestSetHash so the writer
+does not re-hash the growing FactSet per recording. Without it the
+writer would re-sort and re-trie the whole FactSet on every
+`record()`, which was the O(n²) failure mode in earlier prototypes.
 
-`useful` dispatch is the per-edge subset of Requests not already in
-`cur` — a Patricia-split tail edge keeps its original whole-set RS
-reference (including the shared-prefix Requests the intermediate
-cur now contains), but the "useful" part is just what the tail
-adds.
+`useful` dispatch is the per-Ask subset of Requests not already in
+`cur` — a Patricia-split tail Ask keeps its original whole-set
+RequestSet reference (including the shared-prefix Requests the
+intermediate cur now contains), but the "useful" part is just what
+the tail adds.
 
 ### Patricia split
 
 When a new recording's `remaining` partially overlaps an existing
-edge's useful-dispatch (∅ ⊊ shared ⊊ useful), the existing edge is
+Ask's useful-dispatch (∅ ⊊ shared ⊊ useful), the existing Ask is
 split:
 
 ```
 Before:
-   (queryHash, cur) ── RS_existing ──▶ FactSet_existing
+   (queryHash, cur) ── existingRequestSet ──▶ FactSet_existing
 
 After:
-   (queryHash, cur)          ── RS_shared    ──▶ FactSet_intermediate
-                           (new RS node keyed by SHA-256 of the shared part)
-   (queryHash, intermediate) ── RS_existing ──▶ FactSet_existing  (re-pointed)
-   (queryHash, intermediate) ── RS_new      ──▶ FactSet_new       (added later)
+   (queryHash, cur)          ── sharedRequestSet   ──▶ FactSet_intermediate
+                           (new RequestSet node keyed by SHA-256 of the shared part)
+   (queryHash, intermediate) ── existingRequestSet ──▶ FactSet_existing  (re-pointed)
+   (queryHash, intermediate) ── newRequestSet      ──▶ FactSet_new       (added later)
 ```
 
 Three properties of how this is implemented in `dg_recordImpl`:
 
-- Both tail edges keep their original `RS_*` references — the
+- Both tail Asks keep their original RequestSet references — the
   RequestSet pool already stores them, so no duplication. Only
-  `RS_shared` is a freshly inserted node, deduping against any
-  other recording that produced the same intersection via
+  `sharedRequestSet` is a freshly inserted node, deduping against
+  any other recording that produced the same intersection via
   `INSERT OR IGNORE` on the node hash.
 - `FactSet_intermediate` is `FactSet ∪ Facts(shared)`, computed via
   XOR extension. Two recordings that observed the same Responses for
   the shared Requests land at the same intermediate by hash equality;
   divergent Responses land them at different intermediates and they
   coexist as sibling paths.
-- The split removes the old `Ask(queryHash, cur, RS_existing)` row via
-  `removeAsks` (in the schema specifically for this case).
+- The split removes the old `Ask(queryHash, cur, existingRequestSet)`
+  row via `removeAsks` (in the schema specifically for this case).
 
 ## Replay
 
@@ -403,18 +404,19 @@ question would treat hashes as outputs of lookups.
 
 ### Walk from ∅: `decisionGraph.walk(queryHash, dispatch)`
 
-Walks the chain from ∅, one edge at a time. At each `(queryHash, cur)`:
+Walks the chain from ∅, one Ask at a time. At each `(queryHash, cur)`:
 
-1. `getAsks(queryHash, cur)` for outgoing edges. If empty: miss.
-2. For each edge's RS: compute `usefulDispatch(rs, dispatchedSoFar)`.
-   Dispatch the useful Requests (via `dispatch` callback — memoised
-   in `responseFor`), XOR-fold their `H_element` into a candidate
+1. `getAsks(queryHash, cur)` for outgoing Asks. If empty: miss.
+2. For each Ask's RequestSet: compute
+   `usefulDispatch(requestSet, dispatchedSoFar)`. Dispatch the
+   useful Requests (via `dispatch` callback — memoised in
+   `responseFor`), XOR-fold their `H_element` into a candidate
    `nextCur`.
 3. Validate: `hasAnyEdge(queryHash, nextCur)`? That is, is there some
    `Ask(queryHash, nextCur, *)` or `Terminal(queryHash, nextCur, *)` row? If yes,
    advance `cur = nextCur` and continue. If no, this branch of the
    recording isn't reachable from the current env — try the next
-   outgoing edge.
+   outgoing Ask.
 4. If `Terminal(queryHash, cur)` exists, return that Result.
 
 The existence check is per-`queryHash` rather than per-FactSet — what
@@ -436,8 +438,10 @@ fall through to inner.
 
 `apply(fn, arg)` is the awkward case: when `fn` or `arg` came from a
 prior cache boundary and no live Object is around to probe. The
-Ambient interaction handles this — inner-owned callback args are
-proxied by `ReplayCallbackArg` (see the vocab §15), and their
+Ambient message pairing handles this — inner-owned callback args
+are proxied by `ReplayCallbackArg` (see the vocab's
+[Callback arg objects](./tracing-eval-cache-vocabulary.md#callback-arg-objects)),
+and their
 recorded responses are served from the `InnerValueResponse` table.
 `TracingReplayEvaluator::dispatchAmbientQuery` is the per-tag
 bridge; details live in

@@ -826,7 +826,8 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         recordProvenance(applyReqHash, "dispatchApplyLive-entry",
                          {{"walkerCur", walkerCur.to_string(HashFormat::Base16, false)},
                           {"params", params}});
-    /* Design contextHash (vocab §11): SHA-256(outerCur || walkerCur).
+    /* Design contextHash (see vocab, "Ambient payload types and
+       edges"): SHA-256(outerCur || walkerCur).
        Under lockstep, walker's outerCur here equals writer's
        `outerEnvCurAtOpen` at boundary open, and walkerCur equals
        writer's `boundaryOuterCtx` (fromFactSetHashAtBoundary XOR
