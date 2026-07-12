@@ -38,7 +38,7 @@ class TracingObject : public Object
 
     /* For apply-result wrappers: the subject-id Subject that identifies
        this apply structurally (ApplyResultSubject{fn, arg}), and the
-       inherited argAncestry (= state hash(Q) at the cb-apply boundary). Child
+       inherited argAncestry (= state hash(Q) at the cb-apply). Child
        queries on this wrapper emit at
        `stateHashAt(applyResultSubject, applyArgAncestry, writer.envWalk,
        history.size())` — the per-arg evolved state hash the design's
@@ -117,7 +117,7 @@ public:
     }
 
     /** Inherited argAncestry for `stateHashAt(getSubject(), getArgAncestry(), …)`.
-        For apply-result wrappers it's the cb-apply boundary's argAncestry
+        For apply-result wrappers it's the cb-apply's argAncestry
         baked at construction. */
     Hash getArgAncestry() const override { return applyArgAncestry; }
 

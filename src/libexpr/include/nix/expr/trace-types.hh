@@ -446,7 +446,7 @@ DECLARE_QUERY_RESULT(QueryGetFunctionInfo, ResultFunctionInfo)
     Two construction modes, with the same content-addressed semantics:
 
     - **Legacy direct mode** populates `fn`/`arg` with the constituents'
-      scope state ids. Used by the cb-apply boundary recording on the writer
+      scope state ids. Used by the cb-apply recording on the writer
       side, where the apply's `fn` and `arg` are already content-addressed
       leaf-form Objects (TracingObject, OuterObject).
 

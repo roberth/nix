@@ -126,7 +126,7 @@ Observation observationFromQR(const trace::QueryVariant & query, const trace::Re
 
 /** Compute the state hash of `subject` after walking through all
     `edges`, inheriting `argAncestry` (the XOR of outer-argAncestry state hashes — e.g.
-    state hash(Q) at the cb-apply boundary). Passing the zero hash for
+    state hash(Q) at the cb-apply). Passing the zero hash for
     `argAncestry` gives the pure structural state hash, equivalent to
     no inheritance.
 
@@ -282,7 +282,7 @@ struct PathAndRoots
     roots without adjusting them. */
 PathAndRoots pathAndRootsFromSubject(const Subject & subject);
 
-/** Combine fn's and arg's inherited scopes into an apply boundary's
+/** Combine fn's and arg's inherited scopes into an cb-apply's
     argAncestry. Apply treats both sides equally (= unlike QueryAttr or
     curried-result subjects which have a neat single parent), but the
     combination must be non-commutative (= `f a` ≠ `a f`; cf.
@@ -304,7 +304,7 @@ std::string describe(const Subject & subject);
 
 /** Per-cb-apply observation context.
 
-    A fresh instance is created at each cb-apply boundary and shared
+    A fresh instance is created at each cb-apply and shared
     by every Object participating in that single invocation: the
     cb-arg side OuterObject's queryFn pushes observations the inner
     makes on the outer arg; the apply-result side TracingObject /

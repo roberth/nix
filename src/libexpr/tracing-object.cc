@@ -324,12 +324,12 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     if (!fnIdOpt || !argIdOpt)
         throw Error("TracingObject::queryApply: fn/arg lacks a state hash");
 
-    /* cb-apply boundary: record an explicit ε edge for this apply.
+    /* cb-apply: record an explicit ε edge for this apply.
        See parallel call in TracingEvaluator::apply. */
     nlohmann::json applyBoundaryJson = trace::QueryApply{*fnIdOpt, *argIdOpt};
-    tracingCacheLog("openApplyBoundary callsite=TracingObject::queryApply fn=%s arg=%s",
+    tracingCacheLog("openCbApply callsite=TracingObject::queryApply fn=%s arg=%s",
                     fnIdOpt->substr(0, 12), argIdOpt->substr(0, 12));
-    writer.openApplyBoundary(applyBoundaryJson);
+    writer.openCbApply(applyBoundaryJson);
 
     auto fnIdHash = Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256);
     auto argSubjectHash = Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256);

@@ -133,7 +133,7 @@ public:
        like `{ cb }: (cb 10) + (cb 20)` where both invocations
        hit the same requestHash for the callback arg's initial
        probes but the outer contexts differ (post- vs
-       pre-first-apply-boundary). See the "Matching until
+       pre-first-cb-apply). See the "Matching until
        divergence" section of tracing-eval-cache-subject-id.md. */
     void insertInnerValueResponse(const RequestHash & requestHash, const Hash & contextHash, std::string_view payload);
     std::optional<std::string> getInnerValueResponsePayload(const RequestHash & requestHash, const Hash & contextHash);
@@ -234,7 +234,7 @@ public:
     bool hasAnyEdge(const QueryHash & q, const SetHash & factSet);
 
     /* ─────────────────────────────────────────────────────────────────
-       Decision graph layer: ambient layer (cb-apply boundary)
+       Decision graph layer: ambient layer (cb-apply)
 
        The ambient layer trie is keyed on factSet alone (no Q), per
        doc/design/tracing-eval-cache-subject-id.md.

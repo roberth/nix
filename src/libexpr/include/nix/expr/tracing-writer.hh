@@ -113,9 +113,9 @@ class TracingWriter
     /* Depth-1 facts (= ambient observations on outer state). Drained
        at every intermediate closeAsksEdge and at finalize. */
     std::vector<PendingFact> pendingDepth1Facts;
-    /* Depth-2 facts live on their owning ApplyBoundary so
+    /* Depth-2 facts live on their owning PendingCbApply so
        each cb-apply invocation's chain is built from exactly its
-       own probe sequence. Storage is below (= ApplyBoundary's
+       own probe sequence. Storage is below (= PendingCbApply's
        facts field). */
 
     /* Persistent subject-id chain for env layer ambient observations.
@@ -166,7 +166,7 @@ class TracingWriter
     };
     std::vector<PendingRequest> pendingRequests;
 
-    /* Deferred cb-apply boundaries. openApplyBoundary pushes a new
+    /* Deferred cb-apply boundaries. openCbApply pushes a new
        entry with empty facts; logAmbientObservation appends probes to
        the most recently-pushed boundary whose applyId matches.
        flushAmbient processes each boundary's ambient chain (=
@@ -175,44 +175,44 @@ class TracingWriter
        at `(applyReqHash, AmbientResult)`. Each cb-apply invocation
        owns exactly its own probe sequence. Recording order = vector
        order. */
-    struct ApplyBoundary
+    struct PendingCbApply
     {
         Hash applyId;            ///< ambientApplyId for the ambient group
         Hash applyRequestHash;   ///< natural hash of applyQueryPayload
         std::vector<PendingFact> facts;
         /* Chronological insertion: ε perQAsksEdge for this boundary
            is inserted into envAsksEdges at this position at finalize
-           time (= position recorded at openApplyBoundary time, AFTER
+           time (= position recorded at openCbApply time, AFTER
            closeAsksEdge(false) drained pre-boundary env chunk). This
            makes the walker dispatch the ε edge BEFORE the body's
            env facts that follow, so the lambda-ReplayCallbackArg's primop
            fires and seedCell extension happens in time for arg(N+1)
            probes to resolve. */
         size_t insertionIndex;
-        /* prevQFactSetHash AT openApplyBoundary time = cur the
+        /* prevQFactSetHash AT openCbApply time = cur the
            walker would have at the start of ε's dispatch BEFORE
            any prior ε's contributions. After each ε insertion at
            finalize, this gets XOR-propagated by prior ε's element
            hashes. */
-        Hash fromFactSetHashAtBoundary;
+        Hash envCurAtOpen;
         /* The OUTER writer's env cur at the moment inner emitted
-           this cb-apply Fact. Captured at openApplyBoundary from
+           this cb-apply Fact. Captured at openCbApply from
            `outerWriter->getV13FactSetHash()`. Under lockstep
            replay this is the value the outer walker sees as its
            own env cur when it dispatches this same cb-apply Fact,
            i.e. `walkerCur` at `dispatchApplyLive`. Used together
-           with `fromFactSetHashAtBoundary` to compute the
+           with `envCurAtOpen` to compute the
            InnerValueResponse contextHash. */
         Hash outerEnvCurAtOpen;
-        /* Walker's outer env cur at THIS apply-boundary's dispatch
-           moment (= fromFactSetHashAtBoundary XOR priorApplyFactAccum
+        /* Walker's outer env cur at THIS cb-apply's dispatch
+           moment (= envCurAtOpen XOR priorApplyFactAccum
            at first-finalize time). Stored for late-obs re-processing
            so re-emitted InnerValueResponse inserts use the same
            context as the first-finalize inserts. Zero (empty hash)
            until first finalize populates it. */
-        Hash boundaryOuterCtx;
+        Hash contextCur;
         /* Option (b) — late ambient obs support. Once a boundary's first
-           finalize pass runs, it stays in `pendingApplyBoundaries`
+           finalize pass runs, it stays in `pendingCbApplies`
            with `finalized=true` so a later `logAmbientObservation`
            with the same applyId can find it and process the probe
            incrementally instead of dropping it. State preserved
@@ -242,28 +242,28 @@ class TracingWriter
            tail `facts[lastProcessedCount..]`. */
         size_t lastProcessedCount = 0;
     };
-    std::vector<ApplyBoundary> pendingApplyBoundaries;
+    std::vector<PendingCbApply> pendingCbApplies;
 
-    /* RAII suppress counter for `openApplyBoundary` while > 0. Used to
+    /* RAII suppress counter for `openCbApply` while > 0. Used to
        elide redundant boundary firings during walker re-dispatch of a
        recorded apply (= `dispatchApplyLive`): walker's
        `fnObj->queryApply(replayLocal)` re-routes through
        `OuterObject::queryApply` → `applyFn` → `OuterApply::run`,
-       which would normally fire `openApplyBoundary` — but that path
+       which would normally fire `openCbApply` — but that path
        represents validation of an already-recorded apply event, not a
        NEW event. Letting it fire inflates `envWalk` with ε edges
        per re-validation, breaking the walker's 1:1 alignment with
        cold's writer at warm. */
-    size_t suppressApplyBoundary = 0;
+    size_t suppressCbApply = 0;
 
 public:
-    /* RAII helper: scoped suppress of openApplyBoundary. */
+    /* RAII helper: scoped suppress of openCbApply. */
     class SuppressApplyBoundary
     {
         TracingWriter & writer;
     public:
-        explicit SuppressApplyBoundary(TracingWriter & w) : writer(w) { ++writer.suppressApplyBoundary; }
-        ~SuppressApplyBoundary() { --writer.suppressApplyBoundary; }
+        explicit SuppressApplyBoundary(TracingWriter & w) : writer(w) { ++writer.suppressCbApply; }
+        ~SuppressApplyBoundary() { --writer.suppressCbApply; }
         SuppressApplyBoundary(const SuppressApplyBoundary &) = delete;
         SuppressApplyBoundary & operator=(const SuppressApplyBoundary &) = delete;
     };
@@ -475,8 +475,8 @@ public:
            next `flushAmbient(true)` pass picks up the new
            facts via `lastProcessedCount` and processes them
            incrementally. */
-        for (auto it = pendingApplyBoundaries.rbegin();
-             it != pendingApplyBoundaries.rend(); ++it) {
+        for (auto it = pendingCbApplies.rbegin();
+             it != pendingCbApplies.rend(); ++it) {
             if (it->applyId == applyId) {
                 it->facts.push_back({query, result, std::move(subject),
                     std::move(argAncestry), applyId});
@@ -569,11 +569,11 @@ public:
      * Flush buffered ambient facts and Requests into the pool at
      * their natural reqHashes.
      *
-     * Called from `closeAsksEdge` (= every cb-apply boundary and at
+     * Called from `closeAsksEdge` (= every cb-apply and at
      * logResult). With `finalize=false` (= intermediate flushes),
      * only env layer facts are drained; ambient layer facts and buffered
-     * `pendingApplyBoundaries` stay buffered for later. With
-     * `processApplies=true` (= logResult), pendingApplyBoundaries are
+     * `pendingCbApplies` stay buffered for later. With
+     * `processApplies=true` (= logResult), pendingCbApplies are
      * also processed: for each, the ambient chain group is built,
      * its terminal `cumulativeFactSet` is the AmbientResult, and
      * the env synthetic apply Fact `(applyReqHash, AmbientResult)`
@@ -583,14 +583,14 @@ public:
     void flushAmbient(bool processApplies = false);
 
     /**
-     * End the current Asks edge at a cb-apply boundary inside a
+     * End the current Asks edge at a cb-apply inside a
      * body run. Processes pending observations (advancing
      * envWalk by one edge if any ambient observations are
      * pending), finalises the perQAsksEdge boundary, and resets
      * pendingNewRequests so the next observation set starts a
      * fresh edge.
      *
-     * Required at every cb-apply boundary the writer crosses
+     * Required at every cb-apply the writer crosses
      * during a body run — TracingEvaluator::apply,
      * TracingObject::queryApply, OuterResolver::apply. Without
      * this split, multiple body-level cb-applies collapse into a
@@ -607,10 +607,10 @@ public:
     void closeAsksEdge(bool processApplies = false);
 
     /**
-     * Mark a cb-apply boundary in the recording. Closes the
+     * Mark a cb-apply in the recording. Closes the
      * preceding observations into their own Asks edge (= β1 via
      * closeAsksEdge), inserts the apply Request payload into the CAS
-     * pool, and buffers a `ApplyBoundary` recording the
+     * pool, and buffers a `PendingCbApply` recording the
      * applyId and reqHash.
      *
      * The env apply Fact itself is *not* folded into envFactSet
@@ -623,11 +623,11 @@ public:
      * `Response` for the enclosing `OuterQuery`."
      *
      * The `fromHash` of the synthetic env apply Fact's
-     * envWalk observation is `Hash(0)` — the apply boundary
+     * envWalk observation is `Hash(0)` — the cb-apply
      * is a history-advance marker, not a fact about any subject, so
      * it doesn't fold into any subject's own-loop.
      */
-    void openApplyBoundary(const nlohmann::json & applyQueryPayload);
+    void openCbApply(const nlohmann::json & applyQueryPayload);
 
     /**
      * Log a nested cb-apply as a ambient layer fact under the enclosing
@@ -645,8 +645,8 @@ public:
      * walker stamping. No-op when there's no enclosing cb-apply.
      */
     /**
-     * Return the `applyId` of the cb-apply boundary currently on top
-     * of `pendingApplyBoundaries`. Used by `IT::apply` when fn is a
+     * Return the `applyId` of the cb-apply currently on top
+     * of `pendingCbApplies`. Used by `IT::apply` when fn is a
      * TracingCallbackArg (= the recursive cb-apply path) to capture
      * the enclosing boundary's id before the recursive call would
      * otherwise push a new boundary; the captured id then flows to
@@ -654,11 +654,11 @@ public:
      * its observations land in the same boundary's ambient chain as the
      * recursive apply Fact `logAmbientApplyFact` appended.
      */
-    std::optional<Hash> getCurrentApplyBoundaryId() const
+    std::optional<Hash> getCurrentCbApplyId() const
     {
-        if (pendingApplyBoundaries.empty())
+        if (pendingCbApplies.empty())
             return std::nullopt;
-        return pendingApplyBoundaries.back().applyId;
+        return pendingCbApplies.back().applyId;
     }
 
     void logAmbientApplyFact(
@@ -668,9 +668,9 @@ public:
     {
         if (!decisionGraph)
             return;
-        if (pendingApplyBoundaries.empty())
+        if (pendingCbApplies.empty())
             return;
-        auto & enclosing = pendingApplyBoundaries.back();
+        auto & enclosing = pendingCbApplies.back();
         trace::QueryApply applyQ{
             applyQueryPayload["params"]["fn"].get<std::string>(),
             applyQueryPayload["params"]["arg"].get<std::string>(),
@@ -713,7 +713,7 @@ public:
            AmbientResult from its ambient chain and folding the
            synthetic env apply Fact in), and close the trailing
            Asks edge boundary. closeAsksEdge is also called at every
-           cb-apply boundary inside a body run, but with
+           cb-apply inside a body run, but with
            finalize=false; the ambient-driven AmbientResult computation
            happens only here at logResult, since intermediate
            splitFlushes can be interleaved with the apply's body

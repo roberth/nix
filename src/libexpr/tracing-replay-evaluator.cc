@@ -43,7 +43,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        dispatch (resolveApplyId, navigatePath's Apply step,
        dispatchApplyLive) re-route through `OuterObject::queryApply
        → applyFn → OuterApply::run` and would each fire a fresh
-       `openApplyBoundary` on the writer if not suppressed. Each fresh
+       `openCbApply` on the writer if not suppressed. Each fresh
        boundary inflates `envWalk` with a redundant ε edge
        beyond the genuine cb-apply events the recorder already
        captured. Suppress for the history's duration so writer's
@@ -51,7 +51,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        envWalk. */
     TracingWriter::SuppressApplyBoundary suppressBoundary(writer);
 
-    /* Register callback so suppressed openApplyBoundary calls (=
+    /* Register callback so suppressed openCbApply calls (=
        inner cb-apply boundaries fired inside dispatchApplyLive's
        cb-fn execution) synthesise a phantom ε obs in walker's
        envWalk. Cold's writer would have inserted these as ε
@@ -77,7 +77,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
 
     auto commitEdge = [&]() {
         /* 1:1 alignment with writer's envWalk: writer inserts each
-           cb-apply boundary's ε obs as a SEPARATE env edge at its
+           cb-apply's ε obs as a SEPARATE env edge at its
            `insertionIndex`, not bundled with the real-obs edge that
            triggered it. Walker's dispatch() pushes ε obs (fromHash=0)
            into `pendingEdgeObservations` alongside real obs of the
@@ -816,7 +816,7 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        edges"): SHA-256(outerCur || walkerCur).
        Under lockstep, walker's outerCur here equals writer's
        `outerEnvCurAtOpen` at boundary open, and walkerCur equals
-       writer's `boundaryOuterCtx` (fromFactSetHashAtBoundary XOR
+       writer's `contextCur` (envCurAtOpen XOR
        priorApplyFactAccum). The writer inserts one InnerValueResponse
        row per (queryHash, designContextHash), so this lookup lands
        on the row the writer wrote. */

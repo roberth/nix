@@ -105,9 +105,9 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     }
     auto writer = std::make_shared<TracingWriter>(*sink, decisionGraph);
     // Plumb the outer evaluator's writer so this inner writer can
-    // capture the outer's env cur at each cb-apply boundary. Under
+    // capture the outer's env cur at each cb-apply. Under
     // lockstep replay both sides see the same value: writer captures
-    // outerWriter->getV13FactSetHash() at openApplyBoundary; walker
+    // outerWriter->getV13FactSetHash() at openCbApply; walker
     // reads writer.outerWriter->getV13FactSetHash() at
     // dispatchApplyLive for the RCA's outerContext.
     if (auto outerEvalShared = state.evaluatorCompat.lock()) {
@@ -160,7 +160,7 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     interpreter->outerResolver = resolver;
     /* Inherited scope for subject-id: uniquely identifies this cached
        call so sibling cached calls (different import / expr) get
-       distinct scope state ids throughout the cb-apply boundary.
+       distinct scope state ids throughout the cb-apply.
        XOR-fold with `state.inheritedCallArgAncestry` to accumulate
        across enclosing cached calls (= per via-asks
        `state hash(LocalObject) = ... ⊕ state hash(Q) ⊕ state hash(Q_outer) ⊕

@@ -15,7 +15,7 @@
  *
  *  - TracingCallbackApplyResult's methods record ambient observations via
  *    `writer.logAmbientObservation`. They are grouped with the
- *    enclosing cb-apply boundary's recursive apply Fact (= the same
+ *    enclosing cb-apply's recursive apply Fact (= the same
  *    boundary `logAmbientApplyFact` appended to). At flushAmbient
  *    finalize the writer's ambient loop stamps each observation with
  *    `from = hex(stateHashAt(applyResultSubject, argAncestry, history, i))`,
@@ -62,15 +62,15 @@ class TracingCallbackApplyResult : public Object
        field at the appropriate edge index. */
     Subject applyResultSubject;
 
-    /* Scope inherited from the cb-apply boundary — = contraArg's
+    /* Scope inherited from the cb-apply — = contraArg's
        argAncestry = the resolver's callArgAncestry. The walker's
        sidecar lookup recovers the same argAncestry. */
     Hash applyArgAncestry;
 
-    /* The enclosing cb-apply boundary's `applyId` (= what `runOn`
+    /* The enclosing cb-apply's `applyId` (= what `runOn`
        computed as `queryHash(QueryApply{fn, arg})` when it pushed
        this boundary). Captured BEFORE `IT::apply`'s
-       `openApplyBoundary` would push a new entry, so the
+       `openCbApply` would push a new entry, so the
        observations route to the correct boundary's ambient chain. */
     Hash ambientApplyId;
 

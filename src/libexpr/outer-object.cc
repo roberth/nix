@@ -241,7 +241,7 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
        cell before moving it into applyFn. */
     auto callerScope = effectiveArgCell(*this);
     auto argForScope = argObj;
-    /* Each value crossing into a cb-apply boundary starts fresh as
+    /* Each value crossing into a cb-apply starts fresh as
        a Arg at the apply's reverse-De-Bruijn depth — no
        inherited Subject is propagated, so observations at the
        boundary are predictable regardless of where the arg came

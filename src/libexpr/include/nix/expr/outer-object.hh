@@ -69,11 +69,11 @@ class OuterObject : public Object
     Subject subject; ///< Static structural identifier (positional/derived/apply)
     /* Inherited argAncestry: XOR of outer-argAncestry state hashes (chiefly the cached
        call's state hash(Q)) for argAncestry inheritance, per
-       content-identity-via-asks.md. Set at the cb-apply boundary;
+       content-identity-via-asks.md. Set at the cb-apply;
        propagated to children. Zero hash if no inheritance. */
     Hash argAncestry;
     /* Per-apply observation context. Set on cb-arg arg OuterObjects
-       by makeCachedFnPrimOp.impl at the apply boundary; the queryFn
+       by makeCachedFnPrimOp.impl at the cb-apply; the queryFn
        closure routes observations through this context so the
        apply-result wrapping can compute its evolved state hash via
        stateHashAfter against the accumulated history. Null on
@@ -132,7 +132,7 @@ public:
     }
 
     /** Attach a per-apply observation context. Used on cb-arg arg
-        OuterObjects at the cb-apply boundary; the queryFn closure
+        OuterObjects at the cb-apply; the queryFn closure
         routes observations into this context. */
     OuterObject & withApplyContext(std::shared_ptr<ApplyContext> ctx)
     {

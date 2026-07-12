@@ -227,7 +227,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
        effects on the subject's running state hash.
 
        Inheritance: `argAncestry` is the XOR of outer-argAncestry state hashes (chiefly
-       the cached call's state hash(Q) at the cb-apply boundary). Passing
+       the cached call's state hash(Q) at the cb-apply). Passing
        zero gives the pure structural id. Leaf subjects
        (Arg, PostulatedIdempotentRead) XOR `argAncestry` into their
        base hash. Composite subjects (DerivedSubject,

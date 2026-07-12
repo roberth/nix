@@ -27,7 +27,7 @@ void TracingCallbackApplyResult::recordD2(const trace::QueryVariant & query, con
 {
     /* Route through the ambient layer entry point: every observation on
        this apply-result is grouped with the recursive apply Fact
-       under the enclosing cb-apply boundary so that the ambient chain
+       under the enclosing cb-apply so that the ambient chain
        has [recursiveApplyFact, this_obs, next_obs, ...] in the
        order they're appended. flushAmbient's ambient loop
        stamps each `from` at `step = i` (= position in the
@@ -194,7 +194,7 @@ std::optional<std::vector<std::string>> TracingCallbackApplyResult::getAttrPath(
 
 std::shared_ptr<Object> TracingCallbackApplyResult::queryApply(std::shared_ptr<Object> argObj)
 {
-    /* The apply-result is a fresh value crossing the cb-apply boundary
+    /* The apply-result is a fresh value crossing the cb-apply
        back to the cached body. Subsequent applies on it go through the
        inner Object's `queryApply` (= delegating to whatever the inner
        Object's apply semantics are). Recording for that apply, if

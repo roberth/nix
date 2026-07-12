@@ -201,7 +201,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
        ref) so OuterResolver stays default-constructible. */
     std::shared_ptr<SourceRoot> outerRootFSRoot;
     /* Inherited argAncestry (state hash of this cached call's Q) — used by the
-       cb-apply boundary to make sibling cached calls' state hashes
+       cb-apply to make sibling cached calls' state hashes
        distinct via subject-id inheritance. Zero hash means no
        inheritance (= no argAncestry discrimination). */
     Hash callArgAncestry = Hash(HashAlgorithm::SHA256);
@@ -212,7 +212,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
        can match the registered arg's subject-id-evolved state hash at any
        history-edge index, not just the initial one. List rather than
        map because subject equality isn't trivially hashable;
-       n_registrations is small (= one per cb-apply boundary the
+       n_registrations is small (= one per cb-apply the
        primop fires at). */
     struct LiveProxyEntry
     {
@@ -281,7 +281,7 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
        because a resolved fn may be an InterpreterObject without a
        proxy parent chain). The cell carries only topology. */
     auto localCell = ArgCell::make(callerScope, argObj);
-    /* Each new value that crosses INTO a cb-apply boundary is
+    /* Each new value that crosses INTO a cb-apply is
        treated uniformly as a value — no inherited Subject is
        propagated. Identity at this boundary starts fresh as
        Arg at the apply's static (reverse-De-Bruijn)
@@ -309,14 +309,14 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
     auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
     auto argStateHashStr = argStateHash.to_string(HashFormat::Base16, false);
 
-    /* cb-apply boundary: record the apply's synthetic history-advance
+    /* cb-apply: record the apply's synthetic history-advance
        edge (= ε) now that we have fnIdStr and argStateHashStr. See parallel
        call in TracingEvaluator::apply for the principle. */
     if (innerWriter) {
         nlohmann::json applyQ = trace::QueryApply{fnIdStr, argStateHashStr};
-        tracingCacheLog("openApplyBoundary callsite=OuterApply::run fn=%s arg=%s",
+        tracingCacheLog("openCbApply callsite=OuterApply::run fn=%s arg=%s",
                         fnIdStr.substr(0, 12), argStateHashStr.substr(0, 12));
-        innerWriter->openApplyBoundary(applyQ);
+        innerWriter->openCbApply(applyQ);
     }
     trace::QueryApply applyQuery{fnIdStr, argStateHashStr};
     auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
@@ -469,7 +469,7 @@ static PrimOp * makeCachedFnPrimOp(
                            of this cached call). Sibling cached calls
                            with different Qs get distinct rootIds and
                            therefore distinct subject-derived content
-                           ids throughout this cb-apply boundary. */
+                           ids throughout this cb-apply. */
                         Hash callArgAncestry = resolver->callArgAncestry;
                         auto rootId = stateHashAfter(argSubject, callArgAncestry, {});
                         /* Per-apply observation context. Captures the
@@ -767,7 +767,7 @@ void registerAmbientResolverProxy(
     std::shared_ptr<Object> obj)
 {
     /* Overwrite-on-conflict for the same (subject, argAncestry) key. The
-       primop fires once per cb-apply boundary it covers; re-firing
+       primop fires once per cb-apply it covers; re-firing
        with the same args produces the same registration. Different
        boundaries register different subjects (= different
        `applyDepth+1` values), so collisions across boundaries

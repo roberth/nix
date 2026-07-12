@@ -123,7 +123,7 @@ class ReplayCallbackArg : public Object
 
     /* cb-arg apply context, sourced from the writer's localArg
        sidecar. `applyDepth` = `localCell->depth` at the recorder's
-       OuterResolver::apply boundary. `applyArgAncestry` = the resolver's
+       OuterResolver::cb-apply. `applyArgAncestry` = the resolver's
        callArgAncestry. Used by the lambda primop to compose nested
        apply-result subjects matching the recorder's encoding (=
        `ApplyResultSubject{fn=this.subject, arg=Arg{depth+1}}`
@@ -169,7 +169,7 @@ public:
     }
 
     /** Opt into ambient layer per-probe validation. Set on the cb-apply
-        local (= the ReplayCallbackArg materialised at the cb apply boundary,
+        local (= the ReplayCallbackArg materialised at the cb cb-apply,
         whose surface probes were recorded in AmbientAsks). */
     ReplayCallbackArg & withAmbientAsksValidation()
     {

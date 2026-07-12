@@ -296,8 +296,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     tracingCacheLog("tracing: apply fnStateHash=%s argStateHash=%s", fnStateHashStr, argStateHashStr);
 
-    /* cb-apply boundary: record an explicit ε edge for this apply.
-       openApplyBoundary closes the preceding observations as one
+    /* cb-apply: record an explicit ε edge for this apply.
+       openCbApply closes the preceding observations as one
        Asks edge (β1) and then records a synthetic single-observation
        Asks edge (ε) carrying just the apply Request — both sides
        advance their cumulative subject-id history by one for ε, so the
@@ -314,7 +314,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        the ReplayCallbackArg's chainCursor by this fact's elementHash.
 
        Capture the enclosing boundary's applyId BEFORE
-       logAmbientApplyFact / openApplyBoundary so the apply-result
+       logAmbientApplyFact / openCbApply so the apply-result
        observations recorded after `inner->apply` returns (via
        `TracingCallbackApplyResult` below) route to the same enclosing
        boundary the recursive apply Fact landed in. Their ambient
@@ -323,7 +323,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        primop manual-push (= one fact) followed by the synthetic's
        per-probe `advanceChainAndAppendFact` calls.
 
-       Skip `openApplyBoundary` entirely for the TracingCallbackArg-fn path: it
+       Skip `openCbApply` entirely for the TracingCallbackArg-fn path: it
        would push a fresh empty boundary whose synthetic env fact
        `(applyReqHash, applyReqHash)` enters envFactSet at finalize
        and forces the outer walker into a `dispatchApplyLive` whose
@@ -383,7 +383,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     Hash enclosingApplyId(HashAlgorithm::SHA256);
     if (fnIsTlo) {
-        if (auto enclosingId = writer.getCurrentApplyBoundaryId())
+        if (auto enclosingId = writer.getCurrentCbApplyId())
             enclosingApplyId = *enclosingId;
         /* ambient apply Fact: Subject = resultSubject built above;
            flushAmbient stamps via the generic
@@ -413,9 +413,9 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         nlohmann::json applyQd2 = trace::QueryApply{fnSubjHex, argSubjHex};
         writer.logAmbientApplyFact(applyQd2, resultSubject, applyArgAncestry);
     } else {
-        tracingCacheLog("openApplyBoundary callsite=TracingEvaluator::apply fn=%s arg=%s",
+        tracingCacheLog("openCbApply callsite=TracingEvaluator::apply fn=%s arg=%s",
                         fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
-        writer.openApplyBoundary(applyQ);
+        writer.openCbApply(applyQ);
     }
 
     /* Per-arg-completion option 2: apply-result state hash evolves with
@@ -495,7 +495,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     /* For the TracingCallbackArg-fn case (= cb-higher-order's recursive cb-apply):
        wrap the result in a TracingCallbackApplyResult so subsequent
        method calls (`getType`, `getInt`, etc.) record ambient
-       observations on the enclosing cb-apply boundary instead of
+       observations on the enclosing cb-apply instead of
        env main-trie Terminals. The walker's `<replay-local-lambda>`
        primop reads these from InnerValueResponse via the same
        per-arg-stamped reqHash; the AmbientAsks edges enable its

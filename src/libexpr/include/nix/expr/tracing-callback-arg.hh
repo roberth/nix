@@ -39,7 +39,7 @@ class TracingCallbackArg : public Object
     std::shared_ptr<Object> inner;
     Subject subject;  ///< Static structural identifier
     /* Inherited argAncestry: XOR of outer-argAncestry state hashes (state hash(Q) at the
-       cb-apply boundary). Propagated to navigation children. */
+       cb-apply). Propagated to navigation children. */
     Hash argAncestry;
     /* The cb apply this local belongs to (= apply's resultId). Used
        at flush to group ambient layer facts into an AmbientAsks edge per
