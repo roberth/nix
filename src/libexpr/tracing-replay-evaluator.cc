@@ -780,22 +780,15 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
         recordProvenance(applyReqHash, "dispatchApplyLive-entry",
                          {{"walkerCur", walkerCur.to_string(HashFormat::Base16, false)},
                           {"params", params}});
-    /* Design contextHash (see vocab, "Ambient payload types and
-       edges"): SHA-256(outerCur || walkerCur).
-       Under lockstep, walker's outerCur here equals writer's
-       `outerEnvCurAtOpen` at boundary open, and walkerCur equals
-       writer's `contextCur` (envCurAtOpen XOR
-       priorApplyFactAccum). The writer inserts one InnerValueResponse
-       row per (queryHash, designContextHash), so this lookup lands
-       on the row the writer wrote. */
-    Hash outerCurAtDispatch = writer.outerWriter
-        ? writer.outerWriter->getV13FactSetHash()
-        : Hash(HashAlgorithm::SHA256);
-    Hash boundaryContextHash = hashString(HashAlgorithm::SHA256,
-        "InnerValueResponse-ctx:"
-        + outerCurAtDispatch.to_string(HashFormat::Base16, false)
-        + "|"
-        + walkerCur.to_string(HashFormat::Base16, false));
+    /* contextHash is the walker's Env `cur` at the time the response
+       was recorded (vocab, "Ambient payload types and edges"). Here
+       that value is `walkerCur` — the boundary Ask edge's
+       `fromFactSetHash` supplied by the caller. Under principle 7's
+       1:1 alignment it equals the writer's `contextCur` at the
+       corresponding pending cb-apply. Cross-cached-call
+       disambiguation is handled upstream by `callArgAncestry` inside
+       `applyReqHash`. */
+    Hash boundaryContextHash = walkerCur;
     auto fnIdStr = params["fn"].get<std::string>();
     auto fnObj = resolveStateHash(fnIdStr, ctx);
     if (!fnObj) {

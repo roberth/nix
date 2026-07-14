@@ -110,30 +110,21 @@ class TracingWriter
            grouping this fact into the ambient layer sub-trace for that apply. */
         Hash ambientApplyId{HashAlgorithm::SHA256};
     };
-    /* Depth-1 facts (= ambient observations on outer state). Drained
-       at every intermediate closeAsksEdge and at finalize. */
-    std::vector<PendingFact> pendingDepth1Facts;
-    /* Depth-2 facts live on their owning PendingCbApply so
-       each cb-apply invocation's chain is built from exactly its
-       own probe sequence. Storage is below (= PendingCbApply's
-       facts field). */
+    /* Depth-2 (Ambient) facts live on their owning PendingCbApply so
+       each cb-apply invocation's chain is built from exactly its own
+       probe sequence. Storage is below (= PendingCbApply's facts
+       field). Depth-1 (env-layer outer-value probes) are stamped and
+       pushed per-probe in `logOuterObservation`, not buffered here. */
 
-    /* Persistent subject-id chain for env layer ambient observations.
-       envWalk is kept 1:1-aligned with `envAsksEdges`:
-       every Asks edge inserted into `envAsksEdges` is paired with
-       a env edge inserted at the SAME index. This invariant lets the
+    /* Persistent history chain for env-layer observations.
+       envWalk is kept 1:1-aligned with `envAsksEdges`: every Asks
+       edge inserted into `envAsksEdges` is paired with an
+       ObservationSet at the SAME index. This invariant lets the
        walker's `envWalk` — which grows once per dispatched Asks
-       edge via `commitEdge` — match the writer's env history
+       edge via `commitEdge` — match the writer's history
        edge-for-edge, so `stateHashAt(subject, argAncestry, history, K)`
-       computes the same value on both sides. Per-arg-completion
-       option 2 depends on this alignment. */
+       computes the same value on both sides. */
     std::vector<ObservationSet> envWalk;
-    /* Stages the next env edge between `flushAmbient` (which
-       drains pendingDepth1Facts into it) and `closeAsksEdge` (which
-       pushes it to envWalk paired with a perQAsksEdge). May
-       be empty (= file-read-only Asks edge) — still pushed so that
-       envWalk.size() == envAsksEdges.size() always holds. */
-    ObservationSet pendingD1Edge;
 
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
        new query hash added to envFactSet since the last logResult,
@@ -387,9 +378,14 @@ public:
 
     /**
      * Log a response (file read, env lookup, etc.) — a d>0
-     * Request/Response pair. Appended to factSet for the next
-     * Result's recording, and the Request/Response payloads land
-     * in atomic pools.
+     * Request/Response pair. Per-probe: each call pushes its own
+     * single-request Ask + envWalk entry, matching the
+     * logOuterObservation path and keeping prevQFactSetHash tightly
+     * synchronised with envFactSetHash. Without per-probe pushing
+     * here, prevQFactSetHash lags behind envFactSetHash whenever a
+     * file/env read intervenes between two logOuterObservation
+     * calls, and the latter's Ask row gets inserted at a stale cur
+     * that the walker (with its up-to-date live cur) cannot reach.
      */
     template<typename Req>
     void logResponse(const trace::Response<Req> & resp)
@@ -405,45 +401,56 @@ public:
         decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
         if (storeAllResponsePayloads)
             decisionGraph->insertInnerValueResponse(queryHash, Hash(HashAlgorithm::SHA256), responsePayload);
-        /* Dedupe by (request, response) pair, not request alone.
-           Idempotent observations (same request, same response —
-           e.g. file reads, env reads) collapse to one entry; sibling
-           cb applies (same request, different responses) keep both
-           contributions so envFactSetHash reflects both elementHashes
-           and the trie's per-(Q, factSet) terminals don't collide. */
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), queryHash, responseHash);
-        if (seenRequests.insert(factHash).second) {
-            envFactSet.push_back({queryHash, responseHash});
-            envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                envFactSetHash, queryHash, responseHash);
-            responseFor.emplace(queryHash, responseHash);
-            sessionRequestsTrie.insert(queryHash);
-            if (allRequestHashes.insert(queryHash).second)
-                pendingNewRequests.push_back(queryHash);
-        }
+        if (!seenRequests.insert(factHash).second)
+            return;
+        envFactSet.push_back({queryHash, responseHash});
+        envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
+            envFactSetHash, queryHash, responseHash);
+        responseFor.emplace(queryHash, responseHash);
+        sessionRequestsTrie.insert(queryHash);
+        allRequestHashes.insert(queryHash);
+        auto requestSetHash = decisionGraph->insertRequestSet({queryHash});
+        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+        /* Push envWalk with the fact's observation (fromHash=0 since
+           file/env reads don't attribute to any Subject). Walker's
+           dispatch of this Ask returns the same responseHash live,
+           folds elementHash into cur — walker's envWalk push would
+           match on fingerprint if it happened. Since walker's
+           commitEdge skips empty pushes (and file/env dispatch
+           pushes no pendingEdgeObservations), walker's envWalk is
+           shorter here; that's harmless because these observations
+           have fromHash=0 and fold into no Subject's own-loop. */
+        ObservationSet obsSet;
+        obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
+        envWalk.push_back(std::move(obsSet));
+        prevQFactSetHash = envFactSetHash;
     }
 
     /**
-     * Log an ambient interaction as a d>0 Request/Response pair.
+     * Log an env-layer outer-value probe (inner asks outer via
+     * OuterObject). Stamped and pushed inline per-probe rather than
+     * buffered: the design's chain says each response advances the
+     * Subject's state hash, and the NEXT probe's `from` is that
+     * evolved state hash (principle 5's post-substitution rule). If
+     * we batched multiple probes into one flush, all their `from`
+     * fields would share the pre-flush state and collapse to identical
+     * requestHashes — collapsing sibling cb-apply invocations that
+     * SHOULD end up at distinct trie positions. Per-probe stamping
+     * yields the design's per-observation state evolution.
      *
-     * Under Phase 4 of state hash, ambient facts are
-     * buffered here rather than eagerly inserted into envFactSet and
-     * the Requests pool / InnerValueResponse — the `from` field of the query
-     * may be a placeholder (counter-derived local id) whose final
-     * Buffered until flushAmbient() at logResult time
-     * inserts into the pool at the query payload's natural reqHash. */
+     * Concurrency batching within a single Ask (P7's XOR
+     * commutativity) is legitimate for Env probes that don't feed
+     * each other's `from` fields (independent file reads via
+     * logResponse), but not for outer-value probes whose
+     * requestHashes depend on evolved Subject state — so those go
+     * per-probe here. */
     void logOuterObservation(
         const trace::QueryVariant & query,
         const trace::ResultVariant & result,
         Subject subject,
-        Hash argAncestry = Hash(HashAlgorithm::SHA256))
-    {
-        if (!decisionGraph)
-            return;
-        pendingDepth1Facts.push_back({query, result, std::move(subject), std::move(argAncestry),
-            /*ambientApplyId=*/ Hash(HashAlgorithm::SHA256)});
-    }
+        Hash argAncestry = Hash(HashAlgorithm::SHA256));
 
     /**
      * Log a ambient layer observation (= the outer probes an inner-supplied
@@ -514,15 +521,21 @@ public:
             return;
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), request, response);
-        if (seenRequests.insert(factHash).second) {
-            responseFor.emplace(request, response);
-            envFactSet.push_back({request, response});
-            envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                envFactSetHash, request, response);
-            sessionRequestsTrie.insert(request);
-            if (allRequestHashes.insert(request).second)
-                pendingNewRequests.push_back(request);
-        }
+        if (!seenRequests.insert(factHash).second)
+            return;
+        responseFor.emplace(request, response);
+        envFactSet.push_back({request, response});
+        envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
+            envFactSetHash, request, response);
+        sessionRequestsTrie.insert(request);
+        allRequestHashes.insert(request);
+        /* Per-probe push (see logResponse for reasoning). */
+        auto requestSetHash = decisionGraph->insertRequestSet({request});
+        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+        ObservationSet obsSet;
+        obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
+        envWalk.push_back(std::move(obsSet));
+        prevQFactSetHash = envFactSetHash;
     }
 
     /**

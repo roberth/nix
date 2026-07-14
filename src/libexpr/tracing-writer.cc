@@ -9,6 +9,158 @@
 
 namespace nix {
 
+namespace {
+void rewriteFromInQuery(nlohmann::json & queryJson, const std::string & fromHex)
+{
+    if (queryJson.is_object() && queryJson.contains("params")) {
+        auto & params = queryJson["params"];
+        if (params.is_object() && params.contains("from"))
+            params["from"] = fromHex;
+    }
+}
+} // namespace
+
+void TracingWriter::logOuterObservation(
+    const trace::QueryVariant & query,
+    const trace::ResultVariant & result,
+    Subject subject,
+    Hash argAncestry)
+{
+    if (!decisionGraph)
+        return;
+
+    /* Per-probe stamping. `from` is computed against the WRITER's
+       current `envWalk` (which reflects every prior probe's fold),
+       so successive probes on the same Subject stamp against evolved
+       state — the design's per-observation state evolution. */
+    auto [path, roots] = pathAndRootsFromSubject(subject);
+    std::vector<trace::QueryLeaf> fromStateHashes;
+    fromStateHashes.reserve(roots.size());
+    for (auto & root : roots) {
+        Hash rootSelfHash = stateHashAt(
+            root, Hash(HashAlgorithm::SHA256), {}, 0);
+        auto cid = stateHashAtStamping(
+            root, argAncestry, envWalk, envWalk.size(),
+            [&](const EvolutionStep & step) {
+                insertSubjectEvolutionEdge(
+                    rootSelfHash, step.curBefore,
+                    step.obsFromHash, step.obsElementHash,
+                    step.curAfter);
+            });
+        fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
+    }
+    std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].stateHash();
+    auto fromStateHash = fromStateHashes.empty()
+        ? Hash(HashAlgorithm::SHA256)
+        : Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
+
+    std::string queryTag = std::visit(
+        [](const auto & q) -> std::string { return std::string(q.tag); }, query);
+    tracingCacheLog(
+        "logOuterObservation: subject=%s query=%s from=%s path=%zu fromStateHashes=%zu",
+        describe(subject), queryTag, fromHex.substr(0, 12),
+        path.steps.size(), fromStateHashes.size());
+
+    nlohmann::json queryJson;
+    std::visit([&](const auto & q) { queryJson = q; }, query);
+    rewriteFromInQuery(queryJson, fromHex);
+    if (!path.steps.empty())
+        queryJson["params"]["path"] = path;
+    if (!fromStateHashes.empty())
+        queryJson["params"]["fromStateHashes"] = fromStateHashes;
+    nlohmann::json resultJson;
+    std::visit([&](const auto & r) { resultJson = r; }, result);
+
+    auto queryHash = hashString(HashAlgorithm::SHA256, queryJson.dump());
+    auto responsePayload = jsonToCborString(resultJson);
+    auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
+
+    tracingCacheLog(
+        "  reqHash=%s reqJSON=%s",
+        queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        queryJson.dump());
+    tracingCacheLog(
+        "  respHash=%s respJSON=%s",
+        responseHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        resultJson.dump());
+    if (provenanceEnabled()) {
+        recordProvenance(queryHash, "requestHash-d1",
+                         {{"queryJson", queryJson},
+                          {"subject", describe(subject)},
+                          {"argAncestry", argAncestry.to_string(HashFormat::Base16, false)}});
+        recordProvenance(responseHash, "responseHash-d1",
+                         {{"resultJson", resultJson},
+                          {"queryHash", queryHash.to_string(HashFormat::Base16, false)}});
+    }
+
+    decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
+
+    /* Secondary index for producer queries — see comment on the
+       original loop for the reasoning. Preserved verbatim. */
+    if ((queryTag == "getAttr" || queryTag == "getListElem") && !roots.empty()) {
+        std::vector<trace::QueryLeaf> initialFromStateHashes;
+        initialFromStateHashes.reserve(roots.size());
+        for (auto & root : roots) {
+            auto initStateHash = stateHashAt(
+                root, argAncestry, {}, 0);
+            initialFromStateHashes.emplace_back(
+                initStateHash.to_string(HashFormat::Base16, false));
+        }
+        std::string initialFromHex = initialFromStateHashes[0].stateHash();
+        nlohmann::json initialQueryJson;
+        std::visit([&](const auto & q) { initialQueryJson = q; }, query);
+        rewriteFromInQuery(initialQueryJson, initialFromHex);
+        if (!path.steps.empty())
+            initialQueryJson["params"]["path"] = path;
+        initialQueryJson["params"]["fromStateHashes"] = initialFromStateHashes;
+        auto initialReqHash = hashString(
+            HashAlgorithm::SHA256, initialQueryJson.dump());
+        if (initialReqHash != queryHash) {
+            tracingCacheLog(
+                "  secondary insert at initial-history reqHash=%s from=%s",
+                initialReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                initialFromHex.substr(0, 12));
+            decisionGraph->insertRequest(
+                initialReqHash, jsonToCborString(initialQueryJson));
+        }
+    }
+
+    auto elementHash = TracingDecisionGraph::xorFactIntoHash(
+        Hash(HashAlgorithm::SHA256), queryHash, responseHash);
+    auto factHash = elementHash;
+
+    /* Dedup by (request, response). If already recorded this session,
+       skip both envFactSet fold AND envWalk push — pushing a duplicate
+       ObservationSet would XOR-cancel its earlier contribution to any
+       Subject's own-loop fold (see the design's XOR audit). */
+    if (!seenRequests.insert(factHash).second)
+        return;
+
+    envFactSet.push_back({queryHash, responseHash});
+    envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
+        envFactSetHash, queryHash, responseHash);
+    responseFor.emplace(queryHash, responseHash);
+    sessionRequestsTrie.insert(queryHash);
+    allRequestHashes.insert(queryHash);
+
+    /* Per-probe Ask/envWalk push: single-observation ObservationSet
+       at a single-request Ask. Walker at replay dispatches this Ask's
+       one request, folds the response, advances cur by exactly this
+       observation's elementHash. Next probe's stamping (walker side)
+       sees the advanced envWalk and stamps its own request with the
+       evolved `from`. */
+    auto requestSetHash = decisionGraph->insertRequestSet({queryHash});
+    envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+    ObservationSet obsSet;
+    obsSet.observations.push_back({fromStateHash, elementHash});
+    envWalk.push_back(std::move(obsSet));
+    tracingCacheLog(
+        "logOuterObservation: pushed Ask+envWalk from=%s (perQ=%zu env=%zu)",
+        prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        envAsksEdges.size(), envWalk.size());
+    prevQFactSetHash = envFactSetHash;
+}
+
 void TracingWriter::flushAmbient(bool processApplies)
 {
     if (!decisionGraph)
@@ -29,196 +181,10 @@ void TracingWriter::flushAmbient(bool processApplies)
     }
     pendingRequests.clear();
 
-    /* Depth-1 facts (= ambient observations on outer state) fold into
-       envFactSet immediately; we build a single edge per flush appended
-       to envWalk for subject-id own-fold evolution. Depth-2 facts
-       group by cb-apply id and are NOT folded into envFactSet — they
-       live only in AmbientAsks rows, processed at `processApplies=true`
-       (= logResult) when each cb-apply's chain is known to be complete. */
-
-    auto rewriteFromInQuery = [](nlohmann::json & queryJson, const std::string & fromHex) {
-        if (queryJson.is_object() && queryJson.contains("params")) {
-            auto & params = queryJson["params"];
-            if (params.is_object() && params.contains("from"))
-                params["from"] = fromHex;
-        }
-    };
-
-    /* Depth-1: this flush's ambient facts form ONE edge appended to
-       the persistent `envWalk` chain (= principles 3/5/7). Each
-       fact's `from` substitutes against `envWalk[history.size()]`
-       — the precondition for the new edge — so per-arg roots evolve
-       across logResults.
-
-       Under the 1:1 alignment invariant, the new edge is NOT pushed
-       here; it's staged in `pendingD1Edge` for `closeAsksEdge` to push
-       paired with the corresponding perQAsksEdge. This keeps
-       writer.envWalk.size() == envAsksEdges.size() at every
-       transition. */
-    size_t d1EdgeIndex = envWalk.size();
-    ObservationSet & d1NewEdge = pendingD1Edge;
-    d1NewEdge = {};
-    /* Per-edge dedup of observations by elementHash. An Asks edge is a
-       set, not a list — XOR-folding the same observation twice cancels
-       its contribution to cur. The walker dispatches each unique
-       observation once, so the writer must too. */
-    std::set<Hash> d1NewEdgeSeen;
-
-    for (auto & pf : pendingDepth1Facts) {
-        /* Per-arg with multi-root: `from` is the first cb_arg's state hash;
-           `fromStateHashes[]` carries all cb_arg roots reached via the
-           subject tree; `path` encodes the access expression that
-           walks from fromStateHashes[0] to the observed subject. */
-        auto [path, roots] = pathAndRootsFromSubject(pf.subject);
-        std::vector<trace::QueryLeaf> fromStateHashes;
-        fromStateHashes.reserve(roots.size());
-        for (auto & root : roots) {
-            /* Subject-evolution fast-path: stamp SubjectEvolutionEdges via hook. */
-            Hash rootSelfHash = stateHashAt(
-                root, Hash(HashAlgorithm::SHA256), {}, 0);
-            auto cid = stateHashAtStamping(
-                root, pf.argAncestry, envWalk, d1EdgeIndex,
-                [&](const EvolutionStep & step) {
-                    insertSubjectEvolutionEdge(
-                        rootSelfHash, step.curBefore,
-                        step.obsFromHash, step.obsElementHash,
-                        step.curAfter);
-                });
-            fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
-        }
-        std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].stateHash();
-        auto fromStateHash = fromStateHashes.empty()
-            ? Hash(HashAlgorithm::SHA256)
-            : Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
-
-        std::string queryTag = std::visit(
-            [](const auto & q) -> std::string { return std::string(q.tag); }, pf.query);
-        tracingCacheLog(
-            "flush env fact: subject=%s query=%s from=%s path=%zu fromStateHashes=%zu",
-            describe(pf.subject), queryTag, fromHex.substr(0, 12),
-            path.steps.size(), fromStateHashes.size());
-
-        nlohmann::json queryJson;
-        std::visit([&](const auto & q) { queryJson = q; }, pf.query);
-        rewriteFromInQuery(queryJson, fromHex);
-        if (!path.steps.empty())
-            queryJson["params"]["path"] = path;
-        if (!fromStateHashes.empty())
-            queryJson["params"]["fromStateHashes"] = fromStateHashes;
-        nlohmann::json resultJson;
-        std::visit([&](const auto & r) { resultJson = r; }, pf.result);
-
-        auto queryHash = hashString(HashAlgorithm::SHA256, queryJson.dump());
-        auto responsePayload = jsonToCborString(resultJson);
-        auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
-
-        /* Diff-ready logging: render the exact bytes that fed reqHash and
-           respHash (= reqJson.dump() and resultJson.dump()). Compare these
-           between cold's flush here and warm's `dispatch ambient:` log to
-           isolate which (q, r) pair differs and why curs diverge. */
-        tracingCacheLog(
-            "  reqHash=%s reqJSON=%s",
-            queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
-            queryJson.dump());
-        tracingCacheLog(
-            "  respHash=%s respJSON=%s",
-            responseHash.to_string(HashFormat::Base16, false).substr(0, 12),
-            resultJson.dump());
-        /* Record BEFORE insertRequest so the richer d1 provenance
-           beats the generic RequestHash from insertRequest. */
-        if (provenanceEnabled()) {
-            recordProvenance(queryHash, "requestHash-d1",
-                             {{"queryJson", queryJson},
-                              {"subject", describe(pf.subject)},
-                              {"argAncestry", pf.argAncestry.to_string(HashFormat::Base16, false)}});
-            recordProvenance(responseHash, "responseHash-d1",
-                             {{"resultJson", resultJson},
-                              {"queryHash", queryHash.to_string(HashFormat::Base16, false)}});
-        }
-
-        decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-
-        /* Secondary index for producer queries (getAttr / getListElem):
-           insert the SAME query payload under the initial-history reqHash
-           (from = parent root's state hash at history={}, K=0). OuterApply
-           computes fn state hashes as `stateHashAfterSubject(DerivedSubject, scope,
-           {})` — always at empty history — so the fn state hash equals the reqHash
-           of the getAttr/getListElem query IF the from field is at
-           initial state. The primary insert above uses the evolved
-           `envWalk` state, so when any observations have
-           accumulated before this flush, the primary reqHash diverges
-           from the fn state hash and walker's `resolveStateHash` pool lookup
-           misses. The secondary insert closes that gap: walker looks up
-           fn state hash → hits payload → `resolveProducerChild` navigates
-           `parent.maybeGetAttr(name)` live. Variant 1 has empty history at
-           flush so primary == secondary (idempotent no-op); variant 2
-           has evolved history so this is the ONLY reqHash under which
-           walker finds the fn's producer. */
-        if ((queryTag == "getAttr" || queryTag == "getListElem") && !roots.empty()) {
-            std::vector<trace::QueryLeaf> initialFromStateHashes;
-            initialFromStateHashes.reserve(roots.size());
-            for (auto & root : roots) {
-                auto initStateHash = stateHashAt(
-                    root, pf.argAncestry, {}, 0);
-                initialFromStateHashes.emplace_back(
-                    initStateHash.to_string(HashFormat::Base16, false));
-            }
-            std::string initialFromHex = initialFromStateHashes[0].stateHash();
-            nlohmann::json initialQueryJson;
-            std::visit([&](const auto & q) { initialQueryJson = q; }, pf.query);
-            rewriteFromInQuery(initialQueryJson, initialFromHex);
-            if (!path.steps.empty())
-                initialQueryJson["params"]["path"] = path;
-            initialQueryJson["params"]["fromStateHashes"] = initialFromStateHashes;
-            auto initialReqHash = hashString(
-                HashAlgorithm::SHA256, initialQueryJson.dump());
-            if (initialReqHash != queryHash) {
-                tracingCacheLog(
-                    "  secondary insert at initial-history reqHash=%s from=%s",
-                    initialReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    initialFromHex.substr(0, 12));
-                decisionGraph->insertRequest(
-                    initialReqHash, jsonToCborString(initialQueryJson));
-            }
-        }
-
-        /* Append the substituted fact to the new env-layer subject-id edge so
-           later logResults' stateHashAt sees it in the own-loop.
-
-           Per-edge dedup by elementHash: an Asks edge is a SET of
-           observations (per the design's principle 4), not a list. The
-           walker's `commitEdge` already dedups by edge-fingerprint, so
-           if the writer leaves duplicates in the edge here the XOR-fold
-           on each side computes different cumulative cur — when a fact
-           appears EVEN times here it cancels, ODD it contributes; the
-           walker's single contribution per unique fact then mismatches.
-           This used to be papered over by symmetric over-recording
-           where every observation type fired an even number of times
-           and canceled together; WHNF memoization (which records once
-           per Object instance) broke that symmetry by making one
-           observation appear once while siblings still fire many.
-           Dedup makes the writer match the walker independent of how
-           often each method is called. */
-        auto elementHash = TracingDecisionGraph::xorFactIntoHash(
-            Hash(HashAlgorithm::SHA256), queryHash, responseHash);
-        if (d1NewEdgeSeen.insert(elementHash).second)
-            d1NewEdge.observations.push_back({fromStateHash, elementHash});
-
-        /* Dedupe by (request, response). See logResponse. */
-        auto factHash = elementHash;
-        if (seenRequests.insert(factHash).second) {
-            envFactSet.push_back({queryHash, responseHash});
-            envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                envFactSetHash, queryHash, responseHash);
-            responseFor.emplace(queryHash, responseHash);
-            sessionRequestsTrie.insert(queryHash);
-            if (allRequestHashes.insert(queryHash).second)
-                pendingNewRequests.push_back(queryHash);
-        }
-    }
-    /* d1NewEdge is staged in pendingD1Edge — closeAsksEdge pushes it
-       paired with the perQAsksEdge so the 1:1 alignment holds. */
-    pendingDepth1Facts.clear();
+    /* Depth-1 facts (outer-value probes) are now stamped and pushed
+       per-probe in `logOuterObservation`, not batched here. Depth-2
+       facts (cb-apply ambient chain probes) still group by cb-apply id
+       and are processed at `processApplies=true` below. */
 
     if (!processApplies) {
         /* Intermediate flush: ambient layer facts stay buffered until
@@ -229,23 +195,15 @@ void TracingWriter::flushAmbient(bool processApplies)
         return;
     }
 
-    /* Finalize: close the final env layer chunk's perQAsksEdge BEFORE
-       processing apply boundaries. Without this the env facts get
-       bundled with the first cb-apply's perQAsksEdge — walker
-       would still XOR-fold the same elementHashes (commutative) but
-       intermediate Asks(Q, cur) lookups during walk() expect each
-       edge to land at a recorded cur, and bundling shifts those
-       positions. Separating gives walker the same per-edge curs the
-       writer used at record time. */
+    /* Finalize: close the trailing chunk of file/env-var reads (which
+       flow through logResponse, not through the per-probe
+       logOuterObservation path). One Ask per closeAsksEdge covers
+       these; they don't need per-observation state evolution because
+       their requestHashes don't carry a `from` field. */
     if (!pendingNewRequests.empty()) {
         auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-        /* 1:1 alignment: push the staged env edge alongside the
-           perQAsksEdge. The env edge may be empty (= file-read-only
-           Asks edge with no ambient observations) — still pushed so
-           the indices match. */
-        envWalk.push_back(std::move(pendingD1Edge));
-        pendingD1Edge = {};
+        envWalk.push_back({});  // 1:1 with envAsksEdges; empty is harmless for stateHashAt.
         tracingCacheLog("finalize: final env Asks edge from=%s rs-size=%zu (perQ=%zu env=%zu)",
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
@@ -389,17 +347,17 @@ void TracingWriter::flushAmbient(bool processApplies)
             }
 
             decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-            /* Design contextHash: SHA-256(outerCur || walkerCur).
-               Writer and walker compute the same value from
-               lockstep-reproducible inputs, so the row inserted here
-               is looked up by dispatchApplyLive at replay under the
-               same key. */
-            Hash designContextHash = hashString(HashAlgorithm::SHA256,
-                "InnerValueResponse-ctx:"
-                + pendingApply.outerEnvCurAtOpen.to_string(HashFormat::Base16, false)
-                + "|"
-                + contextCur.to_string(HashFormat::Base16, false));
-            decisionGraph->insertInnerValueResponse(queryHash, designContextHash, responsePayload);
+            /* contextHash is the walker's Env `cur` at the time the
+               response is recorded (vocab, "Ambient payload types and
+               edges"). At the writer that value is `contextCur`
+               (= `envCurAtOpen XOR priorApplyFactAccum`), which also
+               equals `boundaryAskFromHash` (below), so the walker at
+               warm sees the identical Hash as its Ask edge's
+               `fromFactSetHash` and lands on the row inserted here.
+               Cross-cached-call disambiguation is handled upstream by
+               `callArgAncestry` inside `requestHash`; no outer
+               contribution needed here. */
+            decisionGraph->insertInnerValueResponse(queryHash, contextCur, responsePayload);
 
             auto toFactSet = TracingDecisionGraph::xorFactIntoHash(
                 cumulativeFactSet, queryHash, responseHash);
@@ -591,22 +549,16 @@ void TracingWriter::closeAsksEdge(bool processApplies)
        the synthetic env apply Facts in. */
     flushAmbient(processApplies);
 
-    /* Materialise the perQAsksEdge boundary so the trailing logResult
-       (or a later closeAsksEdge) inserts an Asks(Q, fromFactSet, RS) row
-       for this transition into Q's namespace. Skip-on-empty is
-       deliberate: an edge with no requests has nothing to advance, so
-       neither writer's envWalk nor walker's envWalk grows
-       for it (= principles 4 + 7).
-
-       1:1 alignment: push the staged env edge alongside the
-       perQAsksEdge. May be empty (= file-read-only Asks edge with no
-       ambient observations contributing observations to d1) — still
-       pushed so the indices match the walker's commitEdge counts. */
+    /* Close the trailing file/env-read batch (logResponse path only —
+       outer-value probes push their own Ask per probe). One Ask row
+       per closeAsksEdge covers whatever file/env reads have
+       accumulated since the last close; walker's envWalk gets an
+       empty ObservationSet (file/env reads don't advance any
+       Subject's state hash) so the 1:1 alignment holds. */
     if (!pendingNewRequests.empty()) {
         auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-        envWalk.push_back(std::move(pendingD1Edge));
-        pendingD1Edge = {};
+        envWalk.push_back({});  // 1:1 with envAsksEdges; empty is harmless for stateHashAt.
         tracingCacheLog("closeAsksEdge: new Asks edge from=%s rs-size=%zu (perQ=%zu env=%zu)",
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
