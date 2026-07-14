@@ -137,9 +137,6 @@ void TracingWriter::flushAmbient(bool processApplies)
         }
 
         decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-        /* env fact InnerValueResponse insert at empty-hash context: kept for
-           DISALLOW-mode fallback lookups. */
-        decisionGraph->insertInnerValueResponse(queryHash, Hash(HashAlgorithm::SHA256), responsePayload);
 
         /* Secondary index for producer queries (getAttr / getListElem):
            insert the SAME query payload under the initial-history reqHash

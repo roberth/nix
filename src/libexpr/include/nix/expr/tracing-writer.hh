@@ -515,31 +515,7 @@ public:
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), request, response);
         if (seenRequests.insert(factHash).second) {
-            /* Cross-context update: if we previously noted a different
-               response for the SAME request (cb-sibling's shared
-               reqhash across sibling contexts), replace the old fact
-               with the new one. Otherwise envFactSet accumulates
-               multiple fact hashes per request but record() can only
-               emit one dispatch per request per chain — walker can
-               contribute one fact-hash per dispatch, so the chain
-               and cur diverge. Keeping the latest observation as the
-               canonical one aligns the chain with warm walker's
-               current-context live-dispatch. */
-            if (auto it = responseFor.find(request); it != responseFor.end() && it->second != response) {
-                /* XOR out the old fact from envFactSetHash and drop the
-                   old entry from envFactSet. seenRequests keeps the old
-                   factHash entry to guard against re-adding it. */
-                envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                    envFactSetHash, request, it->second);
-                auto oldResp = it->second;
-                envFactSet.erase(
-                    std::remove_if(envFactSet.begin(), envFactSet.end(),
-                        [&](const auto & f) { return f.request == request && f.response == oldResp; }),
-                    envFactSet.end());
-                it->second = response;
-            } else {
-                responseFor.emplace(request, response);
-            }
+            responseFor.emplace(request, response);
             envFactSet.push_back({request, response});
             envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
                 envFactSetHash, request, response);

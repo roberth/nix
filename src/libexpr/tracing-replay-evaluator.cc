@@ -213,38 +213,6 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         }
         auto currentResp = getCurrentResponse(*requestPayload, ctx);
         if (!currentResp) {
-            /* DISALLOW-mode InnerValueResponse fallback (on dispatch failure only,
-               not mismatch): under `_NIX_DISALLOW_CACHE_INTERPRET_INNER=1`
-               the cache must serve every recorded value, so a
-               `resolveRoots` failure here is a walker routing bug
-               (currentProxy can't reach the sibling's contraArg to
-               dispatch a cross-sibling `from`), not a legitimate env
-               change. Fall back to InnerValueResponse which under within-session
-               soundness has cold's actual response for this reqhash.
-               Only substitute on FAILURE — not on live/stored mismatch
-               — so observation-driven divergence (cb-sibling-
-               discrimination-via-observation) with distinct reqhashes
-               per sibling stays uncorrupted. Gated on DISALLOW so
-               normal-mode capability-mediated dispatch stays live-only. */
-            static const bool disallowInner =
-                getEnv("_NIX_DISALLOW_CACHE_INTERPRET_INNER").value_or("") == "1";
-            if (disallowInner && isAmbient) {
-                if (auto storedResp = decisionGraph.getInnerValueResponsePayload(requestHash, Hash(HashAlgorithm::SHA256))) {
-                    auto storedH = TracingDecisionGraph::computeResponseHash(*storedResp);
-                    tracingCacheLog(
-                        "dispatch DISALLOW-mode InnerValueResponse fallback req=%s -> resp=%s (%s)",
-                        requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                        storedH.to_string(HashFormat::Base16, false).substr(0, 12),
-                        queryDescription);
-                    writer.noteEnvObservation(requestHash, storedH);
-                    pendingEdgeObservations.push_back({
-                        outerFromHash.value_or(Hash(HashAlgorithm::SHA256)),
-                        TracingDecisionGraph::xorFactIntoHash(
-                            Hash(HashAlgorithm::SHA256), requestHash, storedH),
-                    });
-                    return storedH;
-                }
-            }
             tracingCacheLog(
                 "dispatch FAIL req=%s payload=%s (no current response)",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
