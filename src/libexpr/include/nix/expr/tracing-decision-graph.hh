@@ -134,7 +134,7 @@ public:
        hit the same requestHash for the callback arg's initial
        probes but the outer contexts differ (post- vs
        pre-first-cb-apply). See the "Matching until
-       divergence" section of tracing-eval-cache-subject-id.md. */
+       divergence" section of tracing-eval-cache-subject-identity.md. */
     void insertInnerValueResponse(const RequestHash & requestHash, const Hash & contextHash, std::string_view payload);
     std::optional<std::string> getInnerValueResponsePayload(const RequestHash & requestHash, const Hash & contextHash);
 
@@ -237,7 +237,7 @@ public:
        Decision graph layer: ambient layer (cb-apply)
 
        The ambient layer trie is keyed on factSet alone (no Q), per
-       doc/design/tracing-eval-cache-subject-id.md.
+       doc/design/tracing-eval-cache-subject-identity.md.
        It records the observations the outer makes against an
        inner-supplied LocalObject during a covariant callback.
        Same-call sibling collapse within is intentional;

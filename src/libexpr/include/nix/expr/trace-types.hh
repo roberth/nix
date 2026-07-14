@@ -230,7 +230,7 @@ struct ResultWHNF
  * CLI uses content-defined hashes via `StateHashLeaf`. Currently
  * unused: the eval-cache path constructs `StateHashLeaf` directly, and
  * CLI integration through this carrier hasn't landed.
- * See doc/design/tracing-eval-cache-subject-id.md §Foundational principles.
+ * See doc/design/tracing-eval-cache-subject-identity.md §Foundational principles.
  */
 struct OuterLeaf
 {

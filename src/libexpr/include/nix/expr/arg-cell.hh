@@ -5,7 +5,7 @@
  * Carries only structural topology (depth, parent, liveObject).
  *
  * Under the design in
- * doc/design/tracing-eval-cache-subject-id.md,
+ * doc/design/tracing-eval-cache-subject-identity.md,
  * state hashes are pure functions of (subject, factset) and are not
  * stored on the cell. The cell exists for navigation through the
  * proxy graph; the `depth` field provides the static positional

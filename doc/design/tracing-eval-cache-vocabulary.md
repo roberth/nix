@@ -330,7 +330,7 @@ The subject-identity machinery those Facts hang off — Subject,
 state hash, argAncestry, callback-arg objects, cell navigation,
 the subject-evolution fast-path — is a separate concern, defined
 starting at [Subject](#subject). Storage for both lives in
-[Storage tables (Ambient and subject-id additions)](#storage-tables-ambient-and-subject-id-additions).
+[Storage tables (Ambient and Subject-evolution additions)](#storage-tables-ambient-and-subject-evolution-additions).
 
 ### Ambient payload types and edges
 
@@ -408,7 +408,7 @@ each cb-apply, disambiguated in storage by
 [Cell navigation](#cell-navigation) wire this through the Object
 graph; [Subject-evolution fast-path](#subject-evolution-fast-path)
 caches step-by-step transitions. Storage lives in
-[Storage tables (Ambient and subject-id additions)](#storage-tables-ambient-and-subject-id-additions).
+[Storage tables (Ambient and Subject-evolution additions)](#storage-tables-ambient-and-subject-evolution-additions).
 
 ### Subject
 
@@ -573,7 +573,7 @@ subject-evolution fast-path caches the individual fold-step
 transitions so a walker can hop directly to any step.
 
 **SubjectEvolutionEdge** — a persistent table (schema in
-[Storage tables (Ambient and subject-id additions)](#storage-tables-ambient-and-subject-id-additions))
+[Storage tables (Ambient and Subject-evolution additions)](#storage-tables-ambient-and-subject-evolution-additions))
 with one row per single-observation fold step. Populated by the
 writer via a callback during `stateHashAtStamping`; consumed by
 the replay walker to navigate step-by-step through observations at
@@ -592,7 +592,7 @@ via a callback. Structurally equivalent to `stateHashAt`; used
 only at record time.
 
 
-### Storage tables (Ambient and subject-id additions)
+### Storage tables (Ambient and Subject-evolution additions)
 
 Extends the base schema
 ([Storage tables (Query and Env only)](#storage-tables-query-and-env-only)).

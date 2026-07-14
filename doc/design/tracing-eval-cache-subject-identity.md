@@ -232,16 +232,16 @@ Specific commitments of the present design.
    a time; within an edge, requests may be probed concurrently.
 
    *Recorder/walker alignment obligation.* The writer's
-   subject-id history advances in 1:1 lockstep with its
-   `envAsksEdges`: every Ask edge added on the writer side is
-   paired with a subject-id edge at the same index (ε boundaries
-   insert into both; trailing closes append to both). The walker
-   pushes to its subject-id history for every Ask edge it
-   traverses — even when the edge contributes no observations to
-   a given Subject. Without this alignment, the writer's
-   flush-time state hash for a Subject at edge `k` and the
-   walker's re-computation at the same `k` disagree, and every
-   Query keyed on the disagreeing hash misses.
+   history advances in 1:1 lockstep with its `envAsksEdges`:
+   every Ask edge added on the writer side is paired with an
+   `ObservationSet` at the same index (ε boundaries insert into
+   both; trailing closes append to both). The walker pushes to
+   its history for every Ask edge it traverses — even when the
+   edge contributes no observations to a given Subject. Without
+   this alignment, the writer's flush-time state hash for a
+   Subject at edge `k` and the walker's re-computation at the
+   same `k` disagree, and every Query keyed on the disagreeing
+   hash misses.
 
 8. **Same-shape collapse is automatic.** Two Subjects with
    identical observation histories evaluate to identical state
@@ -286,7 +286,7 @@ Specific commitments of the present design.
 
 We use XOR-fold in two places: the FactSet hashes (`envFactSetHash`
 and every `factSetHash` used as a key in `Ask` / `Terminal` /
-`AmbientAsk`) and the subject-id own-fold inside `stateHashAt`.
+`AmbientAsk`) and the own-fold inside `stateHashAt`.
 XOR has set semantics (commutative, associative, self-inverse
 with identity 0), which is load-bearing where set algebra is
 intended and a soundness hazard everywhere else.
@@ -296,7 +296,7 @@ intended and a soundness hazard everywhere else.
 1. *No multiset.* The XOR-fold's inputs must be a true set:
    membership dedup'd by hash before folding (a `std::set` or
    equivalent), or guaranteed unique by upstream construction
-   (e.g., subject-id-evolved `requestHash`es). Without this,
+   (e.g., state-hash-evolved `requestHash`es). Without this,
    folding the same element in twice silently cancels.
 
 2. *No order assumption.* Any consumer that uses `v` as an
@@ -354,7 +354,7 @@ component membership and any new compounding it introduces.
   with the same set of (req, resp) pairs are meant to match.
 - Compounding: none — every fold operand is a fresh SHA-256 atom.
   Dedupe is the caller's responsibility (via `std::set` /
-  `sort+dedup` / subject-id-evolved `requestHash` uniqueness).
+  `sort+dedup` / state-hash-evolved `requestHash` uniqueness).
 - Verdict: sound.
 
 *Component G — Subject-identity state hashes.*
@@ -380,7 +380,7 @@ component membership and any new compounding it introduces.
 - Boundary consumers:
   - Hex-encoded into `query.from`, then `queryHash(query)` —
     **SHA-256 seal exits G**.
-  - Equality check inside the subject-id filter
+  - Equality check inside the own-fold membership filter
     (`f.fromHash == myStateHashAt(k)`) — **stays in G**.
 - Compounding sites observed:
   - `PostulatedIdempotentRead{X}.structural = X XOR argAncestry`
@@ -420,7 +420,7 @@ component membership and any new compounding it introduces.
   is a Merkle seal; F sees uncorrelated SHA-256 atoms regardless
   of G's internal algebra.
 - F → G: not observed in the codebase. No `factSetHash` is fed
-  into a subject-id construction. If introduced, the `factSetHash`
+  into a state-hash construction. If introduced, the `factSetHash`
   would arrive XOR-derived and would compound with G's algebra —
   keep it banned.
 

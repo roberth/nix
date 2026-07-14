@@ -74,7 +74,7 @@ factors shared prefixes when later recordings overlap.
 Six SQLite tables (Query + Env layers). All append-only via
 `INSERT OR IGNORE`; reads use prepared statements with a per-hash
 in-process cache. Ambient adds three more (see the vocab's
-[Storage tables (Ambient and subject-id additions)](./tracing-eval-cache-vocabulary.md#storage-tables-ambient-and-subject-id-additions)).
+[Storage tables (Ambient and Subject-evolution additions)](./tracing-eval-cache-vocabulary.md#storage-tables-ambient-and-subject-evolution-additions)).
 
 ```
 Requests(requestHash BLOB PRIMARY KEY, payload BLOB)

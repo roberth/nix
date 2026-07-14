@@ -304,7 +304,7 @@ whose arg is the passed value's Subject. The walker's
 consults `AmbientAsk` for the apply Fact's chain-advance and
 reads the per-probe responses from `InnerValueResponse` for the
 follow-up observations. Recording and reading go through the same
-subject-id evolution formula on both sides.
+`stateHashAt` formula on both sides.
 
 ### Ambient responses are capability-mediated, not cached
 
