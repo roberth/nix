@@ -347,6 +347,28 @@ work-doing. When a tier misses cleanly, replay drops to the next.
    is currently underdeveloped in the code — Env fallibility as a
    general mechanism needs implementing.)
 
+   *Observation about the current implementation's warm mode
+   without this discipline.* When replay dispatches a cb-apply via
+   `dispatchApplyLive`, it invokes the outer's callback live. The
+   callback's body probes outer values via `OuterObject`, and those
+   probes flow through `TracingEnvironment::outerQuery` to
+   `logOuterObservation` on the writer. Walker's direct dispatches
+   also feed the writer via `noteEnvObservation`. Both grow the
+   writer's `envWalk` during warm replay. A subsequent
+   `logOuterObservation` on that same writer then stamps a new
+   request payload with `from = stateHashAt(subject, argAncestry,
+   envWalk, envWalk.size())` — a state hash computed against the
+   writer's grown cumulative history. Replay's own per-walk
+   `envWalk` is a strict subset of the writer's at that moment, so
+   `resolveStateHash` on that fresh `from` value misses across
+   replay's cell chain. This within-session drift is distinct from
+   cross-invocation drift. Its relationship to the outer-request
+   discipline hasn't been verified: the discipline would suppress
+   cascade probes if it prevents live outer callback invocations,
+   which plausibly reduces writer growth during warm — but the
+   exact semantics of the discipline (which outer requests are safe
+   to dispatch, when) are not fully pinned down.
+
 3. **Interpreter fallback.** Both preceding tiers can miss cleanly;
    when they do, replay falls through to the inner `Interpreter` for
    a fresh evaluation, which then records into the cache so
