@@ -111,6 +111,34 @@ instead.
 
 ---
 
+## Trace
+
+A **trace** is the log of interactions across all three message
+pairings during one evaluation: Query pairs at the top (user ↔
+evaluator), Env pairs required to answer each Query (evaluator ↔
+environment), and Ambient pairs required when an Env pair reaches
+an inner-supplied callback arg (outer's callback body ↔ callback
+arg). Env pairs sit under the Query pair that provoked them;
+Ambient pairs sit under the Env pair that provoked them.
+
+Traces are what the cache records and replays. A recording is the
+persisted form of a writer's trace up to a Result; a walker at
+replay builds its own trace live from its dispatches and looks for
+matches against recorded ones.
+
+Narrower usages in the docs (e.g., "a trace through the cache for a
+Query is a chain of Asks ending at a Terminal", in
+[`tracing-eval-cache.md`](./tracing-eval-cache.md)) refer to the
+Ask-edge decomposition of one Query's Env pairs. Such a decomposition
+is a **known prefix**: previously recorded (known, in the DB) and
+walked by the walker as a prefix of its live-dispatched chain,
+extended Fact by Fact from ∅ until the Terminal confirms the full
+known prefix or the walker's live Fact diverges from it. The full
+trace includes all such per-Query known prefixes alongside the
+enclosing Query pairs and any Ambient pairs required inside them.
+
+---
+
 ## The Query message pairing
 
 ### Query payload types
