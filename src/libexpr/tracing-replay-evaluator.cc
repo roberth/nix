@@ -59,11 +59,34 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        falls short of cold's step for later flushes referencing
        arg(1) at post-inner-apply positions. */
 
-    /* Per-history resolution context. The cumulative subject-id history
-       (= `this->envWalk`) lives on the evaluator so it
-       persists across history calls — required for cell-chain
-       state hash computation to land at the writer's `d1EdgeIndex` (=
-       cumulative across logResults). */
+    /* Per-walk scoping: envWalk (and committedEdgeFingerprints) belong
+       to this walk only. Each walk builds its own history from ∅ via
+       the Ask chain it traverses; the recorded chain determines what
+       gets folded in. Under matching-until-divergence, walker's
+       per-walk envWalk mirrors the writer's history at the time of
+       the recording being matched — no cross-walk pollution.
+
+       See `doc/design/tracing-eval-cache.md` §Replay strategies
+       (slow path) for the reasoning. Save the outer scope's state
+       so nested walks don't corrupt it. */
+    auto savedEnvWalk = std::move(envWalk);
+    envWalk.clear();
+    auto savedFingerprints = std::move(committedEdgeFingerprints);
+    committedEdgeFingerprints.clear();
+    struct WalkScope
+    {
+        std::vector<ObservationSet> & envWalk;
+        std::unordered_set<Hash> & committedEdgeFingerprints;
+        std::vector<ObservationSet> savedEnvWalk;
+        std::unordered_set<Hash> savedFingerprints;
+        ~WalkScope()
+        {
+            envWalk = std::move(savedEnvWalk);
+            committedEdgeFingerprints = std::move(savedFingerprints);
+        }
+    } walkScope{envWalk, committedEdgeFingerprints,
+                std::move(savedEnvWalk), std::move(savedFingerprints)};
+
     ResolutionContext ctx{
         std::move(currentProxy),
         {},
