@@ -305,11 +305,97 @@ object activates inner lazily — for a hit chain that doesn't reach
 into the package's value tree at all, the inner is never
 constructed.
 
-The cache-side primitive is `walk(queryHash)`. Currently there is
-only one path: the walk-from-∅ described under "Slow path" below.
-The subsection that follows describes a fast-path design that has
-not been implemented; the code has no `envCur`, no
-`dispatchedTrie`, and no diff routine on `TrieBuilder`.
+### Replay strategies
+
+Replay uses tiered strategies, ordered from cheapest to most
+work-doing. When a tier misses cleanly, replay drops to the next.
+
+1. **Following a known trace (fast path).** When replay has a specific
+   recorded trace to walk against and can verify each Ask matches
+   without discovery cost, it walks that trace directly. Lockstep 1:1
+   replay is one specific case (replay's live dispatches align with a
+   session-cumulative trace it's tracking). Currently unimplemented;
+   a candidate design using `envCur` diff is sketched below.
+
+2. **Walk from ∅ per Query (slow path).** Replay walks a Query's Ask
+   trie from `cur = ∅`, dispatching each Ask's requests, folding
+   responses into `cur`, and following whichever outgoing Ask (or
+   Terminal) the next `cur` matches. Can hit a recorded Terminal
+   whose trace is smaller or larger than replay's accumulated
+   context, because the walk builds its own local `cur` via this
+   Q's dispatches only.
+
+   During Ask traversal, the queries replay dispatches must **evolve
+   with the walk's own state**: each Ask's precondition determines
+   the Subject state hashes referenced in that Ask's request payloads
+   (per Design principle 5's flush substitution on the writer side).
+   Replay mirrors the substitution so its dispatched queries hash to
+   the recorded request payloads it needs to find. This is why
+   simply looking up requests at their "initial state hash" (empty
+   history) helps only at the very first step — as soon as an
+   observation folds in, the substitution has to track the walk's
+   evolved state.
+
+   **Outer-request discipline.** When a slow-path Ask requires
+   dispatching an outer-evaluator request whose response replay
+   doesn't already have (not in `responseFor`), replay MUST NOT
+   dispatch it. Dispatching would trigger an outer callback
+   invocation the user never asked for at that point, surfacing as
+   unprompted logs, errors, or other observable outer behaviour the
+   user cannot correlate with the expression they wrote. Replay
+   shortcuts to the interpreter fallback instead. (This discipline
+   is currently underdeveloped in the code — Env fallibility as a
+   general mechanism needs implementing.)
+
+3. **Interpreter fallback.** Both preceding tiers can miss cleanly;
+   when they do, replay falls through to the inner `Interpreter` for
+   a fresh evaluation, which then records into the cache so
+   subsequent replays can hit.
+
+Note (writer side): the writer **must not** record under a smaller
+set than what it observed. The failure mode is two-step: (1) at
+write time, the writer identifies the recording with a hash
+representing a smaller set than the true set it observed; (2) at
+replay time, replay trusts the recording as complete and follows it
+against a live environment where the omitted facts or observations
+would have been different. Combined: a false hit — a Result served
+that the writer's true observations don't justify.
+
+The principle applies to fact sets and observation sets alike.
+Hashes just represent those sets in storage: a `factSetHash` on an
+Ask or Terminal key represents the fact set; a `from` field on a
+request payload carries a Subject state hash, which represents the
+observation set folded into that Subject's own-loop up to that
+point. Per Foundational principle 9's cumulative dependency, both
+must faithfully identify what the writer actually observed.
+
+The lookup-key hashes are all **pre-Response**: they identify a
+state before the Responses they anticipate fold in. Two instances of
+the same principle:
+
+- An Ask row's `factSetHash` key is the pre-Response `cur` — the
+  factSet before this Ask's Responses fold into `cur`. Replay uses
+  `cur` alone to find which outgoing Ask goes next, without needing
+  to know the Ask's Responses in advance.
+- A request payload's `from` field carries the referenced Subject's
+  pre-Response state hash — the state hash before this request's own
+  Response folds into that Subject's own-loop. Per Design principle
+  5's post-substitution flush, this is `stateHashAt(subject,
+  argAncestry, history, k)` at the Ask edge's precondition. Replay
+  uses `from` to route the dispatch through the right Subject
+  without needing the Response in advance.
+
+Whether a specific fold moves each hash depends on the observation
+type. A file read moves `cur` but not any Subject state hash. An
+Ambient-layer observation (outer probing an inner-supplied callback
+arg) moves the referenced Subject state hash but not `cur` — Ambient
+observations feed `AmbientAsks`, not `envFactSet`. An env-layer
+outer-value probe moves both. What's constant across observation
+types is that pre-Response hashes are the lookup anchors and
+post-Response hashes are computed by folding — regardless of whether
+the fold changed the value. Neither pre-Response hash is a shrink
+from the writer's actual observations; both are faithful identifiers
+that let replay progress from `cur` alone.
 
 ### Candidate design: trie diff against `envCur`
 
