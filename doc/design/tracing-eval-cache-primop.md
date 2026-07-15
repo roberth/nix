@@ -369,24 +369,25 @@ per observation. That's the cost the cache is designed to amortise
 across warm replays, not multiply.
 
 Consequence for trace scope: **the cache supports same-trace hits.**
-Walker's history at the point it reaches a recorded Terminal matches
-the writer's history at the point it recorded that Terminal, each
+Replay's trace at the point it reaches a recorded Terminal matches
+the writer's trace at the point it recorded that Terminal, each
 observation gets one live re-dispatch, factSetHash trajectory matches,
-the Terminal hits. A walker whose accumulated history is a *superset*
-of a recording's history cannot cheaply match that recording —
-validating the walker's extra observations against outer would invoke
-outer callbacks the user never asked for at those points in the
-evaluation. Those unprompted invocations surface as user-facing logs,
-errors, and other observable outer behaviour the user cannot correlate
-with the expression they wrote. The cache is meant to be invisible;
-unprompted outer evaluations aren't.
+the Terminal hits.
+
+A replay whose accumulated trace is a *subset* of a recording cannot
+cheaply match that recording — acquiring the missing facts requires
+new Env requests and Ambient observations, and for observations that
+were originally callback results, that means invoking outer callbacks
+the user never asked for at those points in the evaluation. Those
+unprompted invocations surface as user-facing logs, errors, and other
+observable outer behaviour the user cannot correlate with the
+expression they wrote. The cache is meant to be invisible; unprompted
+outer evaluations aren't.
 
 Cross-invocation cache reuse across independent recordings works when
-the recording's history is reproducible by the walker at replay time.
-It does not work when the replaying walker's history grew larger than
-a target recording's history — for example when earlier Query walks in
-the same walker instance already accumulated observations the target
-recording never had.
+replay's trace reproduces the recording's trace (or a superset — the
+recording's facts are all present and just need finding and
+validating).
 
 ## Lifetime and ownership
 
