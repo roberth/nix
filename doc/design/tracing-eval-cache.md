@@ -71,6 +71,14 @@ factors shared prefixes when later recordings overlap.
 
 ## Storage layer
 
+The cache database is an **index over all recorded traces**.
+Recorded traces are not stored as first-class objects; there is no
+list of them on disk. Instead, a set of shared content-addressed
+tables holds the material — payload atoms, Ask edges, Terminals —
+that any recorded trace is composed of, and a walker at replay
+finds matches by hashed key lookups against those tables, never a
+scan.
+
 Six SQLite tables (Query + Env layers). All append-only via
 `INSERT OR IGNORE`; reads use prepared statements with a per-hash
 in-process cache. Ambient adds three more (see the vocab's
