@@ -185,7 +185,11 @@ struct OuterApply
 
 struct OuterResolver : std::enable_shared_from_this<OuterResolver>
 {
-    OuterRegistry registry;
+    /* No shared OuterRegistry field. Each cache-primop invocation
+       constructs its own registry captured by the queryFn/applyFn
+       closures — sibling invocations don't collide on hash-keyed
+       Object lookups. See makeCachedFnPrimOp for the per-invocation
+       allocation. */
     BridgedThunkCache bridgedLocals;
     EvalState * outerState = nullptr;
     std::shared_ptr<Evaluator> innerEvaluator;
@@ -222,12 +226,12 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
     };
     std::vector<LiveProxyEntry> liveProxies;
 
-    OuterQueryResult query(OuterId objectId, const trace::QueryVariant & q)
+    OuterQueryResult query(OuterRegistry & registry, OuterId objectId, const trace::QueryVariant & q)
     {
-        return queryOn(registry.resolveOuter(objectId), q);
+        return queryOn(registry, registry.resolveOuter(objectId), q);
     }
 
-    OuterQueryResult queryOn(std::shared_ptr<Object> obj, const trace::QueryVariant & q)
+    OuterQueryResult queryOn(OuterRegistry & registry, std::shared_ptr<Object> obj, const trace::QueryVariant & q)
     {
         return OuterQuery{registry, innerWriter}.on(std::move(obj), q);
     }
@@ -240,6 +244,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
      *  caller (applyFn closure) records the QueryApply Fact with
      *  the same arg id. */
     std::pair<OuterId, OuterId> apply(
+        OuterRegistry & registry,
         OuterId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
     {
         return OuterApply{
@@ -252,6 +257,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
         with a captured reference, like makeCachedFnPrimOp's
         applyFn closure for arg-self applies). */
     std::pair<OuterId, OuterId> applyOn(
+        OuterRegistry & registry,
         std::shared_ptr<Object> fnObj, OuterId fnId,
         std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
     {
@@ -494,23 +500,36 @@ static PrimOp * makeCachedFnPrimOp(
                            latest outer arg. Instead each invocation's
                            queryFn captures its own outerArgObj and uses
                            it directly for arg (rootId) queries. */
+                        /* Per-invocation registry. Sibling cb-apply
+                           invocations share callArgAncestry and Subject
+                           shapes, so a shared Object registry would
+                           collide on derived-child queryHashes (b's
+                           getAttr("x") child overwrites a's, and a's
+                           later probes serve b's live values). Each
+                           impl gets its own map; closures capture it,
+                           so the queryFn/applyFn calls originating
+                           from THIS cache-primop invocation stay
+                           isolated. Fresh proxies per call: no
+                           cross-invocation hash-keyed reuse. */
+                        auto perInvocationRegistry = std::make_shared<OuterRegistry>();
                         auto & innerEnv = *innerEval->getEvalState().environment;
                         OuterQueryFn queryFn = [resolver, outerArgObj, rootId,
-                                                  &innerEnv, applyContext](
+                                                  &innerEnv, applyContext, perInvocationRegistry](
                             OuterId objectId,
                             const trace::QueryVariant & q,
                             Subject subject,
                             Hash argAncestry) {
                             /* For cb-arg queries (objectId == this cb's
                                rootId), dispatch on the captured
-                               outerArgObj directly — bypass the shared
-                               resolver lookup. For derived ids (child
-                               objects from earlier getAttr/getListElem),
-                               delegate to the resolver which has them
-                               registered. */
+                               outerArgObj directly — bypass the
+                               registry. For derived ids (child objects
+                               from earlier getAttr/getListElem),
+                               resolve through THIS invocation's
+                               registry (populated by prior probes on
+                               this cb's arg-chain). */
                             OuterQueryResult qr = (objectId == rootId)
-                                ? resolver->queryOn(outerArgObj, q)
-                                : resolver->query(objectId, q);
+                                ? resolver->queryOn(*perInvocationRegistry, outerArgObj, q)
+                                : resolver->query(*perInvocationRegistry, objectId, q);
                             innerEnv.outerQuery(
                                 q,
                                 [&](const trace::QueryVariant &) { return qr.result; },
@@ -548,7 +567,7 @@ static PrimOp * makeCachedFnPrimOp(
                            Facts with `from=<apply_qH>` can have
                            their response payloads located via the
                            InnerValueResponse on replay. */
-                        OuterApplyFn applyFn = [resolver, outerArgObj, rootId](
+                        OuterApplyFn applyFn = [resolver, outerArgObj, rootId, perInvocationRegistry](
                             OuterId fnId,
                             std::shared_ptr<Object> argObj,
                             std::shared_ptr<const ArgCell> callerScope) {
@@ -566,10 +585,11 @@ static PrimOp * makeCachedFnPrimOp(
                                queries. */
                             if (fnId == rootId) {
                                 auto [argSubject, resultId] = resolver->applyOn(
-                                    outerArgObj, fnId, std::move(argObj), std::move(callerScope));
+                                    *perInvocationRegistry, outerArgObj, fnId, std::move(argObj), std::move(callerScope));
                                 return resultId;
                             }
-                            auto [argSubject, resultId] = resolver->apply(fnId, std::move(argObj), std::move(callerScope));
+                            auto [argSubject, resultId] = resolver->apply(
+                                *perInvocationRegistry, fnId, std::move(argObj), std::move(callerScope));
                             return resultId;
                         };
                         /* lazy-paths: pin OuterObject's path SourceRoot
