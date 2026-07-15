@@ -350,6 +350,44 @@ A successful replay still feeds the recording-side writer state
 on a different queryHash in the same session falls into a coherent
 recording chain.
 
+### Live validation generalises; trace scope follows
+
+Live validation of ambient responses (above) is the specific case of
+a broader property: every observation the cache walks re-dispatches
+live at replay, not just Ambient responses. Env-layer probes
+(OuterValueRequests where the inner probes the outer via
+`OuterObject`, file reads, env-var lookups) all re-dispatch live at
+replay. The recording stores *what* was observed; each observation's
+validity depends on the live environment producing the same response
+now.
+
+For observations whose live re-dispatch invokes an outer callback (the
+result of applying an outer-supplied function, and any subsequent
+Env-layer probe that reaches into the apply-result through
+`OuterObject`), the validation cost is one outer callback invocation
+per observation. That's the cost the cache is designed to amortise
+across warm replays, not multiply.
+
+Consequence for trace scope: **the cache supports same-trace hits.**
+Walker's history at the point it reaches a recorded Terminal matches
+the writer's history at the point it recorded that Terminal, each
+observation gets one live re-dispatch, factSetHash trajectory matches,
+the Terminal hits. A walker whose accumulated history is a *superset*
+of a recording's history cannot cheaply match that recording —
+validating the walker's extra observations against outer would invoke
+outer callbacks the user never asked for at those points in the
+evaluation. Those unprompted invocations surface as user-facing logs,
+errors, and other observable outer behaviour the user cannot correlate
+with the expression they wrote. The cache is meant to be invisible;
+unprompted outer evaluations aren't.
+
+Cross-invocation cache reuse across independent recordings works when
+the recording's history is reproducible by the walker at replay time.
+It does not work when the replaying walker's history grew larger than
+a target recording's history — for example when earlier Query walks in
+the same walker instance already accumulated observations the target
+recording never had.
+
 ## Lifetime and ownership
 
 Two cases:
