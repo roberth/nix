@@ -19,6 +19,7 @@
 
 #include <functional>
 #include <memory>
+#include <source_location>
 #include <string>
 #include <variant>
 #include <vector>
@@ -154,7 +155,8 @@ Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std
     `(root_cdi, path)`. Passing a `DerivedSubject` traps; callers
     that want a content-addressed identifier for any Subject
     (including derived) should use `stateHashAtSubject` instead. */
-Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step);
+Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step,
+    std::source_location caller = std::source_location::current());
 
 /** Grouping-independent converged fold. Flattens `history` into a
     deduplicated observation pool (by (fromHash, elementHash)) and

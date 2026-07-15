@@ -220,7 +220,8 @@ Hash stateHashAtStamping(
     return result;
 }
 
-Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step)
+Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step,
+    std::source_location caller)
 {
     /* Compute subject's state hash at the precondition of the
        `step`-th edge by replaying the first `step` edges'
@@ -320,9 +321,17 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
             }
 
             auto result = TracingDecisionGraph::xorHashes(subjectIdAt(step), selfFactFold);
+            /* Caller filename:line identifies which stateHashAt call
+               built the passed history — useful for diagnosing which
+               code path is passing a history that doesn't match a
+               target state hash. */
+            const char * callerFile = caller.file_name();
+            const char * shortFile = std::strrchr(callerFile, '/');
+            shortFile = shortFile ? shortFile + 1 : callerFile;
             tracingCacheLog(
-                "stateHashAt: subject=%s argAncestry=%s history.size=%zu step=%zu\n"
+                "stateHashAt[%s:%u]: subject=%s argAncestry=%s history.size=%zu step=%zu\n"
                 "  subjectIdAt(step)=%s selfFactFold=%s result=%s%s",
+                shortFile, caller.line(),
                 describe(subject),
                 hashHex(argAncestry).substr(0, 12),
                 history.size(), step,
