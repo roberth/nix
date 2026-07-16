@@ -314,7 +314,11 @@ work-doing. When a tier misses cleanly, replay drops to the next.
    recorded trace to walk against and can verify each Ask matches
    without discovery cost, it walks that trace directly. Lockstep 1:1
    replay is one specific case (replay's live dispatches align with a
-   session-cumulative trace it's tracking). Currently unimplemented;
+   session-cumulative trace it's tracking). Composes with the slow
+   path rather than replacing it: the fast path carries
+   session-scope evidence that a slow-path Q-local walk cannot
+   reproduce (Terminals whose `cur` folds in observations from
+   earlier queries in the same session). Currently unimplemented;
    a candidate design using `envCur` diff is sketched below.
 
 2. **Walk from ∅ per Query (slow path).** Replay walks a Query's Ask
@@ -336,43 +340,56 @@ work-doing. When a tier misses cleanly, replay drops to the next.
    observation folds in, the substitution has to track the walk's
    evolved state.
 
-   **Outer-request discipline.** When a slow-path Ask requires
-   dispatching an outer-evaluator request whose response replay
-   doesn't already have (not in `responseFor`), replay MUST NOT
-   dispatch it. Dispatching would trigger an outer callback
-   invocation the user never asked for at that point, surfacing as
-   unprompted logs, errors, or other observable outer behaviour the
-   user cannot correlate with the expression they wrote. Replay
-   shortcuts to the interpreter fallback instead. (This discipline
-   is currently underdeveloped in the code — Env fallibility as a
-   general mechanism needs implementing.)
-
-   *Observation about the current implementation's warm mode
-   without this discipline.* When replay dispatches a cb-apply via
-   `dispatchApplyLive`, it invokes the outer's callback live. The
-   callback's body probes outer values via `OuterObject`, and those
-   probes flow through `TracingEnvironment::outerQuery` to
-   `logOuterObservation` on the writer. Walker's direct dispatches
-   also feed the writer via `noteEnvObservation`. Both grow the
-   writer's `envWalk` during warm replay. A subsequent
-   `logOuterObservation` on that same writer then stamps a new
-   request payload with `from = stateHashAt(subject, argAncestry,
-   envWalk, envWalk.size())` — a state hash computed against the
-   writer's grown cumulative history. Replay's own per-walk
-   `envWalk` is a strict subset of the writer's at that moment, so
-   `resolveStateHash` on that fresh `from` value misses across
-   replay's cell chain. This within-session drift is distinct from
-   cross-invocation drift. Its relationship to the outer-request
-   discipline hasn't been verified: the discipline would suppress
-   cascade probes if it prevents live outer callback invocations,
-   which plausibly reduces writer growth during warm — but the
-   exact semantics of the discipline (which outer requests are safe
-   to dispatch, when) are not fully pinned down.
+   *Reachability limit.* A per-walk `cur` reproduces only what this
+   Q's own dispatches fold in. Recordings made under session-cumulative
+   writer state — where the writer's `envWalk` already contained
+   observations from earlier queries in the same session — index
+   Terminals at `cur` values the per-walk fold cannot reach.
+   Composing session-scope evidence with per-walk evidence is the
+   fast path's job below; the slow path stays honest about what its
+   `cur` represents.
 
 3. **Interpreter fallback.** Both preceding tiers can miss cleanly;
    when they do, replay falls through to the inner `Interpreter` for
    a fresh evaluation, which then records into the cache so
    subsequent replays can hit.
+
+### Outer-request discipline (open problem, separate from replay tiers)
+
+Independent of the fast/slow tiering above: a slow-path Ask can
+require dispatching an outer-evaluator request whose response replay
+doesn't already have (not in `responseFor`). Dispatching such a
+request invokes an outer callback the user's expression didn't ask
+for at that point — surfacing as unprompted logs, errors, or other
+observable outer behaviour the user cannot correlate with what they
+wrote. The right shape of the fix is to shortcut to the interpreter
+fallback in that case, but the exact semantics — which outer
+requests are safe to dispatch, when — are not fully pinned down.
+Env fallibility as a general mechanism needs implementing.
+
+This is a distinct concern from the fast/slow path split and from
+within-session drift below. Solving one does not automatically solve
+the other; they overlap only insofar as any speculative dispatch
+during warm inflates writer state, which is a symptom rather than a
+cause.
+
+*Observation about the current implementation, unrelated to
+outer-request discipline.* When replay dispatches a cb-apply via
+`dispatchApplyLive`, it invokes the outer's callback live. The
+callback's body probes outer values via `OuterObject`, and those
+probes flow through `TracingEnvironment::outerQuery` to
+`logOuterObservation` on the writer. Walker's direct dispatches
+also feed the writer via `noteEnvObservation`. Both grow the
+writer's `envWalk` during warm replay. A subsequent
+`logOuterObservation` on that same writer then stamps a new
+request payload with `from = stateHashAt(subject, argAncestry,
+envWalk, envWalk.size())` — a state hash computed against the
+writer's grown cumulative history. Replay's own per-walk
+`envWalk` is a strict subset of the writer's at that moment, so
+`resolveStateHash` on that fresh `from` value misses across
+replay's cell chain. This within-session drift is the reachability
+limit called out in the slow path above, viewed from the writer
+side.
 
 Note (writer side): the writer **must not** record under a smaller
 set than what it observed. The failure mode is two-step: (1) at
