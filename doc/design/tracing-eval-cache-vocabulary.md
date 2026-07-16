@@ -139,6 +139,34 @@ Query pairs and any Ambient pairs required inside them.
 
 ---
 
+## Session
+
+A **session** is the lifetime of one `TracingWriter` and the
+evaluator stack that shares it. The writer accumulates the trace
+during that lifetime — `envFactSet`, `envFactSetHash`,
+`sessionRequestsTrie`, `responseFor` are all session-scoped state.
+`record()` at any queryHash reads and updates these fields; the
+walker consults them for session-cumulative bookkeeping.
+
+Not process-scoped: one CLI invocation contains multiple sessions.
+The outer `EvalCommand` opens one; each `builtins.cache { ... }`
+invocation opens one for its inner evaluator stack, shared across
+every application of the returned `<cached-fn>` (so sibling cached
+calls of the same `cached` share a session). Nested
+`builtins.cache` inside a cached body opens a further session for
+its own inner. Sessions are disjoint — a session's writer state
+never spans another session's.
+
+Qualifiers built on this: **session-cumulative** state is the value
+of a session-scoped field at a moment in the session's lifetime.
+**Within-session drift** is divergence in that state (e.g., between
+walker's per-walk view and writer's cumulative view) that surfaces
+inside one session's boundary. **Cross-session amortisation** is
+sharing content-addressed atoms across recordings from disjoint
+sessions via the DB index.
+
+---
+
 ## The Query message pairing
 
 ### Query payload types
@@ -250,6 +278,13 @@ queries can start at their parent's `terminalCur`.
 
 **terminalCur** — the `cur` the walker lands at when committing a
 Terminal.
+
+**sessionCur** — the writer's `envFactSetHash` viewed as a role of
+`cur`: the session-cumulative fold across all Facts the writer has
+folded in this session. Corresponds on the walker side to the
+running state after every dispatch the walker's session has done.
+Named as a role because it's the same value as the writer's
+`envFactSetHash`; distinct name marks the walker-side role.
 
 **dispatch** — the walker's per-Request callback. Given a
 Request, returns a Response by asking the live environment.
