@@ -598,11 +598,17 @@ EvalCommand::getEvalState                  // src/libcmd/command.cc
     └── shares the single TracingWriter across all of the above
 ```
 
-The recording path and the replay path use the *same* writer; it's
-the canonical sink for both. A successful replay still feeds the
-writer (so its `envFactSet`, `sessionRequestsTrie`, etc. stay in
-sync) — important if a later miss falls through to inner and
-produces a fresh `record()`.
+The recording path and the replay path use the *same* writer, but
+only the recording path (Interpreter → TracingEnvironment → writer)
+feeds its cumulative envFactSet. The replay path's walker validates
+against a separate `validationEnv` (constructed as the bare
+`SystemEnvironment` at the top of the stack) so walker-side
+dispatches don't pollute the writer's cumulative state. The
+recording *session* — what `envFactSet`, `sessionRequestsTrie`, and
+`envFactSetHash` accumulate — is the Interpreter's session,
+matching Foundational 9's cumulative-dependency premise (the
+inner-evaluator black box, whose state actually evolves through
+its own observations).
 
 `builtins.cache` lives in `src/libexpr/primops/cache.cc`. It creates
 a nested evaluator stack (`TracingReplayEvaluator → TracingEvaluator

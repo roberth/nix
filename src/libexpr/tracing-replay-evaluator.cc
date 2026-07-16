@@ -258,12 +258,16 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         (void) edgeCtx;
         if (!isAmbient)
             responseFor.emplace(requestHash, h);
-        /* Dispatched facts are real environment observations; feed
-           them into the writer's envFactSet so any subsequent
-           logResult records at the same factSetHash regardless of
-           which facts came from interpretation vs cache-hit
-           dispatch. */
-        writer.noteEnvObservation(requestHash, h);
+        /* Walker-side dispatch is validation, not new recording.
+           The observation being validated was already emitted by the
+           original interpreter run (via logResponse or
+           logOuterObservation) and lives in the pool. Feeding it back
+           into the writer's cumulative envFactSet would conflate
+           walker-validation activity with interpreter work — the
+           recording session belongs to the Interpreter, not the
+           walker. Under DISALLOW mode this pollution was structurally
+           breaking slow-path reachability (phantom curs never keyed
+           by any real writer emission). */
         /* Buffer ambient facts for this in-flight Asks edge; the
            history-loop commits them via onEdgeCommitted on success. */
         /* Decode for diffing: render the full request + response JSON
