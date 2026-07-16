@@ -335,6 +335,12 @@ public:
     struct QueryHandle
     {
         std::optional<Hash> queryHash;
+        /* Parent Query's terminalCur, captured at logQuery time. Used
+           at logResult as the explicit start point of this Q's Ask
+           chain — the "structural parent factSet" the walker's
+           parentAnchor path lands on. std::nullopt for root queries
+           (no parent → chain starts at ∅). */
+        std::optional<Hash> structuralParentFactSetHash;
     };
 
     /**
@@ -362,7 +368,7 @@ public:
      * (Merkle identity).
      */
     template<typename Q>
-    std::pair<ValueHandle, QueryHandle> logQuery(const Q & query, const std::optional<TriePosition> & /*parent*/)
+    std::pair<ValueHandle, QueryHandle> logQuery(const Q & query, const std::optional<TriePosition> & parent)
     {
         auto valueNum = sink.logQuery(query);
         if (!decisionGraph)
@@ -373,7 +379,10 @@ public:
             "writer logQuery: Q=%s queryJSON=%s",
             queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
             qj.dump());
-        return {valueNum, {queryHash}};
+        QueryHandle qh{queryHash};
+        if (parent)
+            qh.structuralParentFactSetHash = parent->factSetHash;
+        return {valueNum, qh};
     }
 
     /**
@@ -741,13 +750,21 @@ public:
            so the walker walks them one by one (= each commit advances
            ctx.step). Pass `allRequestHashes` (= query hashes),
            not `seenRequests` (= fact hashes for XOR dedup); record()'s
-           slow path iterates this for its trailing remaining-edge. */
+           slow path iterates this for its trailing remaining-edge.
+
+           startFactSetHash: parent Q's terminalCur (captured at
+           logQuery), or ∅ for root queries. Anchors this Q's Ask
+           chain at the "structural parent factSet" — the walker's
+           parentAnchor path (currentProxy.getTriePos().factSetHash)
+           lands on Q-labeled Asks there. */
+        auto startFactSetHash = qh.structuralParentFactSetHash.value_or(
+            TracingDecisionGraph::emptySetHash());
         if (envAsksEdges.empty())
             decisionGraph->record(*qh.queryHash, envFactSetHash, resultNodeHash,
-                responseFor, seenRequests, sessionRequestsTrie.rootHash());
+                responseFor, seenRequests, sessionRequestsTrie.rootHash(), startFactSetHash);
         else
             decisionGraph->record(*qh.queryHash, envFactSetHash, resultNodeHash,
-                responseFor, allRequestHashes);
+                responseFor, allRequestHashes, startFactSetHash);
 
         /* Populate per-edge response table AFTER `record()` so
            Patricia-split-added Asks rows are covered too. Enumerate
@@ -759,6 +776,7 @@ public:
         return TriePosition{
             .resultNodeHash = resultNodeHash,
             .queryHashStr = qh.queryHash->to_string(HashFormat::Base16, false),
+            .factSetHash = envFactSetHash,
         };
     }
 

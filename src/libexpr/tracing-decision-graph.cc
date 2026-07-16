@@ -1144,9 +1144,10 @@ static void dg_recordImpl(
     const Hash & result,
     const std::unordered_map<Hash, Hash> & responseFor,
     const std::unordered_set<Hash> & allRequests,
-    const Hash * sessionRequestsRsHash = nullptr)
+    const Hash * sessionRequestsRsHash = nullptr,
+    Hash startFactSetHash = TracingDecisionGraph::emptySetHash())
 {
-    auto cur = TracingDecisionGraph::emptySetHash();
+    auto cur = startFactSetHash;
     std::unordered_set<Hash> dispatchedSoFar;
 
     auto isInRemaining = [&](const Hash & req) {
@@ -1280,9 +1281,10 @@ void TracingDecisionGraph::record(
     const SetHash & factSetHash,
     const ResultHash & result,
     const std::unordered_map<Hash, Hash> & responseFor,
-    const std::unordered_set<Hash> & allRequests)
+    const std::unordered_set<Hash> & allRequests,
+    SetHash startFactSetHash)
 {
-    dg_recordImpl(*this, q, factSetHash, result, responseFor, allRequests);
+    dg_recordImpl(*this, q, factSetHash, result, responseFor, allRequests, nullptr, startFactSetHash);
 }
 
 void TracingDecisionGraph::record(
@@ -1291,9 +1293,10 @@ void TracingDecisionGraph::record(
     const ResultHash & result,
     const std::unordered_map<Hash, Hash> & responseFor,
     const std::unordered_set<Hash> & allRequests,
-    const SetHash & sessionRequestsRsHash)
+    const SetHash & sessionRequestsRsHash,
+    SetHash startFactSetHash)
 {
-    dg_recordImpl(*this, q, factSetHash, result, responseFor, allRequests, &sessionRequestsRsHash);
+    dg_recordImpl(*this, q, factSetHash, result, responseFor, allRequests, &sessionRequestsRsHash, startFactSetHash);
 }
 
 bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factSet)

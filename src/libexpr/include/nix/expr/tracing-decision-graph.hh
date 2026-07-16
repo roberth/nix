@@ -301,26 +301,36 @@ public:
        handing them in by reference so record() skips the O(N)
        rebuild of these structures from getFactSet() members on every
        call. TracingWriter uses this; tests use the simpler overload
-       above. */
-    void record(
-        const QueryHash & q,
-        const SetHash & factSet,
-        const ResultHash & result,
-        const std::unordered_map<Hash, Hash> & responseFor,
-        const std::unordered_set<Hash> & allRequests);
+       above.
 
-    /* Fastest overload: caller also supplies the canonical RequestSet
-       hash for the *current* allRequests (e.g. from an incremental
-       TrieBuilder). When record() falls through to the whole-remaining
-       insert at cur=∅, it uses this precomputed hash directly and
-       avoids re-running insertRequestSet over allRequests. */
+       `startFactSetHash` is the explicit start point of this Q's Ask
+       chain — the "structural parent factSet" (parent Query's
+       terminalCur). Defaults to emptySetHash(), giving from-∅
+       behavior. Non-empty values anchor the chain at parent's
+       terminal so the walker's parentAnchor path finds Q-labeled
+       Asks there. */
     void record(
         const QueryHash & q,
         const SetHash & factSet,
         const ResultHash & result,
         const std::unordered_map<Hash, Hash> & responseFor,
         const std::unordered_set<Hash> & allRequests,
-        const SetHash & sessionRequestsRsHash);
+        SetHash startFactSetHash);
+
+    /* Fastest overload: caller also supplies the canonical RequestSet
+       hash for the *current* allRequests (e.g. from an incremental
+       TrieBuilder). When record() falls through to the whole-remaining
+       insert at cur=startFactSetHash, it uses this precomputed hash
+       directly and avoids re-running insertRequestSet over
+       allRequests. See other overload for `startFactSetHash`. */
+    void record(
+        const QueryHash & q,
+        const SetHash & factSet,
+        const ResultHash & result,
+        const std::unordered_map<Hash, Hash> & responseFor,
+        const std::unordered_set<Hash> & allRequests,
+        const SetHash & sessionRequestsRsHash,
+        SetHash startFactSetHash);
 
     /* Navigate from (Q, ∅) using `dispatch` to evaluate Requests
        the recorded path needs. Returns the Result hash on hit,
