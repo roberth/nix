@@ -31,6 +31,31 @@ State creep is over-approximation — the cache key widens beyond
 the strict minimum — but never invalidates incorrectly. Both
 interaction models are designed around it.
 
+*In development, untested but promising* — qualifiers useful when
+reasoning about state creep on the write side:
+
+- **Locally minimal** — a fact set / state hash is *locally
+  minimal* at a Query if no new facts or observations were recorded
+  between the Query's structural parent and the Query itself. State
+  creep contributed nothing between them.
+- **Ancestrally minimal** — locally minimal along parents
+  transitively. Weaker than session-minimal (see next); probably
+  not what you actually want.
+- **Session-minimal** — no extraneous requests recorded anywhere in
+  the session up to this Query. Strongest of the three.
+
+Ancestrally minimal is not session-minimal in the general case. A
+CLI-driven evaluator can load file after file (or expression after
+expression) within one session. Each file's evaluation may be
+ancestrally minimal down its own tree, but only the *first* file's
+tree can also be session-minimal — the second file's evaluation
+starts against a session cur that already folded the first file's
+facts. In `builtins.cache` we currently have one starting
+expression per `cache` call and one session per `cache` call, so
+ancestrally-minimal and session-minimal coincide by construction —
+but that's an assumption specific to the primop, not a general
+property.
+
 ---
 
 ## Interaction models
