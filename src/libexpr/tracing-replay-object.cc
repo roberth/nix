@@ -83,26 +83,14 @@ std::vector<std::string> TracingReplayObject::parentHashCandidates() const
     std::vector<std::string> out;
     if (applyResultSubject && applyContext) {
         out.push_back(evolvedQueryFrom());
-        /* If we've completed our WHNF probe, query at the post-WHNF
-           prefix too. IDs are consistent with facts: a smaller fact
-           set produces different IDs that align with recordings made
-           at that state. Useful for composition of independent
-           warmups where each warmup probed one attr after WHNF —
-           sibling attrs in those warmups recorded at this prefix
-           regardless of which warmup wrote them. */
-        if (postWHNFObservationCount && *postWHNFObservationCount < applyContext->observations.size()) {
-            std::vector<ObservationSet> history;
-            history.reserve(*postWHNFObservationCount);
-            for (size_t i = 0; i < *postWHNFObservationCount; ++i) {
-                ObservationSet edge;
-                edge.observations.push_back(applyContext->observations[i]);
-                history.push_back(std::move(edge));
-            }
-            auto snap = stateHashAt(*applyResultSubject, applyArgAncestry, history, history.size());
-            auto snapHex = snap.to_string(HashFormat::Base16, false);
-            if (snapHex != out.front())
-                out.push_back(snapHex);
-        }
+        /* Removed the postWHNF prefix "historic" candidate. It was a
+           smaller state hash — a subset of the observations actually
+           accumulated. Using it as a lookup key mirrors the writer-
+           side pitfall we banned: treating a hash for a *smaller* set
+           as if it identified the recording we want. Sibling attrs
+           recorded at a smaller prefix aren't ours to serve — that
+           was the recording's precondition when it was written, not
+           the lookup's precondition now. Miss cleanly instead. */
     } else {
         out.push_back(triePos.queryHashStr);
     }
@@ -311,8 +299,6 @@ std::optional<const trace::ResultWHNF *> TracingReplayObject::whnf()
                 if (auto deep = lookupResult<trace::QueryGetWHNF, trace::ResultWHNF>(deepQuery)) {
                     auto deepQueryHash = TracingDecisionGraph::computeQueryHash(deepQuery);
                     pushObservation(deepFromHex, deepQueryHash, deep->second);
-                    if (applyContext)
-                        postWHNFObservationCount = applyContext->observations.size();
                     cachedWHNF = std::move(deep->first);
                     return &*cachedWHNF;
                 }
@@ -320,8 +306,6 @@ std::optional<const trace::ResultWHNF *> TracingReplayObject::whnf()
         }
 
         pushObservation(parentHash, shallowQueryHash, shallowResp);
-        if (applyContext)
-            postWHNFObservationCount = applyContext->observations.size();
         cachedWHNF = std::move(r->first);
         return &*cachedWHNF;
     }
