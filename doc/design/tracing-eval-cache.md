@@ -722,6 +722,18 @@ Performance harness under `tests/perf/tracing-cache/`:
   factSet is a redundant superset of an existing Terminal) and a
   distance-to-any-R navigation heuristic. The K² motivations are
   gone; the semantics remain valid future work.
+- **Structural-Ask index bloat.** Recording structural Asks
+  alongside fast-path Asks duplicates content in the index. How
+  much depends on the size of the first child's own requestSet and
+  how the Ask hierarchy fans out. Not solved by "follow this
+  sibling until" node types — those risk leading walks into traces
+  that don't reach the target. RequestSet sharing plus larger
+  per-node request increments help typical workloads but do little
+  for callback-heavy ones, where state-hash evolution forces query
+  rewriting between observations. A speculative direction: allow
+  query rewriting within a single requestSet (form TBD).
+  Optimisation only — the recording scheme is correct as-is; this
+  is index size / write cost, not correctness.
 - **Eviction / compaction**: none. The DB grows with the workload.
   At 41 MB per 10k recorded attrs, tolerable for a while.
 - **Wiring `nix-env -qa`** through the cache. Currently bypasses
