@@ -725,15 +725,27 @@ Performance harness under `tests/perf/tracing-cache/`:
 - **Structural-Ask index bloat.** Recording structural Asks
   alongside fast-path Asks duplicates content in the index. How
   much depends on the size of the first child's own requestSet and
-  how the Ask hierarchy fans out. Not solved by "follow this
-  sibling until" node types — those risk leading walks into traces
-  that don't reach the target. RequestSet sharing plus larger
-  per-node request increments help typical workloads but do little
-  for callback-heavy ones, where state-hash evolution forces query
-  rewriting between observations. A speculative direction: allow
-  query rewriting within a single requestSet (form TBD).
-  Optimisation only — the recording scheme is correct as-is; this
-  is index size / write cost, not correctness.
+  how the Ask hierarchy fans out. Concrete illustration in a
+  Nixpkgs-shaped workload: evaluating `pkgs` itself might only
+  touch a handful of files (`top-level.nix` and friends). But
+  evaluating `pkgs.hello` walks all of stdenv before reaching
+  `hello/package.nix` — and every subsequent `pkgs.foo` evaluation
+  repeats the stdenv Asks under its own Query. Structural chains
+  would replay that stdenv contribution once per package Query.
+  Not solved by "follow this sibling until" node types — those
+  risk leading walks into traces that don't reach the target.
+  RequestSet sharing plus larger per-node request increments help
+  typical workloads but do little for callback-heavy ones, where
+  state-hash evolution forces query rewriting between observations.
+  A speculative direction: allow query rewriting within a single
+  requestSet (form TBD). Complementary mitigation: budget the
+  number of structural Ask inserts per Query — when a Query's
+  structural chain exceeds the budget, stop inserting further
+  structural Asks. Costs the affected Query its slow-path
+  reachability but caps the write cost; also implicitly discourages
+  runaway state creep, which isn't desirable anyway. Optimisation
+  only — the recording scheme is correct as-is; this is index size
+  / write cost, not correctness.
 - **Eviction / compaction**: none. The DB grows with the workload.
   At 41 MB per 10k recorded attrs, tolerable for a while.
 - **Wiring `nix-env -qa`** through the cache. Currently bypasses
