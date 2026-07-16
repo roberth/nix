@@ -722,16 +722,21 @@ Performance harness under `tests/perf/tracing-cache/`:
   factSet is a redundant superset of an existing Terminal) and a
   distance-to-any-R navigation heuristic. The K² motivations are
   gone; the semantics remain valid future work.
-- **Structural-Ask index bloat.** Recording structural Asks
-  alongside fast-path Asks duplicates content in the index. How
-  much depends on the size of the first child's own requestSet and
-  how the Ask hierarchy fans out. Concrete illustration in a
-  Nixpkgs-shaped workload: evaluating `pkgs` itself might only
-  touch a handful of files (`top-level.nix` and friends). But
-  evaluating `pkgs.hello` walks all of stdenv before reaching
-  `hello/package.nix` — and every subsequent `pkgs.foo` evaluation
-  repeats the stdenv Asks under its own Query. Structural chains
-  would replay that stdenv contribution once per package Query.
+- **Structural-Ask insert cost during recording.** The concern is
+  the write-side load, not the read-side. On replay, following a
+  structural chain is fine — it's a variation of the fast path
+  (walker following a related index trace, not just its own
+  session's cumulative one). The worry is that inserting structural
+  Asks at record time scales as O(#children × Ask-depth-of-write)
+  for query patterns like `nix search`: many children, each with
+  a deep Ask chain from the parent's factSet through its own
+  observations. Concrete illustration in Nixpkgs shape: evaluating
+  `pkgs` itself might only touch a handful of files
+  (`top-level.nix` and friends). But evaluating `pkgs.hello` walks
+  all of stdenv before reaching `hello/package.nix` — and every
+  subsequent `pkgs.foo` evaluation repeats the stdenv Asks under
+  its own Query. Structural chains would insert that stdenv
+  contribution once per package Query.
   Not solved by "follow this sibling until" node types — those
   risk leading walks into traces that don't reach the target.
   RequestSet sharing plus larger per-node request increments help
