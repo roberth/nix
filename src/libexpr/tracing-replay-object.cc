@@ -37,43 +37,26 @@ ref<Object> TracingReplayObject::ensureInner() const
 
 std::string TracingReplayObject::evolvedQueryFrom() const
 {
-    /* If inner has been activated to a TracingObject, share its
-       applyContext for evolvedQueryFrom's computation — inner's
-       applyContext gets populated by TracingObject's own maybeGetAttr
-       / whnf / etc. as evaluation flows through it. TRO's own
-       applyContext only grows on cache HITS (via pushObservation from
-       maybeGetAttr's shallow/deep-lookup path); the two contexts
-       diverge whenever TRO falls through to inner. Sharing gives TRO
-       the same evolved from-hash cold's TracingObject would compute
-       at analogous points — the cb-sibling discrimination path
-       requires this alignment so warm's Q hashes match cold's stored
-       Q hashes for the derived .whatever queries. */
-    if (applyResultSubject && inner) {
-        if (auto * innerT = dynamic_cast<TracingObject *>(inner->get_ptr().get())) {
-            if (auto innerCtx = innerT->getApplyContext()) {
-                std::vector<ObservationSet> history;
-                history.reserve(innerCtx->observations.size());
-                for (auto & obs : innerCtx->observations) {
-                    ObservationSet edge;
-                    edge.observations.push_back(obs);
-                    history.push_back(std::move(edge));
-                }
-                auto evolved = stateHashAt(*applyResultSubject, applyArgAncestry, history, history.size());
-                return evolved.to_string(HashFormat::Base16, false);
-            }
-        }
-    }
-    if (applyResultSubject && applyContext) {
-        std::vector<ObservationSet> history;
-        history.reserve(applyContext->observations.size());
-        for (auto & obs : applyContext->observations) {
-            ObservationSet edge;
-            edge.observations.push_back(obs);
-            history.push_back(std::move(edge));
-        }
-        auto evolved = stateHashAt(*applyResultSubject, applyArgAncestry, history, history.size());
-        auto hex = evolved.to_string(HashFormat::Base16, false);
-        return hex;
+    /* Child queryHash `from` field derivation, aligned with walker
+       per-walk factSet at Ask edge precondition (Design principle 5
+       flush substitution shape). Each walker.walk() starts fresh at
+       factSet=∅, so parent's Subject state at that precondition is
+       its INITIAL state (empty history, step=0). Cold and warm agree
+       on this by construction: same Subject + argAncestry → same
+       initial state hash → same queryHash → slow-path walker finds
+       the recording.
+
+       Previously this computed evolved state from
+       applyContext.observations — a cross-walk accumulator that
+       drifts as sibling attrs are probed on the parent proxy. That
+       drift made queryHashes depend on probe order, breaking
+       independent-warmup composition (cb-deep-indep-singles) and
+       sibling recording matches (cb-sibling). Accumulator is not
+       the walker's per-walk factSet; walker per-walk factSet at
+       walk start is ∅. */
+    if (applyResultSubject) {
+        auto initial = stateHashAt(*applyResultSubject, applyArgAncestry, {}, 0);
+        return initial.to_string(HashFormat::Base16, false);
     }
     return triePos.queryHashStr;
 }

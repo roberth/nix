@@ -75,30 +75,18 @@ ref<TracingObject> TracingObject::create(
 
 std::string TracingObject::evolvedQueryFrom() const
 {
-    if (applyResultSubject && applyContext) {
-        std::vector<ObservationSet> history;
-        history.reserve(applyContext->observations.size());
-        for (auto & obs : applyContext->observations) {
-            ObservationSet edge;
-            edge.observations.push_back(obs);
-            history.push_back(std::move(edge));
-        }
-        /* Subject-evolution fast-path: emit fold-step stamps into SubjectEvolutionEdges
-           so walker can navigate subject's evolution edge-by-edge
-           rather than iterating K. Uses the subject's Merkle
-           content hash as the trie root key. */
-        Hash argSubjectHash = stateHashAt(
-            *applyResultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
-        auto evolved = stateHashAtStamping(
-            *applyResultSubject, applyArgAncestry, history, history.size(),
-            [&](const EvolutionStep & step) {
-                writer.insertSubjectEvolutionEdge(
-                    argSubjectHash, step.curBefore,
-                    step.obsFromHash, step.obsElementHash,
-                    step.curAfter);
-            });
-        auto hex = evolved.to_string(HashFormat::Base16, false);
-        return hex;
+    /* Child queryHash `from` field: parent's Subject state hash at
+       the walker's per-walk factSet precondition. At walk start
+       (fresh walker.walk()) that factSet is ∅, so we compute
+       parent's INITIAL state hash. Same convention as
+       TracingReplayObject::evolvedQueryFrom — recording and replay
+       agree by construction. Previously this folded
+       applyContext.observations, an accumulator that drifted across
+       sibling attr probes and broke independent-warmup composition
+       and sibling recording matches. */
+    if (applyResultSubject) {
+        auto initial = stateHashAt(*applyResultSubject, applyArgAncestry, {}, 0);
+        return initial.to_string(HashFormat::Base16, false);
     }
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());
 }
