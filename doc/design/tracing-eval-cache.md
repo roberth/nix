@@ -354,27 +354,22 @@ work-doing. When a tier misses cleanly, replay drops to the next.
    a fresh evaluation, which then records into the cache so
    subsequent replays can hit.
 
-### Outer-request discipline (open problem, separate from replay tiers)
+### Outer-request discipline (open problem)
 
-Independent of the fast/slow tiering above: a slow-path Ask can
-require dispatching an outer-evaluator request whose response replay
-doesn't already have (not in `responseFor`). Dispatching such a
-request invokes an outer callback the user's expression didn't ask
-for at that point — surfacing as unprompted logs, errors, or other
-observable outer behaviour the user cannot correlate with what they
-wrote. The right shape of the fix is to shortcut to the interpreter
-fallback in that case, but the exact semantics — which outer
-requests are safe to dispatch, when — are not fully pinned down.
-Env fallibility as a general mechanism needs implementing.
+An Ask can require dispatching an outer-evaluator request whose
+response replay doesn't already have (not in `responseFor`).
+Dispatching such a request invokes an outer callback the user's
+expression didn't ask for at that point — surfacing as unprompted
+logs, errors, or other observable outer behaviour the user cannot
+correlate with what they wrote. The right shape of the fix is to
+shortcut to the interpreter fallback in that case, but the exact
+semantics — which outer requests are safe to dispatch, when — are
+not fully pinned down. Env fallibility as a general mechanism needs
+implementing. Not trivially solved by the fast/slow path split
+above.
 
-This is a distinct concern from the fast/slow path split and from
-within-session drift below. Solving one does not automatically solve
-the other; they overlap only insofar as any speculative dispatch
-during warm inflates writer state, which is a symptom rather than a
-cause.
-
-*Observation about the current implementation, unrelated to
-outer-request discipline.* When replay dispatches a cb-apply via
+*Observation about the current implementation.* When replay
+dispatches a cb-apply via
 `dispatchApplyLive`, it invokes the outer's callback live. The
 callback's body probes outer values via `OuterObject`, and those
 probes flow through `TracingEnvironment::outerQuery` to
