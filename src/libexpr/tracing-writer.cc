@@ -410,42 +410,12 @@ void TracingWriter::flushAmbient(bool processApplies)
                 group.size(),
                 ambientResult.to_string(HashFormat::Base16, false).substr(0, 12));
 
-            /* Ambient redesign (task #103, in-progress wiring):
-               emit a QueryCallbackApply for this firing, keyed by
-               (fn state hash, observation set hash). Different
-               observation sets → different queryHashes → no
-               sibling collision. Runs alongside the old boundary
-               synthesis for now; walker handling not yet wired,
-               so no test impact expected. */
-            if (!pendingApply.fnStateHashHex.empty() && !group.empty()) {
-                std::vector<TracingDecisionGraph::Observation> observations;
-                observations.reserve(group.size());
-                for (const auto & fact : group) {
-                    nlohmann::json rJson = std::visit(
-                        [](const auto & r) -> nlohmann::json { return r; },
-                        fact.result);
-                    auto qHash = std::visit(
-                        [](const auto & q) {
-                            return TracingDecisionGraph::computeQueryHash(q);
-                        }, fact.query);
-                    auto rHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(rJson));
-                    observations.push_back({qHash, rHash});
-                }
-                auto obsSetHash = decisionGraph->insertObservationSet(observations);
-                trace::QueryCallbackApply cbApply{
-                    .fn = pendingApply.fnStateHashHex,
-                    .argObsSet = obsSetHash.to_string(HashFormat::Base16, false),
-                };
-                auto cbApplyQueryHash = TracingDecisionGraph::computeQueryHash(cbApply);
-                nlohmann::json cbApplyJson = cbApply;
-                decisionGraph->insertRequest(cbApplyQueryHash, jsonToCborString(cbApplyJson));
-                tracingCacheLog(
-                    "callbackApply emit: fn=%s obsSet=%s obs=%zu -> qHash=%s",
-                    pendingApply.fnStateHashHex.substr(0, 12),
-                    obsSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    observations.size(),
-                    cbApplyQueryHash.to_string(HashFormat::Base16, false).substr(0, 12));
-            }
+            /* Per-firing CallbackApply emission moved to
+               logAmbientObservation (task #103): each observation
+               emits its own CallbackApply with the running obsSet.
+               The last per-observation emission has the fullest
+               obsSet, subsuming what this per-firing emission would
+               produce. Kept comment as a landmark. */
 
             /* Unobserved cb-apply: the outer's callback body ran
                without probing the inner-supplied arg (group is empty).
