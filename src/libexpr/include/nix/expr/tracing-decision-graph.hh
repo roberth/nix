@@ -139,30 +139,36 @@ public:
     std::optional<std::string> getInnerValueResponsePayload(const RequestHash & requestHash, const Hash & contextHash);
 
     /* ObservationSet CAS pool. An observation set is the set of
-       (queryHash, responseHash) tuples the outer's callback probed
-       on an inner-supplied contra-arg during one callback firing.
+       (queryHash, responsePayload) tuples the outer's callback
+       probed on an inner-supplied contra-arg during one callback
+       firing. Payload is inline so the walker can reconstruct arg
+       responses without a separate response-payload table (no
+       InnerValueResponse dependency for this path).
+
        Referenced by `QueryCallbackApply.argObsSet` — different
        observation sets give different queryHashes → distinct DB
-       rows, no first-writer-wins collision at the shared prefix.
+       rows.
 
-       Payload is CBOR of the sorted-dedup member list; hash is
-       SHA-256 of the payload. Idempotent via INSERT OR IGNORE.
-       Members = `std::pair<QueryHash, ResponseHash>` tuples. */
+       Members hash: SHA-256 of the sorted-by-queryHash CBOR of the
+       member list. Idempotent via INSERT OR IGNORE. */
     struct Observation
     {
         Hash queryHash{HashAlgorithm::SHA256};
-        Hash responseHash{HashAlgorithm::SHA256};
+        /* CBOR bytes of the ambient probe's response (a
+           `trace::ResultVariant`). Used by the walker at replay to
+           serve callback probes via an obsSet-answering proxy. */
+        std::string responsePayload;
 
         bool operator==(const Observation & o) const
         {
-            return queryHash == o.queryHash && responseHash == o.responseHash;
+            return queryHash == o.queryHash && responsePayload == o.responsePayload;
         }
 
         bool operator<(const Observation & o) const
         {
             if (queryHash != o.queryHash)
                 return queryHash < o.queryHash;
-            return responseHash < o.responseHash;
+            return responsePayload < o.responsePayload;
         }
     };
     static Hash computeObservationSetHash(std::vector<Observation> members);

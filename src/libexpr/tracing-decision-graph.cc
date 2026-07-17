@@ -639,9 +639,14 @@ static std::string dg_observationSetPayload(
 {
     nlohmann::json arr = nlohmann::json::array();
     for (const auto & m : sortedMembers) {
+        /* Response payload embedded as a JSON binary value —
+           nlohmann::json's CBOR encoder handles it natively as a
+           byte string. Preserves exact CBOR bytes without any hex
+           encoding overhead. */
         arr.push_back({
             {"q", m.queryHash.to_string(HashFormat::Base16, false)},
-            {"r", m.responseHash.to_string(HashFormat::Base16, false)},
+            {"p", nlohmann::json::binary(std::vector<std::uint8_t>(
+                m.responsePayload.begin(), m.responsePayload.end()))},
         });
     }
     auto cbor = nlohmann::json::to_cbor(arr);
@@ -691,7 +696,8 @@ TracingDecisionGraph::getObservationSet(const Hash & h)
     for (const auto & elt : arr) {
         Observation m;
         m.queryHash = Hash::parseNonSRIUnprefixed(elt.at("q").get<std::string>(), HashAlgorithm::SHA256);
-        m.responseHash = Hash::parseNonSRIUnprefixed(elt.at("r").get<std::string>(), HashAlgorithm::SHA256);
+        auto & binVal = elt.at("p").get_binary();
+        m.responsePayload.assign(binVal.begin(), binVal.end());
         members.push_back(std::move(m));
     }
     return members;

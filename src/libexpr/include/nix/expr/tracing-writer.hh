@@ -536,8 +536,11 @@ public:
                         [](const auto & r) -> nlohmann::json { return r; },
                         result);
                     auto rPayload = jsonToCborString(rJson);
-                    auto rh = TracingDecisionGraph::computeResponseHash(rPayload);
-                    it->runningObsSet.push_back({qh, rh});
+                    /* Observation stores queryHash + inline
+                       responsePayload so the walker's obsSet-answering
+                       proxy can serve callback probes without any
+                       separate response table. */
+                    it->runningObsSet.push_back({qh, rPayload});
                     auto obsSetHash = decisionGraph->insertObservationSet(it->runningObsSet);
                     trace::QueryCallbackApply cbApply{
                         it->fnStateHashHex,
@@ -546,8 +549,17 @@ public:
                     auto cbApplyQueryHash = TracingDecisionGraph::computeQueryHash(cbApply);
                     nlohmann::json cbApplyJson = cbApply;
                     decisionGraph->insertRequest(cbApplyQueryHash, jsonToCborString(cbApplyJson));
-                    decisionGraph->insertInnerValueResponse(
-                        cbApplyQueryHash, Hash(HashAlgorithm::SHA256), rPayload);
+                    /* Deterministic callbackApply-fact response:
+                       CBOR of the obsSet hex. Both cold's fold and
+                       warm's dispatch compute the same, so the fact
+                       XOR-fold matches without any per-fact response
+                       storage. Walker validates outer live by firing
+                       fn with an obsSet-answering proxy at dispatch
+                       time; validation success is required before
+                       reaching this response. */
+                    auto cbApplyRespPayload = jsonToCborString(
+                        nlohmann::json(obsSetHash.to_string(HashFormat::Base16, false)));
+                    auto rh = TracingDecisionGraph::computeResponseHash(cbApplyRespPayload);
                     tracingCacheLog(
                         "callbackApply per-obs emit: fn=%s obsSet=%s obs=%zu -> qHash=%s",
                         it->fnStateHashHex.substr(0, 12),
