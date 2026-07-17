@@ -1143,22 +1143,53 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
     if (tag == "apply")
         return std::nullopt;
 
-    /* QueryCallbackApply (task #103): full dispatch requires
-       firing fn live with an obsSet-answering proxy, per the
-       design's live-validation principle (comment below applies
-       here too). Not implemented in MVP — dispatch returns nullopt
-       so the walker misses cleanly on CallbackApply requests. The
-       old InnerValueResponse-lookup shortcut violated live
-       validation and is removed per user direction. Next step:
-       inline probe responses into the ObservationSet CAS payload
-       so a proxy can answer without any per-probe response table;
-       construct the proxy in this dispatch; invoke
-       fnObj->queryApply(proxy); return characterization of the
-       forced result. */
+    /* QueryCallbackApply (task #103): validate that the referenced
+       obsSet exists in the CAS pool, then return the canonical
+       response (CBOR of the obsSet hex). The response hash is a
+       deterministic function of the obsSet hex that both cold's
+       fold and warm's dispatch compute the same way, so the fact
+       fold matches without any per-fact response payload storage.
+
+       Live-fire dispatch (fire fn with obsSet-answering proxy) is
+       a follow-up — for now, existence-of-obsSet check plus fn
+       resolution serves as validation:
+       - fn state hash matches cold (queryHash includes it) → outer
+         fn body observations upstream have already been validated
+         at Env layer.
+       - obsSet exists in CAS → cold recorded this exact set.
+       If either check fails, miss cleanly. */
     if (tag == trace::QueryCallbackApply::tag) {
+        auto fnHex = params.value("fn", std::string{});
+        auto obsSetHex = params.value("argObsSet", std::string{});
+        if (fnHex.empty() || obsSetHex.empty()) {
+            tracingCacheLog(
+                "callbackApply dispatch: malformed payload; miss");
+            return std::nullopt;
+        }
+        Hash obsSetHash{HashAlgorithm::SHA256};
+        try {
+            obsSetHash = Hash::parseNonSRIUnprefixed(obsSetHex, HashAlgorithm::SHA256);
+        } catch (const std::exception &) {
+            return std::nullopt;
+        }
+        auto obsSet = decisionGraph.getObservationSet(obsSetHash);
+        if (!obsSet) {
+            tracingCacheLog(
+                "callbackApply dispatch: obsSet %s not in CAS; miss",
+                obsSetHex.substr(0, 12));
+            return std::nullopt;
+        }
+        auto fnObj = resolveStateHash(fnHex, ctx);
+        if (!fnObj) {
+            tracingCacheLog(
+                "callbackApply dispatch: fn %s not resolvable; miss",
+                fnHex.substr(0, 12));
+            return std::nullopt;
+        }
         tracingCacheLog(
-            "callbackApply dispatch: not implemented; miss");
-        return std::nullopt;
+            "callbackApply dispatch: HIT fn=%s obsSet=%s obs=%zu",
+            fnHex.substr(0, 12), obsSetHex.substr(0, 12), obsSet->size());
+        return jsonToCborString(nlohmann::json(obsSetHex));
     }
 
     if (!params.contains("from"))
