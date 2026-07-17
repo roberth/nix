@@ -150,6 +150,16 @@ class TracingWriter
     std::vector<TracingDecisionGraph::SetHash> perQFactSetBaselineStack{
         TracingDecisionGraph::emptySetHash()};
 
+    /** Per-Q factSet: writer's cumulative XOR'd against current Q's
+        baseline. This is the value the walker would have as its
+        per-walk factSet at the corresponding point under matching-
+        until-divergence. */
+    TracingDecisionGraph::SetHash perQFactSetHash() const
+    {
+        return TracingDecisionGraph::xorHashes(
+            envFactSetHash, perQFactSetBaselineStack.back());
+    }
+
     struct AsksEdgeRecord
     {
         TracingDecisionGraph::SetHash fromFactSetHash;
@@ -161,13 +171,6 @@ class TracingWriter
        Q-own; logResult inserts only those, with fromFactSetHash
        rebased against the Q's baseline. */
     std::vector<size_t> perQAsksEdgesStartStack{0};
-
-    /* Q-local envWalk slice: envWalk size at the start of the
-       currently-active Q. Q-local history for stateHashAt =
-       envWalk[qStart..] — matches walker's per-walk envWalk under
-       task 90's per-walk scoping. */
-    std::vector<size_t> perQEnvWalkStartStack{0};
-
     /* Mirrors `seenRequests` but keyed by query hash, not fact hash.
        record()'s slow path iterates this to build the trailing
        remaining-edge — an Asks edge's requestSet is a set of query
@@ -317,25 +320,6 @@ public:
     {
     }
 
-    /** Q-local envWalk view: subset of envWalk from the current Q's
-        start onward. This is what a walker's per-walk envWalk would
-        contain at the corresponding point in its walk. */
-    std::vector<ObservationSet> perQEnvWalkView() const
-    {
-        auto start = perQEnvWalkStartStack.back();
-        return std::vector<ObservationSet>(envWalk.begin() + start, envWalk.end());
-    }
-
-    /** Q-local factSet: writer's cumulative XOR'd against current Q's
-        baseline. This is the value the walker would have as its
-        per-walk factSet at the corresponding point under matching-
-        until-divergence. */
-    TracingDecisionGraph::SetHash perQFactSetHash() const
-    {
-        return TracingDecisionGraph::xorHashes(
-            envFactSetHash, perQFactSetBaselineStack.back());
-    }
-
     /** The outer evaluator's writer, if this writer is inside a
         nested `builtins.cache` call. Its `getV13FactSetHash()` is
         the value the walker sees as `walkerCur` when it dispatches
@@ -428,7 +412,6 @@ public:
            context is restored at child's logResult. */
         perQFactSetBaselineStack.push_back(envFactSetHash);
         perQAsksEdgesStartStack.push_back(envAsksEdges.size());
-        perQEnvWalkStartStack.push_back(envWalk.size());
         QueryHandle qh{queryHash};
         if (parent)
             qh.structuralParentFactSetHash = parent->factSetHash;
@@ -822,7 +805,6 @@ public:
            continued evaluation. */
         perQFactSetBaselineStack.pop_back();
         perQAsksEdgesStartStack.pop_back();
-        perQEnvWalkStartStack.pop_back();
 
         /* Populate per-edge response table AFTER `record()` so
            Patricia-split-added Asks rows are covered too. Enumerate
