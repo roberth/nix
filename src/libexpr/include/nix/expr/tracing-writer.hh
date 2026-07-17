@@ -240,6 +240,14 @@ class TracingWriter
            in the payload. Captured at openCbApply time from the
            applyQueryPayload's `fn` field. */
         std::string fnStateHashHex;
+        /* Running observation set — grows by one each time
+           `logAmbientObservation` records a new probe on this
+           cb-apply's contra-arg. Each append produces a new
+           QueryCallbackApply request (fn + current obsSet hash) →
+           its queryHash → folded as a fact into envFactSet, with
+           InnerValueResponse recording the probe's response for
+           walker lookup at replay. Task #103. */
+        std::vector<TracingDecisionGraph::Observation> runningObsSet;
     };
     std::vector<PendingCbApply> pendingCbApplies;
 
@@ -509,6 +517,44 @@ public:
                         "logAmbientObservation: late probe queued for finalized applyId=%s (now %zu facts, %zu processed)",
                         applyId.to_string(HashFormat::Base16, false).substr(0, 12),
                         it->facts.size(), it->lastProcessedCount);
+                /* Ambient redesign (task #103): emit a
+                   QueryCallbackApply per probe with the running
+                   observation set. Different observation sets across
+                   sibling callback firings produce different
+                   queryHashes → distinct DB rows. Records the probe's
+                   response into InnerValueResponse keyed on the
+                   CallbackApply's queryHash so walker dispatch is a
+                   simple lookup. No envFactSet fold here yet —
+                   coexists with the existing AmbientAsk-driven fold
+                   in flushAmbient until cutover. */
+                if (!it->fnStateHashHex.empty()) {
+                    auto qh = std::visit(
+                        [](const auto & q) {
+                            return TracingDecisionGraph::computeQueryHash(q);
+                        }, query);
+                    nlohmann::json rJson = std::visit(
+                        [](const auto & r) -> nlohmann::json { return r; },
+                        result);
+                    auto rPayload = jsonToCborString(rJson);
+                    auto rh = TracingDecisionGraph::computeResponseHash(rPayload);
+                    it->runningObsSet.push_back({qh, rh});
+                    auto obsSetHash = decisionGraph->insertObservationSet(it->runningObsSet);
+                    trace::QueryCallbackApply cbApply{
+                        it->fnStateHashHex,
+                        obsSetHash.to_string(HashFormat::Base16, false),
+                    };
+                    auto cbApplyQueryHash = TracingDecisionGraph::computeQueryHash(cbApply);
+                    nlohmann::json cbApplyJson = cbApply;
+                    decisionGraph->insertRequest(cbApplyQueryHash, jsonToCborString(cbApplyJson));
+                    decisionGraph->insertInnerValueResponse(
+                        cbApplyQueryHash, Hash(HashAlgorithm::SHA256), rPayload);
+                    tracingCacheLog(
+                        "callbackApply per-obs emit: fn=%s obsSet=%s obs=%zu -> qHash=%s",
+                        it->fnStateHashHex.substr(0, 12),
+                        obsSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                        it->runningObsSet.size(),
+                        cbApplyQueryHash.to_string(HashFormat::Base16, false).substr(0, 12));
+                }
                 return;
             }
         }
