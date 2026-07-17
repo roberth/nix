@@ -1143,6 +1143,26 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
     if (tag == "apply")
         return std::nullopt;
 
+    /* QueryCallbackApply (task #103, walker-side wiring in progress):
+       payload references a content-addressed observation set. Full
+       dispatch — decode the obsSet, construct a proxy that answers
+       exactly those observations, invoke fn live, compare result —
+       is not wired yet. For now, log and miss cleanly. The writer
+       is emitting these requests already (feat 75a93e41f); the
+       walker just doesn't consume them. Once wiring lands: look up
+       obsSet via `decisionGraph.getObservationSet(hash)`, build a
+       proxy answering the (queryHash, responseHash) pairs, invoke
+       `fnObj->queryApply(proxy)`, return the callback's response
+       hash. Ask-structured miss on any live probe not in obsSet. */
+    if (tag == trace::QueryCallbackApply::tag) {
+        auto fn = params.value("fn", std::string{});
+        auto argObsSet = params.value("argObsSet", std::string{});
+        tracingCacheLog(
+            "callbackApply dispatch (unwired): fn=%s argObsSet=%s",
+            fn.substr(0, 12), argObsSet.substr(0, 12));
+        return std::nullopt;
+    }
+
     if (!params.contains("from"))
         return std::nullopt;
 
