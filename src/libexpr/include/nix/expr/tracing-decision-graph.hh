@@ -138,6 +138,37 @@ public:
     void insertInnerValueResponse(const RequestHash & requestHash, const Hash & contextHash, std::string_view payload);
     std::optional<std::string> getInnerValueResponsePayload(const RequestHash & requestHash, const Hash & contextHash);
 
+    /* ObservationSet CAS pool. An observation set is the set of
+       (queryHash, responseHash) tuples the outer's callback probed
+       on an inner-supplied contra-arg during one callback firing.
+       Referenced by `QueryCallbackApply.argObsSet` — different
+       observation sets give different queryHashes → distinct DB
+       rows, no first-writer-wins collision at the shared prefix.
+
+       Payload is CBOR of the sorted-dedup member list; hash is
+       SHA-256 of the payload. Idempotent via INSERT OR IGNORE.
+       Members = `std::pair<QueryHash, ResponseHash>` tuples. */
+    struct Observation
+    {
+        Hash queryHash{HashAlgorithm::SHA256};
+        Hash responseHash{HashAlgorithm::SHA256};
+
+        bool operator==(const Observation & o) const
+        {
+            return queryHash == o.queryHash && responseHash == o.responseHash;
+        }
+
+        bool operator<(const Observation & o) const
+        {
+            if (queryHash != o.queryHash)
+                return queryHash < o.queryHash;
+            return responseHash < o.responseHash;
+        }
+    };
+    static Hash computeObservationSetHash(std::vector<Observation> members);
+    Hash insertObservationSet(std::vector<Observation> members);
+    std::optional<std::vector<Observation>> getObservationSet(const Hash & h);
+
 
     /* ─────────────────────────────────────────────────────────────────
        Storage layer: set pools (content-addressed by canonical hash)

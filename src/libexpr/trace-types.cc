@@ -101,7 +101,8 @@ static void queryVariantFromJson(const nlohmann::json & j, QueryVariant & query)
         || tryParse.template operator()<QueryGetListOfStrings>()
         || tryParse.template operator()<QueryGetListElem>()
         || tryParse.template operator()<QueryGetFunctionInfo>()
-        || tryParse.template operator()<QueryGetWHNF>() || tryParse.template operator()<QueryApply>())
+        || tryParse.template operator()<QueryGetWHNF>() || tryParse.template operator()<QueryApply>()
+        || tryParse.template operator()<QueryCallbackApply>())
         return;
 
     throw nlohmann::json::parse_error::create(302, 0, "unknown ambient query tag: " + std::string(tag), &j);
@@ -542,6 +543,19 @@ void from_json(const nlohmann::json & j, QueryApply & q)
         params.at("argRootIndex").get_to(q.argRootIndex);
 }
 
+void to_json(nlohmann::json & j, const QueryCallbackApply & q)
+{
+    j = nlohmann::json{
+        {"query", QueryCallbackApply::tag},
+        {"params", {{"fn", q.fn}, {"argObsSet", q.argObsSet}}}};
+}
+
+void from_json(const nlohmann::json & j, QueryCallbackApply & q)
+{
+    j.at("params").at("fn").get_to(q.fn);
+    j.at("params").at("argObsSet").get_to(q.argObsSet);
+}
+
 // ---------------------------------------------------------------------------
 // parseTraceEntry
 // ---------------------------------------------------------------------------
@@ -617,6 +631,8 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
         if (auto r = tryParseQuery<QueryGetWHNF>(type, j))
             return r;
         if (auto r = tryParseQuery<QueryGetFunctionInfo>(type, j))
+            return r;
+        if (auto r = tryParseQuery<QueryCallbackApply>(type, j))
             return r;
         if (auto r = tryParseQuery<QueryApply>(type, j))
             return r;

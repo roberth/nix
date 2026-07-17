@@ -474,6 +474,38 @@ struct QueryApply
 };
 DECLARE_QUERY_RESULT(QueryApply, ResultType)
 
+/** Apply a callback to a contra-arg, identified by the outer's
+    observation-set on the contra-arg.
+
+    Distinct from `QueryApply` in identity semantics: a regular
+    `QueryApply` identifies the arg by its state hash (evolving via
+    Env-layer observation folding), while `QueryCallbackApply`
+    identifies the arg by the SET of observations the outer's
+    callback made on it during this call. Different observation sets
+    → different queryHashes → distinct DB rows.
+
+    Motivation: sibling `(cb 10) + (cb 20)` calls whose contra-args
+    have identical initial state hashes but observably different
+    values. State-hash-only identity collides at the first probe;
+    observation-set identity discriminates by construction.
+
+    `argObsSet` is a content hash referring to an entry in the
+    ObservationSet CAS pool. The pool entry lists the (queryHash,
+    responseHash) tuples of the outer's probes on the contra-arg
+    during this call.
+
+    Payload consumers: writer emits this at callback firing end
+    with the accumulated observation set. Walker constructs a proxy
+    that answers exactly those observations, invokes fn live. */
+struct QueryCallbackApply
+{
+    static constexpr std::string_view tag = "callbackApply";
+    QueryLeaf fn;              ///< Function identity (state hash of the callback)
+    std::string argObsSet;     ///< Content hash of the observation set
+    auto operator<=>(const QueryCallbackApply &) const = default;
+};
+DECLARE_QUERY_RESULT(QueryCallbackApply, ResultType)
+
 // ---------------------------------------------------------------------------
 // CompletedQuery: a query correlated with its result
 // ---------------------------------------------------------------------------
@@ -520,7 +552,8 @@ using Queries = ApplyWrapper<
     QueryGetListElem,
     QueryGetFunctionInfo,
     QueryGetWHNF,
-    QueryApply>;
+    QueryApply,
+    QueryCallbackApply>;
 
 /**
  * All result payload types.
@@ -546,7 +579,8 @@ using QueryVariant = std::variant<
     QueryGetListElem,
     QueryGetFunctionInfo,
     QueryGetWHNF,
-    QueryApply>;
+    QueryApply,
+    QueryCallbackApply>;
 
 using ResultVariant = std::variant<
     ResultType,

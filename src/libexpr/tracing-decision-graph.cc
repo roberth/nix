@@ -69,6 +69,17 @@ CREATE TABLE IF NOT EXISTS InnerValueResponse (
     PRIMARY KEY (requestHash, contextHash)
 );
 
+-- ObservationSet CAS pool: content-addressed sets of (queryHash,
+-- responseHash) tuples. Referenced from QueryCallbackApply payloads
+-- to identify the specific observations an outer callback made on
+-- an inner-supplied contra-arg during one callback firing. Distinct
+-- observation sets → distinct QueryCallbackApply queryHashes →
+-- distinct DB rows. Same set → same hash → shared row.
+CREATE TABLE IF NOT EXISTS ObservationSet (
+    setHash BLOB PRIMARY KEY,
+    payload BLOB NOT NULL
+) WITHOUT ROWID;
+
 -- Storage layer: set pools.
 --
 -- RequestSets are stored as a hash-prefix trie of content-addressed
@@ -171,6 +182,7 @@ struct TracingDecisionGraph::State
     /* Storage layer */
     SQLiteStmt insertRequest, insertQuery, insertResult, insertInnerValueResponse;
     SQLiteStmt selectRequest, selectQuery, selectResult, selectInnerValueResponse;
+    SQLiteStmt insertObservationSet, selectObservationSet;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
     SQLiteStmt countAsks, countTerminals;
@@ -405,6 +417,10 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "SELECT payload FROM Results WHERE resultHash = ?");
     state->selectInnerValueResponse.create(state->db,
         "SELECT payload FROM InnerValueResponse WHERE requestHash = ? AND contextHash = ?");
+    state->insertObservationSet.create(state->db,
+        "INSERT OR IGNORE INTO ObservationSet(setHash, payload) VALUES (?, ?)");
+    state->selectObservationSet.create(state->db,
+        "SELECT payload FROM ObservationSet WHERE setHash = ?");
     /* Drop obsolete tables from earlier schema versions. */
     state->db.exec("DROP TABLE IF EXISTS FactSets;");
     state->db.exec("DROP TABLE IF EXISTS EdgeResponses;");
@@ -610,6 +626,74 @@ static std::vector<T> dg_sortAndDedup(std::vector<T> members)
 {
     std::sort(members.begin(), members.end());
     members.erase(std::unique(members.begin(), members.end()), members.end());
+    return members;
+}
+
+/* ObservationSet CAS pool. Flat CBOR payload of sorted-dedup member
+   list; hash = SHA-256 of payload. Distinct from RequestSet's trie
+   because expected member counts are small (per callback firing),
+   and lookup is by whole-set hash — no set-difference operations
+   needed here. */
+static std::string dg_observationSetPayload(
+    const std::vector<TracingDecisionGraph::Observation> & sortedMembers)
+{
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto & m : sortedMembers) {
+        arr.push_back({
+            {"q", m.queryHash.to_string(HashFormat::Base16, false)},
+            {"r", m.responseHash.to_string(HashFormat::Base16, false)},
+        });
+    }
+    auto cbor = nlohmann::json::to_cbor(arr);
+    return std::string(reinterpret_cast<const char *>(cbor.data()), cbor.size());
+}
+
+Hash TracingDecisionGraph::computeObservationSetHash(
+    std::vector<TracingDecisionGraph::Observation> members)
+{
+    auto sorted = dg_sortAndDedup(std::move(members));
+    return hashString(HashAlgorithm::SHA256, dg_observationSetPayload(sorted));
+}
+
+Hash TracingDecisionGraph::insertObservationSet(
+    std::vector<TracingDecisionGraph::Observation> members)
+{
+    auto sorted = dg_sortAndDedup(std::move(members));
+    auto payload = dg_observationSetPayload(sorted);
+    auto h = hashString(HashAlgorithm::SHA256, payload);
+    {
+        auto state(_state->lock());
+        auto use = state->insertObservationSet.use();
+        dg_bindBlob(use, dg_hashToBlob(h));
+        dg_bindBlob(use, payload);
+        use.exec();
+    }
+    return h;
+}
+
+std::optional<std::vector<TracingDecisionGraph::Observation>>
+TracingDecisionGraph::getObservationSet(const Hash & h)
+{
+    std::optional<std::string> payload;
+    {
+        auto state(_state->lock());
+        auto query = state->selectObservationSet.use();
+        dg_bindBlob(query, dg_hashToBlob(h));
+        if (query.next())
+            payload = query.getBlob(0);
+    }
+    if (!payload)
+        return std::nullopt;
+    auto bytes = reinterpret_cast<const uint8_t *>(payload->data());
+    auto arr = nlohmann::json::from_cbor(bytes, bytes + payload->size());
+    std::vector<Observation> members;
+    members.reserve(arr.size());
+    for (const auto & elt : arr) {
+        Observation m;
+        m.queryHash = Hash::parseNonSRIUnprefixed(elt.at("q").get<std::string>(), HashAlgorithm::SHA256);
+        m.responseHash = Hash::parseNonSRIUnprefixed(elt.at("r").get<std::string>(), HashAlgorithm::SHA256);
+        members.push_back(std::move(m));
+    }
     return members;
 }
 
