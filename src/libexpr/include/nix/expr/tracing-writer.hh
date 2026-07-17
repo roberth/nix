@@ -232,6 +232,14 @@ class TracingWriter
            DB. Re-entrant finalize passes only need to insert the
            tail `facts[lastProcessedCount..]`. */
         size_t lastProcessedCount = 0;
+        /* Fn's Subject-derived state hash for this cb-apply. Used
+           to build the QueryCallbackApply payload at flush time —
+           this Q's payload references the arg's observation set
+           (built from `facts` above) rather than the arg's
+           state hash, so the fn side still needs its state hash
+           in the payload. Captured at openCbApply time from the
+           applyQueryPayload's `fn` field. */
+        std::string fnStateHashHex;
     };
     std::vector<PendingCbApply> pendingCbApplies;
 

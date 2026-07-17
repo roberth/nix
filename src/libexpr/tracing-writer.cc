@@ -410,6 +410,43 @@ void TracingWriter::flushAmbient(bool processApplies)
                 group.size(),
                 ambientResult.to_string(HashFormat::Base16, false).substr(0, 12));
 
+            /* Ambient redesign (task #103, in-progress wiring):
+               emit a QueryCallbackApply for this firing, keyed by
+               (fn state hash, observation set hash). Different
+               observation sets → different queryHashes → no
+               sibling collision. Runs alongside the old boundary
+               synthesis for now; walker handling not yet wired,
+               so no test impact expected. */
+            if (!pendingApply.fnStateHashHex.empty() && !group.empty()) {
+                std::vector<TracingDecisionGraph::Observation> observations;
+                observations.reserve(group.size());
+                for (const auto & fact : group) {
+                    nlohmann::json rJson = std::visit(
+                        [](const auto & r) -> nlohmann::json { return r; },
+                        fact.result);
+                    auto qHash = std::visit(
+                        [](const auto & q) {
+                            return TracingDecisionGraph::computeQueryHash(q);
+                        }, fact.query);
+                    auto rHash = TracingDecisionGraph::computeResponseHash(jsonToCborString(rJson));
+                    observations.push_back({qHash, rHash});
+                }
+                auto obsSetHash = decisionGraph->insertObservationSet(observations);
+                trace::QueryCallbackApply cbApply{
+                    .fn = pendingApply.fnStateHashHex,
+                    .argObsSet = obsSetHash.to_string(HashFormat::Base16, false),
+                };
+                auto cbApplyQueryHash = TracingDecisionGraph::computeQueryHash(cbApply);
+                nlohmann::json cbApplyJson = cbApply;
+                decisionGraph->insertRequest(cbApplyQueryHash, jsonToCborString(cbApplyJson));
+                tracingCacheLog(
+                    "callbackApply emit: fn=%s obsSet=%s obs=%zu -> qHash=%s",
+                    pendingApply.fnStateHashHex.substr(0, 12),
+                    obsSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                    observations.size(),
+                    cbApplyQueryHash.to_string(HashFormat::Base16, false).substr(0, 12));
+            }
+
             /* Unobserved cb-apply: the outer's callback body ran
                without probing the inner-supplied arg (group is empty).
                No content crossed the boundary → no Ambient Fact to
@@ -627,15 +664,34 @@ void TracingWriter::openCbApply(const nlohmann::json & applyQueryPayload)
        puts ε BEFORE its body's env facts in walker dispatch order,
        so the lambda-ReplayCallbackArg's seedCell extension fires before
        arg(N+1) probes try to resolve. */
-    pendingCbApplies.push_back({
+    /* Extract fn's state hash from the applyQueryPayload (params.fn)
+       so we can build the QueryCallbackApply payload at flush time
+       without re-parsing. Empty string on legacy payloads where the
+       field isn't present (in which case CallbackApply emission is
+       skipped). */
+    std::string fnStateHashHex;
+    try {
+        if (applyQueryPayload.contains("params")
+            && applyQueryPayload["params"].contains("fn")
+            && applyQueryPayload["params"]["fn"].is_object()
+            && applyQueryPayload["params"]["fn"].contains("stateHash"))
+            fnStateHashHex = applyQueryPayload["params"]["fn"]["stateHash"].get<std::string>();
+        else if (applyQueryPayload.contains("params")
+                 && applyQueryPayload["params"].contains("fn")
+                 && applyQueryPayload["params"]["fn"].is_string())
+            fnStateHashHex = applyQueryPayload["params"]["fn"].get<std::string>();
+    } catch (...) {}
+    PendingCbApply pending{
         applyReqHash,
         applyReqHash,
         {},
-        envAsksEdges.size(),  // insertionIndex AFTER pre-boundary chunk
-        prevQFactSetHash,      // envCurAtOpen
-        outerEnvCurAtOpen,     // captured for InnerValueResponse contextHash
-        Hash(HashAlgorithm::SHA256)  // contextCur (populated at first finalize)
-    });
+        envAsksEdges.size(),
+        prevQFactSetHash,
+        outerEnvCurAtOpen,
+        Hash(HashAlgorithm::SHA256),
+    };
+    pending.fnStateHashHex = std::move(fnStateHashHex);
+    pendingCbApplies.push_back(std::move(pending));
     tracingCacheLog("openCbApply: buffered (applyReqHash=%s, pendingBoundaries=%zu, insertionIndex=%zu)",
                     applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
                     pendingCbApplies.size(),
