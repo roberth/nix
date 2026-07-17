@@ -1143,26 +1143,22 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
     if (tag == "apply")
         return std::nullopt;
 
-    /* QueryCallbackApply (task #103): the response for this
-       specific probe was recorded into InnerValueResponse by the
-       writer at record time, keyed on the CallbackApply's own
-       queryHash. Walker dispatch is a table lookup; matching-
-       until-divergence is enforced upstream by the queryHash
-       encoding fn + obsSet. */
+    /* QueryCallbackApply (task #103): full dispatch requires
+       firing fn live with an obsSet-answering proxy, per the
+       design's live-validation principle (comment below applies
+       here too). Not implemented in MVP — dispatch returns nullopt
+       so the walker misses cleanly on CallbackApply requests. The
+       old InnerValueResponse-lookup shortcut violated live
+       validation and is removed per user direction. Next step:
+       inline probe responses into the ObservationSet CAS payload
+       so a proxy can answer without any per-probe response table;
+       construct the proxy in this dispatch; invoke
+       fnObj->queryApply(proxy); return characterization of the
+       forced result. */
     if (tag == trace::QueryCallbackApply::tag) {
-        auto cbApplyQueryHash = hashString(HashAlgorithm::SHA256, reqJson.dump());
-        auto payload = decisionGraph.getInnerValueResponsePayload(
-            cbApplyQueryHash, Hash(HashAlgorithm::SHA256));
-        if (!payload) {
-            tracingCacheLog(
-                "callbackApply dispatch: no recorded response for qHash=%s",
-                cbApplyQueryHash.to_string(HashFormat::Base16, false).substr(0, 12));
-            return std::nullopt;
-        }
         tracingCacheLog(
-            "callbackApply dispatch: HIT qHash=%s",
-            cbApplyQueryHash.to_string(HashFormat::Base16, false).substr(0, 12));
-        return *payload;
+            "callbackApply dispatch: not implemented; miss");
+        return std::nullopt;
     }
 
     if (!params.contains("from"))
