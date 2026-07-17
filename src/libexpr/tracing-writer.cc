@@ -607,7 +607,7 @@ void TracingWriter::openCbApply(const nlohmann::json & applyQueryPayload)
        provenance beats the generic RequestHash entry from the
        insertRequest macro (first-registration-wins). */
     Hash outerEnvCurAtOpen = outerWriter
-        ? outerWriter->getV13FactSetHash()
+        ? outerWriter->perQFactSetHash()
         : Hash(HashAlgorithm::SHA256);
     if (provenanceEnabled())
         recordProvenance(applyReqHash, "applyRequestHash",
