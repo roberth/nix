@@ -54,12 +54,14 @@ class TracingReplayObject : public Object
     ref<Object> ensureInner() const;
 
     std::string evolvedQueryFrom() const;
-    /** Candidate parent hashes for child Q construction. Currently a
-        single candidate: the full evolved hash (stateHashAt over
-        current applyContext observations). A previous "historic"
-        smaller-prefix candidate was removed — it violated the
-        smaller-hash caveat by using a hash that identifies a subset
-        of what's actually observed. */
+    /** Candidate parent hashes for child Q construction. First is the
+        full evolved hash (= stateHashAt over current applyContext
+        observations); if `postWHNFObservationCount` is set and points
+        to a smaller fact set, a second candidate is the parent hash
+        at that prefix (= the parent's "initial discovery state,"
+        matching sibling-attr recordings in independent warmups).
+        IDs are always consistent with their fact set; querying at a
+        smaller fact set aligns with recordings made at that state. */
     std::vector<std::string> parentHashCandidates() const;
     void pushObservation(const std::string & fromHex, const Hash & queryHash, const Hash & responseHash);
 
@@ -84,6 +86,14 @@ class TracingReplayObject : public Object
     mutable std::optional<trace::ResultWHNF> cachedWHNF;
     std::optional<const trace::ResultWHNF *> whnf();
 
+    /* Snapshot of `applyContext->observations.size()` right after
+       this TracingReplayObject's own `whnf()` push. The "parent's initial discovery
+       state" — sibling attr probes recorded in independent sessions
+       were stamped with parent hash = stateHashAt at THIS prefix.
+       parentHashCandidates uses it as a second lookup candidate
+       (= "query at a smaller fact set so IDs align with recordings
+       made before sibling probes accumulated"). */
+    mutable std::optional<size_t> postWHNFObservationCount;
 
 public:
     TracingReplayObject(
