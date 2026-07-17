@@ -641,30 +641,22 @@ public:
                         allRequestHashes.insert(cbApplyQueryHash);
                         auto requestSetHash = decisionGraph->insertRequestSet({cbApplyQueryHash});
                         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-                        /* Observation's `from` = subject state hash
-                           at pre-observation step. Under matching-
-                           until-divergence, sibling callback firings
-                           produce different element hashes → arg
-                           Subject's state hash evolves distinctly
-                           per sibling → downstream applyResult
-                           Subject state hashes discriminate
-                           siblings, so subsequent Env-layer probes
-                           get sibling-distinct queryHashes.
-
-                           We extract the from from the query's
-                           `from` field which stampAndEmit sets to
-                           the arg subject's stateHashAt at the
-                           current probe step. */
+                        /* Observation's `fromHash` = fn's subject
+                           state hash. CallbackApply is a contextually
+                           atomic observation ON THE FUNCTION — the
+                           firing evolves fn's state, not arg's. Arg
+                           stays at its Arg{depth} baseId; follow-up
+                           observations that involve this firing are
+                           modelled as new CallbackApply queries with
+                           their own obsSets, discriminating siblings
+                           at the payload level by construction.
+                           Downstream compound subjects (applyResult)
+                           inherit fn's evolution via the compositional
+                           state hash formula. */
                         Hash fromStateHash{HashAlgorithm::SHA256};
                         try {
-                            nlohmann::json qJson = std::visit(
-                                [](const auto & q) -> nlohmann::json { return q; }, query);
-                            if (qJson.contains("params") && qJson["params"].contains("from")) {
-                                auto fromHex = qJson["params"]["from"].get<std::string>();
-                                if (!fromHex.empty())
-                                    fromStateHash = Hash::parseNonSRIUnprefixed(
-                                        fromHex, HashAlgorithm::SHA256);
-                            }
+                            fromStateHash = Hash::parseNonSRIUnprefixed(
+                                it->fnStateHashHex, HashAlgorithm::SHA256);
                         } catch (...) {}
                         ObservationSet obsSetEdge;
                         obsSetEdge.observations.push_back({

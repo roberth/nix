@@ -176,23 +176,15 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
                                 params["from"].get<std::string>(), HashAlgorithm::SHA256);
                         } catch (...) {}
                     } else if (queryTag == trace::QueryCallbackApply::tag
-                               && params.contains("argDepth")
-                               && params.contains("argAncestry")) {
-                        /* CallbackApply has no `from` field on the
-                           query itself. Writer stamps the observation's
-                           fromHash with the ambient probe's `from` =
-                           `stateHashAfter(Arg{argDepth}, argAncestry,
-                           {})`, i.e. the callback arg's structural
-                           subject id. Walker must derive the same
-                           value from the payload so its per-Fact fold
-                           into envWalk matches cold's writer. */
+                               && params.contains("fn")) {
+                        /* CallbackApply is atomic ON THE FUNCTION.
+                           The Fact's `fromHash` is fn's subject state
+                           hash — CallbackApply's fold evolves fn (not
+                           arg). Walker takes fn from the payload
+                           directly; matches writer's stamping. */
                         try {
-                            auto argAncestry = Hash::parseNonSRIUnprefixed(
-                                params["argAncestry"].get<std::string>(),
-                                HashAlgorithm::SHA256);
-                            int argDepth = params["argDepth"].get<int>();
-                            Subject argRoot{Arg{argDepth}};
-                            outerFromHash = stateHashAfter(argRoot, argAncestry, {});
+                            outerFromHash = Hash::parseNonSRIUnprefixed(
+                                params["fn"].get<std::string>(), HashAlgorithm::SHA256);
                         } catch (...) {}
                     }
                     if (params.contains("name"))
@@ -578,6 +570,39 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
         return nullptr;
     }
 
+    /* Task #103: callback-arg resolution takes priority over pool
+       lookup. If target matches Arg{argDepth}'s baseId for any
+       tracked cbApply, materialise a fresh ReplayCallbackArg backed
+       by the latest cbApply's obsSet. Runs before the localArg
+       sidecar path — the sidecar returns an old-style
+       InnerValueResponse-only ReplayCallbackArg that doesn't know
+       about the obsSet the callback body needs to probe. */
+    for (auto it = callbackApplies.rbegin(); it != callbackApplies.rend(); ++it) {
+        if (it->baseArgStateHash != idHash)
+            continue;
+        auto obsSet = decisionGraph.getObservationSet(it->argObsSet);
+        if (!obsSet)
+            continue;
+        auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
+        for (const auto & obs : *obsSet)
+            obsSetMap->emplace(obs.queryHash, obs.responsePayload);
+        Subject rootSubject{Arg{it->argDepth}};
+        auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
+        auto chainCursor = std::make_shared<Hash>(HashAlgorithm::SHA256);
+        Hash zeroContext(HashAlgorithm::SHA256);
+        auto replayArg = std::make_shared<ReplayCallbackArg>(
+            std::move(rootSubject), it->argAncestry,
+            walkFacts, chainCursor, zeroContext,
+            decisionGraph, inner->getEvalState().rootFSRoot,
+            &inner->getEvalState());
+        replayArg->withObsSetResponses(obsSetMap);
+        tracingCacheLog(
+            "resolve %s: materialised fresh ReplayCallbackArg (argDepth=%d, obsSet=%s, latest cbApply)",
+            idStr.substr(0, 12), it->argDepth,
+            it->argObsSet.to_string(HashFormat::Base16, false).substr(0, 12));
+        return replayArg;
+    }
+
     auto reqPayload = decisionGraph.getRequestPayload(idHash);
     if (!reqPayload) {
         /* "Not in pool" means the id has no recorded provenance — no
@@ -627,56 +652,6 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                     idStr.substr(0, 12));
                 ctx.memo[idStr] = live;
                 return live;
-            }
-        }
-        /* Task #103: callback-arg resolution. Target may be a
-           callback arg's subject id (base or CallbackApply-evolved).
-           Different sibling firings can share the same target
-           evolved state hash (Arg{depth}'s cumulative state stops
-           evolving after the first cbApply's fold — subsequent
-           cbApply Facts carry obs.from = baseId which no longer
-           matches arg's running state, so they don't further fold).
-           Target hash alone therefore can't discriminate siblings.
-           The current firing at the point of a downstream probe is
-           determined by the walker's envWalk trajectory: the
-           most-recently-folded cbApply Fact is this firing's.
-
-           Two-step: (1) verify target is a reachable arg state hash
-           for SOME tracked cbApply (matches its base or
-           base-XOR-elementHash); (2) materialise the ReplayCallbackArg
-           from the MOST RECENTLY committed cbApply record. Fresh
-           per probe — no ctx.memo caching (would misroute later
-           siblings). */
-        bool anyMatch = false;
-        for (const auto & rec : callbackApplies) {
-            if (rec.baseArgStateHash == idHash
-                || TracingDecisionGraph::xorHashes(rec.baseArgStateHash, rec.elementHash) == idHash) {
-                anyMatch = true;
-                break;
-            }
-        }
-        if (anyMatch && !callbackApplies.empty()) {
-            const auto & rec = callbackApplies.back();
-            if (auto obsSet = decisionGraph.getObservationSet(rec.argObsSet)) {
-                auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
-                for (const auto & obs : *obsSet)
-                    obsSetMap->emplace(obs.queryHash, obs.responsePayload);
-                Subject rootSubject{Arg{rec.argDepth}};
-                auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
-                auto chainCursor = std::make_shared<Hash>(HashAlgorithm::SHA256);
-                Hash zeroContext(HashAlgorithm::SHA256);
-                auto replayArg = std::make_shared<ReplayCallbackArg>(
-                    std::move(rootSubject),
-                    rec.argAncestry,
-                    walkFacts, chainCursor, zeroContext,
-                    decisionGraph, inner->getEvalState().rootFSRoot,
-                    &inner->getEvalState());
-                replayArg->withObsSetResponses(obsSetMap);
-                tracingCacheLog(
-                    "resolve %s: materialised fresh ReplayCallbackArg (argDepth=%d, obsSet=%s, latest cbApply)",
-                    idStr.substr(0, 12), rec.argDepth,
-                    rec.argObsSet.to_string(HashFormat::Base16, false).substr(0, 12));
-                return replayArg;
             }
         }
         tracingCacheLog(
@@ -1294,26 +1269,11 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
         tracingCacheLog(
             "callbackApply dispatch: HIT fn=%s obsSet=%s obs=%zu",
             fnHex.substr(0, 12), obsSetHex.substr(0, 12), obsSet->size());
-        /* Record this CallbackApply for later resolveStateHash lookups.
-           Subsequent Env-layer probes on `applyResult(fn, Arg{argDepth})`
-           reference the arg's evolved state hash; walker materialises
-           a fresh ReplayCallbackArg from this record per probe. */
-        Hash cbApplyReqHash{HashAlgorithm::SHA256};
-        try {
-            trace::QueryCallbackApply cbApply{fnHex, obsSetHex, argAncestryHex, argDepth};
-            cbApplyReqHash = TracingDecisionGraph::computeQueryHash(cbApply);
-        } catch (const std::exception &) {
-            /* Fall through — hash will be zero, downstream match won't fire. */
-        }
-        auto cbApplyRespPayload = jsonToCborString(nlohmann::json(obsSetHex));
-        auto cbApplyRespHash = TracingDecisionGraph::computeResponseHash(cbApplyRespPayload);
-        auto elementHash = TracingDecisionGraph::xorFactIntoHash(
-            Hash(HashAlgorithm::SHA256), cbApplyReqHash, cbApplyRespHash);
+        /* Record this CallbackApply for later resolveStateHash
+           lookups. Arg is atomic — its state hash stays at baseId
+           throughout — so the match is only on Arg's baseId. */
         Hash baseArgStateHash = stateHashAfter(Subject{Arg{argDepth}}, argAncestry, {});
-        callbackApplies.push_back({
-            fnHex, argDepth, argAncestry, obsSetHash,
-            baseArgStateHash, elementHash,
-        });
+        callbackApplies.push_back({argDepth, argAncestry, obsSetHash, baseArgStateHash});
         return jsonToCborString(nlohmann::json(obsSetHex));
     }
 

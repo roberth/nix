@@ -83,21 +83,18 @@ class TracingReplayEvaluator : public Evaluator
 
     /** CallbackApply Facts folded into `envWalk` during this walk.
         Populated in `dispatchAmbientQuery` when a `callbackApply`
-        request lands and its Fact is committed. Used by
-        `resolveStateHash` to materialise a fresh `ReplayCallbackArg`
-        backed by the recorded observation set whenever a target
-        state hash matches Arg{argDepth}'s base or CallbackApply-
-        evolved subject id. Multiple downstream probes on the same
-        applyResult each get a fresh proxy — outer callback fires
-        anew per probe (denotational correctness first;
-        amortisation later). */
+        request lands. Used by `resolveStateHash` to materialise a
+        fresh `ReplayCallbackArg` backed by the recorded observation
+        set whenever a target state hash matches Arg{argDepth}'s
+        subject id. Arg is atomic under the callback model — it
+        does not evolve — so the match is just on Arg's baseId.
+        The record carries what the fresh ReplayCallbackArg needs
+        to reconstruct plus the base id used to match. */
     struct CallbackApplyRecord {
-        std::string fnHex;
         int argDepth;
         Hash argAncestry;
         Hash argObsSet;
         Hash baseArgStateHash; ///< stateHashAfter(Arg{argDepth}, argAncestry, {})
-        Hash elementHash; ///< SHA(cbApplyReqHash || cbApplyRespHash) — the arg's own-loop XOR delta from this fact
     };
     std::vector<CallbackApplyRecord> callbackApplies;
 
