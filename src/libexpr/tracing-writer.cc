@@ -632,7 +632,10 @@ void TracingWriter::openCbApply(const nlohmann::json & applyQueryPayload)
         applyReqHash,
         {},
         envAsksEdges.size(),  // insertionIndex AFTER pre-boundary chunk
-        prevQFactSetHash,      // envCurAtOpen
+        /* envCurAtOpen: per-Q factSet at cb-apply-open moment. Aligns
+           with walker's per-walk factSet at the corresponding
+           dispatchApplyLive on the read side. */
+        perQFactSetHash(),
         outerEnvCurAtOpen,     // captured for InnerValueResponse contextHash
         Hash(HashAlgorithm::SHA256)  // contextCur (populated at first finalize)
     });
