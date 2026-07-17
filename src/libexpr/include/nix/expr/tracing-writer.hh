@@ -790,16 +790,19 @@ public:
             decisionGraph->insertAsk(*qh.queryHash, perQFromFactSet, edge.requestSetHash);
         }
 
-        /* Insert Terminal for Q at its per-Q terminal factSet. Ask
-           edges already inserted above cover Q's own trajectory; we
-           skip the record() call's Patricia-split / whole-remaining
-           logic because it's session-cumulative in shape and would
-           either fire spurious slow-path inserts (allRequestHashes is
-           session-cumulative but Q owns only a subset) or insert an
-           unhelpful whole-remaining Ask under Q. Q's Terminal is what
-           the walker's terminal lookup keys on; the Ask chain path is
-           already laid out via the per-Q edge inserts above. */
-        decisionGraph->insertTerminal(*qh.queryHash, perQFactSet, resultNodeHash);
+        /* startFactSetHash: parent Q's terminalCur (captured at
+           logQuery), or ∅ for root queries. Anchors this Q's Ask
+           chain at the "structural parent factSet" — the walker's
+           parentAnchor path (currentProxy.getTriePos().factSetHash)
+           lands on Q-labeled Asks there. */
+        auto startFactSetHash = qh.structuralParentFactSetHash.value_or(
+            TracingDecisionGraph::emptySetHash());
+        if (qEdgeCount == 0)
+            decisionGraph->record(*qh.queryHash, perQFactSet, resultNodeHash,
+                responseFor, seenRequests, sessionRequestsTrie.rootHash(), startFactSetHash);
+        else
+            decisionGraph->record(*qh.queryHash, perQFactSet, resultNodeHash,
+                responseFor, allRequestHashes, startFactSetHash);
 
         /* Pop per-Q stacks: parent's context restored for any
            continued evaluation. */
