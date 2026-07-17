@@ -138,39 +138,12 @@ class TracingWriter
     std::vector<Hash> pendingNewRequests;
 
     TracingDecisionGraph::SetHash prevQFactSetHash{TracingDecisionGraph::emptySetHash()};
-
-    /* Per-Q factSet baseline: writer's cumulative envFactSetHash at the
-       start of the currently-active Q's evaluation. Q-local factSet at
-       any moment = envFactSetHash XOR this. Stacked for nested Qs
-       (logQuery pushes current envFactSetHash, logResult pops). This
-       makes writer stamps (Ask fromFactSetHash, Terminal factSetHash,
-       InnerValueResponse contextHash) align with walker's per-walk
-       factSet: walker starts fresh at ∅ each walker.walk(); writer's
-       per-Q baseline plays the analogous role on the record side. */
-    std::vector<TracingDecisionGraph::SetHash> perQFactSetBaselineStack{
-        TracingDecisionGraph::emptySetHash()};
-
-    /** Per-Q factSet: writer's cumulative XOR'd against current Q's
-        baseline. This is the value the walker would have as its
-        per-walk factSet at the corresponding point under matching-
-        until-divergence. */
-    TracingDecisionGraph::SetHash perQFactSetHash() const
-    {
-        return TracingDecisionGraph::xorHashes(
-            envFactSetHash, perQFactSetBaselineStack.back());
-    }
-
     struct AsksEdgeRecord
     {
         TracingDecisionGraph::SetHash fromFactSetHash;
         TracingDecisionGraph::SetHash requestSetHash;
     };
     std::vector<AsksEdgeRecord> envAsksEdges;
-    /* Q-local edge slice: envAsksEdges size at the start of the
-       currently-active Q. Only edges appended after this index are
-       Q-own; logResult inserts only those, with fromFactSetHash
-       rebased against the Q's baseline. */
-    std::vector<size_t> perQAsksEdgesStartStack{0};
     /* Mirrors `seenRequests` but keyed by query hash, not fact hash.
        record()'s slow path iterates this to build the trailing
        remaining-edge — an Asks edge's requestSet is a set of query
@@ -406,12 +379,6 @@ public:
             "writer logQuery: Q=%s queryJSON=%s",
             queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
             qj.dump());
-        /* Push per-Q baselines so subsequent observations get stamped
-           against Q-local factSet. Nested Qs (child logQuery inside
-           parent's evaluation) get their own fresh baseline; parent's
-           context is restored at child's logResult. */
-        perQFactSetBaselineStack.push_back(envFactSetHash);
-        perQAsksEdgesStartStack.push_back(envAsksEdges.size());
         QueryHandle qh{queryHash};
         if (parent)
             qh.structuralParentFactSetHash = parent->factSetHash;
@@ -772,42 +739,32 @@ public:
         decisionGraph->installFactSet(envFactSetHash, envFactSet);
         sessionRequestsTrie.persist(*decisionGraph);
 
-        /* Q-local views: baseline captured at logQuery, XOR-rebase to
-           get Q-local factSet and Q-local edge fromFactSetHash. This
-           is what the walker's per-walk factSet would be at the
-           corresponding point on the read side. */
-        auto qBaseline = perQFactSetBaselineStack.back();
-        auto qEdgesStart = perQAsksEdgesStartStack.back();
-        auto perQFactSet = TracingDecisionGraph::xorHashes(envFactSetHash, qBaseline);
-        size_t qEdgeCount = envAsksEdges.size() - qEdgesStart;
         tracingCacheLog("logResult: Q=%s factSet=%s -> result (inserting %zu Asks edges)",
                         qh.queryHash->to_string(HashFormat::Base16, false).substr(0, 12),
-                        perQFactSet.to_string(HashFormat::Base16, false).substr(0, 12),
-                        qEdgeCount);
-        for (size_t i = qEdgesStart; i < envAsksEdges.size(); ++i) {
-            const auto & edge = envAsksEdges[i];
-            auto perQFromFactSet = TracingDecisionGraph::xorHashes(edge.fromFactSetHash, qBaseline);
-            decisionGraph->insertAsk(*qh.queryHash, perQFromFactSet, edge.requestSetHash);
-        }
+                        envFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                        envAsksEdges.size());
+        for (const auto & edge : envAsksEdges)
+            decisionGraph->insertAsk(*qh.queryHash, edge.fromFactSetHash, edge.requestSetHash);
 
-        /* startFactSetHash: parent Q's terminalCur (captured at
+        /* If we have per-Q edges, skip the whole-remaining shortcut
+           so the walker walks them one by one (= each commit advances
+           ctx.step). Pass `allRequestHashes` (= query hashes),
+           not `seenRequests` (= fact hashes for XOR dedup); record()'s
+           slow path iterates this for its trailing remaining-edge.
+
+           startFactSetHash: parent Q's terminalCur (captured at
            logQuery), or ∅ for root queries. Anchors this Q's Ask
            chain at the "structural parent factSet" — the walker's
            parentAnchor path (currentProxy.getTriePos().factSetHash)
            lands on Q-labeled Asks there. */
         auto startFactSetHash = qh.structuralParentFactSetHash.value_or(
             TracingDecisionGraph::emptySetHash());
-        if (qEdgeCount == 0)
-            decisionGraph->record(*qh.queryHash, perQFactSet, resultNodeHash,
+        if (envAsksEdges.empty())
+            decisionGraph->record(*qh.queryHash, envFactSetHash, resultNodeHash,
                 responseFor, seenRequests, sessionRequestsTrie.rootHash(), startFactSetHash);
         else
-            decisionGraph->record(*qh.queryHash, perQFactSet, resultNodeHash,
+            decisionGraph->record(*qh.queryHash, envFactSetHash, resultNodeHash,
                 responseFor, allRequestHashes, startFactSetHash);
-
-        /* Pop per-Q stacks: parent's context restored for any
-           continued evaluation. */
-        perQFactSetBaselineStack.pop_back();
-        perQAsksEdgesStartStack.pop_back();
 
         /* Populate per-edge response table AFTER `record()` so
            Patricia-split-added Asks rows are covered too. Enumerate
@@ -819,7 +776,7 @@ public:
         return TriePosition{
             .resultNodeHash = resultNodeHash,
             .queryHashStr = qh.queryHash->to_string(HashFormat::Base16, false),
-            .factSetHash = perQFactSet,
+            .factSetHash = envFactSetHash,
         };
     }
 
