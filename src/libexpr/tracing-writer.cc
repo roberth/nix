@@ -427,19 +427,74 @@ void TracingWriter::flushAmbient(bool processApplies)
             if (group.empty())
                 continue;
 
-            /* Cutover (task #103): removed the per-boundary
-               synthetic apply Fact fold + boundary Ask edge
-               insertion. Per-observation CallbackApply emissions in
-               logAmbientObservation now handle envFactSet
-               advancement and Ask/envWalk pushes. This block was
-               the last of the old boundary-synthesis machinery for
-               ambient chains. */
-            (void) ambientResult;
-            (void) shift;
+            auto factHash = TracingDecisionGraph::xorFactIntoHash(
+                Hash(HashAlgorithm::SHA256), pendingApply.applyRequestHash, ambientResult);
+            /* Dedup gate: `seenRequests` tracks (applyRequestHash,
+               ambientResult) pairs. Under matching-until-divergence
+               with XOR-evolution, same-shape sibling boundaries
+               produce identical (applyRequestHash, ambientResult),
+               so `seenRequests.insert(factHash).second` returns
+               false for the second sibling. When that happens, we
+               must NOT propagate the boundary contribution
+               downstream either — otherwise XORing the same
+               factHash twice cancels the first boundary's
+               contribution and the walker's cur at recorded edges
+               drifts. */
+            bool isNewFact = seenRequests.insert(factHash).second;
+            if (isNewFact) {
+                envFactSet.push_back({pendingApply.applyRequestHash, ambientResult});
+                envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
+                    envFactSetHash, pendingApply.applyRequestHash, ambientResult);
+                responseFor.emplace(pendingApply.applyRequestHash, ambientResult);
+                sessionRequestsTrie.insert(pendingApply.applyRequestHash);
+                allRequestHashes.insert(pendingApply.applyRequestHash);
+            }
+
+            ObservationSet applyEdge;
+            applyEdge.observations.push_back({
+                Hash(HashAlgorithm::SHA256),
+                factHash,
+            });
+
+            auto boundaryAskRequestSet = decisionGraph->insertRequestSet({pendingApply.applyRequestHash});
+            size_t pos = pendingApply.insertionIndex + shift;
+            Hash boundaryAskFromHash = TracingDecisionGraph::xorHashes(
+                pendingApply.envCurAtOpen, priorApplyFactAccum);
+            envAsksEdges.insert(envAsksEdges.begin() + pos,
+                {boundaryAskFromHash, boundaryAskRequestSet});
+            envWalk.insert(envWalk.begin() + pos, std::move(applyEdge));
+            tracingCacheLog("finalize: cb-apply Ask inserted at pos=%zu from=%s (insertionIndex=%zu shift=%zu perQ=%zu)",
+                            pos,
+                            boundaryAskFromHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                            pendingApply.insertionIndex,
+                            shift,
+                            envAsksEdges.size());
+            ++shift;
+
+            if (isNewFact) {
+                for (size_t i = pos + 1; i < envAsksEdges.size(); ++i)
+                    envAsksEdges[i].fromFactSetHash = TracingDecisionGraph::xorHashes(
+                        envAsksEdges[i].fromFactSetHash, factHash);
+                priorApplyFactAccum = TracingDecisionGraph::xorHashes(priorApplyFactAccum, factHash);
+            }
+            /* Keep prevQFactSetHash aligned with envFactSetHash after
+               the boundary XOR-fold. Without this, subsequent Q's
+               `openCbApply` captures a stale (pre-boundary)
+               envCurAtOpen, and subsequent `finalize`
+               pushes edges indexed at a pre-boundary state that walker
+               can't reach from its post-boundary cur. cb-repeated
+               variant 2's Q=6063a6243f6c history misses at cur=99566783ffd7
+               because cold indexed its edges at pre-boundary state
+               3dc1fe6c5b76 = 99566783ffd7 XOR factHash_boundary0. */
             prevQFactSetHash = envFactSetHash;
 
+            /* Stash state on the boundary so subsequent re-processing
+               passes (= late ambient obs) can pick up where this finalize
+               left off. */
             pendingApply.finalized = true;
             pendingApply.cumulativeFactSet = ambientResult;
+            pendingApply.factHash = factHash;
+            pendingApply.pos = pos;
             pendingApply.lastProcessedCount = group.size();
         } else if (group.size() > pendingApply.lastProcessedCount) {
             /* Late ambient obs path: the boundary was finalized in a
