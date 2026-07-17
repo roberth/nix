@@ -1362,12 +1362,12 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
 
-    /* Walker mirror of TracingEvaluator::apply's option 2 evolution.
-       Uses walker.envWalk (the cumulative committed history), which
-       under the 1:1 alignment restructure matches writer.envWalk
-       edge-for-edge once all prior cb-applies' chains have been
-       dispatched. */
-    auto & history = writer.getD1CidasksWalk();
+    /* Walker's own per-walk envWalk is the ground truth for state
+       hash computation on the read side (per task 90's per-walk
+       scoping). Writer's session-cumulative envWalk is per-Q under
+       the per-Q baseline stack — reading writer's cumulative here
+       would drift from walker's per-walk view. */
+    auto & history = envWalk;
     auto applyArgAncestryStateHash = stateHashAt(resultSubject, applyArgAncestry, history, history.size());
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
     {
