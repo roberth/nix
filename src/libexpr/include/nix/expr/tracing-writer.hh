@@ -554,32 +554,6 @@ public:
                         obsSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         it->runningObsSet.size(),
                         cbApplyQueryHash.to_string(HashFormat::Base16, false).substr(0, 12));
-
-                    /* Cutover: fold CallbackApply fact into
-                       envFactSet, push Ask + envWalk edges,
-                       mirroring logOuterObservation's per-probe
-                       pattern. Walker's Ask-chain walk now reaches
-                       this cbApplyQueryHash request; its
-                       dispatchAmbientQuery for `callbackApply` tag
-                       returns the recorded response via
-                       InnerValueResponse. */
-                    auto factElementHash = TracingDecisionGraph::xorFactIntoHash(
-                        Hash(HashAlgorithm::SHA256), cbApplyQueryHash, rh);
-                    if (seenRequests.insert(factElementHash).second) {
-                        envFactSet.push_back({cbApplyQueryHash, rh});
-                        envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                            envFactSetHash, cbApplyQueryHash, rh);
-                        responseFor.emplace(cbApplyQueryHash, rh);
-                        sessionRequestsTrie.insert(cbApplyQueryHash);
-                        allRequestHashes.insert(cbApplyQueryHash);
-                        auto requestSetHash = decisionGraph->insertRequestSet({cbApplyQueryHash});
-                        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-                        ObservationSet obsSetEdge;
-                        obsSetEdge.observations.push_back({
-                            Hash(HashAlgorithm::SHA256), factElementHash});
-                        envWalk.push_back(std::move(obsSetEdge));
-                        prevQFactSetHash = envFactSetHash;
-                    }
                 }
                 return;
             }
