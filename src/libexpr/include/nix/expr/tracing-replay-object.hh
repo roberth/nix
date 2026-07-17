@@ -54,6 +54,14 @@ class TracingReplayObject : public Object
     ref<Object> ensureInner() const;
 
     std::string evolvedQueryFrom() const;
+    /** Candidate parent hashes for child Q construction. Currently a
+        single candidate: the full evolved hash (stateHashAt over
+        current applyContext observations). A previous "historic"
+        smaller-prefix candidate was removed — it violated the
+        smaller-hash caveat by using a hash that identifies a subset
+        of what's actually observed. */
+    std::vector<std::string> parentHashCandidates() const;
+    void pushObservation(const std::string & fromHex, const Hash & queryHash, const Hash & responseHash);
 
     /**
      * Cascading lookup for leaf results. Returns the parsed R plus
