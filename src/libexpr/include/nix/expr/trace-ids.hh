@@ -5,11 +5,11 @@
  * system. Prevents accidental mixing of:
  *
  * - ValueHandle: JSON trace correlation handle (TraceSink)
- * - OuterId:   OuterResolver registry handle, a content Hash.
- *                Arg roots use the empty-set hash (their
- *                state hash at apply time, since no
- *                observations have happened yet); derived values
- *                use the producer query's queryHash.
+ * - OuterId:   a Subject-derived state hash used in payloads referring
+ *                to outer values. Alias for Hash; distinguishes
+ *                Subject-state-hash uses from other Hash uses at call
+ *                sites. Not a registry key — outer Objects flow
+ *                directly through queryFn/applyFn.
  */
 
 #include "nix/util/hash.hh"
@@ -50,12 +50,10 @@ struct ValueHandleTag
 /** JSON trace correlation handle (links Query and Result entries). */
 using ValueHandle = StrongId<ValueHandleTag, uint64_t>;
 
-/** OuterResolver registry handle for outer/local values.
- *
- *  A content Hash. Arg roots are `hashString("arg:N")` /
- *  `hashString("local:N")` for an interpreter-side counter N;
- *  derived values are the producer query's `queryHash`. Both go
- *  through the same map. */
+/** A Subject-derived state hash. Alias for Hash; marks call-site
+ *  intent — this Hash is the state hash of some outer/local Subject.
+ *  No registry lookup involved: outer Objects flow directly through
+ *  queryFn/applyFn now. */
 using OuterId = Hash;
 
 } // namespace nix

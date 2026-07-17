@@ -17,113 +17,42 @@
 
 namespace nix {
 
-/**
- * Stateful resolver mapping ambient ids to outer/local Objects.
- *
- * Ambient ids are SHA-256 hashes:
- * - Arg roots: hashString("arg:N") for outer values entering the
- *   inner; hashString("local:N") for local values reaching back to
- *   the outer through a covariant callback.
- * - Derived ids: the producer query's queryHash. A child Object
- *   reached via getAttr("f") on parent P is identified by
- *   queryHash(QueryGetAttr{name="f", from=hex(P)}). On replay the
- *   walker recovers P from the Requests pool and re-dispatches the
- *   producer query, yielding the same child by Merkle identity.
- * - Apply results: queryHash(QueryApply{fn=hex(fnId), arg=hex(argSubject)})
- *   under which the resolver registers the outer's mkApp Object.
- *   The apply Request is also inserted into the pool so downstream
- *   `from=<apply_qH>` Facts can chase identity back.
- */
-/* Pure-storage registry mapping state hashs to live outer
-   Objects (values the inner reads through OuterObject). The Local
-   direction (inner values the outer reads via callback) doesn't go
-   through this registry at all on replay — those are served by
-   ReplayCallbackArg proxies reading from InnerValueResponse. Local
-   registration on the recording side was previously here as a write-
-   only map; dropped because nothing read it back. */
-struct OuterRegistry
+/* Dispatch a query on the given outer Object directly. Returns the
+   response plus (for producer queries) the outer's child Object at
+   the queried position. No lookup table, no id round-trip — the
+   caller passes the outer Object it already holds. */
+static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::QueryVariant & q)
 {
-    std::map<OuterId, std::shared_ptr<Object>> outerValues;
-
-    /** Register an outer value under an explicit id (used for
-        derived values, where the id is the producer query's
-        queryHash, and for apply results). Single-entry contract:
-        eval is reproducible, so two distinct entries arriving at
-        the same id is a reproducibility bug to surface rather than
-        suppress. */
-    void registerOuterAt(OuterId id, std::shared_ptr<Object> obj)
-    {
-        outerValues[id] = std::move(obj);
-    }
-
-    std::shared_ptr<Object> resolveOuter(OuterId id)
-    {
-        auto it = outerValues.find(id);
-        if (it != outerValues.end())
-            return it->second;
-        throw Error("ambient query: unknown value id %s", id.to_string(HashFormat::Base16, false));
-    }
-};
-
-/* Pure-dispatch wrapper around an Object's query interface. Knows how
-   to invoke the right Object method for each QueryVariant alternative,
-   how to derive a child's state hash from a producer query's
-   payload, and how to register the derived child / delay its settled
-   identity into the writer. Stateless apart from the references it
-   holds. Constructed on demand from OuterResolver members. */
-struct OuterQuery
-{
-    OuterRegistry & registry;
-    TracingWriter * innerWriter;
-
-    /** Dispatch a query against the given outer Object directly,
-        bypassing the resolver's id → Object lookup. Boundary-trace-
-        only discipline (per the design doc): each cb apply's queryFn
-        captures its own outer arg and calls this directly for arg
-        observations, so sibling cb invocations don't collide on the
-        shared `outerValues` map. */
-    OuterQueryResult on(std::shared_ptr<Object> obj, const trace::QueryVariant & q) const
-    {
-        return std::visit(
-            [&](const auto & query) -> OuterQueryResult {
-                using Q = std::decay_t<decltype(query)>;
-                if constexpr (std::is_same_v<Q, trace::QueryApply>) {
-                    throw Error("ambient query: QueryApply should go through applyFn, not queryFn");
-                } else if constexpr (!requires { query.from; }) {
-                    throw Error("ambient query: query type has no 'from' field");
-                } else {
-                    (void) 0;  // obj already provided
-
-                    if constexpr (std::is_same_v<Q, trace::QueryGetWHNF>) {
-                        return {computeWHNFFromObject(*obj), std::nullopt};
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetAttr>) {
-                        auto child = obj->maybeGetAttr(query.name);
-                        if (!child)
-                            return {trace::ResultMaybeType{std::nullopt}, std::nullopt};
-                        /* Derived child id is the producer query's queryHash. */
-                        auto childId = TracingDecisionGraph::computeQueryHash(query);
-                        registry.registerOuterAt(childId, child);
-                        return {
-                            trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}},
-                            childId};
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
-                        auto child = obj->getListElem(query.index);
-                        auto childId = TracingDecisionGraph::computeQueryHash(query);
-                        registry.registerOuterAt(childId, child);
-                        return {trace::ResultType{objectTypeToString(child->getType())}, childId};
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetFunctionInfo>) {
-                        auto info = obj->getFunctionInfo();
-                        if (!info)
-                            return {trace::ResultFunctionInfo{false, {}, false}, std::nullopt};
-                        return {trace::ResultFunctionInfo{true, info->formals, info->ellipsis}, std::nullopt};
-                    } else {
-                        throw Error("unsupported ambient query type");
-                    }
-                }
-            },
-            q);
-    }
-};
+    return std::visit(
+        [&](const auto & query) -> OuterQueryResult {
+            using Q = std::decay_t<decltype(query)>;
+            if constexpr (std::is_same_v<Q, trace::QueryApply>) {
+                throw Error("ambient query: QueryApply should go through applyFn, not queryFn");
+            } else if constexpr (!requires { query.from; }) {
+                throw Error("ambient query: query type has no 'from' field");
+            } else if constexpr (std::is_same_v<Q, trace::QueryGetWHNF>) {
+                return {computeWHNFFromObject(*obj), nullptr};
+            } else if constexpr (std::is_same_v<Q, trace::QueryGetAttr>) {
+                auto child = obj->maybeGetAttr(query.name);
+                if (!child)
+                    return {trace::ResultMaybeType{std::nullopt}, nullptr};
+                return {
+                    trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}},
+                    std::move(child)};
+            } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
+                auto child = obj->getListElem(query.index);
+                return {trace::ResultType{objectTypeToString(child->getType())}, std::move(child)};
+            } else if constexpr (std::is_same_v<Q, trace::QueryGetFunctionInfo>) {
+                auto info = obj->getFunctionInfo();
+                if (!info)
+                    return {trace::ResultFunctionInfo{false, {}, false}, nullptr};
+                return {trace::ResultFunctionInfo{true, info->formals, info->ellipsis}, nullptr};
+            } else {
+                throw Error("unsupported ambient query type");
+            }
+        },
+        q);
+}
 
 /* Memoised Object* → Value* cache for bridged argThunks. Lives long
    enough to span multiple apply calls within one cb body — when the
@@ -148,19 +77,17 @@ struct BridgedThunkCache
     }
 };
 
-/* Orchestrates a covariant-callback apply: resolves the outer fn from
-   the registry, opens a cell for the inner-supplied arg, wraps the arg
-   in TracingCallbackArg so outer accesses on it land in the inner
-   trace, bridges the wrapped arg via ExprFromObject into an outer
-   `mkApp` thunk, registers the apply result, and defers the Pass-1
-   apply Request + Pass-2 localArg sidecar to the writer's flush.
+/* Orchestrates a covariant-callback apply: opens a cell for the
+   inner-supplied arg, wraps the arg in TracingCallbackArg so outer
+   accesses on it land in the inner trace, bridges the wrapped arg
+   via ExprFromObject into an outer `mkApp` thunk, and defers the
+   apply Request + localArg sidecar to the writer's flush.
    Constructed transiently per call; holds refs/copies from the owning
    resolver. The `resolverHandle` shared_ptr is required for
    ExprFromObject's `outerResolver` field; everything else is by
    reference. */
 struct OuterApply
 {
-    OuterRegistry & registry;
     BridgedThunkCache & bridgedLocals;
     EvalState * outerState;
     std::shared_ptr<Evaluator> innerEvaluator;
@@ -168,28 +95,19 @@ struct OuterApply
     std::shared_ptr<SourceRoot> outerRootFSRoot;
     std::shared_ptr<OuterResolver> resolverHandle;
 
-    std::pair<OuterId, OuterId> run(
-        OuterId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope);
-
-    /** Same as run, but the fnObj is provided directly instead of
-        being resolved via the registry. Used by makeCachedFnPrimOp's
-        applyFn closure when the arg OuterObject itself is being
-        applied (= fnId is the arg's state hash, which boundary discipline
-        keeps unregistered to avoid sibling collisions; the closure
-        captures outerArgObj instead). */
-    std::pair<OuterId, OuterId> runOn(
-        std::shared_ptr<Object> fnObj, OuterId fnId,
-        std::shared_ptr<Object> argObj,
+    /** Invoke `fnObj` on `argObj`. `fnObj` is the outer Object to
+        apply (passed by the caller who already holds it — no id
+        round-trip). `fnStateHash` is the Subject-derived state hash
+        used to build the QueryApply payload (the outer Object typically
+        has no Subject; the wrapping OuterObject computes it). Returns
+        the outer's apply-result Object. */
+    std::shared_ptr<Object> run(
+        std::shared_ptr<Object> fnObj, Hash fnStateHash, std::shared_ptr<Object> argObj,
         std::shared_ptr<const ArgCell> callerScope);
 };
 
 struct OuterResolver : std::enable_shared_from_this<OuterResolver>
 {
-    /* No shared OuterRegistry field. Each cache-primop invocation
-       constructs its own registry captured by the queryFn/applyFn
-       closures — sibling invocations don't collide on hash-keyed
-       Object lookups. See makeCachedFnPrimOp for the per-invocation
-       allocation. */
     BridgedThunkCache bridgedLocals;
     EvalState * outerState = nullptr;
     std::shared_ptr<Evaluator> innerEvaluator;
@@ -226,59 +144,30 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
     };
     std::vector<LiveProxyEntry> liveProxies;
 
-    OuterQueryResult query(OuterRegistry & registry, OuterId objectId, const trace::QueryVariant & q)
-    {
-        return queryOn(registry, registry.resolveOuter(objectId), q);
-    }
-
-    OuterQueryResult queryOn(OuterRegistry & registry, std::shared_ptr<Object> obj, const trace::QueryVariant & q)
-    {
-        return OuterQuery{registry, innerWriter}.on(std::move(obj), q);
-    }
-
-    /** Apply an outer fn (resolved from fnId) to a local argObj.
-     *  Returns a pair: (argSubject, resultId). argSubject is the local arg
-     *  Hash assigned to argObj; resultId is the producer queryHash
-     *  of QueryApply{fn=fnId, arg=argSubject}, under which the
-     *  resulting Object is registered as an outer value. The
-     *  caller (applyFn closure) records the QueryApply Fact with
-     *  the same arg id. */
-    std::pair<OuterId, OuterId> apply(
-        OuterRegistry & registry,
-        OuterId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
-    {
-        return OuterApply{
-            registry, bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
-            shared_from_this(),
-        }.run(fnId, std::move(argObj), std::move(callerScope));
-    }
-
-    /** Apply variant where fnObj is provided directly (= callers
-        with a captured reference, like makeCachedFnPrimOp's
-        applyFn closure for arg-self applies). */
-    std::pair<OuterId, OuterId> applyOn(
-        OuterRegistry & registry,
-        std::shared_ptr<Object> fnObj, OuterId fnId,
+    /** Invoke the outer fn Object `fnObj` on `argObj`. `fnStateHash`
+        is the Subject-derived state hash of the wrapping
+        OuterObject, used to build the QueryApply payload. Returns
+        the outer's apply-result Object. */
+    std::shared_ptr<Object> apply(
+        std::shared_ptr<Object> fnObj, Hash fnStateHash,
         std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
     {
         return OuterApply{
-            registry, bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
+            bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
             shared_from_this(),
-        }.runOn(std::move(fnObj), fnId, std::move(argObj), std::move(callerScope));
+        }.run(std::move(fnObj), fnStateHash, std::move(argObj), std::move(callerScope));
     }
 };
 
-std::pair<OuterId, OuterId> OuterApply::run(
-    OuterId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
+std::shared_ptr<Object> OuterApply::run(
+    std::shared_ptr<Object> fnObj, Hash fnStateHash, std::shared_ptr<Object> argObj,
+    std::shared_ptr<const ArgCell> callerScope)
 {
-    auto fnObj = registry.resolveOuter(fnId);
-    return runOn(std::move(fnObj), fnId, std::move(argObj), std::move(callerScope));
-}
-
-std::pair<OuterId, OuterId> OuterApply::runOn(
-    std::shared_ptr<Object> fnObj, OuterId fnId,
-    std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
-{
+    /* fnId — the Subject-derived state hash of the wrapping OuterObject,
+       used for the QueryApply payload's `fn` field. The caller
+       computed this from its own Subject + argAncestry; the raw
+       outer Object typically has no Subject. */
+    auto fnId = fnStateHash;
     if (!outerState)
         throw Error("ambient apply requires outerState");
 
@@ -370,10 +259,6 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
     resultVal->mkApp(*fnVal, argThunk);
     auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
 
-    /* Result id is queryHash(QueryApply{fn=fnId, arg=argSubject})
-       (already computed above for ambientApplyId plumbing). */
-    registry.registerOuterAt(resultId, std::move(resultObj));
-
     /* Defer the QueryApply Request and the localArg sidecar to the
        writer's flush at logResult. Pool entries land at the natural
        reqHashes (no substitution under the via-Asks design's
@@ -421,7 +306,7 @@ std::pair<OuterId, OuterId> OuterApply::runOn(
         innerWriter->deferRequest(localSidecar, argStateHashStr);
     }
 
-    return {argStateHash, resultId};
+    return resultObj;
 }
 
 /* Out-of-line virtual definitions so the abstract base gets a key
@@ -473,11 +358,9 @@ static PrimOp * makeCachedFnPrimOp(
                         Subject argSubject{Arg{seedCell->depth}};
                         /* Inherit the resolver's callArgAncestry (= state hash(Q)
                            of this cached call). Sibling cached calls
-                           with different Qs get distinct rootIds and
-                           therefore distinct subject-derived content
-                           ids throughout this cb-apply. */
+                           with different Qs get distinct state hashes
+                           at every derived Subject throughout this cb-apply. */
                         Hash callArgAncestry = resolver->callArgAncestry;
-                        auto rootId = stateHashAfter(argSubject, callArgAncestry, {});
                         /* Per-apply observation context. Captures the
                            outer's probes on the cb arg as they fire
                            through queryFn; the apply-result wrapper
@@ -490,114 +373,45 @@ static PrimOp * makeCachedFnPrimOp(
                            `inner.f 2`), per the ambient layer design. */
                         auto applyContext = std::make_shared<ApplyContext>(
                             ApplyContext{argSubject, callArgAncestry, {}});
-                        /* Boundary-trace-only discipline: do NOT
-                           register outerArgObj under rootId in the
-                           shared resolver. Sibling cb apply invocations
-                           share the same rootId (= cell.contentId() at
-                           apply time = depth marker for empty cell), so
-                           a shared registration would last-write-wins
-                           and queryFn closures would all resolve to the
-                           latest outer arg. Instead each invocation's
-                           queryFn captures its own outerArgObj and uses
-                           it directly for arg (rootId) queries. */
-                        /* Per-invocation registry. Sibling cb-apply
-                           invocations share callArgAncestry and Subject
-                           shapes, so a shared Object registry would
-                           collide on derived-child queryHashes (b's
-                           getAttr("x") child overwrites a's, and a's
-                           later probes serve b's live values). Each
-                           impl gets its own map; closures capture it,
-                           so the queryFn/applyFn calls originating
-                           from THIS cache-primop invocation stay
-                           isolated. Fresh proxies per call: no
-                           cross-invocation hash-keyed reuse. */
-                        auto perInvocationRegistry = std::make_shared<OuterRegistry>();
                         auto & innerEnv = *innerEval->getEvalState().environment;
-                        OuterQueryFn queryFn = [resolver, outerArgObj, rootId,
-                                                  &innerEnv, applyContext, perInvocationRegistry](
-                            OuterId objectId,
+                        /* queryFn: dispatch the query directly on the
+                           outer Object the OuterObject was
+                           constructed to wrap. No id round-trip, no
+                           lookup table — each OuterObject already
+                           holds its outerObj, and passes it in. */
+                        OuterQueryFn queryFn = [&innerEnv, applyContext](
+                            std::shared_ptr<Object> outerObj,
                             const trace::QueryVariant & q,
                             Subject subject,
                             Hash argAncestry) {
-                            /* For cb-arg queries (objectId == this cb's
-                               rootId), dispatch on the captured
-                               outerArgObj directly — bypass the
-                               registry. For derived ids (child objects
-                               from earlier getAttr/getListElem),
-                               resolve through THIS invocation's
-                               registry (populated by prior probes on
-                               this cb's arg-chain). */
-                            OuterQueryResult qr = (objectId == rootId)
-                                ? resolver->queryOn(*perInvocationRegistry, outerArgObj, q)
-                                : resolver->query(*perInvocationRegistry, objectId, q);
+                            OuterQueryResult qr = dispatchOuterQuery(std::move(outerObj), q);
                             innerEnv.outerQuery(
                                 q,
                                 [&](const trace::QueryVariant &) { return qr.result; },
                                 subject,
                                 argAncestry);
-                            /* Note: queryFn (= cb-arg side) observations
-                               are NOT pushed into applyContext.observations.
-                               They would be noise from the apply-result
-                               wrapper's perspective (their `fromHash` is
-                               the cb-arg arg's state hash, not the wrapper's,
-                               so the subject-id own-loop on the wrapper
-                               doesn't fold them in) but the history's size
-                               growing from these silent pushes would
-                               diverge writer (queryFn fires before
-                               evolvedQueryFrom because inner.method()
-                               is called first) from walker (queryFn
-                               fires after evolvedQueryFrom because
-                               parentHash must be computed first to
-                               build the query). The cb-arg
-                               OuterObject's own state hash uses
-                               stateHashAfterSubject with empty history
-                               (= content-only) anyway, so dropping
-                               these pushes is consistent throughout. */
                             return qr;
                         };
-                        /* applyFn does NOT record a QueryApply Fact:
-                           a fresh app thunk has no result type
-                           ("apply" is not a value type). The
-                           apply-result Object is still registered in
-                           the resolver under
-                           queryHash(QueryApply{fn=fnId, arg=argSubject}),
-                           and the QueryApply Request itself is
-                           inserted into the pool (see
-                           OuterResolver::apply) so downstream
-                           Facts with `from=<apply_qH>` can have
-                           their response payloads located via the
-                           InnerValueResponse on replay. */
-                        OuterApplyFn applyFn = [resolver, outerArgObj, rootId, perInvocationRegistry](
-                            OuterId fnId,
+                        /* applyFn: invoke the outer fn on the arg,
+                           return the outer's apply-result Object
+                           directly. Caller (OuterObject::queryApply)
+                           passes fnObj — the outer's fn Object it
+                           already holds — plus the wrapping
+                           OuterObject's Subject-derived state hash
+                           used for the QueryApply payload. */
+                        OuterApplyFn applyFn = [resolver](
+                            std::shared_ptr<Object> fnObj,
+                            Hash fnStateHash,
                             std::shared_ptr<Object> argObj,
                             std::shared_ptr<const ArgCell> callerScope) {
-                            /* Boundary-trace-only discipline keeps the
-                               cb-arg arg unregistered in
-                               OuterRegistry. When the SEED ITSELF is
-                               applied (= inner does `args 5` on the
-                               arg OuterObject), fnId == rootId.
-                               `resolver->apply` would try
-                               `resolveOuter(rootId)` and throw
-                               "unknown value id". Route through
-                               `applyOn` with the captured outerArgObj
-                               instead — same path as queryFn's
-                               `queryOn` shortcut for direct arg
-                               queries. */
-                            if (fnId == rootId) {
-                                auto [argSubject, resultId] = resolver->applyOn(
-                                    *perInvocationRegistry, outerArgObj, fnId, std::move(argObj), std::move(callerScope));
-                                return resultId;
-                            }
-                            auto [argSubject, resultId] = resolver->apply(
-                                *perInvocationRegistry, fnId, std::move(argObj), std::move(callerScope));
-                            return resultId;
+                            return resolver->apply(std::move(fnObj), fnStateHash, std::move(argObj), std::move(callerScope));
                         };
                         /* lazy-paths: pin OuterObject's path SourceRoot
                            on the outer EvalState's `rootFSRoot` so the
                            SourceRoot outlives the Values the outer
                            evaluator builds from any returned RootedPaths. */
                         auto contraArg =
-                            make_ref<OuterObject>(std::move(argSubject), std::move(queryFn), state.rootFSRoot, std::move(applyFn));
+                            make_ref<OuterObject>(std::move(argSubject), outerArgObj, std::move(queryFn), state.rootFSRoot, std::move(applyFn));
                         /* Wire seedCell.liveObject to contraArg now
                            that it exists. This is the deliberate
                            shared_ptr cycle documented on

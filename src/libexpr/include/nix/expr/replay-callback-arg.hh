@@ -284,9 +284,7 @@ public:
         through `Object::defeatCache` + value-level `callFunction`,
         not `Object::queryApply`. The override exists so that when
         callers are restructured to call `queryApply` uniformly, this
-        is the entry that fires. The provenance tag in
-        `OuterRegistry` keeps the existing-callers path correct
-        until the restructure lands. */
+        is the entry that fires. */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 };
 

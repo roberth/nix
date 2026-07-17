@@ -27,8 +27,9 @@ static void stampPerArgFieldsAmbient(Q & q, const Subject & subject, const Hash 
 }
 
 OuterObject::OuterObject(
-    Subject subject_, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn)
+    Subject subject_, std::shared_ptr<Object> outerObj_, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn)
     : subject(std::move(subject_))
+    , outerObj(std::move(outerObj_))
     , argAncestry(HashAlgorithm::SHA256)
     , queryFn(std::move(queryFn))
     , applyFn(std::move(applyFn))
@@ -38,21 +39,20 @@ OuterObject::OuterObject(
 
 std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
 {
-    auto stateHash = stateHashAfterSubject(subject, argAncestry, {});
     trace::QueryGetAttr q{name, std::string{}};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
-    auto qr = queryFn(stateHash, q, subject, argAncestry);
+    auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultMaybeType>(&qr.result);
     if (!r || !r->type)
         return nullptr;
-    if (!qr.childId)
-        throw Error("ambient maybeGetAttr: resolver didn't return child id");
+    if (!qr.child)
+        throw Error("ambient maybeGetAttr: queryFn didn't return a child Object");
     Subject childSubject{DerivedSubject{
         .parent = std::make_shared<const Subject>(subject),
         .kind = DerivedSubject::Kind::GetAttr,
         .name = name,
     }};
-    auto child = std::make_shared<OuterObject>(std::move(childSubject), queryFn, outerRootFSRoot, applyFn);
+    auto child = std::make_shared<OuterObject>(std::move(childSubject), qr.child, queryFn, outerRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     /* Inherit argAncestry so the child's `from` fields include
@@ -65,10 +65,9 @@ trace::ResultWHNF & OuterObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    auto stateHash = stateHashAfterSubject(subject, argAncestry, {});
     trace::QueryGetWHNF q{std::string{}};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
-    auto qr = queryFn(stateHash, q, subject, argAncestry);
+    auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("ambient getWHNF: unexpected result type");
@@ -163,18 +162,17 @@ size_t OuterObject::getListSize()
 
 std::shared_ptr<Object> OuterObject::getListElem(size_t index)
 {
-    auto stateHash = stateHashAfterSubject(subject, argAncestry, {});
     trace::QueryGetListElem q{std::string{}, index};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
-    auto qr = queryFn(stateHash, q, subject, argAncestry);
-    if (!qr.childId)
-        throw Error("ambient getListElem: resolver didn't return child id");
+    auto qr = queryFn(outerObj, q, subject, argAncestry);
+    if (!qr.child)
+        throw Error("ambient getListElem: queryFn didn't return a child Object");
     Subject childSubject{DerivedSubject{
         .parent = std::make_shared<const Subject>(subject),
         .kind = DerivedSubject::Kind::GetListElem,
         .index = index,
     }};
-    auto child = std::make_shared<OuterObject>(std::move(childSubject), queryFn, outerRootFSRoot, applyFn);
+    auto child = std::make_shared<OuterObject>(std::move(childSubject), qr.child, queryFn, outerRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     child->withInheritedScope(argAncestry);
@@ -210,10 +208,9 @@ RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<OuterRe
 
 std::optional<FunctionInfo> OuterObject::getFunctionInfo()
 {
-    auto stateHash = stateHashAfterSubject(subject, argAncestry, {});
     trace::QueryGetFunctionInfo q{std::string{}};
     stampPerArgFieldsAmbient(q, subject, argAncestry);
-    auto qr = queryFn(stateHash, q, subject, argAncestry);
+    auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
         return std::nullopt;
@@ -236,26 +233,23 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
         throw Error("ambient apply: no apply callback");
     /* Thread the caller's effective argAncestry into applyFn so the cb
        apply's new local cell can chain off the right depth, even
-       when `resolve(fnId)` returns an InterpreterObject without a
-       proxy parent chain. Keep a copy of argObj for the result's
-       cell before moving it into applyFn. */
+       when `fnObj` has no proxy parent chain. Keep a copy of argObj
+       for the result's cell before moving it into applyFn. */
     auto callerScope = effectiveArgCell(*this);
     auto argForScope = argObj;
-    /* Each value crossing into a cb-apply starts fresh as
-       a Arg at the apply's reverse-De-Bruijn depth — no
-       inherited Subject is propagated, so observations at the
-       boundary are predictable regardless of where the arg came
-       from. Must match what `OuterApply::run` computes for argSubject
-       downstream so the registry's resultId and this proxy's state hash
-       for queryFn lookups agree. */
+    /* Each value crossing into a cb-apply starts fresh as an Arg at
+       the apply's reverse-De-Bruijn depth — no inherited Subject is
+       propagated, so observations are predictable regardless of where
+       the arg came from. */
     int localDepth = callerScope ? callerScope->depth + 1 : 0;
     Subject argSubject{Arg{localDepth}};
-    applyFn(stateHashAfterSubject(subject, argAncestry, {}), std::move(argObj), callerScope);
+    auto fnStateHash = stateHashAfterSubject(subject, argAncestry, {});
+    auto outerResult = applyFn(outerObj, fnStateHash, std::move(argObj), callerScope);
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(subject),
         .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
-    auto result = std::make_shared<OuterObject>(std::move(resultSubject), queryFn, outerRootFSRoot, applyFn);
+    auto result = std::make_shared<OuterObject>(std::move(resultSubject), std::move(outerResult), queryFn, outerRootFSRoot, applyFn);
     /* Apply-result argAncestry cell rooted at the caller's argAncestry. */
     auto cell = ArgCell::make(callerScope, std::move(argForScope));
     result->withArgCell(std::move(cell));

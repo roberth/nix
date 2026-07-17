@@ -22,42 +22,50 @@
 namespace nix {
 
 /**
- * Response from an ambient query: the result plus an optional child id
- * for queries that produce child Objects (getAttr, getListElem, apply).
+ * Response from an ambient query: the result plus an optional child
+ * Object for queries that produce child Objects (getAttr, getListElem).
+ * The child is the outer's Object at the queried position, which the
+ * caller wraps in a new OuterObject.
  */
 struct OuterQueryResult
 {
     trace::ResultVariant result;
-    std::optional<OuterId> childId; // id of child Object in the resolver, if applicable
+    std::shared_ptr<Object> child; // outer's child Object, if applicable
 };
 
 /**
- * Callback type for issuing ambient queries. Takes the caller's
- * Object id, the query, the caller's Subject, and the caller's
+ * Callback type for issuing ambient queries. Takes the outer Object
+ * to query, the query itself, the caller's Subject, and the caller's
  * inherited argAncestry (both for state-hash attribution at the writer).
+ * Passing the outer Object directly (rather than an id) reflects that
+ * OuterObject wraps a specific Object from a different Interpreter.
  */
 using OuterQueryFn = std::function<OuterQueryResult(
-    OuterId objectId,
+    std::shared_ptr<Object> outerObj,
     const trace::QueryVariant &,
     Subject,
     Hash argAncestry)>;
 
 /**
- * Callback type for ambient function application.
- * Takes the function's Object id, the argument Object, and the
- * calling OuterObject's effective argCell cell (the chain
- * root from which the new local cell's depth descends). Returns
- * the result Object id.
+ * Callback type for ambient function application. Takes the outer fn
+ * Object, its Subject-derived state hash (used to build the
+ * QueryApply payload — the outer Object itself typically has no
+ * Subject, so the wrapping OuterObject computes and passes this),
+ * the argument Object, and the calling OuterObject's effective
+ * argCell (the chain root from which the new local cell's depth
+ * descends). Returns the outer's apply-result Object.
  *
- * Why pass `callerScope`: the cb is reached via a navigation
- * chain (e.g. arg.items[0]), and `resolve(fnId)` may return an
- * InterpreterObject without a proxy parent chain — so the
- * callee can't infer depth from the resolved fn. The caller
- * (OuterObject::queryApply) knows its own proxy graph
- * position and threads the effective cell through.
+ * Why pass `callerScope`: the cb is reached via a navigation chain
+ * (e.g. arg.items[0]), and `fnObj` may not carry a proxy parent chain
+ * — so the callee can't infer depth from `fnObj` alone. The caller
+ * (OuterObject::queryApply) knows its own proxy graph position and
+ * threads the effective cell through.
  */
-using OuterApplyFn = std::function<OuterId(
-    OuterId fnId, std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)>;
+using OuterApplyFn = std::function<std::shared_ptr<Object>(
+    std::shared_ptr<Object> fnObj,
+    Hash fnStateHash,
+    std::shared_ptr<Object> argObj,
+    std::shared_ptr<const ArgCell> callerScope)>;
 
 /**
  * Object implementation backed by ambient queries to the outer evaluator.
@@ -67,6 +75,12 @@ using OuterApplyFn = std::function<OuterId(
 class OuterObject : public Object
 {
     Subject subject; ///< Static structural identifier (positional/derived/apply)
+    /* The Object from the outer Interpreter this proxy wraps.
+       Methods on OuterObject dispatch through this reference: the
+       inner side asks OuterObject (via Object interface), OuterObject
+       dispatches the equivalent method on `outerObj` (executing in the
+       outer's Interpreter), and hands the result back to the inner. */
+    std::shared_ptr<Object> outerObj;
     /* Inherited argAncestry: XOR of outer-argAncestry state hashes (chiefly the cached
        call's state hash(Q)) for argAncestry inheritance, per
        content-identity-via-asks.md. Set at the cb-apply;
@@ -104,7 +118,7 @@ class OuterObject : public Object
     trace::ResultWHNF & whnf();
 
 public:
-    OuterObject(Subject subject, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn = {});
+    OuterObject(Subject subject, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn = {});
 
     /** This proxy's structural identity (positional / derived /
         apply-result), per the subject-id design. */
