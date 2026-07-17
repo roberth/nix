@@ -547,13 +547,22 @@ void to_json(nlohmann::json & j, const QueryCallbackApply & q)
 {
     j = nlohmann::json{
         {"query", QueryCallbackApply::tag},
-        {"params", {{"fn", q.fn}, {"argObsSet", q.argObsSet}}}};
+        {"params", {
+            {"fn", q.fn},
+            {"argObsSet", q.argObsSet},
+            {"argAncestry", q.argAncestry},
+            {"argDepth", q.argDepth},
+        }}};
 }
 
 void from_json(const nlohmann::json & j, QueryCallbackApply & q)
 {
     j.at("params").at("fn").get_to(q.fn);
     j.at("params").at("argObsSet").get_to(q.argObsSet);
+    if (j.at("params").contains("argAncestry"))
+        j.at("params").at("argAncestry").get_to(q.argAncestry);
+    if (j.at("params").contains("argDepth"))
+        j.at("params").at("argDepth").get_to(q.argDepth);
 }
 
 // ---------------------------------------------------------------------------

@@ -502,6 +502,8 @@ struct QueryCallbackApply
     static constexpr std::string_view tag = "callbackApply";
     QueryLeaf fn;              ///< Function identity (state hash of the callback)
     std::string argObsSet;     ///< Content hash of the observation set
+    std::string argAncestry;   ///< callArgAncestry of the cached call — walker needs this to reconstruct the arg's subject state hashes when firing fn live with a proxy backed by obsSet.
+    int argDepth = 0;          ///< Reverse-De-Bruijn depth of the contra-arg. Combined with argAncestry lets the walker rebuild the arg's Subject and compute matching state hashes.
     auto operator<=>(const QueryCallbackApply &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryCallbackApply, ResultType)

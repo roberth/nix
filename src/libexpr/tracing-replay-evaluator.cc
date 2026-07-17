@@ -1143,21 +1143,14 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
     if (tag == "apply")
         return std::nullopt;
 
-    /* QueryCallbackApply (task #103): validate that the referenced
-       obsSet exists in the CAS pool, then return the canonical
-       response (CBOR of the obsSet hex). The response hash is a
-       deterministic function of the obsSet hex that both cold's
-       fold and warm's dispatch compute the same way, so the fact
-       fold matches without any per-fact response payload storage.
-
-       Live-fire dispatch (fire fn with obsSet-answering proxy) is
-       a follow-up — for now, existence-of-obsSet check plus fn
-       resolution serves as validation:
-       - fn state hash matches cold (queryHash includes it) → outer
-         fn body observations upstream have already been validated
-         at Env layer.
-       - obsSet exists in CAS → cold recorded this exact set.
-       If either check fails, miss cleanly. */
+    /* QueryCallbackApply (task #103): live-fire dispatch.
+       Constructs a ReplayCallbackArg backed by the CallbackApply's
+       observation set, invokes `fnObj->queryApply(replayArg)`, and
+       forces the result. The live fn firing is what establishes
+       cell chain for the specific sibling being applied — necessary
+       for subsequent Env-layer probes on applyResult subjects to
+       route correctly. Returns a canonical response (CBOR of obsSet
+       hex) matching cold's fact fold. */
     if (tag == trace::QueryCallbackApply::tag) {
         auto fnHex = params.value("fn", std::string{});
         auto obsSetHex = params.value("argObsSet", std::string{});
@@ -1184,6 +1177,49 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
             tracingCacheLog(
                 "callbackApply dispatch: fn %s not resolvable; miss",
                 fnHex.substr(0, 12));
+            return std::nullopt;
+        }
+        /* Build queryHash → payload map from obsSet. */
+        auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
+        for (const auto & obs : *obsSet)
+            obsSetMap->emplace(obs.queryHash, obs.responsePayload);
+        /* Construct ReplayCallbackArg backed by obsSet. Subject is
+           Arg{depth=0} with argAncestry from the payload (== the
+           cached call's callArgAncestry at cold time). Probe
+           queryHashes computed here match cold's obsSet entries. */
+        auto argAncestryHex = params.value("argAncestry", std::string{});
+        Hash argAncestry(HashAlgorithm::SHA256);
+        if (!argAncestryHex.empty()) {
+            try {
+                argAncestry = Hash::parseNonSRIUnprefixed(argAncestryHex, HashAlgorithm::SHA256);
+            } catch (const std::exception &) {
+                /* Fall through with zero — will likely miss. */
+            }
+        }
+        int argDepth = params.value("argDepth", 0);
+        Subject rootSubject{Arg{argDepth}};
+        auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
+        auto chainCursor = std::make_shared<Hash>(HashAlgorithm::SHA256);
+        Hash zeroContext(HashAlgorithm::SHA256);
+        auto replayArg = std::make_shared<ReplayCallbackArg>(
+            std::move(rootSubject),
+            argAncestry,
+            walkFacts, chainCursor, zeroContext,
+            decisionGraph, inner->getEvalState().rootFSRoot,
+            &inner->getEvalState());
+        replayArg->withObsSetResponses(obsSetMap);
+        /* Fire fn live — this establishes cell chain for this
+           specific sibling and lets outer's fn body probe the arg
+           through the obsSet-served responses. */
+        try {
+            auto resultObj = fnObj->queryApply(replayArg);
+            if (!resultObj)
+                return std::nullopt;
+            (void) resultObj->getType();
+        } catch (const std::exception & e) {
+            tracingCacheLog(
+                "callbackApply dispatch: fn firing failed: %s",
+                e.what());
             return std::nullopt;
         }
         tracingCacheLog(

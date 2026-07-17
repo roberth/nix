@@ -65,7 +65,9 @@ static Hash stampPerArgFields(
    response, so first-writer-wins in the map can't return the
    wrong payload. */
 template<typename Q>
-static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, const Hash & outerContext)
+static nlohmann::json readResponse(
+    TracingDecisionGraph & dg, const Q & query, const Hash & outerContext,
+    const std::shared_ptr<std::map<Hash, std::string>> & obsSetResponses = {})
 {
     auto reqHash = TracingDecisionGraph::computeQueryHash(query);
     tracingCacheLog(
@@ -73,6 +75,18 @@ static nlohmann::json readResponse(TracingDecisionGraph & dg, const Q & query, c
         Q::tag, query.from.isStateHash() ? query.from.stateHash().substr(0, 12) : "<?>",
         reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
         outerContext.to_string(HashFormat::Base16, false).substr(0, 12));
+    /* obsSet responses first (task #103). When the CallbackApply
+       dispatcher set an obsSet source, look up here — no
+       InnerValueResponse dependency. */
+    if (obsSetResponses) {
+        auto it = obsSetResponses->find(reqHash);
+        if (it != obsSetResponses->end()) {
+            tracingCacheLog(
+                "rlo: obsSet HIT reqHash=%s",
+                reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
+            return cborStringToJson(it->second);
+        }
+    }
     auto payload = dg.getInnerValueResponsePayload(reqHash, outerContext);
     if (!payload)
         throw Error("ReplayCallbackArg: no recorded response for %s on local %s",
@@ -162,7 +176,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
 {
     trace::QueryGetAttr query{name, std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query, outerContext);
+    auto rJson = readResponse(decisionGraph, query, outerContext, obsSetResponses);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromStateHash, rJson, *walkFacts, *chainCursor);
     else
@@ -186,6 +200,11 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
        they're observed within the same cb apply's recorded chain. */
     if (validateAgainstAmbientAsks)
         child->withAmbientAsksValidation();
+    /* Inherit obsSet response source (task #103). Derived children
+       probe within the same callback firing, so the same obsSet
+       serves their responses too. */
+    if (obsSetResponses)
+        child->withObsSetResponses(obsSetResponses);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     /* Inherit cb-arg apply context — derived navigation stays within
@@ -203,7 +222,7 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
         return *cachedWHNF;
     trace::QueryGetWHNF query{std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query, outerContext);
+    auto rJson = readResponse(decisionGraph, query, outerContext, obsSetResponses);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromStateHash, rJson, *walkFacts, *chainCursor);
     else
@@ -296,7 +315,7 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
 {
     trace::QueryGetListElem query{std::string{}, index};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query, outerContext);
+    auto rJson = readResponse(decisionGraph, query, outerContext, obsSetResponses);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromStateHash, rJson, *walkFacts, *chainCursor);
     else
@@ -630,7 +649,7 @@ std::optional<FunctionInfo> ReplayCallbackArg::getFunctionInfo()
 {
     trace::QueryGetFunctionInfo query{std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query, outerContext);
+    auto rJson = readResponse(decisionGraph, query, outerContext, obsSetResponses);
     if (validateAgainstAmbientAsks)
         advanceChainAndAppendFact(decisionGraph, query, fromStateHash, rJson, *walkFacts, *chainCursor);
     else

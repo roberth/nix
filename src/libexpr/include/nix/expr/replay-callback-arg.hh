@@ -103,6 +103,14 @@ class ReplayCallbackArg : public Object
        AmbientAsks. */
     bool validateAgainstAmbientAsks = false;
 
+    /* Optional obsSet response source (task #103). When set, method
+       responses are looked up in this map by queryHash instead of
+       (or before) InnerValueResponse. Populated by the walker's
+       callbackApply dispatch from the CallbackApply's referenced
+       observation set — each entry is (queryHash → CBOR response
+       payload). Independent of the boundary/contextHash mechanism. */
+    std::shared_ptr<std::map<Hash, std::string>> obsSetResponses;
+
     /* Memoized WHNF response. The recorder logs ONE QueryGetWHNF ambient
        observation per value force; the walker must advance
        `chainCursor` once to stay in lockstep but reuse the cached
@@ -211,6 +219,26 @@ public:
         applyDepth = depth_;
         applyArgAncestry = std::move(scope_);
         return *this;
+    }
+
+    /** Attach an obsSet response source (task #103). Each probe on
+        this ReplayCallbackArg (or its derived children, if the
+        shared_ptr is passed through) will look up its queryHash in
+        this map first, decoding the CBOR payload as the response
+        Result. Falls back to InnerValueResponse if the queryHash
+        isn't in the map. Enables the CallbackApply walker's live
+        outer validation without the boundary/contextHash
+        machinery. */
+    ReplayCallbackArg & withObsSetResponses(
+        std::shared_ptr<std::map<Hash, std::string>> map)
+    {
+        obsSetResponses = std::move(map);
+        return *this;
+    }
+
+    std::shared_ptr<std::map<Hash, std::string>> getObsSetResponses() const
+    {
+        return obsSetResponses;
     }
 
     std::optional<int> getApplyDepth() const { return applyDepth; }

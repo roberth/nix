@@ -240,6 +240,19 @@ class TracingWriter
            in the payload. Captured at openCbApply time from the
            applyQueryPayload's `fn` field. */
         std::string fnStateHashHex;
+        /* Cached call's callArgAncestry, captured at openCbApply.
+           Encoded into the QueryCallbackApply payload so the
+           walker's live-fire dispatch can construct a
+           ReplayCallbackArg with the same argAncestry the writer
+           saw — required for probe queryHashes to match cold's
+           obsSet entries. */
+        std::string argAncestryHex;
+        /* Contra-arg's reverse-De-Bruijn depth, captured from the
+           observation's Subject on first probe. Same reason as
+           argAncestryHex — needed to reconstruct the arg's Subject
+           in the walker's ReplayCallbackArg. */
+        int argDepth = 0;
+        bool argDepthCaptured = false;
         /* Running observation set — grows by one each time
            `logAmbientObservation` records a new probe on this
            cb-apply's contra-arg. Each append produces a new
@@ -510,6 +523,22 @@ public:
         for (auto it = pendingCbApplies.rbegin();
              it != pendingCbApplies.rend(); ++it) {
             if (it->applyId == applyId) {
+                /* Capture argAncestry and arg's depth on first
+                   observation. Walker uses them to rebuild the
+                   ReplayCallbackArg's Subject + argAncestry so probe
+                   queryHashes match cold's obsSet entries. Every
+                   observation in this firing shares both values. */
+                if (it->argAncestryHex.empty())
+                    it->argAncestryHex = argAncestry.to_string(HashFormat::Base16, false);
+                if (!it->argDepthCaptured) {
+                    auto par = pathAndRootsFromSubject(subject);
+                    if (!par.roots.empty()) {
+                        if (auto * a = std::get_if<Arg>(&par.roots[0].data)) {
+                            it->argDepth = a->depth;
+                            it->argDepthCaptured = true;
+                        }
+                    }
+                }
                 it->facts.push_back({query, result, std::move(subject),
                     std::move(argAncestry), applyId});
                 if (it->finalized)
@@ -528,10 +557,34 @@ public:
                    coexists with the existing AmbientAsk-driven fold
                    in flushAmbient until cutover. */
                 if (!it->fnStateHashHex.empty()) {
+                    /* Restamp the query to match how the walker's
+                       ReplayCallbackArg computes queryHash — with
+                       path + fromStateHashes populated based on
+                       subject state at empty history (matches
+                       TracingCallbackArg's tracingLocalFromOf which
+                       uses stateHashAfterSubject with empty history). */
+                    trace::QueryVariant stampedQuery = query;
+                    auto par = pathAndRootsFromSubject(it->facts.back().subject);
+                    std::vector<trace::QueryLeaf> fromStateHashes;
+                    fromStateHashes.reserve(par.roots.size());
+                    for (auto & root : par.roots) {
+                        auto cid = stateHashAfter(root, it->facts.back().argAncestry, {});
+                        fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
+                    }
+                    std::visit([&](auto & q) {
+                        using QT = std::decay_t<decltype(q)>;
+                        if constexpr (requires { q.from; }) {
+                            q.from = fromStateHashes.empty()
+                                ? trace::QueryLeaf{std::string{}}
+                                : fromStateHashes[0];
+                            q.path = par.path;
+                            q.fromStateHashes = fromStateHashes;
+                        }
+                    }, stampedQuery);
                     auto qh = std::visit(
                         [](const auto & q) {
                             return TracingDecisionGraph::computeQueryHash(q);
-                        }, query);
+                        }, stampedQuery);
                     nlohmann::json rJson = std::visit(
                         [](const auto & r) -> nlohmann::json { return r; },
                         result);
@@ -545,6 +598,8 @@ public:
                     trace::QueryCallbackApply cbApply{
                         it->fnStateHashHex,
                         obsSetHash.to_string(HashFormat::Base16, false),
+                        it->argAncestryHex,
+                        it->argDepth,
                     };
                     auto cbApplyQueryHash = TracingDecisionGraph::computeQueryHash(cbApply);
                     nlohmann::json cbApplyJson = cbApply;
