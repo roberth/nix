@@ -418,14 +418,12 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         writer.openCbApply(applyQ);
     }
 
-    /* Per-arg-completion option 2: apply-result state hash evolves with
-       the writer's envWalk at the moment of apply. With the
-       1:1 alignment restructure, writer.d1.size grows in lockstep
-       with envAsksEdges; walker.envWalk grows per dispatched
-       Asks edge. At sibling B's apply, walker.envWalk should
-       have caught up to writer.d1.size at cold sib B apply (= all
-       of sib A's envAsksEdges traversed via prior v13Walks). */
-    auto & d1Walk = writer.getD1CidasksWalk();
+    /* Per-Q envWalk view: matches walker's per-walk envWalk at the
+       corresponding point on the read side (per task 90's per-walk
+       scoping + per-Q writer baseline). Session-cumulative envWalk
+       drifts from walker's per-walk view; per-Q view is the ground
+       truth for stateHashAt on the record side. */
+    auto d1Walk = writer.perQEnvWalkView();
     /* Subject-evolution fast-path: stamp SubjectEvolutionEdges via hook. */
     Hash resultIdHash = stateHashAt(
         resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
@@ -474,17 +472,17 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         if (auto resolver = inner->getAmbientResolver()) {
             guard.resolver = resolver;
             guard.oldScope = getAmbientResolverCallScope(*resolver);
-            /* Sibling discrimination (cb-sibling-b): applyArgAncestryStateHash
-               alone collides across siblings whose constituents are
-               structurally identical at apply time. XOR in
-               writer.envFactSetHash so cold's sibling A (applying at
-               v13FactSet_A) and sibling B (applying at v13FactSet_B >
-               v13FactSet_A) get distinct siblingScopes → distinct
-               inner-ambient-object inheritedScopes → distinct
-               reqhashes for observations they emit. */
+            /* Sibling discrimination: per-Q factSet at apply time is
+               the walker-per-walk-equivalent term. Session-cumulative
+               getV13FactSetHash() would drift from walker's per-walk
+               view. Under matching-until-divergence, siblings with
+               structurally identical constituents at apply time
+               diverge via subsequent observations — but the XOR term
+               here still needs to align with walker's view for
+               inheritedScope propagation. */
             auto siblingScope = TracingDecisionGraph::xorHashes(
                 TracingDecisionGraph::xorHashes(guard.oldScope, applyArgAncestryStateHash),
-                writer.getV13FactSetHash());
+                writer.perQFactSetHash());
             setAmbientResolverCallArgAncestry(*resolver, siblingScope);
         }
     }
