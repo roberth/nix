@@ -1144,11 +1144,15 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
         return std::nullopt;
 
     /* Task #103: outer probes that reach through an applyResult carry
-       a `callbackApply` slot. Materialise a fresh ReplayCallbackArg
-       backed by the slot's obsSet, then pre-populate ctx.memo at the
-       contra-arg's base state hash so the downstream resolveRoots /
-       resolveStateHash / navigatePath pipeline picks it up. Fresh fn
-       invocation per probe — no memoisation of the resulting Object. */
+       a `callbackApply` slot. Dispatch end-to-end here rather than
+       falling through to the state-hash-equality routing pipeline —
+       the slot carries every piece of navigation info the walker
+       needs. Materialise a fresh ReplayCallbackArg backed by the
+       slot's obsSet, navigate to fn structurally from the outer's
+       arg (cell[0].liveObject) via the query's `fnPath`, invoke
+       fn->queryApply(replayArg), then run the query's op
+       (getWHNF/getAttr/…) on the result. No ctx.memo, no
+       resolveStateHash dance. */
     if (params.contains("callbackApply")) {
         trace::CallbackApplyRef ref;
         try {
@@ -1181,40 +1185,98 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
             decisionGraph, inner->getEvalState().rootFSRoot,
             &inner->getEvalState());
         replayArg->withObsSetResponses(obsSetMap);
-        auto argBaseId = stateHashAfter(Subject{Arg{ref.argDepth}}, argAncestry, {});
-        ctx.memo[argBaseId.to_string(HashFormat::Base16, false)] = replayArg;
-        /* Also pre-memoise root 0 (the outer's arg to the cached fn)
-           at whatever evolved state hash the query stamped. Under
-           the slot-based design the outer's arg Object is whatever
-           lives at cell[0] in the current walker's proxy chain — its
-           OuterObject at whatever state hash. navigatePath's Apply
-           step then navigates from that live Object via fnPath (e.g.
-           `.getAttr("f")`) to reach fn; the state-hash equality
-           machinery isn't required because the slot carries the
-           canonical navigation info directly. */
-        if (params.contains("fromStateHashes")
-            && params["fromStateHashes"].is_array()
-            && params["fromStateHashes"].size() >= 1
-            && ctx.currentProxy) {
-            auto rootHex = params["fromStateHashes"][0].get<std::string>();
-            if (!ctx.memo.count(rootHex)) {
-                if (auto cell = ctx.currentProxy->getProxyArgCell()) {
-                    if (auto live = cell->liveObject) {
-                        ctx.memo[rootHex] = live;
-                        tracingCacheLog(
-                            "callbackApply slot: memoised outer arg root %s to cell[0].liveObject",
-                            rootHex.substr(0, 12));
-                    }
-                }
-            }
+
+        /* Resolve fn structurally. cell[0].liveObject is the outer's
+           arg to the cached fn (an OuterObject wrapping e.g. `{f=…}`).
+           The query's path is [{apply, fnPath, argPath, …}]; fnPath
+           navigates from that root to fn. */
+        std::shared_ptr<Object> outerRootObj;
+        if (ctx.currentProxy) {
+            if (auto cell = ctx.currentProxy->getProxyArgCell())
+                outerRootObj = cell->liveObject;
         }
-        tracingCacheLog(
-            "callbackApply slot: materialised ReplayCallbackArg for argDepth=%d obsSet=%s at baseId=%s",
-            ref.argDepth, ref.argObsSet.substr(0, 12),
-            argBaseId.to_string(HashFormat::Base16, false).substr(0, 12));
-        /* Fall through — the query's own tag (getWHNF/getAttr/…) runs
-           the normal resolveRoots+navigatePath pipeline below, which
-           now finds both roots via ctx.memo. */
+        if (!outerRootObj)
+            return std::nullopt;
+
+        auto pathParsed = parsePathFromParams(params);
+        std::shared_ptr<Object> fnObj = outerRootObj;
+        std::shared_ptr<Object> resultObj;
+        try {
+            /* First step must be Apply; trailing steps handled after. */
+            if (pathParsed.steps.empty()
+                || pathParsed.steps[0].kind != trace::PathStep::Kind::Apply
+                || !pathParsed.steps[0].fnPath)
+                return std::nullopt;
+            for (const auto & step : pathParsed.steps[0].fnPath->steps) {
+                if (!fnObj)
+                    return std::nullopt;
+                if (step.kind == trace::PathStep::Kind::GetAttr)
+                    fnObj = fnObj->maybeGetAttr(step.name);
+                else if (step.kind == trace::PathStep::Kind::GetListElem)
+                    fnObj = fnObj->getListElem(step.index);
+                else
+                    return std::nullopt;
+            }
+            if (!fnObj)
+                return std::nullopt;
+            resultObj = fnObj->queryApply(replayArg);
+        } catch (const std::exception & e) {
+            tracingCacheLog("callbackApply slot: dispatch failed at fn resolve/apply: %s", e.what());
+            return std::nullopt;
+        }
+        if (!resultObj)
+            return std::nullopt;
+
+        /* Apply the query's leaf op to the result Object, using any
+           trailing path steps after the Apply for descendant probes
+           (e.g. `.getAttr("rr")` before the leaf op). */
+        std::shared_ptr<Object> obj = resultObj;
+        try {
+            for (size_t i = 1; i < pathParsed.steps.size(); ++i) {
+                const auto & step = pathParsed.steps[i];
+                if (!obj)
+                    return std::nullopt;
+                if (step.kind == trace::PathStep::Kind::GetAttr)
+                    obj = obj->maybeGetAttr(step.name);
+                else if (step.kind == trace::PathStep::Kind::GetListElem)
+                    obj = obj->getListElem(step.index);
+                else
+                    return std::nullopt;
+            }
+            if (!obj)
+                return std::nullopt;
+
+            nlohmann::json resultJson;
+            if (tag == "getWHNF") {
+                resultJson = computeWHNFFromObject(*obj);
+            } else if (tag == "getAttr") {
+                auto name = params["name"].get<std::string>();
+                auto child = obj->maybeGetAttr(name);
+                if (!child)
+                    resultJson = trace::ResultMaybeType{std::nullopt};
+                else
+                    resultJson = trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}};
+            } else if (tag == "getListElem") {
+                auto index = params["index"].get<size_t>();
+                auto child = obj->getListElem(index);
+                resultJson = trace::ResultType{objectTypeToString(child->getType())};
+            } else if (tag == "getFunctionInfo") {
+                auto info = obj->getFunctionInfo();
+                if (!info)
+                    resultJson = trace::ResultFunctionInfo{false, {}, false};
+                else
+                    resultJson = trace::ResultFunctionInfo{true, info->formals, info->ellipsis};
+            } else {
+                return std::nullopt;
+            }
+            tracingCacheLog(
+                "callbackApply slot: end-to-end dispatch HIT tag=%s obsSet=%s argDepth=%d",
+                tag.c_str(), ref.argObsSet.substr(0, 12), ref.argDepth);
+            return jsonToCborString(resultJson);
+        } catch (const std::exception & e) {
+            tracingCacheLog("callbackApply slot: dispatch failed at leaf op %s: %s", tag.c_str(), e.what());
+            return std::nullopt;
+        }
     }
 
     if (!params.contains("from"))
