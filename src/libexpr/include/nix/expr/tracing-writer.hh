@@ -288,54 +288,6 @@ class TracingWriter
         fromHash = fn's subject state hash. Sets `it.emitted = true`.
         Idempotent: no-op if already emitted or if runningObsSet is
         empty. */
-    void emitCallbackApplyFact(CallbackCell & it)
-    {
-        if (it.emitted || it.runningObsSet.empty() || it.fnStateHashHex.empty())
-            return;
-        if (!decisionGraph)
-            return;
-        auto obsSetHash = decisionGraph->insertObservationSet(it.runningObsSet);
-        trace::QueryCallbackApply cbApply{
-            it.fnStateHashHex,
-            obsSetHash.to_string(HashFormat::Base16, false),
-            it.argAncestryHex,
-            it.argDepth,
-        };
-        auto cbApplyQueryHash = TracingDecisionGraph::computeQueryHash(cbApply);
-        nlohmann::json cbApplyJson = cbApply;
-        decisionGraph->insertRequest(cbApplyQueryHash, jsonToCborString(cbApplyJson));
-        auto cbApplyRespPayload = jsonToCborString(
-            nlohmann::json(obsSetHash.to_string(HashFormat::Base16, false)));
-        auto rh = TracingDecisionGraph::computeResponseHash(cbApplyRespPayload);
-        tracingCacheLog(
-            "callbackApply per-firing emit: fn=%s obsSet=%s obs=%zu -> qHash=%s",
-            it.fnStateHashHex.substr(0, 12),
-            obsSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
-            it.runningObsSet.size(),
-            cbApplyQueryHash.to_string(HashFormat::Base16, false).substr(0, 12));
-        auto factElementHash = TracingDecisionGraph::xorFactIntoHash(
-            Hash(HashAlgorithm::SHA256), cbApplyQueryHash, rh);
-        if (seenRequests.insert(factElementHash).second) {
-            envFactSet.push_back({cbApplyQueryHash, rh});
-            envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                envFactSetHash, cbApplyQueryHash, rh);
-            responseFor.emplace(cbApplyQueryHash, rh);
-            sessionRequestsTrie.insert(cbApplyQueryHash);
-            allRequestHashes.insert(cbApplyQueryHash);
-            auto requestSetHash = decisionGraph->insertRequestSet({cbApplyQueryHash});
-            envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-            Hash fromStateHash{HashAlgorithm::SHA256};
-            try {
-                fromStateHash = Hash::parseNonSRIUnprefixed(
-                    it.fnStateHashHex, HashAlgorithm::SHA256);
-            } catch (...) {}
-            ObservationSet obsSetEdge;
-            obsSetEdge.observations.push_back({fromStateHash, factElementHash});
-            envWalk.push_back(std::move(obsSetEdge));
-            prevQFactSetHash = envFactSetHash;
-        }
-        it.emitted = true;
-    }
 
     /* RAII suppress counter for `createCallbackCell` while > 0. Used to
        elide redundant boundary firings during walker re-dispatch of a

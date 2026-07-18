@@ -81,22 +81,6 @@ class TracingReplayEvaluator : public Evaluator
         reconstructed value tree). */
     std::unordered_set<TracingDecisionGraph::RequestHash> inFlightApplyReqs;
 
-    /** CallbackApply Facts folded into `envWalk` during this walk.
-        Populated in `dispatchAmbientQuery` when a `callbackApply`
-        request lands. Used by `resolveStateHash` to materialise a
-        fresh `ReplayCallbackArg` backed by the recorded observation
-        set whenever a target state hash matches Arg{argDepth}'s
-        subject id. Arg is atomic under the callback model — it
-        does not evolve — so the match is just on Arg's baseId.
-        The record carries what the fresh ReplayCallbackArg needs
-        to reconstruct plus the base id used to match. */
-    struct CallbackApplyRecord {
-        int argDepth;
-        Hash argAncestry;
-        Hash argObsSet;
-        Hash baseArgStateHash; ///< stateHashAfter(Arg{argDepth}, argAncestry, {})
-    };
-    std::vector<CallbackApplyRecord> callbackApplies;
 
 
     std::optional<std::string> dispatchAmbientQuery(const nlohmann::json & reqJson, ResolutionContext & ctx);
