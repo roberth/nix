@@ -1183,13 +1183,38 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
         replayArg->withObsSetResponses(obsSetMap);
         auto argBaseId = stateHashAfter(Subject{Arg{ref.argDepth}}, argAncestry, {});
         ctx.memo[argBaseId.to_string(HashFormat::Base16, false)] = replayArg;
+        /* Also pre-memoise root 0 (the outer's arg to the cached fn)
+           at whatever evolved state hash the query stamped. Under
+           the slot-based design the outer's arg Object is whatever
+           lives at cell[0] in the current walker's proxy chain — its
+           OuterObject at whatever state hash. navigatePath's Apply
+           step then navigates from that live Object via fnPath (e.g.
+           `.getAttr("f")`) to reach fn; the state-hash equality
+           machinery isn't required because the slot carries the
+           canonical navigation info directly. */
+        if (params.contains("fromStateHashes")
+            && params["fromStateHashes"].is_array()
+            && params["fromStateHashes"].size() >= 1
+            && ctx.currentProxy) {
+            auto rootHex = params["fromStateHashes"][0].get<std::string>();
+            if (!ctx.memo.count(rootHex)) {
+                if (auto cell = ctx.currentProxy->getProxyArgCell()) {
+                    if (auto live = cell->liveObject) {
+                        ctx.memo[rootHex] = live;
+                        tracingCacheLog(
+                            "callbackApply slot: memoised outer arg root %s to cell[0].liveObject",
+                            rootHex.substr(0, 12));
+                    }
+                }
+            }
+        }
         tracingCacheLog(
             "callbackApply slot: materialised ReplayCallbackArg for argDepth=%d obsSet=%s at baseId=%s",
             ref.argDepth, ref.argObsSet.substr(0, 12),
             argBaseId.to_string(HashFormat::Base16, false).substr(0, 12));
         /* Fall through — the query's own tag (getWHNF/getAttr/…) runs
            the normal resolveRoots+navigatePath pipeline below, which
-           now finds the replayArg via ctx.memo. */
+           now finds both roots via ctx.memo. */
     }
 
     if (!params.contains("from"))
