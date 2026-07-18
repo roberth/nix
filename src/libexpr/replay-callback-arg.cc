@@ -38,12 +38,23 @@ static Hash stampPerArgFields(
     const std::vector<ObservationSet> & walkFacts,
     size_t step)
 {
+    /* Contra-arg roots (`Arg{depth}`) don't have an evolving state
+       hash. Their `from` field is their structural id
+       (`SHA("positional-<depth>") XOR argAncestry`) — computed at
+       empty history, invariant across probes. Walker's fresh firing
+       under any outer probe stamps identically; matches cold's
+       obsSet queryHashes. `walkFacts`/`step` are still used by the
+       AmbientAsks chain machinery in advanceChainAndAppendFact
+       (call-sites keep passing them), just not for `from` field
+       computation. */
+    (void) walkFacts;
+    (void) step;
     auto par = pathAndRootsFromSubject(subject);
     std::vector<trace::QueryLeaf> fromStateHashes;
     fromStateHashes.reserve(par.roots.size());
     Hash fromStateHash(HashAlgorithm::SHA256);
     for (size_t i = 0; i < par.roots.size(); ++i) {
-        auto cid = stateHashAt(par.roots[i], argAncestry, walkFacts, step);
+        auto cid = stateHashAfter(par.roots[i], argAncestry, {});
         if (i == 0)
             fromStateHash = cid;
         fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));

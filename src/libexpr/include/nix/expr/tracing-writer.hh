@@ -582,24 +582,23 @@ public:
                    coexists with the existing AmbientAsk-driven fold
                    in flushAmbient until cutover. */
                 if (!it->fnStateHashHex.empty()) {
-                    /* Progressive per-probe stamping — mirrors
-                       `ReplayCallbackArg::stampPerArgFields` with
-                       `walkFacts` progression. Each probe's `from`
-                       is stateHashAt with runningObsHistory as it
-                       stands; the observation is then appended so
-                       the NEXT probe stamps against the evolved
-                       state. Warm reproduces the same sequence via
-                       its ReplayCallbackArg, so k-th probe's
-                       queryHash matches this k-th obsSet entry. */
+                    /* Contra-arg is a subject-without-state-hash: its
+                       structural id is `SHA("positional-<depth>") XOR
+                       argAncestry` (Arg{depth}'s baseId) and doesn't
+                       evolve. Stamp each ambient probe's `from` at
+                       that structural id — empty history, no
+                       walkFacts progression. Sibling calls with
+                       different callback bodies differ via the
+                       obsSet content-hash on the enclosing
+                       CallbackApply, not via arg-side state hash
+                       evolution. */
                     trace::QueryVariant stampedQuery = query;
                     auto par = pathAndRootsFromSubject(it->facts.back().subject);
                     std::vector<trace::QueryLeaf> fromStateHashes;
                     fromStateHashes.reserve(par.roots.size());
                     for (auto & root : par.roots) {
-                        auto cid = stateHashAt(
-                            root, it->facts.back().argAncestry,
-                            it->runningObsHistory,
-                            it->runningObsHistory.size());
+                        auto cid = stateHashAfter(
+                            root, it->facts.back().argAncestry, {});
                         fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
                     }
                     std::visit([&](auto & q) {
@@ -620,26 +619,7 @@ public:
                         [](const auto & r) -> nlohmann::json { return r; },
                         result);
                     auto rPayload = jsonToCborString(rJson);
-                    auto rHash = TracingDecisionGraph::computeResponseHash(rPayload);
                     it->runningObsSet.push_back({qh, rPayload});
-                    /* Append the observation to the local history so
-                       the next probe stamps against its evolved state. */
-                    Hash fromStateHashForHistory{HashAlgorithm::SHA256};
-                    if (!fromStateHashes.empty()) {
-                        try {
-                            fromStateHashForHistory = Hash::parseNonSRIUnprefixed(
-                                fromStateHashes[0].stateHash(), HashAlgorithm::SHA256);
-                        } catch (...) {}
-                    }
-                    auto elementHash = TracingDecisionGraph::xorFactIntoHash(
-                        Hash(HashAlgorithm::SHA256), qh, rHash);
-                    ObservationSet edge;
-                    edge.observations.push_back({fromStateHashForHistory, elementHash});
-                    it->runningObsHistory.push_back(std::move(edge));
-                    /* Emission of the single CallbackApply Fact
-                       is deferred to `emitCallbackApplyFact`, called
-                       from `logOuterObservation` when the outer
-                       first observes this firing's applyResult. */
                 }
                 return;
             }
