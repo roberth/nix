@@ -76,20 +76,6 @@ void TracingWriter::logOuterObservation(
                     if (cell.argAncestryHex.empty())
                         continue;
                     auto obsSetHash = decisionGraph->insertObservationSet(cell.runningObsSet);
-                    /* Reset walkFacts scope for the next outer probe.
-                       Warm re-fires fn afresh per outer probe with
-                       empty walkFacts; cold's ambient probe stamping
-                       must match that fresh state for each outer
-                       probe. runningObsHistory drives progressive
-                       stamping within an outer probe's ambient
-                       sequence — resetting it here means the NEXT
-                       outer probe's ambient probes stamp starting
-                       from walkFacts=0. Within a single outer
-                       probe (e.g., cb-local-descendants' 7 eager
-                       ambients under one applyResult.getWHNF),
-                       runningObsHistory grows correctly and matches
-                       warm's fresh firing's progression. */
-                    cell.runningObsHistory.clear();
                     trace::CallbackApplyRef r;
                     r.fn = fnCurrentHex;
                     r.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);

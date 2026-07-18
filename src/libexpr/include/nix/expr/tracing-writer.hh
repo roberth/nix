@@ -799,6 +799,21 @@ public:
         return callbackCells.back().applyId;
     }
 
+    /** Signal that a new outer probe is beginning. Called from
+        `TracingEnvironment::outerQuery` before the probe's evaluation
+        runs. Resets each active CallbackCell's `runningObsHistory`
+        so the ambient probes fired during this outer probe stamp
+        starting from walkFacts=0 — matching warm's fresh fn firing
+        per outer probe (each firing has empty walkFacts). Ambient
+        probes fired within one outer probe still accumulate into the
+        cell's history and stamp progressively; across outer probes
+        the history resets. */
+    void beginOuterProbe()
+    {
+        for (auto & cell : callbackCells)
+            cell.runningObsHistory.clear();
+    }
+
     void logAmbientApplyFact(
         const nlohmann::json & applyQueryPayload,
         const Subject & resultSubject,
