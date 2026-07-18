@@ -261,8 +261,81 @@ class TracingWriter
            InnerValueResponse recording the probe's response for
            walker lookup at replay. Task #103. */
         std::vector<TracingDecisionGraph::Observation> runningObsSet;
+        /* Companion to `runningObsSet` used for progressive
+           per-probe stamping. Each new probe stamps its `from`
+           field with `stateHashAt(root, argAncestry,
+           runningObsHistory, runningObsHistory.size())` and then
+           appends its own {fromStateHash, elementHash} single-obs
+           edge — matching `ReplayCallbackArg`'s `walkFacts`
+           progression so warm's queryHash for the k-th probe
+           equals the queryHash stored here. */
+        std::vector<ObservationSet> runningObsHistory;
+        /* Set once the single per-firing CallbackApply Fact has
+           been emitted (task #103). Emission happens when the outer
+           first observes the applyResult subject that this cb-apply
+           produces — at that point fn body has completed and
+           runningObsSet is fixed. Flushed as a single-request Ask
+           so fn's own-loop evolves before the applyResult
+           observation stamps against the evolved state. */
+        bool emitted = false;
     };
     std::vector<PendingCbApply> pendingCbApplies;
+
+    /** Emit the single CallbackApply Fact for a pendingCbApply whose
+        firing has just completed. Inserts the request into the pool,
+        folds `(cbApplyQueryHash, cbApplyRespHash)` into envFactSet,
+        pushes an Ask edge, and records an envWalk observation with
+        fromHash = fn's subject state hash. Sets `it.emitted = true`.
+        Idempotent: no-op if already emitted or if runningObsSet is
+        empty. */
+    void emitCallbackApplyFact(PendingCbApply & it)
+    {
+        if (it.emitted || it.runningObsSet.empty() || it.fnStateHashHex.empty())
+            return;
+        if (!decisionGraph)
+            return;
+        auto obsSetHash = decisionGraph->insertObservationSet(it.runningObsSet);
+        trace::QueryCallbackApply cbApply{
+            it.fnStateHashHex,
+            obsSetHash.to_string(HashFormat::Base16, false),
+            it.argAncestryHex,
+            it.argDepth,
+        };
+        auto cbApplyQueryHash = TracingDecisionGraph::computeQueryHash(cbApply);
+        nlohmann::json cbApplyJson = cbApply;
+        decisionGraph->insertRequest(cbApplyQueryHash, jsonToCborString(cbApplyJson));
+        auto cbApplyRespPayload = jsonToCborString(
+            nlohmann::json(obsSetHash.to_string(HashFormat::Base16, false)));
+        auto rh = TracingDecisionGraph::computeResponseHash(cbApplyRespPayload);
+        tracingCacheLog(
+            "callbackApply per-firing emit: fn=%s obsSet=%s obs=%zu -> qHash=%s",
+            it.fnStateHashHex.substr(0, 12),
+            obsSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            it.runningObsSet.size(),
+            cbApplyQueryHash.to_string(HashFormat::Base16, false).substr(0, 12));
+        auto factElementHash = TracingDecisionGraph::xorFactIntoHash(
+            Hash(HashAlgorithm::SHA256), cbApplyQueryHash, rh);
+        if (seenRequests.insert(factElementHash).second) {
+            envFactSet.push_back({cbApplyQueryHash, rh});
+            envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
+                envFactSetHash, cbApplyQueryHash, rh);
+            responseFor.emplace(cbApplyQueryHash, rh);
+            sessionRequestsTrie.insert(cbApplyQueryHash);
+            allRequestHashes.insert(cbApplyQueryHash);
+            auto requestSetHash = decisionGraph->insertRequestSet({cbApplyQueryHash});
+            envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+            Hash fromStateHash{HashAlgorithm::SHA256};
+            try {
+                fromStateHash = Hash::parseNonSRIUnprefixed(
+                    it.fnStateHashHex, HashAlgorithm::SHA256);
+            } catch (...) {}
+            ObservationSet obsSetEdge;
+            obsSetEdge.observations.push_back({fromStateHash, factElementHash});
+            envWalk.push_back(std::move(obsSetEdge));
+            prevQFactSetHash = envFactSetHash;
+        }
+        it.emitted = true;
+    }
 
     /* RAII suppress counter for `openCbApply` while > 0. Used to
        elide redundant boundary firings during walker re-dispatch of a
@@ -557,18 +630,24 @@ public:
                    coexists with the existing AmbientAsk-driven fold
                    in flushAmbient until cutover. */
                 if (!it->fnStateHashHex.empty()) {
-                    /* Restamp the query to match how the walker's
-                       ReplayCallbackArg computes queryHash — with
-                       path + fromStateHashes populated based on
-                       subject state at empty history (matches
-                       TracingCallbackArg's tracingLocalFromOf which
-                       uses stateHashAfterSubject with empty history). */
+                    /* Progressive per-probe stamping — mirrors
+                       `ReplayCallbackArg::stampPerArgFields` with
+                       `walkFacts` progression. Each probe's `from`
+                       is stateHashAt with runningObsHistory as it
+                       stands; the observation is then appended so
+                       the NEXT probe stamps against the evolved
+                       state. Warm reproduces the same sequence via
+                       its ReplayCallbackArg, so k-th probe's
+                       queryHash matches this k-th obsSet entry. */
                     trace::QueryVariant stampedQuery = query;
                     auto par = pathAndRootsFromSubject(it->facts.back().subject);
                     std::vector<trace::QueryLeaf> fromStateHashes;
                     fromStateHashes.reserve(par.roots.size());
                     for (auto & root : par.roots) {
-                        auto cid = stateHashAfter(root, it->facts.back().argAncestry, {});
+                        auto cid = stateHashAt(
+                            root, it->facts.back().argAncestry,
+                            it->runningObsHistory,
+                            it->runningObsHistory.size());
                         fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
                     }
                     std::visit([&](auto & q) {
@@ -589,81 +668,26 @@ public:
                         [](const auto & r) -> nlohmann::json { return r; },
                         result);
                     auto rPayload = jsonToCborString(rJson);
-                    /* Observation stores queryHash + inline
-                       responsePayload so the walker's obsSet-answering
-                       proxy can serve callback probes without any
-                       separate response table. */
+                    auto rHash = TracingDecisionGraph::computeResponseHash(rPayload);
                     it->runningObsSet.push_back({qh, rPayload});
-                    auto obsSetHash = decisionGraph->insertObservationSet(it->runningObsSet);
-                    trace::QueryCallbackApply cbApply{
-                        it->fnStateHashHex,
-                        obsSetHash.to_string(HashFormat::Base16, false),
-                        it->argAncestryHex,
-                        it->argDepth,
-                    };
-                    auto cbApplyQueryHash = TracingDecisionGraph::computeQueryHash(cbApply);
-                    nlohmann::json cbApplyJson = cbApply;
-                    decisionGraph->insertRequest(cbApplyQueryHash, jsonToCborString(cbApplyJson));
-                    /* Deterministic callbackApply-fact response:
-                       CBOR of the obsSet hex. Both cold's fold and
-                       warm's dispatch compute the same, so the fact
-                       XOR-fold matches without any per-fact response
-                       storage. Walker validates outer live by firing
-                       fn with an obsSet-answering proxy at dispatch
-                       time; validation success is required before
-                       reaching this response. */
-                    auto cbApplyRespPayload = jsonToCborString(
-                        nlohmann::json(obsSetHash.to_string(HashFormat::Base16, false)));
-                    auto rh = TracingDecisionGraph::computeResponseHash(cbApplyRespPayload);
-                    tracingCacheLog(
-                        "callbackApply per-obs emit: fn=%s obsSet=%s obs=%zu -> qHash=%s",
-                        it->fnStateHashHex.substr(0, 12),
-                        obsSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                        it->runningObsSet.size(),
-                        cbApplyQueryHash.to_string(HashFormat::Base16, false).substr(0, 12));
-
-                    /* Cutover: fold CallbackApply fact into
-                       envFactSet, push Ask + envWalk edges,
-                       mirroring logOuterObservation's per-probe
-                       pattern. Walker's Ask-chain walk now reaches
-                       this cbApplyQueryHash request; its
-                       dispatchAmbientQuery for `callbackApply` tag
-                       returns the recorded response via
-                       InnerValueResponse. */
-                    auto factElementHash = TracingDecisionGraph::xorFactIntoHash(
-                        Hash(HashAlgorithm::SHA256), cbApplyQueryHash, rh);
-                    if (seenRequests.insert(factElementHash).second) {
-                        envFactSet.push_back({cbApplyQueryHash, rh});
-                        envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-                            envFactSetHash, cbApplyQueryHash, rh);
-                        responseFor.emplace(cbApplyQueryHash, rh);
-                        sessionRequestsTrie.insert(cbApplyQueryHash);
-                        allRequestHashes.insert(cbApplyQueryHash);
-                        auto requestSetHash = decisionGraph->insertRequestSet({cbApplyQueryHash});
-                        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-                        /* Observation's `fromHash` = fn's subject
-                           state hash. CallbackApply is a contextually
-                           atomic observation ON THE FUNCTION — the
-                           firing evolves fn's state, not arg's. Arg
-                           stays at its Arg{depth} baseId; follow-up
-                           observations that involve this firing are
-                           modelled as new CallbackApply queries with
-                           their own obsSets, discriminating siblings
-                           at the payload level by construction.
-                           Downstream compound subjects (applyResult)
-                           inherit fn's evolution via the compositional
-                           state hash formula. */
-                        Hash fromStateHash{HashAlgorithm::SHA256};
+                    /* Append the observation to the local history so
+                       the next probe stamps against its evolved state. */
+                    Hash fromStateHashForHistory{HashAlgorithm::SHA256};
+                    if (!fromStateHashes.empty()) {
                         try {
-                            fromStateHash = Hash::parseNonSRIUnprefixed(
-                                it->fnStateHashHex, HashAlgorithm::SHA256);
+                            fromStateHashForHistory = Hash::parseNonSRIUnprefixed(
+                                fromStateHashes[0].stateHash(), HashAlgorithm::SHA256);
                         } catch (...) {}
-                        ObservationSet obsSetEdge;
-                        obsSetEdge.observations.push_back({
-                            fromStateHash, factElementHash});
-                        envWalk.push_back(std::move(obsSetEdge));
-                        prevQFactSetHash = envFactSetHash;
                     }
+                    auto elementHash = TracingDecisionGraph::xorFactIntoHash(
+                        Hash(HashAlgorithm::SHA256), qh, rHash);
+                    ObservationSet edge;
+                    edge.observations.push_back({fromStateHashForHistory, elementHash});
+                    it->runningObsHistory.push_back(std::move(edge));
+                    /* Emission of the single CallbackApply Fact
+                       is deferred to `emitCallbackApplyFact`, called
+                       from `logOuterObservation` when the outer
+                       first observes this firing's applyResult. */
                 }
                 return;
             }

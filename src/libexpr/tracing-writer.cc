@@ -29,6 +29,27 @@ void TracingWriter::logOuterObservation(
     if (!decisionGraph)
         return;
 
+    /* Task #103: if this observation is on an applyResult, fn body
+       has just completed and its runningObsSet is fixed. Emit the
+       single CallbackApply Fact NOW so fn's own-loop evolves before
+       this observation stamps its fromStateHashes. One flush per
+       firing; per the evolvability rule for fn's state evolution
+       (Design principle 5). Handles compound subjects too — probes
+       through DerivedSubject wrappers whose root eventually reaches
+       an ApplyResultSubject still trigger the flush. */
+    std::function<bool(const Subject &)> containsApplyResult =
+        [&](const Subject & s) -> bool {
+            if (std::holds_alternative<ApplyResultSubject>(s.data))
+                return true;
+            if (auto * d = std::get_if<DerivedSubject>(&s.data))
+                return containsApplyResult(*d->parent);
+            return false;
+        };
+    if (containsApplyResult(subject)) {
+        for (auto & pending : pendingCbApplies)
+            emitCallbackApplyFact(pending);
+    }
+
     /* Per-probe stamping. `from` is computed against the WRITER's
        current `envWalk` (which reflects every prior probe's fold),
        so successive probes on the same Subject stamp against evolved
