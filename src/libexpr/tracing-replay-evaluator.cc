@@ -43,7 +43,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        dispatch (resolveApplyId, navigatePath's Apply step,
        dispatchApplyLive) re-route through `OuterObject::queryApply
        → applyFn → OuterApply::run` and would each fire a fresh
-       `openCbApply` on the writer if not suppressed. Each fresh
+       `createCallbackCell` on the writer if not suppressed. Each fresh
        boundary inflates `envWalk` with a redundant ε edge
        beyond the genuine cb-apply events the recorder already
        captured. Suppress for the history's duration so writer's
@@ -51,7 +51,7 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        envWalk. */
     TracingWriter::SuppressApplyBoundary suppressBoundary(writer);
 
-    /* Register callback so suppressed openCbApply calls (=
+    /* Register callback so suppressed createCallbackCell calls (=
        inner cb-apply boundaries fired inside dispatchApplyLive's
        cb-fn execution) synthesise a phantom ε obs in walker's
        envWalk. Cold's writer would have inserted these as ε
@@ -1186,6 +1186,55 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
        dispatcher has nothing to compare a current response against. */
     if (tag == "apply")
         return std::nullopt;
+
+    /* Task #103: outer probes that reach through an applyResult carry
+       a `callbackApply` slot. Materialise a fresh ReplayCallbackArg
+       backed by the slot's obsSet, then pre-populate ctx.memo at the
+       contra-arg's base state hash so the downstream resolveRoots /
+       resolveStateHash / navigatePath pipeline picks it up. Fresh fn
+       invocation per probe — no memoisation of the resulting Object. */
+    if (params.contains("callbackApply")) {
+        trace::CallbackApplyRef ref;
+        try {
+            params.at("callbackApply").get_to(ref);
+        } catch (const std::exception &) {
+            return std::nullopt;
+        }
+        Hash obsSetHash{HashAlgorithm::SHA256};
+        Hash argAncestry(HashAlgorithm::SHA256);
+        try {
+            obsSetHash = Hash::parseNonSRIUnprefixed(ref.argObsSet, HashAlgorithm::SHA256);
+            if (!ref.argAncestry.empty())
+                argAncestry = Hash::parseNonSRIUnprefixed(ref.argAncestry, HashAlgorithm::SHA256);
+        } catch (const std::exception &) {
+            return std::nullopt;
+        }
+        auto obsSet = decisionGraph.getObservationSet(obsSetHash);
+        if (!obsSet)
+            return std::nullopt;
+        auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
+        for (const auto & obs : *obsSet)
+            obsSetMap->emplace(obs.queryHash, obs.responsePayload);
+        Subject argSubject{Arg{ref.argDepth}};
+        auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
+        auto chainCursor = std::make_shared<Hash>(HashAlgorithm::SHA256);
+        Hash zeroContext(HashAlgorithm::SHA256);
+        auto replayArg = std::make_shared<ReplayCallbackArg>(
+            std::move(argSubject), argAncestry,
+            walkFacts, chainCursor, zeroContext,
+            decisionGraph, inner->getEvalState().rootFSRoot,
+            &inner->getEvalState());
+        replayArg->withObsSetResponses(obsSetMap);
+        auto argBaseId = stateHashAfter(Subject{Arg{ref.argDepth}}, argAncestry, {});
+        ctx.memo[argBaseId.to_string(HashFormat::Base16, false)] = replayArg;
+        tracingCacheLog(
+            "callbackApply slot: materialised ReplayCallbackArg for argDepth=%d obsSet=%s at baseId=%s",
+            ref.argDepth, ref.argObsSet.substr(0, 12),
+            argBaseId.to_string(HashFormat::Base16, false).substr(0, 12));
+        /* Fall through — the query's own tag (getWHNF/getAttr/…) runs
+           the normal resolveRoots+navigatePath pipeline below, which
+           now finds the replayArg via ctx.memo. */
+    }
 
     /* QueryCallbackApply (task #103): live-fire dispatch.
        Constructs a ReplayCallbackArg backed by the CallbackApply's

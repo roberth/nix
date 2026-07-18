@@ -29,25 +29,63 @@ void TracingWriter::logOuterObservation(
     if (!decisionGraph)
         return;
 
-    /* Task #103: if this observation is on an applyResult, fn body
-       has just completed and its runningObsSet is fixed. Emit the
-       single CallbackApply Fact NOW so fn's own-loop evolves before
-       this observation stamps its fromStateHashes. One flush per
-       firing; per the evolvability rule for fn's state evolution
-       (Design principle 5). Handles compound subjects too — probes
-       through DerivedSubject wrappers whose root eventually reaches
-       an ApplyResultSubject still trigger the flush. */
-    std::function<bool(const Subject &)> containsApplyResult =
-        [&](const Subject & s) -> bool {
-            if (std::holds_alternative<ApplyResultSubject>(s.data))
-                return true;
-            if (auto * d = std::get_if<DerivedSubject>(&s.data))
-                return containsApplyResult(*d->parent);
-            return false;
-        };
-    if (containsApplyResult(subject)) {
-        for (auto & pending : pendingCbApplies)
-            emitCallbackApplyFact(pending);
+    /* Task #103: probes on the applyResult (or a DerivedSubject
+       reaching it) belong to an active callback call. Look up the
+       cell (still spelled CallbackCell for now) by matching the
+       ApplyResultSubject's fn Subject's state hash against
+       fnStateHashHex. Stamp a CallbackApplyRef into the query's
+       payload with fn's CURRENT state hash (by-reference, computed
+       fresh) and the CAS content-hash of the cell's runningObsSet
+       snapshot. Walker uses the slot to fire fn live per probe.
+       If no ApplyResultSubject is anywhere in the subject tree,
+       this observation is a normal outer probe with no
+       callbackApply attached. */
+    std::optional<trace::CallbackApplyRef> callbackSlot;
+    {
+        std::function<const ApplyResultSubject *(const Subject &)> findApplyResult =
+            [&](const Subject & s) -> const ApplyResultSubject * {
+                if (auto * ar = std::get_if<ApplyResultSubject>(&s.data))
+                    return ar;
+                if (auto * d = std::get_if<DerivedSubject>(&s.data))
+                    return findApplyResult(*d->parent);
+                return nullptr;
+            };
+        if (auto * ar = findApplyResult(subject)) {
+            if (ar->fn) {
+                /* Cell lookup uses fn's initial state hash (empty
+                   history) — that's what createCallbackCell stored in
+                   `fnStateHashHex`. Slot payload carries fn's current
+                   state hash (evolved envWalk) — the by-reference
+                   "fresh" hash the walker uses. */
+                auto fnInitial = stateHashAtSubject(
+                    *ar->fn, argAncestry, {}, 0);
+                auto fnInitialHex = fnInitial.to_string(HashFormat::Base16, false);
+                auto fnCurrent = stateHashAtSubject(
+                    *ar->fn, argAncestry, envWalk, envWalk.size());
+                auto fnCurrentHex = fnCurrent.to_string(HashFormat::Base16, false);
+                /* Iterate most-recent-first: sibling calls share the
+                   same fnInitialHex (same lambda) and Arg{depth} —
+                   structural equality can't discriminate. Under
+                   matching-until-divergence's outer-side temporal
+                   ordering, the most recently created cell is the
+                   current call. */
+                for (auto it = callbackCells.rbegin(); it != callbackCells.rend(); ++it) {
+                    auto & cell = *it;
+                    if (cell.fnStateHashHex != fnInitialHex)
+                        continue;
+                    if (cell.argAncestryHex.empty())
+                        continue;
+                    auto obsSetHash = decisionGraph->insertObservationSet(cell.runningObsSet);
+                    trace::CallbackApplyRef r;
+                    r.fn = fnCurrentHex;
+                    r.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
+                    r.argAncestry = cell.argAncestryHex;
+                    r.argDepth = cell.argDepth;
+                    callbackSlot = std::move(r);
+                    break;
+                }
+            }
+        }
     }
 
     /* Per-probe stamping. `from` is computed against the WRITER's
@@ -89,6 +127,8 @@ void TracingWriter::logOuterObservation(
         queryJson["params"]["path"] = path;
     if (!fromStateHashes.empty())
         queryJson["params"]["fromStateHashes"] = fromStateHashes;
+    if (callbackSlot)
+        queryJson["params"]["callbackApply"] = *callbackSlot;
     nlohmann::json resultJson;
     std::visit([&](const auto & r) { resultJson = r; }, result);
 
@@ -281,7 +321,7 @@ void TracingWriter::flushAmbient(bool processApplies)
 
        Chronological cb-apply Ask insertion: each observed cb-apply's
        Ask is INSERTED at pendingApply.insertionIndex (= captured at
-       openCbApply time, AFTER closeAsksEdge(false) drained the
+       createCallbackCell time, AFTER closeAsksEdge(false) drained the
        pre-boundary env chunk), not appended at the end. This puts
        the cb-apply Ask BEFORE its body's env facts in walker
        dispatch order. Each insertion shifts subsequent indices by 1,
@@ -293,7 +333,7 @@ void TracingWriter::flushAmbient(bool processApplies)
        reflects all prior cb-apply contributions to its left. */
     size_t shift = 0;
     Hash priorApplyFactAccum(HashAlgorithm::SHA256);
-    for (auto & pendingApply : pendingCbApplies) {
+    for (auto & pendingApply : callbackCells) {
         auto & group = pendingApply.facts;
 
         /* Helper: stamp the i-th fact and emit Request/InnerValueResponse
@@ -406,7 +446,7 @@ void TracingWriter::flushAmbient(bool processApplies)
                moment this boundary's cb-apply Request will be
                dispatched at warm. Equals
                `pendingApply.envCurAtOpen XOR priorApplyFactAccum`
-               (= state at openCbApply time + all prior
+               (= state at createCallbackCell time + all prior
                boundary Ask contributions). Used as the
                InnerValueResponse key discriminator so ambient chain
                facts within different apply boundaries store under
@@ -505,7 +545,7 @@ void TracingWriter::flushAmbient(bool processApplies)
         }
     }
 
-    /* Don't clear pendingCbApplies — finalized entries stay
+    /* Don't clear callbackCells — finalized entries stay
        so `logAmbientObservation` can find them on late probes
        (option (b)). */
 }
@@ -542,7 +582,7 @@ void TracingWriter::closeAsksEdge(bool processApplies)
     }
 }
 
-void TracingWriter::openCbApply(const nlohmann::json & applyQueryPayload)
+void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
 {
     if (!decisionGraph)
         return;
@@ -553,7 +593,7 @@ void TracingWriter::openCbApply(const nlohmann::json & applyQueryPayload)
        redundant ε edge to envWalk, breaking the 1:1 alignment
        with walker.envWalk at warm. */
     if (suppressCbApply > 0) {
-        tracingCacheLog("openCbApply: SUPPRESSED (in dispatchApplyLive)");
+        tracingCacheLog("createCallbackCell: SUPPRESSED (in dispatchApplyLive)");
         /* Insert the apply Request payload into the CAS pool even when
            suppressed so walker's ambient-asks history can look it up.
            Hook-based ε obs push in walker (iter <=91) is now redundant
@@ -593,7 +633,7 @@ void TracingWriter::openCbApply(const nlohmann::json & applyQueryPayload)
     /* Buffer the boundary. The synthetic env apply Fact's respHash
        is the AmbientResult = terminal of this cb-apply's ambient chain,
        only known after the body finishes. flushAmbient at
-       logResult walks pendingCbApplies in order and finalises
+       logResult walks callbackCells in order and finalises
        each one, INSERTING the ε perQAsksEdge at the chronological
        insertionIndex (= position in envAsksEdges captured AFTER
        closeAsksEdge(false) drained the pre-boundary env chunk). This
@@ -617,7 +657,7 @@ void TracingWriter::openCbApply(const nlohmann::json & applyQueryPayload)
                  && applyQueryPayload["params"]["fn"].is_string())
             fnStateHashHex = applyQueryPayload["params"]["fn"].get<std::string>();
     } catch (...) {}
-    PendingCbApply pending{
+    CallbackCell pending{
         applyReqHash,
         applyReqHash,
         {},
@@ -627,10 +667,10 @@ void TracingWriter::openCbApply(const nlohmann::json & applyQueryPayload)
         Hash(HashAlgorithm::SHA256),
     };
     pending.fnStateHashHex = std::move(fnStateHashHex);
-    pendingCbApplies.push_back(std::move(pending));
-    tracingCacheLog("openCbApply: buffered (applyReqHash=%s, pendingBoundaries=%zu, insertionIndex=%zu)",
+    callbackCells.push_back(std::move(pending));
+    tracingCacheLog("createCallbackCell: buffered (applyReqHash=%s, pendingBoundaries=%zu, insertionIndex=%zu)",
                     applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    pendingCbApplies.size(),
+                    callbackCells.size(),
                     envAsksEdges.size());
 }
 

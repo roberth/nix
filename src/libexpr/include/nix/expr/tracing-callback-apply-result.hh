@@ -70,7 +70,7 @@ class TracingCallbackApplyResult : public Object
     /* The enclosing cb-apply's `applyId` (= what `runOn`
        computed as `queryHash(QueryApply{fn, arg})` when it pushed
        this boundary). Captured BEFORE `IT::apply`'s
-       `openCbApply` would push a new entry, so the
+       `createCallbackCell` would push a new entry, so the
        observations route to the correct boundary's ambient chain. */
     Hash ambientApplyId;
 

@@ -297,7 +297,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     tracingCacheLog("tracing: apply fnStateHash=%s argStateHash=%s", fnStateHashStr, argStateHashStr);
 
     /* cb-apply: record an explicit ε edge for this apply.
-       openCbApply closes the preceding observations as one
+       createCallbackCell closes the preceding observations as one
        Asks edge (β1) and then records a synthetic single-observation
        Asks edge (ε) carrying just the apply Request — both sides
        advance their cumulative subject-id history by one for ε, so the
@@ -314,7 +314,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        the ReplayCallbackArg's chainCursor by this fact's elementHash.
 
        Capture the enclosing boundary's applyId BEFORE
-       logAmbientApplyFact / openCbApply so the apply-result
+       logAmbientApplyFact / createCallbackCell so the apply-result
        observations recorded after `inner->apply` returns (via
        `TracingCallbackApplyResult` below) route to the same enclosing
        boundary the recursive apply Fact landed in. Their ambient
@@ -323,7 +323,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        primop manual-push (= one fact) followed by the synthetic's
        per-probe `advanceChainAndAppendFact` calls.
 
-       Skip `openCbApply` entirely for the TracingCallbackArg-fn path: it
+       Skip `createCallbackCell` entirely for the TracingCallbackArg-fn path: it
        would push a fresh empty boundary whose synthetic env fact
        `(applyReqHash, applyReqHash)` enters envFactSet at finalize
        and forces the outer walker into a `dispatchApplyLive` whose
@@ -413,9 +413,9 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         nlohmann::json applyQd2 = trace::QueryApply{fnSubjHex, argSubjHex};
         writer.logAmbientApplyFact(applyQd2, resultSubject, applyArgAncestry);
     } else {
-        tracingCacheLog("openCbApply callsite=TracingEvaluator::apply fn=%s arg=%s",
+        tracingCacheLog("createCallbackCell callsite=TracingEvaluator::apply fn=%s arg=%s",
                         fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
-        writer.openCbApply(applyQ);
+        writer.createCallbackCell(applyQ);
     }
 
     /* Per-arg-completion option 2: apply-result state hash evolves with

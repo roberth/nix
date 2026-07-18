@@ -209,9 +209,9 @@ std::shared_ptr<Object> OuterApply::run(
        call in TracingEvaluator::apply for the principle. */
     if (innerWriter) {
         nlohmann::json applyQ = trace::QueryApply{fnIdStr, argStateHashStr};
-        tracingCacheLog("openCbApply callsite=OuterApply::run fn=%s arg=%s",
+        tracingCacheLog("createCallbackCell callsite=OuterApply::run fn=%s arg=%s",
                         fnIdStr.substr(0, 12), argStateHashStr.substr(0, 12));
-        innerWriter->openCbApply(applyQ);
+        innerWriter->createCallbackCell(applyQ);
     }
     trace::QueryApply applyQuery{fnIdStr, argStateHashStr};
     auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
