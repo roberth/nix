@@ -36,8 +36,104 @@ TracingReplayEvaluator::TracingReplayEvaluator(
 }
 
 std::optional<TracingReplayEvaluator::WalkResult>
+TracingReplayEvaluator::tryFastPath(const Hash & queryHash)
+{
+    /* Try the session-cumulative fast path (task #106): for each
+       outgoing Ask at (queryHash, ∅), compute a candidate Terminal
+       cur as `envCur XOR delta(dispatchedSet, ask.requestSet)`
+       using only responses already in `responseFor`. If a Terminal
+       exists at that cur, hit.
+
+       No live dispatches are performed here — any request in Q's
+       chain that isn't already memoised means the fast path can't
+       compose a candidate cur without doing slow-path work, so we
+       fall through cleanly. */
+    auto asks = decisionGraph.getAsks(queryHash, TracingDecisionGraph::emptySetHash());
+    if (asks.empty())
+        return std::nullopt;
+
+    for (auto & rsHash : asks) {
+        auto members = decisionGraph.getRequestSet(rsHash);
+        if (!members)
+            continue;
+
+        std::unordered_set<Hash> memberSet(members->begin(), members->end());
+
+        /* Verify every needed request has a memoised response. If any
+           `onlyInOther` request isn't in `responseFor`, the fast path
+           can't compose without dispatching — bail out cleanly. */
+        std::vector<Hash> onlyInOther;
+        std::vector<Hash> onlyInThis;
+        onlyInOther.reserve(members->size());
+        bool coverageOk = true;
+        for (auto & req : *members) {
+            if (dispatchedSet.count(req) == 0) {
+                if (responseFor.find(req) == responseFor.end()) {
+                    coverageOk = false;
+                    break;
+                }
+                onlyInOther.push_back(req);
+            }
+        }
+        if (!coverageOk)
+            continue;
+
+        for (auto & req : dispatchedSet) {
+            if (memberSet.count(req) == 0) {
+                if (responseFor.find(req) == responseFor.end())
+                    continue; /* transient — treat as absent from delta */
+                onlyInThis.push_back(req);
+            }
+        }
+
+        auto candidateCur = envCur;
+        for (auto & req : onlyInOther) {
+            auto respHash = responseFor.at(req);
+            candidateCur = TracingDecisionGraph::xorFactIntoHash(candidateCur, req, respHash);
+        }
+        for (auto & req : onlyInThis) {
+            auto respHash = responseFor.at(req);
+            candidateCur = TracingDecisionGraph::xorFactIntoHash(candidateCur, req, respHash);
+        }
+
+        auto terminal = decisionGraph.getTerminal(queryHash, candidateCur);
+        if (!terminal)
+            continue;
+
+        auto payload = decisionGraph.getResultPayload(*terminal);
+        if (!payload)
+            continue;
+
+        for (auto & req : onlyInOther)
+            dispatchedSet.insert(req);
+        envCur = candidateCur;
+
+        tracingCacheStats().hits++;
+        tracingCacheLog(
+            "fast path HIT queryHash=%s candidateCur=%s "
+            "(onlyInOther=%zu, onlyInThis=%zu)",
+            queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            candidateCur.to_string(HashFormat::Base16, false).substr(0, 12),
+            onlyInOther.size(), onlyInThis.size());
+
+        return WalkResult{std::move(*payload), *terminal, candidateCur};
+    }
+
+    return std::nullopt;
+}
+
+std::optional<TracingReplayEvaluator::WalkResult>
 TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy)
 {
+    /* Fast path first (task #106). If the session's cumulative
+       `envCur` + `dispatchedSet` can compose a candidate Terminal
+       cur for this Q via XOR-delta, we hit without walking from ∅.
+       On any miss (no outgoing Asks, missing memoised responses,
+       no Terminal at the composed cur), fall through to the
+       walk-from-∅ slow path below. */
+    if (auto fastHit = tryFastPath(queryHash))
+        return fastHit;
+
     /* The entire history is VALIDATION of recorded state — any apply
        queries triggered through `fnObj->queryApply(...)` during
        dispatch (resolveApplyId, navigatePath's Apply step,
@@ -383,6 +479,16 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         return std::nullopt;
     }
     tracingCacheStats().hits++;
+
+    /* Fast-path bookkeeping (task #106): the slow-path walk that
+       just succeeded has extended this session's cumulative state.
+       Update `envCur` to the walk's terminalCur, and record every
+       request `responseFor` now knows about into `dispatchedSet` so
+       subsequent Q lookups can attempt the fast path. */
+    envCur = walkHit->terminalCur;
+    for (auto & [reqHash, respHash] : responseFor)
+        dispatchedSet.insert(reqHash);
+
     return WalkResult{std::move(*payload), walkHit->resultHash, walkHit->terminalCur};
 }
 
