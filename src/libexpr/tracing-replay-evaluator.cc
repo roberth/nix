@@ -1175,42 +1175,36 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
             &inner->getEvalState());
         replayArg->withObsSetResponses(obsSetMap);
 
-        /* Resolve fn structurally. cell[0].liveObject is the outer's
-           arg to the cached fn (an OuterObject wrapping e.g. `{f=…}`).
-           The query's path is [{apply, fnPath, argPath, …}]; fnPath
-           navigates from that root to fn. */
-        std::shared_ptr<Object> outerRootObj;
-        if (ctx.currentProxy) {
-            if (auto cell = ctx.currentProxy->getProxyArgCell())
-                outerRootObj = cell->liveObject;
-        }
-        if (!outerRootObj)
+        /* Resolve fn as a live Object from the slot's state-hash
+           reference. `ref.fn` is fn's evolved state hash stamped by
+           the writer at emission time (`tracing-writer.cc:80`).
+           resolveStateHash routes through the cell chain via
+           state-hash equality — finds the specific fn whose evolved
+           state matches the recording's, not merely whichever fn is
+           currently in cell[0]. If it can't find a match, miss
+           cleanly rather than falling back to a structural shortcut
+           that discriminates by the current invocation's fn instead
+           of the recording's. Correctness-first per task #103's
+           MVP framing (repeated live outer validation calls, no
+           per-cell memoisation). */
+        auto fnObj = resolveStateHash(ref.fn, ctx);
+        if (!fnObj) {
+            tracingCacheLog(
+                "callbackApply slot: resolveStateHash(fn=%s) miss — clean fallthrough",
+                ref.fn.substr(0, 12));
             return std::nullopt;
+        }
 
         auto pathParsed = parsePathFromParams(params);
-        std::shared_ptr<Object> fnObj = outerRootObj;
         std::shared_ptr<Object> resultObj;
         try {
             /* First step must be Apply; trailing steps handled after. */
             if (pathParsed.steps.empty()
-                || pathParsed.steps[0].kind != trace::PathStep::Kind::Apply
-                || !pathParsed.steps[0].fnPath)
-                return std::nullopt;
-            for (const auto & step : pathParsed.steps[0].fnPath->steps) {
-                if (!fnObj)
-                    return std::nullopt;
-                if (step.kind == trace::PathStep::Kind::GetAttr)
-                    fnObj = fnObj->maybeGetAttr(step.name);
-                else if (step.kind == trace::PathStep::Kind::GetListElem)
-                    fnObj = fnObj->getListElem(step.index);
-                else
-                    return std::nullopt;
-            }
-            if (!fnObj)
+                || pathParsed.steps[0].kind != trace::PathStep::Kind::Apply)
                 return std::nullopt;
             resultObj = fnObj->queryApply(replayArg);
         } catch (const std::exception & e) {
-            tracingCacheLog("callbackApply slot: dispatch failed at fn resolve/apply: %s", e.what());
+            tracingCacheLog("callbackApply slot: dispatch failed at fn apply: %s", e.what());
             return std::nullopt;
         }
         if (!resultObj)
