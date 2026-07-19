@@ -73,21 +73,6 @@ class TracingReplayEvaluator : public Evaluator
        CBOR encode + SHA-256 happens once per request. */
     std::unordered_map<Hash, Hash> responseFor;
 
-    /* Fast path (task #106): session-cumulative composition. `envCur`
-       is the cur the last successful walk landed at — i.e. warm's
-       session-cumulative factSet after all committed walks so far.
-       `dispatchedSet` is the set of Request hashes that have been
-       dispatched in this session (matching `responseFor`'s domain
-       for dispatches that reached a Terminal). Together they let the
-       walker, on a new Q, compute a candidate Terminal cur via
-       XOR-delta between Q's Ask requestSet and dispatchedSet, then
-       check `Terminal(Q, candidateCur)` directly — bypassing walking
-       the chain from ∅ per Q. See tracing-eval-cache.md's Replay
-       strategies § fast path and § Candidate design: trie diff
-       against `envCur`. */
-    TracingDecisionGraph::SetHash envCur{TracingDecisionGraph::emptySetHash()};
-    std::unordered_set<Hash> dispatchedSet;
-
     /** applyReqHashes currently being driven by `dispatchApplyLive`.
         Short-circuits walker re-entry while outer's-f-invocation is
         still routed through TracingReplayEvaluator::apply. TODO:
@@ -194,17 +179,6 @@ public:
         candidate startCur. */
     struct WalkResult { std::string payload; Hash resultNodeHash; Hash terminalCur; };
     std::optional<WalkResult> walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy = nullptr);
-
-    /** Fast-path attempt at `walk()` entry (task #106). Compute a
-        candidate Terminal cur for `queryHash` by XOR-delta between
-        Q's outgoing-Ask requestSets and this session's cumulative
-        `dispatchedSet`, starting from `envCur`. Only uses responses
-        already in `responseFor` — no live dispatches, no fallthrough
-        to slow-path machinery. Returns a WalkResult on a fast hit
-        (also updates `envCur` and `dispatchedSet`); returns
-        std::nullopt on any miss so the caller falls through to
-        walk-from-∅ per Q. */
-    std::optional<WalkResult> tryFastPath(const Hash & queryHash);
 
     bool isReadOnly() const override;
     Store & getStore() override;
