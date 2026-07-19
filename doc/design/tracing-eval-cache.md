@@ -318,8 +318,7 @@ work-doing. When a tier misses cleanly, replay drops to the next.
    path rather than replacing it: the fast path carries
    session-scope evidence that a slow-path Q-local walk cannot
    reproduce (Terminals whose `cur` folds in observations from
-   earlier queries in the same session). Currently unimplemented;
-   a candidate design using `envCur` diff is sketched below.
+   earlier queries in the same session). Currently unimplemented.
 
 2. **Walk from a known state per Query (slow path).** Replay walks a
    Query's Ask trie starting from a `cur` that corresponds to some
@@ -412,10 +411,10 @@ per-walk evidence, letting state-evolved queries be followed when
 the walker's session context reproduces cold's writer state. Two
 main work directions follow:
 
-- **Bring back the fast path.** Currently unimplemented; a
-  candidate design using `envCur` diff is sketched below. This is
-  what lets state-evolved queries be followed under session-cumulative
-  writer state — the case the slow path structurally can't reach.
+- **Bring back the fast path.** Currently unimplemented. Following
+  a known trace lets state-evolved queries be followed under
+  session-cumulative writer state — the case the slow path
+  structurally can't reach.
 
 - **Let the slow path query smaller state hashes.** State evolution
   during a walk produces intermediate `cur` values; recordings may
@@ -544,47 +543,6 @@ post-Response hashes are computed by folding — regardless of whether
 the fold changed the value. Neither pre-Response hash is a shrink
 from the writer's actual observations; both are faithful identifiers
 that let replay progress from `cur` alone.
-
-### Candidate design: trie diff against `envCur`
-
-Not present in the code today. Recorded here as a design worth
-trying if the walk-from-∅ cost per Query becomes the bottleneck.
-
-The idea: `TracingReplayEvaluator` would maintain
-
-```cpp
-unordered_map<Hash, Hash>  responseFor;     // request → response, per-process
-SetHash                    envCur;          // cur the last successful walk landed at
-TrieBuilder                dispatchedTrie;  // cumulative requests dispatched
-```
-
-In a session that just walked a previous Query successfully, the
-next Query usually only differs in a handful of new Requests — it
-imports a new package, reads a few extra files, etc. Instead of
-walking the chain from ∅, the design would:
-
-1. Look at the Query's outgoing Ask at `cur = ∅` and take its
-   RequestSet root hash `askRequestSetHash`.
-2. `dispatchedTrie.diff(decisionGraph, askRequestSetHash, onlyInThis,
-   onlyInOther)`. A parallel descent of the in-memory
-   `dispatchedTrie` and the stored trie rooted at
-   `askRequestSetHash`; subtrees with matching node hashes collapse
-   to no-ops via short-circuit at the recursive descent.
-3. For each request in `onlyInOther` (added by this Query): dispatch
-   it (memoised in `responseFor`), XOR `H_element(req, resp)` into
-   a candidate cur starting from `envCur`.
-4. For each request in `onlyInThis` (dispatched for an earlier
-   Query but not in this one's RequestSet): look up the cached
-   response, XOR `H_element(req, resp)` into the candidate cur —
-   XOR is its own inverse, so the "out" operation is the same XOR.
-5. Check `Terminal(queryHash, candidateCur)`. Hit → commit (extend
-   `dispatchedTrie` with `onlyInOther`, update `envCur`), return the
-   Result. Miss → fall through to walk-from-∅.
-
-The goal would be that session-cumulative warm cost tracks the
-delta between successive Queries' RequestSets, not the size of
-either RequestSet. Whether it's worth landing depends on measured
-walk-from-∅ cost on realistic workloads.
 
 ### Navigation invariant: hashes flow *into* lookups as keys, never *out*
 
@@ -736,8 +694,8 @@ design in
 Single-writer-process model — a `nix eval` invocation holds the
 SQLite connection for its lifetime. Multiple concurrent `nix`
 processes can read+write the same DB; SQLite WAL mode handles the
-coexistence, but the in-process caches (`responseFor`,
-`dispatchedTrie`, etc.) are per-process and don't synchronise.
+coexistence, but the in-process caches (`responseFor`, etc.) are
+per-process and don't synchronise.
 That's fine: every persistent write is `INSERT OR IGNORE` on a
 hash-derived key, so concurrent recorders either land identical
 rows (no conflict) or land genuinely different rows (no conflict).
@@ -759,10 +717,7 @@ them transparently:
    XOR of live response hashes lands at a `cur` not present in any
    recorded chain. `hasAnyEdge` returns false at the divergent
    position; walk gives up. Fall through.
-3. **Fast path lookup miss.** `dispatchedTrie.diff` produces a delta;
-   we compute candidateCur; `Terminal(queryHash, candidateCur)` is absent.
-   Fall through to slow walk (which may itself hit or miss).
-4. **TracingReplayObject can't model the call** (e.g.
+3. **TracingReplayObject can't model the call** (e.g.
    `getStringWithoutContext`, `getPath`). Fall through to inner via
    `ensureInner()`.
 
@@ -783,10 +738,7 @@ correct answer regardless. The cost is just the missed cache benefit.
 - **Session-cumulative work proportional to observed change**, not
   to the total recorded state. The writer's incremental
   `sessionRequestsTrie` and `envFactSetHash` avoid re-hashing the
-  growing FactSet per recording. The walker's `dispatchedTrie` fast
-  path avoids re-walking the chain from ∅ per Query — subsequent
-  Queries in the same session pay for the delta from the previous
-  walk.
+  growing FactSet per recording.
 - **Structural storage sharing.** RequestSets that overlap share
   their common trie subtrees automatically via node-hash equality.
   Storage grows with the count of unique Requests, not with the
