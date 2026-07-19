@@ -321,13 +321,70 @@ work-doing. When a tier misses cleanly, replay drops to the next.
    earlier queries in the same session). Currently unimplemented;
    a candidate design using `envCur` diff is sketched below.
 
-2. **Walk from ∅ per Query (slow path).** Replay walks a Query's Ask
-   trie from `cur = ∅`, dispatching each Ask's requests, folding
-   responses into `cur`, and following whichever outgoing Ask (or
-   Terminal) the next `cur` matches. Can hit a recorded Terminal
-   whose trace is smaller or larger than replay's accumulated
-   context, because the walk builds its own local `cur` via this
-   Q's dispatches only.
+2. **Walk from a known state per Query (slow path).** Replay walks a
+   Query's Ask trie starting from a `cur` that corresponds to some
+   Subject state its own evaluation already established, dispatching
+   each Ask's requests, folding responses into `cur`, and following
+   whichever outgoing Ask (or Terminal) the next `cur` matches. Can
+   hit a recorded Terminal whose trace is smaller or larger than
+   replay's accumulated context, because the walk builds its own
+   local `cur` via this Q's dispatches only.
+
+   *Purpose*: the slow path brings **factSet evolution to a new
+   query** — the walker composes state evolution rooted at parent-Q
+   state (or ∅ for a root Q) with observations recorded specifically
+   under this Q's namespace. It is not, and is not designed to be, a
+   solution to observation creep: state evolution driven by
+   observations from earlier sibling queries in the recording
+   session is not something the slow path can un-do or approximate.
+
+   *Why parents are safe as starting states*. A parent Q is a
+   precursor in the query DSL — a child Q the outer expression asked
+   for implies its parent was already evaluated on the replay side.
+   Re-dispatching parent-chain observations under the child's
+   namespace incurs no extra outer-evaluator work; those observations
+   would have been made anyway during the parent's evaluation.
+   The parent's terminal `cur` is thus a "free" starting point for
+   child Q's walk.
+
+   *Why session-earlier siblings are the load-bearing gap*. A cold
+   session's recording contains a sequence of Qs (Q1, Q2, ..., Qk)
+   evaluated in order; the writer's session-cumulative `envWalk`
+   grows across them. The recording's fast-path presence — a
+   linear sequence of Ask rows keyed under each Q — works very well
+   for lockstep re-evaluation where replay's session tracks cold's
+   step for step. But it provides little to no opportunity for
+   another session to "hop on" mid-sequence: cold's facts are only
+   recorded under its own sequence of factset-relevant queries,
+   *even when* the writer wasn't doing any state hash evolution
+   at that step — i.e. even when the only cost of "catching up" to
+   cold's cur would be re-dispatching some system-environment
+   observations (which is safe: file reads, env-var reads, and
+   parent-chain observations are things replay could re-issue
+   without changing what the outer evaluator is asked to do). The
+   slow path's role is to enable this hopping on: an Ask chain
+   rooted at parent state that the replayer already has, that
+   accumulates the Env-layer state creep on the *new* query without
+   requiring the replayer to have gone through cold's earlier
+   query siblings (NB not sibling *calls* but e.g. prior sibling
+   attribute evaluations. Observation creep can not be counteracted
+   without overquerying the outer evaluator — a no go).
+
+   Recordings made under session-cumulative writer state that
+   embeds observations from earlier siblings will still be
+   unreachable from a per-walk fold that never made those earlier
+   observations. That's a correct outcome, not a bug: the recording
+   depended on something the current replay session doesn't have,
+   and serving it would be a false hit under Foundational 9.
+
+   *Not a niche case*. Slow-path-reachable recordings — those
+   without unreachable state-evolution prerequisites — arise
+   naturally when a Q evaluated in isolation falls through to the
+   interpreter fallback and re-records. The fresh recording captures
+   only that Q's own necessary state, with no cross-Q contamination
+   from a wider session. Fallback thus continuously seeds the DB
+   with shorter, more reusable traces that later replay sessions
+   can hop onto via the slow path.
 
    During Ask traversal, the queries replay dispatches must **evolve
    with the walk's own state**: each Ask's precondition determines
@@ -340,19 +397,76 @@ work-doing. When a tier misses cleanly, replay drops to the next.
    observation folds in, the substitution has to track the walk's
    evolved state.
 
-   *Reachability limit.* A per-walk `cur` reproduces only what this
-   Q's own dispatches fold in. Recordings made under session-cumulative
-   writer state — where the writer's `envWalk` already contained
-   observations from earlier queries in the same session — index
-   Terminals at `cur` values the per-walk fold cannot reach.
-   Composing session-scope evidence with per-walk evidence is the
-   fast path's job below; the slow path stays honest about what its
-   `cur` represents.
-
 3. **Interpreter fallback.** Both preceding tiers can miss cleanly;
    when they do, replay falls through to the inner `Interpreter` for
    a fresh evaluation, which then records into the cache so
-   subsequent replays can hit.
+   subsequent replays can hit. Each fallback contributes a
+   shorter, more reusable trace as described above.
+
+### Development directions
+
+The slow path and fast path are complementary, not alternatives.
+Slow path brings factSet evolution to a new query rooted at
+replay-known state; fast path composes session-scope evidence with
+per-walk evidence, letting state-evolved queries be followed when
+the walker's session context reproduces cold's writer state. Two
+main work directions follow:
+
+- **Bring back the fast path.** Currently unimplemented; a
+  candidate design using `envCur` diff is sketched below. This is
+  what lets state-evolved queries be followed under session-cumulative
+  writer state — the case the slow path structurally can't reach.
+
+- **Let the slow path query smaller state hashes.** State evolution
+  during a walk produces intermediate `cur` values; recordings may
+  exist at smaller state hashes (subsets of what the walker has
+  folded) that would be valid answers. Reaching them, in order of
+  increasing sophistication:
+
+  - *MVP + later*: anchor the recording-side slow-path Ask chain at
+    the writer's *latest observed state* at the moment the child
+    query's chain begins — not a historical checkpoint. Recording
+    is asymmetric from replay: the writer must anchor at latest
+    because any older anchor either lies about preconditions
+    (the writer had already made subsequent observations by that
+    point) or requires the observation-test machinery below, which is
+    not in the MVP. Every row's `fromFactSetHash` faithfully
+    identifies the writer's observed preconditions; Foundational 9
+    stays intact.
+
+    Replay is free to query the DB at older / smaller state
+    hashes — legitimate because the walker is only reading recorded
+    rows whose preconditions are honest. Backtracking (below) covers
+    the *older* case; the more general *smaller* case is reached via
+    the observation-test bullet further down.
+
+    Note the slow path bridges *factSet* evolution only, not state
+    hash evolution. The chain from the anchor state to child Q's
+    Terminal folds new facts into `cur` but does not attempt to
+    reproduce any specific state-hash trajectory. State hashes on
+    request payloads may embed observations from earlier query
+    siblings in the writer's session that the replayer never made —
+    when the replayer can't compute one, that's the observation-creep
+    boundary and the miss is correct.
+
+  - *MVP*: unbounded backtracking through previously-seen state
+    hashes. The walker maintains the set of `cur` values it has been
+    at during the current walk; on miss, re-attempts lookup at those
+    smaller state hashes. Simple, potentially expensive; adequate
+    starting point.
+
+  - *Later*: a clever Ask-like structure for the state hash, to be
+    designed later. Observation *tests* instead of requests, but
+    otherwise similar. Traversing a test edge requires the walker to
+    have already observed the required facts, never to dispatch them
+    — so no over-querying. Preserves the Ask-structure guarantee that
+    the walker never over-queries the outer evaluator. Two goals:
+    give the slow path a **non-backtracking** replay behaviour
+    (indexed navigation instead of the MVP's barely-bounded retry
+    loop),
+    and reach *smaller* state hashes generally (not just the older
+    ones the walker held earlier in this walk). Unchallenged idea
+    for now.
 
 ### Outer-request discipline (open problem)
 
