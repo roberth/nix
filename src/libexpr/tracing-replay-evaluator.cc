@@ -250,11 +250,11 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
            the design's capability-mediated invariant) AND, even
            under `_NIX_DISALLOW_CACHE_INTERPRET_INNER=1`, breaks
            observation-driven sibling discrimination
-           (cb-sibling-discrimination-via-observation): a wrong-sibling
-           live response substituted with the FIRST-WRITER InnerValueResponse entry
-           routes both siblings to the same recorded terminal, giving
-           `200` instead of `100 + 1000 = 1100`. Only substitute on
-           DISPATCH FAILURE (see the block above), not on mismatch. */
+           (cb-sibling-discrimination-via-observation): substituting
+           a stored response for a wrong-sibling live response
+           would route both siblings to the same recorded terminal.
+           Only substitute on DISPATCH FAILURE (see the block above),
+           not on mismatch. */
         (void) edgeCtx;
         if (!isAmbient)
             responseFor.emplace(requestHash, h);
@@ -584,22 +584,17 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
            Without a registration, fall through to nullptr. The via-
            Asks design forbids serving from the Responses pool for
            OUTER values ("ambient responses are capability-mediated,
-           not cached" — primop doc §Replay semantics); the previous
-           fallback materialised an ReplayCallbackArg and let its methods read out
-           of InnerValueResponse, which was correct for INNER locals but
-           wrong here: it served the recorded outer response regardless
-           of whether the live outer would produce it, silently masking
-           outer-body change (cb-higher-order step 3 returning stale 6
-           when outer changed from `g 5` to `g 10`).
+           not cached" — primop doc §Replay semantics). Serving a
+           recorded outer response regardless of whether the live
+           outer would produce it silently masks outer-body change
+           (cb-higher-order step 3 returning stale 6 when outer
+           changed from `g 5` to `g 10`).
 
-           INNER locals are unaffected by this change: their sidecar
-           presence routes them via `chaseLocalArgSidecar`, and
+           INNER locals are unaffected: their sidecar presence
+           routes them via `chaseLocalArgSidecar`, and
            `resolveApplyId` with explicit `isLocalArgId`
-           discrimination materialises their ReplayCallbackArg. Serving inner
-           locals from the reconstructed value tree backed by
-           InnerValueResponse is per design (= ambient layer Replay's
-           "walker reconstructs the LocalObject as a live Nix Value
-           tree from the CAS pool"). The forbidden thing is treating
+           discrimination materialises their ReplayCallbackArg
+           backed by the obsSet CAS. The forbidden thing is treating
            an OUTER-direction id as if it were a local. */
         if (auto resolver = inner->getAmbientResolver()) {
             if (auto live = tryResolveAmbientResolverProxy(*resolver, idHash, envWalk, &decisionGraph)) {
@@ -669,8 +664,8 @@ bool TracingReplayEvaluator::isLocalArgId(const Hash & idHash)
    inner-side TracingCallbackArg's content-hash whose facts were emitted
    with from=hex(id) but whose id itself isn't a producer Request.
    Materialise a ReplayCallbackArg keyed by it; its methods read
-   recorded responses out of InnerValueResponse by qH(query{from=hex(id)}),
-   matching what TracingCallbackArg wrote during recording. */
+   recorded responses out of the CallbackApply's obsSet map, matching
+   what TracingCallbackArg wrote during recording. */
 /* Mixed direction: fn is Outer (resolved through the producer chain to
    an OuterObject); arg may be Local (ReplayCallbackArg) or Outer (resolved
    through chain). Invokes the apply live against fn and arg to
@@ -704,8 +699,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
            probe extends the chain, every subsequent probe's
            `stampPerArgFields` reads back `localId` instead of the
            subject-id-evolved state hash the recorder stamped its facts
-           against. The recorded reqHashes then can't be found in
-           InnerValueResponse → cb-sibling fails with
+           against. The recorded reqHashes then can't be found in the
+           obsSet map → cb-sibling fails with
            "no recorded response for getType on local". Both
            sibling cb-applies share the same first probe's stamped
            reqHash regardless of subject (= at step=0,
@@ -732,20 +727,14 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                         sidecarJson["argAncestry"].get<std::string>(), HashAlgorithm::SHA256);
                     Subject rootSubject{Arg{sidecarDepth}};
                     /* Pre-emptive ReplayCallbackArg constructed
-                       during memo-cache resolveStateHash. The
-                       contextHash it should use is the walker's
-                       Env cur at the moment this arg will actually
-                       be used (i.e. at boundary open), which isn't
-                       known here. Under lockstep the writer inserts
-                       InnerValueResponse at the design contextHash
-                       computed from (outerCur, walkerCur-at-open),
-                       so this fallback's ReplayCallbackArg cannot
-                       reach those rows via a walker-cur snapshot
-                       taken at construction time. Pass zero as the
-                       contextHash — if the arg is actually consumed
-                       later, the read will miss and the caller
-                       will fall through to inner re-eval, which is
-                       the same outcome as a genuine miss. */
+                       during memo-cache resolveStateHash. Under the
+                       #103 redesign the ReplayCallbackArg reads
+                       from a per-firing obsSet map populated at
+                       CallbackApply dispatch, not from a persistent
+                       response store — this pre-emptive path has no
+                       obsSet map, so any actual consumption will
+                       miss and the caller will fall through to
+                       inner re-eval. */
                     Hash fallbackContextHash(HashAlgorithm::SHA256);
                     auto rlo = std::make_shared<ReplayCallbackArg>(
                         std::move(rootSubject), sidecarScope,
@@ -886,13 +875,13 @@ std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
        currentProxy's applyContext observations into the ReplayCallbackArg's initial
        history. Without this, ReplayCallbackArg's per-arg fields are computed against
        an empty history — so sibling A's ReplayCallbackArg and sibling B's ReplayCallbackArg have
-       identical state hashes at their initial `.x` / `.f` probes, and InnerValueResponse's
-       first-writer-wins returns whichever sibling recorded first,
-       yielding cross-sibling data mixing (cb-sibling-b's int-1000
-       result = sibling A's x=1 folded with sibling B's f×1000).
-       Injecting the current sibling's applyContext obs makes the
-       ReplayCallbackArg's state hashes reflect the SPECIFIC sibling context walker is
-       operating under. */
+       identical state hashes at their initial `.x` / `.f` probes,
+       and the shared obsSet lookup would collapse them onto whichever
+       sibling recorded first, yielding cross-sibling data mixing
+       (cb-sibling-b's int-1000 result = sibling A's x=1 folded with
+       sibling B's f×1000). Injecting the current sibling's
+       applyContext obs makes the ReplayCallbackArg's state hashes
+       reflect the SPECIFIC sibling context walker is operating under. */
     auto seededWalkFacts = std::make_shared<std::vector<ObservationSet>>();
     if (auto * proxyTR = dynamic_cast<TracingReplayObject *>(ctx.currentProxy.get())) {
         if (auto proxyCtx = proxyTR->getApplyContext()) {

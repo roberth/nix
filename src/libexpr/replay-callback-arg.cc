@@ -67,14 +67,10 @@ static Hash stampPerArgFields(
     return fromStateHash;
 }
 
-/* Look up the recorded payload for `query` in InnerValueResponse.
-   The map is keyed by requestHash and that's sound at ambient layer
-   because reqHash is `SHA-256(query{from = subject-id-evolved state hash})`
-   — a pure function of (subject, argAncestry, prior chain facts). Two
-   recordings reaching the same reqHash necessarily observed the
-   same history; a deterministic env then produces the same
-   response, so first-writer-wins in the map can't return the
-   wrong payload. */
+/* Look up the recorded payload for `query` in the obsSet map the
+   CallbackApply consumer populated at dispatch time. The map is
+   keyed by requestHash; miss is a real error (there's no
+   secondary source under the #103 redesign). */
 template<typename Q>
 static nlohmann::json readResponse(
     TracingDecisionGraph & dg, const Q & query, const Hash & outerContext,
@@ -479,9 +475,8 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    Without a copy, walkFacts would accumulate
                    entries from prior firings and the synthetic's
                    `stampPerArgFields` would compute its `from` at a
-                   later edge index than the writer's
-                   `flushAmbient` stamped, breaking the
-                   InnerValueResponse lookup.
+                   later edge index than what the recorded probe
+                   used, breaking the obsSet-map lookup.
 
                    localWalkFacts copies just the ReplayCallbackArg's
                    surface-probe portion (= entries pushed before

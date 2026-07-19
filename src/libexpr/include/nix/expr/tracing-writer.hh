@@ -187,20 +187,14 @@ class TracingWriter
            hashes. */
         Hash envCurAtOpen;
         /* The OUTER writer's env cur at the moment inner emitted
-           this cb-apply Fact. Captured at createCallbackCell from
-           `outerWriter->getV13FactSetHash()`. Under lockstep
-           replay this is the value the outer walker sees as its
-           own env cur when it dispatches this same cb-apply Fact,
-           i.e. `walkerCur` at `dispatchApplyLive`. Used together
-           with `envCurAtOpen` to compute the
-           InnerValueResponse contextHash. */
+           this cb-apply Fact. Legacy field carried from the pre-#103
+           InnerValueResponse contextHash scheme; unused under the
+           obsSet CAS design. */
         Hash outerEnvCurAtOpen;
         /* Walker's outer env cur at THIS cb-apply's dispatch
-           moment (= envCurAtOpen XOR priorApplyFactAccum
-           at first-finalize time). Stored for late-obs re-processing
-           so re-emitted InnerValueResponse inserts use the same
-           context as the first-finalize inserts. Zero (empty hash)
-           until first finalize populates it. */
+           moment. Legacy field carried from the pre-#103
+           InnerValueResponse contextHash scheme; unused under the
+           obsSet CAS design. */
         Hash contextCur;
         /* Option (b) — late ambient obs support. Once a boundary's first
            finalize pass runs, it stays in `callbackCells`
@@ -228,9 +222,9 @@ class TracingWriter
         size_t pos = 0;
         /* Facts up to (but not including) this index have been
            processed in a previous finalize pass — their Request /
-           InnerValueResponse / AmbientAsks entries are already in the
-           DB. Re-entrant finalize passes only need to insert the
-           tail `facts[lastProcessedCount..]`. */
+           AmbientAsks entries are already in the DB. Re-entrant
+           finalize passes only need to insert the tail
+           `facts[lastProcessedCount..]`. */
         size_t lastProcessedCount = 0;
         /* Fn's Subject-derived state hash for this cb-apply. Used
            to build the QueryCallbackApply payload at flush time —
@@ -255,11 +249,10 @@ class TracingWriter
         bool argDepthCaptured = false;
         /* Running observation set — grows by one each time
            `logAmbientObservation` records a new probe on this
-           cb-apply's contra-arg. Each append produces a new
-           QueryCallbackApply request (fn + current obsSet hash) →
-           its queryHash → folded as a fact into envFactSet, with
-           InnerValueResponse recording the probe's response for
-           walker lookup at replay. Task #103. */
+           cb-apply's contra-arg. Snapshotted into the ObservationSet
+           CAS by `logOuterObservation` when it stamps a
+           CallbackApplyRef slot into an outer probe reaching this
+           call's applyResult. Task #103. */
         std::vector<TracingDecisionGraph::Observation> runningObsSet;
         /* Companion to `runningObsSet` used for progressive
            per-probe stamping. Each new probe stamps its `from`
@@ -569,16 +562,12 @@ public:
                         "logAmbientObservation: late probe queued for finalized applyId=%s (now %zu facts, %zu processed)",
                         applyId.to_string(HashFormat::Base16, false).substr(0, 12),
                         it->facts.size(), it->lastProcessedCount);
-                /* Ambient redesign (task #103): emit a
-                   QueryCallbackApply per probe with the running
-                   observation set. Different observation sets across
-                   sibling callback firings produce different
-                   queryHashes → distinct DB rows. Records the probe's
-                   response into InnerValueResponse keyed on the
-                   CallbackApply's queryHash so walker dispatch is a
-                   simple lookup. No envFactSet fold here yet —
-                   coexists with the existing AmbientAsk-driven fold
-                   in flushAmbient until cutover. */
+                /* Accumulate this probe into the cell's
+                   `runningObsSet`. `logOuterObservation` reads
+                   `runningObsSet` when it stamps a CallbackApplyRef
+                   slot on an outer probe that reaches this call's
+                   applyResult; the snapshot goes into the
+                   ObservationSet CAS. */
                 if (!it->fnStateHashHex.empty()) {
                     /* Contra-arg is a subject-without-state-hash: its
                        structural id is `SHA("positional-<depth>") XOR
@@ -888,13 +877,8 @@ public:
             decisionGraph->record(*qh.queryHash, envFactSetHash, resultNodeHash,
                 responseFor, allRequestHashes, startFactSetHash);
 
-        /* Populate per-edge response table AFTER `record()` so
-           Patricia-split-added Asks rows are covered too. Enumerate
-           ALL Asks rows for Q (not just `envAsksEdges`), and use
-           InnerValueResponse (`getInnerValueResponsePayload`) as the source of truth so
-           coordinates whose reqhashes came from a prior sibling's
-           dispatch (cumulative-dependency principle) also get
-           covered. */
+        /* record() runs after all this Q's observations have been
+           folded; nothing else to do at this scope. */
         return TriePosition{
             .resultNodeHash = resultNodeHash,
             .queryHashStr = qh.queryHash->to_string(HashFormat::Base16, false),
