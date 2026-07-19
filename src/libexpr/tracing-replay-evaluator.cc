@@ -51,42 +51,6 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
        envWalk. */
     TracingWriter::SuppressApplyBoundary suppressBoundary(writer);
 
-    /* Register callback so suppressed createCallbackCell calls (=
-       inner cb-apply boundaries fired inside dispatchApplyLive's
-       cb-fn execution) synthesise a phantom ε obs in walker's
-       envWalk. Cold's writer would have inserted these as ε
-       edges into envWalk; without this walker's history-index
-       falls short of cold's step for later flushes referencing
-       arg(1) at post-inner-apply positions. */
-
-    /* Per-walk scoping: envWalk (and committedEdgeFingerprints) belong
-       to this walk only. Each walk builds its own history from ∅ via
-       the Ask chain it traverses; the recorded chain determines what
-       gets folded in. Under matching-until-divergence, walker's
-       per-walk envWalk mirrors the writer's history at the time of
-       the recording being matched — no cross-walk pollution.
-
-       See `doc/design/tracing-eval-cache.md` §Replay strategies
-       (slow path) for the reasoning. Save the outer scope's state
-       so nested walks don't corrupt it. */
-    auto savedEnvWalk = std::move(envWalk);
-    envWalk.clear();
-    auto savedFingerprints = std::move(committedEdgeFingerprints);
-    committedEdgeFingerprints.clear();
-    struct WalkScope
-    {
-        std::vector<ObservationSet> & envWalk;
-        std::unordered_set<Hash> & committedEdgeFingerprints;
-        std::vector<ObservationSet> savedEnvWalk;
-        std::unordered_set<Hash> savedFingerprints;
-        ~WalkScope()
-        {
-            envWalk = std::move(savedEnvWalk);
-            committedEdgeFingerprints = std::move(savedFingerprints);
-        }
-    } walkScope{envWalk, committedEdgeFingerprints,
-                std::move(savedEnvWalk), std::move(savedFingerprints)};
-
     ResolutionContext ctx{
         std::move(currentProxy),
         {},
@@ -318,6 +282,83 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         return h;
     };
 
+    std::vector<Observation> rejectedObs;
+    auto commitRejected = [&](const std::vector<Hash> &) {
+        for (auto & obs : pendingEdgeObservations)
+            rejectedObs.push_back(std::move(obs));
+        pendingEdgeObservations.clear();
+    };
+
+    /* === Fast path (task #106) ===
+       Session-cumulative: look up `getAsks(Q, envCur)` and walk that
+       specific known trace lockstep, using session-scoped envWalk. On
+       hit, envWalk has been extended with this Q's Ask edges and
+       envCur advanced to the terminalCur. On miss, roll back any
+       partial commits and fall through to the slow path with per-walk
+       scoping. */
+    std::optional<TracingDecisionGraph::WalkHit> walkHit;
+    {
+        auto fastPathSavedEnvWalkSize = envWalk.size();
+        auto fastPathSavedEnvCur = envCur;
+        auto fastPathSavedFingerprints = committedEdgeFingerprints;
+        walkHit = decisionGraph.walk(queryHash, dispatch,
+            [&](bool committed, const std::vector<Hash> & useful) {
+                if (committed) commitEdge();
+                else commitRejected(useful);
+            },
+            envCur);
+        if (walkHit) {
+            auto payload = decisionGraph.getResultPayload(walkHit->resultHash);
+            if (payload) {
+                envCur = walkHit->terminalCur;
+                tracingCacheStats().hits++;
+                tracingCacheLog(
+                    "fast path HIT queryHash=%s startCur=%s terminalCur=%s "
+                    "(envWalk grew %zu -> %zu)",
+                    queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                    fastPathSavedEnvCur.to_string(HashFormat::Base16, false).substr(0, 12),
+                    envCur.to_string(HashFormat::Base16, false).substr(0, 12),
+                    fastPathSavedEnvWalkSize, envWalk.size());
+                return WalkResult{std::move(*payload), walkHit->resultHash, walkHit->terminalCur};
+            }
+        }
+        /* Fast path missed or Result payload absent. Roll back partial
+           commits so the slow path starts with clean session state. */
+        envWalk.resize(fastPathSavedEnvWalkSize);
+        envCur = fastPathSavedEnvCur;
+        committedEdgeFingerprints = std::move(fastPathSavedFingerprints);
+        pendingEdgeObservations.clear();
+        rejectedObs.clear();
+        walkHit.reset();
+    }
+
+    /* === Slow path ===
+       Per-walk scoping: save session envWalk, reset to empty, do
+       parent-anchored + walk-from-∅ attempts, restore session state
+       on exit. Slow-path per-Q walk builds its own local envWalk;
+       it does not update the session envCur (per-Q state is not the
+       session-cumulative point).
+
+       See `doc/design/tracing-eval-cache.md` §Replay strategies
+       (slow path) for the reasoning. */
+    auto savedEnvWalk = std::move(envWalk);
+    envWalk.clear();
+    auto savedFingerprints = std::move(committedEdgeFingerprints);
+    committedEdgeFingerprints.clear();
+    struct WalkScope
+    {
+        std::vector<ObservationSet> & envWalk;
+        std::unordered_set<Hash> & committedEdgeFingerprints;
+        std::vector<ObservationSet> savedEnvWalk;
+        std::unordered_set<Hash> savedFingerprints;
+        ~WalkScope()
+        {
+            envWalk = std::move(savedEnvWalk);
+            committedEdgeFingerprints = std::move(savedFingerprints);
+        }
+    } walkScope{envWalk, committedEdgeFingerprints,
+                std::move(savedEnvWalk), std::move(savedFingerprints)};
+
     /* Walk with two anchor candidates in order:
        1. Parent TracingReplayObject's terminalCur — the structural-anchor
           lookup position. Child Q's recording was made starting from
@@ -325,35 +366,11 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
           matches the recording's frame.
        2. From ∅ — needed when no parent anchor exists (top-level Q
           like evalFile/evalExpr, no TracingReplayObject) and as a backstop
-          when the parent-anchored attempt finds no matching Asks chain.
-
-       Use `ctx.currentProxy` (not `currentProxy`) — the local was
-       moved into ctx above, so it's now empty. */
+          when the parent-anchored attempt finds no matching Asks chain. */
     Hash parentAnchor = TracingDecisionGraph::emptySetHash();
     if (auto * parentTR = dynamic_cast<TracingReplayObject *>(ctx.currentProxy.get())) {
         parentAnchor = parentTR->getTriePos().factSetHash;
     }
-    /* Track rejected-edge obs across all attempts. Committed on history
-       MISS so subsequent history calls' resolveStateHash sees the obs
-       walker produced during the failed traversal — those obs carry
-       real (req, resp) pairs from cold's recorded responses, and
-       future resolves at deeper step may need them. Only
-       preserve on final miss; on hit, the winning edges are already
-       committed and the rejected ones represent wrong branches whose
-       obs would contaminate the correct chain. */
-    std::vector<Observation> rejectedObs;
-    auto commitRejected = [&](const std::vector<Hash> &) {
-        for (auto & obs : pendingEdgeObservations)
-            rejectedObs.push_back(std::move(obs));
-        pendingEdgeObservations.clear();
-    };
-    /* Two structural attempts:
-       (1) parent-anchored — walk from the parent TracingReplayObject's
-           terminalCur, the lockstep continuation of the enclosing
-           traversal.
-       (2) walk-from-∅ fallback — used when (1) misses or when there
-           is no parent anchor. */
-    std::optional<TracingDecisionGraph::WalkHit> walkHit;
     walkHit = decisionGraph.walk(queryHash, dispatch,
         [&](bool committed, const std::vector<Hash> & useful) {
             if (committed) commitEdge();
@@ -368,12 +385,6 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
             });
     }
     if (!walkHit) {
-        /* Walker missed. Rejected-edge obs are NOT committed to
-           envWalk: they represent wrong paths whose responses
-           cold never recorded, so folding them into arg state hashes shifts
-           subject_at_k to values cold never stamped. Per Asks-paradigm
-           navigation invariant, state hashes are pure functions of the
-           committed factset; rejected paths are not in that factset. */
         tracingCacheStats().misses++;
         return std::nullopt;
     }
