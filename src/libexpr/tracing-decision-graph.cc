@@ -39,36 +39,6 @@ CREATE TABLE IF NOT EXISTS Results (
     payload    BLOB NOT NULL
 );
 
--- Depth-2 (request → response payload) map. Used by the walker to
--- serve the LocalObject's responses on warm replay, where the inner
--- evaluator isn't running and there's no live source for the
--- payloads. Depth-1 doesn't consult this table — the walker
--- dispatches against the live environment and validates structurally
--- via factSet evolution through Asks/Terminals.
---
--- "Local" in the name: a row here is the payload the LocalObject
--- (= the inner-supplied cb arg) revealed to one of the outer's
--- probes during a covariant callback. The recorder always writes
--- these. A writer-level flag also redirects env layer ambient
--- response payloads here for offline debugging when the JSON
--- traces aren't available; the walker never reads those, so the
--- flag is debug-only.
---
--- Why keyed by requestHash, not by responseHash (= the natural CAS
--- key): the ambient layer reqHash is `SHA-256(query{from =
--- subject-id-evolved state hash})` — a pure function of (subject, scope,
--- prior facts in the chain). Two recordings reaching the same
--- reqHash necessarily observed the same history; a deterministic
--- env then produces the same response, so (request → response) is
--- a function. First-writer-wins is sound, and the walker can look
--- the payload up by reqHash directly.
-CREATE TABLE IF NOT EXISTS InnerValueResponse (
-    requestHash BLOB NOT NULL,
-    contextHash BLOB NOT NULL,
-    payload     BLOB NOT NULL,
-    PRIMARY KEY (requestHash, contextHash)
-);
-
 -- ObservationSet CAS pool: content-addressed sets of (queryHash,
 -- responseHash) tuples. Referenced from QueryCallbackApply payloads
 -- to identify the specific observations an outer callback made on
@@ -180,8 +150,8 @@ struct TracingDecisionGraph::State
     SQLite db;
 
     /* Storage layer */
-    SQLiteStmt insertRequest, insertQuery, insertResult, insertInnerValueResponse;
-    SQLiteStmt selectRequest, selectQuery, selectResult, selectInnerValueResponse;
+    SQLiteStmt insertRequest, insertQuery, insertResult;
+    SQLiteStmt selectRequest, selectQuery, selectResult;
     SQLiteStmt insertObservationSet, selectObservationSet;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
@@ -208,10 +178,6 @@ struct TracingDecisionGraph::State
     std::unordered_map<Hash, std::optional<std::vector<TracingDecisionGraph::Fact>>> factSetCache;
     std::unordered_map<Hash, std::optional<std::string>> requestPayloadCache;
     std::unordered_map<Hash, std::optional<std::string>> resultPayloadCache;
-    /* InnerValueResponse uses (requestHash, contextHash) key; explicit
-       implementation bypasses the ATOM_CACHED macro. No in-memory
-       cache — SQLite indexed lookup is fast enough for the walker's
-       hot path here (measured hit rate is low per query). */
     /* RequestSet trie *node* cache. Different RequestSets that share
        subtrees (via content addressing) hit the same node hashes;
        caching per-node lets second-and-later getRequestSet calls reuse
@@ -407,16 +373,12 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "INSERT OR IGNORE INTO Queries(queryHash, payload) VALUES (?, ?)");
     state->insertResult.create(state->db,
         "INSERT OR IGNORE INTO Results(resultHash, payload) VALUES (?, ?)");
-    state->insertInnerValueResponse.create(state->db,
-        "INSERT OR IGNORE INTO InnerValueResponse(requestHash, contextHash, payload) VALUES (?, ?, ?)");
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
     state->selectQuery.create(state->db,
         "SELECT payload FROM Queries WHERE queryHash = ?");
     state->selectResult.create(state->db,
         "SELECT payload FROM Results WHERE resultHash = ?");
-    state->selectInnerValueResponse.create(state->db,
-        "SELECT payload FROM InnerValueResponse WHERE requestHash = ? AND contextHash = ?");
     state->insertObservationSet.create(state->db,
         "INSERT OR IGNORE INTO ObservationSet(setHash, payload) VALUES (?, ?)");
     state->selectObservationSet.create(state->db,
@@ -435,6 +397,10 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     /* Drop the previous flat-blob RequestSets table from earlier
        schema versions if present (incompatible payload format). */
     state->db.exec("DROP TABLE IF EXISTS RequestSets;");
+    /* Drop the obsolete InnerValueResponse table — ambient probe
+       responses now live in the ObservationSet CAS via each
+       CallbackApply query's `argObsSet`. */
+    state->db.exec("DROP TABLE IF EXISTS InnerValueResponse;");
 
     state->insertAsk.create(state->db,
         "INSERT OR IGNORE INTO Ask(queryHash, factSetHash, requestSetHash) VALUES (?, ?, ?)");
@@ -519,35 +485,6 @@ ATOM_INSERT_CACHED(Result, resultPayloadCache)
 #undef ATOM_INSERT_CACHED
 #undef ATOM_INSERT_PLAIN
 
-void TracingDecisionGraph::insertInnerValueResponse(
-    const Hash & requestHash, const Hash & contextHash, std::string_view payload)
-{
-    {
-        auto state(_state->lock());
-        auto use = state->insertInnerValueResponse.use();
-        dg_bindBlob(use, dg_hashToBlob(requestHash));
-        dg_bindBlob(use, dg_hashToBlob(contextHash));
-        dg_bindBlob(use, payload);
-        use.exec();
-    }
-    tracingCacheLog(
-        "insertInnerValueResponse req=%s ctx=%s payload_len=%zu",
-        describeHash(requestHash).c_str(),
-        describeHash(contextHash).c_str(),
-        payload.size());
-    if (provenanceEnabled()) {
-        static std::atomic<size_t> insertSeq{0};
-        auto seq = insertSeq++;
-        auto keyHash = hashString(HashAlgorithm::SHA256,
-            "InnerValueResponseInsert:" + std::to_string(seq));
-        recordProvenance(keyHash, "InnerValueResponse-insert-call",
-            {{"seq", seq},
-             {"requestHash", requestHash.to_string(HashFormat::Base16, false)},
-             {"contextHash", contextHash.to_string(HashFormat::Base16, false)},
-             {"payload_len", payload.size()}});
-    }
-}
-
 #define ATOM_GET_CACHED(NAME, CACHE)                                            \
     std::optional<std::string> TracingDecisionGraph::get##NAME##Payload(        \
         const Hash & h)                                                         \
@@ -581,41 +518,6 @@ ATOM_GET_PLAIN(Query)
 ATOM_GET_CACHED(Result, resultPayloadCache)
 #undef ATOM_GET_CACHED
 #undef ATOM_GET_PLAIN
-
-std::optional<std::string> TracingDecisionGraph::getInnerValueResponsePayload(
-    const Hash & requestHash, const Hash & contextHash)
-{
-    std::optional<std::string> result;
-    {
-        auto state(_state->lock());
-        auto query = state->selectInnerValueResponse.use();
-        dg_bindBlob(query, dg_hashToBlob(requestHash));
-        dg_bindBlob(query, dg_hashToBlob(contextHash));
-        if (query.next())
-            result = query.getBlob(0);
-    }
-    tracingCacheLog(
-        "getInnerValueResponsePayload req=%s ctx=%s -> %s",
-        describeHash(requestHash).c_str(),
-        describeHash(contextHash).c_str(),
-        result ? "HIT" : "MISS");
-    if (provenanceEnabled()) {
-        static std::atomic<size_t> lookupSeq{0};
-        auto seq = lookupSeq++;
-        /* Hash the seq to get a unique registry key per lookup site.
-           We can't index by (reqHash, ctxHash) — those repeat for
-           different lookups within the same session — so we use an
-           incrementing counter as a synthetic key. */
-        auto keyHash = hashString(HashAlgorithm::SHA256,
-            "lookup:" + std::to_string(seq));
-        recordProvenance(keyHash, "getInnerValueResponsePayload-call",
-            {{"seq", seq},
-             {"requestHash", requestHash.to_string(HashFormat::Base16, false)},
-             {"contextHash", contextHash.to_string(HashFormat::Base16, false)},
-             {"hit", result.has_value()}});
-    }
-    return result;
-}
 
 /* ─────────────────────────────────────────────────────────────────────
    Storage layer: sets

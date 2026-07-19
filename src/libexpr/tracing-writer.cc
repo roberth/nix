@@ -408,17 +408,6 @@ void TracingWriter::flushAmbient(bool processApplies)
             }
 
             decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-            /* contextHash is the walker's Env `cur` at the time the
-               response is recorded (vocab, "Ambient payload types and
-               edges"). At the writer that value is `contextCur`
-               (= `envCurAtOpen XOR priorApplyFactAccum`), which also
-               equals `boundaryAskFromHash` (below), so the walker at
-               warm sees the identical Hash as its Ask edge's
-               `fromFactSetHash` and lands on the row inserted here.
-               Cross-cached-call disambiguation is handled upstream by
-               `callArgAncestry` inside `requestHash`; no outer
-               contribution needed here. */
-            decisionGraph->insertInnerValueResponse(queryHash, contextCur, responsePayload);
 
             auto toFactSet = TracingDecisionGraph::xorFactIntoHash(
                 cumulativeFactSet, queryHash, responseHash);

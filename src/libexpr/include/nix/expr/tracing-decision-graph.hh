@@ -117,33 +117,11 @@ public:
     std::optional<std::string> getQueryPayload(const QueryHash & h);
     std::optional<std::string> getResultPayload(const ResultHash & h);
 
-    /* InnerValueResponse: response payload pool used by Ambient
-       replay only. `ReplayCallbackArg` reads these back to serve
-       probes into a reconstructed LocalObject value tree — the
-       "ambient walker is the only consumer" contract (design doc
-       §Atom storage). Env dispatch MUST NOT read this map, since
-       cross-context matching-until-divergence would give the same
-       requestHash under differing outer args and env responses
-       must come from the live environment.
-
-       PK is (requestHash, contextHash): contextHash is the
-       walker's/writer's outer env fact-set state at record time.
-       That allows matching requestHashes under different outer
-       contexts to store distinct payloads — necessary for cases
-       like `{ cb }: (cb 10) + (cb 20)` where both invocations
-       hit the same requestHash for the callback arg's initial
-       probes but the outer contexts differ (post- vs
-       pre-first-cb-apply). See the "Matching until
-       divergence" section of tracing-eval-cache-subject-identity.md. */
-    void insertInnerValueResponse(const RequestHash & requestHash, const Hash & contextHash, std::string_view payload);
-    std::optional<std::string> getInnerValueResponsePayload(const RequestHash & requestHash, const Hash & contextHash);
-
     /* ObservationSet CAS pool. An observation set is the set of
        (queryHash, responsePayload) tuples the outer's callback
        probed on an inner-supplied contra-arg during one callback
-       firing. Payload is inline so the walker can reconstruct arg
-       responses without a separate response-payload table (no
-       InnerValueResponse dependency for this path).
+       firing. Payload is inline so the walker reconstructs arg
+       responses directly from this CAS.
 
        Referenced by `QueryCallbackApply.argObsSet` — different
        observation sets give different queryHashes → distinct DB

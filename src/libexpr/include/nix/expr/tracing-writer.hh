@@ -462,8 +462,6 @@ public:
         auto responsePayload = jsonToCborString(respJson);
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
         decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
-        if (storeAllResponsePayloads)
-            decisionGraph->insertInnerValueResponse(queryHash, Hash(HashAlgorithm::SHA256), responsePayload);
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), queryHash, responseHash);
         if (!seenRequests.insert(factHash).second)
@@ -816,17 +814,6 @@ public:
             enclosing.applyId,
         });
     }
-
-    /**
-     * When true, every file-read / env-var response payload gets
-     * persisted into the decisionGraph's InnerValueResponse too —
-     * useful for offline debugging when JSON traces aren't
-     * available. Default false: walker never reads env layer payloads
-     * from there (= live-dispatches against the env instead), so
-     * the storage is pure overhead unless someone's grepping the
-     * DB by hand.
-     */
-    bool storeAllResponsePayloads = false;
 
     /**
      * Log a d=0 Result. Records (Q, current factSet) -> Result in

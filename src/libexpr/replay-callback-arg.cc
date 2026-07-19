@@ -86,9 +86,13 @@ static nlohmann::json readResponse(
         Q::tag, query.from.isStateHash() ? query.from.stateHash().substr(0, 12) : "<?>",
         reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
         outerContext.to_string(HashFormat::Base16, false).substr(0, 12));
-    /* obsSet responses first (task #103). When the CallbackApply
-       dispatcher set an obsSet source, look up here — no
-       InnerValueResponse dependency. */
+    /* Under the #103 redesign, every ambient probe's response is
+       carried in the CallbackApply query's `argObsSet` — the
+       consumer at dispatch time populates `obsSetResponses` with
+       that CAS content. No secondary storage. Miss here is a real
+       error. */
+    (void) dg;
+    (void) outerContext;
     if (obsSetResponses) {
         auto it = obsSetResponses->find(reqHash);
         if (it != obsSetResponses->end()) {
@@ -98,11 +102,8 @@ static nlohmann::json readResponse(
             return cborStringToJson(it->second);
         }
     }
-    auto payload = dg.getInnerValueResponsePayload(reqHash, outerContext);
-    if (!payload)
-        throw Error("ReplayCallbackArg: no recorded response for %s on local %s",
-            Q::tag, query.from.isStateHash() ? query.from.stateHash() : "<ambient>");
-    return cborStringToJson(*payload);
+    throw Error("ReplayCallbackArg: no recorded response for %s on local %s",
+        Q::tag, query.from.isStateHash() ? query.from.stateHash() : "<ambient>");
 }
 
 /* Multi-edge AmbientAsks walker: dispatch and validate one probe at

@@ -70,37 +70,11 @@ TEST_F(TracingDecisionGraphTest, AtomInsertIsIdempotent)
     EXPECT_EQ(*g.getRequestPayload(h), "payload");
 }
 
-TEST_F(TracingDecisionGraphTest, InnerValueResponse_KeyedByRequestHash_FunctionAtAmbient)
-{
-    /* `InnerValueResponse` is keyed by requestHash. This is sound at
-       depth-2 (the only place the walker reads it) because the
-       depth-2 reqHash is `SHA-256(query{from = cidasks-evolved
-       scopeStateId})` — a pure function of (subject, scope, prior facts in
-       the chain). Two recordings reaching the same reqHash
-       necessarily observed the same history; a deterministic env
-       then produces the same response, so (request → response) is a
-       function and first-writer-wins under PK = requestHash can't
-       surface the wrong payload.
-
-       This test pins that contract: if the same requestHash is
-       inserted with different payloads, only the first wins — and
-       that's CORRECT because the upstream invariant (= reqHash
-       functionally encodes inner evaluator state) forbids the
-       different-payloads case from ever happening at depth-2 in
-       practice. (Depth-1 doesn't read this map — it dispatches
-       against the live environment.) */
-    TracingDecisionGraph g(dbPath);
-
-    auto reqHash = sha("shared-request");
-    auto ctxHash = sha("shared-context");
-    g.insertInnerValueResponse(reqHash, ctxHash, "first-payload");
-    g.insertInnerValueResponse(reqHash, ctxHash, "second-payload");
-
-    EXPECT_EQ(g.getInnerValueResponsePayload(reqHash, ctxHash).value_or(""), "first-payload");
-}
-
 /* EdgeResponses table + its tests deleted: the table had no
-   walker-side readers and cold's write path was pure side effect. */
+   walker-side readers and cold's write path was pure side effect.
+   InnerValueResponse table + its test deleted: ambient probe
+   responses now live in the ObservationSet CAS via each
+   CallbackApply query's `argObsSet`. */
 
 /* ─────────────────────────────────────────────────────────────────────
    Set pools: canonical hashing
