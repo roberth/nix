@@ -198,6 +198,7 @@ suites = [
       'cb-deep-nav-and-indexing.sh',
       'cb-lazy-result-multi-attr.sh',
       'cb-obsset-mismatch-clean-miss.sh',
+      'cb-two-sibling-distinct-callbacks.sh',
       'cb-xor-evolution-repeated-cb-apply.sh',
       'cb-repeated-cb-apply-diff-args.sh',
       'cb-sibling-discrimination-via-observation.sh',
