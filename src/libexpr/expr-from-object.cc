@@ -334,18 +334,35 @@ std::shared_ptr<Object> OuterApply::run(
        call's applyResult.state (formula uses Arg{d}.state) then
        differs per sibling → distinct outer probe queryHashes →
        distinct DB rows, no wrong-sibling hits. */
-    if (innerWriter) {
+    if (innerWriter && !innerWriter->isSuppressingCbApply()) {
         try {
             auto whnfResult = computeWHNFFromObject(*resultObj);
-            /* Subject: the caller OuterObject's own subject (fnSubject
-               passed in from OuterObject::queryApply). Typically a
-               DerivedSubject like {arg(d), .f} — fn as reached via
-               attribute navigation on the outer arg. Emission is "on
-               fn"; response captures what fn produced when applied to
-               the inner arg. Per-arg centralisation stamps `from` at
-               the root (arg(d)), so the fold enters arg(d)'s own-loop
-               at the outer callArgAncestry. */
-            Subject applyResultSubj = fnSubject;
+            /* Subject: an ApplyResultSubject with fn=fnSubject (from
+               OuterObject::queryApply — typically a DerivedSubject
+               like {arg(d), .f}) and arg=Arg{localDepth} (the
+               inner-supplied callback arg).
+
+               Why ApplyResultSubject and not just the fn subject:
+               the recorded response is the applyResult's WHNF (the
+               callback's return, sibling-discriminating). Warm's
+               walker dispatches this query via dispatchAmbientQuery
+               which sees the callbackApply slot (auto-stamped by
+               logOuterObservation when the subject tree contains an
+               ApplyResultSubject) and fires fn->queryApply(arg) live
+               via dispatchApplyLive. That produces the same
+               applyResult WHNF, so the elementHash matches cold's on
+               both sides. A plain DerivedSubject subject would make
+               warm's live dispatch return the fn's own WHNF (a
+               lambda) instead of the applyResult's WHNF — mismatch
+               and miss. */
+            auto argHashLocal = Hash::parseNonSRIUnprefixed(argStateHashStr, HashAlgorithm::SHA256);
+            Subject innerArgSubj = argObj->getSubject()
+                ? *argObj->getSubject()
+                : Subject{PostulatedIdempotentRead{argHashLocal}};
+            Subject applyResultSubj{ApplyResultSubject{
+                .fn = std::make_shared<const Subject>(fnSubject),
+                .arg = std::make_shared<const Subject>(std::move(innerArgSubj)),
+            }};
             trace::QueryGetWHNF q{};
             trace::ResultVariant result = whnfResult;
             innerWriter->logOuterObservation(
