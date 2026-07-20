@@ -1323,33 +1323,15 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                     q.to_string(HashFormat::Base16, false).substr(0, 12),
                     cur.to_string(HashFormat::Base16, false).substr(0, 12));
     for (;;) {
-        /* Try outgoing Asks before accepting Terminal at this cur.
-           Under matching-until-divergence with Q hash collisions across
-           siblings (e.g. two cb-apply callbacks whose applyResult
-           subjects share initial state hash), cold recorded distinct
-           Terminals for each sibling at distinct curs, plus outgoing
-           Asks that extend one sibling's chain from the other's cur.
-           If we accept Terminal at cur first, warm at sibling A's
-           terminalCur would return A's Result when the current outer
-           context is actually B — the sibling discrimination bug.
+        if (auto term = getTerminal(q, cur)) {
+            tracingCacheLog("history Q=%s TERMINAL at cur=%s",
+                            q.to_string(HashFormat::Base16, false).substr(0, 12),
+                            cur.to_string(HashFormat::Base16, false).substr(0, 12));
+            return WalkHit{*term, cur};
+        }
 
-           Trying Asks first lets sibling-specific dispatches match or
-           miss based on live responses. Wrong-context dispatches
-           produce responses that don't match cold's recording → no
-           recorded edge at nextCur → try next outgoing Ask. Only when
-           no Ask can be committed do we fall through to Terminal(cur)
-           — the correct terminal for the walker's current context.
-
-           Empty outgoing case unchanged: if there are no Asks and no
-           Terminal, miss. */
         auto outgoing = getAsks(q, cur);
         if (outgoing.empty()) {
-            if (auto term = getTerminal(q, cur)) {
-                tracingCacheLog("history Q=%s TERMINAL at cur=%s (no outgoing)",
-                                q.to_string(HashFormat::Base16, false).substr(0, 12),
-                                cur.to_string(HashFormat::Base16, false).substr(0, 12));
-                return WalkHit{*term, cur};
-            }
             tracingCacheLog("history Q=%s NO OUTGOING at cur=%s -> miss",
                             q.to_string(HashFormat::Base16, false).substr(0, 12),
                             cur.to_string(HashFormat::Base16, false).substr(0, 12));
@@ -1443,18 +1425,6 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
         }
 
         if (!advanced) {
-            /* No outgoing Ask can be committed at this cur. If a
-               Terminal exists at cur, take it — the recording's chain
-               ends here for the current context (sibling
-               discrimination worked out: wrong-context Asks all
-               missed, so we're at the right terminal for our
-               context). */
-            if (auto term = getTerminal(q, cur)) {
-                tracingCacheLog("history Q=%s TERMINAL at cur=%s (after Ask attempts)",
-                                q.to_string(HashFormat::Base16, false).substr(0, 12),
-                                cur.to_string(HashFormat::Base16, false).substr(0, 12));
-                return WalkHit{*term, cur};
-            }
             tracingCacheLog("history Q=%s NO EDGE COMMITTED at cur=%s -> miss",
                             q.to_string(HashFormat::Base16, false).substr(0, 12),
                             cur.to_string(HashFormat::Base16, false).substr(0, 12));

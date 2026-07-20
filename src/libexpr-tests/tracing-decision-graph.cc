@@ -911,15 +911,11 @@ TEST_F(TracingDecisionGraphTest, Phase1_RecordReusesEdgeWhenExtendingSuperset)
     };
     auto hit1 = g.walk(q, dispatch);
     ASSERT_TRUE(hit1.has_value());
-    /* Walk hits the LONGER recording (fs2, R2). At each cur the
-       walker tries outgoing Asks before accepting Terminal — this
-       is the discipline that makes sibling discrimination work
-       (otherwise Q-collision-across-siblings makes warm hit
-       whichever Terminal it stumbles onto first, ignoring the
-       chain continuation that would lead to the sibling-specific
-       Terminal). Here at fs1 the walker follows the outgoing
-       Ask dispatching r3, reaches fs2, and returns R2. */
-    EXPECT_EQ(hit1->resultHash, sha("R2"));
+    /* Walk hits the SHORTER recording (fs1, R1) first because
+       walk checks Terminal at every intermediate cur. After
+       dispatching {r1,r2} it reaches fs1, where Terminal(Q, fs1, R1)
+       is present. */
+    EXPECT_EQ(hit1->resultHash, sha("R1"));
 }
 
 TEST_F(TracingDecisionGraphTest, Phase1_PatriciaSplitsOnOverlappingDivergence)
