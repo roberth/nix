@@ -64,6 +64,7 @@ using OuterQueryFn = std::function<OuterQueryResult(
 using OuterApplyFn = std::function<std::shared_ptr<Object>(
     std::shared_ptr<Object> fnObj,
     Hash fnStateHash,
+    Subject fnSubject,
     std::shared_ptr<Object> argObj,
     std::shared_ptr<const ArgCell> callerScope)>;
 

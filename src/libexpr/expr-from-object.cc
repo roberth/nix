@@ -102,7 +102,8 @@ struct OuterApply
         has no Subject; the wrapping OuterObject computes it). Returns
         the outer's apply-result Object. */
     std::shared_ptr<Object> run(
-        std::shared_ptr<Object> fnObj, Hash fnStateHash, std::shared_ptr<Object> argObj,
+        std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject,
+        std::shared_ptr<Object> argObj,
         std::shared_ptr<const ArgCell> callerScope);
 };
 
@@ -149,19 +150,20 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
         OuterObject, used to build the QueryApply payload. Returns
         the outer's apply-result Object. */
     std::shared_ptr<Object> apply(
-        std::shared_ptr<Object> fnObj, Hash fnStateHash,
+        std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject,
         std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
     {
         return OuterApply{
             bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
             shared_from_this(),
-        }.run(std::move(fnObj), fnStateHash, std::move(argObj), std::move(callerScope));
+        }.run(std::move(fnObj), fnStateHash, std::move(fnSubject),
+              std::move(argObj), std::move(callerScope));
     }
 };
 
 std::shared_ptr<Object> OuterApply::run(
-    std::shared_ptr<Object> fnObj, Hash fnStateHash, std::shared_ptr<Object> argObj,
-    std::shared_ptr<const ArgCell> callerScope)
+    std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject,
+    std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
 {
     /* fnId — the Subject-derived state hash of the wrapping OuterObject,
        used for the QueryApply payload's `fn` field. The caller
@@ -306,6 +308,138 @@ std::shared_ptr<Object> OuterApply::run(
         innerWriter->deferRequest(localSidecar, argStateHashStr);
     }
 
+    /* Task #108 Approach B: emit the callback-firing observation via
+       the standard writer path so cold records an Ask edge that
+       warm walks — the callback re-fires live via dispatchApplyLive
+       during warm's traversal.
+
+       Subject: ApplyResultSubject{fn=fnObj.subject_or_opaque,
+       arg=argObj.subject_or_opaque}. fn.subject is a DerivedSubject
+       (from getAttr on the outer arg) so per-arg centralisation
+       stamps the observation's `from` at the root Arg{d}'s state,
+       folding into Arg{d}'s own-loop.
+
+       argAncestry: the OUTER callArgAncestry — the scope where
+       Arg{d} lives, so the fold enters the outer arg's own-loop
+       (not the callback's inner scope's Arg{d+1}).
+
+       Response: the applyResult's forced WHNF — the callback's
+       return value, which differs per sibling (the sibling
+       discriminator).
+
+       Under matching-until-divergence, cold's `elementHash =
+       SHA(reqHash || respHash)` and warm's (from live re-invocation)
+       match, so per-arg centralisation into Arg{d}'s own-loop
+       evolves Arg{d}.state identically on both sides. The cached
+       call's applyResult.state (formula uses Arg{d}.state) then
+       differs per sibling → distinct outer probe queryHashes →
+       distinct DB rows, no wrong-sibling hits. */
+    if (innerWriter) {
+        try {
+            auto whnfResult = computeWHNFFromObject(*resultObj);
+            /* Subject: the caller OuterObject's own subject (fnSubject
+               passed in from OuterObject::queryApply). Typically a
+               DerivedSubject like {arg(d), .f} — fn as reached via
+               attribute navigation on the outer arg. Emission is "on
+               fn"; response captures what fn produced when applied to
+               the inner arg. Per-arg centralisation stamps `from` at
+               the root (arg(d)), so the fold enters arg(d)'s own-loop
+               at the outer callArgAncestry. */
+            Subject applyResultSubj = fnSubject;
+            trace::QueryGetWHNF q{};
+            trace::ResultVariant result = whnfResult;
+            innerWriter->logOuterObservation(
+                q, result, applyResultSubj, resolverHandle->callArgAncestry);
+            tracingCacheLog(
+                "OuterApply::run: task#108 emitted outer-scope observation "
+                "argAncestry=%s fnId=%s argId=%s",
+                resolverHandle->callArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                fnIdStr.substr(0, 12).c_str(),
+                argStateHashStr.substr(0, 12).c_str());
+
+            /* Bridge: also push the observation into the outer
+               contraArg's applyContext. Current evolvedQueryFrom on
+               TracingObject/TRO reads applyContext, not envWalk, so
+               the logOuterObservation emission alone doesn't reach
+               the outer probe Q computation. Both cold and warm run
+               OuterApply::run (warm reaches it via
+               dispatchApplyLive when the walker traverses the
+               emission's Ask under some ancestor Q), so both sides
+               push identical content into the shared applyContext.
+
+               Walk callerScope ancestry to find the nearest OuterObject
+               with an applyContext — that's the outer arg to the
+               cached call (contraArg from makeCachedFnPrimOp.impl).
+               Walking to the outermost root would land at the
+               imported-file wrapper (no applyContext). */
+            OuterObject * outerCbArg = nullptr;
+            std::shared_ptr<ApplyContext> ctx;
+            auto probe = callerScope;
+            while (probe) {
+                if (probe->liveObject) {
+                    if (auto * cand = dynamic_cast<OuterObject *>(probe->liveObject.get())) {
+                        if (auto candCtx = cand->getApplyContext()) {
+                            outerCbArg = cand;
+                            ctx = std::move(candCtx);
+                            break;
+                        }
+                    }
+                }
+                probe = probe->parent;
+            }
+            if (ctx) {
+                /* Compute the observation's elementHash the same way
+                   logOuterObservation would: SHA(reqHash || respHash)
+                   over the constructed query/result. `from` = Arg{d}'s
+                   state hash at applyContext's current history (this is
+                   what per-arg centralisation stamps for observations
+                   whose subject's root is Arg{d}). */
+                nlohmann::json queryJson;
+                queryJson = q;
+                queryJson["query"] = "getWHNF";
+                /* Reconstruct the same JSON logOuterObservation built:
+                   from-field, path, fromStateHashes. Match the writer's
+                   substitution so we produce the same reqHash. */
+                auto [path, roots] = pathAndRootsFromSubject(applyResultSubj);
+                std::vector<trace::QueryLeaf> fromStateHashes;
+                fromStateHashes.reserve(roots.size());
+                for (auto & root : roots) {
+                    auto cid = stateHashAtSubject(
+                        root, resolverHandle->callArgAncestry, {}, 0);
+                    fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
+                }
+                std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].stateHash();
+                if (queryJson.contains("params") && queryJson["params"].is_object()) {
+                    queryJson["params"]["from"] = fromHex;
+                }
+                if (!path.steps.empty())
+                    queryJson["params"]["path"] = path;
+                if (!fromStateHashes.empty())
+                    queryJson["params"]["fromStateHashes"] = fromStateHashes;
+                nlohmann::json resultJson = whnfResult;
+                auto reqHash = hashString(HashAlgorithm::SHA256, queryJson.dump());
+                auto respPayload = jsonToCborString(resultJson);
+                auto respHash = TracingDecisionGraph::computeResponseHash(respPayload);
+                auto elementHash = TracingDecisionGraph::xorFactIntoHash(
+                    Hash(HashAlgorithm::SHA256), reqHash, respHash);
+                Hash fromHash = fromStateHashes.empty()
+                    ? Hash(HashAlgorithm::SHA256)
+                    : Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
+                ctx->observations.push_back({fromHash, elementHash});
+                tracingCacheLog(
+                    "OuterApply::run: task#108 bridge push into "
+                    "applyContext=%p from=%s eh=%s ctxObs=%zu",
+                    (void*)ctx.get(),
+                    fromHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                    elementHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                    ctx->observations.size());
+            }
+        } catch (const std::exception & e) {
+            tracingCacheLog(
+                "OuterApply::run: task#108 emission skipped: %s", e.what());
+        }
+    }
+
     return resultObj;
 }
 
@@ -402,9 +536,11 @@ static PrimOp * makeCachedFnPrimOp(
                         OuterApplyFn applyFn = [resolver](
                             std::shared_ptr<Object> fnObj,
                             Hash fnStateHash,
+                            Subject fnSubject,
                             std::shared_ptr<Object> argObj,
                             std::shared_ptr<const ArgCell> callerScope) {
-                            return resolver->apply(std::move(fnObj), fnStateHash, std::move(argObj), std::move(callerScope));
+                            return resolver->apply(std::move(fnObj), fnStateHash, std::move(fnSubject),
+                                                    std::move(argObj), std::move(callerScope));
                         };
                         /* lazy-paths: pin OuterObject's path SourceRoot
                            on the outer EvalState's `rootFSRoot` so the

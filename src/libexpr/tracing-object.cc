@@ -75,6 +75,11 @@ ref<TracingObject> TracingObject::create(
 
 std::string TracingObject::evolvedQueryFrom() const
 {
+    tracingCacheLog(
+        "TO::evolvedQueryFrom: applyContext=%p applyResultSubject=%s obs=%zu",
+        (void*)applyContext.get(),
+        applyResultSubject ? "yes" : "no",
+        applyContext ? applyContext->observations.size() : 0);
     if (applyResultSubject && applyContext) {
         std::vector<ObservationSet> history;
         history.reserve(applyContext->observations.size());
