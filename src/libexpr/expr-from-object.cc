@@ -337,24 +337,29 @@ std::shared_ptr<Object> OuterApply::run(
     if (innerWriter && !innerWriter->isSuppressingCbApply()) {
         try {
             auto whnfResult = computeWHNFFromObject(*resultObj);
-            /* Subject: an ApplyResultSubject with fn=fnSubject (from
-               OuterObject::queryApply — typically a DerivedSubject
-               like {arg(d), .f}) and arg=Arg{localDepth} (the
-               inner-supplied callback arg).
+            /* Subject: `ApplyResultSubject{fn=fnSubject, arg=innerArgSubj}`.
+               fn.subject is a DerivedSubject (typically {Arg{d}, .f}
+               from getAttr on the outer arg); arg.subject is the
+               inner-supplied callback arg (Arg{d+1} or a
+               PostulatedIdempotentRead).
 
-               Why ApplyResultSubject and not just the fn subject:
-               the recorded response is the applyResult's WHNF (the
-               callback's return, sibling-discriminating). Warm's
-               walker dispatches this query via dispatchAmbientQuery
-               which sees the callbackApply slot (auto-stamped by
-               logOuterObservation when the subject tree contains an
-               ApplyResultSubject) and fires fn->queryApply(arg) live
-               via dispatchApplyLive. That produces the same
-               applyResult WHNF, so the elementHash matches cold's on
-               both sides. A plain DerivedSubject subject would make
-               warm's live dispatch return the fn's own WHNF (a
-               lambda) instead of the applyResult's WHNF — mismatch
-               and miss. */
+               Under pathAndRootsFromSubject, fn's root (Arg{d}) is
+               at fromStateHashes[0] — the observation's `from` field.
+               Per per-arg centralisation, the fold check inside the
+               outer applyResult's evolvedQueryFrom compares
+               obs.fromHash against Arg{d}.state at the CACHED CALL's
+               applyArgAncestry. For the fold to enter Arg{d}'s
+               own-loop and evolve it per sibling, the emission MUST
+               use that applyArgAncestry — not the raw callArgAncestry
+               that the applyContext was created with.
+
+               Response: the applyResult's forced WHNF (differs per
+               sibling — 42 vs 99 in the two-sibling test). elementHash
+               = SHA(reqHash || respHash) differs per sibling → Arg{d}
+               .state evolves per sibling → cached-call applyResult
+               .state evolves per sibling → outer probe Q differs per
+               sibling → cold records distinct Terminals under
+               distinct Qs, no fast-path wrong-hit by construction. */
             auto argHashLocal = Hash::parseNonSRIUnprefixed(argStateHashStr, HashAlgorithm::SHA256);
             Subject innerArgSubj = argObj->getSubject()
                 ? *argObj->getSubject()
@@ -363,32 +368,20 @@ std::shared_ptr<Object> OuterApply::run(
                 .fn = std::make_shared<const Subject>(fnSubject),
                 .arg = std::make_shared<const Subject>(std::move(innerArgSubj)),
             }};
-            trace::QueryGetWHNF q{};
-            trace::ResultVariant result = whnfResult;
-            innerWriter->logOuterObservation(
-                q, result, applyResultSubj, resolverHandle->callArgAncestry);
-            tracingCacheLog(
-                "OuterApply::run: task#108 emitted outer-scope observation "
-                "argAncestry=%s fnId=%s argId=%s",
-                resolverHandle->callArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                fnIdStr.substr(0, 12).c_str(),
-                argStateHashStr.substr(0, 12).c_str());
 
-            /* Bridge: also push the observation into the outer
-               contraArg's applyContext. Current evolvedQueryFrom on
-               TracingObject/TRO reads applyContext, not envWalk, so
-               the logOuterObservation emission alone doesn't reach
-               the outer probe Q computation. Both cold and warm run
-               OuterApply::run (warm reaches it via
-               dispatchApplyLive when the walker traverses the
-               emission's Ask under some ancestor Q), so both sides
-               push identical content into the shared applyContext.
+            /* Cached call's applyArgAncestry: mirror TE::apply's
+               `combineArgAncestries(fn->getArgAncestry(),
+               arg->getArgAncestry())` for the outer apply of the
+               cached body against contraArg.
 
-               Walk callerScope ancestry to find the nearest OuterObject
-               with an applyContext — that's the outer arg to the
-               cached call (contraArg from makeCachedFnPrimOp.impl).
-               Walking to the outermost root would land at the
-               imported-file wrapper (no applyContext). */
+               Walk callerScope ancestry to find contraArg (the nearest
+               OuterObject with applyContext — its argAncestry equals
+               callArgAncestry set at makeCachedFnPrimOp.impl). Cached
+               body's argAncestry is Hash(0) for a top-level cache; for
+               nested cases where evalFile inside a cache boundary
+               establishes an inherited argAncestry, this would be
+               non-zero and we'd need to thread the actual value —
+               left as a follow-up. */
             OuterObject * outerCbArg = nullptr;
             std::shared_ptr<ApplyContext> ctx;
             auto probe = callerScope;
@@ -404,25 +397,46 @@ std::shared_ptr<Object> OuterApply::run(
                 }
                 probe = probe->parent;
             }
+            if (!outerCbArg) {
+                tracingCacheLog(
+                    "OuterApply::run: task#108 no outer contraArg found, skip");
+                return resultObj;
+            }
+            Hash contraArgArgAncestry = outerCbArg->getArgAncestry();
+            Hash cachedCallApplyArgAncestry = combineArgAncestries(
+                Hash(HashAlgorithm::SHA256), contraArgArgAncestry);
+
+            trace::QueryGetWHNF q{};
+            trace::ResultVariant result = whnfResult;
+            innerWriter->logOuterObservation(
+                q, result, applyResultSubj, cachedCallApplyArgAncestry);
+            tracingCacheLog(
+                "OuterApply::run: task#108 emitted outer-scope observation "
+                "cachedApplyArgAncestry=%s (from contraArgArgAncestry=%s) "
+                "fnId=%s argId=%s",
+                cachedCallApplyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                contraArgArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                fnIdStr.substr(0, 12).c_str(),
+                argStateHashStr.substr(0, 12).c_str());
+
+            /* Bridge: also push into contraArg's applyContext so the
+               observation reaches evolvedQueryFrom (which reads
+               applyContext, not envWalk). Uses the SAME
+               cachedCallApplyArgAncestry as the emission so
+               `from` matches the fold check's Arg{d}.state at the
+               applyResult TRO's applyArgAncestry (set via
+               withApplyResultSubject from TE::apply, which is the
+               same combineArgAncestries value). */
             if (ctx) {
-                /* Compute the observation's elementHash the same way
-                   logOuterObservation would: SHA(reqHash || respHash)
-                   over the constructed query/result. `from` = Arg{d}'s
-                   state hash at applyContext's current history (this is
-                   what per-arg centralisation stamps for observations
-                   whose subject's root is Arg{d}). */
                 nlohmann::json queryJson;
                 queryJson = q;
                 queryJson["query"] = "getWHNF";
-                /* Reconstruct the same JSON logOuterObservation built:
-                   from-field, path, fromStateHashes. Match the writer's
-                   substitution so we produce the same reqHash. */
                 auto [path, roots] = pathAndRootsFromSubject(applyResultSubj);
                 std::vector<trace::QueryLeaf> fromStateHashes;
                 fromStateHashes.reserve(roots.size());
                 for (auto & root : roots) {
                     auto cid = stateHashAtSubject(
-                        root, resolverHandle->callArgAncestry, {}, 0);
+                        root, cachedCallApplyArgAncestry, {}, 0);
                     fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
                 }
                 std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].stateHash();
