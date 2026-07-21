@@ -713,17 +713,23 @@ public:
         decisionGraph->installFactSet(envFactSetHash, envFactSet);
         sessionRequestsTrie.persist(*decisionGraph);
 
-        /* Task #110 Q-evolution: Ask edges have already been inserted
-           at observation time (per-active-Q, in logOuterObservation /
-           logResponse / closeAsksEdge). Just insert the Terminal at
-           this Q's final currentQ + envFactSetHash. */
+        /* Task #110: Ask edges attributed to innermost Q were inserted
+           at observation time. For this Q's chain to be complete,
+           also insert every session Ask edge under this Q's finalQ —
+           parent Q's walker needs to bridge startCur→envFactSet via
+           the same obs sub-Qs saw. INSERT OR IGNORE deduplicates. Q
+           evolution stays per-Q (using perQEnvWalk); Ask coverage is
+           session-wide. */
         Hash finalQ = activeQueryStack.empty()
             ? *qh.queryHash
             : activeQueryStack.back().currentQ;
-        tracingCacheLog("logResult: Q_initial=%s Q_final=%s factSet=%s -> result",
+        tracingCacheLog("logResult: Q_initial=%s Q_final=%s factSet=%s -> result (bridging %zu Asks)",
                         qh.queryHash->to_string(HashFormat::Base16, false).substr(0, 12),
                         finalQ.to_string(HashFormat::Base16, false).substr(0, 12),
-                        envFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12));
+                        envFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                        envAsksEdges.size());
+        for (const auto & edge : envAsksEdges)
+            decisionGraph->insertAsk(finalQ, edge.fromFactSetHash, edge.requestSetHash);
         decisionGraph->insertTerminal(finalQ, envFactSetHash, resultNodeHash);
 
         /* Empty-envAsksEdges case (Q's evaluation produced no
