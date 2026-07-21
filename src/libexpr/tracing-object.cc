@@ -75,22 +75,19 @@ ref<TracingObject> TracingObject::create(
 
 std::string TracingObject::evolvedQueryFrom() const
 {
-    tracingCacheLog(
-        "TO::evolvedQueryFrom: applyContext=%p applyResultSubject=%s obs=%zu",
-        (void*)applyContext.get(),
-        applyResultSubject ? "yes" : "no",
-        applyContext ? applyContext->observations.size() : 0);
-    if (applyResultSubject && applyContext) {
-        std::vector<ObservationSet> history;
-        history.reserve(applyContext->observations.size());
-        for (auto & obs : applyContext->observations) {
-            ObservationSet edge;
-            edge.observations.push_back(obs);
-            history.push_back(std::move(edge));
-        }
+    /* Task #110: use writer's session envWalk directly (source of
+       truth for accumulated observations). Under the Q-evolution
+       protocol, subsequent Q evolution during the walk picks up any
+       further observations that fold in. Falls back to the fixed
+       triePos hash when no applyResultSubject (no evolution needed). */
+    if (applyResultSubject) {
+        const auto & walk = writer.getD1CidasksWalk();
         auto evolved = stateHashAt(
-            *applyResultSubject, applyArgAncestry, history, history.size());
+            *applyResultSubject, applyArgAncestry, walk, walk.size());
         auto hex = evolved.to_string(HashFormat::Base16, false);
+        tracingCacheLog(
+            "TO::evolvedQueryFrom: envWalk-based, applyResultSubject=yes envWalk=%zu -> %s",
+            walk.size(), hex.substr(0, 12));
         return hex;
     }
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());
