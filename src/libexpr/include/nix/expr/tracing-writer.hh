@@ -395,11 +395,11 @@ public:
         sessionRequestsTrie.insert(queryHash);
         allRequestHashes.insert(queryHash);
         auto requestSetHash = decisionGraph->insertRequestSet({queryHash});
-        /* Task #110: insert Ask under every active Q. File/env reads
-           still contribute to any active Q's chain (walker walking Q
-           must dispatch them along with the other observations). */
-        for (auto & aq : activeQueryStack) {
-            decisionGraph->insertAsk(aq.currentQ, prevQFactSetHash, requestSetHash);
+        /* Task #110 (correct model): attribute to the innermost active
+           Q only (see logOuterObservation). */
+        if (!activeQueryStack.empty()) {
+            auto & innermost = activeQueryStack.back();
+            decisionGraph->insertAsk(innermost.currentQ, prevQFactSetHash, requestSetHash);
         }
         Hash edgeQ = activeQueryStack.empty()
             ? Hash(HashAlgorithm::SHA256)
@@ -546,11 +546,12 @@ public:
             envFactSetHash, request, response);
         sessionRequestsTrie.insert(request);
         allRequestHashes.insert(request);
-        /* Per-probe push (see logResponse for reasoning). Task #110:
-           insert Ask under every active Q. */
+        /* Per-probe push (see logResponse for reasoning). Task #110
+           (correct model): attribute to the innermost active Q only. */
         auto requestSetHash = decisionGraph->insertRequestSet({request});
-        for (auto & aq : activeQueryStack) {
-            decisionGraph->insertAsk(aq.currentQ, prevQFactSetHash, requestSetHash);
+        if (!activeQueryStack.empty()) {
+            auto & innermost = activeQueryStack.back();
+            decisionGraph->insertAsk(innermost.currentQ, prevQFactSetHash, requestSetHash);
         }
         Hash edgeQ = activeQueryStack.empty()
             ? Hash(HashAlgorithm::SHA256)
