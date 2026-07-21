@@ -37,15 +37,43 @@ ref<Object> TracingReplayObject::ensureInner() const
 
 std::string TracingReplayObject::evolvedQueryFrom() const
 {
-    /* Task #110: use walker's envWalk directly. Under matching-until-
-       divergence, cold's writer envWalk and warm's walker envWalk
-       agree at corresponding moments, so this produces the same
-       evolved state hash cold's TracingObject computed. */
-    if (applyResultSubject) {
-        const auto & walk = evaluator.getCidasksWalk();
-        auto evolved = stateHashAt(
-            *applyResultSubject, applyArgAncestry, walk, walk.size());
-        return evolved.to_string(HashFormat::Base16, false);
+    /* If inner has been activated to a TracingObject, share its
+       applyContext for evolvedQueryFrom's computation — inner's
+       applyContext gets populated by TracingObject's own maybeGetAttr
+       / whnf / etc. as evaluation flows through it. TRO's own
+       applyContext only grows on cache HITS (via pushObservation from
+       maybeGetAttr's shallow/deep-lookup path); the two contexts
+       diverge whenever TRO falls through to inner. Sharing gives TRO
+       the same evolved from-hash cold's TracingObject would compute
+       at analogous points — the cb-sibling discrimination path
+       requires this alignment so warm's Q hashes match cold's stored
+       Q hashes for the derived .whatever queries. */
+    if (applyResultSubject && inner) {
+        if (auto * innerT = dynamic_cast<TracingObject *>(inner->get_ptr().get())) {
+            if (auto innerCtx = innerT->getApplyContext()) {
+                std::vector<ObservationSet> history;
+                history.reserve(innerCtx->observations.size());
+                for (auto & obs : innerCtx->observations) {
+                    ObservationSet edge;
+                    edge.observations.push_back(obs);
+                    history.push_back(std::move(edge));
+                }
+                auto evolved = stateHashAt(*applyResultSubject, applyArgAncestry, history, history.size());
+                return evolved.to_string(HashFormat::Base16, false);
+            }
+        }
+    }
+    if (applyResultSubject && applyContext) {
+        std::vector<ObservationSet> history;
+        history.reserve(applyContext->observations.size());
+        for (auto & obs : applyContext->observations) {
+            ObservationSet edge;
+            edge.observations.push_back(obs);
+            history.push_back(std::move(edge));
+        }
+        auto evolved = stateHashAt(*applyResultSubject, applyArgAncestry, history, history.size());
+        auto hex = evolved.to_string(HashFormat::Base16, false);
+        return hex;
     }
     return triePos.queryHashStr;
 }

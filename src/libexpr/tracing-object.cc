@@ -75,19 +75,22 @@ ref<TracingObject> TracingObject::create(
 
 std::string TracingObject::evolvedQueryFrom() const
 {
-    /* Task #110: use writer's session envWalk directly (source of
-       truth for accumulated observations). Under the Q-evolution
-       protocol, subsequent Q evolution during the walk picks up any
-       further observations that fold in. Falls back to the fixed
-       triePos hash when no applyResultSubject (no evolution needed). */
-    if (applyResultSubject) {
-        const auto & walk = writer.getD1CidasksWalk();
+    tracingCacheLog(
+        "TO::evolvedQueryFrom: applyContext=%p applyResultSubject=%s obs=%zu",
+        (void*)applyContext.get(),
+        applyResultSubject ? "yes" : "no",
+        applyContext ? applyContext->observations.size() : 0);
+    if (applyResultSubject && applyContext) {
+        std::vector<ObservationSet> history;
+        history.reserve(applyContext->observations.size());
+        for (auto & obs : applyContext->observations) {
+            ObservationSet edge;
+            edge.observations.push_back(obs);
+            history.push_back(std::move(edge));
+        }
         auto evolved = stateHashAt(
-            *applyResultSubject, applyArgAncestry, walk, walk.size());
+            *applyResultSubject, applyArgAncestry, history, history.size());
         auto hex = evolved.to_string(HashFormat::Base16, false);
-        tracingCacheLog(
-            "TO::evolvedQueryFrom: envWalk-based, applyResultSubject=yes envWalk=%zu -> %s",
-            walk.size(), hex.substr(0, 12));
         return hex;
     }
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());
@@ -113,19 +116,12 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
        rationale). */
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetAttr query{name, parentHash};
-    /* Task #110: pass whatever Subject this TracingObject exposes via
-       the polymorphic getSubject() — including nullopt when none is
-       set. The writer's Q-evolution loop skips entries with no
-       fromSubject, so passing nullopt is behaviourally equivalent to
-       not participating in evolution for this Q. Under the model,
-       every TracingObject SHOULD have a Subject; only applyResult
-       TracingObjects currently do. That gap (missing Subject
-       tracking on non-applyResult TracingObjects) is visible here
-       rather than hidden by a caller-side conditional. */
     std::optional<Subject> fromSubject;
-    Hash fromSubjectArgAncestry = getArgAncestry();
-    if (auto * s = getSubject())
-        fromSubject = *s;
+    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
+    if (applyResultSubject) {
+        fromSubject = *applyResultSubject;
+        fromSubjectArgAncestry = applyArgAncestry;
+    }
     auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto result = inner->maybeGetAttr(name);
     if (result) {
@@ -154,19 +150,12 @@ trace::ResultWHNF & TracingObject::whnf()
        to this Q's chain and evolve its fromSubject's state hash. */
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetWHNF query{parentHash};
-    /* Task #110: pass whatever Subject this TracingObject exposes via
-       the polymorphic getSubject() — including nullopt when none is
-       set. The writer's Q-evolution loop skips entries with no
-       fromSubject, so passing nullopt is behaviourally equivalent to
-       not participating in evolution for this Q. Under the model,
-       every TracingObject SHOULD have a Subject; only applyResult
-       TracingObjects currently do. That gap (missing Subject
-       tracking on non-applyResult TracingObjects) is visible here
-       rather than hidden by a caller-side conditional. */
     std::optional<Subject> fromSubject;
-    Hash fromSubjectArgAncestry = getArgAncestry();
-    if (auto * s = getSubject())
-        fromSubject = *s;
+    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
+    if (applyResultSubject) {
+        fromSubject = *applyResultSubject;
+        fromSubjectArgAncestry = applyArgAncestry;
+    }
     auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto whnfResult = computeWHNFFromObject(*inner);
     auto tp = writer.logResult(valueId, whnfResult, qh);
@@ -265,19 +254,12 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
 {
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetListElem query{parentHash, index};
-    /* Task #110: pass whatever Subject this TracingObject exposes via
-       the polymorphic getSubject() — including nullopt when none is
-       set. The writer's Q-evolution loop skips entries with no
-       fromSubject, so passing nullopt is behaviourally equivalent to
-       not participating in evolution for this Q. Under the model,
-       every TracingObject SHOULD have a Subject; only applyResult
-       TracingObjects currently do. That gap (missing Subject
-       tracking on non-applyResult TracingObjects) is visible here
-       rather than hidden by a caller-side conditional. */
     std::optional<Subject> fromSubject;
-    Hash fromSubjectArgAncestry = getArgAncestry();
-    if (auto * s = getSubject())
-        fromSubject = *s;
+    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
+    if (applyResultSubject) {
+        fromSubject = *applyResultSubject;
+        fromSubjectArgAncestry = applyArgAncestry;
+    }
     auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto result = inner->getListElem(index);
     auto type = result->getType();
@@ -295,19 +277,12 @@ std::vector<std::string> TracingObject::getListOfStringsNoCtx()
 {
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetListOfStrings query{parentHash};
-    /* Task #110: pass whatever Subject this TracingObject exposes via
-       the polymorphic getSubject() — including nullopt when none is
-       set. The writer's Q-evolution loop skips entries with no
-       fromSubject, so passing nullopt is behaviourally equivalent to
-       not participating in evolution for this Q. Under the model,
-       every TracingObject SHOULD have a Subject; only applyResult
-       TracingObjects currently do. That gap (missing Subject
-       tracking on non-applyResult TracingObjects) is visible here
-       rather than hidden by a caller-side conditional. */
     std::optional<Subject> fromSubject;
-    Hash fromSubjectArgAncestry = getArgAncestry();
-    if (auto * s = getSubject())
-        fromSubject = *s;
+    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
+    if (applyResultSubject) {
+        fromSubject = *applyResultSubject;
+        fromSubjectArgAncestry = applyArgAncestry;
+    }
     auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto result = inner->getListOfStringsNoCtx();
     trace::ResultListOfStrings resJson{result};
