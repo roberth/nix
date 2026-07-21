@@ -40,16 +40,11 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
 {
     /* The entire history is VALIDATION of recorded state — any apply
        queries triggered through `fnObj->queryApply(...)` during
-       dispatch (resolveApplyId, navigatePath's Apply step,
-       callbackApply slot's live invocation) re-route through
-       `OuterObject::queryApply → applyFn → OuterApply::run` and
-       would each fire a fresh
-       `createCallbackCell` on the writer if not suppressed. Each fresh
-       boundary inflates `envWalk` with a redundant ε edge
-       beyond the genuine cb-apply events the recorder already
-       captured. Suppress for the history's duration so writer's
-       envWalk stays in 1:1 alignment with walker's
-       envWalk. */
+       dispatch re-route through `OuterObject::queryApply → applyFn
+       → OuterApply::run` and would each fire a fresh
+       `createCallbackCell` on the writer if not suppressed. Each
+       fresh cell would corrupt runningObsSet routing for observations
+       that follow. Suppress for the history's duration. */
     TracingWriter::SuppressApplyBoundary suppressBoundary(writer);
 
     ResolutionContext ctx{
@@ -166,16 +161,11 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
             if (auto it = responseFor.find(requestHash); it != responseFor.end())
                 return it->second;
         }
-        /* Apply-boundary requests without a callbackApply slot have no
-           live-fire dispatch path anymore — AmbientAsks was ripped out
-           (task #109); the callbackApply slot mechanism carries the
-           obsSet CAS reference and warm's dispatchAmbientQuery fires
-           fn live via that path (see line ~1156). If we reach this
-           branch, the request is a stale apply Fact from before the
-           #103 cutover — miss cleanly. */
+        /* Bare "apply" Requests (recorded but with no Terminal) have
+           no live-fire dispatch path — miss cleanly. */
         if (isAmbient && queryTag == "apply") {
             tracingCacheLog(
-                "dispatch: legacy apply Fact req=%s (no callbackApply slot) — miss",
+                "dispatch: apply Request req=%s — miss",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12));
             return Hash(HashAlgorithm::SHA256);
         }
@@ -746,134 +736,6 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
        dispatcher has nothing to compare a current response against. */
     if (tag == "apply")
         return std::nullopt;
-
-    /* Task #103: outer probes that reach through an applyResult carry
-       a `callbackApply` slot. Dispatch end-to-end here rather than
-       falling through to the state-hash-equality routing pipeline —
-       the slot carries every piece of navigation info the walker
-       needs. Materialise a fresh ReplayCallbackArg backed by the
-       slot's obsSet, navigate to fn structurally from the outer's
-       arg (cell[0].liveObject) via the query's `fnPath`, invoke
-       fn->queryApply(replayArg), then run the query's op
-       (getWHNF/getAttr/…) on the result. No ctx.memo, no
-       resolveStateHash dance. */
-    if (params.contains("callbackApply")) {
-        trace::CallbackApplyRef ref;
-        try {
-            params.at("callbackApply").get_to(ref);
-        } catch (const std::exception &) {
-            return std::nullopt;
-        }
-        Hash obsSetHash{HashAlgorithm::SHA256};
-        Hash argAncestry(HashAlgorithm::SHA256);
-        try {
-            obsSetHash = Hash::parseNonSRIUnprefixed(ref.argObsSet, HashAlgorithm::SHA256);
-            if (!ref.argAncestry.empty())
-                argAncestry = Hash::parseNonSRIUnprefixed(ref.argAncestry, HashAlgorithm::SHA256);
-        } catch (const std::exception &) {
-            return std::nullopt;
-        }
-        auto obsSet = decisionGraph.getObservationSet(obsSetHash);
-        if (!obsSet)
-            return std::nullopt;
-        auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
-        for (const auto & obs : *obsSet)
-            obsSetMap->emplace(obs.queryHash, obs.responsePayload);
-        Subject argSubject{Arg{ref.argDepth}};
-        auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
-        auto replayArg = std::make_shared<ReplayCallbackArg>(
-            std::move(argSubject), argAncestry,
-            walkFacts,
-            decisionGraph, inner->getEvalState().rootFSRoot,
-            &inner->getEvalState());
-        replayArg->withObsSetResponses(obsSetMap);
-
-        /* Resolve fn as a live Object from the slot's state-hash
-           reference. `ref.fn` is fn's evolved state hash stamped by
-           the writer at emission time (`tracing-writer.cc:80`).
-           resolveStateHash routes through the cell chain via
-           state-hash equality — finds the specific fn whose evolved
-           state matches the recording's, not merely whichever fn is
-           currently in cell[0]. If it can't find a match, miss
-           cleanly rather than falling back to a structural shortcut
-           that discriminates by the current invocation's fn instead
-           of the recording's. Correctness-first per task #103's
-           MVP framing (repeated live outer validation calls, no
-           per-cell memoisation). */
-        auto fnObj = resolveStateHash(ref.fn, ctx);
-        if (!fnObj) {
-            tracingCacheLog(
-                "callbackApply slot: resolveStateHash(fn=%s) miss — clean fallthrough",
-                ref.fn.substr(0, 12));
-            return std::nullopt;
-        }
-
-        auto pathParsed = parsePathFromParams(params);
-        std::shared_ptr<Object> resultObj;
-        try {
-            /* First step must be Apply; trailing steps handled after. */
-            if (pathParsed.steps.empty()
-                || pathParsed.steps[0].kind != trace::PathStep::Kind::Apply)
-                return std::nullopt;
-            resultObj = fnObj->queryApply(replayArg);
-        } catch (const std::exception & e) {
-            tracingCacheLog("callbackApply slot: dispatch failed at fn apply: %s", e.what());
-            return std::nullopt;
-        }
-        if (!resultObj)
-            return std::nullopt;
-
-        /* Apply the query's leaf op to the result Object, using any
-           trailing path steps after the Apply for descendant probes
-           (e.g. `.getAttr("rr")` before the leaf op). */
-        std::shared_ptr<Object> obj = resultObj;
-        try {
-            for (size_t i = 1; i < pathParsed.steps.size(); ++i) {
-                const auto & step = pathParsed.steps[i];
-                if (!obj)
-                    return std::nullopt;
-                if (step.kind == trace::PathStep::Kind::GetAttr)
-                    obj = obj->maybeGetAttr(step.name);
-                else if (step.kind == trace::PathStep::Kind::GetListElem)
-                    obj = obj->getListElem(step.index);
-                else
-                    return std::nullopt;
-            }
-            if (!obj)
-                return std::nullopt;
-
-            nlohmann::json resultJson;
-            if (tag == "getWHNF") {
-                resultJson = computeWHNFFromObject(*obj);
-            } else if (tag == "getAttr") {
-                auto name = params["name"].get<std::string>();
-                auto child = obj->maybeGetAttr(name);
-                if (!child)
-                    resultJson = trace::ResultMaybeType{std::nullopt};
-                else
-                    resultJson = trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}};
-            } else if (tag == "getListElem") {
-                auto index = params["index"].get<size_t>();
-                auto child = obj->getListElem(index);
-                resultJson = trace::ResultType{objectTypeToString(child->getType())};
-            } else if (tag == "getFunctionInfo") {
-                auto info = obj->getFunctionInfo();
-                if (!info)
-                    resultJson = trace::ResultFunctionInfo{false, {}, false};
-                else
-                    resultJson = trace::ResultFunctionInfo{true, info->formals, info->ellipsis};
-            } else {
-                return std::nullopt;
-            }
-            tracingCacheLog(
-                "callbackApply slot: end-to-end dispatch HIT tag=%s obsSet=%s argDepth=%d",
-                tag.c_str(), ref.argObsSet.substr(0, 12), ref.argDepth);
-            return jsonToCborString(resultJson);
-        } catch (const std::exception & e) {
-            tracingCacheLog("callbackApply slot: dispatch failed at leaf op %s: %s", tag.c_str(), e.what());
-            return std::nullopt;
-        }
-    }
 
     if (!params.contains("from"))
         return std::nullopt;

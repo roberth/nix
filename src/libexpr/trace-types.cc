@@ -419,8 +419,6 @@ void to_json(nlohmann::json & j, const QueryGetAttr & q)
 {
     j = nlohmann::json{{"query", QueryGetAttr::tag}, {"params", {{"name", q.name}, {"from", q.from}}}};
     emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
-    if (q.callbackApply)
-        j["params"]["callbackApply"] = *q.callbackApply;
 }
 
 void from_json(const nlohmann::json & j, QueryGetAttr & q)
@@ -428,11 +426,6 @@ void from_json(const nlohmann::json & j, QueryGetAttr & q)
     j.at("params").at("name").get_to(q.name);
     j.at("params").at("from").get_to(q.from);
     parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
-    if (j.at("params").contains("callbackApply")) {
-        CallbackApplyRef r;
-        j.at("params").at("callbackApply").get_to(r);
-        q.callbackApply = std::move(r);
-    }
 }
 
 void to_json(nlohmann::json & j, const QueryGetListOfStrings & q)
@@ -487,19 +480,12 @@ void to_json(nlohmann::json & j, const QueryGetWHNF & q)
 {
     j = nlohmann::json{{"query", QueryGetWHNF::tag}, {"params", {{"from", q.from}}}};
     emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
-    if (q.callbackApply)
-        j["params"]["callbackApply"] = *q.callbackApply;
 }
 
 void from_json(const nlohmann::json & j, QueryGetWHNF & q)
 {
     j.at("params").at("from").get_to(q.from);
     parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
-    if (j.at("params").contains("callbackApply")) {
-        CallbackApplyRef r;
-        j.at("params").at("callbackApply").get_to(r);
-        q.callbackApply = std::move(r);
-    }
 }
 
 void to_json(nlohmann::json & j, const QueryApply & q)
@@ -557,26 +543,6 @@ void from_json(const nlohmann::json & j, QueryCallbackApply & q)
         j.at("params").at("argAncestry").get_to(q.argAncestry);
     if (j.at("params").contains("argDepth"))
         j.at("params").at("argDepth").get_to(q.argDepth);
-}
-
-void to_json(nlohmann::json & j, const CallbackApplyRef & r)
-{
-    j = nlohmann::json{
-        {"fn", r.fn},
-        {"argObsSet", r.argObsSet},
-        {"argAncestry", r.argAncestry},
-        {"argDepth", r.argDepth},
-    };
-}
-
-void from_json(const nlohmann::json & j, CallbackApplyRef & r)
-{
-    j.at("fn").get_to(r.fn);
-    j.at("argObsSet").get_to(r.argObsSet);
-    if (j.contains("argAncestry"))
-        j.at("argAncestry").get_to(r.argAncestry);
-    if (j.contains("argDepth"))
-        j.at("argDepth").get_to(r.argDepth);
 }
 
 // ---------------------------------------------------------------------------

@@ -29,65 +29,6 @@ void TracingWriter::logOuterObservation(
     if (!decisionGraph)
         return;
 
-    /* Task #103: probes on the applyResult (or a DerivedSubject
-       reaching it) belong to an active callback call. Look up the
-       cell (still spelled CallbackCell for now) by matching the
-       ApplyResultSubject's fn Subject's state hash against
-       fnStateHashHex. Stamp a CallbackApplyRef into the query's
-       payload with fn's CURRENT state hash (by-reference, computed
-       fresh) and the CAS content-hash of the cell's runningObsSet
-       snapshot. Walker uses the slot to fire fn live per probe.
-       If no ApplyResultSubject is anywhere in the subject tree,
-       this observation is a normal outer probe with no
-       callbackApply attached. */
-    std::optional<trace::CallbackApplyRef> callbackSlot;
-    {
-        std::function<const ApplyResultSubject *(const Subject &)> findApplyResult =
-            [&](const Subject & s) -> const ApplyResultSubject * {
-                if (auto * ar = std::get_if<ApplyResultSubject>(&s.data))
-                    return ar;
-                if (auto * d = std::get_if<DerivedSubject>(&s.data))
-                    return findApplyResult(*d->parent);
-                return nullptr;
-            };
-        if (auto * ar = findApplyResult(subject)) {
-            if (ar->fn) {
-                /* Cell lookup uses fn's initial state hash (empty
-                   history) — that's what createCallbackCell stored in
-                   `fnStateHashHex`. Slot payload carries fn's current
-                   state hash (evolved envWalk) — the by-reference
-                   "fresh" hash the walker uses. */
-                auto fnInitial = stateHashAtSubject(
-                    *ar->fn, argAncestry, {}, 0);
-                auto fnInitialHex = fnInitial.to_string(HashFormat::Base16, false);
-                auto fnCurrent = stateHashAtSubject(
-                    *ar->fn, argAncestry, envWalk, envWalk.size());
-                auto fnCurrentHex = fnCurrent.to_string(HashFormat::Base16, false);
-                /* Iterate most-recent-first: sibling calls share the
-                   same fnInitialHex (same lambda) and Arg{depth} —
-                   structural equality can't discriminate. Under
-                   matching-until-divergence's outer-side temporal
-                   ordering, the most recently created cell is the
-                   current call. */
-                for (auto it = callbackCells.rbegin(); it != callbackCells.rend(); ++it) {
-                    auto & cell = *it;
-                    if (cell.fnStateHashHex != fnInitialHex)
-                        continue;
-                    if (cell.argAncestryHex.empty())
-                        continue;
-                    auto obsSetHash = decisionGraph->insertObservationSet(cell.runningObsSet);
-                    trace::CallbackApplyRef r;
-                    r.fn = fnCurrentHex;
-                    r.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
-                    r.argAncestry = cell.argAncestryHex;
-                    r.argDepth = cell.argDepth;
-                    callbackSlot = std::move(r);
-                    break;
-                }
-            }
-        }
-    }
-
     /* Per-probe stamping. `from` is computed against the WRITER's
        current `envWalk` (which reflects every prior probe's fold),
        so successive probes on the same Subject stamp against evolved
@@ -119,8 +60,6 @@ void TracingWriter::logOuterObservation(
         queryJson["params"]["path"] = path;
     if (!fromStateHashes.empty())
         queryJson["params"]["fromStateHashes"] = fromStateHashes;
-    if (callbackSlot)
-        queryJson["params"]["callbackApply"] = *callbackSlot;
     nlohmann::json resultJson;
     std::visit([&](const auto & r) { resultJson = r; }, result);
 

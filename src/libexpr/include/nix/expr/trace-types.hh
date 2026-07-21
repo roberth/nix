@@ -371,26 +371,6 @@ struct QueryImport
 DECLARE_QUERY_RESULT(QueryImport, ResultType)
 
 /** Get an attribute from a value. */
-/** A reference to an in-flight callback call embedded in an outer
-    probe. The outer's probe on the callback's applyResult (or a
-    DerivedSubject reaching it) carries this so the walker can fire
-    fn live per probe with the specific obsSet snapshot the writer
-    observed at emit time. All fields are content-addressed strings
-    or by-reference identifiers — no captured state hash goes stale
-    because `fn` is computed fresh at each emission and `argObsSet`
-    is the current CAS content-hash of the cell's history snapshot. */
-struct CallbackApplyRef
-{
-    std::string fn;            ///< fn's current state hash hex (computed fresh per probe)
-    std::string argObsSet;     ///< Content hash of the cell's history snapshot at emit time
-    std::string argAncestry;
-    int argDepth = 0;
-    auto operator<=>(const CallbackApplyRef &) const = default;
-};
-
-void to_json(nlohmann::json & j, const CallbackApplyRef & r);
-void from_json(const nlohmann::json & j, CallbackApplyRef & r);
-
 struct QueryGetAttr
 {
     static constexpr std::string_view tag = "getAttr";
@@ -398,7 +378,6 @@ struct QueryGetAttr
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
     std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
-    std::optional<CallbackApplyRef> callbackApply;  ///< Populated when this probe reaches through an outer-callback's applyResult
     auto operator<=>(const QueryGetAttr &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetAttr, ResultMaybeType)
@@ -438,7 +417,6 @@ struct QueryGetWHNF
     QueryLeaf from;
     std::vector<QueryLeaf> fromStateHashes;
     PathExpr path;
-    std::optional<CallbackApplyRef> callbackApply;  ///< Populated when this probe reaches through an outer-callback's applyResult
     auto operator<=>(const QueryGetWHNF &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetWHNF, ResultWHNF)
