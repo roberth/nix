@@ -89,33 +89,6 @@ class TracingWriter
        RequestSet hash for the whole-remaining edge in O(1). */
     TracingDecisionGraph::TrieBuilder sessionRequestsTrie;
 
-    /* Ambient facts buffered during recording and flushed at
-       logResult time via flushAmbient. The Subject identifies
-       which value the observation is about — flush uses it via
-       stateHashAt to compute the fact's `from` field
-       against the relevant Asks-edge precondition factset.
-
-       Layer marker: env layer facts (inner asks outer about an outer
-       value) feed into the env layer envFactSet. Depth-2 facts (outer
-       probes an inner-supplied LocalObject during a cb apply) group
-       by their `applyId` (= the cb apply's resultId) into a ambient layer
-       Asks-edge in `AmbientAsks`, per the via-Asks design. */
-    struct PendingFact
-    {
-        trace::QueryVariant query;
-        trace::ResultVariant result;
-        Subject subject;
-        Hash argAncestry; ///< outer-argAncestry state hashes for stateHashAt
-        /* Empty hash = env layer; otherwise = the cb apply's resultId,
-           grouping this fact into the ambient layer sub-trace for that apply. */
-        Hash ambientApplyId{HashAlgorithm::SHA256};
-    };
-    /* Depth-2 (Ambient) facts live on their owning CallbackCell so
-       each cb-apply invocation's chain is built from exactly its own
-       probe sequence. Storage is below (= CallbackCell's facts
-       field). Depth-1 (env-layer outer-value probes) are stamped and
-       pushed per-probe in `logOuterObservation`, not buffered here. */
-
     /* Persistent history chain for env-layer observations.
        envWalk is kept 1:1-aligned with `envAsksEdges`: every Asks
        edge inserted into `envAsksEdges` is paired with an
@@ -152,120 +125,40 @@ class TracingWriter
 
     std::vector<nlohmann::json> pendingRequests;
 
-    /* Deferred cb-apply boundaries. createCallbackCell pushes a new
-       entry with empty facts; logAmbientObservation appends probes to
-       the most recently-pushed boundary whose applyId matches.
-       flushAmbient processes each boundary's ambient chain (=
-       just its own facts), computes the terminal cumulative
-       factSet as AmbientResult, and synthesises the env apply Fact
-       at `(applyReqHash, AmbientResult)`. Each cb-apply invocation
-       owns exactly its own probe sequence. Recording order = vector
-       order. */
+    /* Active cb-apply cells (task #103). `createCallbackCell` pushes a
+       new cell at cache-boundary apply; `logCallbackObservation`
+       appends each observation the outer makes on the arg to the
+       cell's `runningObsSet`; `logOuterObservation` snapshots that
+       set into the ObservationSet CAS and stamps a CallbackApplyRef
+       into any outer probe whose Subject reaches this apply's
+       result. Cell lookup at stamping time is by
+       `fnStateHashHex` — the fn's initial state hash captured at
+       apply time. */
     struct CallbackCell
     {
-        Hash applyId;            ///< ambientApplyId for the ambient group
-        Hash applyRequestHash;   ///< natural hash of applyQueryPayload
-        std::vector<PendingFact> facts;
-        /* Chronological insertion: ε perQAsksEdge for this boundary
-           is inserted into envAsksEdges at this position at finalize
-           time (= position recorded at createCallbackCell time, AFTER
-           closeAsksEdge(false) drained pre-boundary env chunk). This
-           makes the walker dispatch the ε edge BEFORE the body's
-           env facts that follow, so the lambda-ReplayCallbackArg's primop
-           fires and seedCell extension happens in time for arg(N+1)
-           probes to resolve. */
-        size_t insertionIndex;
-        /* prevQFactSetHash AT createCallbackCell time = cur the
-           walker would have at the start of ε's dispatch BEFORE
-           any prior ε's contributions. After each ε insertion at
-           finalize, this gets XOR-propagated by prior ε's element
-           hashes. */
-        Hash envCurAtOpen;
-        /* The OUTER writer's env cur at the moment inner emitted
-           this cb-apply Fact. Legacy field carried from the pre-#103
-           InnerValueResponse contextHash scheme; unused under the
-           obsSet CAS design. */
-        Hash outerEnvCurAtOpen;
-        /* Walker's outer env cur at THIS cb-apply's dispatch
-           moment. Legacy field carried from the pre-#103
-           InnerValueResponse contextHash scheme; unused under the
-           obsSet CAS design. */
-        Hash contextCur;
-        /* Option (b) — late ambient obs support. Once a boundary's first
-           finalize pass runs, it stays in `callbackCells`
-           with `finalized=true` so a later `logAmbientObservation`
-           with the same applyId can find it and process the probe
-           incrementally instead of dropping it. State preserved
-           across re-processings:
-            - `cumulativeFactSet` = current ambient chain terminal (=
-              AmbientResult so far).
-            - `factHash` = current SHA-256(applyReqHash || cumulativeFactSet),
-              i.e. the synthetic env apply Fact's element hash. On
-              each re-process, recomputed; the delta between old and
-              new is XOR-applied to envFactSetHash and downstream
-              envAsksEdges' fromFactSetHash to keep the writer
-              state consistent with the extended chain.
-            - `pos` = the actual envAsksEdges position where this
-              boundary's ε edge ended up after insertion (=
-              `insertionIndex + shift` at finalize time). Needed
-              because subsequent boundaries' insertions don't shift
-              this entry, but the in-memory shift counter is local
-              to the finalize loop. */
-        bool finalized = false;
-        Hash cumulativeFactSet{HashAlgorithm::SHA256};
-        Hash factHash{HashAlgorithm::SHA256};
-        size_t pos = 0;
-        /* Facts up to (but not including) this index have been
-           processed in a previous finalize pass — their Request /
-           AmbientAsks entries are already in the DB. Re-entrant
-           finalize passes only need to insert the tail
-           `facts[lastProcessedCount..]`. */
-        size_t lastProcessedCount = 0;
-        /* Fn's Subject-derived state hash for this cb-apply. Used
-           to build the QueryCallbackApply payload at flush time —
-           this Q's payload references the arg's observation set
-           (built from `facts` above) rather than the arg's
-           state hash, so the fn side still needs its state hash
-           in the payload. Captured at createCallbackCell time from the
-           applyQueryPayload's `fn` field. */
+        /* Identity of this callback firing; used by
+           `logCallbackObservation` to route observations to the right
+           cell. Equals the natural hash of the apply query payload. */
+        Hash applyId{HashAlgorithm::SHA256};
+        /* Fn's initial state hash (empty history). Cell lookup key
+           in `logOuterObservation` — matches the ApplyResultSubject's
+           fn state hash under matching-until-divergence. Captured
+           at `createCallbackCell` from the applyQueryPayload's `fn`
+           field. */
         std::string fnStateHashHex;
-        /* Cached call's callArgAncestry, captured at createCallbackCell.
-           Encoded into the QueryCallbackApply payload so the
-           walker's live-fire dispatch can construct a
-           ReplayCallbackArg with the same argAncestry the writer
-           saw — required for probe queryHashes to match cold's
-           obsSet entries. */
+        /* Cached call's callArgAncestry, encoded into the
+           CallbackApplyRef so the walker's ReplayCallbackArg
+           reconstructs the arg's Subject at the same argAncestry —
+           required for probe queryHashes to match cold's obsSet. */
         std::string argAncestryHex;
         /* Contra-arg's reverse-De-Bruijn depth, captured from the
-           observation's Subject on first probe. Same reason as
-           argAncestryHex — needed to reconstruct the arg's Subject
-           in the walker's ReplayCallbackArg. */
+           first observation's Subject. Same reason as `argAncestryHex`. */
         int argDepth = 0;
         bool argDepthCaptured = false;
-        /* Running observation set — grows by one each time
-           `logAmbientObservation` records a new probe on this
-           cb-apply's contra-arg. Snapshotted into the ObservationSet
-           CAS by `logOuterObservation` when it stamps a
-           CallbackApplyRef slot into an outer probe reaching this
-           call's applyResult. Task #103. */
+        /* Observations made on this cell's contra-arg so far.
+           Snapshotted into the ObservationSet CAS at
+           CallbackApplyRef stamping time. */
         std::vector<TracingDecisionGraph::Observation> runningObsSet;
-        /* Companion to `runningObsSet` used for progressive
-           per-probe stamping. Each new probe stamps its `from`
-           field with `stateHashAt(root, argAncestry,
-           runningObsHistory, runningObsHistory.size())` and then
-           appends its own {fromStateHash, elementHash} single-obs
-           edge — matching `ReplayCallbackArg`'s `walkFacts`
-           progression so warm's queryHash for the k-th probe
-           equals the queryHash stored here. */
-        std::vector<ObservationSet> runningObsHistory;
-        /* Set once the single per-firing CallbackApply Fact has
-           been emitted (task #103). Emission happens when the outer
-           first observes the applyResult subject that this cb-apply
-           produces — at that point fn body has completed and
-           runningObsSet is fixed. Flushed as a single-request Ask
-           so fn's own-loop evolves before the applyResult
-           observation stamps against the evolved state. */
-        bool emitted = false;
     };
     std::vector<CallbackCell> callbackCells;
 
@@ -324,14 +217,6 @@ public:
         , envFactSetHash(TracingDecisionGraph::emptySetHash())
     {
     }
-
-    /** The outer evaluator's writer, if this writer is inside a
-        nested `builtins.cache` call. Its `getV13FactSetHash()` is
-        the value the walker sees as `walkerCur` when it dispatches
-        this writer's recorded cb-apply Fact at replay under
-        lockstep. Set by cache.cc from the outer's TracingReplayEvaluator.
-        Null on the top-level (non-nested) writer. */
-    TracingWriter * outerWriter = nullptr;
 
     /** Cumulative subject-id history over env layer ambient observations.
         One edge per logResult-triggered flush. Exposed so writer-side
@@ -492,12 +377,22 @@ public:
         Hash argAncestry = Hash(HashAlgorithm::SHA256));
 
     /**
-     * Log a ambient layer observation (= the outer probes an inner-supplied
-     * LocalObject during a cb apply). Same payload shape as the
-     * env layer path; the additional `applyId` (= the cb apply's
-     * resultId) groups this fact into a ambient layer sub-trace at flush.
+     * Record one observation the outer made on a callback firing's
+     * contra-arg. Routes to the matching CallbackCell by `applyId`
+     * and pushes an `{queryHash, responsePayload}` entry into that
+     * cell's `runningObsSet`. `logOuterObservation` later snapshots
+     * that set into the ObservationSet CAS when it stamps a
+     * CallbackApplyRef into an outer probe reaching this apply's
+     * result.
+     *
+     * The contra-arg's `Subject` has no state-hash evolution — its
+     * structural id `SHA("positional-<depth>") XOR argAncestry` is
+     * constant — so `from` is stamped against an empty history.
+     * Sibling calls with different callback bodies discriminate
+     * downstream via the obsSet content-hash on their enclosing
+     * CallbackApply, not via arg-side state hash evolution.
      */
-    void logAmbientObservation(
+    void logCallbackObservation(
         const trace::QueryVariant & query,
         const trace::ResultVariant & result,
         Subject subject,
@@ -506,99 +401,59 @@ public:
     {
         if (!decisionGraph)
             return;
-        /* Append to the most recently pushed boundary whose applyId
-           matches — that's the cb-apply invocation currently
-           building its probe sequence. Each invocation's probes
-           land in its own facts vector, no cross-invocation mixing.
-
-           Option (b) — late ambient obs: the boundary may already be
-           `finalized=true` (e.g. cb-sibling's `{f,x}: f x` doesn't
-           force its local during the body, so probes only fire
-           when the outer subsequently accesses `.whatever` on the
-           apply-result — by then the boundary's first finalize
-           pass has already run). Boundaries are no longer cleared
-           after finalize; this search still finds them, and the
-           next `flushAmbient(true)` pass picks up the new
-           facts via `lastProcessedCount` and processes them
-           incrementally. */
+        /* Most recent matching cell = the cb-apply invocation
+           currently building its probe sequence. */
         for (auto it = callbackCells.rbegin();
              it != callbackCells.rend(); ++it) {
-            if (it->applyId == applyId) {
-                /* Capture argAncestry and arg's depth on first
-                   observation. Walker uses them to rebuild the
-                   ReplayCallbackArg's Subject + argAncestry so probe
-                   queryHashes match cold's obsSet entries. Every
-                   observation in this firing shares both values. */
-                if (it->argAncestryHex.empty())
-                    it->argAncestryHex = argAncestry.to_string(HashFormat::Base16, false);
-                if (!it->argDepthCaptured) {
-                    auto par = pathAndRootsFromSubject(subject);
-                    if (!par.roots.empty()) {
-                        if (auto * a = std::get_if<Arg>(&par.roots[0].data)) {
-                            it->argDepth = a->depth;
-                            it->argDepthCaptured = true;
-                        }
+            if (it->applyId != applyId)
+                continue;
+            /* Capture argAncestry + arg depth on first observation.
+               Walker uses them to rebuild the ReplayCallbackArg's
+               Subject at the same shape so probe queryHashes match. */
+            if (it->argAncestryHex.empty())
+                it->argAncestryHex = argAncestry.to_string(HashFormat::Base16, false);
+            if (!it->argDepthCaptured) {
+                auto par = pathAndRootsFromSubject(subject);
+                if (!par.roots.empty()) {
+                    if (auto * a = std::get_if<Arg>(&par.roots[0].data)) {
+                        it->argDepth = a->depth;
+                        it->argDepthCaptured = true;
                     }
                 }
-                it->facts.push_back({query, result, std::move(subject),
-                    std::move(argAncestry), applyId});
-                if (it->finalized)
-                    tracingCacheLog(
-                        "logAmbientObservation: late probe queued for finalized applyId=%s (now %zu facts, %zu processed)",
-                        applyId.to_string(HashFormat::Base16, false).substr(0, 12),
-                        it->facts.size(), it->lastProcessedCount);
-                /* Accumulate this probe into the cell's
-                   `runningObsSet`. `logOuterObservation` reads
-                   `runningObsSet` when it stamps a CallbackApplyRef
-                   slot on an outer probe that reaches this call's
-                   applyResult; the snapshot goes into the
-                   ObservationSet CAS. */
-                if (!it->fnStateHashHex.empty()) {
-                    /* Contra-arg is a subject-without-state-hash: its
-                       structural id is `SHA("positional-<depth>") XOR
-                       argAncestry` (Arg{depth}'s baseId) and doesn't
-                       evolve. Stamp each ambient probe's `from` at
-                       that structural id — empty history, no
-                       walkFacts progression. Sibling calls with
-                       different callback bodies differ via the
-                       obsSet content-hash on the enclosing
-                       CallbackApply, not via arg-side state hash
-                       evolution. */
-                    trace::QueryVariant stampedQuery = query;
-                    auto par = pathAndRootsFromSubject(it->facts.back().subject);
-                    std::vector<trace::QueryLeaf> fromStateHashes;
-                    fromStateHashes.reserve(par.roots.size());
-                    for (auto & root : par.roots) {
-                        auto cid = stateHashAfter(
-                            root, it->facts.back().argAncestry, {});
-                        fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
-                    }
-                    std::visit([&](auto & q) {
-                        using QT = std::decay_t<decltype(q)>;
-                        if constexpr (requires { q.from; }) {
-                            q.from = fromStateHashes.empty()
-                                ? trace::QueryLeaf{std::string{}}
-                                : fromStateHashes[0];
-                            q.path = par.path;
-                            q.fromStateHashes = fromStateHashes;
-                        }
-                    }, stampedQuery);
-                    auto qh = std::visit(
-                        [](const auto & q) {
-                            return TracingDecisionGraph::computeQueryHash(q);
-                        }, stampedQuery);
-                    nlohmann::json rJson = std::visit(
-                        [](const auto & r) -> nlohmann::json { return r; },
-                        result);
-                    auto rPayload = jsonToCborString(rJson);
-                    it->runningObsSet.push_back({qh, rPayload});
-                }
-                return;
             }
+            if (it->fnStateHashHex.empty())
+                return;
+            trace::QueryVariant stampedQuery = query;
+            auto par = pathAndRootsFromSubject(subject);
+            std::vector<trace::QueryLeaf> fromStateHashes;
+            fromStateHashes.reserve(par.roots.size());
+            for (auto & root : par.roots) {
+                auto cid = stateHashAfter(root, argAncestry, {});
+                fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
+            }
+            std::visit([&](auto & q) {
+                using QT = std::decay_t<decltype(q)>;
+                if constexpr (requires { q.from; }) {
+                    q.from = fromStateHashes.empty()
+                        ? trace::QueryLeaf{std::string{}}
+                        : fromStateHashes[0];
+                    q.path = par.path;
+                    q.fromStateHashes = fromStateHashes;
+                }
+            }, stampedQuery);
+            auto qh = std::visit(
+                [](const auto & q) {
+                    return TracingDecisionGraph::computeQueryHash(q);
+                }, stampedQuery);
+            nlohmann::json rJson = std::visit(
+                [](const auto & r) -> nlohmann::json { return r; },
+                result);
+            auto rPayload = jsonToCborString(rJson);
+            it->runningObsSet.push_back({qh, rPayload});
+            return;
         }
-        /* No matching boundary at all — true invariant violation. */
         tracingCacheLog(
-            "logAmbientObservation: no matching boundary for applyId=%s",
+            "logCallbackObservation: no matching cell for applyId=%s",
             applyId.to_string(HashFormat::Base16, false).substr(0, 12));
     }
 
@@ -744,44 +599,6 @@ public:
         if (callbackCells.empty())
             return std::nullopt;
         return callbackCells.back().applyId;
-    }
-
-    /** Signal that a new outer probe is beginning. Called from
-        `TracingEnvironment::outerQuery` before the probe's evaluation
-        runs. Resets each active CallbackCell's `runningObsHistory`
-        so the ambient probes fired during this outer probe stamp
-        starting from walkFacts=0 — matching warm's fresh fn firing
-        per outer probe (each firing has empty walkFacts). Ambient
-        probes fired within one outer probe still accumulate into the
-        cell's history and stamp progressively; across outer probes
-        the history resets. */
-    void beginOuterProbe()
-    {
-        for (auto & cell : callbackCells)
-            cell.runningObsHistory.clear();
-    }
-
-    void logAmbientApplyFact(
-        const nlohmann::json & applyQueryPayload,
-        const Subject & resultSubject,
-        const Hash & applyArgAncestry)
-    {
-        if (!decisionGraph)
-            return;
-        if (callbackCells.empty())
-            return;
-        auto & enclosing = callbackCells.back();
-        trace::QueryApply applyQ{
-            applyQueryPayload["params"]["fn"].get<std::string>(),
-            applyQueryPayload["params"]["arg"].get<std::string>(),
-        };
-        enclosing.facts.push_back({
-            trace::QueryVariant{applyQ},
-            trace::ResultVariant{trace::ResultType{"apply"}},
-            resultSubject,
-            applyArgAncestry,
-            enclosing.applyId,
-        });
     }
 
     /**

@@ -12,12 +12,12 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
     TracingWriter & writer_,
     Subject applyResultSubject_,
     Hash applyScope_,
-    Hash ambientApplyId_)
+    Hash applyId_)
     : inner(std::move(inner_))
     , writer(writer_)
     , applyResultSubject(std::move(applyResultSubject_))
     , applyArgAncestry(std::move(applyScope_))
-    , ambientApplyId(std::move(ambientApplyId_))
+    , applyId(std::move(applyId_))
 {
     auto stateHash = stateHashAfter(applyResultSubject, applyArgAncestry, {});
     applyArgAncestryStateHashHex = stateHash.to_string(HashFormat::Base16, false);
@@ -34,7 +34,7 @@ void TracingCallbackApplyResult::recordD2(const trace::QueryVariant & query, con
        boundary's facts vector), matching the walker's stamping at
        `walkFacts.size()` after the synthetic-side primop pushed
        the apply Fact. */
-    writer.logAmbientObservation(query, result, applyResultSubject, applyArgAncestry, ambientApplyId);
+    writer.logCallbackObservation(query, result, applyResultSubject, applyArgAncestry, applyId);
 }
 
 std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::string & name)

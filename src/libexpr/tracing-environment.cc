@@ -62,7 +62,6 @@ trace::ResultVariant TracingEnvironment::outerQuery(
     Subject subject,
     Hash argAncestry)
 {
-    writer.beginOuterProbe();
     auto result = resolve(query);
     writer.logOuterObservation(query, result, std::move(subject), std::move(argAncestry));
     return result;

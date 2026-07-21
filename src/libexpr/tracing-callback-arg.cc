@@ -23,11 +23,11 @@ TracingCallbackArg::TracingCallbackArg(
     ref<SourceRoot> rootFSRoot,
     std::shared_ptr<const ArgCell> argCell,
     Hash inheritedScope_,
-    Hash ambientApplyId_)
+    Hash applyId_)
     : inner(std::move(inner))
     , subject(std::move(subject_))
     , argAncestry(std::move(inheritedScope_))
-    , ambientApplyId(std::move(ambientApplyId_))
+    , applyId(std::move(applyId_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
     , argCell(std::move(argCell))
@@ -50,7 +50,7 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
         .name = name,
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, argAncestry, ambientApplyId);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, argAncestry, applyId);
 }
 
 trace::ResultWHNF & TracingCallbackArg::whnf()
@@ -158,7 +158,7 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
         .index = index,
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, argAncestry, ambientApplyId);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, argAncestry, applyId);
 }
 
 ObjectType TracingCallbackArg::getTypeLazy()
@@ -205,9 +205,9 @@ std::optional<std::vector<std::string>> TracingCallbackArg::getAttrPath()
 void TracingCallbackArg::recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
     /* Route through the ambient layer entry point: the outer is probing
-       an inner-supplied local. The `ambientApplyId` groups this fact
+       an inner-supplied local. The `applyId` groups this fact
        into the cb apply's AmbientAsks edge at flush. */
-    writer.logAmbientObservation(query, result, subject, argAncestry, ambientApplyId);
+    writer.logCallbackObservation(query, result, subject, argAncestry, applyId);
 }
 
 std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> argObj)
@@ -235,7 +235,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(result), std::move(resultSubject), writer, rootFSRoot, argCell, argAncestry, ambientApplyId);
+        std::move(result), std::move(resultSubject), writer, rootFSRoot, argCell, argAncestry, applyId);
 }
 
 } // namespace nix

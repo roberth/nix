@@ -385,33 +385,11 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     if (fnIsTlo) {
         if (auto enclosingId = writer.getCurrentCbApplyId())
             enclosingApplyId = *enclosingId;
-        /* ambient apply Fact: Subject = resultSubject built above;
-           flushAmbient stamps via the generic
-           pathAndRootsFromSubject path. The QueryApply payload's
-           fn/arg use Subject-derived hex so the walker (which has
-           only Subjects at primop firing time) can byte-match. */
-        const auto & ars = std::get<ApplyResultSubject>(resultSubject.data);
-        /* Use polymorphic dispatch: fn or arg can be a DerivedSubject
-           (e.g. outer callback does `arg.someFn value` where arg is a
-           TracingCallbackArg), whose hash is a producer-query hash rather
-           than a state hash. Strict stateHashAfter traps on Derived; the
-           walker's own ApplyResultSubject formula in subject-id.cc uses
-           stateHashAtSubject on constituents, so aligning the writer here
-           keeps the QueryApply payload's fn/arg fields byte-identical
-           between record and replay. */
-        auto fnSubjHash = stateHashAfterSubject(*ars.fn, applyArgAncestry, {});
-        auto argSubjHash = stateHashAfterSubject(*ars.arg, applyArgAncestry, {});
-        auto fnSubjHex = fnSubjHash.to_string(HashFormat::Base16, false);
-        auto argSubjHex = argSubjHash.to_string(HashFormat::Base16, false);
-        tracingCacheLog(
-            "writer logAmbientApplyFact: fnSubj=%s argSubject=%s applyArgAncestry=%s fnHex=%s argHex=%s",
-            describe(*ars.fn),
-            describe(*ars.arg),
-            applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
-            fnSubjHex.substr(0, 12),
-            argSubjHex.substr(0, 12));
-        nlohmann::json applyQd2 = trace::QueryApply{fnSubjHex, argSubjHex};
-        writer.logAmbientApplyFact(applyQd2, resultSubject, applyArgAncestry);
+        /* Nested cb-apply (fn is a TracingCallbackArg): the recursive
+           apply itself is an observation on the enclosing cell's
+           contra-arg. Under task #103's obsSet CAS mechanism it's
+           carried through the enclosing cell's runningObsSet — no
+           dedicated fact record is needed at the writer level here. */
     } else {
         tracingCacheLog("createCallbackCell callsite=TracingEvaluator::apply fn=%s arg=%s",
                         fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));

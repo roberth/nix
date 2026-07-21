@@ -159,26 +159,6 @@ void from_json(const nlohmann::json & j, OuterValueResponse & r)
     resultVariantFromJson(j, r.result);
 }
 
-void to_json(nlohmann::json & j, const InnerValueRequestPayload & r)
-{
-    queryVariantToJson(j, r.query);
-}
-
-void from_json(const nlohmann::json & j, InnerValueRequestPayload & r)
-{
-    queryVariantFromJson(j, r.query);
-}
-
-void to_json(nlohmann::json & j, const InnerValueResponsePayload & r)
-{
-    resultVariantToJson(j, r.result);
-}
-
-void from_json(const nlohmann::json & j, InnerValueResponsePayload & r)
-{
-    resultVariantFromJson(j, r.result);
-}
-
 // ---------------------------------------------------------------------------
 // Result payload serialization
 // ---------------------------------------------------------------------------
@@ -643,13 +623,6 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
             OuterValueResponse resp;
             from_json(j["response"], resp);
             return Response<OuterValueRequest>{req, resp};
-        }
-        if (type == InnerValueRequestPayload::tag) {
-            InnerValueRequestPayload req;
-            from_json(j["request"], req);
-            InnerValueResponsePayload resp;
-            from_json(j["response"], resp);
-            return Response<InnerValueRequestPayload>{req, resp};
         }
         return std::nullopt;
     }

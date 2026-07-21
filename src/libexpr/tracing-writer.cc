@@ -258,258 +258,6 @@ void TracingWriter::flushAmbient(bool processApplies)
         prevQFactSetHash = envFactSetHash;
         pendingNewRequests.clear();
     }
-
-    /* Finalize pass: process each buffered cb-apply in the
-       order recorded. For each boundary:
-        1. Look up its ambient group (may be empty if no probes happened).
-        2. Build the ambient chain via incremental stateHashAt
-           substitution — each fact's `from` is computed against the
-           chain prefix the walker reconstructs probe-by-probe.
-        3. The terminal `cumulativeFactSet` IS the AmbientResult
-           (via-Asks §"Recording (ambient layer)").
-        4. Synthesize the env apply Fact (applyReqHash, AmbientResult);
-           fold into envFactSet and append a synthetic edge to
-           envWalk (fromHash=Hash(0), elementHash=factHash) —
-           the cb-apply contributes to cur but not to any
-           subject's own-fold (= phantom edge for history-index sync).
-        5. Add applyReqHash to pendingNewRequests so the trailing
-           closeAsksEdge's perQAsksEdge close picks it up.
-
-       Reverse-nested order is acceptable but unnecessary: AmbientResult
-       for one apply doesn't depend on another's chain — each group is
-       independent because their ambient chains share no facts.
-
-       Chain rooting: each cb-apply's ambient chain is rooted at
-       `pendingApply.applyRequestHash` (= the natural hash of the apply
-       payload) rather than `emptySetHash()`. This makes each
-       cb-apply's chain its own subtree in AmbientAsks, so the
-       walker can pick the right chain by knowing the apply Fact's
-       reqHash — no ambiguity when multiple cb-applies are recorded.
-       via-Asks discrimination via inherited state hash propagation still
-       flows through: different inherited state hashes → different argSubject →
-       different applyReqHash → different chain root. Same-shape
-       collapse still holds for identical cb-applies (= same fnId,
-       same argSubject, same observations → same applyReqHash → same
-       chain). The loss is atom sharing across cb-applies whose
-       chains happen to coincide but whose applyReqHashes differ — a
-       storage trade-off, not correctness. */
-    /* Same-shape collapse happens automatically via content-addressed
-       AmbientAsks rows: two boundaries with the same applyId and the
-       same probes produce identical rows that INSERT OR IGNORE
-       deduplicates; envFactSet's seenRequests deduplicates the
-       synthesised env Fact too. Process each boundary independently
-       so its own pendingDepth2FactsByApply slice gets folded into
-       its own chain — collapsing the boundary list before processing
-       conflates probes across boundaries and the resulting
-       AmbientResult doesn't match what a per-call walker would
-       reproduce.
-
-       Chronological cb-apply Ask insertion: each observed cb-apply's
-       Ask is INSERTED at pendingApply.insertionIndex (= captured at
-       createCallbackCell time, AFTER closeAsksEdge(false) drained the
-       pre-boundary env chunk), not appended at the end. This puts
-       the cb-apply Ask BEFORE its body's env facts in walker
-       dispatch order. Each insertion shifts subsequent indices by 1,
-       tracked via `shift`. Each cb-apply's elementHash propagates
-       into all subsequent envAsksEdges' fromFactSetHash (= walker's
-       cur advances by that Fact at that position).
-       `priorApplyFactAccum` accumulates earlier cb-apply Fact
-       contributions so each new cb-apply Ask's own fromFactSetHash
-       reflects all prior cb-apply contributions to its left. */
-    size_t shift = 0;
-    Hash priorApplyFactAccum(HashAlgorithm::SHA256);
-    for (auto & pendingApply : callbackCells) {
-        auto & group = pendingApply.facts;
-
-        /* Helper: stamp the i-th fact and emit Request/InnerValueResponse
-           into the pool. AmbientAsks is inserted iff `withAmbientAsks`
-           is true. Returns (cumulativeFactSet, history-edge-to-append).
-           Used both for first-finalize processing (with AmbientAsks)
-           and for late-d2-obs re-processing (without AmbientAsks —
-           see commentary at the "late probe" branch below). */
-        auto stampAndEmit = [&](size_t i, const std::vector<ObservationSet> & history,
-                                Hash cumulativeFactSet, bool withAmbientAsks,
-                                Hash contextCur = Hash(HashAlgorithm::SHA256))
-            -> std::pair<Hash, ObservationSet>
-        {
-            auto & pf = group[i];
-            auto [path, roots] = pathAndRootsFromSubject(pf.subject);
-            std::vector<trace::QueryLeaf> fromStateHashes;
-            fromStateHashes.reserve(roots.size());
-            for (auto & root : roots) {
-                auto cid = stateHashAt(
-                    root, pf.argAncestry, history, /*step=*/ i);
-                fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
-            }
-            std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].stateHash();
-            auto fromStateHash = fromStateHashes.empty()
-                ? Hash(HashAlgorithm::SHA256)
-                : Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
-
-            std::string queryTag = std::visit(
-                [](const auto & q) -> std::string { return std::string(q.tag); }, pf.query);
-            tracingCacheLog(
-                "flush ambient fact: applyId=%s i=%zu subject=%s query=%s from=%s path=%zu fromStateHashes=%zu ambientAsks=%s",
-                pendingApply.applyId.to_string(HashFormat::Base16, false).substr(0, 12),
-                i, describe(pf.subject), queryTag, fromHex.substr(0, 12),
-                path.steps.size(), fromStateHashes.size(), withAmbientAsks ? "yes" : "no");
-
-            nlohmann::json queryJson;
-            std::visit([&](const auto & q) { queryJson = q; }, pf.query);
-            rewriteFromInQuery(queryJson, fromHex);
-            if (!path.steps.empty())
-                queryJson["params"]["path"] = path;
-            if (!fromStateHashes.empty())
-                queryJson["params"]["fromStateHashes"] = fromStateHashes;
-            nlohmann::json resultJson;
-            std::visit([&](const auto & r) { resultJson = r; }, pf.result);
-
-            auto queryHash = hashString(HashAlgorithm::SHA256, queryJson.dump());
-            auto responsePayload = jsonToCborString(resultJson);
-            auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
-            /* Record BEFORE insertRequest so the richer ambient
-               provenance beats the generic RequestHash from the
-               insertRequest macro. */
-            if (provenanceEnabled()) {
-                recordProvenance(queryHash, "requestHash-ambient",
-                                 {{"queryJson", queryJson},
-                                  {"subject", describe(pf.subject)},
-                                  {"argAncestry", pf.argAncestry.to_string(HashFormat::Base16, false)},
-                                  {"applyId", pendingApply.applyId.to_string(HashFormat::Base16, false)},
-                                  {"boundaryFactIndex", i},
-                                  {"fromHex", fromHex}});
-                recordProvenance(responseHash, "responseHash-ambient",
-                                 {{"resultJson", resultJson},
-                                  {"queryHash", queryHash.to_string(HashFormat::Base16, false)}});
-            }
-
-            decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
-
-            auto toFactSet = TracingDecisionGraph::xorFactIntoHash(
-                cumulativeFactSet, queryHash, responseHash);
-            (void) withAmbientAsks;
-
-            ObservationSet edge;
-            auto elementHash = TracingDecisionGraph::xorFactIntoHash(
-                Hash(HashAlgorithm::SHA256), queryHash, responseHash);
-            edge.observations.push_back({fromStateHash, elementHash});
-            return {toFactSet, std::move(edge)};
-        };
-
-        if (!pendingApply.finalized) {
-            /* First finalize for this boundary. Process all facts
-               accumulated so far. If any were made, insert the
-               boundary Ask carrying the applyRequest, fold the
-               (applyRequestHash, AmbientResult) Fact into
-               envFactSet, and propagate that factHash to downstream
-               envAsksEdges.
-
-               `contextCur` = the walker's outer env cur at the
-               moment this boundary's cb-apply Request will be
-               dispatched at warm. Equals
-               `pendingApply.envCurAtOpen XOR priorApplyFactAccum`
-               (= state at createCallbackCell time + all prior
-               boundary Ask contributions). Used as the
-               InnerValueResponse key discriminator so ambient chain
-               facts within different apply boundaries store under
-               distinct rows, letting cb-repeated's two applies with
-               the same abstract reqHash resolve to their respective
-               responses. */
-            Hash contextCur = TracingDecisionGraph::xorHashes(
-                pendingApply.envCurAtOpen, priorApplyFactAccum);
-            pendingApply.contextCur = contextCur;
-            std::vector<ObservationSet> history;
-            history.reserve(group.size());
-            Hash cumulativeFactSet = pendingApply.applyRequestHash;
-            for (size_t i = 0; i < group.size(); ++i) {
-                auto [nextCfs, edge] = stampAndEmit(i, history, cumulativeFactSet, /*withAmbientAsks=*/ true, contextCur);
-                cumulativeFactSet = nextCfs;
-                history.push_back(std::move(edge));
-            }
-            auto ambientResult = cumulativeFactSet;
-            tracingCacheLog(
-                "finalize cb-apply: applyId=%s probes=%zu AmbientResult=%s",
-                pendingApply.applyId.to_string(HashFormat::Base16, false).substr(0, 12),
-                group.size(),
-                ambientResult.to_string(HashFormat::Base16, false).substr(0, 12));
-
-            /* Per-firing CallbackApply emission moved to
-               logAmbientObservation (task #103): each observation
-               emits its own CallbackApply with the running obsSet.
-               The last per-observation emission has the fullest
-               obsSet, subsuming what this per-firing emission would
-               produce. Kept comment as a landmark. */
-
-            /* Unobserved cb-apply: the outer's callback body ran
-               without probing the inner-supplied arg (group is empty).
-               No content crossed the boundary → no Ambient Fact to
-               record → no boundary Ask needed. Leave
-               `pendingApply.finalized` false so a later flush with
-               newly-arrived probes re-enters this branch and records
-               the boundary once observations exist. */
-            if (group.empty())
-                continue;
-
-            /* Cutover (task #103): removed the per-boundary
-               synthetic apply Fact fold + boundary Ask edge
-               insertion. Per-observation CallbackApply emissions in
-               logAmbientObservation now handle envFactSet
-               advancement and Ask/envWalk pushes. This block was
-               the last of the old boundary-synthesis machinery for
-               ambient chains. */
-            (void) ambientResult;
-            (void) shift;
-            prevQFactSetHash = envFactSetHash;
-
-            pendingApply.finalized = true;
-            pendingApply.cumulativeFactSet = ambientResult;
-            pendingApply.lastProcessedCount = group.size();
-        } else if (group.size() > pendingApply.lastProcessedCount) {
-            /* Late ambient obs path: the boundary was finalized in a
-               previous flush, but new probes have since arrived
-               (= cb-sibling's `{f,x}: f x` only forces its local on
-               the outer's `.whatever` access, after `TO_A.getType`'s
-               logResult already ran the boundary's first finalize).
-
-               Process the tail facts `[lastProcessedCount..end]` with
-               `withAmbientAsks=false`: extending the AmbientAsks
-               chain would change what `dispatchApplyLive` returns at
-               warm (= different AmbientResult), so the walker's cur
-               would diverge from the recorded factHash that
-               `[finalize: ε Asks edge]` baked into downstream
-               envAsksEdges. Instead we only need the late probes'
-               request payloads and recorded responses in the pool
-               so `ReplayCallbackArg`'s `readResponse` finds them.
-               Validation against AmbientAsks is skipped for boundaries
-               whose chain is empty at chainStart — see
-               `ReplayCallbackArg::withChainStart`. */
-            std::vector<ObservationSet> history;
-            history.reserve(group.size());
-            Hash cumulativeFactSet = pendingApply.applyRequestHash;
-            for (size_t i = 0; i < pendingApply.lastProcessedCount; ++i) {
-                /* Re-stamp prior facts to rebuild history; inserts are
-                   idempotent (INSERT OR IGNORE) so the duplicate
-                   Request/InnerValueResponse calls are harmless. */
-                auto [nextCfs, edge] = stampAndEmit(i, history, cumulativeFactSet, /*withAmbientAsks=*/ false, pendingApply.contextCur);
-                cumulativeFactSet = nextCfs;
-                history.push_back(std::move(edge));
-            }
-            for (size_t i = pendingApply.lastProcessedCount; i < group.size(); ++i) {
-                auto [nextCfs, edge] = stampAndEmit(i, history, cumulativeFactSet, /*withAmbientAsks=*/ false, pendingApply.contextCur);
-                cumulativeFactSet = nextCfs;
-                history.push_back(std::move(edge));
-            }
-            tracingCacheLog(
-                "late-ambient process: applyId=%s tail=%zu..%zu (probes now %zu)",
-                pendingApply.applyId.to_string(HashFormat::Base16, false).substr(0, 12),
-                pendingApply.lastProcessedCount, group.size() - 1, group.size());
-            pendingApply.lastProcessedCount = group.size();
-        }
-    }
-
-    /* Don't clear callbackCells — finalized entries stay
-       so `logAmbientObservation` can find them on late probes
-       (option (b)). */
 }
 
 void TracingWriter::closeAsksEdge(bool processApplies)
@@ -550,60 +298,27 @@ void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
         return;
 
     /* Suppressed during walker re-dispatch of an already-recorded
-       apply (= `dispatchApplyLive`). Re-dispatch is validation, not a
-       new cb-apply event — each re-dispatch would otherwise add a
-       redundant ε edge to envWalk, breaking the 1:1 alignment
-       with walker.envWalk at warm. */
+       apply. Re-dispatch is validation, not a new cb-apply event —
+       skip cell creation so `envWalk` alignment doesn't drift. The
+       apply Request payload is still inserted so walker lookups
+       find it. */
+    auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQueryPayload.dump());
+    auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
     if (suppressCbApply > 0) {
-        tracingCacheLog("createCallbackCell: SUPPRESSED (in dispatchApplyLive)");
-        /* Insert the apply Request payload into the CAS pool even when
-           suppressed so walker's ambient-asks history can look it up.
-           Hook-based ε obs push in walker (iter <=91) is now redundant
-           after writer prev-post-boundary alignment + walker retry loop. */
-        auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQueryPayload.dump());
-        auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
+        tracingCacheLog("createCallbackCell: SUPPRESSED");
         decisionGraph->insertRequest(applyReqHash, applyPayloadCbor);
         return;
     }
 
-    /* Close any preceding observations into their own Asks edge
-       (= β1). The intermediate flush only drains env layer facts; any
-       ambient layer facts from prior unfinalised cb-applies (= nested case)
-       stay buffered, waiting for their own boundary's finalize. */
-    closeAsksEdge(/*processApplies=*/ false);
-
-    /* Insert the apply Request payload into the CAS pool now — its
-       hash is known immediately, payload doesn't depend on AmbientResult.
-       The walker needs this entry by the time it dispatches the apply
-       Fact at warm replay. */
-    auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQueryPayload.dump());
-    auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
-    /* Record BEFORE insertRequest so the richer applyRequestHash
-       provenance beats the generic RequestHash entry from the
-       insertRequest macro (first-registration-wins). */
-    Hash outerEnvCurAtOpen = outerWriter
-        ? outerWriter->getV13FactSetHash()
-        : Hash(HashAlgorithm::SHA256);
     if (provenanceEnabled())
         recordProvenance(applyReqHash, "applyRequestHash",
                          {{"applyQueryPayload", applyQueryPayload},
                           {"prevQFactSetHash", prevQFactSetHash.to_string(HashFormat::Base16, false)},
-                          {"envFactSetHash", envFactSetHash.to_string(HashFormat::Base16, false)},
-                          {"outerEnvCurAtOpen", outerEnvCurAtOpen.to_string(HashFormat::Base16, false)}});
+                          {"envFactSetHash", envFactSetHash.to_string(HashFormat::Base16, false)}});
     decisionGraph->insertRequest(applyReqHash, applyPayloadCbor);
 
-    /* Buffer the boundary. The synthetic env apply Fact's respHash
-       is the AmbientResult = terminal of this cb-apply's ambient chain,
-       only known after the body finishes. flushAmbient at
-       logResult walks callbackCells in order and finalises
-       each one, INSERTING the ε perQAsksEdge at the chronological
-       insertionIndex (= position in envAsksEdges captured AFTER
-       closeAsksEdge(false) drained the pre-boundary env chunk). This
-       puts ε BEFORE its body's env facts in walker dispatch order,
-       so the lambda-ReplayCallbackArg's seedCell extension fires before
-       arg(N+1) probes try to resolve. */
     /* Extract fn's state hash from the applyQueryPayload (params.fn)
-       so we can build the QueryCallbackApply payload at flush time
+       so we can look up the cell at CallbackApplyRef stamping time
        without re-parsing. Empty string on legacy payloads where the
        field isn't present (in which case CallbackApply emission is
        skipped). */
@@ -619,21 +334,13 @@ void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
                  && applyQueryPayload["params"]["fn"].is_string())
             fnStateHashHex = applyQueryPayload["params"]["fn"].get<std::string>();
     } catch (...) {}
-    CallbackCell pending{
-        applyReqHash,
-        applyReqHash,
-        {},
-        envAsksEdges.size(),
-        prevQFactSetHash,
-        outerEnvCurAtOpen,
-        Hash(HashAlgorithm::SHA256),
-    };
-    pending.fnStateHashHex = std::move(fnStateHashHex);
-    callbackCells.push_back(std::move(pending));
-    tracingCacheLog("createCallbackCell: buffered (applyReqHash=%s, pendingBoundaries=%zu, insertionIndex=%zu)",
+    CallbackCell cell;
+    cell.applyId = applyReqHash;
+    cell.fnStateHashHex = std::move(fnStateHashHex);
+    callbackCells.push_back(std::move(cell));
+    tracingCacheLog("createCallbackCell: applyReqHash=%s cells=%zu",
                     applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    callbackCells.size(),
-                    envAsksEdges.size());
+                    callbackCells.size());
 }
 
 } // namespace nix

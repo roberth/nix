@@ -44,7 +44,7 @@ class TracingCallbackArg : public Object
     /* The cb apply this local belongs to (= apply's resultId). Used
        at flush to group ambient layer facts into an AmbientAsks edge per
        apply. Navigation children inherit. */
-    Hash ambientApplyId;
+    Hash applyId;
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
@@ -73,7 +73,7 @@ public:
         ref<SourceRoot> rootFSRoot,
         std::shared_ptr<const ArgCell> argCell,
         Hash argAncestry = Hash(HashAlgorithm::SHA256),
-        Hash ambientApplyId = Hash(HashAlgorithm::SHA256));
+        Hash applyId = Hash(HashAlgorithm::SHA256));
 
     /** This proxy's structural identity, per the
         subject-id design. */

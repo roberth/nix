@@ -200,7 +200,7 @@ std::shared_ptr<Object> OuterApply::run(
                     argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));
 
     /* Compute the resultId early so we can pass it to the
-       TracingCallbackArg as ambientApplyId — groups all ambient layer facts
+       TracingCallbackArg as applyId — groups all ambient layer facts
        made on this local (and its descendants) into a single
        AmbientAsks edge at flush. */
     auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);

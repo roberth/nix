@@ -638,25 +638,8 @@ struct OuterValueResponse
 
 DECLARE_TRACE_PAIR(OuterValueRequest, OuterValueResponse)
 
-/**
- * Incoming ambient query: external→local.
- * The ambient evaluator accessing local values during a callback.
- */
-struct InnerValueRequestPayload
-{
-    static constexpr std::string_view tag = "innerValue";
-    QueryVariant query;
-};
-
-struct InnerValueResponsePayload
-{
-    ResultVariant result;
-};
-
-DECLARE_TRACE_PAIR(InnerValueRequestPayload, InnerValueResponsePayload)
-
 template<template<typename> class F>
-using AllEnvRequests = ApplyWrapper<F, FileReadRequest, GetEnvRequest, OuterValueRequest, InnerValueRequestPayload>;
+using AllEnvRequests = ApplyWrapper<F, FileReadRequest, GetEnvRequest, OuterValueRequest>;
 
 namespace detail {
 

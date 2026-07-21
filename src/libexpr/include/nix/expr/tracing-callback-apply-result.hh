@@ -14,7 +14,7 @@
  *    apply-results whose evolved state hash participates in the env history.
  *
  *  - TracingCallbackApplyResult's methods record ambient observations via
- *    `writer.logAmbientObservation`. They are grouped with the
+ *    `writer.logCallbackObservation`. They are grouped with the
  *    enclosing cb-apply's recursive apply Fact (= the same
  *    boundary `logAmbientApplyFact` appended to). At flushAmbient
  *    finalize the writer's ambient loop stamps each observation with
@@ -72,7 +72,7 @@ class TracingCallbackApplyResult : public Object
        this boundary). Captured BEFORE `IT::apply`'s
        `createCallbackCell` would push a new entry, so the
        observations route to the correct boundary's ambient chain. */
-    Hash ambientApplyId;
+    Hash applyId;
 
     /* stateHashAfter(applyResultSubject, applyArgAncestry, {}) hex — the
        content-only apply-result state hash exposed via getStateHashHex. Computed
@@ -97,7 +97,7 @@ public:
         TracingWriter & writer,
         Subject applyResultSubject,
         Hash applyArgAncestry,
-        Hash ambientApplyId);
+        Hash applyId);
 
     TracingCallbackApplyResult & withArgCell(std::shared_ptr<const ArgCell> cell)
     {
