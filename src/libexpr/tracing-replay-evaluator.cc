@@ -165,38 +165,18 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
             if (auto it = responseFor.find(requestHash); it != responseFor.end())
                 return it->second;
         }
-        /* Apply-boundary: AmbientResult split by chain presence.
-            - No chain at applyReqHash: AmbientResult = applyReqHash
-              (= chain root; matches writer's empty-ambient-group path).
-            - Chain present: invoke fn live via dispatchApplyLive,
-              which forces the result so outer's f drives probes
-              against a fresh ReplayCallbackArg. On divergence, fail dispatch. */
+        /* Apply-boundary requests without a callbackApply slot have no
+           live-fire dispatch path anymore — AmbientAsks was ripped out
+           (task #109); the callbackApply slot mechanism carries the
+           obsSet CAS reference and warm's dispatchAmbientQuery fires
+           fn live via that path (see line ~1156). If we reach this
+           branch, the request is a stale apply Fact from before the
+           #103 cutover — miss cleanly. */
         if (isAmbient && queryTag == "apply") {
-            auto outgoing = decisionGraph.getAmbientAsks(requestHash);
-            Hash applyRespHash{HashAlgorithm::SHA256};
-            if (outgoing.empty()) {
-                applyRespHash = requestHash;
-            } else {
-                nlohmann::json reqJson;
-                try {
-                    reqJson = cborStringToJson(*requestPayload);
-                } catch (const std::exception &) {
-                    return Hash(HashAlgorithm::SHA256);
-                }
-                if (!reqJson.contains("params") || !reqJson["params"].is_object())
-                    return Hash(HashAlgorithm::SHA256);
-                auto maybeAmbientResult = dispatchApplyLive(
-                    requestHash, reqJson["params"], edgeCtx.fromFactSetHash, ctx);
-                if (!maybeAmbientResult)
-                    return Hash(HashAlgorithm::SHA256);
-                applyRespHash = *maybeAmbientResult;
-            }
-            pendingEdgeObservations.push_back({
-                Hash(HashAlgorithm::SHA256),
-                TracingDecisionGraph::xorFactIntoHash(
-                    Hash(HashAlgorithm::SHA256), requestHash, applyRespHash),
-            });
-            return applyRespHash;
+            tracingCacheLog(
+                "dispatch: legacy apply Fact req=%s (no callbackApply slot) — miss",
+                requestHash.to_string(HashFormat::Base16, false).substr(0, 12));
+            return Hash(HashAlgorithm::SHA256);
         }
         auto currentResp = getCurrentResponse(*requestPayload, ctx);
         if (!currentResp) {

@@ -100,21 +100,6 @@ CREATE TABLE IF NOT EXISTS Terminal (
     PRIMARY KEY (queryHash, factSetHash, resultHash)
 ) WITHOUT ROWID;
 
--- Depth-2 (interaction-tracing) layer: the cb-apply's
--- sub-trie. Per doc/design/tracing-eval-cache-subject-identity.md,
--- ambient layer edges key on factSet alone (no Q column) — sibling cached
--- calls' ambient layer sub-traces are kept apart by scope state id inheritance,
--- and same-shape collapse within a call is intentional. toFactSetHash
--- is stored explicitly: at ambient layer there is no live producer for
--- incoming-ambient observations, so the walker can't reproduce the
--- transition by live dispatch the way env layer does.
-CREATE TABLE IF NOT EXISTS AmbientAsk (
-    fromFactSetHash BLOB NOT NULL,
-    requestSetHash  BLOB NOT NULL,
-    toFactSetHash   BLOB NOT NULL,
-    PRIMARY KEY (fromFactSetHash, requestSetHash)
-) WITHOUT ROWID;
-
 -- (per-subject observation trie). Cold-side stamps each
 -- fold step encountered during stateHashAt so walker can
 -- navigate subject's evolution as an edge-by-edge trie rather than
@@ -160,9 +145,6 @@ struct TracingDecisionGraph::State
     /* Decision graph layer */
     SQLiteStmt insertAsk, selectAsks, deleteAsks;
     SQLiteStmt insertTerminal, selectTerminal;
-
-    /* Depth-2 decision graph layer */
-    SQLiteStmt insertAmbientAsk, selectAmbientAsks;
 
     /* (subject-evolution fast-path) — populated by cold's
        stateHashAtStamping fold callback; consumed by
@@ -416,10 +398,6 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "SELECT 1 FROM Ask WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
     state->countTerminals.create(state->db,
         "SELECT 1 FROM Terminal WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
-    state->insertAmbientAsk.create(state->db,
-        "INSERT OR IGNORE INTO AmbientAsk(fromFactSetHash, requestSetHash, toFactSetHash) VALUES (?, ?, ?)");
-    state->selectAmbientAsks.create(state->db,
-        "SELECT requestSetHash, toFactSetHash FROM AmbientAsk WHERE fromFactSetHash = ?");
     state->insertSubjectEvolutionEdge.create(state->db,
         "INSERT OR IGNORE INTO SubjectEvolutionEdge("
         "subjectHash, curHash, obsFromHash, obsElementHash, nextCurHash) "
@@ -1042,29 +1020,6 @@ void TracingDecisionGraph::removeAsk(
     dg_bindBlob(use, dg_hashToBlob(factSet));
     dg_bindBlob(use, dg_hashToBlob(requestSet));
     use.exec();
-}
-
-void TracingDecisionGraph::insertAmbientAsk(
-    const SetHash & fromFactSet, const SetHash & requestSet, const SetHash & toFactSet)
-{
-    auto state(_state->lock());
-    auto use = state->insertAmbientAsk.use();
-    dg_bindBlob(use, dg_hashToBlob(fromFactSet));
-    dg_bindBlob(use, dg_hashToBlob(requestSet));
-    dg_bindBlob(use, dg_hashToBlob(toFactSet));
-    use.exec();
-}
-
-std::vector<std::pair<TracingDecisionGraph::SetHash, TracingDecisionGraph::SetHash>>
-TracingDecisionGraph::getAmbientAsks(const SetHash & fromFactSet)
-{
-    auto state(_state->lock());
-    auto query = state->selectAmbientAsks.use();
-    dg_bindBlob(query, dg_hashToBlob(fromFactSet));
-    std::vector<std::pair<SetHash, SetHash>> out;
-    while (query.next())
-        out.emplace_back(dg_blobToHash(query.getBlob(0)), dg_blobToHash(query.getBlob(1)));
-    return out;
 }
 
 void TracingDecisionGraph::insertSubjectEvolutionEdge(

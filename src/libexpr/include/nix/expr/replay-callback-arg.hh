@@ -97,10 +97,8 @@ class ReplayCallbackArg : public Object
     /* When true, each Object-method call validates the probe against
        the recorded AmbientAsks edges from ∅ — the ambient layer per-probe
        check (= "did the outer probe the local in a recorded way?").
-       Set on the cb-apply local that crosses the boundary. The
-       primop's recursive synthetic (= apply result reconstruction)
-       has this false because its facts live in env layer, not in
-       AmbientAsks. */
+       AmbientAsks removed (task #109) — flag stays false; kept for
+       ABI-stability while callers get cleaned up. */
     bool validateAgainstAmbientAsks = false;
 
     /* Optional obsSet response source (task #103). When set, method
@@ -176,35 +174,17 @@ public:
         return *this;
     }
 
-    /** Opt into ambient layer per-probe validation. Set on the cb-apply
-        local (= the ReplayCallbackArg materialised at the cb cb-apply,
-        whose surface probes were recorded in AmbientAsks). */
+    /** AmbientAsks validation removed (task #109). Method retained as
+        a no-op so callers compile until they're cleaned up. */
     ReplayCallbackArg & withAmbientAsksValidation()
     {
-        validateAgainstAmbientAsks = true;
+        /* No-op: obsSet CAS is the sole validation surface. */
         return *this;
     }
 
-    /** Set the ambient chain's starting cursor. Each cb-apply's ambient
-        chain is rooted at its applyReqHash (= the natural hash of
-        the cb-apply payload) — different cb-applies' chains live in
-        disjoint subtrees of AmbientAsks. The walker passes the
-        apply_qH it's resolving here so the ReplayCallbackArg's per-probe history
-        starts at the right root.
-
-        Side-effect: if the chain at this root is empty (= no
-        AmbientAsks rows), demote `validateAgainstAmbientAsks` to
-        false. This handles the late-d2-obs option (b) case where
-        the recorder's first finalize pass for this boundary saw
-        probes=0 (= the inner body didn't force the local) and the
-        actual probes only arrived later — by then those probes
-        were inserted into `InnerValueResponse` but NOT into
-        `AmbientAsks` (= extending the chain would corrupt
-        dispatchApplyLive's AmbientResult and break the env
-        per-Q cur propagation). The cb-apply local can still
-        readResponse the late probes; we just can't per-probe
-        validate them against AmbientAsks because the chain row
-        wasn't recorded. */
+    /** Set the ambient chain's starting cursor. Kept for compatibility
+        with older code paths that still thread a chain root; the
+        cursor no longer drives AmbientAsks lookups. */
     ReplayCallbackArg & withChainStart(Hash root);
 
     /** Set the cb-arg apply context (depth + argAncestry) so the lambda

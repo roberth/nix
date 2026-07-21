@@ -16,11 +16,11 @@ namespace nix {
 ReplayCallbackArg & ReplayCallbackArg::withChainStart(Hash root)
 {
     *chainCursor = std::move(root);
-    if (validateAgainstAmbientAsks) {
-        auto outgoing = decisionGraph.getAmbientAsks(*chainCursor);
-        if (outgoing.empty())
-            validateAgainstAmbientAsks = false;
-    }
+    /* AmbientAsks removed (task #109) — validation via chain traversal
+       is no longer supported. obsSet CAS is the sole validation surface:
+       probes constructed here must appear in the obsSet or readResponse
+       throws. */
+    validateAgainstAmbientAsks = false;
     return *this;
 }
 
@@ -133,62 +133,16 @@ static void appendFactToWalk(
     walkFacts.push_back(std::move(edge));
 }
 
-template<typename Q>
-static void advanceChainAndAppendFact(
-    TracingDecisionGraph & dg, const Q & query, const Hash & fromStateHash,
-    const nlohmann::json & responseJson,
-    std::vector<ObservationSet> & walkFacts, Hash & chainCursor)
-{
-    auto reqHash = TracingDecisionGraph::computeQueryHash(query);
-    tracingCacheLog(
-        "history: probe %s from=%s reqHash=%s cursor=%s walkSize=%zu",
-        Q::tag, fromStateHash.to_string(HashFormat::Base16, false).substr(0, 12),
-        reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-        chainCursor.to_string(HashFormat::Base16, false).substr(0, 12),
-        walkFacts.size());
-    auto edges = dg.getAmbientAsks(chainCursor);
-    for (auto & [requestSetHash, toFactSet] : edges) {
-        auto requestSet = dg.getRequestSet(requestSetHash);
-        if (!requestSet)
-            continue;
-        if (std::find(requestSet->begin(), requestSet->end(), reqHash) == requestSet->end())
-            continue;
-        appendFactToWalk(query, fromStateHash, responseJson, walkFacts);
-        /* Advance chainCursor by XOR-folding the live
-           (reqHash, responseHash) rather than reading cold's
-           `toFactSet`. Cold's AmbientAsks schema `(from, rs) → to`
-           with INSERT OR IGNORE loses chain B when two apply
-           invocations share a (from, rs) key: XOR-fold lets the
-           walker compute each invocation's unique chainCursor from
-           the same `from` position without schema widening. Live
-           and cold agree when cold's stored
-           `toFactSet == from XOR H(reqHash, respHash)` (writer's
-           ambient stampAndEmit), so the substitution is exact. */
-        auto responsePayload = jsonToCborString(responseJson);
-        auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
-        chainCursor = TracingDecisionGraph::xorFactIntoHash(
-            chainCursor, reqHash, responseHash);
-        (void) toFactSet;
-        return;
-    }
-    tracingCacheLog(
-        "ambient layer divergence: probe %s reqHash=%s no AmbientAsks edge from %s",
-        Q::tag, reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-        chainCursor.to_string(HashFormat::Base16, false).substr(0, 12));
-    throw Error(
-        "ambient layer divergence: probe %s on local has no AmbientAsks edge from current factSet",
-        Q::tag);
-}
+/* advanceChainAndAppendFact removed (task #109): AmbientAsks chain
+   traversal is gone. Callers use appendFactToWalk directly — obsSet
+   CAS handles the "matches or misses" contract via readResponse. */
 
 std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name)
 {
     trace::QueryGetAttr query{name, std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, outerContext, obsSetResponses);
-    if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromStateHash, rJson, *walkFacts, *chainCursor);
-    else
-        appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
+    appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     trace::ResultMaybeType r = rJson;
     if (!r.type)
         return nullptr;
@@ -204,10 +158,8 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     auto child = std::make_shared<ReplayCallbackArg>(
         std::move(childSubject), argAncestry, walkFacts, chainCursor,
         outerContext, decisionGraph, rootFSRoot, state);
-    /* Children inherit per-probe validation if the parent has it —
-       they're observed within the same cb apply's recorded chain. */
-    if (validateAgainstAmbientAsks)
-        child->withAmbientAsksValidation();
+    /* AmbientAsks validation removed (task #109). Children inherit
+       the obsSet response source. */
     /* Inherit obsSet response source (task #103). Derived children
        probe within the same callback firing, so the same obsSet
        serves their responses too. */
@@ -231,10 +183,7 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
     trace::QueryGetWHNF query{std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, outerContext, obsSetResponses);
-    if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromStateHash, rJson, *walkFacts, *chainCursor);
-    else
-        appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
+    appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     cachedWHNF = rJson.get<trace::ResultWHNF>();
     return *cachedWHNF;
 }
@@ -324,10 +273,7 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
     trace::QueryGetListElem query{std::string{}, index};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, outerContext, obsSetResponses);
-    if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromStateHash, rJson, *walkFacts, *chainCursor);
-    else
-        appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
+    appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     Subject childSubject{DerivedSubject{
         .parent = std::make_shared<const Subject>(subject),
         .kind = DerivedSubject::Kind::GetListElem,
@@ -336,8 +282,6 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
     auto child = std::make_shared<ReplayCallbackArg>(
         std::move(childSubject), argAncestry, walkFacts, chainCursor,
         outerContext, decisionGraph, rootFSRoot, state);
-    if (validateAgainstAmbientAsks)
-        child->withAmbientAsksValidation();
     child->withArgCell(argCell);
     if (applyDepth && applyArgAncestry)
         child->withApplyContext(*applyDepth, *applyArgAncestry);
@@ -625,7 +569,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    — matching the writer's flushAmbient ambient
                    loop at index 1 (= position after `logAmbientApplyFact`'s
                    fact in the boundary). */
-                synthetic->withAmbientAsksValidation();
+                /* AmbientAsks validation removed (task #109). */
                 /* Propagate apply context so a nested cb-higher-order
                    case (= the apply result is itself a function whose
                    `toValueOrProxy` builds another `<replay-local-lambda>`
@@ -657,10 +601,7 @@ std::optional<FunctionInfo> ReplayCallbackArg::getFunctionInfo()
     trace::QueryGetFunctionInfo query{std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, outerContext, obsSetResponses);
-    if (validateAgainstAmbientAsks)
-        advanceChainAndAppendFact(decisionGraph, query, fromStateHash, rJson, *walkFacts, *chainCursor);
-    else
-        appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
+    appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     trace::ResultFunctionInfo r = rJson;
     if (!r.hasInfo)
         return std::nullopt;

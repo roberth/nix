@@ -411,10 +411,7 @@ void TracingWriter::flushAmbient(bool processApplies)
 
             auto toFactSet = TracingDecisionGraph::xorFactIntoHash(
                 cumulativeFactSet, queryHash, responseHash);
-            if (withAmbientAsks) {
-                auto requestSet = decisionGraph->insertRequestSet({queryHash});
-                decisionGraph->insertAmbientAsk(cumulativeFactSet, requestSet, toFactSet);
-            }
+            (void) withAmbientAsks;
 
             ObservationSet edge;
             auto elementHash = TracingDecisionGraph::xorFactIntoHash(

@@ -264,15 +264,6 @@ public:
        transition by live dispatch.
        ───────────────────────────────────────────────────────────────── */
 
-    /* Insert a ambient layer Asks edge: at `fromFactSet`, dispatching
-       `requestSet` and observing the recorded responses lands at
-       `toFactSet`. Idempotent on (fromFactSet, requestSet). */
-    void insertAmbientAsk(const SetHash & fromFactSet, const SetHash & requestSet, const SetHash & toFactSet);
-
-    /* Look up ambient layer outgoing edges at `fromFactSet`. Returns a
-       list of (requestSetHash, toFactSetHash) pairs. */
-    std::vector<std::pair<SetHash, SetHash>> getAmbientAsks(const SetHash & fromFactSet);
-
     /* Subject-evolution fast-path: insert a per-subject observation trie edge. Cold
        records each fold step encountered during stateHashAt:
        subject S at running state `cur`, seeing observation
