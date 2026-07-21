@@ -113,10 +113,45 @@ class TracingWriter
     TracingDecisionGraph::SetHash prevQFactSetHash{TracingDecisionGraph::emptySetHash()};
     struct AsksEdgeRecord
     {
+        /** The Q this edge belongs to, at the moment the observation
+            was recorded. Under Q evolution, subsequent observations in
+            the same walk may have a different (evolved) Q. */
+        Hash q{HashAlgorithm::SHA256};
         TracingDecisionGraph::SetHash fromFactSetHash;
         TracingDecisionGraph::SetHash requestSetHash;
     };
     std::vector<AsksEdgeRecord> envAsksEdges;
+
+    /** Per-active-query state. Each `logQuery` pushes; each `logResult`
+        pops. LIFO nesting matches the evaluator's Q hierarchy (parent
+        Q's evaluation triggers child Q's logQuery inside). Observations
+        that fire while a Q is active are attributed to that Q's
+        current `currentQ`. When an observation folds into `envWalk`
+        and evolves the fromSubject's state hash, the writer re-derives
+        `currentQ` (by updating the payload's `from` field and re-
+        hashing). Subsequent Ask edges land at the new `currentQ`, and
+        `logResult` inserts Terminal at the final `currentQ`. */
+    struct ActiveQuery
+    {
+        /** Current Q hash, updated on each observation that evolves the
+            fromSubject's state. */
+        Hash currentQ{HashAlgorithm::SHA256};
+        /** Q's serialisable payload. `from` gets rewritten as the
+            fromSubject's state evolves; re-hashing gives `currentQ`. */
+        nlohmann::json payloadTemplate;
+        /** Subject that Q's `from` field's state hash is derived from.
+            Not set for root queries or queries whose from is a fixed
+            hash (state does not evolve for those). */
+        std::optional<Subject> fromSubject;
+        /** argAncestry for `stateHashAt(fromSubject, ..., envWalk, ...)`. */
+        Hash fromSubjectArgAncestry{HashAlgorithm::SHA256};
+        /** Cached fromSubject state hash at last recomputation; used to
+            detect changes without re-hashing Q every observation. */
+        Hash fromSubjectLastState{HashAlgorithm::SHA256};
+        /** Parent Q's terminalCur, for the walker's structural anchor. */
+        std::optional<TracingDecisionGraph::SetHash> structuralParentFactSetHash;
+    };
+    std::vector<ActiveQuery> activeQueryStack;
     /* Mirrors `seenRequests` but keyed by query hash, not fact hash.
        record()'s slow path iterates this to build the trailing
        remaining-edge — an Asks edge's requestSet is a set of query
@@ -261,8 +296,9 @@ public:
     };
 
     /**
-     * Log a root query (evalFile, evalExpr, apply).
-     * Returns (valueHandle, queryHandle) so the caller can pass queryHandle to logResult.
+     * Log a root query (evalFile, evalExpr, apply). Root queries have
+     * no evolving from-subject, so `activeQueryStack` records the Q
+     * as fixed.
      */
     template<typename Q>
     std::pair<ValueHandle, QueryHandle> logRootQuery(const Q & query)
@@ -276,16 +312,26 @@ public:
             "writer logRootQuery: Q=%s queryJSON=%s",
             queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
             qj.dump());
+        ActiveQuery aq;
+        aq.currentQ = queryHash;
+        aq.payloadTemplate = qj;
+        activeQueryStack.push_back(std::move(aq));
         return {valueNum, {queryHash}};
     }
 
     /**
-     * Log a query on an existing value (getAttr, getString, etc.).
-     * The query's `from` field must contain the parent's queryHash
-     * (Merkle identity).
+     * Log a query on an existing value (getAttr, getString, etc.). If
+     * `fromSubject` is provided, the writer will re-derive Q's `from`
+     * field after each observation that evolves that subject's state
+     * hash, and Ask/Terminal rows for this Q will be keyed on the
+     * evolved Q at each step (per task #110 Q-evolution protocol).
      */
     template<typename Q>
-    std::pair<ValueHandle, QueryHandle> logQuery(const Q & query, const std::optional<TriePosition> & parent)
+    std::pair<ValueHandle, QueryHandle> logQuery(
+        const Q & query,
+        const std::optional<TriePosition> & parent,
+        std::optional<Subject> fromSubject = std::nullopt,
+        Hash fromSubjectArgAncestry = Hash(HashAlgorithm::SHA256))
     {
         auto valueNum = sink.logQuery(query);
         if (!decisionGraph)
@@ -299,6 +345,19 @@ public:
         QueryHandle qh{queryHash};
         if (parent)
             qh.structuralParentFactSetHash = parent->factSetHash;
+        Hash lastState(HashAlgorithm::SHA256);
+        if (fromSubject) {
+            lastState = stateHashAt(
+                *fromSubject, fromSubjectArgAncestry, envWalk, envWalk.size());
+        }
+        ActiveQuery aq;
+        aq.currentQ = queryHash;
+        aq.payloadTemplate = qj;
+        aq.fromSubject = std::move(fromSubject);
+        aq.fromSubjectArgAncestry = fromSubjectArgAncestry;
+        aq.fromSubjectLastState = lastState;
+        aq.structuralParentFactSetHash = qh.structuralParentFactSetHash;
+        activeQueryStack.push_back(std::move(aq));
         return {valueNum, qh};
     }
 
@@ -336,16 +395,18 @@ public:
         sessionRequestsTrie.insert(queryHash);
         allRequestHashes.insert(queryHash);
         auto requestSetHash = decisionGraph->insertRequestSet({queryHash});
-        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-        /* Push envWalk with the fact's observation (fromHash=0 since
-           file/env reads don't attribute to any Subject). Walker's
-           dispatch of this Ask returns the same responseHash live,
-           folds elementHash into cur — walker's envWalk push would
-           match on fingerprint if it happened. Since walker's
-           commitEdge skips empty pushes (and file/env dispatch
-           pushes no pendingEdgeObservations), walker's envWalk is
-           shorter here; that's harmless because these observations
-           have fromHash=0 and fold into no Subject's own-loop. */
+        /* Task #110: insert Ask under every active Q. File/env reads
+           still contribute to any active Q's chain (walker walking Q
+           must dispatch them along with the other observations). */
+        for (auto & aq : activeQueryStack) {
+            decisionGraph->insertAsk(aq.currentQ, prevQFactSetHash, requestSetHash);
+        }
+        Hash edgeQ = activeQueryStack.empty()
+            ? Hash(HashAlgorithm::SHA256)
+            : activeQueryStack.back().currentQ;
+        envAsksEdges.push_back({edgeQ, prevQFactSetHash, requestSetHash});
+        /* File/env reads have fromHash=0 and thus don't evolve any
+           subject's state hash — no Q evolution triggered here. */
         ObservationSet obsSet;
         obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
         envWalk.push_back(std::move(obsSet));
@@ -485,9 +546,16 @@ public:
             envFactSetHash, request, response);
         sessionRequestsTrie.insert(request);
         allRequestHashes.insert(request);
-        /* Per-probe push (see logResponse for reasoning). */
+        /* Per-probe push (see logResponse for reasoning). Task #110:
+           insert Ask under every active Q. */
         auto requestSetHash = decisionGraph->insertRequestSet({request});
-        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+        for (auto & aq : activeQueryStack) {
+            decisionGraph->insertAsk(aq.currentQ, prevQFactSetHash, requestSetHash);
+        }
+        Hash edgeQ = activeQueryStack.empty()
+            ? Hash(HashAlgorithm::SHA256)
+            : activeQueryStack.back().currentQ;
+        envAsksEdges.push_back({edgeQ, prevQFactSetHash, requestSetHash});
         ObservationSet obsSet;
         obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
         envWalk.push_back(std::move(obsSet));
@@ -602,28 +670,29 @@ public:
     }
 
     /**
-     * Log a d=0 Result. Records (Q, current factSet) -> Result in
-     * the decision graph and returns a TriePosition for use by
-     * child queries.
+     * Log a d=0 Result. Records (Q_final, current factSet) -> Result
+     * in the decision graph and returns a TriePosition for use by
+     * child queries. Under the Q-evolution protocol, Q_final is the
+     * activeQuery's `currentQ` after all this Q's observations have
+     * folded — which may differ from the Q hash returned at
+     * `logQuery` time.
      */
     template<typename R>
     std::optional<TriePosition> logResult(ValueHandle valueNum, const R & result, const QueryHandle & qh)
     {
         sink.logResult(valueNum, result);
 
-        if (!decisionGraph || !qh.queryHash)
+        if (!decisionGraph || !qh.queryHash) {
+            if (!activeQueryStack.empty())
+                activeQueryStack.pop_back();
             return std::nullopt;
+        }
 
         /* Process any pending ambient observations, finalise
-           buffered cb-apply boundaries (computing each one's
-           AmbientResult from its ambient chain and folding the
-           synthetic env apply Fact in), and close the trailing
-           Asks edge boundary. closeAsksEdge is also called at every
-           cb-apply inside a body run, but with
-           finalize=false; the ambient-driven AmbientResult computation
-           happens only here at logResult, since intermediate
-           splitFlushes can be interleaved with the apply's body
-           and the ambient chain may not be complete yet. */
+           buffered cb-apply cells, and close the trailing Asks edge
+           boundary. Any observations that fire during closeAsksEdge
+           still fold into envWalk and evolve the innermost
+           activeQuery's Q (via logOuterObservation). */
         closeAsksEdge(/*processApplies=*/ true);
 
         nlohmann::json j = result;
@@ -631,54 +700,39 @@ public:
         auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
         decisionGraph->insertResult(resultNodeHash, resultPayload);
 
-        /* envFactSetHash is maintained incrementally per fact; skip
-           insertFactSet's O(N log N) sort + fold. installFactSet
-           makes the members available to record() via getFactSet
-           without rebuilding the hash. responseFor + seenRequests
-           are passed by reference so record() doesn't re-build its
-           per-call lookup map and remaining set.
-
-           sessionRequestsTrie is maintained incrementally per fact and
-           gives us the canonical RequestSet root hash for the
-           current allRequests in O(1). Persist any unwritten nodes
-           and hand the root hash to record() as the precomputed RS
-           hash for the whole-remaining edge — record() can then
-           skip its insertRequestSet(remainingVec) call. */
         decisionGraph->installFactSet(envFactSetHash, envFactSet);
         sessionRequestsTrie.persist(*decisionGraph);
 
-        tracingCacheLog("logResult: Q=%s factSet=%s -> result (inserting %zu Asks edges)",
+        /* Task #110 Q-evolution: Ask edges have already been inserted
+           at observation time (per-active-Q, in logOuterObservation /
+           logResponse / closeAsksEdge). Just insert the Terminal at
+           this Q's final currentQ + envFactSetHash. */
+        Hash finalQ = activeQueryStack.empty()
+            ? *qh.queryHash
+            : activeQueryStack.back().currentQ;
+        tracingCacheLog("logResult: Q_initial=%s Q_final=%s factSet=%s -> result",
                         qh.queryHash->to_string(HashFormat::Base16, false).substr(0, 12),
-                        envFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                        envAsksEdges.size());
-        for (const auto & edge : envAsksEdges)
-            decisionGraph->insertAsk(*qh.queryHash, edge.fromFactSetHash, edge.requestSetHash);
+                        finalQ.to_string(HashFormat::Base16, false).substr(0, 12),
+                        envFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12));
+        decisionGraph->insertTerminal(finalQ, envFactSetHash, resultNodeHash);
 
-        /* If we have per-Q edges, skip the whole-remaining shortcut
-           so the walker walks them one by one (= each commit advances
-           ctx.step). Pass `allRequestHashes` (= query hashes),
-           not `seenRequests` (= fact hashes for XOR dedup); record()'s
-           slow path iterates this for its trailing remaining-edge.
+        /* Empty-envAsksEdges case (Q's evaluation produced no
+           observations that got attributed to it): still need an Ask
+           from the parent's terminalCur (or ∅) to this Terminal, so
+           the walker can find it via `startCur`. Insert a single
+           "empty" edge at (Q_final, startFactSetHash) with an empty
+           requestSet — the walker would treat this as "advance to
+           envFactSetHash without dispatching anything." Actually
+           there's no observation to advance by, so this only fires
+           when startFactSetHash == envFactSetHash, in which case
+           Terminal is directly reachable and no Ask edge is needed. */
 
-           startFactSetHash: parent Q's terminalCur (captured at
-           logQuery), or ∅ for root queries. Anchors this Q's Ask
-           chain at the "structural parent factSet" — the walker's
-           parentAnchor path (currentProxy.getTriePos().factSetHash)
-           lands on Q-labeled Asks there. */
-        auto startFactSetHash = qh.structuralParentFactSetHash.value_or(
-            TracingDecisionGraph::emptySetHash());
-        if (envAsksEdges.empty())
-            decisionGraph->record(*qh.queryHash, envFactSetHash, resultNodeHash,
-                responseFor, seenRequests, sessionRequestsTrie.rootHash(), startFactSetHash);
-        else
-            decisionGraph->record(*qh.queryHash, envFactSetHash, resultNodeHash,
-                responseFor, allRequestHashes, startFactSetHash);
+        if (!activeQueryStack.empty())
+            activeQueryStack.pop_back();
 
-        /* record() runs after all this Q's observations have been
-           folded; nothing else to do at this scope. */
         return TriePosition{
             .resultNodeHash = resultNodeHash,
-            .queryHashStr = qh.queryHash->to_string(HashFormat::Base16, false),
+            .queryHashStr = finalQ.to_string(HashFormat::Base16, false),
             .factSetHash = envFactSetHash,
         };
     }

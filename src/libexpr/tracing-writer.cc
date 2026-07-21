@@ -179,22 +179,65 @@ void TracingWriter::logOuterObservation(
     sessionRequestsTrie.insert(queryHash);
     allRequestHashes.insert(queryHash);
 
-    /* Per-probe Ask/envWalk push: single-observation ObservationSet
-       at a single-request Ask. Walker at replay dispatches this Ask's
-       one request, folds the response, advances cur by exactly this
-       observation's elementHash. Next probe's stamping (walker side)
-       sees the advanced envWalk and stamps its own request with the
-       evolved `from`. */
+    /* Per-probe Ask push. Task #110 Q-evolution: an observation
+       happening during Q's walk is part of Q's Ask chain — for EVERY
+       Q currently active on the stack. Parent Q's evaluation includes
+       child Q's observations too; each Q's chain must be complete for
+       the walker to follow it. Insert Ask immediately under every
+       active Q's currentQ.
+
+       Order per active Q: (1) record Ask at (Q_before-fold, cur_before),
+       (2) fold observation into cur/envWalk, (3) re-derive Q_after-fold
+       (see below). */
     auto requestSetHash = decisionGraph->insertRequestSet({queryHash});
-    envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+    for (auto & aq : activeQueryStack) {
+        decisionGraph->insertAsk(aq.currentQ, prevQFactSetHash, requestSetHash);
+    }
+    /* Retain envAsksEdges + envWalk for 1:1 alignment invariants used
+       elsewhere (fingerprint dedup, session bookkeeping). Each edge's
+       `q` is the innermost active Q, purely for logging. */
+    Hash edgeQ = activeQueryStack.empty()
+        ? Hash(HashAlgorithm::SHA256)
+        : activeQueryStack.back().currentQ;
+    envAsksEdges.push_back({edgeQ, prevQFactSetHash, requestSetHash});
     ObservationSet obsSet;
     obsSet.observations.push_back({fromStateHash, elementHash});
     envWalk.push_back(std::move(obsSet));
     tracingCacheLog(
-        "logOuterObservation: pushed Ask+envWalk from=%s (perQ=%zu env=%zu)",
+        "logOuterObservation: inserted Ask under %zu active Q(s) from=%s (env=%zu)",
+        activeQueryStack.size(),
         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
-        envAsksEdges.size(), envWalk.size());
+        envWalk.size());
     prevQFactSetHash = envFactSetHash;
+
+    /* Q evolution: after folding this observation into envWalk, if any
+       active Q's fromSubject state hash has changed, re-derive from
+       and re-hash Q. Subsequent observations attribute to the new Q. */
+    for (auto & aq : activeQueryStack) {
+        if (!aq.fromSubject)
+            continue;
+        auto newState = stateHashAt(
+            *aq.fromSubject, aq.fromSubjectArgAncestry, envWalk, envWalk.size());
+        if (newState == aq.fromSubjectLastState)
+            continue;
+        aq.fromSubjectLastState = newState;
+        auto newFromHex = newState.to_string(HashFormat::Base16, false);
+        if (aq.payloadTemplate.contains("params") && aq.payloadTemplate["params"].is_object()) {
+            auto & p = aq.payloadTemplate["params"];
+            if (p.contains("from"))
+                p["from"] = newFromHex;
+            if (p.contains("fromStateHashes") && p["fromStateHashes"].is_array()
+                && !p["fromStateHashes"].empty())
+                p["fromStateHashes"][0] = newFromHex;
+        }
+        auto newQ = hashString(HashAlgorithm::SHA256, aq.payloadTemplate.dump());
+        tracingCacheLog(
+            "Q-evolution: Q %s -> %s (fromSubject state %s)",
+            aq.currentQ.to_string(HashFormat::Base16, false).substr(0, 12),
+            newQ.to_string(HashFormat::Base16, false).substr(0, 12),
+            newState.to_string(HashFormat::Base16, false).substr(0, 12));
+        aq.currentQ = newQ;
+    }
 }
 
 void TracingWriter::flushAmbient(bool processApplies)
@@ -231,9 +274,16 @@ void TracingWriter::flushAmbient(bool processApplies)
        their requestHashes don't carry a `from` field. */
     if (!pendingNewRequests.empty()) {
         auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
-        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+        for (auto & aq : activeQueryStack) {
+            decisionGraph->insertAsk(aq.currentQ, prevQFactSetHash, requestSetHash);
+        }
+        Hash edgeQ = activeQueryStack.empty()
+            ? Hash(HashAlgorithm::SHA256)
+            : activeQueryStack.back().currentQ;
+        envAsksEdges.push_back({edgeQ, prevQFactSetHash, requestSetHash});
         envWalk.push_back({});  // 1:1 with envAsksEdges; empty is harmless for stateHashAt.
-        tracingCacheLog("finalize: final env Asks edge from=%s rs-size=%zu (perQ=%zu env=%zu)",
+        tracingCacheLog("finalize: final env Asks edge Q=%s from=%s rs-size=%zu (perQ=%zu env=%zu)",
+                        edgeQ.to_string(HashFormat::Base16, false).substr(0, 12),
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
                         envAsksEdges.size(),
@@ -263,9 +313,16 @@ void TracingWriter::closeAsksEdge(bool processApplies)
        Subject's state hash) so the 1:1 alignment holds. */
     if (!pendingNewRequests.empty()) {
         auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
-        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+        for (auto & aq : activeQueryStack) {
+            decisionGraph->insertAsk(aq.currentQ, prevQFactSetHash, requestSetHash);
+        }
+        Hash edgeQ = activeQueryStack.empty()
+            ? Hash(HashAlgorithm::SHA256)
+            : activeQueryStack.back().currentQ;
+        envAsksEdges.push_back({edgeQ, prevQFactSetHash, requestSetHash});
         envWalk.push_back({});  // 1:1 with envAsksEdges; empty is harmless for stateHashAt.
-        tracingCacheLog("closeAsksEdge: new Asks edge from=%s rs-size=%zu (perQ=%zu env=%zu)",
+        tracingCacheLog("closeAsksEdge: new Asks edge Q=%s from=%s rs-size=%zu (perQ=%zu env=%zu)",
+                        edgeQ.to_string(HashFormat::Base16, false).substr(0, 12),
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
                         envAsksEdges.size(),

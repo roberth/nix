@@ -140,7 +140,18 @@ trace::ResultWHNF & TracingObject::whnf()
     auto whnfResult = computeWHNFFromObject(*inner);
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetWHNF query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
+    /* Task #110: for probes on an applyResult (whose Subject is
+       ApplyResultSubject), pass the subject to logQuery so the writer
+       tracks Q's evolution as callback observations fold into the
+       subject's state hash. Non-applyResult TracingObjects have no
+       observation-driven subject evolution, so no subject is passed. */
+    std::optional<Subject> fromSubject;
+    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
+    if (applyResultSubject) {
+        fromSubject = *applyResultSubject;
+        fromSubjectArgAncestry = applyArgAncestry;
+    }
+    auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto tp = writer.logResult(valueId, whnfResult, qh);
     if (qh.queryHash && tp)
         pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
