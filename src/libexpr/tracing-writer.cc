@@ -206,7 +206,12 @@ void TracingWriter::logOuterObservation(
     envAsksEdges.push_back({edgeQ, prevQFactSetHash, requestSetHash});
     ObservationSet obsSet;
     obsSet.observations.push_back({fromStateHash, elementHash});
-    envWalk.push_back(std::move(obsSet));
+    envWalk.push_back(obsSet);
+    /* Task #110: append to innermost Q's perQEnvWalk. Session envWalk
+       stays 1:1-aligned with envAsksEdges for other bookkeeping. */
+    if (!activeQueryStack.empty()) {
+        activeQueryStack.back().perQEnvWalk.push_back(std::move(obsSet));
+    }
     tracingCacheLog(
         "logOuterObservation: inserted Ask under %zu active Q(s) from=%s (env=%zu)",
         activeQueryStack.size(),
@@ -214,18 +219,18 @@ void TracingWriter::logOuterObservation(
         envWalk.size());
     prevQFactSetHash = envFactSetHash;
 
-    /* Q evolution: after folding this observation into envWalk, if the
-       innermost active Q's fromSubject has evolved, re-derive Q's
-       from-field and re-hash. Only the innermost Q evolves (per fix
-       #1 — the observation attributes to it). Session envWalk is the
-       correct history: any observation on the fromSubject counts,
-       whether it happened during this Q's walk or an ancestor's. */
+    /* Q evolution: after folding this observation into the innermost
+       Q's perQEnvWalk, if its fromSubject has evolved, re-derive Q's
+       from-field and re-hash. Per-Q chain preserves same-shape
+       collapse: two Qs with the same fromSubject-initial-state and
+       the same own-chain evolve to the same finalQ regardless of
+       what other Qs did in the session. */
     if (!activeQueryStack.empty()) {
         auto & aq = activeQueryStack.back();
         if (aq.fromSubject) {
             auto newState = stateHashAt(
                 *aq.fromSubject, aq.fromSubjectArgAncestry,
-                envWalk, envWalk.size());
+                aq.perQEnvWalk, aq.perQEnvWalk.size());
             if (newState != aq.fromSubjectLastState) {
                 aq.fromSubjectLastState = newState;
                 auto newFromHex = newState.to_string(HashFormat::Base16, false);

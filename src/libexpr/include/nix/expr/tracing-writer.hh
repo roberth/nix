@@ -150,6 +150,15 @@ class TracingWriter
         Hash fromSubjectLastState{HashAlgorithm::SHA256};
         /** Parent Q's terminalCur, for the walker's structural anchor. */
         std::optional<TracingDecisionGraph::SetHash> structuralParentFactSetHash;
+        /** Task #110: per-Q chain observation history. Each observation
+            attributed to this Q (the innermost at that moment) appends
+            here. Q's `from` is derived from stateHashAt(fromSubject,
+            argAncestry, perQEnvWalk, perQEnvWalk.size()) — using THIS
+            Q's own chain, not session-wide observations from other Qs.
+            Preserves same-shape collapse: two same-shape Qs with the
+            same fromSubject-initial-state evolve to the same finalQ
+            because they see the same fold from their own chains. */
+        std::vector<ObservationSet> perQEnvWalk;
     };
     std::vector<ActiveQuery> activeQueryStack;
     /* Mirrors `seenRequests` but keyed by query hash, not fact hash.
