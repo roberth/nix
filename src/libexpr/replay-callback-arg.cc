@@ -73,22 +73,20 @@ static Hash stampPerArgFields(
    secondary source under the #103 redesign). */
 template<typename Q>
 static nlohmann::json readResponse(
-    TracingDecisionGraph & dg, const Q & query, const Hash & outerContext,
+    TracingDecisionGraph & dg, const Q & query,
     const std::shared_ptr<std::map<Hash, std::string>> & obsSetResponses = {})
 {
     auto reqHash = TracingDecisionGraph::computeQueryHash(query);
     tracingCacheLog(
-        "rlo: read %s from=%s reqHash=%s outerCtx=%s",
+        "rlo: read %s from=%s reqHash=%s",
         Q::tag, query.from.isStateHash() ? query.from.stateHash().substr(0, 12) : "<?>",
-        reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-        outerContext.to_string(HashFormat::Base16, false).substr(0, 12));
+        reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
     /* Under the #103 redesign, every ambient probe's response is
        carried in the CallbackApply query's `argObsSet` — the
        consumer at dispatch time populates `obsSetResponses` with
        that CAS content. No secondary storage. Miss here is a real
        error. */
     (void) dg;
-    (void) outerContext;
     if (obsSetResponses) {
         auto it = obsSetResponses->find(reqHash);
         if (it != obsSetResponses->end()) {
@@ -141,7 +139,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
 {
     trace::QueryGetAttr query{name, std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query, outerContext, obsSetResponses);
+    auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     trace::ResultMaybeType r = rJson;
     if (!r.type)
@@ -157,7 +155,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     }};
     auto child = std::make_shared<ReplayCallbackArg>(
         std::move(childSubject), argAncestry, walkFacts, chainCursor,
-        outerContext, decisionGraph, rootFSRoot, state);
+        decisionGraph, rootFSRoot, state);
     /* AmbientAsks validation removed (task #109). Children inherit
        the obsSet response source. */
     /* Inherit obsSet response source (task #103). Derived children
@@ -182,7 +180,7 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
         return *cachedWHNF;
     trace::QueryGetWHNF query{std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query, outerContext, obsSetResponses);
+    auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     cachedWHNF = rJson.get<trace::ResultWHNF>();
     return *cachedWHNF;
@@ -272,7 +270,7 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
 {
     trace::QueryGetListElem query{std::string{}, index};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query, outerContext, obsSetResponses);
+    auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     Subject childSubject{DerivedSubject{
         .parent = std::make_shared<const Subject>(subject),
@@ -281,7 +279,7 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
     }};
     auto child = std::make_shared<ReplayCallbackArg>(
         std::move(childSubject), argAncestry, walkFacts, chainCursor,
-        outerContext, decisionGraph, rootFSRoot, state);
+        decisionGraph, rootFSRoot, state);
     child->withArgCell(argCell);
     if (applyDepth && applyArgAncestry)
         child->withApplyContext(*applyDepth, *applyArgAncestry);
@@ -344,7 +342,6 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
     auto chainCursorSaved = chainCursor;
     auto applyDepthSaved = applyDepth;
     auto applyArgAncestrySaved = applyArgAncestry;
-    auto outerContextSaved = outerContext;
     /* Capture the resolver so the primop can register the live arg
        it receives (args[0]) as an outer-direction proxy. The OUTER
        walker dispatches env facts whose `from` references the cb-arg
@@ -380,7 +377,6 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                      walkFactsSaved, chainCursorSaved,
                      initialChainCursor, initialWalkFactsSize,
                      applyDepthSaved, applyArgAncestrySaved,
-                     outerContextSaved,
                      resolverSaved](
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
                 /* Publish the live arg under the cb-arg arg's
@@ -553,7 +549,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                 auto synthetic = std::make_shared<ReplayCallbackArg>(
                     std::move(syntheticSubject), mergedApplyScope,
                     localWalkFacts, localChainCursor,
-                    outerContextSaved, *dg, rootFSRootSaved, &state);
+                    *dg, rootFSRootSaved, &state);
                 /* Enable per-probe AmbientAsks validation. After the
                    `TracingCallbackApplyResult` writer change, the
                    apply-result observations live in the ambient chain
@@ -600,7 +596,7 @@ std::optional<FunctionInfo> ReplayCallbackArg::getFunctionInfo()
 {
     trace::QueryGetFunctionInfo query{std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query, outerContext, obsSetResponses);
+    auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     trace::ResultFunctionInfo r = rJson;
     if (!r.hasInfo)

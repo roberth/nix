@@ -74,17 +74,6 @@ class ReplayCallbackArg : public Object
        validated probe advances `*chainCursor` to the matched edge's
        toFactSet. */
     std::shared_ptr<Hash> chainCursor;
-    /* Walker's outer env fact-set state at the moment this ReplayCallbackArg
-       was constructed (= walker's cur before entering this cb-apply
-       boundary). Used as the InnerValueResponse lookup context so two
-       cb-applies of the same abstract fn+arg within one cached body
-       resolve to their respective recorded responses (cb-repeated-
-       cb-apply-diff-args's fix). Cold's insertInnerValueResponse writes
-       with writer.envFactSetHash at the matching moment; walker at
-       ReplayCallbackArg construction time receives its own outer
-       cur which — by lockstep growth of walker.envWalk with
-       writer.envWalk via the subject-evolution fast-path — equals cold's writer cur. */
-    Hash outerContext;
     TracingDecisionGraph & decisionGraph;
     ref<SourceRoot> rootFSRoot;
     /* EvalState used for primop construction in `defeatCache`. The
@@ -106,7 +95,7 @@ class ReplayCallbackArg : public Object
        (or before) InnerValueResponse. Populated by the walker's
        callbackApply dispatch from the CallbackApply's referenced
        observation set — each entry is (queryHash → CBOR response
-       payload). Independent of the boundary/contextHash mechanism. */
+       payload). */
     std::shared_ptr<std::map<Hash, std::string>> obsSetResponses;
 
     /* Memoized WHNF response. The recorder logs ONE QueryGetWHNF ambient
@@ -155,7 +144,6 @@ public:
         Hash scope_,
         std::shared_ptr<std::vector<ObservationSet>> walkFacts_,
         std::shared_ptr<Hash> chainCursor_,
-        Hash outerContext_,
         TracingDecisionGraph & dg,
         ref<SourceRoot> rootFSRoot,
         EvalState * state = nullptr)
@@ -164,7 +152,6 @@ public:
         , localId(stateHashAtSubject(subject, argAncestry, *walkFacts_, 0))
         , walkFacts(std::move(walkFacts_))
         , chainCursor(std::move(chainCursor_))
-        , outerContext(std::move(outerContext_))
         , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
 
     /** Set the proxy's argCell. Returns *this for chaining. */
@@ -207,8 +194,7 @@ public:
         this map first, decoding the CBOR payload as the response
         Result. Falls back to InnerValueResponse if the queryHash
         isn't in the map. Enables the CallbackApply walker's live
-        outer validation without the boundary/contextHash
-        machinery. */
+        outer validation. */
     ReplayCallbackArg & withObsSetResponses(
         std::shared_ptr<std::map<Hash, std::string>> map)
     {

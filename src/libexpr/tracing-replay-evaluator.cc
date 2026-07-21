@@ -727,12 +727,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
                        obsSet map, so any actual consumption will
                        miss and the caller will fall through to
                        inner re-eval. */
-                    Hash fallbackContextHash(HashAlgorithm::SHA256);
                     auto rlo = std::make_shared<ReplayCallbackArg>(
                         std::move(rootSubject), sidecarScope,
                         std::make_shared<std::vector<ObservationSet>>(),
                         std::make_shared<Hash>(HashAlgorithm::SHA256),
-                        fallbackContextHash, decisionGraph, inner->getEvalState().rootFSRoot,
+                        decisionGraph, inner->getEvalState().rootFSRoot,
                         &inner->getEvalState());
                     rlo->withAmbientAsksValidation();
                     try {
@@ -938,10 +937,9 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
         Subject argSubject{Arg{ref.argDepth}};
         auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
         auto chainCursor = std::make_shared<Hash>(HashAlgorithm::SHA256);
-        Hash zeroContext(HashAlgorithm::SHA256);
         auto replayArg = std::make_shared<ReplayCallbackArg>(
             std::move(argSubject), argAncestry,
-            walkFacts, chainCursor, zeroContext,
+            walkFacts, chainCursor,
             decisionGraph, inner->getEvalState().rootFSRoot,
             &inner->getEvalState());
         replayArg->withObsSetResponses(obsSetMap);
