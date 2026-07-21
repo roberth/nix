@@ -227,18 +227,11 @@ void TracingWriter::flushAmbient(bool processApplies)
     if (!decisionGraph)
         return;
 
-    /* Pass A: insert deferred Requests at their natural keys. */
-    for (auto & req : pendingRequests) {
-        if (req.keyPlaceholder) {
-            /* Sidecar: keyPlaceholder is the local arg's
-               positional initial scope state id. Insert at that key. */
-            auto key = Hash::parseNonSRIUnprefixed(*req.keyPlaceholder, HashAlgorithm::SHA256);
-            decisionGraph->insertRequest(key, jsonToCborString(req.payload));
-        } else {
-            /* Apply Q: key = hash of payload itself. */
-            auto key = hashString(HashAlgorithm::SHA256, req.payload.dump());
-            decisionGraph->insertRequest(key, jsonToCborString(req.payload));
-        }
+    /* Pass A: insert deferred Requests at their natural keys
+       (= hash of the payload). */
+    for (auto & payload : pendingRequests) {
+        auto key = hashString(HashAlgorithm::SHA256, payload.dump());
+        decisionGraph->insertRequest(key, jsonToCborString(payload));
     }
     pendingRequests.clear();
 

@@ -553,41 +553,25 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
 
     auto reqPayload = decisionGraph.getRequestPayload(idHash);
     if (!reqPayload) {
-        /* "Not in pool" means the id has no recorded provenance — no
-           producer Request and no localArg sidecar. Such ids are
-           OUTER-direction by elimination: an inner local's argSubject is
-           always sidecar-registered by OuterResolver::apply (=
-           inserting `{kind: "localArg", applyResultId: ...}` at the
-           argSubject), and any derived value has a producer Request. Only
-           outer-arg state hashes minted by makeCachedFnPrimOp.impl — e.g.
-           a nested OuterObject for the int the callback body passes
-           to inner_lambda in cb-higher-order's `g 10` — reach here.
+        /* "Not in pool" means the id has no producer Request. Such
+           ids are OUTER-direction by elimination — outer-arg state
+           hashes minted by makeCachedFnPrimOp.impl, e.g. a nested
+           OuterObject for the int the callback body passes to
+           inner_lambda in cb-higher-order's `g 10`.
 
            Live-proxy fallback: the `<replay-local-lambda>` primop
            registers the args[0] it receives under the cb-arg arg's
-           initial state hash when fired (= registerAmbientResolverProxy in
-           replay-callback-arg.cc). If we find a matching registration
-           here, the OUTER walker resolves to that live proxy and
-           dispatches the env fact live against outer's actual value
-           — capability-mediated, not cached. This closes the arg-
-           resolution gap that otherwise kills cb-higher-order's
-           DISALLOW_PARSE warm-replay steps.
+           initial state hash when fired (= registerAmbientResolverProxy
+           in replay-callback-arg.cc). If we find a matching
+           registration here, the OUTER walker resolves to that live
+           proxy and dispatches the env fact live against outer's
+           actual value — capability-mediated, not cached.
 
            Without a registration, fall through to nullptr. The via-
            Asks design forbids serving from the Responses pool for
-           OUTER values ("ambient responses are capability-mediated,
-           not cached" — primop doc §Replay semantics). Serving a
-           recorded outer response regardless of whether the live
-           outer would produce it silently masks outer-body change
-           (cb-higher-order step 3 returning stale 6 when outer
-           changed from `g 5` to `g 10`).
-
-           INNER locals are unaffected: their sidecar presence
-           routes them via `chaseLocalArgSidecar`, and
-           `resolveApplyId` with explicit `isLocalArgId`
-           discrimination materialises their ReplayCallbackArg
-           backed by the obsSet CAS. The forbidden thing is treating
-           an OUTER-direction id as if it were a local. */
+           OUTER values — silently masks outer-body change (cb-
+           higher-order step 3 returning stale 6 when outer changed
+           from `g 5` to `g 10`). */
         if (auto resolver = inner->getAmbientResolver()) {
             if (auto live = tryResolveAmbientResolverProxy(*resolver, idHash, envWalk, &decisionGraph)) {
                 tracingCacheLog(
@@ -611,15 +595,6 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
         return nullptr;
     }
 
-    if (reqJson.contains("kind") && reqJson["kind"] == "localArg") {
-        tracingCacheLog("resolve %s: localArg sidecar", idStr.substr(0, 12));
-        auto applyResultIdHex = reqJson["applyResultId"].get<std::string>();
-        resolveStateHash(applyResultIdHex, ctx);
-        if (auto it = ctx.memo.find(idStr); it != ctx.memo.end())
-            return it->second;
-        return nullptr;
-    }
-
     auto tag = reqJson["query"].get<std::string>();
     auto & params = reqJson["params"];
 
@@ -639,30 +614,11 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
     return resolveProducerChild(idStr, tag, params, ctx);
 }
 
-bool TracingReplayEvaluator::isLocalArgId(const Hash & idHash)
-{
-    auto reqPayload = decisionGraph.getRequestPayload(idHash);
-    if (!reqPayload)
-        return true;
-    try {
-        auto j = cborStringToJson(*reqPayload);
-        return j.contains("kind") && j["kind"] == "localArg";
-    } catch (const std::exception &) {
-        return true;
-    }
-}
-
-/* Local-direction: unknown id in the Requests pool — most commonly an
-   inner-side TracingCallbackArg's content-hash whose facts were emitted
-   with from=hex(id) but whose id itself isn't a producer Request.
-   Materialise a ReplayCallbackArg keyed by it; its methods read
-   recorded responses out of the CallbackApply's obsSet map, matching
-   what TracingCallbackArg wrote during recording. */
-/* Mixed direction: fn is Outer (resolved through the producer chain to
-   an OuterObject); arg may be Local (ReplayCallbackArg) or Outer (resolved
-   through chain). Invokes the apply live against fn and arg to
-   materialise the apply result; OuterObject::queryApply registers the
-   result in outerValues. */
+/* Resolve an "apply" producer's result by resolving fn + arg and
+   invoking fn.queryApply(arg) live. Arg resolution is uniform (via
+   resolveStateHash) — the historical localArg-sidecar special case
+   is gone: callback-arg observations ride in the CallbackApply
+   query's obsSet, not through producer-chain apply resolution. */
 std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx)
 {
@@ -672,96 +628,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
         return nullptr;
     }
     auto argIdStr = params["arg"].get<std::string>();
-    Hash argHash{HashAlgorithm::SHA256};
-    try {
-        argHash = Hash::parseNonSRIUnprefixed(argIdStr, HashAlgorithm::SHA256);
-    } catch (const std::exception &) {
-        return nullptr;
-    }
-    std::shared_ptr<Object> argObj;
-    if (isLocalArgId(argHash)) {
-        /* The cb apply's local arg. Read the localArg sidecar to
-           source the cb-arg's structural subject (depth + argAncestry)
-           and construct the ReplayCallbackArg with `Arg{depth}`
-           — matching the recorder's TracingCallbackArg subject.
-
-           Do NOT use `PostulatedIdempotentRead{localId}` here.
-           `PostulatedIdempotentRead`'s state hash is constant in `k`
-           (= no own-loop evolution), so once the ReplayCallbackArg's first
-           probe extends the chain, every subsequent probe's
-           `stampPerArgFields` reads back `localId` instead of the
-           subject-id-evolved state hash the recorder stamped its facts
-           against. The recorded reqHashes then can't be found in the
-           obsSet map → cb-sibling fails with
-           "no recorded response for getType on local". Both
-           sibling cb-applies share the same first probe's stamped
-           reqHash regardless of subject (= at step=0,
-           Arg and PostulatedIdempotentRead both yield `localId`),
-           which is why this bug stayed latent until cb-sibling
-           landed: it's the first test that needs the ReplayCallbackArg's
-           state hash to *evolve* via subsequent probes for downstream
-           discrimination.
-
-           Opt into ambient layer per-probe validation (= each probe
-           must appear in some recorded AmbientAsks edge's
-           requestSet, or we throw divergence) and root the chain
-           at applyReqHash — different cb-applies' chains live in
-           disjoint AmbientAsks subtrees; `idStr` IS this apply's
-           chain root. */
-        auto sidecarPayload = decisionGraph.getRequestPayload(argHash);
-        std::shared_ptr<Object> replayObj;
-        if (sidecarPayload) {
-            try {
-                auto sidecarJson = cborStringToJson(*sidecarPayload);
-                if (sidecarJson.contains("depth") && sidecarJson.contains("argAncestry")) {
-                    auto sidecarDepth = sidecarJson["depth"].get<int>();
-                    auto sidecarScope = Hash::parseNonSRIUnprefixed(
-                        sidecarJson["argAncestry"].get<std::string>(), HashAlgorithm::SHA256);
-                    Subject rootSubject{Arg{sidecarDepth}};
-                    /* Pre-emptive ReplayCallbackArg constructed
-                       during memo-cache resolveStateHash. Under the
-                       #103 redesign the ReplayCallbackArg reads
-                       from a per-firing obsSet map populated at
-                       CallbackApply dispatch, not from a persistent
-                       response store — this pre-emptive path has no
-                       obsSet map, so any actual consumption will
-                       miss and the caller will fall through to
-                       inner re-eval. */
-                    auto rlo = std::make_shared<ReplayCallbackArg>(
-                        std::move(rootSubject), sidecarScope,
-                        std::make_shared<std::vector<ObservationSet>>(),
-                        std::make_shared<Hash>(HashAlgorithm::SHA256),
-                        decisionGraph, inner->getEvalState().rootFSRoot,
-                        &inner->getEvalState());
-                    rlo->withAmbientAsksValidation();
-                    try {
-                        rlo->withChainStart(
-                            Hash::parseNonSRIUnprefixed(idStr, HashAlgorithm::SHA256));
-                    } catch (const std::exception &) {
-                        /* idStr should be a valid hex hash here; if not,
-                           leave chainCursor at its default
-                           (emptySetHash) — the history will fail safely. */
-                    }
-                    rlo->withApplyContext(sidecarDepth, sidecarScope);
-                    replayObj = rlo;
-                    ctx.memo[argIdStr] = replayObj;
-                }
-            } catch (const std::exception &) {
-                /* Sidecar malformed — fall through to the PostulatedIdempotentRead
-                   fallback below. */
-            }
-        }
-        /* Missing or malformed sidecar = the recorder didn't supply
-           the depth/argAncestry needed to reconstruct the cb-arg's
-           Arg Subject. Signal resolution failure so the
-           caller falls through to inner re-eval. The previous
-           PostulatedIdempotentRead fallback violated principle 8's corollary
-           (= observation-driven evolution) and produced a ReplayCallbackArg
-           whose discrimination was frozen at step=0. */
-        argObj = replayObj;
-    } else {
-        argObj = resolveStateHash(argIdStr, ctx);
-    }
+    auto argObj = resolveStateHash(argIdStr, ctx);
     if (!argObj)
         return nullptr;
     ctx.memo[argIdStr] = argObj;

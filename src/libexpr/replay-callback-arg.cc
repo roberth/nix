@@ -13,17 +13,6 @@
 
 namespace nix {
 
-ReplayCallbackArg & ReplayCallbackArg::withChainStart(Hash root)
-{
-    *chainCursor = std::move(root);
-    /* AmbientAsks removed (task #109) — validation via chain traversal
-       is no longer supported. obsSet CAS is the sole validation surface:
-       probes constructed here must appear in the obsSet or readResponse
-       throws. */
-    validateAgainstAmbientAsks = false;
-    return *this;
-}
-
 /* Populate `query`'s per-arg fields (from, path, fromStateHashes) so its
    reqHash matches what the writer flushed for the corresponding
    recorder probe. Multi-root applies fill fromStateHashes[] with multiple

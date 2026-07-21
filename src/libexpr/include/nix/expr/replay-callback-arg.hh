@@ -83,12 +83,6 @@ class ReplayCallbackArg : public Object
        gc heap and the lambda capture holds onto the construction
        arguments by value. Threaded from `materialiseLocalStandin`. */
     EvalState * state;
-    /* When true, each Object-method call validates the probe against
-       the recorded AmbientAsks edges from ∅ — the ambient layer per-probe
-       check (= "did the outer probe the local in a recorded way?").
-       AmbientAsks removed (task #109) — flag stays false; kept for
-       ABI-stability while callers get cleaned up. */
-    bool validateAgainstAmbientAsks = false;
 
     /* Optional obsSet response source (task #103). When set, method
        responses are looked up in this map by queryHash instead of
@@ -116,10 +110,9 @@ class ReplayCallbackArg : public Object
         reference so callers can decode the payload by alternative. */
     const trace::ResultWHNF & whnf();
 
-    /* cb-arg apply context, sourced from the writer's localArg
-       sidecar. `applyDepth` = `localCell->depth` at the recorder's
-       OuterResolver::cb-apply. `applyArgAncestry` = the resolver's
-       callArgAncestry. Used by the lambda primop to compose nested
+    /* cb-arg apply context. `applyDepth` = `localCell->depth` at the
+       recorder's OuterResolver::cb-apply. `applyArgAncestry` = the
+       resolver's callArgAncestry. Used by the lambda primop to compose nested
        apply-result subjects matching the recorder's encoding (=
        `ApplyResultSubject{fn=this.subject, arg=Arg{depth+1}}`
        at `applyArgAncestry`). Inherited unchanged through derived
@@ -161,26 +154,12 @@ public:
         return *this;
     }
 
-    /** AmbientAsks validation removed (task #109). Method retained as
-        a no-op so callers compile until they're cleaned up. */
-    ReplayCallbackArg & withAmbientAsksValidation()
-    {
-        /* No-op: obsSet CAS is the sole validation surface. */
-        return *this;
-    }
-
-    /** Set the ambient chain's starting cursor. Kept for compatibility
-        with older code paths that still thread a chain root; the
-        cursor no longer drives AmbientAsks lookups. */
-    ReplayCallbackArg & withChainStart(Hash root);
-
     /** Set the cb-arg apply context (depth + argAncestry) so the lambda
         primop on this ReplayCallbackArg (or its derived children) can compose the
         nested apply-result's synthetic subject as
         `ApplyResultSubject{fn=this.subject, arg=Arg{depth+1}}`
-        with the proper argAncestry. Sourced from the writer's localArg
-        sidecar at the ReplayCallbackArg's localId. Derived children inherit
-        the parent's applyContext via the same setter. */
+        with the proper argAncestry. Derived children inherit the
+        parent's applyContext via the same setter. */
     ReplayCallbackArg & withApplyContext(int depth_, Hash scope_)
     {
         applyDepth = depth_;
@@ -209,9 +188,6 @@ public:
 
     std::optional<int> getApplyDepth() const { return applyDepth; }
     std::optional<Hash> getApplyScope() const { return applyArgAncestry; }
-
-    /** Whether per-probe validation is enabled for this proxy. */
-    bool hasAmbientAsksValidation() const { return validateAgainstAmbientAsks; }
 
     /** Current value of the ambient chain cursor. Read after the outer
         has finished probing the ReplayCallbackArg (= after fn->queryApply

@@ -276,36 +276,6 @@ std::shared_ptr<Object> OuterApply::run(
     if (innerWriter) {
         nlohmann::json applyJson = applyQuery;
         innerWriter->deferRequest(applyJson);
-        nlohmann::json localSidecar = {
-            {"kind", "localArg"},
-            {"applyResultId", resultId.to_string(HashFormat::Base16, false)},
-            /* Depth + argAncestry let the replay-side lambda primop compose
-               the synthetic apply-result subject as
-               `ApplyResultSubject{fn=this.subject, arg=Arg{depth+1}}`
-               with `argAncestry` — matching what the writer's recording
-               produced when OuterObject::queryApply built the apply
-               result's subject. Without these fields the synthetic
-               falls back to PostulatedIdempotentRead encoding which disagrees
-               with the recorder's encoding, breaking CAS reads of
-               the apply-result observations. */
-            {"depth", localCell->depth},
-            {"argAncestry", resolverHandle->callArgAncestry.to_string(HashFormat::Base16, false)},
-        };
-        /* getTypeLazy (not getType) avoids forcing self-referential
-           thunks like `args // { extra = true; }` where args is
-           defined in terms of the apply itself (= selfref-fn,
-           mkOverridable patterns in builtins-cache.sh). It returns
-           nThunk for unforced values, which we just don't record.
-           Also wrapped in try/catch because dispatch-time ReplayCallbackArg
-           may have no recorded type fact. */
-        try {
-            auto t = argObj->getTypeLazy();
-            if (t != nThunk)
-                localSidecar["localType"] = objectTypeToString(t);
-        } catch (...) {
-            /* Replay-side path or unrecorded — skip. */
-        }
-        innerWriter->deferRequest(localSidecar, argStateHashStr);
     }
 
     /* Task #108 Approach B: emit the callback-firing observation via

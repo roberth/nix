@@ -150,12 +150,7 @@ class TracingWriter
        hashes, not fact hashes. */
     std::unordered_set<Hash> allRequestHashes;
 
-    struct PendingRequest
-    {
-        nlohmann::json payload;
-        std::optional<std::string> keyPlaceholder;
-    };
-    std::vector<PendingRequest> pendingRequests;
+    std::vector<nlohmann::json> pendingRequests;
 
     /* Deferred cb-apply boundaries. createCallbackCell pushes a new
        entry with empty facts; logAmbientObservation appends probes to
@@ -662,19 +657,14 @@ public:
     }
 
     /**
-     * Defer a Requests-pool insert until logResult.
-     *
-     * OuterResolver::apply uses this to register the QueryApply
-     * Request and the localArg sidecar. At flush: if `keyPlaceholder`
-     * is set the insert key is that key (the local's state hash);
-     * otherwise the insert key is the hash of the payload (the apply
-     * Q's own queryHash).
+     * Defer a Requests-pool insert until logResult. Insert key is the
+     * hash of the payload (the apply Q's own queryHash).
      */
-    void deferRequest(nlohmann::json payload, std::optional<std::string> keyPlaceholder = std::nullopt)
+    void deferRequest(nlohmann::json payload)
     {
         if (!decisionGraph)
             return;
-        pendingRequests.push_back({std::move(payload), std::move(keyPlaceholder)});
+        pendingRequests.push_back(std::move(payload));
     }
 
     /**
