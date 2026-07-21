@@ -114,7 +114,19 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
                     Q::tag,
                     queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
                     qj.dump());
-    auto walkResult = evaluator.walk(queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this());
+    /* Task #110: pass Q's payload + applyResultSubject/argAncestry so
+       the walker re-derives Q's `from` as observations dispatch,
+       matching the writer's Q-evolution protocol. Non-applyResult
+       TracingReplayObjects pass nullopt subject → no evolution. */
+    std::optional<Subject> fromSubject;
+    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
+    if (applyResultSubject) {
+        fromSubject = *applyResultSubject;
+        fromSubjectArgAncestry = applyArgAncestry;
+    }
+    auto walkResult = evaluator.walk(
+        queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this(),
+        qj, std::move(fromSubject), fromSubjectArgAncestry);
     if (!walkResult) {
         tracingCacheLog("walker lookup: %s MISS Q=%s",
                         Q::tag,
@@ -140,7 +152,19 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
                     Q::tag,
                     queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
                     qj.dump());
-    auto walkResult = evaluator.walk(queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this());
+    /* Task #110: pass Q's payload + applyResultSubject/argAncestry so
+       the walker re-derives Q's `from` as observations dispatch,
+       matching the writer's Q-evolution protocol. Non-applyResult
+       TracingReplayObjects pass nullopt subject → no evolution. */
+    std::optional<Subject> fromSubject;
+    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
+    if (applyResultSubject) {
+        fromSubject = *applyResultSubject;
+        fromSubjectArgAncestry = applyArgAncestry;
+    }
+    auto walkResult = evaluator.walk(
+        queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this(),
+        qj, std::move(fromSubject), fromSubjectArgAncestry);
     if (!walkResult) {
         tracingCacheLog("walker lookup: %s MISS Q=%s",
                         Q::tag,

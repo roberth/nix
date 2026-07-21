@@ -350,7 +350,14 @@ public:
         /* Starting cur for the history. Defaults to ∅. Callers that
            have a structural anchor (= parent TracingReplayObject's terminalCur) can
            hand it in so the history starts at that lookup position. */
-        const SetHash & startCur = SetHash(HashAlgorithm::SHA256));
+        const SetHash & startCur = SetHash(HashAlgorithm::SHA256),
+        /* Task #110 Q-evolution: after each Ask edge commits (folding
+           its request/response into cur), the walker calls this hook
+           with the pre-fold Q, and it returns the post-fold Q. If Q
+           evolved (the caller's fromSubject state hash changed under
+           the walker's local envWalk), subsequent getTerminal/getAsks
+           lookups use the new Q. Default is identity (no evolution). */
+        const std::function<QueryHash(const QueryHash & preFoldQ)> & recomputeQ = {});
 
     /* Backward-compat overload: dispatch takes only the request. Used
        by unit tests that don't need edge context. */

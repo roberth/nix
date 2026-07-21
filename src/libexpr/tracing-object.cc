@@ -112,10 +112,18 @@ void TracingObject::pushObservation(const std::string & fromHex, const Hash & qu
 
 std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
 {
-    auto result = inner->maybeGetAttr(name);
+    /* Task #110: push ActiveQuery before forcing (see whnf() for
+       rationale). */
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetAttr query{name, parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
+    std::optional<Subject> fromSubject;
+    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
+    if (applyResultSubject) {
+        fromSubject = *applyResultSubject;
+        fromSubjectArgAncestry = applyArgAncestry;
+    }
+    auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
+    auto result = inner->maybeGetAttr(name);
     if (result) {
         trace::ResultMaybeType resJson{std::string("deferred")};
         auto childTriePos = writer.logResult(valueId, resJson, qh);
@@ -137,14 +145,11 @@ trace::ResultWHNF & TracingObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    auto whnfResult = computeWHNFFromObject(*inner);
+    /* Task #110: push ActiveQuery BEFORE forcing so that sub-
+       observations happening during computeWHNFFromObject attribute
+       to this Q's chain and evolve its fromSubject's state hash. */
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetWHNF query{parentHash};
-    /* Task #110: for probes on an applyResult (whose Subject is
-       ApplyResultSubject), pass the subject to logQuery so the writer
-       tracks Q's evolution as callback observations fold into the
-       subject's state hash. Non-applyResult TracingObjects have no
-       observation-driven subject evolution, so no subject is passed. */
     std::optional<Subject> fromSubject;
     Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
     if (applyResultSubject) {
@@ -152,6 +157,7 @@ trace::ResultWHNF & TracingObject::whnf()
         fromSubjectArgAncestry = applyArgAncestry;
     }
     auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
+    auto whnfResult = computeWHNFFromObject(*inner);
     auto tp = writer.logResult(valueId, whnfResult, qh);
     if (qh.queryHash && tp)
         pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
@@ -246,11 +252,17 @@ size_t TracingObject::getListSize()
 
 std::shared_ptr<Object> TracingObject::getListElem(size_t index)
 {
-    auto result = inner->getListElem(index);
-    auto type = result->getType();
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetListElem query{parentHash, index};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
+    std::optional<Subject> fromSubject;
+    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
+    if (applyResultSubject) {
+        fromSubject = *applyResultSubject;
+        fromSubjectArgAncestry = applyArgAncestry;
+    }
+    auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
+    auto result = inner->getListElem(index);
+    auto type = result->getType();
     trace::ResultType resJson{objectTypeToString(type)};
     auto childTriePos = writer.logResult(valueId, resJson, qh);
     if (qh.queryHash && childTriePos)
@@ -263,10 +275,16 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
 
 std::vector<std::string> TracingObject::getListOfStringsNoCtx()
 {
-    auto result = inner->getListOfStringsNoCtx();
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetListOfStrings query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
+    std::optional<Subject> fromSubject;
+    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
+    if (applyResultSubject) {
+        fromSubject = *applyResultSubject;
+        fromSubjectArgAncestry = applyArgAncestry;
+    }
+    auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
+    auto result = inner->getListOfStringsNoCtx();
     trace::ResultListOfStrings resJson{result};
     auto tp = writer.logResult(valueId, resJson, qh);
     if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
@@ -293,6 +311,9 @@ RootValue TracingObject::defeatCache()
 
 std::optional<FunctionInfo> TracingObject::getFunctionInfo()
 {
+    /* Note: getFunctionInfo doesn't use the Q-evolution swap because
+       inner->getFunctionInfo() is expected to not trigger callback
+       observations (it just inspects the function's formals). */
     auto result = inner->getFunctionInfo();
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetFunctionInfo query{parentHash};

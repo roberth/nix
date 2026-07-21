@@ -36,7 +36,12 @@ TracingReplayEvaluator::TracingReplayEvaluator(
 }
 
 std::optional<TracingReplayEvaluator::WalkResult>
-TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> currentProxy)
+TracingReplayEvaluator::walk(
+    const Hash & queryHash,
+    std::shared_ptr<Object> currentProxy,
+    std::optional<nlohmann::json> payloadTemplate,
+    std::optional<Subject> fromSubject,
+    Hash fromSubjectArgAncestry)
 {
     /* The entire history is VALIDATION of recorded state — any apply
        queries triggered through `fnObj->queryApply(...)` during
@@ -260,6 +265,33 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
         pendingEdgeObservations.clear();
     };
 
+    /* Task #110 Q-evolution: recomputeQ hook. After each Ask-edge
+       commit, if fromSubject is provided, re-derive Q's `from` field
+       using the walker's current envWalk state and re-hash the
+       payload. If Q evolved, the walker looks up subsequent
+       Ask/Terminal at the new Q. Matches the writer's per-observation
+       Q-evolution protocol. */
+    std::function<Hash(const Hash &)> recomputeQ;
+    if (payloadTemplate && fromSubject) {
+        recomputeQ = [payloadTemplate, fromSubject,
+                      fromSubjectArgAncestry, this](const Hash & preFoldQ) -> Hash {
+            auto newState = stateHashAt(
+                *fromSubject, fromSubjectArgAncestry, envWalk, envWalk.size());
+            auto newFromHex = newState.to_string(HashFormat::Base16, false);
+            nlohmann::json payload = *payloadTemplate;
+            if (payload.contains("params") && payload["params"].is_object()) {
+                auto & p = payload["params"];
+                if (p.contains("from"))
+                    p["from"] = newFromHex;
+                if (p.contains("fromStateHashes") && p["fromStateHashes"].is_array()
+                    && !p["fromStateHashes"].empty())
+                    p["fromStateHashes"][0] = newFromHex;
+            }
+            auto newQ = hashString(HashAlgorithm::SHA256, payload.dump());
+            return newQ;
+        };
+    }
+
     /* === Fast path (task #106) ===
        Session-cumulative: look up `getAsks(Q, envCur)` and walk that
        specific known trace lockstep, using session-scoped envWalk. On
@@ -277,7 +309,8 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
                 if (committed) commitEdge();
                 else commitRejected(useful);
             },
-            envCur);
+            envCur,
+            recomputeQ);
         if (walkHit) {
             auto payload = decisionGraph.getResultPayload(walkHit->resultHash);
             if (payload) {
@@ -347,13 +380,16 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
             if (committed) commitEdge();
             else commitRejected(useful);
         },
-        parentAnchor);
+        parentAnchor,
+        recomputeQ);
     if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
         walkHit = decisionGraph.walk(queryHash, dispatch,
             [&](bool committed, const std::vector<Hash> & useful) {
                 if (committed) commitEdge();
                 else commitRejected(useful);
-            });
+            },
+            TracingDecisionGraph::emptySetHash(),
+            recomputeQ);
     }
     if (!walkHit) {
         tracingCacheStats().misses++;
@@ -855,7 +891,13 @@ std::optional<std::pair<std::string, TriePosition>>
 TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentProxy)
 {
     auto queryHash = TracingDecisionGraph::computeQueryHash(query);
-    auto walkResult = walk(queryHash, std::move(currentProxy));
+    /* Task #110: pass Q's payload JSON so the walker can re-derive
+       Q's `from` field as observations dispatch. No subject is passed
+       from lookup()'s template path — probes with applyResultSubject
+       come through a different code path (TracingReplayObject) which
+       calls walk() directly with the appropriate subject. */
+    nlohmann::json payloadJson = query;
+    auto walkResult = walk(queryHash, std::move(currentProxy), std::move(payloadJson));
     if (!walkResult)
         return std::nullopt;
     tracingCacheLog("replay hit: %s", Q::tag);
