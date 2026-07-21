@@ -737,6 +737,70 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
     if (tag == "apply")
         return std::nullopt;
 
+    /* Task #110: QueryCallbackApply request. Materialise a
+       ReplayCallbackArg backed by the referenced ObservationSet,
+       resolve fn live (state-hash-equality routing through the
+       cell chain), invoke fn->queryApply(replayArg), return a
+       marker ResultType. Downstream probes on the callback's
+       returned value chain from this observation's queryHash+respHash
+       through the normal state-hash machinery. */
+    if (tag == "callbackApply") {
+        auto fnHex = params.at("fn").is_object()
+            ? params.at("fn").at("stateHash").get<std::string>()
+            : params.at("fn").get<std::string>();
+        auto obsSetHex = params.at("argObsSet").get<std::string>();
+        auto argAncestryHex = params.at("argAncestry").get<std::string>();
+        int argDepth = params.at("argDepth").get<int>();
+        Hash obsSetHash{HashAlgorithm::SHA256};
+        Hash argAncestry{HashAlgorithm::SHA256};
+        try {
+            obsSetHash = Hash::parseNonSRIUnprefixed(obsSetHex, HashAlgorithm::SHA256);
+            if (!argAncestryHex.empty())
+                argAncestry = Hash::parseNonSRIUnprefixed(argAncestryHex, HashAlgorithm::SHA256);
+        } catch (const std::exception &) {
+            return std::nullopt;
+        }
+        auto obsSet = decisionGraph.getObservationSet(obsSetHash);
+        if (!obsSet) {
+            tracingCacheLog(
+                "callbackApply: obsSet=%s not in pool — miss",
+                obsSetHex.substr(0, 12));
+            return std::nullopt;
+        }
+        auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
+        for (const auto & obs : *obsSet)
+            obsSetMap->emplace(obs.queryHash, obs.responsePayload);
+        auto fnObj = resolveStateHash(fnHex, ctx);
+        if (!fnObj) {
+            tracingCacheLog(
+                "callbackApply: resolveStateHash(fn=%s) miss",
+                fnHex.substr(0, 12));
+            return std::nullopt;
+        }
+        Subject argSubject{Arg{argDepth}};
+        auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
+        auto replayArg = std::make_shared<ReplayCallbackArg>(
+            std::move(argSubject), argAncestry,
+            walkFacts,
+            decisionGraph, inner->getEvalState().rootFSRoot,
+            &inner->getEvalState());
+        replayArg->withObsSetResponses(obsSetMap);
+        try {
+            auto resultObj = fnObj->queryApply(replayArg);
+            if (!resultObj)
+                return std::nullopt;
+            /* Result: a marker matching what the writer emitted. */
+            trace::ResultType resultJson{"callback"};
+            tracingCacheLog(
+                "callbackApply: HIT obsSet=%s argDepth=%d",
+                obsSetHex.substr(0, 12), argDepth);
+            return jsonToCborString(nlohmann::json(resultJson));
+        } catch (const std::exception & e) {
+            tracingCacheLog("callbackApply: fn->queryApply failed: %s", e.what());
+            return std::nullopt;
+        }
+    }
+
     if (!params.contains("from"))
         return std::nullopt;
 
