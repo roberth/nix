@@ -88,20 +88,8 @@ std::string TracingObject::evolvedQueryFrom() const
             edge.observations.push_back(obs);
             history.push_back(std::move(edge));
         }
-        /* Subject-evolution fast-path: emit fold-step stamps into SubjectEvolutionEdges
-           so walker can navigate subject's evolution edge-by-edge
-           rather than iterating K. Uses the subject's Merkle
-           content hash as the trie root key. */
-        Hash argSubjectHash = stateHashAt(
-            *applyResultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
-        auto evolved = stateHashAtStamping(
-            *applyResultSubject, applyArgAncestry, history, history.size(),
-            [&](const EvolutionStep & step) {
-                writer.insertSubjectEvolutionEdge(
-                    argSubjectHash, step.curBefore,
-                    step.obsFromHash, step.obsElementHash,
-                    step.curAfter);
-            });
+        auto evolved = stateHashAt(
+            *applyResultSubject, applyArgAncestry, history, history.size());
         auto hex = evolved.to_string(HashFormat::Base16, false);
         return hex;
     }

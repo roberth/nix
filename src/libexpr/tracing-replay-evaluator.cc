@@ -464,27 +464,21 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                         found = true;
                     }
                 }
-                /* Subject-evolution fast-path walker-side trie navigation for K > 0.
-                   Walker's current cur is its own hashed state (key);
-                   walker looks up (subject, cur, obs.from, obs.elem)
-                   in cold-recorded SubjectEvolutionEdges; if edge
-                   exists, folds obs.elem into edge accumulator.
-                   ObservationSet-scoped semantics (all obs in one edge check
-                   against edge-entry cur) preserved.
-                   Empirical: every previously-iterated K-match is
-                   also reached by trie navigation, so the loop's
-                   K dimension is unnecessary here. */
+                /* Per-edge K > 0 navigation: fold in only observations
+                   whose `fromHash` equals subject's current state (=
+                   observation was made against subject at cur).
+                   ObservationSet-scoped semantics (all obs in one edge
+                   check against edge-entry cur) preserved via
+                   `edgeAcc`. Under matching-until-divergence this is
+                   the same filter cold's writer used when stamping a
+                   fold step — no DB roundtrip needed. */
                 if (!found) {
-                    Hash argSubjectHash = stateHashAt(
-                        *subj, Hash(HashAlgorithm::SHA256), {}, 0);
                     Hash cur = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
                     for (const auto & edge : extendedWalkForMatch) {
                         if (found) break;
                         Hash edgeAcc(HashAlgorithm::SHA256);
                         for (const auto & obs : edge.observations) {
-                            auto next = decisionGraph.getSubjectEvolutionEdge(
-                                argSubjectHash, cur, obs.fromHash, obs.elementHash);
-                            if (next)
+                            if (obs.fromHash == cur)
                                 edgeAcc = TracingDecisionGraph::xorHashes(edgeAcc, obs.elementHash);
                         }
                         cur = TracingDecisionGraph::xorHashes(cur, edgeAcc);
@@ -492,26 +486,10 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                     }
                 }
                 /* Observation-permutation navigation, folded to its
-                   fixed point. Formerly a multi-round loop that
-                   checked the target at every round; instrumentation
-                   across the full cb-* + builtins-cache suite showed
-                   the loop fires once and its winning round equals
-                   the converged fixed point. Replaced with a single
-                   call to
-                   `stateHashConverged`, which is order- and
+                   fixed point. `stateHashConverged` is order- and
                    grouping-independent by construction: walker's
                    convergence value depends only on the SET of
-                   observations, not on edge boundaries. Cold's
-                   `stateHashAtStamping` stamps SubjectEvolutionEdges
-                   trie rows in the same order-invariant way when the
-                   subject's stamp state coincides with the fixed
-                   point — so both sides reach the same hash on the
-                   aligned pool without a per-round hash comparison.
-
-                   The former loop is preserved semantically because
-                   `stateHashConverged` iterates the same greedy
-                   partition internally, but the caller no longer sees
-                   intermediate rounds — the search is a single call.
+                   observations, not on edge boundaries.
 
                    Handles the permuted-order case (cb-385's 5-round
                    evolution): where walker's envWalk carries the

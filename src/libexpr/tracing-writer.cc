@@ -96,16 +96,8 @@ void TracingWriter::logOuterObservation(
     std::vector<trace::QueryLeaf> fromStateHashes;
     fromStateHashes.reserve(roots.size());
     for (auto & root : roots) {
-        Hash rootSelfHash = stateHashAt(
-            root, Hash(HashAlgorithm::SHA256), {}, 0);
-        auto cid = stateHashAtStamping(
-            root, argAncestry, envWalk, envWalk.size(),
-            [&](const EvolutionStep & step) {
-                insertSubjectEvolutionEdge(
-                    rootSelfHash, step.curBefore,
-                    step.obsFromHash, step.obsElementHash,
-                    step.curAfter);
-            });
+        auto cid = stateHashAt(
+            root, argAncestry, envWalk, envWalk.size());
         fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
     }
     std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].stateHash();
@@ -345,17 +337,8 @@ void TracingWriter::flushAmbient(bool processApplies)
             std::vector<trace::QueryLeaf> fromStateHashes;
             fromStateHashes.reserve(roots.size());
             for (auto & root : roots) {
-                /* Subject-evolution fast-path: stamp SubjectEvolutionEdges via hook. */
-                Hash rootSelfHash = stateHashAt(
-                    root, Hash(HashAlgorithm::SHA256), {}, 0);
-                auto cid = stateHashAtStamping(
-                    root, pf.argAncestry, history, /*step=*/ i,
-                    [&](const EvolutionStep & step) {
-                        insertSubjectEvolutionEdge(
-                            rootSelfHash, step.curBefore,
-                            step.obsFromHash, step.obsElementHash,
-                            step.curAfter);
-                    });
+                auto cid = stateHashAt(
+                    root, pf.argAncestry, history, /*step=*/ i);
                 fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
             }
             std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].stateHash();

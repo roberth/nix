@@ -100,34 +100,14 @@ CREATE TABLE IF NOT EXISTS Terminal (
     PRIMARY KEY (queryHash, factSetHash, resultHash)
 ) WITHOUT ROWID;
 
--- (per-subject observation trie). Cold-side stamps each
--- fold step encountered during stateHashAt so walker can
--- navigate subject's evolution as an edge-by-edge trie rather than
--- iterating K positions on its own history. Consumed by walker at
--- resolveStateHash's cell-loop K > 0 navigation.
---
--- Row semantics: `(subjectHash, curHash, obs*)` uniquely identifies
--- a fold step at cold record time. `nextCurHash` is what subject's
--- state hash becomes after folding this observation. Walker
--- reproduces the navigation by looking up its own current cur +
--- observation and following the recorded nextCur.
---
--- Not yet consumed on the walker side — this table lands as a
--- forward-compat schema entry so cold can begin populating and
--- future iterations can implement navigation without a schema
--- migration.
-CREATE TABLE IF NOT EXISTS SubjectEvolutionEdge (
-    subjectHash    BLOB NOT NULL,
-    curHash        BLOB NOT NULL,
-    obsFromHash    BLOB NOT NULL,
-    obsElementHash BLOB NOT NULL,
-    nextCurHash    BLOB NOT NULL,
-    PRIMARY KEY (subjectHash, curHash, obsFromHash, obsElementHash)
-) WITHOUT ROWID;
-
 -- Clean up indexes from earlier schema versions, if present.
 DROP INDEX IF EXISTS AsksByQF;
 DROP INDEX IF EXISTS TerminalsByQF;
+
+-- Clean up SubjectEvolutionEdge from earlier schema versions (walker-
+-- side per-subject observation trie replaced by a local `obs.fromHash
+-- == cur` check in resolveStateHash's K > 0 loop).
+DROP TABLE IF EXISTS SubjectEvolutionEdge;
 )sql";
 
 struct TracingDecisionGraph::State
@@ -147,10 +127,6 @@ struct TracingDecisionGraph::State
     SQLiteStmt insertTerminal, selectTerminal;
 
     /* (subject-evolution fast-path) — populated by cold's
-       stateHashAtStamping fold callback; consumed by
-       walker's inline trie navigation in resolveStateHash. */
-    SQLiteStmt insertSubjectEvolutionEdge, selectSubjectEvolutionEdge;
-
     /* In-memory caches of parsed sets and payloads. Populated lazily on
        first read or write so that subsequent operations within the same
        process avoid the SQLite round-trip and the CBOR decode.
@@ -398,14 +374,6 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
         "SELECT 1 FROM Ask WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
     state->countTerminals.create(state->db,
         "SELECT 1 FROM Terminal WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
-    state->insertSubjectEvolutionEdge.create(state->db,
-        "INSERT OR IGNORE INTO SubjectEvolutionEdge("
-        "subjectHash, curHash, obsFromHash, obsElementHash, nextCurHash) "
-        "VALUES (?, ?, ?, ?, ?)");
-    state->selectSubjectEvolutionEdge.create(state->db,
-        "SELECT nextCurHash FROM SubjectEvolutionEdge "
-        "WHERE subjectHash = ? AND curHash = ? "
-        "AND obsFromHash = ? AND obsElementHash = ?");
 }
 
 TracingDecisionGraph::~TracingDecisionGraph() = default;
@@ -1020,37 +988,6 @@ void TracingDecisionGraph::removeAsk(
     dg_bindBlob(use, dg_hashToBlob(factSet));
     dg_bindBlob(use, dg_hashToBlob(requestSet));
     use.exec();
-}
-
-void TracingDecisionGraph::insertSubjectEvolutionEdge(
-    const Hash & subjectHash, const Hash & curHash,
-    const Hash & obsFromHash, const Hash & obsElementHash,
-    const Hash & nextCurHash)
-{
-    auto state(_state->lock());
-    auto use = state->insertSubjectEvolutionEdge.use();
-    dg_bindBlob(use, dg_hashToBlob(subjectHash));
-    dg_bindBlob(use, dg_hashToBlob(curHash));
-    dg_bindBlob(use, dg_hashToBlob(obsFromHash));
-    dg_bindBlob(use, dg_hashToBlob(obsElementHash));
-    dg_bindBlob(use, dg_hashToBlob(nextCurHash));
-    use.exec();
-}
-
-std::optional<Hash>
-TracingDecisionGraph::getSubjectEvolutionEdge(
-    const Hash & subjectHash, const Hash & curHash,
-    const Hash & obsFromHash, const Hash & obsElementHash)
-{
-    auto state(_state->lock());
-    auto query = state->selectSubjectEvolutionEdge.use();
-    dg_bindBlob(query, dg_hashToBlob(subjectHash));
-    dg_bindBlob(query, dg_hashToBlob(curHash));
-    dg_bindBlob(query, dg_hashToBlob(obsFromHash));
-    dg_bindBlob(query, dg_hashToBlob(obsElementHash));
-    if (query.next())
-        return dg_blobToHash(query.getBlob(0));
-    return std::nullopt;
 }
 
 void TracingDecisionGraph::insertTerminal(

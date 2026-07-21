@@ -206,31 +206,6 @@ Hash stateHashAtSubject(const Subject & subject, const Hash & argAncestry, const
     (= step = history.size()). */
 Hash stateHashAfterSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history);
 
-/** Per-subject observation trie fold step, as consumed by the subject-evolution fast-path
-    stamping / navigation. Emitted by `stateHashAtStamping`
-    whenever an observation matches the subject's running state
-    and folds into it. The tuple `(curBefore, obsFromHash,
-    obsElementHash) → curAfter` is uniquely identifying — cold
-    stamps insert exactly the rows walker's navigation looks up. */
-struct EvolutionStep {
-    Hash curBefore;
-    Hash obsFromHash;
-    Hash obsElementHash;
-    Hash curAfter;
-};
-
-/** Variant of `stateHashAt` that emits a callback per fold
-    step. `stateHashAt` delegates to this with a no-op hook.
-    Cold's writer passes a callback that inserts each step into
-    `SubjectEvolutionEdges` (Subject-evolution stamping). Used only at cold
-    record time — walker doesn't call this variant. */
-Hash stateHashAtStamping(
-    const Subject & subject,
-    const Hash & argAncestry,
-    const std::vector<ObservationSet> & history,
-    size_t step,
-    const std::function<void(const EvolutionStep &)> & hook);
-
 /** Build the per-arg-encoded `QueryApply` payload for an apply-result
     subject at a given history edge index. The returned query's JSON
     hash equals `stateHashAt(applyResult, argAncestry, history, step)`,

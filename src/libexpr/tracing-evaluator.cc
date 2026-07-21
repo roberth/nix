@@ -426,17 +426,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        have caught up to writer.d1.size at cold sib B apply (= all
        of sib A's envAsksEdges traversed via prior v13Walks). */
     auto & d1Walk = writer.getD1CidasksWalk();
-    /* Subject-evolution fast-path: stamp SubjectEvolutionEdges via hook. */
-    Hash resultIdHash = stateHashAt(
-        resultSubject, Hash(HashAlgorithm::SHA256), {}, 0);
-    auto applyArgAncestryStateHash = stateHashAtStamping(
-        resultSubject, applyArgAncestry, d1Walk, d1Walk.size(),
-        [&](const EvolutionStep & step) {
-            writer.insertSubjectEvolutionEdge(
-                resultIdHash, step.curBefore,
-                step.obsFromHash, step.obsElementHash,
-                step.curAfter);
-        });
+    auto applyArgAncestryStateHash = stateHashAt(
+        resultSubject, applyArgAncestry, d1Walk, d1Walk.size());
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);

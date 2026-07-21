@@ -318,23 +318,6 @@ private:
     std::unordered_set<Hash> recordedQHashes;
 
 public:
-    /* Subject-evolution stamp: insert one SubjectEvolutionEdges row. Called
-       from cold's stateHashAtStamping hook callback at
-       fact-`from` construction sites. Immediate write (not
-       buffered) — Subject-evolution emissions per stateHashAt call are
-       bounded by the history length × observations per edge and are
-       infrequent enough that buffering isn't necessary. */
-    void insertSubjectEvolutionEdge(
-        const Hash & subjectHash, const Hash & curHash,
-        const Hash & obsFromHash, const Hash & obsElementHash,
-        const Hash & nextCurHash)
-    {
-        if (!decisionGraph)
-            return;
-        decisionGraph->insertSubjectEvolutionEdge(
-            subjectHash, curHash, obsFromHash, obsElementHash, nextCurHash);
-    }
-
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
         : sink(sink)
         , decisionGraph(decisionGraph)

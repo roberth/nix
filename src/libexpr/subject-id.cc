@@ -180,46 +180,6 @@ trace::QueryApply makeApplyResultQuery(
     return q;
 }
 
-Hash stateHashAtStamping(
-    const Subject & subject,
-    const Hash & argAncestry,
-    const std::vector<ObservationSet> & history,
-    size_t step,
-    const std::function<void(const EvolutionStep &)> & hook)
-{
-    /* Mirrors stateHashAt's fold logic, emitting one
-       EvolutionStep per matched observation. Subject-evolution walker will
-       navigate via a table stamped from these emissions.
-
-       Within a single history edge, all observations are matched
-       against the edge-entry state hash (not the accumulated
-       one). This means multiple observations in the same edge
-       fold into the SAME curBefore; the emitted `curAfter` is
-       curBefore XOR obs.elem (per-observation), not the
-       edge-cumulative fold. Subject-evolution walker will replicate this
-       edge-scoped semantics — cur updates at edge boundaries,
-       not per-observation. */
-    Hash result = stateHashAt(subject, argAncestry, history, step);
-    Hash argSubjectHash = stateHashAt(subject, Hash(HashAlgorithm::SHA256), {}, 0);
-    Hash selfFactFold = Hash(HashAlgorithm::SHA256);
-    for (size_t k = 0; k < step && k < history.size(); ++k) {
-        Hash myScopeStateIdAtK = TracingDecisionGraph::xorHashes(
-            stateHashAt(subject, argAncestry, history, k), Hash(HashAlgorithm::SHA256));
-        /* Above is `stateHashAt(subject, argAncestry, history, k)` —
-           subject's state at edge k's precondition. */
-        for (auto & obs : history[k].observations) {
-            if (obs.fromHash == myScopeStateIdAtK) {
-                Hash curAfter = TracingDecisionGraph::xorHashes(myScopeStateIdAtK, obs.elementHash);
-                if (hook)
-                    hook(EvolutionStep{myScopeStateIdAtK, obs.fromHash, obs.elementHash, curAfter});
-                selfFactFold = TracingDecisionGraph::xorHashes(selfFactFold, obs.elementHash);
-            }
-        }
-    }
-    (void) argSubjectHash;  /* Reserved for stamping the subject's Merkle key. */
-    return result;
-}
-
 Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step,
     std::source_location caller)
 {
