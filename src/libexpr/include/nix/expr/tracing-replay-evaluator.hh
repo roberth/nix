@@ -82,13 +82,8 @@ class TracingReplayEvaluator : public Evaluator
        which resets envWalk to per-walk (empty) scoping. */
     TracingDecisionGraph::SetHash envCur{TracingDecisionGraph::emptySetHash()};
 
-    /** applyReqHashes currently being driven by `dispatchApplyLive`.
-        Short-circuits walker re-entry while outer's-f-invocation is
-        still routed through TracingReplayEvaluator::apply. TODO:
-        drop once invocation goes through a path that doesn't re-enter
-        the env walker (= live Interpreter::apply against the
-        reconstructed value tree). */
-    std::unordered_set<TracingDecisionGraph::RequestHash> inFlightApplyReqs;
+    /* Historical inFlightApplyReqs (short-circuit for dispatchApplyLive
+       re-entry) removed with task #109 — dispatchApplyLive is gone. */
 
 
 
@@ -112,25 +107,9 @@ class TracingReplayEvaluator : public Evaluator
     bool isLocalArgId(const Hash & idHash);
     std::shared_ptr<Object> resolveApplyId(const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx);
 
-    /** ambient live AmbientResult computation for a cb-apply Fact
-        dispatch. Materialises a fresh ReplayCallbackArg rooted at
-        `applyReqHash`, invokes `fn->queryApply(ReplayCallbackArg)` live, then
-        FORCES the apply result (= via `getType()`) so outer's `f`
-        actually evaluates and drives probes against the ReplayCallbackArg
-        through `ExprFromObject`'s bridge thunk. Per-probe
-        `validateAgainstAmbientAsks` walks the recorded chain;
-        divergence throws and is caught here. Returns
-        `std::nullopt` on divergence so the env dispatch fails.
-
-        Returns the ReplayCallbackArg's terminal `chainCursor` — the
-        AmbientResult to fold into env cur as the cb-apply
-        Request's respHash. No memoisation: per via-Asks principle
-        9, each dispatch re-invokes fn fresh. */
-    std::optional<Hash> dispatchApplyLive(
-        const Hash & applyReqHash,
-        const nlohmann::json & params,
-        const Hash & walkerCur,
-        ResolutionContext & ctx);
+    /* dispatchApplyLive removed with task #109 — AmbientAsks-chain
+       driven live invocation is gone; callbackApply-slot path in
+       dispatchAmbientQuery is the sole live-fire mechanism. */
 
     std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx);
 

@@ -41,8 +41,9 @@ TracingReplayEvaluator::walk(const Hash & queryHash, std::shared_ptr<Object> cur
     /* The entire history is VALIDATION of recorded state — any apply
        queries triggered through `fnObj->queryApply(...)` during
        dispatch (resolveApplyId, navigatePath's Apply step,
-       dispatchApplyLive) re-route through `OuterObject::queryApply
-       → applyFn → OuterApply::run` and would each fire a fresh
+       callbackApply slot's live invocation) re-route through
+       `OuterObject::queryApply → applyFn → OuterApply::run` and
+       would each fire a fresh
        `createCallbackCell` on the writer if not suppressed. Each fresh
        boundary inflates `envWalk` with a redundant ε edge
        beyond the genuine cb-apply events the recorder already
@@ -777,225 +778,45 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     return resultObj;
 }
 
-std::optional<Hash> TracingReplayEvaluator::dispatchApplyLive(
-    const Hash & applyReqHash,
-    const nlohmann::json & params,
-    const Hash & walkerCur,
-    ResolutionContext & ctx)
+
+static trace::PathExpr parsePathFromParams(const nlohmann::json & params)
 {
-    if (provenanceEnabled())
-        recordProvenance(applyReqHash, "dispatchApplyLive-entry",
-                         {{"walkerCur", walkerCur.to_string(HashFormat::Base16, false)},
-                          {"params", params}});
-    /* contextHash is the walker's Env `cur` at the time the response
-       was recorded (vocab, "Ambient payload types and edges"). Here
-       that value is `walkerCur` — the boundary Ask edge's
-       `fromFactSetHash` supplied by the caller. Under principle 7's
-       1:1 alignment it equals the writer's `contextCur` at the
-       corresponding pending cb-apply. Cross-cached-call
-       disambiguation is handled upstream by `callArgAncestry` inside
-       `applyReqHash`. */
-    Hash boundaryContextHash = walkerCur;
-    auto fnIdStr = params["fn"].get<std::string>();
-    auto fnObj = resolveStateHash(fnIdStr, ctx);
-    if (!fnObj) {
-        tracingCacheLog(
-            "dispatchApplyLive: cannot resolve fn %s for applyReqHash=%s",
-            fnIdStr,
-            applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12));
-        return std::nullopt;
-    }
-
-    auto argIdStr = params["arg"].get<std::string>();
-    Hash argHash{HashAlgorithm::SHA256};
-    try {
-        argHash = Hash::parseNonSRIUnprefixed(argIdStr, HashAlgorithm::SHA256);
-    } catch (const std::exception &) {
-        tracingCacheLog(
-            "dispatchApplyLive: cannot parse arg id %s", argIdStr);
-        return std::nullopt;
-    }
-    if (!isLocalArgId(argHash)) {
-        tracingCacheLog(
-            "dispatchApplyLive: arg %s is not a local; no ambient ReplayCallbackArg to drive",
-            argIdStr.substr(0, 12));
-        return std::nullopt;
-    }
-
-    /* Cycle break (interim): the live invocation below can still
-       trigger walker re-entry through nested cached-fn impls (=
-       inside the cb body's `<cached-fn>` on a TracingCallbackArg). Until that path
-       is also rewired, short-circuit re-entries to chain root. */
-    if (!inFlightApplyReqs.insert(applyReqHash).second) {
-        tracingCacheLog(
-            "dispatchApplyLive: re-entry for applyReqHash=%s — return chain root",
-            applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12));
-        return applyReqHash;
-    }
-    struct InFlightGuard {
-        std::unordered_set<TracingDecisionGraph::RequestHash> & set;
-        Hash key;
-        ~InFlightGuard() { set.erase(key); }
-    } guard{inFlightApplyReqs, applyReqHash};
-
-    /* Fresh per-dispatch ReplayCallbackArg for the inner-supplied
-       value. Per via-Asks Replay (ambient layer): the walker reconstructs
-       the LocalObject as a live Nix Value tree (= lazily produced
-       from CAS atoms), hands it to outer's f, and lets f run
-       natively. For lambda LocalObjects, the `<replay-local-lambda>`
-       primop the ReplayCallbackArg produces consults AmbientAsks at apply-time.
-       Per-call discipline: each cb-apply Fact dispatch creates its
-       own ReplayCallbackArg; no ctx.memo lookup. */
-    /* Read the writer's localArg sidecar at argHash. depth+argAncestry are
-       required: the structural subject (= Arg{depth} at
-       argAncestry) evolves with observations on cb_arg the same way the
-       writer did, which is what makes the synthetic's apply-result
-       CAS reads find the recorded facts. */
-    auto sidecarPayload = decisionGraph.getRequestPayload(argHash);
-    if (!sidecarPayload)
-        throw Error(
-            "dispatchApplyLive: no localArg sidecar at argHash=%s",
-            argHash.to_string(HashFormat::Base16, false));
-    auto sidecarJson = cborStringToJson(*sidecarPayload);
-    auto sidecarDepth = sidecarJson["depth"].get<int>();
-    auto sidecarScope = Hash::parseNonSRIUnprefixed(
-        sidecarJson["argAncestry"].get<std::string>(), HashAlgorithm::SHA256);
-
-    Subject rootSubject{Arg{sidecarDepth}};
-    /* Sibling-discriminating walkFacts arg: inject walker's
-       currentProxy's applyContext observations into the ReplayCallbackArg's initial
-       history. Without this, ReplayCallbackArg's per-arg fields are computed against
-       an empty history — so sibling A's ReplayCallbackArg and sibling B's ReplayCallbackArg have
-       identical state hashes at their initial `.x` / `.f` probes,
-       and the shared obsSet lookup would collapse them onto whichever
-       sibling recorded first, yielding cross-sibling data mixing
-       (cb-sibling-b's int-1000 result = sibling A's x=1 folded with
-       sibling B's f×1000). Injecting the current sibling's
-       applyContext obs makes the ReplayCallbackArg's state hashes
-       reflect the SPECIFIC sibling context walker is operating under. */
-    auto seededWalkFacts = std::make_shared<std::vector<ObservationSet>>();
-    if (auto * proxyTR = dynamic_cast<TracingReplayObject *>(ctx.currentProxy.get())) {
-        if (auto proxyCtx = proxyTR->getApplyContext()) {
-            for (auto & obs : proxyCtx->observations) {
-                ObservationSet edge;
-                edge.observations.push_back(obs);
-                seededWalkFacts->push_back(std::move(edge));
-            }
-        }
-    }
-    auto replayLocal = std::make_shared<ReplayCallbackArg>(
-        std::move(rootSubject), sidecarScope,
-        seededWalkFacts,
-        std::make_shared<Hash>(HashAlgorithm::SHA256),
-        boundaryContextHash, decisionGraph, inner->getEvalState().rootFSRoot,
-        &inner->getEvalState());
-    replayLocal->withApplyContext(sidecarDepth, sidecarScope);
-    replayLocal->withAmbientAsksValidation().withChainStart(applyReqHash);
-
-    /* Invoke outer's f LIVE via the Object-level apply entry. Object-
-       level apply preserves the ReplayCallbackArg replayLocal as an Object through
-       the bridging chain (= OuterObject::queryApply → applyFn →
-       resolver->apply → runOn sees argObj as the ReplayCallbackArg, NOT as an
-       InterpreterObject wrapping a primop Value). That is what lets
-       Change B's TracingCallbackArg-skip kick in and lets outer's `g 5` fire the
-       ReplayCallbackArg's primop directly instead of routing through a
-       `<cached-fn>(TracingCallbackArg)` cascade that bypasses the ambient lambda-LO
-       mechanism. The earlier Value-level `mkApp + force` path lost
-       the ReplayCallbackArg's Object-ness behind two layers of Value wrapping.
-       Divergence (= ambient layer mismatch thrown out of the ReplayCallbackArg's
-       primop, or an outer-side query failure) is caught and signaled
-       as nullopt — the surrounding walker treats this as a miss. */
-    std::shared_ptr<Object> resultObj;
-    try {
-        resultObj = fnObj->queryApply(replayLocal);
-    } catch (const std::exception & e) {
-        tracingCacheLog(
-            "dispatchApplyLive: divergence at queryApply for applyReqHash=%s: %s",
-            applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-            e.what());
-        return std::nullopt;
-    }
-    if (!resultObj) {
-        tracingCacheLog(
-            "dispatchApplyLive: queryApply returned null for applyReqHash=%s",
-            applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12));
-        return std::nullopt;
-    }
-    /* Force via getType so the apply result evaluates to WHNF; that
-       triggers outer's f.body running, which drives replayLocal's
-       probes. */
-    try {
-        (void) resultObj->getType();
-    } catch (const std::exception & e) {
-        tracingCacheLog(
-            "dispatchApplyLive: divergence forcing apply-result for applyReqHash=%s: %s",
-            applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-            e.what());
-        return std::nullopt;
-    }
-
-    auto ambientResult = replayLocal->getChainCursor();
-    tracingCacheLog(
-        "dispatchApplyLive: applyReqHash=%s AmbientResult=%s",
-        applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-        ambientResult.to_string(HashFormat::Base16, false).substr(0, 12));
-
-    /* Correctness-first cb-repeated fix: memoise the ReplayCallbackArg at
-       BOTH the arg leaf's evolved state hash (invariant across invocations
-       in the outer history — kept for chaseLocalArgSidecar-alignment)
-       AND at the fn leaf's evolved state hash at THIS invocation (which
-       DOES differ per invocation because arg(1)_evolved captures
-       the outer history's per-boundary ε folds). Cold's outer probe
-       recorded `from = fromStateHashes[0]` which is the FIRST root's cid;
-       for `applyResult(getAttr(arg(1), "cb"), arg(N))` that first
-       root is arg(1). So walker's dispatch of `getWHNF from=X`
-       calls resolveStateHash(X = arg(1)_evolved) — memoising a
-       correction here would break other arg(1) resolutions.
-
-       Instead memoise at BOTH the LEAF (arg root) and at the
-       applyResult subject's evolved cid, so any downstream lookup
-       via those cids finds THIS invocation's ReplayCallbackArg. Compute the
-       applyResult subject's evolved cid using fnObj's subject +
-       Arg{sidecarDepth} as arg. */
-    {
-        Subject argSubject{Arg{sidecarDepth}};
-        Hash evolvedLeafStateHash = stateHashAt(
-            argSubject, sidecarScope, envWalk, envWalk.size());
-        auto evolvedLeafStateHashHex = evolvedLeafStateHash.to_string(HashFormat::Base16, false);
-        ctx.memo[evolvedLeafStateHashHex] = replayLocal;
-        tracingCacheLog(
-            "dispatchApplyLive: memoised ReplayCallbackArg at leaf cid %s (history.size=%zu, boundaryContextHash=%s)",
-            evolvedLeafStateHashHex.substr(0, 12), envWalk.size(),
-            boundaryContextHash.to_string(HashFormat::Base16, false).substr(0, 12));
-
-        if (auto * fnSubj = fnObj->getSubject()) {
-            Subject applyResultSubj{ApplyResultSubject{
-                .fn = std::make_shared<const Subject>(*fnSubj),
-                .arg = std::make_shared<const Subject>(std::move(argSubject)),
-            }};
-            Hash applyArgAncestryForStateHash = fnObj->getArgAncestry();
-            Hash evolvedApplyResultStateHash = stateHashAt(
-                applyResultSubj, applyArgAncestryForStateHash, envWalk, envWalk.size());
-            auto evolvedApplyResultCidHex =
-                evolvedApplyResultStateHash.to_string(HashFormat::Base16, false);
-            ctx.memo[evolvedApplyResultCidHex] = replayLocal;
-            tracingCacheLog(
-                "dispatchApplyLive: memoised ReplayCallbackArg at applyResult cid %s (history.size=%zu)",
-                evolvedApplyResultCidHex.substr(0, 12), envWalk.size());
-        }
-    }
-    return ambientResult;
+    trace::PathExpr path;
+    if (params.contains("path"))
+        from_json(params.at("path"), path);
+    return path;
 }
 
-/* Outer-direction: derived child id whose producer Request is a
-   navigation step (getAttr / getListElem). Resolve parent through the
-   producer chain, then perform the live navigation step on it. */
-/* Per-arg path navigation with multi-root support. `roots` are the
-   live Objects corresponding to the query's `fromStateHashes[]` entries (=
-   each entry is a cb_arg's ReplayCallbackArg). The top-level path navigates
-   from `roots[0]`; Apply steps reach into `roots` by index via
-   their `fnRootIndex` / `argRootIndex` so higher-order applies (=
-   fn from one cb_arg, arg from another) work. */
+static std::vector<std::shared_ptr<Object>> resolveRoots(
+    const nlohmann::json & params,
+    std::function<std::shared_ptr<Object>(const std::string &)> resolve)
+{
+    std::vector<std::shared_ptr<Object>> roots;
+    if (params.contains("fromStateHashes")) {
+        for (auto & cid : params["fromStateHashes"]) {
+            std::string cidHex;
+            if (cid.is_string())
+                cidHex = cid.get<std::string>();
+            else if (cid.is_object() && cid.contains("content"))
+                cidHex = cid["content"].get<std::string>();
+            else
+                return {};
+            auto obj = resolve(cidHex);
+            if (!obj)
+                return {};
+            roots.push_back(std::move(obj));
+        }
+        return roots;
+    }
+    if (params.contains("from")) {
+        auto obj = resolve(params["from"].get<std::string>());
+        if (!obj)
+            return {};
+        roots.push_back(std::move(obj));
+    }
+    return roots;
+}
+
 static std::shared_ptr<Object> navigatePath(
     const std::vector<std::shared_ptr<Object>> & roots, const trace::PathExpr & path)
 {
@@ -1034,47 +855,6 @@ static std::shared_ptr<Object> navigatePath(
         }
     }
     return obj;
-}
-
-static trace::PathExpr parsePathFromParams(const nlohmann::json & params)
-{
-    trace::PathExpr path;
-    if (params.contains("path"))
-        from_json(params.at("path"), path);
-    return path;
-}
-
-/* Resolve the query's roots: prefer `fromStateHashes[]` if present (=
-   per-arg multi-root), fall back to the legacy single `from` field.
-   Returns empty vector on resolution failure for any root. */
-static std::vector<std::shared_ptr<Object>> resolveRoots(
-    const nlohmann::json & params,
-    std::function<std::shared_ptr<Object>(const std::string &)> resolve)
-{
-    std::vector<std::shared_ptr<Object>> roots;
-    if (params.contains("fromStateHashes")) {
-        for (auto & cid : params["fromStateHashes"]) {
-            std::string cidHex;
-            if (cid.is_string())
-                cidHex = cid.get<std::string>();
-            else if (cid.is_object() && cid.contains("content"))
-                cidHex = cid["content"].get<std::string>();
-            else
-                return {};
-            auto obj = resolve(cidHex);
-            if (!obj)
-                return {};
-            roots.push_back(std::move(obj));
-        }
-        return roots;
-    }
-    if (params.contains("from")) {
-        auto obj = resolve(params["from"].get<std::string>());
-        if (!obj)
-            return {};
-        roots.push_back(std::move(obj));
-    }
-    return roots;
 }
 
 std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
