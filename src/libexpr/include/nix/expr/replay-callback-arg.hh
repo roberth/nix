@@ -70,10 +70,6 @@ class ReplayCallbackArg : public Object
        wrapped in a single-fact ObservationSet so the history's edge indices match
        the recorder's flush history. */
     std::shared_ptr<std::vector<ObservationSet>> walkFacts;
-    /* Shared chain cursor across all proxies in one cb apply. Each
-       validated probe advances `*chainCursor` to the matched edge's
-       toFactSet. */
-    std::shared_ptr<Hash> chainCursor;
     TracingDecisionGraph & decisionGraph;
     ref<SourceRoot> rootFSRoot;
     /* EvalState used for primop construction in `defeatCache`. The
@@ -92,22 +88,21 @@ class ReplayCallbackArg : public Object
        payload). */
     std::shared_ptr<std::map<Hash, std::string>> obsSetResponses;
 
-    /* Memoized WHNF response. The recorder logs ONE QueryGetWHNF ambient
-       observation per value force; the walker must advance
-       `chainCursor` once to stay in lockstep but reuse the cached
+    /* Memoized WHNF response. The recorder logs ONE QueryGetWHNF
+       observation per value force; the walker must reuse the cached
        response on any subsequent call. Without this, when
        `dispatchAmbientQuery::navigatePath` invokes `queryApply`
        multiple times against the same ReplayCallbackArg (= once per fact
        dispatched on the apply result), each Apply Value's force
        re-fires the ReplayCallbackArg's surface probes and pushes a fresh fact
        past where the recorder stopped recording — the next lookup at
-       `walkFacts.size() > recorded_size` then misses
-       InnerValueResponse and the walker fails. */
+       `walkFacts.size() > recorded_size` then misses and the walker
+       fails. */
     std::optional<trace::ResultWHNF> cachedWHNF;
-    /** Read recorded WHNF for this proxy (= one QueryGetWHNF read +
-        chain advance). Memoized; subsequent calls return the same
-        result without re-probing. Returns the cached WHNF as a const
-        reference so callers can decode the payload by alternative. */
+    /** Read recorded WHNF for this proxy. Memoized; subsequent calls
+        return the same result without re-probing. Returns the cached
+        WHNF as a const reference so callers can decode the payload
+        by alternative. */
     const trace::ResultWHNF & whnf();
 
     /* cb-arg apply context. `applyDepth` = `localCell->depth` at the
@@ -130,13 +125,12 @@ class ReplayCallbackArg : public Object
 public:
     /* Constructor for derived children. Subject is built by the
        parent's maybeGetAttr / getListElem as `DerivedSubject{parent,
-       ...}`. Inherits parent's shared history/cursor so the child's
-       state hash evaluation rides on the same per-cb-apply chain. */
+       ...}`. Inherits parent's shared walkFacts so the child's
+       state hash evaluation rides on the same per-cb-apply history. */
     ReplayCallbackArg(
         Subject subject_,
         Hash scope_,
         std::shared_ptr<std::vector<ObservationSet>> walkFacts_,
-        std::shared_ptr<Hash> chainCursor_,
         TracingDecisionGraph & dg,
         ref<SourceRoot> rootFSRoot,
         EvalState * state = nullptr)
@@ -144,7 +138,6 @@ public:
         , argAncestry(std::move(scope_))
         , localId(stateHashAtSubject(subject, argAncestry, *walkFacts_, 0))
         , walkFacts(std::move(walkFacts_))
-        , chainCursor(std::move(chainCursor_))
         , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
 
     /** Set the proxy's argCell. Returns *this for chaining. */
@@ -188,13 +181,6 @@ public:
 
     std::optional<int> getApplyDepth() const { return applyDepth; }
     std::optional<Hash> getApplyScope() const { return applyArgAncestry; }
-
-    /** Current value of the ambient chain cursor. Read after the outer
-        has finished probing the ReplayCallbackArg (= after fn->queryApply
-        returns) to obtain the chain's terminal — that's the
-        AmbientResult fed back as the cb-apply Request's env
-        respHash. */
-    Hash getChainCursor() const { return *chainCursor; }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 

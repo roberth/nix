@@ -781,10 +781,9 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
             obsSetMap->emplace(obs.queryHash, obs.responsePayload);
         Subject argSubject{Arg{ref.argDepth}};
         auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
-        auto chainCursor = std::make_shared<Hash>(HashAlgorithm::SHA256);
         auto replayArg = std::make_shared<ReplayCallbackArg>(
             std::move(argSubject), argAncestry,
-            walkFacts, chainCursor,
+            walkFacts,
             decisionGraph, inner->getEvalState().rootFSRoot,
             &inner->getEvalState());
         replayArg->withObsSetResponses(obsSetMap);

@@ -143,7 +143,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
         .name = name,
     }};
     auto child = std::make_shared<ReplayCallbackArg>(
-        std::move(childSubject), argAncestry, walkFacts, chainCursor,
+        std::move(childSubject), argAncestry, walkFacts,
         decisionGraph, rootFSRoot, state);
     /* AmbientAsks validation removed (task #109). Children inherit
        the obsSet response source. */
@@ -267,7 +267,7 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
         .index = index,
     }};
     auto child = std::make_shared<ReplayCallbackArg>(
-        std::move(childSubject), argAncestry, walkFacts, chainCursor,
+        std::move(childSubject), argAncestry, walkFacts,
         decisionGraph, rootFSRoot, state);
     child->withArgCell(argCell);
     if (applyDepth && applyArgAncestry)
@@ -328,7 +328,6 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
     auto rootFSRootSaved = rootFSRoot;
     auto subjectSaved = subject;
     auto walkFactsSaved = walkFacts;
-    auto chainCursorSaved = chainCursor;
     auto applyDepthSaved = applyDepth;
     auto applyArgAncestrySaved = applyArgAncestry;
     /* Capture the resolver so the primop can register the live arg
@@ -341,17 +340,6 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
        construct a ReplayCallbackArg without a resolver — registration is
        skipped then. */
     auto resolverSaved = resolver;
-    /* Capture the ReplayCallbackArg's chainCursor at primop-construction time
-       (= AFTER ExprFromObject(replayObj).eval's `obj->getType()` call
-       fires `ReplayCallbackArg.getType` and advances chainCursor via
-       `advanceChainAndAppendFact`, but BEFORE any primop firing has
-       added apply Fact / synthetic probes). This is the chain root
-       for each primop firing's local advance — resetting localChainCursor
-       to this at every firing ensures multiple firings (= when the
-       cached ReplayCallbackArg's primop is invoked more than once) each
-       reproduce the same cold-side AmbientResult instead of
-       accumulating XOR contributions across firings. */
-    auto initialChainCursor = std::make_shared<Hash>(*chainCursor);
     auto initialWalkFactsSize = walkFacts->size();
 
     auto * primOp = new
@@ -363,8 +351,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
             .args = {"args"},
             .arity = 1,
             .impl = [dg, rootFSRootSaved, subjectSaved,
-                     walkFactsSaved, chainCursorSaved,
-                     initialChainCursor, initialWalkFactsSize,
+                     walkFactsSaved, initialWalkFactsSize,
                      applyDepthSaved, applyArgAncestrySaved,
                      resolverSaved](
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
@@ -390,36 +377,29 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                         *resolverSaved, std::move(argSubject),
                         *applyArgAncestrySaved, std::move(outerArgObj));
                 }
-                /* Each primop firing replays the ReplayCallbackArg's chain
-                   advance (apply Fact + synthetic probes) on a LOCAL
-                   copy of walkFacts/chainCursor so the ReplayCallbackArg's
-                   persistent shared state isn't polluted across
-                   firings.
+                /* Each primop firing replays the ReplayCallbackArg's
+                   synthetic-probe sequence on a LOCAL copy of walkFacts
+                   so the ReplayCallbackArg's persistent shared state
+                   isn't polluted across firings.
 
-                   Why this is needed: the ReplayCallbackArg (materialised by
+                   The ReplayCallbackArg (materialised by
                    `materialiseLocalStandin` and cached in
-                   `ResolutionContext::memo`) is reused when the
-                   walker dispatches multiple env facts whose
-                   resolution paths force the same ReplayCallbackArg's primop.
-                   Without a copy, walkFacts would accumulate
-                   entries from prior firings and the synthetic's
-                   `stampPerArgFields` would compute its `from` at a
-                   later edge index than what the recorded probe
-                   used, breaking the obsSet-map lookup.
+                   `ResolutionContext::memo`) is reused when the walker
+                   dispatches multiple env facts whose resolution paths
+                   force the same ReplayCallbackArg's primop. Without a
+                   copy, walkFacts would accumulate entries from prior
+                   firings and the synthetic's `stampPerArgFields` would
+                   compute its `from` at a later edge index than what
+                   the recorded probe used, breaking the obsSet-map
+                   lookup.
 
                    localWalkFacts copies just the ReplayCallbackArg's
-                   surface-probe portion (= entries pushed before
-                   any primop firing), trimming any contributions
-                   from prior firings. localChainCursor resets to
-                   the snapshot taken at primop-construction time
-                   (= post-surface-probe). This makes each firing's
-                   chain advance independent of prior firings while
-                   still starting from the right position in the
-                   recorded chain. */
+                   surface-probe portion (= entries pushed before any
+                   primop firing), trimming any contributions from
+                   prior firings. */
                 auto localWalkFacts = std::make_shared<std::vector<ObservationSet>>(
                     walkFactsSaved->begin(),
                     walkFactsSaved->begin() + std::min(initialWalkFactsSize, walkFactsSaved->size()));
-                auto localChainCursor = std::make_shared<Hash>(*initialChainCursor);
                 /* Compose the recursive apply result's subject to
                    match what the recorder built at cold via
                    `OuterObject::queryApply` (= outer-object.cc
@@ -456,17 +436,14 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                 Hash mergedApplyScope = combineArgAncestries(
                     *applyArgAncestrySaved, Hash{HashAlgorithm::SHA256});
 
-                /* Advance the ReplayCallbackArg's chainCursor by the recorded
-                   apply Fact's elementHash. Mirrors the writer's ambient
-                   stamping in flushAmbient: subject =
-                   ApplyResultSubject{fn, arg} = syntheticSubject;
-                   argAncestry = mergedApplyScope; step =
-                   walkFactsSaved->size() (= the apply Fact's position
-                   in the writer's boundary facts list, AFTER the
-                   ReplayCallbackArg's surface probes).
-
-                   Walker's env dispatch of ε reads this updated
-                   chainCursor as the AmbientResult. */
+                /* Stamp the recursive apply Fact into localWalkFacts:
+                   subject = ApplyResultSubject{fn, arg} =
+                   syntheticSubject; argAncestry = mergedApplyScope;
+                   step = walkFactsSaved->size() (= the apply Fact's
+                   position in the writer's history, AFTER the
+                   ReplayCallbackArg's surface probes). Extends the
+                   synthetic's history so its `from` stamping picks up
+                   at the right edge. */
                 {
                     size_t step = walkFactsSaved->size();
                     Hash applyArgAncestry = mergedApplyScope;
@@ -526,35 +503,17 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     ObservationSet edge;
                     edge.observations.push_back({fromStateHash, elementHash});
                     localWalkFacts->push_back(std::move(edge));
-                    *localChainCursor = TracingDecisionGraph::xorHashes(
-                        *localChainCursor, elementHash);
                 }
 
-                /* Synthetic shares the LOCAL history/cursor so its
-                   probes don't pollute the ReplayCallbackArg's persistent
+                /* Synthetic shares the LOCAL history so its probes
+                   don't pollute the ReplayCallbackArg's persistent
                    state. Scope = mergedApplyScope — matches writer's
                    `TracingCallbackApplyResult` which carries this same
                    Merkle argAncestry for its downstream observations. */
                 auto synthetic = std::make_shared<ReplayCallbackArg>(
                     std::move(syntheticSubject), mergedApplyScope,
-                    localWalkFacts, localChainCursor,
+                    localWalkFacts,
                     *dg, rootFSRootSaved, &state);
-                /* Enable per-probe AmbientAsks validation. After the
-                   `TracingCallbackApplyResult` writer change, the
-                   apply-result observations live in the ambient chain
-                   (= same boundary as the recursive apply Fact above),
-                   so the synthetic's `getType` / `getInt` etc. must
-                   history one AmbientAsks edge per probe to (a) keep
-                   `chainCursor` aligned with the cold AmbientResult
-                   (= principle 6 lockstep) and (b) detect divergence
-                   when the outer's behaviour changed. The ReplayCallbackArg's
-                   primop has already pushed the recursive apply Fact
-                   to `walkFacts` and advanced `chainCursor`, so the
-                   first synthetic probe stamps at `walkFacts.size() == 1`
-                   — matching the writer's flushAmbient ambient
-                   loop at index 1 (= position after `logAmbientApplyFact`'s
-                   fact in the boundary). */
-                /* AmbientAsks validation removed (task #109). */
                 /* Propagate apply context so a nested cb-higher-order
                    case (= the apply result is itself a function whose
                    `toValueOrProxy` builds another `<replay-local-lambda>`
@@ -565,15 +524,6 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    synthetic for type/scalar value and constructs the
                    matching Value. */
                 ExprFromObject(synthetic, nullptr, nullptr).eval(state, state.baseEnv, v);
-
-                /* Propagate the firing's final chainCursor to the
-                   ReplayCallbackArg's persistent state. `dispatchApplyLive`
-                   reads this as the AmbientResult for the cb-apply
-                   Fact. Each firing's local chain advance produces
-                   the same final cursor by construction, so this
-                   assignment is deterministic across multiple
-                   firings of the same ReplayCallbackArg. */
-                *chainCursorSaved = *localChainCursor;
             },
         };
     auto * val = evalState.allocValue();
