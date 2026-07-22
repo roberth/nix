@@ -6,11 +6,11 @@ only on earlier terms.
 
 Two **interaction models** describe how the tracing evaluator
 can capture its relationship with another evaluator whose behavior
-it wants to cache. Three **message pairings** — Query, Env, and
-Ambient — realize those models in the code and storage. Query and
-Env are always present and are defined first; Ambient is specific
-to `builtins.cache` callbacks and is defined in
-[The Ambient message pairing](#the-ambient-message-pairing) onward.
+it wants to cache. Two **message pairings** — Query and Env —
+realize those models in the code and storage. Callback-arg values
+that cross the cache boundary from inner to outer are handled by a
+first-class Query variant (`QueryCallbackApply`) rather than a
+separate message pairing.
 
 Above both models sits a property of the black-box interpreter
 model itself: state creep.
@@ -105,11 +105,13 @@ surface, or a narrower per-participant protocol.
 |---|---|---|---|
 | **Query** | caller → evaluator | `Query` → `Result` | Full evaluator surface. |
 | **Env** | inner-evaluator → its environment | varies (see below) | Environment can be filesystem, env vars, or outer evaluator. |
-| **Ambient** | outer → inner-supplied local | `Query` → `Result` (wrapped) | Callback arg probes. |
 
-Input tracing is realized by Query + Env; content tracing is
-realized by Env + Ambient (stacking on top of input tracing).
-Env is the shared foundation.
+Input tracing is realized by Query + Env. Content tracing applies
+to the interaction with the outer evaluator during callbacks —
+modelled as simple Query-level probes with no Env of its own.
+These probes are embedded into the input-traced layer's Env
+messages via the `OuterValueRequest` / `OuterValueResponse`
+variants.
 
 Within Env, payload types depend on the participant:
 
@@ -121,11 +123,6 @@ Within Env, payload types depend on the participant:
   payload inside an `OuterValueRequest` / `Response`
   wrapper. Full evaluator surface; the wrapper tags the payload
   as being about an outer-owned value.
-
-At Ambient, the payload is a `Query` / `Result` inside an
-`InnerValueRequest` / `Response` wrapper — same full evaluator
-surface, wrapper tags the payload as being about an inner-owned
-callback-arg value.
 
 Every payload is identified by SHA-256 of its serialized bytes.
 Hashes throughout the cache are always of payloads — structured
@@ -257,11 +254,11 @@ question shape: "get value of this variable name."
 
 **OuterValueRequest** / **OuterValueResponse** —
 outer-evaluator protocol (via `OuterObject`; see
-[The Ambient message pairing](#the-ambient-message-pairing)). Full
-evaluator surface: payload is a `Query` / `Result`, wrapped to
-tag it as a query about an outer-owned value. Same evaluator
-surface as the Query message pairing — introduced here because the
-wrapper is what the walker records and dispatches at Env.
+[Values crossing the cache boundary](#values-crossing-the-cache-boundary)).
+Full evaluator surface: payload is a `Query` / `Result`, wrapped
+to tag it as a query about an outer-owned value. Same evaluator
+surface as the Query message pairing — introduced here because
+the wrapper is what the walker records and dispatches at Env.
 
 **Request** / **Response** — the collective terms for payloads in
 any of the three families above. The walker treats them uniformly,
@@ -413,66 +410,30 @@ recomputed).
 
 ---
 
-## The Ambient message pairing
-
-### What the Ambient message pairing is
+## Values crossing the cache boundary
 
 `builtins.cache` nests a cached inner evaluator inside an outer
-one. Values cross the cache boundary in both directions; whichever
-side owns a value, the other side is what probes it:
+one. Values cross the cache in both directions; whichever side
+owns a value, the other side is what probes it:
 
 - **Outer-owned values** — Values the outer evaluator produced,
   passed to the inner as arguments. The inner reads them through
-  `OuterObject`. Queries about these are `OuterValueRequest`
-  and belong to the Env message pairing (see [Env payload types](#env-payload-types)) — the outer
+  `OuterObject`. Queries about these are `OuterValueRequest`s and
+  belong to the Env message pairing (see [Env payload types](#env-payload-types)) — the outer
   evaluator is one of the inner's environment participants.
 - **Inner-owned callback-arg values** — Values the inner
   evaluator produced, that the outer receives when it invokes an
   inner-supplied callback. The outer's callback body reads them
   through the callback-arg objects (`TracingCallbackArg` /
-  `ReplayCallbackArg`). Queries about these are
-  `InnerValueRequest`s and belong to the **Ambient message
-  pairing proper** ([Ambient payload types and edges](#ambient-payload-types-and-edges)).
+  `ReplayCallbackArg`). Queries about the callback firing use
+  `QueryCallbackApply` (a first-class Query variant, see the
+  callback-tracking model doc); the observation set the callback
+  body accumulates on its contra-arg is folded into that query's
+  identity.
 
-Both wrappers carry the same `Query` / `Result` payload; what
-distinguishes them is which side owns the value being queried.
-
-Vocabulary that carries over unchanged from Query/Env:
-
-- `Query`, `Result`, `queryHash`, `resultHash`.
-- `Request`, `Response`, `Fact`, `element hash`, XOR-fold.
-- `RequestSet`, `factSetHash`.
-
-Ambient-specific payload types and edges are defined in
-[Ambient payload types and edges](#ambient-payload-types-and-edges).
-The subject-identity machinery those Facts hang off — Subject,
-state hash, argAncestry, callback-arg objects, cell navigation,
-the subject-evolution fast-path — is a separate concern, defined
-starting at [Subject](#subject). Storage for both lives in
-[Storage tables (Ambient and Subject-evolution additions)](#storage-tables-ambient-and-subject-evolution-additions).
-
-### Ambient payload types and edges
-
-**InnerValueRequest** / **InnerValueResponse** — the payload
-types at the Ambient message pairing. Payload is a `Query` / `Result`
-(full evaluator surface); the wrapper tags the payload as being
-about an inner-owned callback-arg value. Persisted responses live
-in the `InnerValueResponse` table below. C++ wire wrappers are
-`InnerValueRequestPayload` / `InnerValueResponsePayload` —
-`Payload` suffix keeps the atom names free for the storage layer.
-
-**AmbientAsk** — a row in `AmbientAsk(fromFactSet) →
-(requestSet, toFactSet)`. Same shape as an Env Ask but keyed
-on factSet alone (no `queryHash`) and storing the transition
-explicitly as `toFactSet` — at replay the walker can't
-dispatch an inner-owned value live, since it no longer exists.
-
-**InnerValueResponse** — a persistent table
-`(requestHash, contextHash) → payload` used by the replay walker
-to serve probes into a reconstructed frozen image of a callback
-arg. `contextHash` is the walker's Env `cur` at the
-time the response was recorded, disambiguating same-request
-observations under different outer contexts.
+The subject-identity machinery that ties observations to structural
+identities — Subject, state hash, argAncestry, callback-arg
+objects, cell navigation — is defined in the next section.
 
 ---
 
@@ -498,43 +459,44 @@ answers carry the value's content one probe at a time, and
 different args produce different Facts. Different Fact chains
 → different walks → different Terminals. At replay the walker
 dispatches recorded probes back to the outer live and matches
-responses against the recording to confirm the hit. The Ambient
-machinery in the [Subject](#subject) through
-[Subject-evolution fast-path](#subject-evolution-fast-path)
-sections doesn't fire here — it's for the callback case, where
-inner-owned values can't be re-probed live.
+responses against the recording to confirm the hit.
 
-Callbacks are the case those sections exist for. When the inner
-supplies a callback and the outer runs it — `(cb 10) + (cb 20)`,
-or nesting inside another cached call whose enclosing
-argAncestry differs — the callback arg is inner-owned. At replay
-the inner isn't running; its closures are gone; the arg no
-longer exists to be probed, so probes have to be served from
-storage (`InnerValueResponse`) instead of dispatched live.
-`Arg{depth=1}` names the slot; per-invocation
-distinction has to come from what the outer *did* with the arg —
-the observations it made. Every invocation shares the same
-Subject (immutable by construction; independent of history,
-argAncestry, invocation); each still produces distinct Facts.
-The machinery below closes that gap:
-[Subject](#subject) fixes the Subject;
-[State hash](#state-hash--situational-characterization) and
-[argAncestry](#argancestry) characterize its state per-invocation
-via state hash and argAncestry (with `callArgAncestry` sampled at
-each cb-apply, disambiguated in storage by
-`InnerValueResponse.contextHash`);
-[Callback arg objects](#callback-arg-objects) and
-[Cell navigation](#cell-navigation) wire this through the Object
-graph; [Subject-evolution fast-path](#subject-evolution-fast-path)
-caches step-by-step transitions. Storage lives in
-[Storage tables (Ambient and Subject-evolution additions)](#storage-tables-ambient-and-subject-evolution-additions).
+The subject-identity machinery below characterises which
+observation belongs to which value on the *arg side* — outer-
+owned values the inner probes, apply-result values including a
+callback firing's `fn` subject, and structural navigation
+(getAttr/getListElem) between them. It fixes a **Subject** as
+the value's structural name and evolves a **state hash** as
+observations accumulate; `from` fields on request payloads
+reference these state hashes so distinct arg-side values produce
+distinct request hashes.
+
+The other case — inner-owned callback-arg values, seen by the
+outer when it runs an inner-supplied callback — is handled
+differently. At replay the inner isn't running; its closures are
+gone; the arg no longer exists to be probed. Rather than name
+contra-arg values via subject identity, the eval-cache stores
+the observations the outer made on them by value in an
+`ObservationSet`, referenced from the enclosing
+`QueryCallbackApply` request (see the callback-tracking model
+doc). Subject / state-hash machinery below applies to arg-side
+identification; it does not identify contra-arg values.
 
 ### Subject
 
-Every Ambient Fact is *about* something — an inner-owned value
-being probed. That thing needs a name that stays fixed while
-its content varies across observations. The name is a
-**Subject**.
+A **Subject** is the structural name for a value in a trace — an
+outer-owned value the inner probes, an apply-result value
+(including a callback firing's arg-side `fn` subject), or a
+derivation of either. It stays fixed while the value's content
+varies across observations; a state hash tracks the
+characterization built up by those observations.
+
+Callback-arg (contra-arg) values are handled separately: instead
+of being named by a Subject, the observations the outer made on
+them are stored by value in an `ObservationSet` (referenced from
+a `QueryCallbackApply` request; see the callback-tracking model
+doc). The Subject / state-hash machinery below does not apply to
+contra-arg identification.
 
 **Observation** — a Fact viewed through the subject-identity
 lens. Just `(fromHash, elementHash)`:
@@ -543,7 +505,13 @@ lens. Just `(fromHash, elementHash)`:
 - `elementHash` — `SHA-256(requestHash || responseHash)`, same
   as the Fact's contribution to the XOR-fold.
 
-Every Fact yields one Observation per subject that emitted it.
+Every Fact about an arg-side value yields one Observation per
+subject that emitted it. Facts about a contra-arg value are not
+projected through the subject-identity lens — they carry no
+`fromHash` because the enclosing `QueryCallbackApply` request
+already fixes the contra-arg position; contra-arg observations
+travel by content-hashed value inside the associated
+`ObservationSet`.
 
 **ObservationSet** — a batch of Observations that share a
 precondition state; the walker's fold at each step consumes one
@@ -557,8 +525,12 @@ ObservationSets.
 
 **Subject** — a structural name for a value. Four variants:
 
-- **Arg{depth}** — a callback arg at a static apply-stack depth
-  (reverse De Bruijn).
+- **Arg{depth}** — a positional name for the arg slot of a
+  callback apply at reverse De Bruijn depth `depth`. Purely
+  positional: no state hash evolves against it, and it is never
+  the origin of a `fromHash` on a Fact — its role is composing
+  `ApplyResultSubject{fn, arg=Arg{d+1}}` for a callback firing's
+  return value.
 - **DerivedSubject{parent, kind, name/index}** — a value reached
   by `getAttr`/`getListElem` on a parent Subject.
 - **ApplyResultSubject{fn, arg}** — the result of applying one
@@ -649,13 +621,15 @@ At each cb-apply boundary the cache tracks the inner-supplied
 argument through the outer's probes. Three related object types:
 
 **TracingCallbackArg** — writer-side wrapper. Wraps the
-inner-supplied value at the boundary; records the outer's probes
-on it as Ambient Facts.
+inner-supplied value at the outer/inner interface; records the
+outer's probes on it into the enclosing `CallbackCell`'s running
+observation set.
 
 **ReplayCallbackArg** — replay-side counterpart. Frozen image
-reconstructed from `InnerValueResponse` rows. Serves the outer's
-probes from recorded data; throws an Ambient divergence exception
-if the outer's probes don't match what was recorded.
+reconstructed from a recorded `QueryCallbackApply`'s referenced
+observation set. Serves the outer's probes from recorded data;
+throws a divergence exception if the outer's probes don't match
+what was recorded.
 
 **OuterObject** — the outer evaluator's view of the callback
 arg while running the callback body. Peer to `TracingCallbackArg`
@@ -683,57 +657,22 @@ holding a `shared_ptr<const ArgCell>`.
 **effectiveArgCell(obj)** / **getProxyArgCell()** — return the
 proxy's cell, or null for non-proxy Objects.
 
-### Subject-evolution fast-path
-
-The state hash of a subject at some history position is a pure
-function of `(subject, argAncestry, history, step)`, but computing
-it from scratch re-runs the fold from step 0 every time. The
-subject-evolution fast-path caches the individual fold-step
-transitions so a walker can hop directly to any step.
-
-**SubjectEvolutionEdge** — a persistent table (schema in
-[Storage tables (Ambient and Subject-evolution additions)](#storage-tables-ambient-and-subject-evolution-additions))
-with one row per single-observation fold step. Populated by the
-writer via a callback during `stateHashAtStamping`; consumed by
-the replay walker to navigate step-by-step through observations at
-a Subject without re-running the fold.
-
-**EvolutionStep** — one row's worth of data as a struct in
-`subject-id.hh`: `curBefore` (state hash at the Subject before
-this observation folds in), the observation's `fromHash` and
-`elementHash`, and `curAfter` (state hash after). Emitted by
-`stateHashAtStamping` to a callback; the writer's callback
-persists each into `SubjectEvolutionEdge`.
-
-**stateHashAtStamping(...)** — the writer-side variant of
-`stateHashAt` that emits an `EvolutionStep` for each fold step
-via a callback. Structurally equivalent to `stateHashAt`; used
-only at record time.
-
-
-### Storage tables (Ambient and Subject-evolution additions)
+### Storage tables (callback-arg observation set)
 
 Extends the base schema
-([Storage tables (Query and Env only)](#storage-tables-query-and-env-only)).
-Ambient ([Ambient payload types and edges](#ambient-payload-types-and-edges))
-contributes the first two rows; the subject-evolution fast-path
-([Subject-evolution fast-path](#subject-evolution-fast-path))
-contributes the
-third.
+([Storage tables (Query and Env only)](#storage-tables-query-and-env-only))
+with a single content-addressed pool for callback-arg observation
+sets referenced by `QueryCallbackApply` requests:
 
 ```
-InnerValueResponse(requestHash BLOB, contextHash BLOB, payload BLOB,
-                   PRIMARY KEY (requestHash, contextHash)) WITHOUT ROWID
-AmbientAsk(fromFactSetHash BLOB, requestSetHash BLOB, toFactSetHash BLOB,
-           PRIMARY KEY (fromFactSetHash, requestSetHash)) WITHOUT ROWID
-SubjectEvolutionEdge(subjectHash BLOB, curHash BLOB, obsFromHash BLOB,
-                     obsElementHash BLOB, nextCurHash BLOB,
-                     PRIMARY KEY (subjectHash, curHash, obsFromHash, obsElementHash))
-                     WITHOUT ROWID
+ObservationSet(setHash BLOB PRIMARY KEY, payload BLOB)
 ```
 
-Same `INSERT OR IGNORE` discipline. Same per-hash in-process
-caches.
+The payload is a canonical serialisation of the set's members
+(`(queryHash, respHash)` tuples); `setHash` is the SHA-256 of
+that payload. Referenced by hash from `QueryCallbackApply`
+request payloads. Same `INSERT OR IGNORE` discipline. Same
+per-hash in-process caches.
 
 ---
 
@@ -757,7 +696,7 @@ Two rules the vocabulary above obeys:
 ## Appendix B: what this dictionary does not cover
 
 - `builtins.cache` primop wiring — see `tracing-eval-cache-primop.md`.
-- The design rationale (why XOR-fold, why Patricia split, why
-  subject-evolution edges) — see `tracing-eval-cache.md`.
+- The design rationale (why XOR-fold, why Patricia split) — see
+  `tracing-eval-cache.md`.
 - Historical vocabulary and the transitions from it — see git
   history.

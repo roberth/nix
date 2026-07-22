@@ -533,10 +533,11 @@ traces are reachable, this addresses which requests are safe to
 dispatch during a walk.
 
 *Observation about the current implementation.* When replay
-dispatches a cb-apply via
-`dispatchApplyLive`, it invokes the outer's callback live. The
-callback's body probes outer values via `OuterObject`, and those
-probes flow through `TracingEnvironment::outerQuery` to
+dispatches a callback-apply request (via the walker's
+`dispatchAmbientQuery` callbackApply branch), it materialises a
+`ReplayCallbackArg` and invokes `fnObj->queryApply(...)` live.
+The callback's body probes outer values via `OuterObject`, and
+those probes flow through `TracingEnvironment::outerQuery` to
 `logOuterObservation` on the writer. Walker's direct dispatches
 also feed the writer via `noteEnvObservation`. Both grow the
 writer's `envWalk` during warm replay. A subsequent

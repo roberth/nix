@@ -79,6 +79,16 @@ That assumption is unverified. If a walker path ever needs to hold multiple vers
 
 **Direction:** thread walker state through function arguments rather than mutating shared fields. Multiple versions coexist naturally as separate values; backtracking is expressed as not committing changes rather than restoring after changes.
 
+### R2. Contra-arg observations still carry vestigial `from` fields keyed on invariant `Arg{depth}` state hashes
+
+Under the current callback model, contra-arg values are identified by the observations stored in the `QueryCallbackApply`'s referenced `ObservationSet`. The observation set is scoped to a specific callback firing by the outer `QueryCallbackApply` payload (`fn`, `argAncestry`, `argDepth`); observations inside are all probes on the same implicit contra-arg by construction and don't need to name a Subject.
+
+The code still computes `from` fields for contra-arg probes by running `stateHashAfter(Arg{depth}, callArgAncestry, {})` — invariant across sibling firings by design (see `replay-callback-arg.cc:30-38`, which explicitly frames the invariance as a compatibility shim). The invariant state hash contributes no discrimination; it's a leftover from when contra-args were subject-identified.
+
+**Direction:** drop `from` from contra-arg observations inside `ObservationSet`; retire the invariant `Arg{depth}` state hash on both writer and walker sides. `Arg{depth}` stays as a positional Subject variant for `ApplyResultSubject{fn, arg=Arg{d+1}}` composition. If `ApplyResultSubject`'s own state hash formula still needs an arg-side hash, use a plain positional constant (`SHA("positional-<d+1>")`) rather than dressing it up as a "state hash of `Arg{d+1}`" — same bytes, different type-abstraction.
+
+Not correctness-affecting; the shim works. Retiring it removes conceptual clutter (a state hash that never evolves) and a stamping/checking overhead on every contra-arg probe.
+
 ## Recovery notes
 
 - `77db4caf8` reverted Phase 5's `evolvedQueryFrom` switch to envWalk. Phase 5's motivation was correct (session envWalk aligns writer/walker) but its implementation broke `cb-same-shape-collapse` because it lost the "inner-first applyContext preference" on TracingReplayObject. When B3 (universal Subject tracking) lands, Phase 5's switch can be re-attempted uniformly on top.
