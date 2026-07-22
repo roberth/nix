@@ -234,12 +234,6 @@ public:
         SuppressApplyBoundary & operator=(const SuppressApplyBoundary &) = delete;
     };
 
-    /** True while the walker's history loop is dispatching (in
-        `SuppressApplyBoundary` scope). Callers that record NEW events
-        (createCallbackCell, task #108 emission) skip recording while
-        dispatching — a walker-driven re-firing of an already-recorded
-        callback is validation, not a fresh event. */
-    bool isSuppressingCbApply() const { return suppressCbApply > 0; }
 private:
 
     /* Q hashes that have been logResult'd in this writer's lifetime.
