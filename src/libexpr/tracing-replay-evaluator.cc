@@ -311,6 +311,12 @@ TracingReplayEvaluator::walk(
         auto fastPathSavedEnvWalkSize = envWalk.size();
         auto fastPathSavedEnvCur = envCur;
         auto fastPathSavedFingerprints = committedEdgeFingerprints;
+        /* B5: perQEnvWalk is a walk-local shared vector captured by
+           recomputeQ; commitEdge appends to it in lockstep with
+           envWalk. Trace-continuing partial commits would otherwise
+           leave residue that trace-discovering's Q evolution folds
+           in, deriving Q hashes at a trajectory no recording anchors. */
+        auto fastPathSavedPerQEnvWalkSize = perQEnvWalk->size();
         walkHit = decisionGraph.walk(queryHash, dispatch,
             [&](bool committed, const std::vector<Hash> & useful) {
                 if (committed) commitEdge();
@@ -339,6 +345,7 @@ TracingReplayEvaluator::walk(
         envWalk.resize(fastPathSavedEnvWalkSize);
         envCur = fastPathSavedEnvCur;
         committedEdgeFingerprints = std::move(fastPathSavedFingerprints);
+        perQEnvWalk->resize(fastPathSavedPerQEnvWalkSize);
         pendingEdgeObservations.clear();
         rejectedObs.clear();
         walkHit.reset();

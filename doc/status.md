@@ -41,11 +41,9 @@ Callback body observations happen during inner's `evalFile fn.nix` walk. At that
 
 **Fix plan (medium confidence):** structural refactor in `TracingEvaluator::apply` (non-fnIsTlo path). Push an ActiveQuery for the QueryCallbackApply/applyResult *around* the entire `inner->apply(fn, arg)` invocation, not around later probes on the wrapped result. That way callback body's observations attribute to the QueryCallbackApply's Q while its firing is in progress.
 
-### B5. `perQEnvWalk` residue between trace-continuing and trace-discovering — MEDIUM
+### B5. FIXED — perQEnvWalk rolled back at trace-continuing→trace-discovering transition
 
-Walk-local `perQEnvWalk` in `TracingReplayEvaluator::walk` is declared at function scope (`tracing-replay-evaluator.cc:64`) and is not reset when a trace-continuing attempt misses and the walker falls through to trace-discovering. Failed trace-continuing commits leave residue that trace-discovering's Q evolution folds in, producing an incorrect Q trajectory.
-
-**Fix plan (high confidence):** reset `perQEnvWalk` (or restore it from a saved copy) at the trace-continuing→trace-discovering transition, alongside the existing envWalk/envCur/fingerprints rollback. Purely mechanical; no design change.
+Trace-continuing rollback now saves `perQEnvWalk->size()` alongside the other fast-path save-set and `resize()`s on miss, matching the existing envWalk/envCur/fingerprints discipline. Test suite unchanged at 312/16/7 — no visible failures relied on this, but the invariant leak is closed.
 
 ### B8. TracingCallbackApplyResult mis-routes nested-application observations — HIGH (blocks curried callbacks)
 
