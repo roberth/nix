@@ -71,6 +71,15 @@ present design.
    therefore disallowed: a Result's factSet hash is cumulative
    over the writer's session up to its `logResult`.
 
+   This is stated from the recording side, where a single trace
+   produces the Result. On replay the walker may consider multiple
+   recorded traces at once — zero, one, or many candidates for a
+   given lookup — and the principle applies to each candidate
+   individually. A candidate's factSet hash is cumulative over that
+   candidate's own observations; the walker never blends
+   preconditions across candidates or manufactures a hybrid
+   precondition set no recording actually observed.
+
    The point of the cache is to work accurately for any outer
    caller. The outer evaluator is outside the cache boundary, and
    the cache makes no assumptions about which outer is calling it
