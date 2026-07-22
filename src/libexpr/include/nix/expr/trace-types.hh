@@ -506,7 +506,7 @@ struct QueryCallbackApply
     int argDepth = 0;          ///< Reverse-De-Bruijn depth of the contra-arg. Combined with argAncestry lets the walker rebuild the arg's Subject and compute matching state hashes.
     auto operator<=>(const QueryCallbackApply &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryCallbackApply, ResultType)
+DECLARE_QUERY_RESULT(QueryCallbackApply, ResultWHNF)
 
 // ---------------------------------------------------------------------------
 // CompletedQuery: a query correlated with its result

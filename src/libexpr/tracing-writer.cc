@@ -29,49 +29,12 @@ void TracingWriter::logOuterObservation(
     if (!decisionGraph)
         return;
 
-    /* Task #110 preamble: if this observation's Subject reaches an
-       ApplyResultSubject, it's a probe on the return value of an
-       active callback firing. Emit a QueryCallbackApply observation
-       first, so subsequent probes on the applyResult chain from f's
-       evolved state via the arg-side machinery. Skip if the query
-       itself is already a QueryCallbackApply (guard against
-       recursion on nested-callback subjects). */
-    if (!std::holds_alternative<trace::QueryCallbackApply>(query)) {
-        std::function<const ApplyResultSubject *(const Subject &)> findApplyResult =
-            [&](const Subject & s) -> const ApplyResultSubject * {
-                if (auto * ar = std::get_if<ApplyResultSubject>(&s.data))
-                    return ar;
-                if (auto * d = std::get_if<DerivedSubject>(&s.data))
-                    return findApplyResult(*d->parent);
-                return nullptr;
-            };
-        if (auto * ar = findApplyResult(subject); ar && ar->fn) {
-            auto fnInitial = stateHashAtSubject(*ar->fn, argAncestry, {}, 0);
-            auto fnInitialHex = fnInitial.to_string(HashFormat::Base16, false);
-            for (auto it = callbackCells.rbegin(); it != callbackCells.rend(); ++it) {
-                auto & cell = *it;
-                if (cell.fnStateHashHex != fnInitialHex)
-                    continue;
-                if (cell.argAncestryHex.empty())
-                    continue;
-                auto obsSetHash = decisionGraph->insertObservationSet(cell.runningObsSet);
-                auto fnCurrent = stateHashAtSubject(
-                    *ar->fn, argAncestry, envWalk, envWalk.size());
-                trace::QueryCallbackApply qca;
-                qca.fn = trace::QueryLeaf{
-                    fnCurrent.to_string(HashFormat::Base16, false)};
-                qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
-                qca.argAncestry = cell.argAncestryHex;
-                qca.argDepth = cell.argDepth;
-                logOuterObservation(
-                    trace::QueryVariant{std::move(qca)},
-                    trace::ResultVariant{trace::ResultType{"callback"}},
-                    *ar->fn,
-                    argAncestry);
-                break;
-            }
-        }
-    }
+    /* Task #110 (C3): QueryCallbackApply emission moved to
+       TracingObject::whnf() where the applyResult's WHNF is
+       actually known. No preamble here — a WHNF query always
+       precedes any structural access on an applyResult, so cold
+       will have emitted QCA-with-WHNF by the time non-WHNF probes
+       on that applyResult happen. */
 
     /* Per-probe stamping. `from` is computed against the WRITER's
        current `envWalk` (which reflects every prior probe's fold),

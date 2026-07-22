@@ -158,6 +158,14 @@ trace::ResultWHNF & TracingObject::whnf()
     }
     auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto whnfResult = computeWHNFFromObject(*inner);
+    /* Task #110 (C3): if this whnf is on an applyResult, emit a
+       QueryCallbackApply observation carrying the WHNF directly.
+       That combines what would otherwise be two probes (QCA +
+       getWHNF-of-applyResult) into one, reducing DB spam. Downstream
+       structural probes chain through the applyResult's state hash
+       which now folds in this WHNF. */
+    if (applyResultSubject)
+        writer.emitCallbackApplyForApplyResult(*applyResultSubject, applyArgAncestry, whnfResult);
     auto tp = writer.logResult(valueId, whnfResult, qh);
     if (qh.queryHash && tp)
         pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);

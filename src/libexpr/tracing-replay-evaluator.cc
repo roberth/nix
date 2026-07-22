@@ -834,16 +834,21 @@ std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nl
         replayArg->withObsSetResponses(obsSetMap);
         try {
             /* B6: narrow guard around walker-triggered live invocation. */
-            TracingWriter::SuppressApplyBoundary suppress(writer);
-            auto resultObj = fnObj->queryApply(replayArg);
+            std::shared_ptr<Object> resultObj;
+            {
+                TracingWriter::SuppressApplyBoundary suppress(writer);
+                resultObj = fnObj->queryApply(replayArg);
+            }
             if (!resultObj)
                 return std::nullopt;
-            /* Result: a marker matching what the writer emitted. */
-            trace::ResultType resultJson{"callback"};
+            /* Task #110 (C3): return the applyResult's WHNF so cold's
+               and warm's QCA responses match. Force to WHNF via the
+               shared computeWHNFFromObject helper. */
+            auto whnf = computeWHNFFromObject(*resultObj);
             tracingCacheLog(
-                "callbackApply: HIT obsSet=%s argDepth=%d",
-                obsSetHex.substr(0, 12), argDepth);
-            return jsonToCborString(nlohmann::json(resultJson));
+                "callbackApply: HIT obsSet=%s argDepth=%d whnf=%s",
+                obsSetHex.substr(0, 12), argDepth, whnf.type.c_str());
+            return jsonToCborString(nlohmann::json(whnf));
         } catch (const std::exception & e) {
             tracingCacheLog("callbackApply: fn->queryApply failed: %s", e.what());
             return std::nullopt;

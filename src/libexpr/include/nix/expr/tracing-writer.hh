@@ -270,6 +270,52 @@ public:
         return envWalk;
     }
 
+    /** Task #110 (C3): emit a QueryCallbackApply observation for an
+        applyResult, carrying the applyResult's WHNF as the Result.
+        Called from TracingObject::whnf() when it has an
+        applyResultSubject. Looks up the matching CallbackCell by
+        fn's initial state hash, snapshots the cell's runningObsSet
+        into the ObservationSet CAS, constructs the QCA payload with
+        fn's current state hash as `fn`, and emits via the standard
+        logOuterObservation path. Under content addressing, same
+        (fn, obsSet) pair produces the same QCA queryHash across
+        callers — parent's chain sees a single QCA-per-firing. */
+    void emitCallbackApplyForApplyResult(
+        const Subject & applyResultSubject,
+        Hash applyArgAncestry,
+        const trace::ResultWHNF & whnf)
+    {
+        if (!decisionGraph)
+            return;
+        auto * ar = std::get_if<ApplyResultSubject>(&applyResultSubject.data);
+        if (!ar || !ar->fn)
+            return;
+        auto fnInitial = stateHashAtSubject(*ar->fn, applyArgAncestry, {}, 0);
+        auto fnInitialHex = fnInitial.to_string(HashFormat::Base16, false);
+        for (auto it = callbackCells.rbegin(); it != callbackCells.rend(); ++it) {
+            auto & cell = *it;
+            if (cell.fnStateHashHex != fnInitialHex)
+                continue;
+            if (cell.argAncestryHex.empty())
+                continue;
+            auto obsSetHash = decisionGraph->insertObservationSet(cell.runningObsSet);
+            auto fnCurrent = stateHashAtSubject(
+                *ar->fn, applyArgAncestry, envWalk, envWalk.size());
+            trace::QueryCallbackApply qca;
+            qca.fn = trace::QueryLeaf{
+                fnCurrent.to_string(HashFormat::Base16, false)};
+            qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
+            qca.argAncestry = cell.argAncestryHex;
+            qca.argDepth = cell.argDepth;
+            logOuterObservation(
+                trace::QueryVariant{std::move(qca)},
+                trace::ResultVariant{whnf},
+                *ar->fn,
+                applyArgAncestry);
+            return;
+        }
+    }
+
     /** Cumulative factSet hash maintained per-fact via XOR-fold.
         At cold time, advances at `noteEnvObservation` (= walker
         dispatches), `logResponse` (= env/file recordings), and
