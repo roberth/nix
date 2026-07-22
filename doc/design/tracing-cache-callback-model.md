@@ -97,8 +97,12 @@ Q's payload carries a `from` field: a state hash of some referenced
 subject. As observations dispatched during Q's walk fold into that
 subject's state, the subject's state hash evolves → Q's `from`
 evolves → Q's queryHash advances. A chain is
-`Ask(Q_0, cur_0) → Ask(Q_1, cur_1) → … → Terminal(Q_N, cur_N)`
-where both Q and cur evolve in lockstep.
+`Ask(Q_M, cur_M) → Ask(Q_{M+1}, cur_{M+1}) → … → Terminal(Q_N, cur_N)`
+where both Q and cur evolve in lockstep. The starting index `M`
+carries the preconditions the Query begins with (any prior state
+this Query's evaluation inherited); indexing from an arbitrary `M`
+rather than `0` avoids the false connotation that the chain must
+start from an "empty" precondition set.
 
 Not every Q evolves. A Q whose `from`-subject doesn't participate
 in observations dispatched during its walk keeps a constant `from`;
