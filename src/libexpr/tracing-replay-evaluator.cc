@@ -57,6 +57,11 @@ TracingReplayEvaluator::walk(
         std::move(currentProxy),
         {},
     };
+    /* Task #110 B1: per-Q chain observation history for this walk,
+       matching the writer's ActiveQuery::perQEnvWalk basis. commitEdge
+       appends to this in addition to session envWalk. recomputeQ
+       reads from this so walker Q evolution matches writer's. */
+    auto perQEnvWalk = std::make_shared<std::vector<ObservationSet>>();
     /* Per-edge buffer: dispatch() appends ambient facts here; the
        history-loop promotes the buffer to a cumulative envWalk
        edge on commit (via commitEdge) or discards it on reject.
@@ -99,7 +104,9 @@ TracingReplayEvaluator::walk(
             if (committedEdgeFingerprints.insert(fingerprint).second) {
                 ObservationSet edge;
                 edge.observations = std::move(obs);
-                envWalk.push_back(std::move(edge));
+                envWalk.push_back(edge);
+                /* B1: also append to per-Q chain for Q evolution basis. */
+                perQEnvWalk->push_back(std::move(edge));
                 tracingCacheLog("dispatch: committed edge, envWalk=%zu (obs=%zu)",
                                 envWalk.size(), envWalk.back().observations.size());
             } else {
@@ -266,18 +273,15 @@ TracingReplayEvaluator::walk(
         pendingEdgeObservations.clear();
     };
 
-    /* Task #110 Q-evolution: recomputeQ hook. After each Ask-edge
-       commit, if fromSubject is provided, re-derive Q's `from` field
-       using the walker's current envWalk state and re-hash the
-       payload. If Q evolved, the walker looks up subsequent
-       Ask/Terminal at the new Q. Matches the writer's per-observation
-       Q-evolution protocol. */
+    /* Task #110 Q-evolution: recomputeQ reads from walk-local
+       perQEnvWalk (defined above; populated by commitEdge) — B1
+       alignment with writer's ActiveQuery::perQEnvWalk basis. */
     std::function<Hash(const Hash &)> recomputeQ;
     if (payloadTemplate && fromSubject) {
         recomputeQ = [payloadTemplate, fromSubject,
-                      fromSubjectArgAncestry, this](const Hash & preFoldQ) -> Hash {
+                      fromSubjectArgAncestry, perQEnvWalk](const Hash & preFoldQ) -> Hash {
             auto newState = stateHashAt(
-                *fromSubject, fromSubjectArgAncestry, envWalk, envWalk.size());
+                *fromSubject, fromSubjectArgAncestry, *perQEnvWalk, perQEnvWalk->size());
             auto newFromHex = newState.to_string(HashFormat::Base16, false);
             nlohmann::json payload = *payloadTemplate;
             if (payload.contains("params") && payload["params"].is_object()) {

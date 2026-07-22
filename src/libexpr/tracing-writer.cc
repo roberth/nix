@@ -200,10 +200,7 @@ void TracingWriter::logOuterObservation(
         auto & innermost = activeQueryStack.back();
         decisionGraph->insertAsk(innermost.currentQ, prevQFactSetHash, requestSetHash);
     }
-    Hash edgeQ = activeQueryStack.empty()
-        ? Hash(HashAlgorithm::SHA256)
-        : activeQueryStack.back().currentQ;
-    envAsksEdges.push_back({edgeQ, prevQFactSetHash, requestSetHash});
+    envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
     ObservationSet obsSet;
     obsSet.observations.push_back({fromStateHash, elementHash});
     envWalk.push_back(obsSet);
@@ -293,13 +290,9 @@ void TracingWriter::flushAmbient(bool processApplies)
             auto & innermost = activeQueryStack.back();
             decisionGraph->insertAsk(innermost.currentQ, prevQFactSetHash, requestSetHash);
         }
-        Hash edgeQ = activeQueryStack.empty()
-            ? Hash(HashAlgorithm::SHA256)
-            : activeQueryStack.back().currentQ;
-        envAsksEdges.push_back({edgeQ, prevQFactSetHash, requestSetHash});
+        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         envWalk.push_back({});  // 1:1 with envAsksEdges; empty is harmless for stateHashAt.
-        tracingCacheLog("finalize: final env Asks edge Q=%s from=%s rs-size=%zu (perQ=%zu env=%zu)",
-                        edgeQ.to_string(HashFormat::Base16, false).substr(0, 12),
+        tracingCacheLog("finalize: final env Asks edge from=%s rs-size=%zu (perQ=%zu env=%zu)",
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
                         envAsksEdges.size(),
@@ -334,13 +327,9 @@ void TracingWriter::closeAsksEdge(bool processApplies)
             auto & innermost = activeQueryStack.back();
             decisionGraph->insertAsk(innermost.currentQ, prevQFactSetHash, requestSetHash);
         }
-        Hash edgeQ = activeQueryStack.empty()
-            ? Hash(HashAlgorithm::SHA256)
-            : activeQueryStack.back().currentQ;
-        envAsksEdges.push_back({edgeQ, prevQFactSetHash, requestSetHash});
+        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         envWalk.push_back({});  // 1:1 with envAsksEdges; empty is harmless for stateHashAt.
-        tracingCacheLog("closeAsksEdge: new Asks edge Q=%s from=%s rs-size=%zu (perQ=%zu env=%zu)",
-                        edgeQ.to_string(HashFormat::Base16, false).substr(0, 12),
+        tracingCacheLog("closeAsksEdge: new Asks edge from=%s rs-size=%zu (perQ=%zu env=%zu)",
                         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                         pendingNewRequests.size(),
                         envAsksEdges.size(),

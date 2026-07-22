@@ -113,10 +113,6 @@ class TracingWriter
     TracingDecisionGraph::SetHash prevQFactSetHash{TracingDecisionGraph::emptySetHash()};
     struct AsksEdgeRecord
     {
-        /** The Q this edge belongs to, at the moment the observation
-            was recorded. Under Q evolution, subsequent observations in
-            the same walk may have a different (evolved) Q. */
-        Hash q{HashAlgorithm::SHA256};
         TracingDecisionGraph::SetHash fromFactSetHash;
         TracingDecisionGraph::SetHash requestSetHash;
     };
@@ -410,10 +406,7 @@ public:
             auto & innermost = activeQueryStack.back();
             decisionGraph->insertAsk(innermost.currentQ, prevQFactSetHash, requestSetHash);
         }
-        Hash edgeQ = activeQueryStack.empty()
-            ? Hash(HashAlgorithm::SHA256)
-            : activeQueryStack.back().currentQ;
-        envAsksEdges.push_back({edgeQ, prevQFactSetHash, requestSetHash});
+        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         /* File/env reads have fromHash=0 and thus don't evolve any
            subject's state hash — no Q evolution triggered here. */
         ObservationSet obsSet;
@@ -562,10 +555,7 @@ public:
             auto & innermost = activeQueryStack.back();
             decisionGraph->insertAsk(innermost.currentQ, prevQFactSetHash, requestSetHash);
         }
-        Hash edgeQ = activeQueryStack.empty()
-            ? Hash(HashAlgorithm::SHA256)
-            : activeQueryStack.back().currentQ;
-        envAsksEdges.push_back({edgeQ, prevQFactSetHash, requestSetHash});
+        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         ObservationSet obsSet;
         obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
         envWalk.push_back(std::move(obsSet));
