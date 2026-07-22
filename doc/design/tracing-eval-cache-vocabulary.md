@@ -220,6 +220,46 @@ sessions via the DB index.
 
 ---
 
+## Per-Q-chain
+
+Under Q evolution (see
+[`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
+§3), a Query's `queryHash` is not stable across its own
+evaluation: `Query`'s payload has a `from` field carrying some
+Subject's state hash, and as observations dispatched during the
+Query's evaluation fold into that Subject, `from` evolves and
+`queryHash` advances through a chain `Q_0 → Q_1 → … → Q_N`.
+One evaluator activation of a Query — one `ActiveQuery` frame on
+the writer's stack, one walk-local Q context on the walker —
+tracks exactly this chain from Q_0 through Q_N.
+
+**Per-Q-chain** state is the value of a field scoped to one such
+frame's whole Q_0..Q_N chain, from when the frame is pushed
+until it pops at `logResult`. Distinct from:
+
+- **Session-scoped** (above) — spans all Queries in one
+  `TracingWriter`'s lifetime.
+- **Walk-local** — spans one call to the walker's `walk()`.
+  A `walk()` call carries one Query's evaluation, but "walk-local"
+  emphasizes the call scope, whereas "per-Q-chain" emphasizes the
+  Q_0..Q_N chain that call corresponds to. On the writer they
+  coincide within one `ActiveQuery` frame; on the walker
+  "walk-local" is the more common phrasing because a walk may
+  begin at trace-continuing state and fall through to
+  trace-discovering.
+
+Per-Q-chain scoping is what the writer's
+`ActiveQuery::perQEnvWalk` and the walker's `recomputeQ`-reading
+`perQEnvWalk` use for Q evolution's re-derivation — each Q's own
+chain of observations, not session-cumulative and not folded
+across Queries.
+
+**Per-Q** appears in prose as a looser shorthand for the same
+concept when the context makes Q-evolution unambiguous. Prefer
+**per-Q-chain** where precision matters.
+
+---
+
 ## The Query message pairing
 
 ### Query payload types
