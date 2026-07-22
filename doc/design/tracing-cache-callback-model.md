@@ -263,17 +263,15 @@ Writer emission: `TracingWriter::emitCallbackApplyForApplyResult`
 (`tracing-writer.hh:277-311`). Called from `TracingObject::whnf()`
 (`tracing-object.cc:167`) after `computeWHNFFromObject` returns.
 
-Walker dispatch: `TracingReplayEvaluator::dispatchAmbientQuery`
+Walker dispatch: `TracingReplayEvaluator::dispatchQueryRequest`
 has a `tag == "callbackApply"` branch that extracts
 fn/argObsSet/argAncestry/argDepth, materialises a
 `ReplayCallbackArg` backed by the referenced ObservationSet,
 invokes `fnObj->queryApply(replayArg)` live, returns `ResultWHNF`.
 
-**Gap** (branch name legacy). The walker's method is
-`dispatchAmbientQuery` — "Ambient" is legacy nomenclature; the
-Ambient message pairing has been dissolved but the method name
-stayed. All callers dispatch first-class Query variants
-(`QueryCallbackApply` and outer-value queries).
+The walker dispatches recorded outer-value and
+`QueryCallbackApply` Requests through `dispatchQueryRequest`,
+which routes by tag to each branch.
 
 ## 5. `f` is arg-side, obs is contra-arg-side
 
@@ -572,7 +570,7 @@ between XOR layers) to prevent accidental cancellation.
 - `callArgAncestry` seeded in `primops/cache.cc` (primop step 5):
   `hashString("cache-import:" | "cache-expr:" || <source id>)`
   XOR-folded with `state.inheritedCallArgAncestry`.
-- Propagated via `setAmbientResolverCallArgAncestry` and
+- Propagated via `setOuterResolverCallArgAncestry` and
   `innerState->inheritedCallArgAncestry`.
 - Used in QCA payload: `qca.argAncestry = cell.argAncestryHex`
   (`tracing-writer.hh:302`).
@@ -681,7 +679,7 @@ those into two variants. Not urgent — the guard is small.
 
 **Code.** The guard wraps four `queryApply` sites individually
 (`resolveApplyId`, `navigatePath`'s Apply step,
-`dispatchAmbientQuery`'s callbackApply branch,
+`dispatchQueryRequest`'s callbackApply branch,
 `TracingReplayEvaluator::apply`'s outer-direction branch), not the
 entire `walk()` body. Wrapping the entire walk was a latent bug
 because fallback triggered inside `ensureInner()` during dispatch
@@ -723,7 +721,7 @@ There are two message pairings now: **Query** and **Env**. QCA is
 a Query variant; contra-arg observations are Facts on Env; the
 cell mechanism (§5) is implementation detail, not a distinct
 message-pairing layer. Vocab §Message pairings drops from three
-to two; subj's Ambient sections retire; `dispatchAmbientQuery`
+to two; subj's Ambient sections retire; `dispatchQueryRequest`
 gets renamed.
 
 **Term reservation** (user, 2026-07-22 — "Park as note only").
@@ -772,7 +770,7 @@ messages / stale doc sections:
   Cell is now the per-application accumulator for `runningObsSet`
   (§6); `SuppressApplyBoundary` prevents walker-triggered phantom
   cells (§12).
-- **`dispatchAmbientQuery`** (walker method name) — despite the
+- **`dispatchQueryRequest`** (walker method name) — despite the
   name, all its branches dispatch first-class Query variants.
   Rename pending.
 

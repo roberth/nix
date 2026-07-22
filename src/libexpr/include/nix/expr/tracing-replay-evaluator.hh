@@ -29,7 +29,7 @@ class TracingReplayEvaluator : public Evaluator
      * Per-history resolution context.
      *
      * Threaded through history → dispatch → getCurrentResponse →
-     * dispatchAmbientQuery → resolveStateHash. Holds the proxy
+     * dispatchQueryRequest → resolveStateHash. Holds the proxy
      * whose method triggered this history (so resolveStateHash can
      * history the parent / argCell chain on the proxy graph) plus a
      * per-history memo of ids already resolved. Lives only for the
@@ -87,7 +87,7 @@ class TracingReplayEvaluator : public Evaluator
 
 
 
-    std::optional<std::string> dispatchAmbientQuery(const nlohmann::json & reqJson, ResolutionContext & ctx);
+    std::optional<std::string> dispatchQueryRequest(const nlohmann::json & reqJson, ResolutionContext & ctx);
 
     /** Resolve a recorded ambient id (hex of a Hash) to a live
         Object. Arg ids are found by walking ctx.currentProxy's
@@ -102,7 +102,7 @@ class TracingReplayEvaluator : public Evaluator
 
     /* dispatchApplyLive removed with task #109 — AmbientAsks-chain
        driven live invocation is gone; callbackApply-slot path in
-       dispatchAmbientQuery is the sole live-fire mechanism. */
+       dispatchQueryRequest is the sole live-fire mechanism. */
 
     std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx);
 
@@ -185,9 +185,9 @@ public:
     ref<Object> mkAttrs(const std::map<std::string, ref<Object>> & attrs) override;
     ref<Object> getInternalPrimOp(const std::string & name) override;
     ref<Object> apply(ref<Object> fn, ref<Object> arg) override;
-    std::shared_ptr<struct OuterResolver> getAmbientResolver() override
+    std::shared_ptr<struct OuterResolver> getOuterResolver() override
     {
-        return inner->getAmbientResolver();
+        return inner->getOuterResolver();
     }
 };
 

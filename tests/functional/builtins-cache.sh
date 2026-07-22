@@ -572,7 +572,7 @@ echo '14' > "$TEST_ROOT/itn-leaf.nix"
 # lazy result attributes. Each attribute's getInt triggers its own
 # ambient event section. The second section's backward validation
 # encounters the first section's ambient events. The FIFO unification
-# in dispatchAmbientQuery must map ids correctly: child Objects from
+# in dispatchQueryRequest must map ids correctly: child Objects from
 # getAttr must be consumed by the immediately-following id reference,
 # not by an unrelated id from a different section.
 

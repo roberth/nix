@@ -120,11 +120,11 @@ std::shared_ptr<OuterResolver> makeOuterResolver(
 /** Set the resolver's cached-call argAncestry — used by subject-id to make
     sibling cached calls' state hashes distinct via inheritance.
     Should be unique per cached call (e.g. hash of import path). */
-void setAmbientResolverCallArgAncestry(OuterResolver & resolver, Hash callArgAncestry);
+void setOuterResolverCallArgAncestry(OuterResolver & resolver, Hash callArgAncestry);
 
 /** Get the resolver's current callArgAncestry for RAII save/restore around
     per-cb-invocation argAncestry overrides. */
-Hash getAmbientResolverCallScope(const OuterResolver & resolver);
+Hash getOuterResolverCallScope(const OuterResolver & resolver);
 
 /** Register a live outer-direction proxy under a subject-id `subject` +
     `argAncestry` in the resolver's outer-values map. Used by the
@@ -139,7 +139,7 @@ Hash getAmbientResolverCallScope(const OuterResolver & resolver);
     registration is the equivalent live channel. Single-entry
     contract (= overwrite-on-conflict) keyed by `(subject, argAncestry)`
     structural-equality. */
-void registerAmbientResolverProxy(
+void registerOuterResolverProxy(
     OuterResolver & resolver,
     Subject subject,
     Hash argAncestry,
@@ -156,7 +156,7 @@ void registerAmbientResolverProxy(
     arg's state hash at the writer's flush-time `envWalk` index
     (= post-observations evolution), which differs from the
     initial state hash we registered under. */
-std::shared_ptr<Object> tryResolveAmbientResolverProxy(
+std::shared_ptr<Object> tryResolveOuterResolverProxy(
     OuterResolver & resolver,
     const Hash & idHash,
     const std::vector<ObservationSet> & envWalk,

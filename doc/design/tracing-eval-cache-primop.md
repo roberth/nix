@@ -109,7 +109,7 @@ libexpr components that the primop wires together. Reading tour:
   inner-supplied callback arg into the cell's obsSet; at replay
   the arg is reconstructed from the obsSet carried inside the
   recorded `QueryCallbackApply` request.
-- `src/libexpr/tracing-replay-evaluator.cc` — `dispatchAmbientQuery`
+- `src/libexpr/tracing-replay-evaluator.cc` — `dispatchQueryRequest`
   (name is legacy) routes recorded outer-value and
   `QueryCallbackApply` Requests through the walker, resolving
   `from` fields via `resolveStateHash`.
@@ -174,7 +174,7 @@ Inside `prim_cache`:
 5. **Seed `callArgAncestry`.** Compute a per-cache-call contribution
    (hash of `"cache-import:"|"cache-expr:"` plus the source
    identifier) XOR-folded with `state.inheritedCallArgAncestry`. Propagate
-   the result via `setAmbientResolverCallArgAncestry` and
+   the result via `setOuterResolverCallArgAncestry` and
    `innerState->inheritedCallArgAncestry`. Sibling cached calls get
    distinct state hashes at their cb-apply boundaries because their
    contributions differ; nested calls accumulate.
@@ -256,7 +256,7 @@ When `replayEval->evalFile(...)` (or `evalExpr`, or `apply`) runs:
 4. The `dispatch` callback in `TracingReplayEvaluator` reads each
    Request payload, calls `getCurrentResponse`, and returns the
    response hash. For Requests whose payload contains a `Query`,
-   dispatch routes to `dispatchAmbientQuery` (name is legacy),
+   dispatch routes to `dispatchQueryRequest`,
    which:
    - resolves the `from` field via `resolveStateHash` (against the
      subject-identity machinery: `Arg{depth}` positional seeds,
@@ -535,7 +535,7 @@ listed. What remains:
 - `src/libcmd/command.cc` — sets `evalState->rootDecisionGraph`
   during `getEvalState()`.
 - `src/libexpr/tracing-replay-evaluator.cc` —
-  `dispatchAmbientQuery`, `apply()`, `resolveStateHash`.
+  `dispatchQueryRequest`, `apply()`, `resolveStateHash`.
 - `src/libexpr/outer-object.cc` — `OuterObject` (outer-owned value
   the inner probes via Env).
 - `src/libexpr/expr-from-object.cc` — `ExprFromObject`,

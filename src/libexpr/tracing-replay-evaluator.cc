@@ -131,14 +131,14 @@ TracingReplayEvaluator::walk(
         auto requestPayload = decisionGraph.getRequestPayload(requestHash);
         if (!requestPayload)
             return Hash(HashAlgorithm::SHA256);
-        bool isAmbient = false;
+        bool isQueryRequest = false;
         std::optional<Hash> outerFromHash;
         std::string queryTag;
         std::string queryDescription;
         try {
             auto reqJson = cborStringToJson(*requestPayload);
-            isAmbient = reqJson.contains("query");
-            if (isAmbient) {
+            isQueryRequest = reqJson.contains("query");
+            if (isQueryRequest) {
                 queryTag = reqJson["query"].get<std::string>();
                 queryDescription = queryTag;
                 if (reqJson.contains("params") && reqJson["params"].is_object()) {
@@ -170,13 +170,13 @@ TracingReplayEvaluator::walk(
         } catch (...) {
             queryDescription = "(parse-failed)";
         }
-        if (!isAmbient) {
+        if (!isQueryRequest) {
             if (auto it = responseFor.find(requestHash); it != responseFor.end())
                 return it->second;
         }
         /* Bare "apply" Requests (recorded but with no Terminal) have
            no live-fire dispatch path — miss cleanly. */
-        if (isAmbient && queryTag == "apply") {
+        if (isQueryRequest && queryTag == "apply") {
             tracingCacheLog(
                 "dispatch: apply Request req=%s — miss",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12));
@@ -204,7 +204,7 @@ TracingReplayEvaluator::walk(
            Only substitute on DISPATCH FAILURE (see the block above),
            not on mismatch. */
         (void) edgeCtx;
-        if (!isAmbient)
+        if (!isQueryRequest)
             responseFor.emplace(requestHash, h);
         /* Walker-side dispatch is validation, not new recording.
            The observation being validated was already emitted by the
@@ -234,23 +234,23 @@ TracingReplayEvaluator::walk(
         } catch (...) {
             respJsonStr = "(unparseable)";
         }
-        if (isAmbient && outerFromHash) {
+        if (isQueryRequest && outerFromHash) {
             pendingEdgeObservations.push_back({
                 *outerFromHash,
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), requestHash, h),
             });
             tracingCacheLog(
-                "dispatch ambient: req=%s payload=%s from=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
+                "dispatch outer: req=%s payload=%s from=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
                 queryDescription,
                 outerFromHash->to_string(HashFormat::Base16, false).substr(0, 12),
                 h.to_string(HashFormat::Base16, false).substr(0, 12),
                 reqJsonStr,
                 respJsonStr);
-        } else if (isAmbient) {
+        } else if (isQueryRequest) {
             tracingCacheLog(
-                "dispatch ambient (no-from): req=%s payload=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
+                "dispatch outer (no-from): req=%s payload=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
                 queryDescription,
                 h.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -424,7 +424,7 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
             nlohmann::json respJson = trace::GetEnvResponse{currentVal};
             return jsonToCborString(respJson);
         } else if (reqJson.contains("query")) {
-            return dispatchAmbientQuery(reqJson, ctx);
+            return dispatchQueryRequest(reqJson, ctx);
         }
     } catch (const std::exception & e) {
         tracingCacheLog("replay: failed to get current response: %s", e.what());
@@ -570,7 +570,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
 
            Live-proxy fallback: the `<replay-local-lambda>` primop
            registers the args[0] it receives under the cb-arg arg's
-           initial state hash when fired (= registerAmbientResolverProxy
+           initial state hash when fired (= registerOuterResolverProxy
            in replay-callback-arg.cc). If we find a matching
            registration here, the OUTER walker resolves to that live
            proxy and dispatches the env fact live against outer's
@@ -581,8 +581,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
            OUTER values — silently masks outer-body change (cb-
            higher-order step 3 returning stale 6 when outer changed
            from `g 5` to `g 10`). */
-        if (auto resolver = inner->getAmbientResolver()) {
-            if (auto live = tryResolveAmbientResolverProxy(*resolver, idHash, envWalk, &decisionGraph)) {
+        if (auto resolver = inner->getOuterResolver()) {
+            if (auto live = tryResolveOuterResolverProxy(*resolver, idHash, envWalk, &decisionGraph)) {
                 tracingCacheLog(
                     "resolve %s: not in pool — found live-proxy registration",
                     idStr.substr(0, 12));
@@ -774,7 +774,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
     return child;
 }
 
-std::optional<std::string> TracingReplayEvaluator::dispatchAmbientQuery(const nlohmann::json & reqJson, ResolutionContext & ctx)
+std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nlohmann::json & reqJson, ResolutionContext & ctx)
 {
     auto tag = reqJson["query"].get<std::string>();
     auto & params = reqJson["params"];

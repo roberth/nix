@@ -20,7 +20,7 @@ public:
     /// Shared resolver for ambient interactions (set by builtins.cache).
     std::shared_ptr<struct OuterResolver> outerResolver;
 
-    std::shared_ptr<struct OuterResolver> getAmbientResolver() override
+    std::shared_ptr<struct OuterResolver> getOuterResolver() override
     {
         return outerResolver;
     }

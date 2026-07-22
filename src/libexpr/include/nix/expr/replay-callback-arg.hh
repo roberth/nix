@@ -91,7 +91,7 @@ class ReplayCallbackArg : public Object
     /* Memoized WHNF response. The recorder logs ONE QueryGetWHNF
        observation per value force; the walker must reuse the cached
        response on any subsequent call. Without this, when
-       `dispatchAmbientQuery::navigatePath` invokes `queryApply`
+       `dispatchQueryRequest::navigatePath` invokes `queryApply`
        multiple times against the same ReplayCallbackArg (= once per fact
        dispatched on the apply result), each Apply Value's force
        re-fires the ReplayCallbackArg's surface probes and pushes a fresh fact

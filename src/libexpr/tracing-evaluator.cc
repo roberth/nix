@@ -436,13 +436,13 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         std::shared_ptr<OuterResolver> resolver;
         Hash oldScope{HashAlgorithm::SHA256};
         ~CallScopeGuard() {
-            if (resolver) setAmbientResolverCallArgAncestry(*resolver, oldScope);
+            if (resolver) setOuterResolverCallArgAncestry(*resolver, oldScope);
         }
     } guard;
     if (!fnIsTlo && !fnIsApplyResult) {
-        if (auto resolver = inner->getAmbientResolver()) {
+        if (auto resolver = inner->getOuterResolver()) {
             guard.resolver = resolver;
-            guard.oldScope = getAmbientResolverCallScope(*resolver);
+            guard.oldScope = getOuterResolverCallScope(*resolver);
             /* Sibling discrimination (cb-sibling-b): applyArgAncestryStateHash
                alone collides across siblings whose constituents are
                structurally identical at apply time. XOR in
@@ -454,7 +454,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
             auto siblingScope = TracingDecisionGraph::xorHashes(
                 TracingDecisionGraph::xorHashes(guard.oldScope, applyArgAncestryStateHash),
                 writer.getV13FactSetHash());
-            setAmbientResolverCallArgAncestry(*resolver, siblingScope);
+            setOuterResolverCallArgAncestry(*resolver, siblingScope);
         }
     }
 

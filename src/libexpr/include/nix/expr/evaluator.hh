@@ -432,7 +432,7 @@ public:
      * env facts on the apply's argObj and the cb-arg arg has
      * neither a producer Request nor a localArg sidecar.
      */
-    virtual std::shared_ptr<struct OuterResolver> getAmbientResolver()
+    virtual std::shared_ptr<struct OuterResolver> getOuterResolver()
     {
         return nullptr;
     }

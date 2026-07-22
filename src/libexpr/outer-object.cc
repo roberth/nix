@@ -12,7 +12,7 @@ namespace nix {
    reqHash matches what the writer flushed for the corresponding
    observation. */
 template <typename Q>
-static void stampPerArgFieldsAmbient(Q & q, const Subject & subject, const Hash & argAncestry)
+static void stampPerArgFields(Q & q, const Subject & subject, const Hash & argAncestry)
 {
     auto par = pathAndRootsFromSubject(subject);
     std::vector<trace::QueryLeaf> fromStateHashes;
@@ -40,13 +40,13 @@ OuterObject::OuterObject(
 std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
 {
     trace::QueryGetAttr q{name, std::string{}};
-    stampPerArgFieldsAmbient(q, subject, argAncestry);
+    stampPerArgFields(q, subject, argAncestry);
     auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultMaybeType>(&qr.result);
     if (!r || !r->type)
         return nullptr;
     if (!qr.child)
-        throw Error("ambient maybeGetAttr: queryFn didn't return a child Object");
+        throw Error("outer maybeGetAttr: queryFn didn't return a child Object");
     Subject childSubject{DerivedSubject{
         .parent = std::make_shared<const Subject>(subject),
         .kind = DerivedSubject::Kind::GetAttr,
@@ -66,11 +66,11 @@ trace::ResultWHNF & OuterObject::whnf()
     if (cachedWHNF)
         return *cachedWHNF;
     trace::QueryGetWHNF q{std::string{}};
-    stampPerArgFieldsAmbient(q, subject, argAncestry);
+    stampPerArgFields(q, subject, argAncestry);
     auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
-        throw Error("ambient getWHNF: unexpected result type");
+        throw Error("outer getWHNF: unexpected result type");
     cachedWHNF = std::move(*r);
     return *cachedWHNF;
 }
@@ -80,7 +80,7 @@ std::vector<std::string> OuterObject::getAttrNames()
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
     if (!p)
-        throw Error("ambient getAttrNames: WHNF payload not attrs (type %s)", w.type);
+        throw Error("outer getAttrNames: WHNF payload not attrs (type %s)", w.type);
     return p->names;
 }
 
@@ -89,7 +89,7 @@ std::string OuterObject::getStringIgnoreContext()
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFString>(&w.payload);
     if (!p)
-        throw Error("ambient getStringIgnoreContext: WHNF payload not string (type %s)", w.type);
+        throw Error("outer getStringIgnoreContext: WHNF payload not string (type %s)", w.type);
     return p->value;
 }
 
@@ -103,7 +103,7 @@ std::pair<std::string, NixStringContext> OuterObject::getStringWithContext()
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFString>(&w.payload);
     if (!p)
-        throw Error("ambient getStringWithContext: WHNF payload not string (type %s)", w.type);
+        throw Error("outer getStringWithContext: WHNF payload not string (type %s)", w.type);
     NixStringContext ctx;
     for (auto & s : p->context)
         ctx.insert(NixStringContextElem::parse(s));
@@ -115,7 +115,7 @@ RootedPath OuterObject::getPath()
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFPath>(&w.payload);
     if (!p)
-        throw Error("ambient getPath: WHNF payload not path (type %s)", w.type);
+        throw Error("outer getPath: WHNF payload not path (type %s)", w.type);
     /* lazy-paths: reuse the outer EvalState's `rootFSRoot` so the
        SourceRoot outlives the Value the outer evaluator constructs
        from this path. A one-off `SourceRoot::make` here would be
@@ -129,7 +129,7 @@ bool OuterObject::getBool(std::string_view)
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFBool>(&w.payload);
     if (!p)
-        throw Error("ambient getBool: WHNF payload not bool (type %s)", w.type);
+        throw Error("outer getBool: WHNF payload not bool (type %s)", w.type);
     return p->value;
 }
 
@@ -138,7 +138,7 @@ NixInt OuterObject::getInt(std::string_view)
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFInt>(&w.payload);
     if (!p)
-        throw Error("ambient getInt: WHNF payload not int (type %s)", w.type);
+        throw Error("outer getInt: WHNF payload not int (type %s)", w.type);
     return NixInt{p->value};
 }
 
@@ -147,7 +147,7 @@ NixFloat OuterObject::getFloat(std::string_view)
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
     if (!p)
-        throw Error("ambient getFloat: WHNF payload not float (type %s)", w.type);
+        throw Error("outer getFloat: WHNF payload not float (type %s)", w.type);
     return p->value;
 }
 
@@ -156,17 +156,17 @@ size_t OuterObject::getListSize()
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFList>(&w.payload);
     if (!p)
-        throw Error("ambient getListSize: WHNF payload not list (type %s)", w.type);
+        throw Error("outer getListSize: WHNF payload not list (type %s)", w.type);
     return p->size;
 }
 
 std::shared_ptr<Object> OuterObject::getListElem(size_t index)
 {
     trace::QueryGetListElem q{std::string{}, index};
-    stampPerArgFieldsAmbient(q, subject, argAncestry);
+    stampPerArgFields(q, subject, argAncestry);
     auto qr = queryFn(outerObj, q, subject, argAncestry);
     if (!qr.child)
-        throw Error("ambient getListElem: queryFn didn't return a child Object");
+        throw Error("outer getListElem: queryFn didn't return a child Object");
     Subject childSubject{DerivedSubject{
         .parent = std::make_shared<const Subject>(subject),
         .kind = DerivedSubject::Kind::GetListElem,
@@ -191,7 +191,7 @@ ObjectType OuterObject::getType()
 
 RootValue OuterObject::defeatCache()
 {
-    throw Error("ambient defeatCache: not supported on virtual values");
+    throw Error("outer defeatCache: not supported on virtual values");
 }
 
 RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<OuterResolver> resolver)
@@ -209,7 +209,7 @@ RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<OuterRe
 std::optional<FunctionInfo> OuterObject::getFunctionInfo()
 {
     trace::QueryGetFunctionInfo q{std::string{}};
-    stampPerArgFieldsAmbient(q, subject, argAncestry);
+    stampPerArgFields(q, subject, argAncestry);
     auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
@@ -230,7 +230,7 @@ std::optional<std::vector<std::string>> OuterObject::getAttrPath()
 std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
 {
     if (!applyFn)
-        throw Error("ambient apply: no apply callback");
+        throw Error("outer apply: no apply callback");
     /* Thread the caller's effective argAncestry into applyFn so the cb
        apply's new local cell can chain off the right depth, even
        when `fnObj` has no proxy parent chain. Keep a copy of argObj

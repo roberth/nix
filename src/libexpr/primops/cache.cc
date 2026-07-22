@@ -172,7 +172,7 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
         : hashString(HashAlgorithm::SHA256, "cache-expr:" + *expr + ":" + baseDir->path.abs());
     auto effectiveCallScope = TracingDecisionGraph::xorHashes(
         state.inheritedCallArgAncestry, ownContribution);
-    setAmbientResolverCallArgAncestry(*resolver, effectiveCallScope);
+    setOuterResolverCallArgAncestry(*resolver, effectiveCallScope);
     innerState->inheritedCallArgAncestry = effectiveCallScope;
 
     // Convert paths to use the inner accessor (TracingSourceAccessor)

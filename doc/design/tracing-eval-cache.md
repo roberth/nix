@@ -553,7 +553,7 @@ dispatch during a walk.
 
 *Observation about the current implementation.* When replay
 dispatches a callback-apply request (via the walker's
-`dispatchAmbientQuery` callbackApply branch), it materialises a
+`dispatchQueryRequest` callbackApply branch), it materialises a
 `ReplayCallbackArg` and invokes `fnObj->queryApply(...)` live.
 The callback's body probes outer values via `OuterObject`, and
 those probes flow through `TracingEnvironment::outerQuery` to
@@ -718,8 +718,8 @@ args are proxied by `ReplayCallbackArg` (see the vocab's
 [Callback arg objects](./tracing-eval-cache-vocabulary.md#callback-arg-objects)),
 and their recorded responses are served from the observation set
 carried inside the recorded `QueryCallbackApply` request.
-`TracingReplayEvaluator::dispatchAmbientQuery` (name is legacy)
-is the per-tag bridge; details live in
+`TracingReplayEvaluator::dispatchQueryRequest` is the per-tag
+bridge; details live in
 [`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
 and
 [`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md).

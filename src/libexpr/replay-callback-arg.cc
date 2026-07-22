@@ -373,7 +373,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                         Arg{*applyDepthSaved + 1}};
                     auto outerArgObj = std::make_shared<InterpreterObject>(
                         state, allocRootValue(args[0]));
-                    registerAmbientResolverProxy(
+                    registerOuterResolverProxy(
                         *resolverSaved, std::move(argSubject),
                         *applyArgAncestrySaved, std::move(outerArgObj));
                 }

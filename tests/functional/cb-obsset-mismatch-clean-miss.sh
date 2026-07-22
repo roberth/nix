@@ -17,7 +17,7 @@
 # cold wrote):
 #
 # 1. Fallback works: under normal warm, obsSet-miss triggers
-#    ReplayCallbackArg's throw, dispatchAmbientQuery catches and
+#    ReplayCallbackArg's throw, dispatchQueryRequest catches and
 #    returns std::nullopt (walker miss), walker falls back to
 #    inner, inner re-eval produces the correct value.
 #

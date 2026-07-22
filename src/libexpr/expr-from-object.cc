@@ -130,7 +130,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
     Hash callArgAncestry = Hash(HashAlgorithm::SHA256);
 
     /* Outer-direction proxies registered live by the ReplayCallbackArg's
-       `<replay-local-lambda>` primop (= `registerAmbientResolverProxy`).
+       `<replay-local-lambda>` primop (= `registerOuterResolverProxy`).
        Keyed by `(subject, argAncestry)` so the walker's `resolveStateHash`
        can match the registered arg's subject-id-evolved state hash at any
        history-edge index, not just the initial one. List rather than
@@ -558,17 +558,17 @@ std::shared_ptr<OuterResolver> makeOuterResolver(
     return resolver;
 }
 
-void setAmbientResolverCallArgAncestry(OuterResolver & resolver, Hash callArgAncestry)
+void setOuterResolverCallArgAncestry(OuterResolver & resolver, Hash callArgAncestry)
 {
     resolver.callArgAncestry = std::move(callArgAncestry);
 }
 
-Hash getAmbientResolverCallScope(const OuterResolver & resolver)
+Hash getOuterResolverCallScope(const OuterResolver & resolver)
 {
     return resolver.callArgAncestry;
 }
 
-void registerAmbientResolverProxy(
+void registerOuterResolverProxy(
     OuterResolver & resolver,
     Subject subject,
     Hash argAncestry,
@@ -589,7 +589,7 @@ void registerAmbientResolverProxy(
        the variant tag keeps this collapse honest if a future caller
        passes a different variant. */
     auto * newSeed = std::get_if<Arg>(&subject.data);
-    assert(newSeed && "registerAmbientResolverProxy: subject must be a Arg");
+    assert(newSeed && "registerOuterResolverProxy: subject must be a Arg");
     for (auto & entry : resolver.liveProxies) {
         auto * existingSeed = std::get_if<Arg>(&entry.subject.data);
         if (existingSeed && existingSeed->depth == newSeed->depth && entry.argAncestry == argAncestry) {
@@ -600,7 +600,7 @@ void registerAmbientResolverProxy(
     resolver.liveProxies.push_back({std::move(subject), std::move(argAncestry), std::move(obj)});
 }
 
-std::shared_ptr<Object> tryResolveAmbientResolverProxy(
+std::shared_ptr<Object> tryResolveOuterResolverProxy(
     OuterResolver & resolver,
     const Hash & idHash,
     const std::vector<ObservationSet> & envWalk,
