@@ -99,10 +99,13 @@ struct OuterApply
         apply (passed by the caller who already holds it — no id
         round-trip). `fnStateHash` is the Subject-derived state hash
         used to build the QueryApply payload (the outer Object typically
-        has no Subject; the wrapping OuterObject computes it). Returns
-        the outer's apply-result Object. */
+        has no Subject; the wrapping OuterObject computes it).
+        `fnSubject` and `fnArgAncestry` are the caller's OuterObject's
+        real Subject and inherited argAncestry — used by the wrapper
+        to construct an evolving ApplyResultSubject. Returns the
+        outer's apply-result Object. */
     std::shared_ptr<Object> run(
-        std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject,
+        std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject, Hash fnArgAncestry,
         std::shared_ptr<Object> argObj,
         std::shared_ptr<const ArgCell> callerScope);
 };
@@ -147,22 +150,24 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
 
     /** Invoke the outer fn Object `fnObj` on `argObj`. `fnStateHash`
         is the Subject-derived state hash of the wrapping
-        OuterObject, used to build the QueryApply payload. Returns
-        the outer's apply-result Object. */
+        OuterObject, used to build the QueryApply payload.
+        `fnSubject`/`fnArgAncestry` are the wrapping OuterObject's
+        real Subject/argAncestry. Returns the outer's apply-result
+        Object. */
     std::shared_ptr<Object> apply(
-        std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject,
+        std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject, Hash fnArgAncestry,
         std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
     {
         return OuterApply{
             bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
             shared_from_this(),
-        }.run(std::move(fnObj), fnStateHash, std::move(fnSubject),
+        }.run(std::move(fnObj), fnStateHash, std::move(fnSubject), fnArgAncestry,
               std::move(argObj), std::move(callerScope));
     }
 };
 
 std::shared_ptr<Object> OuterApply::run(
-    std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject,
+    std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject, Hash fnArgAncestry,
     std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
 {
     /* fnId — the Subject-derived state hash of the wrapping OuterObject,
@@ -275,18 +280,23 @@ std::shared_ptr<Object> OuterApply::run(
        uses the enclosing apply's fn subject and misses this cell —
        no QCA lands in the DB and warm can't discriminate siblings.
 
-       Using PostulatedIdempotentRead{fnStateHash} with
-       applyArgAncestry=0 makes stateHashAtSubject at step 0
-       reproduce fnStateHash — matching cell.fnStateHashHex (which
-       was set from fnStateHash by createCallbackCell above). This
-       is only the outer-wrapper piece of B7; children need
-       applyResultSubject too, and the sibling-A empty-cell timing
-       still misses. See doc/status.md B7. */
+       Use the caller's real `fnSubject` with its real
+       `fnArgAncestry` — NOT `PostulatedIdempotentRead{fnStateHash}`,
+       which the PIR docstring flags as invalid ("taking an arbitrary
+       subject id by value and using it as if it's an up-to-date id
+       … conflates all possible future states of the argument").
+       stateHashAtSubject(fnSubject, fnArgAncestry, {}, 0) reproduces
+       fnStateHash (matches cell.fnStateHashHex) at step 0, and
+       evolves as observations on the fn's constituents accumulate
+       during the wrapper's Q chain — so sibling callbacks whose
+       arg-side observations diverge end up at distinct Q_final
+       values instead of colliding at a shared Terminal.
+
+       See doc/status.md B7. */
     if (innerWriter) {
-        Subject fnResultSubject{PostulatedIdempotentRead{fnStateHash}};
         Subject argResultSubject{Arg{localCell->depth}};
         Subject applyResultSubject{ApplyResultSubject{
-            .fn = std::make_shared<const Subject>(std::move(fnResultSubject)),
+            .fn = std::make_shared<const Subject>(fnSubject),
             .arg = std::make_shared<const Subject>(std::move(argResultSubject)),
         }};
         auto v = innerWriter->getSink().logQuery(applyQuery);
@@ -297,7 +307,7 @@ std::shared_ptr<Object> OuterApply::run(
         auto wrapped = TracingObject::create(
             ref<Object>(resultObj), *innerWriter, v, triePos);
         wrapped->withApplyResultSubject(
-            std::move(applyResultSubject), Hash{HashAlgorithm::SHA256});
+            std::move(applyResultSubject), fnArgAncestry);
         /* Mark as cb-apply root: navigation descendants will inherit
            applyResultSubject so their whnf emits QCA (§7). */
         wrapped->withCbApplyOrigin();
@@ -420,9 +430,10 @@ static PrimOp * makeCachedFnPrimOp(
                             std::shared_ptr<Object> fnObj,
                             Hash fnStateHash,
                             Subject fnSubject,
+                            Hash fnArgAncestry,
                             std::shared_ptr<Object> argObj,
                             std::shared_ptr<const ArgCell> callerScope) {
-                            return resolver->apply(std::move(fnObj), fnStateHash, std::move(fnSubject),
+                            return resolver->apply(std::move(fnObj), fnStateHash, std::move(fnSubject), fnArgAncestry,
                                                     std::move(argObj), std::move(callerScope));
                         };
                         /* lazy-paths: pin OuterObject's path SourceRoot

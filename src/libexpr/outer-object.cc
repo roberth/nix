@@ -244,7 +244,7 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
     int localDepth = callerScope ? callerScope->depth + 1 : 0;
     Subject argSubject{Arg{localDepth}};
     auto fnStateHash = stateHashAfterSubject(subject, argAncestry, {});
-    auto outerResult = applyFn(outerObj, fnStateHash, subject, std::move(argObj), callerScope);
+    auto outerResult = applyFn(outerObj, fnStateHash, subject, argAncestry, std::move(argObj), callerScope);
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(subject),
         .arg = std::make_shared<const Subject>(std::move(argSubject)),

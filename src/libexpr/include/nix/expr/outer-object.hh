@@ -51,9 +51,15 @@ using OuterQueryFn = std::function<OuterQueryResult(
  * Object, its Subject-derived state hash (used to build the
  * QueryApply payload — the outer Object itself typically has no
  * Subject, so the wrapping OuterObject computes and passes this),
- * the argument Object, and the calling OuterObject's effective
- * argCell (the chain root from which the new local cell's depth
- * descends). Returns the outer's apply-result Object.
+ * `fnSubject` and `fnArgAncestry` (the calling OuterObject's own
+ * Subject and inherited argAncestry — used to construct the
+ * apply-result's ApplyResultSubject with a real evolving fn root,
+ * rather than a `PostulatedIdempotentRead{fnStateHash}` shortcut
+ * that the PIR docstring explicitly flags as invalid because it
+ * conflates all possible future states of a lazy argument), the
+ * argument Object, and the calling OuterObject's effective argCell
+ * (the chain root from which the new local cell's depth descends).
+ * Returns the outer's apply-result Object.
  *
  * Why pass `callerScope`: the cb is reached via a navigation chain
  * (e.g. arg.items[0]), and `fnObj` may not carry a proxy parent chain
@@ -65,6 +71,7 @@ using OuterApplyFn = std::function<std::shared_ptr<Object>(
     std::shared_ptr<Object> fnObj,
     Hash fnStateHash,
     Subject fnSubject,
+    Hash fnArgAncestry,
     std::shared_ptr<Object> argObj,
     std::shared_ptr<const ArgCell> callerScope)>;
 
