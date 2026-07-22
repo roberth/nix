@@ -827,10 +827,30 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
         auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
         for (const auto & obs : *obsSet)
             obsSetMap->emplace(obs.queryHash, obs.responsePayload);
-        auto fnObj = resolveStateHash(fnHex, ctx);
+        /* Resolve fn by subject-navigation, not by hex lookup. The QCA
+           payload carries `fromStateHashes` (arg-side root state hashes)
+           and `path` (the DerivedSubject navigation from those roots),
+           which together describe the fn's Subject. Reconstruct
+           directly instead of routing through resolveStateHash(fnHex),
+           which would require the exact producer query at fn's evolved
+           state to be in the Requests pool — cold only emits it when a
+           probe fires at that state, which for cb-apply results isn't
+           guaranteed. Subject-navigation walks the roots via cell chain
+           (arg proxies resolve at their evolved state) and navigates
+           the path live. Falls back to the old hex lookup if roots or
+           path are missing (older payloads). */
+        std::shared_ptr<Object> fnObj;
+        if (params.contains("fromStateHashes") && params.contains("path")) {
+            auto roots = resolveRoots(params,
+                [&](const std::string & cid) { return resolveStateHash(cid, ctx); });
+            if (!roots.empty())
+                fnObj = navigatePath(roots, parsePathFromParams(params), &writer);
+        }
+        if (!fnObj)
+            fnObj = resolveStateHash(fnHex, ctx);
         if (!fnObj) {
             tracingCacheLog(
-                "callbackApply: resolveStateHash(fn=%s) miss",
+                "callbackApply: fn resolution miss (fn=%s)",
                 fnHex.substr(0, 12));
             return std::nullopt;
         }
