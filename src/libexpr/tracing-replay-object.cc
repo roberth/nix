@@ -209,6 +209,14 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
         evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
     child->withArgCell(argCell);
     if (applyContext) child->withApplyContextOnly(applyContext);
+    /* Symmetric to TracingObject::maybeGetAttr's B3/B7-remaining
+       propagation: cb-apply-origin walker children inherit both marks
+       so their queryHashes match cold's. */
+    if (cbApplyOrigin) {
+        child->withCbApplyOrigin();
+        if (applyResultSubject)
+            child->withApplyResultSubject(*applyResultSubject, applyArgAncestry);
+    }
     return child;
 }
 
@@ -369,6 +377,12 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
             evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); });
         child->withArgCell(argCell);
         if (applyContext) child->withApplyContextOnly(applyContext);
+        /* B3/B7-remaining: cb-apply-origin propagation, symmetric to maybeGetAttr. */
+        if (cbApplyOrigin) {
+            child->withCbApplyOrigin();
+            if (applyResultSubject)
+                child->withApplyResultSubject(*applyResultSubject, applyArgAncestry);
+        }
         return child;
     }
     tracingCacheLog("replay fallback: getListElem %d", idx);

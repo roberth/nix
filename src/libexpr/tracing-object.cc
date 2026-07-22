@@ -132,6 +132,18 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
         auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
         child->withArgCell(argCell);
         if (applyContext) child->withApplyContext(applyContext);
+        /* B3 / B7 remaining: only cb-apply-origin chains propagate
+           applyResultSubject to children. Non-cb apply results (from
+           TracingEvaluator::apply) leave children order-independent —
+           otherwise evolvedQueryFrom would fold applyContext observations
+           into their `from` field and break order-invariance
+           (cb-deep-indep-orders). Cb-apply-origin descendants keep
+           applyResultSubject so their whnf emits QCA per §7. */
+        if (cbApplyOrigin) {
+            child->withCbApplyOrigin();
+            if (applyResultSubject)
+                child->withApplyResultSubject(*applyResultSubject, applyArgAncestry);
+        }
         return child;
     }
     trace::ResultMaybeType resJson{std::nullopt};
@@ -278,6 +290,12 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
     child->withArgCell(argCell);
     if (applyContext) child->withApplyContext(applyContext);
+    /* B3 / B7 remaining: same cb-apply-origin gating as maybeGetAttr. */
+    if (cbApplyOrigin) {
+        child->withCbApplyOrigin();
+        if (applyResultSubject)
+            child->withApplyResultSubject(*applyResultSubject, applyArgAncestry);
+    }
     return child;
 }
 

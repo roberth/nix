@@ -51,6 +51,10 @@ class TracingReplayObject : public Object
     std::optional<Subject> applyResultSubject;
     Hash applyArgAncestry{HashAlgorithm::SHA256};
 
+    /* Marks this wrapper as cb-apply-descendant, symmetric to
+       TracingObject::cbApplyOrigin. Propagated by navigation. */
+    bool cbApplyOrigin = false;
+
     ref<Object> ensureInner() const;
 
     std::string evolvedQueryFrom() const;
@@ -108,6 +112,15 @@ public:
     {
         applyResultSubject = std::move(subject);
         applyArgAncestry = std::move(argAncestry);
+        return *this;
+    }
+
+    /** Symmetric to `TracingObject::withCbApplyOrigin`. Walker
+        propagates through navigation children so their
+        `applyResultSubject` matches cold's Q payloads. */
+    TracingReplayObject & withCbApplyOrigin()
+    {
+        cbApplyOrigin = true;
         return *this;
     }
 

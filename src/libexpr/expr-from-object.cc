@@ -298,6 +298,9 @@ std::shared_ptr<Object> OuterApply::run(
             ref<Object>(resultObj), *innerWriter, v, triePos);
         wrapped->withApplyResultSubject(
             std::move(applyResultSubject), Hash{HashAlgorithm::SHA256});
+        /* Mark as cb-apply root: navigation descendants will inherit
+           applyResultSubject so their whnf emits QCA (§7). */
+        wrapped->withCbApplyOrigin();
         return wrapped.get_ptr();
     }
 

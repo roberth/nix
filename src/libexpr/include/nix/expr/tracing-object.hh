@@ -47,6 +47,12 @@ class TracingObject : public Object
     std::optional<Subject> applyResultSubject;
     Hash applyArgAncestry{HashAlgorithm::SHA256};
 
+    /* True on wrappers rooted at a cb-apply (OuterApply::run) and on
+       navigation descendants of such wrappers. Gates whether children
+       inherit `applyResultSubject` for QCA emission. See
+       `withCbApplyOrigin` for rationale. */
+    bool cbApplyOrigin = false;
+
     /* Per-invocation observation context shared with the cb-arg
        OuterObject's queryFn and propagated to derived children
        via shared_ptr. */
@@ -89,6 +95,23 @@ public:
     {
         applyResultSubject = std::move(subject);
         applyArgAncestry = std::move(argAncestry);
+        return *this;
+    }
+
+    /** Mark this wrapper as originating from a callback-application
+        boundary (OuterApply::run). Descendants of a cb-apply-marked
+        wrapper inherit the mark and inherit `applyResultSubject`
+        through navigation, so their own whnf fires
+        emitCallbackApplyForApplyResult against the enclosing
+        CallbackCell (callback-model §7). Non-cb apply results (e.g.
+        inner's own function application in TracingEvaluator::apply)
+        leave this false so their children stay order-independent —
+        the propagation of applyResultSubject to children would
+        otherwise route their evolvedQueryFrom through applyContext
+        and break tests like cb-deep-indep-orders. */
+    TracingObject & withCbApplyOrigin()
+    {
+        cbApplyOrigin = true;
         return *this;
     }
 
