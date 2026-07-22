@@ -5,12 +5,13 @@ structural names of values referenced in `builtins.cache`'s trie.
 
 Companion to
 [`tracing-eval-cache.md`](./tracing-eval-cache.md) (base cache
-model) and
+model),
 [`tracing-eval-cache-vocabulary.md`](./tracing-eval-cache-vocabulary.md)
-(term glossary). This doc is the "why" behind the subject-identity
-machinery of the vocab (Subject, state hash, argAncestry,
-callback-arg objects, cell navigation, evolution edges) and the
-Ambient message pairing.
+(term glossary), and
+[`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
+(callback tracking). This doc is the "why" behind the
+subject-identity machinery of the vocab (Subject, state hash,
+argAncestry, callback-arg objects, cell navigation).
 
 ## Foundational principles
 
@@ -85,7 +86,8 @@ present design.
    *Consequence for callbacks.* Outer-supplied functions the inner
    applies cannot have their response served from cache. The walker
    invokes the outer live and validates the structure of the
-   resulting probes via the Ambient chain. Cached state covers the
+   resulting probes against the recorded observation set carried
+   inside the `QueryCallbackApply` request. Cached state covers the
    structural contract (what probes happened, in what order, with
    what response shape) but never the response values themselves —
    those come live each time.
@@ -206,8 +208,7 @@ Specific commitments of the present design.
    **Navigation invariant (mirroring the base cache's "hashes flow
    into lookups as keys, never out").** The walker's inputs to
    state-hash computation are the current walk state (`envWalk`
-   for the Env layer; the Subject-evolution walker for
-   Ambient/Subject-identity) and the Subjects it holds via its
+   for the Env layer) and the Subjects it holds via its
    `currentProxy` chain (see the vocab's
    [Cell navigation](./tracing-eval-cache-vocabulary.md#cell-navigation)).
    For any known Subject
@@ -285,11 +286,11 @@ Specific commitments of the present design.
 ### XOR cancellation and commutativity
 
 We use XOR-fold in two places: the FactSet hashes (`envFactSetHash`
-and every `factSetHash` used as a key in `Ask` / `Terminal` /
-`AmbientAsk`) and the own-fold inside `stateHashAt`.
-XOR has set semantics (commutative, associative, self-inverse
-with identity 0), which is load-bearing where set algebra is
-intended and a soundness hazard everywhere else.
+and every `factSetHash` used as a key in `Ask` / `Terminal`) and
+the own-fold inside `stateHashAt`. XOR has set semantics
+(commutative, associative, self-inverse with identity 0), which
+is load-bearing where set algebra is intended and a soundness
+hazard everywhere else.
 
 **Requirement.** For every value `v` produced by an XOR operation:
 
@@ -345,11 +346,10 @@ component membership and any new compounding it introduces.
 - Generators: `elementHash(req, resp) = SHA-256(req || resp)` —
   fresh Merkle atoms.
 - Members: `envFactSetHash`; every `factSetHash` used as an
-  `Ask` / `Terminal` key; every `fromFactSetHash` /
-  `toFactSetHash` / `cumulativeFactSet` in an `AmbientAsk` chain.
+  `Ask` / `Terminal` key.
 - Operations: XOR-fold; identity = 0 (`emptySetHash`).
-- Boundary consumers: SQL PK / equality lookups in `Ask`,
-  `Terminal`, `AmbientAsk`.
+- Boundary consumers: SQL PK / equality lookups in `Ask` and
+  `Terminal`.
 - Set algebra is *intended* at every boundary — two recordings
   with the same set of (req, resp) pairs are meant to match.
 - Compounding: none — every fold operand is a fresh SHA-256 atom.
@@ -424,13 +424,13 @@ component membership and any new compounding it introduces.
   would arrive XOR-derived and would compound with G's algebra —
   keep it banned.
 
-## Ambient message pairing: how Subject identity crosses the boundary
+## How Subject identity crosses the cache boundary
 
-The vocab's
-[The Ambient message pairing](./tracing-eval-cache-vocabulary.md#the-ambient-message-pairing)
-defines the Ambient message pairing. This section is the
-subject-identity view of it: what happens to Subjects and their
-state hashes when the outer probes an inner-supplied callback arg.
+Values cross `builtins.cache` in both directions
+(see the vocab's
+[Values crossing the cache boundary](./tracing-eval-cache-vocabulary.md#values-crossing-the-cache-boundary)).
+This section is the subject-identity view of what happens to
+Subjects and their state hashes at those crossings.
 
 ### Matching until divergence
 
@@ -475,25 +475,17 @@ Three cases where the property is load-bearing:
 
 2. **Sibling cb-apply invocations at the same lexical position
    within one cached call.** For example, both applies in
-   `{ cb }: (cb 10) + (cb 20)`. At the moment of each apply,
-   the inner has passed an arg but not forced it — the state
-   hashes at every referenced Subject are identical, so the
-   `QueryApply` payloads are identical, so both apply Facts
-   carry the same requestHash `H_apply`. Divergence emerges
-   through the ambient chain that follows each apply:
-   `(cb 10)`'s probes reveal `10`, `(cb 20)`'s probes reveal
-   `20`, their `elementHash`es differ, their Ambient factSets
-   diverge, and their `AmbientResult`s land the env-layer
-   walker at distinct env curs. The writer's storage becomes
-   one Ask edge from `cur_pre` to `cur_after_first_apply`
-   carrying `H_apply`, and a second Ask edge from
-   `cur_after_first_apply` to `cur_after_second_apply`
-   carrying the same `H_apply`. Same requestHash, different
-   `(queryHash, fromCur)` key → different edge rows → no
-   ambiguity at replay. The walker at `cur_pre` dispatches
-   `H_apply`, ambient chain unfolds, cur advances; from
-   `cur_after_first_apply` the walker dispatches `H_apply`
-   again and naturally hits the second edge.
+   `{ cb }: (cb 10) + (cb 20)`. Each apply of `cb` is recorded
+   as a `QueryCallbackApply` request whose payload embeds an
+   `ObservationSet` — the observations the callback body made
+   on its contra-arg during that specific firing. `(cb 10)`'s
+   body observes `10`; `(cb 20)`'s body observes `20`; the two
+   obsSets are content-distinct, so the two `QueryCallbackApply`
+   requestHashes differ, so the two firings register as distinct
+   records — no ambiguity at replay. See the callback-tracking
+   model doc for details on how the enclosing
+   `QueryCallbackApply` scopes contra-arg observations to a
+   specific firing.
 
 3. **Two applications of the same cached function whose
    arguments turn out to be observably equivalent** — same
@@ -522,16 +514,16 @@ fullCharacterization(callbackArg)
 ```
 
 Two cb invocations from different cached calls (different
-enclosing cache boundaries) have different `callArgAncestry`
+enclosing cache invocations) have different `callArgAncestry`
 values, so their callback-arg characterizations diverge from the
 very first probe even though their `Arg{depth}` Subjects are
-identical. Their Ambient probes carry different `from` fields
-— and therefore different requestHashes — and land in disjoint
-regions of the Ambient trie. "Matching until divergence" still
-applies: the state hashes diverge at the boundary itself,
-because `callArgAncestry` is already different, and the
-Merkle chain carries that through into every subsequent
-requestHash.
+identical. Their probes carry different `from` fields
+— and therefore different requestHashes — and the recorded
+`QueryCallbackApply`s land in disjoint parts of the DB.
+"Matching until divergence" still applies: the state hashes
+diverge at the crossing itself, because `callArgAncestry` is
+already different, and the Merkle chain carries that through
+into every subsequent requestHash.
 
 Inheriting outer-scope contributions ripples through every
 observation, so atom sharing across cached calls is reduced.
@@ -542,148 +534,32 @@ from different cached calls with structurally identical
 a Terminal recorded under one call's context in place of
 another's.
 
-### Ambient response storage
+### Callback-arg observations travel by value
 
-`InnerValueResponse` (see the vocab's
-[Ambient payload types and edges](./tracing-eval-cache-vocabulary.md#ambient-payload-types-and-edges))
-is a persistent table
-`(requestHash, contextHash) → payload` keyed on the walker's
-Env `cur` at record time, not on the response's
-own hash. That's not a CAS pool — it's a keyed table, and the
-Ambient walker is the only consumer.
+Contra-arg values — the values the outer probes during a
+callback firing — are not identified via subject-identity in the
+current design. Their observations are recorded by value inside
+an `ObservationSet` referenced from the enclosing
+`QueryCallbackApply` request; at replay the walker reconstructs
+the frozen callback-arg image from that recorded obsSet and
+serves the outer's probes from it.
 
-The `contextHash` disambiguates same-Request observations under
-different outer contexts. The two invocations in
-`{ cb }: (cb 10) + (cb 20)` share `requestHash` for the callback
-arg's initial probes (matching-until-divergence, above), but
-their outer contexts differ — one is pre-first-apply-boundary,
-the other post. Without `contextHash` the table keyed on
-`requestHash` alone would give a first-writer-wins entry: the
-second recording's response would overwrite the first's, so
-the walker at replay would serve the wrong Terminal for one of
-the two contexts. With `contextHash` each outer context gets
-its own entry and matching-`requestHash` observations coexist.
-
-The pool stores the callback-arg's value structure too: small
-atoms covering attrset entries, list elements, scalars.
-Content-addressed at the atom level. They're what the walker
-uses to reconstruct a frozen callback-arg image at Ambient
-replay.
-
-**Lambda callback-args don't need their body stored.** A
-lambda's atom is just `(subjectHash, kind=lambda)`; the walker
-reconstructs it as a primop `Value` whose `impl`, when applied,
-consults the `AmbientAsk` trie for a recorded edge matching the
-live arg's evolved state hash, and either reproduces the
-recorded apply result from stored atoms or throws an
-Ambient divergence exception that the surrounding
-walker catches as a miss. The lambda's "application behavior"
-is encoded in the recorded `AmbientAsk` edges and
-`InnerValueResponse` payloads, not in a stored body.
-
-### `AmbientAsk` — the Ambient walker's edge table
-
-```
-AmbientAsk(fromFactSetHash BLOB, requestSetHash BLOB,
-           toFactSetHash   BLOB,
-           PRIMARY KEY (fromFactSetHash, requestSetHash)) WITHOUT ROWID
-```
-
-No `queryHash` column — Ambient keys edges on `factSet` alone.
-Inheritance discriminates *across cached calls* by folding the
-cached call's identity into `callArgAncestry`, which enters
-every downstream Subject's state hash at the cb-apply boundary;
-every observation's `from` (and therefore `requestHash`) is
-unique per cached-call invocation from the very first probe.
-Discrimination *within* one cached call's sibling cb-apply
-invocations is separate (same `callArgAncestry`, same initial
-`Arg{depth}` state hash, so `from` values start identical;
-siblings diverge via observation evolution per principle 8's
-corollary).
-
-`AmbientAsk` is a *validation skeleton*, not a response source.
-It records which probes appeared, in what order, with what
-resulting factSet transitions. It does *not* hold a
-`requestHash → responseHash` index — that mapping is provided
-by the environment (at Env: files / outer evaluator; at Ambient:
-`InnerValueResponse` payloads reconstructed as a live value tree).
-
-`RequestSetNodes` is reused for Ambient request-set storage —
-same trie machinery, members are Ambient request hashes.
-
-### Recording (Ambient)
-
-On the cold path, when the inner emits an Ambient query (a
-cb-apply), the writer enters Ambient recording. The environment
-is the live inner-constructed callback arg. As the outer's fn
-evaluates against it, each probe is an Ambient request with
-`from = hex(callbackArg's current state hash)`; the callback
-arg's reveal is the Ambient response.
-
-Each observation's `elementHash = SHA-256(requestHash ||
-responseHash)` XOR-folds into the running Ambient `factSet`.
-At flush, edges (`AmbientAsk(fromFactSet, {requestHash}) →
-toFactSet`) are inserted; any new atom payloads land in the
-storage layer. The terminal factSet hash is the Ambient result,
-which the Env-layer walker XOR-folds into its own `cur` as the
-Response for the enclosing Ambient query.
-
-### Replay (Ambient)
-
-The Env-layer walker, having dispatched everything else live and
-reached the Ambient query, enters Ambient replay.
-
-The walker reconstructs the callback arg as a live Nix Value
-tree from stored atoms, keyed via the callback arg's
-characterization computed live from inherited context. It hands
-the tree to the outer as the bridged arg and lets the outer's
-fn run natively. The walker's role from here is purely
-*observational*:
-
-| Per outer probe | Walker does |
-|---|---|
-| compose Ambient request using `from = hex(currentStateHash)` | hash → requestHash |
-| lookup `AmbientAsk(currentFactSet, {requestHash})` | confirms this probe was recorded at this position |
-| observe the value tree's reveal (the outer's evaluation of the probe) | hash → responseHash |
-| XOR-fold elementHash into currentFactSet | check the result matches the edge's `toFactSet` |
-
-Both checks together: "the probe matches the recording" *and*
-"the live response matches the recording." If both pass,
-advance. When the outer finishes probing, the final factSet
-hash is the Ambient result handed up to the Env-layer walker.
-
-The walker never serves a response from a stored index. The
-reconstructed value tree drives the outer; the outer's native
-evaluation produces responses just like any Nix value. The env
-remains the source of the `request → response` mapping,
-exactly as at Env layer.
+See the callback-tracking model doc for the flow. From
+subject-identity's perspective, the contra-arg is unusual: it
+has an `Arg{depth}` Subject variant for structural composition
+into `ApplyResultSubject{fn, arg=Arg{d+1}}`, but no evolving
+state hash — sibling firings' contra-args share the same
+`Arg{depth}` Subject and rely on the enclosing
+`QueryCallbackApply`'s obsSet content to distinguish them.
 
 ### Where staleness is caught
 
-Ambient has no role in stale-cache detection — that's owned
-entirely by the Env layer's input tracing. A changed file or
-environment variable surfaces as a divergent Response at Env
-dispatch; the Env-layer walker's `(queryHash, factSet)` lookup finds no
-Ask edge at the new factSet and falls through. The Ambient
-query lives at a specific factSet position in the Env-layer
-trie; if the Env walker doesn't reach that position, Ambient is
-never entered.
-
-## Implementation hints
-
-Not principles. Mnemonics and guidance for implementers.
-
-### Env → Ambient flip on no-cached-Subject
-
-At a cb-apply, the requester/responder roles invert: at Env,
-inner asks outer or the system environment; at Ambient, outer
-asks inner via the inner-supplied callback arg. The flip is
-conceptual — a mnemonic for the symmetry, not a physical
-reconfiguration. When the walker encounters a cb-apply Request
-whose state hash has no recorded Fact, it runs the outer fn
-live; the Ambient chain validates the probes the outer makes
-back on the callback arg. Outer is never cached for serving;
-Ambient only validates structure.
-
-Caveat: speculatively performing an unused callback is
-undesirable; mitigations postpone-able.
+Stale-cache detection lives entirely in the Env layer's input
+tracing. A changed file or environment variable surfaces as a
+divergent Response at Env dispatch; the walker's
+`(queryHash, factSet)` lookup finds no Ask edge at the new
+factSet and falls through. Callback-arg replay lives inside a
+`QueryCallbackApply` request whose queryHash embeds the recorded
+obsSet content; if the obsSet or its enclosing context wouldn't
+match under the live env, the walker doesn't reach the recorded
+`QueryCallbackApply` in the first place.
