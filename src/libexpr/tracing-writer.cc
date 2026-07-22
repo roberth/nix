@@ -227,17 +227,14 @@ void TracingWriter::flushPending(bool processApplies)
     }
     pendingRequests.clear();
 
-    /* Depth-1 facts (outer-value probes) are now stamped and pushed
-       per-probe in `logOuterObservation`, not batched here. Depth-2
-       facts (cb-apply ambient chain probes) still group by cb-apply id
-       and are processed at `processApplies=true` below. */
+    /* Outer-value probes are stamped and pushed per-probe in
+       `logOuterObservation`, not batched here. Callback observations
+       accumulate in their enclosing CallbackCell's runningObsSet and
+       get snapshotted at sampling moments; nothing to flush here. */
 
     if (!processApplies) {
-        /* Intermediate flush: ambient layer facts stay buffered until
-           their cb-apply is finalised at logResult. The cb-apply
-           boundary's ambient chain may not be complete yet (= outer is
-           still probing the local), so we can't compute AmbientResult
-           here without risking an incomplete chain. */
+        /* Intermediate flush: pending state stays buffered until the
+           enclosing evaluation reaches logResult. */
         return;
     }
 
@@ -270,11 +267,7 @@ void TracingWriter::closeAsksEdge(bool processApplies)
     if (!decisionGraph)
         return;
 
-    /* Process pending ambient observations into one new Asks edge
-       transition (= advances envFactSetHash and envWalk when
-       observations are present). At processApplies=true this also computes
-       AmbientResults for each buffered cb-apply and folds
-       the synthetic env apply Facts in. */
+    /* Insert any deferred Requests at their natural keys. */
     flushPending(processApplies);
 
     /* Close the trailing file/env-read batch (logResponse path only —

@@ -105,7 +105,7 @@ static void queryVariantFromJson(const nlohmann::json & j, QueryVariant & query)
         || tryParse.template operator()<QueryCallbackApply>())
         return;
 
-    throw nlohmann::json::parse_error::create(302, 0, "unknown ambient query tag: " + std::string(tag), &j);
+    throw nlohmann::json::parse_error::create(302, 0, "unknown outer query tag: " + std::string(tag), &j);
 }
 
 static void resultVariantToJson(nlohmann::json & j, const ResultVariant & result)
@@ -136,7 +136,7 @@ static void resultVariantFromJson(const nlohmann::json & j, ResultVariant & resu
         return;
     if (tryParse((ResultListOfStrings *) nullptr))
         return;
-    throw nlohmann::json::parse_error::create(302, 0, "could not parse ambient result", &j);
+    throw nlohmann::json::parse_error::create(302, 0, "could not parse outer result", &j);
 }
 
 void to_json(nlohmann::json & j, const OuterValueRequest & r)
@@ -272,18 +272,18 @@ void to_json(nlohmann::json & j, const QueryLeaf & leaf)
     if (leaf.isStateHash())
         j = leaf.stateHash();
     else
-        j = nlohmann::json{{"ambient", leaf.outerIndex()}};
+        j = nlohmann::json{{"outer", leaf.outerIndex()}};
 }
 
 void from_json(const nlohmann::json & j, QueryLeaf & leaf)
 {
     if (j.is_string())
         leaf = QueryLeaf{j.get<std::string>()};
-    else if (j.is_object() && j.contains("ambient"))
-        leaf = QueryLeaf{OuterLeaf{j.at("ambient").get<int>()}};
+    else if (j.is_object() && j.contains("outer"))
+        leaf = QueryLeaf{OuterLeaf{j.at("outer").get<int>()}};
     else
         throw nlohmann::json::type_error::create(
-            302, "QueryLeaf JSON must be a hex string or {\"ambient\": N}", &j);
+            302, "QueryLeaf JSON must be a hex string or {\"outer\": N}", &j);
 }
 
 // ---------------------------------------------------------------------------

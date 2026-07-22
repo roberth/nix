@@ -200,9 +200,9 @@ std::shared_ptr<Object> OuterApply::run(
                     argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));
 
     /* Compute the resultId early so we can pass it to the
-       TracingCallbackArg as applyId — groups all ambient layer facts
-       made on this local (and its descendants) into a single
-       AmbientAsks edge at flush. */
+       TracingCallbackArg as applyId — routes all observations made
+       on this local (and its descendants) to the matching
+       CallbackCell's runningObsSet. */
     auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
     auto argStateHashStr = argStateHash.to_string(HashFormat::Base16, false);
 
@@ -261,18 +261,8 @@ std::shared_ptr<Object> OuterApply::run(
     resultVal->mkApp(*fnVal, argThunk);
     auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
 
-    /* Defer the QueryApply Request and the localArg sidecar to the
-       writer's flush at logResult. Pool entries land at the natural
-       reqHashes (no substitution under the via-Asks design's
-       single-edge default).
-
-       The sidecar carries `localType` so the replay-side walker
-       can detect non-reconstructible locals (functions) without
-       forcing them. ReplayCallbackArg can serve scalar/structural
-       responses from InnerValueResponse, but a function local has
-       no recorded body to apply against a divergent argument — so
-       the walker bails on dispatch in that case and the env layer
-       fallback (= live re-eval) handles it. */
+    /* Defer the QueryApply Request to the writer's flush at
+       logResult. Pool entries land at the natural reqHashes. */
     if (innerWriter) {
         nlohmann::json applyJson = applyQuery;
         innerWriter->deferRequest(applyJson);

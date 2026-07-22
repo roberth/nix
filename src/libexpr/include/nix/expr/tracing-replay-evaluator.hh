@@ -73,19 +73,15 @@ class TracingReplayEvaluator : public Evaluator
        CBOR encode + SHA-256 happens once per request. */
     std::unordered_map<Hash, Hash> responseFor;
 
-    /* Fast-path (task #106): session-cumulative cur — the factSet the
-       last successful walk landed at. Combined with the session-scoped
-       `envWalk` (which grows across walks under the fast path), this
-       lets the walker follow a known trace: look up
-       `getAsks(Q, envCur)` for the next Q, walk it lockstep, update
-       `envCur` on hit. Fast-path miss falls through to the slow path,
-       which resets envWalk to per-walk (empty) scoping. */
+    /* Trace-continuing anchor: the session-cumulative cur — the
+       factSet the last successful walk landed at. Combined with the
+       session-scoped `envWalk` (which grows across walks under
+       trace-continuing), this lets the walker follow a known trace:
+       look up `getAsks(Q, envCur)` for the next Q, walk it lockstep,
+       update `envCur` on hit. On miss the walker falls through to
+       trace-discovering, which resets envWalk to per-walk (empty)
+       scoping. See tracing-eval-cache.md §Replay strategies. */
     TracingDecisionGraph::SetHash envCur{TracingDecisionGraph::emptySetHash()};
-
-    /* Historical inFlightApplyReqs (short-circuit for dispatchApplyLive
-       re-entry) removed with task #109 — dispatchApplyLive is gone. */
-
-
 
     std::optional<std::string> dispatchQueryRequest(const nlohmann::json & reqJson, ResolutionContext & ctx);
 

@@ -298,12 +298,13 @@ TracingReplayEvaluator::walk(
         };
     }
 
-    /* === Fast path (task #106) ===
+    /* === Trace-continuing attempt ===
        Session-cumulative: look up `getAsks(Q, envCur)` and walk that
        specific known trace lockstep, using session-scoped envWalk. On
        hit, envWalk has been extended with this Q's Ask edges and
        envCur advanced to the terminalCur. On miss, roll back any
-       partial commits and fall through to the slow path with per-walk
+       partial commits and fall through to trace-discovering with
+       per-walk
        scoping. */
     std::optional<TracingDecisionGraph::WalkHit> walkHit;
     {
@@ -323,7 +324,7 @@ TracingReplayEvaluator::walk(
                 envCur = walkHit->terminalCur;
                 tracingCacheStats().hits++;
                 tracingCacheLog(
-                    "fast path HIT queryHash=%s startCur=%s terminalCur=%s "
+                    "trace-continuing HIT queryHash=%s startCur=%s terminalCur=%s "
                     "(envWalk grew %zu -> %zu)",
                     queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
                     fastPathSavedEnvCur.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -332,8 +333,9 @@ TracingReplayEvaluator::walk(
                 return WalkResult{std::move(*payload), walkHit->resultHash, walkHit->terminalCur};
             }
         }
-        /* Fast path missed or Result payload absent. Roll back partial
-           commits so the slow path starts with clean session state. */
+        /* Trace-continuing missed or Result payload absent. Roll back
+           partial commits so trace-discovering starts with clean
+           session state. */
         envWalk.resize(fastPathSavedEnvWalkSize);
         envCur = fastPathSavedEnvCur;
         committedEdgeFingerprints = std::move(fastPathSavedFingerprints);
@@ -342,15 +344,15 @@ TracingReplayEvaluator::walk(
         walkHit.reset();
     }
 
-    /* === Slow path ===
+    /* === Trace-discovering attempt ===
        Per-walk scoping: save session envWalk, reset to empty, do
        parent-anchored + walk-from-∅ attempts, restore session state
-       on exit. Slow-path per-Q walk builds its own local envWalk;
-       it does not update the session envCur (per-Q state is not the
-       session-cumulative point).
+       on exit. Trace-discovering's per-Q walk builds its own local
+       envWalk; it does not update the session envCur (per-Q state
+       is not the session-cumulative point).
 
-       See `doc/design/tracing-eval-cache.md` §Replay strategies
-       (slow path) for the reasoning. */
+       See `doc/design/tracing-eval-cache.md` §Replay strategies for
+       the reasoning. */
     auto savedEnvWalk = std::move(envWalk);
     envWalk.clear();
     auto savedFingerprints = std::move(committedEdgeFingerprints);

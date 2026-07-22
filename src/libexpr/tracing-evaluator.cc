@@ -306,38 +306,17 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     nlohmann::json applyQ = trace::QueryApply{fnStateHashStr, argStateHashStr};
 
     /* If fn is a TracingCallbackArg (= inner-supplied lambda the
-       outer is now applying — the cb-higher-order case), record
-       this apply as a ambient layer fact under the ENCLOSING cb-apply's
-       chain. Per via-Asks Replay (ambient layer): the lambda primop at
-       warm pulls this edge by `(chainCursor, stampedReqHash)`.
-       Walker-side counterpart: the lambda primop's impl advances
-       the ReplayCallbackArg's chainCursor by this fact's elementHash.
+       outer is now applying — the cb-higher-order case), capture the
+       enclosing cell's applyId before proceeding so that observations
+       recorded on the apply-result (via TracingCallbackApplyResult
+       below) route to the enclosing CallbackCell's runningObsSet
+       rather than to a fresh cell.
 
-       Capture the enclosing boundary's applyId BEFORE
-       logAmbientApplyFact / createCallbackCell so the apply-result
-       observations recorded after `inner->apply` returns (via
-       `TracingCallbackApplyResult` below) route to the same enclosing
-       boundary the recursive apply Fact landed in. Their ambient
-       chain order is: [recursiveApplyFact, applyResult.getType,
-       applyResult.getInt, ...] — matching the walker's ReplayCallbackArg's
-       primop manual-push (= one fact) followed by the synthetic's
-       per-probe `advanceChainAndAppendFact` calls.
-
-       Skip `createCallbackCell` entirely for the TracingCallbackArg-fn path: it
-       would push a fresh empty boundary whose synthetic env fact
-       `(applyReqHash, applyReqHash)` enters envFactSet at finalize
-       and forces the outer walker into a `dispatchApplyLive` whose
-       arg has no sidecar — a guaranteed miss that destabilises the
-       outer chain. The recursive apply Fact (recorded in the
-       enclosing boundary by `logAmbientApplyFact`) already covers
-       the ambient chain entry for this apply, so a separate boundary
-       carries no information.
-
-       Filtered to TracingCallbackArg fn specifically so we don't add ambient facts
-       for ordinary nested cb-applies (= cached-fn applied to outer
-       values) — those don't go through the lambda-primop path at
-       warm and would just contaminate the enclosing chain's
-       AmbientResult. */
+       Skip `createCallbackCell` entirely for the TracingCallbackArg-fn
+       path: pushing a fresh empty cell there would produce spurious
+       state that the enclosing cell already covers, since the nested
+       apply is itself an observation on the enclosing cell's
+       contra-arg. */
     bool fnIsTlo = dynamic_cast<TracingCallbackArg *>(fn.get_ptr().get()) != nullptr;
 
     /* Build the ApplyResultSubject from fn/arg constituents.
@@ -387,9 +366,9 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
             enclosingApplyId = *enclosingId;
         /* Nested cb-apply (fn is a TracingCallbackArg): the recursive
            apply itself is an observation on the enclosing cell's
-           contra-arg. Under task #103's obsSet CAS mechanism it's
-           carried through the enclosing cell's runningObsSet — no
-           dedicated fact record is needed at the writer level here. */
+           contra-arg. Under the obsSet CAS mechanism it's carried
+           through the enclosing cell's runningObsSet — no dedicated
+           fact record is needed at the writer level here. */
     } else {
         tracingCacheLog("createCallbackCell callsite=TracingEvaluator::apply fn=%s arg=%s",
                         fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
@@ -461,15 +440,12 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto result = inner->apply(fn, arg);
     auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
 
-    /* For the TracingCallbackArg-fn case (= cb-higher-order's recursive cb-apply):
-       wrap the result in a TracingCallbackApplyResult so subsequent
-       method calls (`getType`, `getInt`, etc.) record ambient
-       observations on the enclosing cb-apply instead of
-       env main-trie Terminals. The walker's `<replay-local-lambda>`
-       primop reads these from InnerValueResponse via the same
-       per-arg-stamped reqHash; the AmbientAsks edges enable its
-       synthetic's `advanceChainAndAppendFact` to keep
-       `chainCursor` aligned with the cold AmbientResult. */
+    /* For the TracingCallbackArg-fn case (cb-higher-order's recursive
+       cb-apply): wrap the result in a TracingCallbackApplyResult so
+       subsequent method calls (`getType`, `getInt`, etc.) route their
+       observations into the enclosing CallbackCell's runningObsSet
+       rather than into env main-trie Terminals. See
+       tracing-callback-apply-result.hh for the recording flow. */
     if (fnIsTlo) {
         auto laro = std::make_shared<TracingCallbackApplyResult>(
             result, writer, std::move(resultSubject), applyArgAncestry, enclosingApplyId);

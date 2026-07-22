@@ -165,13 +165,12 @@ class TracingWriter
 
     std::vector<nlohmann::json> pendingRequests;
 
-    /* Active cb-apply cells (task #103). `createCallbackCell` pushes a
-       new cell at cache-boundary apply; `logCallbackObservation`
-       appends each observation the outer makes on the arg to the
-       cell's `runningObsSet`; `logOuterObservation` snapshots that
-       set into the ObservationSet CAS and stamps a CallbackApplyRef
-       into any outer probe whose Subject reaches this apply's
-       result. Cell lookup at stamping time is by
+    /* Active cb-apply cells. `createCallbackCell` pushes a new cell
+       at cache-boundary apply; `logCallbackObservation` appends each
+       observation the outer makes on the arg to the cell's
+       `runningObsSet`; at sampling moments the writer snapshots that
+       set into the ObservationSet CAS and emits a QueryCallbackApply
+       request referencing it. Cell lookup at sampling time is by
        `fnStateHashHex` — the fn's initial state hash captured at
        apply time. */
     struct CallbackCell
@@ -369,7 +368,7 @@ public:
      * `fromSubject` is provided, the writer will re-derive Q's `from`
      * field after each observation that evolves that subject's state
      * hash, and Ask/Terminal rows for this Q will be keyed on the
-     * evolved Q at each step (per task #110 Q-evolution protocol).
+     * evolved Q at each step (Q evolution protocol).
      */
     template<typename Q>
     std::pair<ValueHandle, QueryHandle> logQuery(

@@ -81,12 +81,11 @@ class ReplayCallbackArg : public Object
        arguments by value. Threaded from `materialiseLocalStandin`. */
     EvalState * state;
 
-    /* Optional obsSet response source (task #103). When set, method
-       responses are looked up in this map by queryHash instead of
-       (or before) InnerValueResponse. Populated by the walker's
-       callbackApply dispatch from the CallbackApply's referenced
-       observation set — each entry is (queryHash → CBOR response
-       payload). */
+    /* obsSet response source: method responses are looked up in
+       this map by queryHash. Populated by the walker's
+       callbackApply dispatch from the QueryCallbackApply's
+       referenced observation set — each entry is (queryHash →
+       CBOR response payload). */
     std::shared_ptr<std::map<Hash, std::string>> obsSetResponses;
 
     /* Memoized WHNF response. The recorder logs ONE QueryGetWHNF
@@ -161,13 +160,12 @@ public:
         return *this;
     }
 
-    /** Attach an obsSet response source (task #103). Each probe on
-        this ReplayCallbackArg (or its derived children, if the
-        shared_ptr is passed through) will look up its queryHash in
-        this map first, decoding the CBOR payload as the response
-        Result. Falls back to InnerValueResponse if the queryHash
-        isn't in the map. Enables the CallbackApply walker's live
-        outer validation. */
+    /** Attach an obsSet response source. Each probe on this
+        ReplayCallbackArg (or its derived children, if the
+        shared_ptr is passed through) looks up its queryHash in
+        this map and decodes the CBOR payload as the response
+        Result. Enables live outer validation from the recorded
+        obsSet content. */
     ReplayCallbackArg & withObsSetResponses(
         std::shared_ptr<std::map<Hash, std::string>> map)
     {

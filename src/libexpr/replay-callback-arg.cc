@@ -120,10 +120,6 @@ static void appendFactToWalk(
     walkFacts.push_back(std::move(edge));
 }
 
-/* advanceChainAndAppendFact removed (task #109): AmbientAsks chain
-   traversal is gone. Callers use appendFactToWalk directly — obsSet
-   CAS handles the "matches or misses" contract via readResponse. */
-
 std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name)
 {
     trace::QueryGetAttr query{name, std::string{}};
@@ -145,11 +141,8 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     auto child = std::make_shared<ReplayCallbackArg>(
         std::move(childSubject), argAncestry, walkFacts,
         decisionGraph, rootFSRoot, state);
-    /* AmbientAsks validation removed (task #109). Children inherit
-       the obsSet response source. */
-    /* Inherit obsSet response source (task #103). Derived children
-       probe within the same callback firing, so the same obsSet
-       serves their responses too. */
+    /* Derived children probe within the same callback firing, so
+       the same obsSet serves their responses too. */
     if (obsSetResponses)
         child->withObsSetResponses(obsSetResponses);
     /* Navigation child inherits parent's argCell cell directly. */
