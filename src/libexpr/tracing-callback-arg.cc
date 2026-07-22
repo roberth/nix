@@ -204,9 +204,10 @@ std::optional<std::vector<std::string>> TracingCallbackArg::getAttrPath()
 
 void TracingCallbackArg::recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
-    /* Route through the ambient layer entry point: the outer is probing
-       an inner-supplied local. The `applyId` groups this fact
-       into the cb apply's AmbientAsks edge at flush. */
+    /* Route the observation into the enclosing CallbackCell's
+       runningObsSet (via `applyId`); the writer later snapshots the
+       obsSet into an ObservationSet referenced from a
+       QueryCallbackApply request. */
     writer.logCallbackObservation(query, result, subject, argAncestry, applyId);
 }
 
@@ -216,12 +217,13 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        inner-supplied lambda (the cb-higher-order case) `inner` is an
        InterpreterObject whose queryApply does mkApp + bridging. For
        a replay-time ReplayCallbackArg replay object, inner->queryApply
-       throws "can't validate" — the ambient-layer divergence
-       exception the walker turns into a cache miss.
+       throws "can't validate" — a divergence exception the walker
+       turns into a cache miss.
 
        The result wrapper carries an ApplyResultSubject so accesses
-       on the apply result continue to be recorded in the ambient layer
-       trace with an evolved state hash (per the subject-id design). */
+       on the apply result continue to be routed through
+       logCallbackObservation with an evolved state hash (per the
+       subject-id design). */
     auto argSubjectHashHex = argObj->getStateHashHex();
     Subject argSubject = argObj->getSubject()
         ? *argObj->getSubject()

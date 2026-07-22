@@ -87,8 +87,9 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
 
     // Per-call tracing infrastructure: TraceSink + TracingWriter →
     // decisionGraph. The writer records both queries/results and
-    // environment responses (file reads, env lookups, ambient
-    // interactions) into the graph for dependency tracking.
+    // environment responses (file reads, env lookups, outer-value
+    // probes, callback observations) into the graph for dependency
+    // tracking.
     //
     // When NIX_TRACE_CACHE_DIR is set, each prim_cache call also
     // writes a JSON-line trace into that directory (a fresh file per
@@ -152,8 +153,9 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
         .innerState = innerState,
     });
 
-    // Shared resolver for ambient interactions; threads through every
-    // <cached-fn>/<outer-fn> PrimOp this call produces.
+    // Shared resolver for outer-value and callback interactions;
+    // threads through every <cached-fn>/<outer-fn> PrimOp this call
+    // produces.
     auto resolver = makeOuterResolver(&state, replayEval.get_ptr(), writer.get());
     interpreter->outerResolver = resolver;
     /* Inherited scope for subject-id: uniquely identifies this cached

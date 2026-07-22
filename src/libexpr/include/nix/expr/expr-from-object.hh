@@ -47,8 +47,8 @@ struct ExprFromObject : ExprProxy
      * boundary. eval() creates a `<cached-fn>` PrimOp that routes
      * calls through this evaluator. outerResolver MUST also be set.
      *
-     * When null, functions are either absent or ambient (from the
-     * outer evaluator). Ambient functions get an `<outer-fn>`
+     * When null, functions are either absent or outer-owned (from
+     * the outer evaluator). Outer functions get an `<outer-fn>`
      * PrimOp that dispatches via OuterObject::queryApply().
      */
     std::shared_ptr<Evaluator> innerEvaluator;

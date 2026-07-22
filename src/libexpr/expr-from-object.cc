@@ -48,7 +48,7 @@ static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const tr
                     return {trace::ResultFunctionInfo{false, {}, false}, nullptr};
                 return {trace::ResultFunctionInfo{true, info->formals, info->ellipsis}, nullptr};
             } else {
-                throw Error("unsupported ambient query type");
+                throw Error("unsupported outer query type");
             }
         },
         q);
@@ -296,7 +296,7 @@ void ExprProxy::bindVars(EvalState & es, const std::shared_ptr<const StaticEnv> 
 
 /**
  * Create a PrimOp for a function defined inside the cache boundary.
- * Calls route through the inner evaluator, with the ambient resolver
+ * Calls route through the inner evaluator, with the OuterResolver
  * bridging arguments between outer and inner.
  */
 static PrimOp * makeCachedFnPrimOp(

@@ -89,7 +89,7 @@ class TracingReplayEvaluator : public Evaluator
 
     std::optional<std::string> dispatchQueryRequest(const nlohmann::json & reqJson, ResolutionContext & ctx);
 
-    /** Resolve a recorded ambient id (hex of a Hash) to a live
+    /** Resolve a recorded outer-value id (hex of a Hash) to a live
         Object. Arg ids are found by walking ctx.currentProxy's
         parent / argCell chain on the proxy graph; derived ids are
         looked up by their producer Request in the Requests pool and
@@ -100,9 +100,10 @@ class TracingReplayEvaluator : public Evaluator
 
     std::shared_ptr<Object> resolveApplyId(const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx);
 
-    /* dispatchApplyLive removed with task #109 — AmbientAsks-chain
-       driven live invocation is gone; callbackApply-slot path in
-       dispatchQueryRequest is the sole live-fire mechanism. */
+    /* Callback live invocation lives inside dispatchQueryRequest's
+       callbackApply branch — materialise a ReplayCallbackArg from
+       the recorded obsSet, then invoke fn->queryApply live. No
+       separate live-fire method. */
 
     std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx);
 
@@ -139,9 +140,9 @@ public:
 
     /**
      * Compute the current response for a recorded request (file hash,
-     * env var, or ambient interaction) by executing against the
-     * current validation environment. Ambient queries route through
-     * proxy-graph resolution using `ctx`.
+     * env var, outer-value probe, or QueryCallbackApply) by executing
+     * against the current validation environment. Query-carrying
+     * requests route through proxy-graph resolution using `ctx`.
      */
     std::optional<std::string> getCurrentResponse(const std::string & requestCbor, ResolutionContext & ctx);
 
@@ -149,7 +150,7 @@ public:
      * history lookup. Returns (resultPayload, resultHash) on hit,
      * nullopt on miss. `currentProxy` is the cache-boundary proxy
      * whose method triggered this history — its parent/argCell chain
-     * grounds ambient id resolution during dispatch. Null for
+     * grounds outer-value id resolution during dispatch. Null for
      * top-level entry points (evalFile/evalExpr) that have no
      * proxy yet.
      */
