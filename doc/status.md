@@ -18,11 +18,29 @@ Walker's `recomputeQ` now reads from a walk-local `perQEnvWalk` fed by `commitEd
 
 **Fix plan (high confidence, requires walker-side change too):** at sub-Q's logResult, insert *one* composite observation into the newly-innermost Q. request = sub-Q's queryHash; response = sub-Q's resultHash; elementHash = XOR(req, resp). Parent's chain then has one entry per sub-Q completion, not per sub-Q observation. Walker's dispatch of this composite request needs to recursively `lookup(subQ)` and return sub's resultHash — a new dispatch branch. Retire the logResult bridging afterward.
 
-### B7. Contra-arg observations not reaching CallbackCell — HIGH (blocks sibling test)
+### B7. No QCA emission wraps the outer cb-apply result — HIGH (blocks sibling test)
 
-Diagnostic (2026-07-22, cb-sibling-discrimination-via-observation): cold has 4 `createCallbackCell` calls but 0 `logCallbackObservation` calls. Cells' `runningObsSet` stays empty and `argAncestryHex` stays empty → `emitCallbackApplyForApplyResult` returns early → 0 QueryCallbackApply Requests in the DB. The callback body's access to its parameter `x` isn't flowing through `TracingCallbackArg::whnf` / `getInt` / etc. — i.e., the wrappedArg produced by `OuterApply::run` isn't the Object the callback body actually probes when it reads `x`.
+Superseded diagnosis (2026-07-22): the original description ("contra-arg observations aren't reaching cells") was wrong. Empirical trace of `cb-sibling-discrimination-via-observation` cold shows `TracingCallbackArg::whnf` fires and `logCallbackObservation` populates the cell (`obsSet=1`, `argAncestryHex` set). The failure is downstream at emission.
 
-**Fix plan (medium confidence — needs diagnosis first):** trace where the callback body's parameter access actually resolves. Candidates: (a) `wrappedArg` is bridged through `ExprFromObject` into a Value thunk; the outer's force of `x` may unwrap back to `argObj` (the raw InterpreterObject) rather than to `wrappedArg` (the TracingCallbackArg); (b) the callback's parameter is resolved through a different path that doesn't traverse TracingCallbackArg at all. Under B7 fixed, `logCallbackObservation` fires, cells populate, QCA emissions fire, and B3/B4/sibling discrimination naturally follow.
+Actual mechanism (re-diagnosed 2026-07-23):
+
+- `<cached-fn>.impl` calls `innerEval.apply({f,x}: f x, contraArg)`. `TracingEvaluator::apply` wraps the result in a `TracingObject` with `applyResultSubject={fn=innerFn, arg=argAttrset}` and creates cell #A keyed by `fn=innerFn` state hash.
+- During that TracingObject's `whnf` → `computeWHNFFromObject`, the inner body's nested `f x` fires `OuterObject::queryApply` → `OuterApply::run`, which creates cell #B keyed by outer f's state hash and wraps the arg in `TracingCallbackArg`.
+- `TracingCallbackArg` records the contra-arg's `whnf` observation into cell #B (routed by `applyId`). Cell #B ends up populated correctly.
+- Back at the enclosing `TracingObject::whnf`, `emitCallbackApplyForApplyResult` scans cells for `fn=innerFn` state hash (the applyResultSubject's fn). Finds cell #A — empty — and skips cell #B on fn-hash mismatch. Emits nothing.
+
+Result: 0 QueryCallbackApply requests in the DB. Warm walks find no QCA rows and DISALLOW throws.
+
+The outer cb-apply result (`OuterApply::run`'s return) is returned as a raw `InterpreterObject`; nothing on the outer's probing path carries an `applyResultSubject` matching cell #B's fn hash, so no QCA emission fires for the right subject.
+
+**Fix direction (per user, 2026-07-23):** wrap `OuterApply::run`'s result so its `whnf` emits QCA against cell #B. Corresponding wrappers must propagate to derived children (getAttr/getListElem results) so each subsequent WHNF-producing probe on a callback-originated value emits its own QCA — per callback-model §7 "Each probe that produces a WHNF emits its own QCA."
+
+A partial-fix prototype (wrap `resultObj` in a `TracingObject` with `applyResultSubject.fn = PostulatedIdempotentRead{fnStateHash}`, `applyArgAncestry = 0`) confirmed the emit path works — 1 QCA fired successfully mid-run after cell #B was populated. But two remaining gaps kept the sibling test failing:
+
+1. **Sibling-A's applyResult whnf fires before its contra-arg probe** (`.whatever` on outer forces contra-arg lazily). At that moment cell #B has empty `argAncestryHex`, and the current emit code skips empty-argAncestry cells. Result: sibling A's QCA never emitted; only sibling B's does (against sibling A's populated cell — same applyId since both siblings' fn/arg initial hashes coincide).
+2. **Children of the wrapper don't emit QCA on their own whnf.** `TracingObject::maybeGetAttr` returns children without `applyResultSubject`, so `.whatever`'s whnf doesn't fire `emitCallbackApplyForApplyResult`. Under §7 that whnf should be QCA-2.
+
+Full fix requires (a) the outer wrapper, (b) recursive QCA-emitting shape on children of cb-apply results, and (c) allowing cells to emit even when contra-arg observations arrived after the applyResult's whnf (either lazy re-emit, or accepting empty-argAncestry cells).
 
 ### B3. TracingObject lacks general Subject tracking — HIGH (blocks sibling test)
 
