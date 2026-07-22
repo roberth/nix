@@ -139,8 +139,18 @@ This shape buys two things:
 2. **Cheap symmetric difference between any two roots.** Descend
    both tries in parallel; any subtree where the two roots agree on
    the hash collapses to a no-op. Cost tracks the size of the
-   difference, not the size of either input set. This is what the
-   replay-side fast path (below) keys off.
+   difference, not the size of either input set.
+
+   The arithmetic depends on participants being independent —
+   extension against a known-disjoint element is a single in-place
+   XOR. State hashing, where applied, probably worsens or inhibits
+   it: observations that fold into an evolving state hash carry
+   dependencies XOR treats as independent inputs. Full effect is
+   retained in domains where state hashing isn't applied — purely
+   non-function `builtins.cache` results, and ambient values bound
+   at `builtins.cache` call time (term reservation; see
+   [`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
+   §13a).
 
 ### FactSet hashing
 
@@ -307,129 +317,158 @@ constructed.
 
 ### Replay strategies
 
-Replay uses tiered strategies, ordered from cheapest to most
-work-doing. When a tier misses cleanly, replay drops to the next.
+Replay against a Query has two options that differ along two axes,
+plus an interpreter fallback when both miss.
 
-1. **Following a known trace (fast path).** When replay has a specific
-   recorded trace to walk against and can verify each Ask matches
-   without discovery cost, it walks that trace directly. Lockstep 1:1
-   replay is one specific case (replay's live dispatches align with a
-   session-cumulative trace it's tracking). Composes with the slow
-   path rather than replacing it: the fast path carries
-   session-scope evidence that a slow-path Q-local walk cannot
-   reproduce (Terminals whose `cur` folds in observations from
-   earlier queries in the same session). Currently unimplemented.
+Both options walk a trace chain (see the vocab's
+[Trace chain](./tracing-eval-cache-vocabulary.md#trace-chain)):
+one Query's Ask-edge sequence from the terminal factSet of the
+prior Query to this Query's Terminal.
 
-2. **Walk from a known state per Query (slow path).** Replay walks a
-   Query's Ask trie starting from a `cur` that corresponds to some
-   Subject state its own evaluation already established, dispatching
-   each Ask's requests, folding responses into `cur`, and following
-   whichever outgoing Ask (or Terminal) the next `cur` matches. Can
-   hit a recorded Terminal whose trace is smaller or larger than
-   replay's accumulated context, because the walk builds its own
-   local `cur` via this Q's dispatches only.
+**Axis A — starting state.** Where the walker begins:
 
-   *Purpose*: the slow path brings **factSet evolution to a new
-   query** — the walker composes state evolution rooted at parent-Q
-   state (or ∅ for a root Q) with observations recorded specifically
-   under this Q's namespace. It is not, and is not designed to be, a
-   solution to observation creep: state evolution driven by
-   observations from earlier sibling queries in the recording
-   session is not something the slow path can un-do or approximate.
+- **cumulative**: the walker's running `cur` from prior work in
+  the same walk stack, already at (or expected to be at) this
+  Query's entry point in the trace being followed.
+- **anchor**: a structural precursor's terminal factSet (the
+  parent Query's, when there is one).
+- **∅**: the empty factSet.
 
-   *Why parents are safe as starting states*. A parent Q is a
-   precursor in the query DSL — a child Q the outer expression asked
-   for implies its parent was already evaluated on the replay side.
-   Re-dispatching parent-chain observations under the child's
-   namespace incurs no extra outer-evaluator work; those observations
-   would have been made anyway during the parent's evaluation.
-   The parent's terminal `cur` is thus a "free" starting point for
-   child Q's walk.
+**Axis B — tracking scope.** How the walker's per-Ask state is
+scoped:
 
-   *Why session-earlier siblings are the load-bearing gap*. A cold
-   session's recording contains a sequence of Qs (Q1, Q2, ..., Qk)
-   evaluated in order; the writer's session-cumulative `envWalk`
-   grows across them. The recording's fast-path presence — a
-   linear sequence of Ask rows keyed under each Q — works very well
-   for lockstep re-evaluation where replay's session tracks cold's
-   step for step. But it provides little to no opportunity for
-   another session to "hop on" mid-sequence: cold's facts are only
-   recorded under its own sequence of factset-relevant queries,
-   *even when* the writer wasn't doing any state hash evolution
-   at that step — i.e. even when the only cost of "catching up" to
-   cold's cur would be re-dispatching some system-environment
-   observations (which is safe: file reads, env-var reads, and
-   parent-chain observations are things replay could re-issue
-   without changing what the outer evaluator is asked to do). The
-   slow path's role is to enable this hopping on: an Ask chain
-   rooted at parent state that the replayer already has, that
-   accumulates the Env-layer state creep on the *new* query without
-   requiring the replayer to have gone through cold's earlier
-   query siblings (NB not sibling *calls* but e.g. prior sibling
-   attribute evaluations. Observation creep can not be counteracted
-   without overquerying the outer evaluator — a no go).
+- **shared**: state accumulates across successive Queries within
+  the walker's walk stack, matching the writer's cumulative trace
+  step for step.
+- **walk-local**: state is scoped to one Query's walk and does
+  not survive to the next.
 
-   Recordings made under session-cumulative writer state that
-   embeds observations from earlier siblings will still be
-   unreachable from a per-walk fold that never made those earlier
-   observations. That's a correct outcome, not a bug: the recording
-   depended on something the current replay session doesn't have,
-   and serving it would be a false hit under Foundational 9.
+Two option names carry the design intent:
 
-   *Not a niche case*. Slow-path-reachable recordings — those
-   without unreachable state-evolution prerequisites — arise
-   naturally when a Q evaluated in isolation falls through to the
-   interpreter fallback and re-records. The fresh recording captures
-   only that Q's own necessary state, with no cross-Q contamination
-   from a wider session. Fallback thus continuously seeds the DB
-   with shorter, more reusable traces that later replay sessions
-   can hop onto via the slow path.
+**Trace-continuing.** Axis A = cumulative, Axis B = shared. The
+walker's cur is already at this Query's entry; it follows the
+trace chain from there. No landing chain is used because none is
+needed to reach the entry point. Cheap when applicable —
+lockstep replay of a known trace. Applicable only when the walker
+is in fact aligned with a trace the DB has recorded.
 
-   During Ask traversal, the queries replay dispatches must **evolve
-   with the walk's own state**: each Ask's precondition determines
-   the Subject state hashes referenced in that Ask's request payloads
-   (per Design principle 5's flush substitution on the writer side).
-   Replay mirrors the substitution so its dispatched queries hash to
-   the recorded request payloads it needs to find. This is why
-   simply looking up requests at their "initial state hash" (empty
-   history) helps only at the very first step — as soon as an
-   observation folds in, the substitution has to track the walk's
-   evolved state.
+**Trace-discovering.** Axis A = anchor or ∅, Axis B = walk-local.
+The walker hops to this Query's entry via landing chains — extra
+Ask insertions the writer laid down for exactly this purpose (see
+the vocab's
+[Landing chain](./tracing-eval-cache-vocabulary.md#landing-chain))
+— then follows the trace chain to a Terminal. Applicable when the
+walker isn't aligned with a specific trace but can find its way
+to one via landing coverage.
 
-3. **Interpreter fallback.** Both preceding tiers can miss cleanly;
-   when they do, replay falls through to the inner `Interpreter` for
-   a fresh evaluation, which then records into the cache so
-   subsequent replays can hit. Each fallback contributes a
-   shorter, more reusable trace as described above.
+The two options are not tiers with a hard-coded ordering; they
+address different situations. A walker can attempt trace-
+continuing first when it's holding cumulative state and fall back
+to trace-discovering when continuation stops matching. A walker
+with no cumulative state (∅) starts with trace-discovering
+directly. The current code implements both options via the same
+`walk()` machinery (`decisionGraph.walk` with different starting
+`cur` and scoping choices).
+
+**Interpreter fallback.** Both options can miss cleanly; when
+they do, replay falls through to the inner `Interpreter` for a
+fresh evaluation. The fallback records into the cache so
+subsequent replays can hit. A fallback recording captures only
+that Query's own necessary trace chain with no cross-Query
+contamination from a wider session — a natural source of shorter,
+more reusable traces that later replays can hop onto via
+trace-discovering.
+
+### Why anchors are safe starting states
+
+A parent Query is a precursor in the query DSL — a child Query
+the outer expression asked for implies its parent was already
+evaluated on the replay side. Re-dispatching parent-chain
+observations under the child's namespace incurs no extra outer-
+evaluator work; those observations would have been made anyway
+during the parent's evaluation. The parent's terminal `cur` is
+thus a "free" starting anchor for the child's walk.
+
+### The reachability limit
+
+A recording whose trace chain requires cumulative-state
+preconditions that the current replay walker doesn't have —
+observations from earlier queries in the recording session that
+the replay session didn't make — is unreachable from
+trace-discovering alone. The trace chain's Ask rows are keyed
+under a `cur` the walker cannot fold to without observations it
+hasn't made. Serving such a trace via observation-manufacture
+would violate Foundational 9 (a Result's factSet must faithfully
+identify the observations that led to it).
+
+Trace-discovering with landing-chain coverage bridges the gap for
+Queries whose landing chains reach into observations the walker
+can honestly reproduce. It does not counteract observation creep —
+where the recording depends on prior-sibling observations the
+replay walker doesn't have, the miss is correct.
+
+A second limit lives at the interface with the environment.
+Over-requesting from the environment is safe: file reads, env-var
+reads, and similar environment observations can be re-issued
+without changing what the outer evaluator is asked to do.
+Over-querying the *outer evaluator*, though, is to be avoided:
+dispatching outer-callback requests the user's expression didn't
+ask for would surface as unprompted logs, errors, or other
+observable outer behaviour, breaking the "cache is invisible"
+property. See [Outer-request discipline](#outer-request-discipline-open-problem)
+below. This is a minor concern in practice until the test suite
+passes, but it imposes a second constraint on what a walker can
+dispatch during trace-discovering — a discovering walk that
+requires outer callbacks the walker hasn't been invited to make
+is not just structurally missing, it's actively wrong to attempt.
+
+### Q evolution during Ask traversal
+
+Whichever option is in use, the queries replay dispatches must
+evolve with the walk's own state: each Ask's precondition
+determines the Subject state hashes referenced in that Ask's
+request payloads (per Design principle 5's flush substitution on
+the writer side). Replay mirrors the substitution so its
+dispatched queries hash to the recorded request payloads it needs
+to find. Simply looking up requests at their "initial state hash"
+(empty history) helps only at the very first step — as soon as
+an observation folds in, the substitution has to track the walk's
+evolved state.
 
 ### Development directions
 
-The slow path and fast path are complementary, not alternatives.
-Slow path brings factSet evolution to a new query rooted at
-replay-known state; fast path composes session-scope evidence with
-per-walk evidence, letting state-evolved queries be followed when
-the walker's session context reproduces cold's writer state. Two
-main work directions follow:
+Trace-continuing and trace-discovering address different
+situations and coexist; neither replaces the other. Work items:
 
-- **Bring back the fast path.** Currently unimplemented. Following
-  a known trace lets state-evolved queries be followed under
-  session-cumulative writer state — the case the slow path
-  structurally can't reach.
+- **Retire the fast-path/slow-path coupling.** The current
+  implementation ties two axes together — walker's starting state
+  (cumulative vs anchor/∅) with tracking scope (shared vs
+  walk-local) — as "fast path" and "slow path". These axes are
+  separable. A walker with cumulative state can prefer to continue
+  first (trace-continuing) and fall back to trace-discovering; the
+  distinction should be an operational preference within a per-trace
+  walker, not a global-vs-per-walk-state coupling. The current
+  coupling is a local optimum: shared tracking doesn't generalise
+  to hopping between traces, while walk-local tracking generalises
+  down to the cumulative case. See
+  [`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
+  §10 for the analysis; the refactor is medium-scope and not
+  correctness-blocking.
 
-- **Let the slow path query smaller state hashes.** State evolution
-  during a walk produces intermediate `cur` values; recordings may
-  exist at smaller state hashes (subsets of what the walker has
-  folded) that would be valid answers. Reaching them, in order of
-  increasing sophistication:
+- **Let trace-discovering reach smaller state hashes.** State
+  evolution during a walk produces intermediate `cur` values;
+  recordings may exist at smaller state hashes (subsets of what the
+  walker has folded) that would be valid answers. Reaching them, in
+  order of increasing sophistication:
 
-  - *MVP + later*: anchor the recording-side slow-path Ask chain at
-    the writer's *latest observed state* at the moment the child
-    query's chain begins — not a historical checkpoint. Recording
-    is asymmetric from replay: the writer must anchor at latest
-    because any older anchor either lies about preconditions
+  - *MVP + later*: anchor the recording-side landing chains at the
+    writer's *latest observed state* at the moment the child
+    query's trace chain begins — not a historical checkpoint.
+    Recording is asymmetric from replay: the writer must anchor at
+    latest because any older anchor either lies about preconditions
     (the writer had already made subsequent observations by that
-    point) or requires the observation-test machinery below, which is
-    not in the MVP. Every row's `fromFactSetHash` faithfully
+    point) or requires the observation-test machinery below, which
+    is not in the MVP. Every row's `fromFactSetHash` faithfully
     identifies the writer's observed preconditions; Foundational 9
     stays intact.
 
@@ -439,33 +478,43 @@ main work directions follow:
     the *older* case; the more general *smaller* case is reached via
     the observation-test bullet further down.
 
-    Note the slow path bridges *factSet* evolution only, not state
-    hash evolution. The chain from the anchor state to child Q's
-    Terminal folds new facts into `cur` but does not attempt to
-    reproduce any specific state-hash trajectory. State hashes on
-    request payloads may embed observations from earlier query
-    siblings in the writer's session that the replayer never made —
-    when the replayer can't compute one, that's the observation-creep
-    boundary and the miss is correct.
+    Note trace-discovering bridges *factSet* evolution only, not
+    state hash evolution. The trace chain from the anchor state to
+    child Q's Terminal folds new facts into `cur` but does not
+    attempt to reproduce any specific state-hash trajectory. State
+    hashes on request payloads may embed observations from earlier
+    query siblings in the writer's session that the replayer never
+    made — when the replayer can't compute one, that's the
+    observation-creep boundary and the miss is correct.
 
-  - *MVP*: unbounded backtracking through previously-seen state
-    hashes. The walker maintains the set of `cur` values it has been
-    at during the current walk; on miss, re-attempts lookup at those
-    smaller state hashes. Simple, potentially expensive; adequate
-    starting point.
+    *Open question.* This mismatch prevents the walker from
+    dispatching recorded requests whose queryHashes embed
+    observations the walker doesn't have — the hashes don't
+    compute, so the request isn't lookable-up, so it isn't
+    dispatched. To what extent that overlaps with the
+    [outer-request discipline](#outer-request-discipline-open-problem)
+    below — where the concern is preventing unprompted outer
+    callbacks — hasn't been analysed. It's plausibly a partial
+    incidental implementation for recorded outer-callback requests
+    whose queryHashes depend on unreachable observations, and
+    orthogonal for requests whose queryHashes don't.
 
-  - *Later*: a clever Ask-like structure for the state hash, to be
-    designed later. Observation *tests* instead of requests, but
-    otherwise similar. Traversing a test edge requires the walker to
-    have already observed the required facts, never to dispatch them
-    — so no over-querying. Preserves the Ask-structure guarantee that
-    the walker never over-queries the outer evaluator. Two goals:
-    give the slow path a **non-backtracking** replay behaviour
-    (indexed navigation instead of the MVP's barely-bounded retry
-    loop),
-    and reach *smaller* state hashes generally (not just the older
-    ones the walker held earlier in this walk). Unchallenged idea
-    for now.
+  - *Later*: an Ask-like structure keyed on state hashes,
+    supporting observation *tests* instead of requests. Traversing
+    a test edge requires the walker to have already observed the
+    required facts; the test itself never dispatches.
+    Outer-request discipline still applies at this layer — the
+    trace a test-edge leads into may require outer-callback
+    dispatches the walker hasn't been invited to make, so test-edge
+    traversal isn't unconditionally safe just because the test
+    itself is. Even under that constraint, there's a real win:
+    discovering trace chains whose preconditions are a strict
+    subset of what the walker has folded, without over-querying.
+    Two goals: give trace-discovering a **non-backtracking** replay
+    behaviour (indexed navigation instead of a barely-bounded retry
+    loop), and reach *smaller* state hashes generally (not just the
+    older ones the walker held earlier in this walk). Unchallenged
+    idea for now.
 
 ### Outer-request discipline (open problem)
 
@@ -478,8 +527,10 @@ correlate with what they wrote. The right shape of the fix is to
 shortcut to the interpreter fallback in that case, but the exact
 semantics — which outer requests are safe to dispatch, when — are
 not fully pinned down. Env fallibility as a general mechanism needs
-implementing. Not trivially solved by the fast/slow path split
-above.
+implementing. Not trivially solved by the trace-continuing /
+trace-discovering options above; those address which recorded
+traces are reachable, this addresses which requests are safe to
+dispatch during a walk.
 
 *Observation about the current implementation.* When replay
 dispatches a cb-apply via
@@ -496,8 +547,8 @@ writer's grown cumulative history. Replay's own per-walk
 `envWalk` is a strict subset of the writer's at that moment, so
 `resolveStateHash` on that fresh `from` value misses across
 replay's cell chain. This within-session drift is the reachability
-limit called out in the slow path above, viewed from the writer
-side.
+limit called out for trace-discovering above, viewed from the
+writer side.
 
 Note (writer side): the writer **must not** record under a smaller
 set than what it observed. The failure mode is two-step: (1) at
@@ -796,19 +847,21 @@ Performance harness under `tests/perf/tracing-cache/`:
   gone; the semantics remain valid future work.
 - **Structural-Ask insert cost during recording.** The concern is
   the write-side load, not the read-side. On replay, following a
-  structural chain is fine — it's a variation of the fast path
-  (walker following a related index trace, not just its own
-  session's cumulative one). The worry is that inserting structural
-  Asks at record time scales as O(#children × Ask-depth-of-write)
-  for query patterns like `nix search`: many children, each with
-  a deep Ask chain from the parent's factSet through its own
-  observations. Concrete illustration in Nixpkgs shape: evaluating
-  `pkgs` itself might only touch a handful of files
-  (`top-level.nix` and friends). But evaluating `pkgs.hello` walks
-  all of stdenv before reaching `hello/package.nix` — and every
-  subsequent `pkgs.foo` evaluation repeats the stdenv Asks under
-  its own Query. Structural chains would insert that stdenv
-  contribution once per package Query.
+  structural chain is fine — a structural chain is a landing chain
+  whose entrypoint is a structural parent's terminalCur (see the
+  vocab's [Landing chain](./tracing-eval-cache-vocabulary.md#landing-chain)),
+  and trace-discovering hops through it cheaply. The worry is
+  that inserting structural Asks at record time scales as
+  O(#children × Ask-depth-of-write) for query patterns like
+  `nix search`: many children, each with a deep Ask chain from
+  the parent's factSet through its own observations.
+  Concrete illustration in Nixpkgs shape: evaluating `pkgs` itself
+  might only touch a handful of files (`top-level.nix` and
+  friends). But evaluating `pkgs.hello` walks all of stdenv before
+  reaching `hello/package.nix` — and every subsequent `pkgs.foo`
+  evaluation repeats the stdenv Asks under its own Query.
+  Structural chains would insert that stdenv contribution once per
+  package Query.
   Not solved by "follow this sibling until" node types — those
   risk leading walks into traces that don't reach the target.
   RequestSet sharing plus larger per-node request increments help
@@ -818,7 +871,7 @@ Performance harness under `tests/perf/tracing-cache/`:
   requestSet (form TBD). Complementary mitigation: budget the
   number of structural Ask inserts per Query — when a Query's
   structural chain exceeds the budget, stop inserting further
-  structural Asks. Costs the affected Query its slow-path
+  structural Asks. Costs the affected Query its trace-discovering
   reachability but caps the write cost; also implicitly discourages
   runaway state creep, which isn't desirable anyway. Optimisation
   only — the recording scheme is correct as-is; this is index size
@@ -838,8 +891,8 @@ Performance harness under `tests/perf/tracing-cache/`:
   hot path
 - `src/libexpr/tracing-environment.cc` — `TracingEnvironment` and
   `TracingSourceAccessor` (file-read capture)
-- `src/libexpr/tracing-replay-evaluator.cc` — `walk` including the
-  trie-diff fast path
+- `src/libexpr/tracing-replay-evaluator.cc` — replay walker
+  (`walk`)
 - `src/libexpr/tracing-replay-object.cc` — per-method lookup &
   fall-through to inner
 - `src/libcmd/command.cc` — wiring into `EvalCommand`

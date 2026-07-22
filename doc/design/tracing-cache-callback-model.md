@@ -599,100 +599,23 @@ current use, but the doc should encode the "hash-seal between
 layers" discipline explicitly rather than treating XOR as a
 default composition operator.
 
-## 10. Fast path × slow path × Q evolution
+## 10. Trace-continuing / trace-discovering under Q evolution
 
-**Model — precise definitions** (user, 2026-07-22).
+The main doc's §Replay strategies carries the trace-continuing /
+trace-discovering vocabulary and the axis decomposition (Axis A =
+starting state, Axis B = tracking scope). This section covers
+only the Q-evolution-specific interactions.
 
-- **Fast path**: following multiple Q's in **lockstep
-  succession**. Walker follows a specific known trace across Q
-  boundaries.
-- **Slow path writing**: only covers **within-evolving-Q**. Writer
-  records Ask/Terminal under one Q's chain, evolving Q per-
-  observation. No cross-Q coordination on the writing side.
-- **Slow path replay**: uses an Ask tree to **reach a Q's starting
-  factSetHash without assuming anything other than matching state
-  hashes**. Walker starts at ∅ or parent-anchored factSetHash and
-  folds observations until matched to cold's recorded chain-start.
-
-**Model — replay has more degrees of freedom** (user, 2026-07-22).
-
-The replay side can hop between traces. That imposes a design
-choice the recording side doesn't face.
-
-Two orthogonal reasons a "path" can be fast:
-
-1. **Global state tracking.** Walker keeps a session-cumulative
-   state and stays with a single trace throughout — no accounting
-   for per-trace differences. Mirrors the recording implementation
-   directly. This is what the current fast path does.
-2. **Avoiding Ask-tree reassembly.** Walker doesn't rebuild the
-   requestSet from scratch for a given (Q, factSet) via slow-path
-   Asks. It can just continue at the current trace's factSet with
-   the next Q.
-
-Currently these two are coupled — fast path does both together.
-That's a "remmende voorsprong" (a lead that holds you back): the
-global-state approach doesn't generalise to hopping. The
-generalising direction is per-trace tracking that can hop; "fast"
-then reduces to "try to continue at the current trace's factSet
-with the new Q first, and fall back to slow-path Ask-tree
-reassembly if not". Fast path becomes one preference among many
-traces, not a separate mechanism.
-
-The other direction (globalise the current fast path further)
-doesn't compose with hopping. Per-trace generalises down to
-current fast path; globalised fast path doesn't generalise up.
-
-**Code.**
-
-`TracingReplayEvaluator::walk` at
-`tracing-replay-evaluator.cc:300-343` (fast path — global state
-tracking via session `envCur`/`envWalk`) and `345-410` (slow path
-— per-walk state, tries `parentAnchor` then `∅`). Both pass
-`recomputeQ` (which reads walk-local `perQEnvWalk`) for the
-within-Q Q evolution.
-
-**Gap 1** (mechanical bug — B5). Walk-local `perQEnvWalk`
-declared at function scope (line 64) is NOT reset between fast-
-path miss and slow-path start. Failed fast-path commits leave
-residue that slow-path Q evolution folds in.
-
-**Gap 2** (design direction). The user's framing above suggests
-the current fast-path/slow-path split isn't the right long-term
-structure — the walker should track per-trace and treat "fast"
-as an operational preference, not a distinct code path. Not a
-task-#110 concern per se; noted here because task #106's fast-
-path design is what's currently in place and B5 is a symptom of
-the coupling.
-
-**Gap 3** (vocabulary). Fast path defined once (across writing
-and replay); slow path defined twice (writing side ≠ replay side).
-The asymmetry is real — replay has more degrees of freedom that
-writing doesn't need — but the doc vocabulary could name this
-asymmetry explicitly rather than leaving it as unmatched
-definitions.
-
-**Code.**
-
-`TracingReplayEvaluator::walk` at
-`tracing-replay-evaluator.cc:300-343` (fast path) and
-`345-410` (slow path) both pass `recomputeQ` (which reads
-perQEnvWalk) to `decisionGraph.walk`. Fast path uses session
-`envCur` as start; slow path saves session state, resets envWalk
-to empty, tries `parentAnchor` first, then `∅`.
-
-**Gap 1** (mechanical bug). `perQEnvWalk` is declared once at
-function scope (line 64) and is NOT reset between fast-path
-attempts and slow-path attempts. Failed fast-path commits leave
-residue that slow-path Q evolution folds in. See §3 Gap 2. This is
-B5 in the status file. Straightforward fix — reset perQEnvWalk on
-fast→slow transition.
-
-**Gap 2** (vocabulary). "Fast path" and "slow path" as used in the
-main doc don't cleanly separate the between-Q / within-Q axis from
-the "which starting state" axis. User has flagged this as needing
-refinement: the docs should introduce the between-Q vs within-Q
-distinction explicitly, then define fast/slow in those terms.
+Both trace-continuing and trace-discovering rely on the same
+per-Ask Q re-derivation. `TracingDecisionGraph::walk` accepts a
+`recomputeQ` callback that re-derives Q from the walker's
+walk-local per-Q chain observations (see §3.2). Q evolution's
+within-Q basis is independent of the between-Q tracking scope —
+the axes are orthogonal here. A trace-continuing walker and a
+trace-discovering walker both walk one Q's trace chain through
+the same Q-evolution loop; they differ in how they arrived at
+that Q's entry and in how their state carries across to the next
+Q.
 
 ## 11. Sub-Q composition
 

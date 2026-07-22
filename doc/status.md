@@ -41,13 +41,11 @@ Callback body observations happen during inner's `evalFile fn.nix` walk. At that
 
 **Fix plan (medium confidence):** structural refactor in `TracingEvaluator::apply` (non-fnIsTlo path). Push an ActiveQuery for the QueryCallbackApply/applyResult *around* the entire `inner->apply(fn, arg)` invocation, not around later probes on the wrapped result. That way callback body's observations attribute to the QueryCallbackApply's Q while its firing is in progress.
 
-### B5. Walker fast path vs slow path Q trajectory mismatch — MEDIUM
+### B5. `perQEnvWalk` residue between trace-continuing and trace-discovering — MEDIUM
 
-Walker's fast path uses session envWalk for `recomputeQ`; slow path uses per-walk envWalk from ∅. Under Q evolution, the two paths would derive different Q trajectories for the same recorded chain. If cold recorded under one basis and warm's other-path retry uses the other, walker misses.
+Walk-local `perQEnvWalk` in `TracingReplayEvaluator::walk` is declared at function scope (`tracing-replay-evaluator.cc:64`) and is not reset when a trace-continuing attempt misses and the walker falls through to trace-discovering. Failed trace-continuing commits leave residue that trace-discovering's Q evolution folds in, producing an incorrect Q trajectory.
 
-**Fix plan (low confidence — needs design thought):** unify under per-Q per-candidate envWalk everywhere on walker side, matching B1's per-Q on writer side. But this conflicts with the fast-path's session-cumulative-envWalk lockstep design (task #106). Design work needed to reconcile.
-
-**Update (2026-07-22, user clarification on Q27):** fast and slow paths aren't contradictory — they operate on different axes. Fast path is between-Q lockstep succession; slow path writing is within-evolving-Q; slow path replay uses an Ask tree to reach a Q's starting factSetHash. The mechanical bug (walk-local `perQEnvWalk` not reset between fast-path miss and slow-path start — see `tracing-replay-evaluator.cc:64`) is separate from and simpler than the design question. Fix the mechanical bug first; vocabulary refinement can follow.
+**Fix plan (high confidence):** reset `perQEnvWalk` (or restore it from a saved copy) at the trace-continuing→trace-discovering transition, alongside the existing envWalk/envCur/fingerprints rollback. Purely mechanical; no design change.
 
 ### B8. TracingCallbackApplyResult mis-routes nested-application observations — HIGH (blocks curried callbacks)
 
@@ -70,6 +68,16 @@ The `logOuterObservation` preamble was retired when C3 moved QCA emission to `Tr
 Global guard around the entire `walk()` body replaced with per-call guards around each `fnObj->queryApply(...)` invocation in the four walker paths (resolveApplyId, navigatePath's Apply step, callbackApply branch, TracingReplayEvaluator::apply outer-direction branch). Fallback triggered by leaf ops outside those narrow scopes now runs with the guard OFF — legitimate cb-applies during ensureInner activation record their cells normally.
 
 The full architectural split of `OuterApply::run` into recording vs pure-eval variants remains as a longer-term cleanup, but the immediate correctness gap (guard leaking into fallback paths) is closed.
+
+## Risks / architectural follow-ups
+
+### R1. Walker `walk()` assumes only one version of state is needed at a time
+
+`TracingReplayEvaluator::walk` maintains session state (`envWalk`, `envCur`, `fingerprints`) as mutable fields, mutated during a backtracking attempt and reset on miss. That pattern only makes sense if the walker only ever needs one version of that state — the current one — at any given moment.
+
+That assumption is unverified. If a walker path ever needs to hold multiple versions of the state simultaneously — for example, to keep an earlier version reachable during a nested lookup, or to explore candidate traces in parallel — the mutation-restore pattern doesn't fit and existing code would be silently incorrect.
+
+**Direction:** thread walker state through function arguments rather than mutating shared fields. Multiple versions coexist naturally as separate values; backtracking is expressed as not committing changes rather than restoring after changes.
 
 ## Recovery notes
 
