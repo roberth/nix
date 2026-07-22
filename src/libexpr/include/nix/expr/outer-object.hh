@@ -4,7 +4,7 @@
  * OuterObject — Object backed by an outer query callback.
  *
  * A value from the outer evaluator, accessed by the local
- * (inner) evaluator through ambient queries. Each Object method issues
+ * (inner) evaluator through outer queries. Each Object method issues
  * a query through the provided callback and interprets the response.
  */
 
@@ -34,7 +34,7 @@ struct OuterQueryResult
 };
 
 /**
- * Callback type for issuing ambient queries. Takes the outer Object
+ * Callback type for issuing outer queries. Takes the outer Object
  * to query, the query itself, the caller's Subject, and the caller's
  * inherited argAncestry (both for state-hash attribution at the writer).
  * Passing the outer Object directly (rather than an id) reflects that
@@ -47,7 +47,7 @@ using OuterQueryFn = std::function<OuterQueryResult(
     Hash argAncestry)>;
 
 /**
- * Callback type for ambient function application. Takes the outer fn
+ * Callback type for outer function application. Takes the outer fn
  * Object, its Subject-derived state hash (used to build the
  * QueryApply payload — the outer Object itself typically has no
  * Subject, so the wrapping OuterObject computes and passes this),
@@ -69,7 +69,7 @@ using OuterApplyFn = std::function<std::shared_ptr<Object>(
     std::shared_ptr<const ArgCell> callerScope)>;
 
 /**
- * Object implementation backed by ambient queries to the outer evaluator.
+ * Object implementation backed by outer queries to the outer evaluator.
  * Each method composes a Query, issues it via the callback, and
  * interprets the Result.
  */
@@ -94,7 +94,7 @@ class OuterObject : public Object
        stateHashAfter against the accumulated history. Null on
        non-cb-arg OuterObjects. */
     std::shared_ptr<ApplyContext> applyContext;
-    OuterQueryFn queryFn;   ///< Callback to issue ambient queries
+    OuterQueryFn queryFn;   ///< Callback to issue outer queries
     OuterApplyFn applyFn;   ///< Callback for function application (may be null)
     /* lazy-paths: stable SourceRoot for paths returned by `getPath`.
        Held as a member so the SourceRoot outlives the Value the

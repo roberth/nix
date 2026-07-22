@@ -13,12 +13,11 @@
 
 namespace nix {
 
-/* Populate `query`'s per-arg fields (from, path, fromStateHashes) so its
-   reqHash matches what the writer flushed for the corresponding
-   recorder probe. Multi-root applies fill fromStateHashes[] with multiple
-   leaf-root state hashes; the canonical `from` field carries fromStateHashes[0].
-   Returns the first-root state hash for callers (= used to log/diagnose
-   and for the AmbientAsks chain advance). */
+/* Populate `query`'s per-arg fields (from, path, fromStateHashes)
+   so its reqHash matches what the recorder produced. Multi-root
+   applies fill fromStateHashes[] with multiple leaf-root state
+   hashes; the canonical `from` field carries fromStateHashes[0].
+   Returns the first-root state hash for callers. */
 template <typename Q>
 static Hash stampPerArgFields(
     Q & query,
@@ -30,12 +29,10 @@ static Hash stampPerArgFields(
     /* Contra-arg roots (`Arg{depth}`) don't have an evolving state
        hash. Their `from` field is their structural id
        (`SHA("positional-<depth>") XOR argAncestry`) — computed at
-       empty history, invariant across probes. Walker's fresh firing
-       under any outer probe stamps identically; matches cold's
-       obsSet queryHashes. `walkFacts`/`step` are still used by the
-       AmbientAsks chain machinery in advanceChainAndAppendFact
-       (call-sites keep passing them), just not for `from` field
-       computation. */
+       empty history, invariant across probes. Cold and warm stamp
+       identically at any moment; matches cold's obsSet queryHashes.
+       `walkFacts` / `step` retained in the signature for call-site
+       compatibility, not used here. */
     (void) walkFacts;
     (void) step;
     auto par = pathAndRootsFromSubject(subject);
@@ -86,25 +83,13 @@ static nlohmann::json readResponse(
         }
     }
     throw Error("ReplayCallbackArg: no recorded response for %s on local %s",
-        Q::tag, query.from.isStateHash() ? query.from.stateHash() : "<ambient>");
+        Q::tag, query.from.isStateHash() ? query.from.stateHash() : "<no-state-hash>");
 }
 
-/* Multi-edge AmbientAsks walker: dispatch and validate one probe at
-   a time. Per the design's "Replay (ambient layer)" section, each probe
-   (a) composes with `from = hex(stateHashAt(subject, argAncestry,
-   walkFacts, walkFacts.size()))` so its reqHash matches what the
-   recorder wrote at this point in the chain, (b) is looked up as a
-   singleton-requestSet edge from `*chainCursor → toFactSet`, and
-   (c) on a match advances the shared chain cursor and appends the
-   fact to the shared history so subsequent probes compose against the
-   correctly evolved state hashes. On mismatch we throw a divergence signal
-   which the surrounding walker layer turns into a miss → env layer
-   fallback handles re-eval. */
 /* Append the just-probed fact to `walkFacts` so the next probe's
-   `stampPerArgFields` sees its own-loop contribution. Whether or not
-   validation against AmbientAsks runs, the per-arg state hash evolution
-   relies on the history extending in lockstep with the recorder — so
-   this needs to fire on every probe, not just validated ones. */
+   `stampPerArgFields` sees its own-loop contribution. Per-arg state
+   hash evolution relies on the history extending in lockstep with
+   the recorder. */
 template<typename Q>
 static void appendFactToWalk(
     const Q & query, const Hash & fromStateHash, const nlohmann::json & responseJson,
@@ -293,22 +278,19 @@ RootValue ReplayCallbackArg::defeatCache()
 
 RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<OuterResolver> resolver)
 {
-    /* Per via-Asks Replay (ambient layer): the walker reconstructs the
-       LocalObject as a live Nix Value tree, lazily produced from
-       CAS atoms. The shape depends on the recorded type:
+    /* The walker materialises the callback arg as a live Nix Value
+       tree, lazily produced from the recorded obsSet. The shape
+       depends on the recorded type:
 
-       - `nFunction` (= an inner-supplied lambda LocalObject):
-         reconstruct as a primop whose impl consults `AmbientAsks`
-         at apply-time for a recorded edge matching the live arg's
-         evolved state hash, and reproduces the recorded apply
-         result. Per the via-Asks doc's "Lambda LocalObjects don't
-         need their body stored" — the application behavior lives
-         in the recorded ambient chain, not in a stored body.
+       - `nFunction` (an inner-supplied lambda): reconstruct as a
+         primop whose impl invokes the wrapped ReplayCallbackArg at
+         apply time, serving the recorded response for the arg's
+         current state.
 
        - Other types (attrset / list / scalars): return a thunk
          wrapping `ExprFromObject(self)` so the consumer materialises
          the value tree lazily via Object methods, each call reading
-         the corresponding recorded response from CAS. */
+         the corresponding recorded response from the obsSet. */
     auto type = getType();
     if (type != nFunction) {
         auto * thunk = evalState.allocValue();
@@ -444,7 +426,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     /* Polymorphic dispatch: subjectSaved can be a
                        DerivedSubject when the outer accesses a fn-typed
                        attribute of the callback arg (e.g. `arg.someFn 42`).
-                       Mirrors the writer's ambient stamping in
+                       Mirrors the writer's stamping in
                        TracingEvaluator::apply. */
                     auto fnSubjHex = stateHashAtSubject(
                         subjectSaved, applyArgAncestry, *walkFactsSaved, step)
@@ -538,17 +520,12 @@ std::optional<FunctionInfo> ReplayCallbackArg::getFunctionInfo()
 
 std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> /*argObj*/)
 {
-    /* See header comment. Until ambient layer walker integration (task #74)
-       or value-structure-atom reconstruction (task #75) lands, an
-       apply on a recorded LocalObject can't be validated. Throw a
-       recognizable signal — callers that route here will catch this
-       and treat it as a walker miss. No caller routes here yet
-       (the chain still goes through defeatCache); this is groundwork
-       for the uniform-queryApply restructure. */
+    /* An apply on a recorded frozen local can't be validated
+       without reconstructing its value structure. Throw a
+       recognizable signal — callers catch this as a walker miss. */
     throw Error(
         "ReplayCallbackArg::queryApply: cannot validate apply on a recorded "
-        "frozen local without reconstructing its value structure (ambient layer "
-        "walker not yet integrated)");
+        "frozen local without reconstructing its value structure");
 }
 
 } // namespace nix

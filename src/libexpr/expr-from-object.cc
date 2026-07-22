@@ -223,11 +223,11 @@ std::shared_ptr<Object> OuterApply::run(
        with `from=hex(argSubject)`. Inherit callArgAncestry so sibling cached
        calls' local-args have distinct state hashes.
 
-       Skip the TracingCallbackArg wrap when argObj is a ReplayCallbackArg. At warm
-       replay, the ReplayCallbackArg reaching `runOn` already encapsulates
-       the recorded contract for the cb-arg crossing — the ReplayCallbackArg's
-       primop and its synthetic apply-result handle the per-probe
-       AmbientAsk lookups directly. Wrapping the ReplayCallbackArg in
+       Skip the TracingCallbackArg wrap when argObj is a ReplayCallbackArg.
+       At warm replay the ReplayCallbackArg reaching `runOn` already
+       encapsulates the recorded contract for the cb-arg crossing — its
+       primop and its synthetic apply-result serve probes from the
+       recorded obsSet directly. Wrapping the ReplayCallbackArg in
        TracingCallbackArg would (1) add a redundant recording layer with
        no new information to capture (the writer isn't recording here at
        warm) and (2) convert the ReplayCallbackArg's primop into the
@@ -332,7 +332,7 @@ static PrimOp * makeCachedFnPrimOp(
                            arg's evolved state hash). This is what
                            distinguishes sibling apply calls within
                            the same cached call (`inner.f 5` vs
-                           `inner.f 2`), per the ambient layer design. */
+                           `inner.f 2`), per the callback tracking design. */
                         auto applyContext = std::make_shared<ApplyContext>(
                             ApplyContext{argSubject, callArgAncestry, {}});
                         auto & innerEnv = *innerEval->getEvalState().environment;
@@ -496,12 +496,10 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
            will throw at apply time (matching the prior behaviour
            for that combination, which the unit tests rely on for
            construction-only checks). */
-        /* ReplayCallbackArg reconstructs a lambda LocalObject as a
-           primop via its own `toValueOrProxy` (= the
-           <replay-local-lambda> mechanism in
-           replay-callback-arg.cc). Use it directly so the recorded
-           ambient chain drives apply-time behaviour; the generic
-           cached/ambient primops here would dispatch on
+        /* ReplayCallbackArg reconstructs a lambda callback arg as a
+           primop via its own `toValueOrProxy`. Use it directly so
+           the recorded obsSet drives apply-time behaviour; the
+           generic cached/outer primops here would dispatch on
            `ReplayCallbackArg::queryApply` which throws by design. */
         if (dynamic_cast<ReplayCallbackArg *>(obj.get())) {
             auto val = obj->toValueOrProxy(state, outerResolver);

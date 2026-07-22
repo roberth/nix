@@ -33,8 +33,8 @@ class TracingReplayEvaluator : public Evaluator
      * whose method triggered this history (so resolveStateHash can
      * history the parent / argCell chain on the proxy graph) plus a
      * per-history memo of ids already resolved. Lives only for the
-     * duration of one history call — no cross-call leakage as
-     * happened with the previous evaluator-global ambientState.
+     * duration of one history call — no cross-call leakage from a
+     * shared evaluator-scoped state.
      */
     struct ResolutionContext
     {

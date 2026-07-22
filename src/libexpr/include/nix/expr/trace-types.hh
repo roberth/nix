@@ -592,11 +592,11 @@ using ResultVariant = std::variant<
     ResultWHNF>;
 
 // ---------------------------------------------------------------------------
-// Ambient message pairing trace types
+// OuterValueRequest / OuterValueResponse
 //
-// These embed content tracing events into the Environment trace.
-// Outgoing: local evaluator queries the outer evaluator.
-// Incoming: ambient evaluator accesses local values during a callback.
+// Wraps a Query / Result to tag it as being about an outer-owned
+// value. Embedded in the Env-layer trace via the inner evaluator's
+// OuterObject probes.
 // ---------------------------------------------------------------------------
 
 /**

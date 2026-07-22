@@ -63,9 +63,8 @@ class ReplayCallbackArg : public Object
        apply construction). */
     OuterId localId;
     /* Shared history across all proxies in one cb apply. Each validated
-       probe appends a Fact (one fact per edge, matching the writer's
-       multi-edge AmbientAsks structure). `stateHashAt` reads this
-       to compute each proxy's evolved state hash.
+       probe appends a Fact (one fact per edge). `stateHashAt` reads
+       this to compute each proxy's evolved state hash.
 
        Backed as a shared single-fact-edge sequence: each entry is
        wrapped in a single-fact ObservationSet so the history's edge indices match
@@ -225,15 +224,14 @@ public:
         recursion). */
     RootValue toValueOrProxy(EvalState & state, std::shared_ptr<OuterResolver> resolver) override;
     std::optional<FunctionInfo> getFunctionInfo() override;
-    /** Recorded LocalObjects (frozen images) can't be applied without
-        either reconstructing the function body from value-structure
-        atoms (task #75) or comparing the live arg's content to the
-        recorded arg's content (task #74's ambient layer walker). Until one
-        of those lands, an apply on a ReplayCallbackArg is undecidable
-        — we don't know whether the recorded result still applies for
-        the current live arg. Throw a recognizable signal that
-        callers can interpret as "walker miss, fall through to live
-        re-eval."
+    /** Recorded frozen callback args can't be applied without
+        reconstructing the function body from value-structure atoms
+        or comparing the live arg's content to the recorded arg's
+        content. Until either lands, an apply on a ReplayCallbackArg
+        is undecidable — we don't know whether the recorded result
+        still applies for the current live arg. Throw a recognizable
+        signal that callers can interpret as "walker miss, fall
+        through to live re-eval."
 
         Today no caller routes here: the apply chain still goes
         through `Object::defeatCache` + value-level `callFunction`,

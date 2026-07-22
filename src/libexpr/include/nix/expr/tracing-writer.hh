@@ -673,10 +673,10 @@ public:
             return std::nullopt;
         }
 
-        /* Process any pending ambient observations, finalise
-           buffered cb-apply cells, and close the trailing Asks edge
-           boundary. Any observations that fire during closeAsksEdge
-           still fold into envWalk and evolve the innermost
+        /* Process any pending Requests, finalise buffered cb-apply
+           cells, and close the trailing Asks edge boundary. Any
+           observations that fire during closeAsksEdge still fold
+           into envWalk and evolve the innermost
            activeQuery's Q (via logOuterObservation). */
         closeAsksEdge(/*processApplies=*/ true);
 
