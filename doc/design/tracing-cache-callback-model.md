@@ -1,22 +1,16 @@
 # Callback tracking model — QueryCallbackApply and Q evolution
 
-2026-07-22. Task #110 model as of commit `9d6da5a58` (branch
-`eval-cache-v13-primop`).
-
 Each section separates **Model** (design intent, cited to user
 prompts or older docs that are still valid), **Code** (what the
 implementation actually does, cited by file:line), and **Gap**
 (where they differ). When a claim appears in the pre-existing
-`tracing-eval-cache-*.md` docs but is stale under task #110, the
-gap section notes it.
+`tracing-eval-cache-*.md` docs but is stale, the gap section notes
+it.
 
-**This doc's positioning** (user, 2026-07-22): the existing
-`tracing-eval-cache-subject-identity.md` still provides a
-foundation; surgical removal of outdated parts is the target, not
-wholesale replacement. This callback-model draft is transitional
-— its content should feed into targeted edits to subj (and to
-vocab / main where they overlap) rather than persist as a
-permanent parallel doc.
+The existing `tracing-eval-cache-subject-identity.md` provides the
+foundation; this doc is transitional and expects its content to
+fold into surgical edits to subj (and to vocab / main where they
+overlap) rather than persist as a permanent parallel doc.
 
 ## 1. What the eval cache does
 
@@ -85,11 +79,12 @@ revises them.
 **Gap.**
 
 - Vocab defines Ask/Terminal with `queryHash` as a stable key
-  throughout a walk. Task #110 makes `queryHash` evolve per-edge.
-  What the row keys concretely represent is now "queryHash at the
-  edge's moment" — see §3. Question Q7 in the questions file.
+  throughout a walk. Under Q evolution, `queryHash` evolves
+  per-edge; row keys concretely represent "queryHash at the edge's
+  moment" — see §3.
 - Vocab's `cur` definition is scope-ambiguous between session and
-  per-Q. Task #110 introduces per-Q scoping explicitly. Question Q8.
+  per-Q; the per-Q scoping under Q evolution is what the row keys
+  actually use.
 
 ## 3. Q evolution
 
@@ -191,7 +186,7 @@ rolls back session `envWalk`/`envCur`/`committedEdgeFingerprints`
 (lines 335-342). But `perQEnvWalk` is declared once at function
 scope and shared between fast and slow paths — failed fast-path
 commits leave residue in `perQEnvWalk`, and slow path's Q evolution
-folds them in. This is bug **B5** in the status file. Question Q27.
+folds them in. This is bug **B5** in the status file.
 
 **Gap 3** (file/env reads and Q evolution). `closeAsksEdge`'s
 finalize (`tracing-writer.cc:246-266`) inserts an Ask under
@@ -258,8 +253,7 @@ QueryGetWHNF(QueryCallbackApply ...) in practice").
 **Code.**
 
 `trace-types.hh`: `QueryCallbackApply` variant with
-`DECLARE_QUERY_RESULT(QueryCallbackApply, ResultWHNF)` (was
-`ResultType` pre-C3, commit `5f763022d`).
+`DECLARE_QUERY_RESULT(QueryCallbackApply, ResultWHNF)`.
 
 Writer emission: `TracingWriter::emitCallbackApplyForApplyResult`
 (`tracing-writer.hh:277-311`). Called from `TracingObject::whnf()`
@@ -272,9 +266,10 @@ fn/argObsSet/argAncestry/argDepth, materialises a
 invokes `fnObj->queryApply(replayArg)` live, returns `ResultWHNF`.
 
 **Gap** (branch name legacy). The walker's method is
-`dispatchAmbientQuery` — "Ambient" is legacy nomenclature (task
-#109 removed the Ambient message pairing but kept the method name).
-Callers are all task-#110 QCA dispatches. Question Q9.
+`dispatchAmbientQuery` — "Ambient" is legacy nomenclature; the
+Ambient message pairing has been dissolved but the method name
+stayed. All callers dispatch first-class Query variants
+(`QueryCallbackApply` and outer-value queries).
 
 ## 5. `f` is arg-side, obs is contra-arg-side
 
@@ -307,9 +302,8 @@ Handoff seam: `TracingWriter::emitCallbackApplyForApplyResult`
 (`tracing-writer.hh:277-311`) reaches into the cell's
 `runningObsSet`, snapshots into the CAS, emits QCA via
 `logOuterObservation` with `*ar->fn` (arg-side subject for `f`) as
-the attribution subject. Question Q25 flags this seam as
-"reasonable but genuinely open" — the model didn't pin down
-where the code seam should live.
+the attribution subject. The seam is reasonable but genuinely
+open — the model didn't pin down where the code seam should live.
 
 ## 6. CallbackCell — writer-side firing accumulator
 
@@ -340,15 +334,9 @@ invoked. `emitCallbackApplyForApplyResult` looks up cells by
 `tracing-writer.hh:289-292`), takes the most recent match (reverse
 iteration), snapshots `runningObsSet` into the CAS, emits QCA.
 
-**Gap.**
-
-The cell struct went through significant slimming in commit
-`52840203e` (13 fields → 6). Prior fields — `applyRequestHash`,
-`insertionIndex`, `envCurAtOpen`, `outerEnvCurAtOpen`, `contextCur`,
-`facts`, `finalized`, `cumulativeFactSet`, `factHash`, `pos`,
-`lastProcessedCount`, `runningObsHistory` — all supported the
-"boundary lifecycle" framing that's now retired. Old doc
-references to `contextCur`, `facts`, `finalized` are stale.
+**Gap.** Old doc references to `contextCur`, `facts`, `finalized`
+and related lifecycle-era cell fields are stale — the cell has
+been slimmed and no longer carries them.
 
 ## 6a. Probe
 
@@ -672,8 +660,7 @@ sweep-everything behaviour.
 - Walker-side change needed for the correct fix: recognize when a
   requestHash is a compound-Q (present in Queries pool) and
   recursively invoke `walk(subQ)` to fold sub's resultHash into
-  parent's cur. Not sketched in code yet. Question Q3 in earlier
-  draft (now retired in favor of implementation notes here).
+  parent's cur. Not sketched in code yet.
 
 ## 12. `SuppressApplyBoundary` — necessary guard
 
@@ -686,26 +673,22 @@ re-invocations.
 
 The guard is a workaround for `OuterApply::run` doing double duty
 (recording orchestration + pure-eval). The clean fix would split
-those into two variants. Not urgent — the guard is small and
-correct after B6.
+those into two variants. Not urgent — the guard is small.
 
-**Code** (B6 fix, commit `719a9b2bf`).
-
-Prior code had a global `SuppressApplyBoundary` around
-`TracingReplayEvaluator::walk`'s entire body — a latent bug because
-fallback triggered inside `ensureInner()` during dispatch could run
-legitimate cb-applies with the guard still active, silently losing
-cell creation.
-
-B6 narrowed the guard to per-`queryApply` scope. Four wrapping
-sites: `resolveApplyId`, `navigatePath`'s Apply step,
+**Code.** The guard wraps four `queryApply` sites individually
+(`resolveApplyId`, `navigatePath`'s Apply step,
 `dispatchAmbientQuery`'s callbackApply branch,
-`TracingReplayEvaluator::apply`'s outer-direction branch. Fallback
-in leaf ops outside those scopes runs unguarded — legitimate
-cb-applies during `ensureInner` record cells normally.
+`TracingReplayEvaluator::apply`'s outer-direction branch), not the
+entire `walk()` body. Wrapping the entire walk was a latent bug
+because fallback triggered inside `ensureInner()` during dispatch
+could run legitimate cb-applies with the guard still active,
+silently losing cell creation. Under the current narrowed scope,
+fallback in leaf ops runs unguarded and cb-applies during
+`ensureInner` record cells normally.
 
-**Gap.** None urgent. C5-in-old-status was "split `OuterApply::run`"
-— now noted as long-term cleanup, no correctness concern.
+**Gap.** Splitting `OuterApply::run` into recording-orchestration
+and pure-eval variants would retire the guard entirely. Long-term
+cleanup, no correctness concern under the current scope.
 
 ## 13. Known gaps (living status: `doc/status.md`)
 
@@ -786,8 +769,8 @@ messages / stale doc sections:
   (§6); `SuppressApplyBoundary` prevents walker-triggered phantom
   cells (§12).
 - **`dispatchAmbientQuery`** (walker method name) — despite the
-  name, all its branches dispatch task-#110 first-class Queries.
-  Rename pending. Question Q9.
+  name, all its branches dispatch first-class Query variants.
+  Rename pending.
 
 **`TracingCallbackApplyResult` — WRONG in the curried/nested case**
 (user, 2026-07-22).
