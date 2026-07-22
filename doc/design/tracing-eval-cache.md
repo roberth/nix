@@ -80,8 +80,10 @@ by hashed key lookups against those tables, never a scan.
 
 Six SQLite tables (Query + Env layers). All append-only via
 `INSERT OR IGNORE`; reads use prepared statements with a per-hash
-in-process cache. Ambient adds three more (see the vocab's
-[Storage tables (Ambient and Subject-evolution additions)](./tracing-eval-cache-vocabulary.md#storage-tables-ambient-and-subject-evolution-additions)).
+in-process cache. Callback tracking adds one more — the
+`ObservationSet` CAS pool referenced from `QueryCallbackApply`
+requests (see the vocab's
+[Storage tables (callback-arg observation set)](./tracing-eval-cache-vocabulary.md#storage-tables-callback-arg-observation-set)).
 
 ```
 Requests(requestHash BLOB PRIMARY KEY, payload BLOB)
@@ -177,6 +179,23 @@ internal cache; a hash collision yields a wrong cache hit detected on
 next use, no security impact.
 
 ## Recording
+
+**Status of this section.** The `record()` algorithm below
+describes a batched shape — buffer all Facts, then insert Asks
+under a fixed `queryHash` in one pass at `logResult`. That shape
+predates Q evolution and does not match what the writer currently
+does. Under Q evolution
+([`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
+§3.1) the writer inserts Ask edges incrementally per observation
+under the innermost active Q's current hash, which evolves per
+edge; the batched `record()` overload with a precomputed
+`sessionRequestsRsHash` is defined in the DB layer but currently
+uninvoked. Reconciling the two — reintroducing a batched or
+partially-batched insertion path with the precomputed
+`requestSetHash` optimisation while preserving Q evolution — is
+pending work, scheduled after the test suite is green. The
+algorithm below is retained as the shape that reimplementation
+targets, minus the fixed-Q assumption.
 
 `TracingEnvironment` wraps the inner environment (currently
 `SystemEnvironment`). Every `getFileHash`, `getEnv`, and Env
@@ -586,14 +605,19 @@ the same principle:
 
 Whether a specific fold moves each hash depends on the observation
 type. A file read moves `cur` but not any Subject state hash. An
-Ambient-layer observation (outer probing an inner-supplied callback
-arg) moves the referenced Subject state hash but not `cur` — Ambient
-observations feed `AmbientAsks`, not `envFactSet`. An env-layer
-outer-value probe moves both. What's constant across observation
-types is that pre-Response hashes are the lookup anchors and
-post-Response hashes are computed by folding — regardless of whether
-the fold changed the value. Neither pre-Response hash is a shrink
-from the writer's actual observations; both are faithful identifiers
+Env-layer outer-value probe moves both `cur` and the referenced
+Subject state hash. A `QueryCallbackApply` observation moves `cur`
+and the `fn`-side Subject state hash it references, sampling the
+enclosing `CallbackCell`'s running observation set by content-hash
+into its `argObsSet` payload. Contra-arg observations recorded
+inside that `ObservationSet` do not appear in the outer `cur` or
+in any arg-side Subject state hash — they travel by value inside
+the `QueryCallbackApply` request and are dispatched from there at
+replay. What's constant across observation types is that
+pre-Response hashes are the lookup anchors and post-Response
+hashes are computed by folding — regardless of whether the fold
+changed the value. Neither pre-Response hash is a shrink from
+the writer's actual observations; both are faithful identifiers
 that let replay progress from `cur` alone.
 
 ### Navigation invariant: hashes flow *into* lookups as keys, never *out*
@@ -639,10 +663,10 @@ question would treat hashes as outputs of lookups.
 > Query.
 >
 > This applies to every table that produces a next observation from
-> a lookup: `Ask` (edge from cur), `AmbientAsk` (chain-advance from
-> fromFactSet), and every requestHash construction whose `from` field
-> is the walker's pre-observation state (Env request payloads and
-> cb-apply `from` fields alike). `Terminal` doesn't fit this pattern
+> a lookup: `Ask` (edge from cur), and every requestHash
+> construction whose `from` field is the walker's pre-observation
+> state (Env request payloads and callback `from` fields alike).
+> `Terminal` doesn't fit this pattern
 > — a Terminal is the *end* of the chain and produces a Result, not a
 > next observation, so it's queried at the cur the walker *lands*
 > at after all observations for that queryHash.
@@ -687,15 +711,17 @@ inner counterpart and forwards the call. Methods the cache can't
 model (`getStringWithoutContext`, `getPath`, `defeatCache`) always
 fall through to inner.
 
-`apply(fn, arg)` is the awkward case: when `fn` or `arg` came from a
-prior cache boundary and no live Object is around to probe. The
-Ambient message pairing handles this — inner-owned callback args
-are proxied by `ReplayCallbackArg` (see the vocab's
+`apply(fn, arg)` is the awkward case: when `fn` or `arg` came
+from a prior cache-boundary crossing and no live Object is around
+to probe. Callback tracking handles this — inner-owned callback
+args are proxied by `ReplayCallbackArg` (see the vocab's
 [Callback arg objects](./tracing-eval-cache-vocabulary.md#callback-arg-objects)),
-and their
-recorded responses are served from the `InnerValueResponse` table.
-`TracingReplayEvaluator::dispatchAmbientQuery` is the per-tag
-bridge; details live in
+and their recorded responses are served from the observation set
+carried inside the recorded `QueryCallbackApply` request.
+`TracingReplayEvaluator::dispatchAmbientQuery` (name is legacy)
+is the per-tag bridge; details live in
+[`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
+and
 [`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md).
 
 **Nondeterminism.** If the environment genuinely produces different
