@@ -268,6 +268,39 @@ std::shared_ptr<Object> OuterApply::run(
         innerWriter->deferRequest(applyJson);
     }
 
+    /* B7: Wrap the cb-apply result so its whnf fires
+       emitCallbackApplyForApplyResult with an applyResultSubject
+       whose fn maps to the CallbackCell we just populated. Without
+       this the QCA emitted from the enclosing apply's TracingObject
+       uses the enclosing apply's fn subject and misses this cell —
+       no QCA lands in the DB and warm can't discriminate siblings.
+
+       Using PostulatedIdempotentRead{fnStateHash} with
+       applyArgAncestry=0 makes stateHashAtSubject at step 0
+       reproduce fnStateHash — matching cell.fnStateHashHex (which
+       was set from fnStateHash by createCallbackCell above). This
+       is only the outer-wrapper piece of B7; children need
+       applyResultSubject too, and the sibling-A empty-cell timing
+       still misses. See doc/status.md B7. */
+    if (innerWriter) {
+        Subject fnResultSubject{PostulatedIdempotentRead{fnStateHash}};
+        Subject argResultSubject{Arg{localCell->depth}};
+        Subject applyResultSubject{ApplyResultSubject{
+            .fn = std::make_shared<const Subject>(std::move(fnResultSubject)),
+            .arg = std::make_shared<const Subject>(std::move(argResultSubject)),
+        }};
+        auto v = innerWriter->getSink().logQuery(applyQuery);
+        TriePosition triePos{
+            .resultNodeHash = Hash{HashAlgorithm::SHA256},
+            .queryHashStr = fnIdStr,
+        };
+        auto wrapped = TracingObject::create(
+            ref<Object>(resultObj), *innerWriter, v, triePos);
+        wrapped->withApplyResultSubject(
+            std::move(applyResultSubject), Hash{HashAlgorithm::SHA256});
+        return wrapped.get_ptr();
+    }
+
     return resultObj;
 }
 
