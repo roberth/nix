@@ -382,12 +382,31 @@ static PrimOp * makeCachedFnPrimOp(
                             const trace::QueryVariant & q,
                             Subject subject,
                             Hash argAncestry) {
+                            /* Skip the redundant `innerEnv.outerQuery` when
+                               `outerObj` already emits its own recording via
+                               a QCA-emitting wrapper. Cold otherwise records
+                               two overlapping observations for the same
+                               event — a generic getWHNF whose `from` refers
+                               to `Arg{depth}` (a subject warm can't resolve
+                               because it has no live contra-arg) and the
+                               QCA observation from the wrapper's own whnf.
+                               Warm hits the generic one and misses. R2 in
+                               status.md flags this redundancy; the QCA
+                               alone is what the callback-model design
+                               requires. */
+                            bool cbApplyOrigin = false;
+                            if (outerObj) {
+                                if (auto * to = dynamic_cast<TracingObject *>(outerObj.get()))
+                                    cbApplyOrigin = to->isCbApplyOrigin();
+                            }
                             OuterQueryResult qr = dispatchOuterQuery(std::move(outerObj), q);
-                            innerEnv.outerQuery(
-                                q,
-                                [&](const trace::QueryVariant &) { return qr.result; },
-                                subject,
-                                argAncestry);
+                            if (!cbApplyOrigin) {
+                                innerEnv.outerQuery(
+                                    q,
+                                    [&](const trace::QueryVariant &) { return qr.result; },
+                                    subject,
+                                    argAncestry);
+                            }
                             return qr;
                         };
                         /* applyFn: invoke the outer fn on the arg,

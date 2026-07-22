@@ -18,7 +18,7 @@ Walker's `recomputeQ` now reads from a walk-local `perQEnvWalk` fed by `commitEd
 
 **Fix plan (high confidence, requires walker-side change too):** at sub-Q's logResult, insert *one* composite observation into the newly-innermost Q. request = sub-Q's queryHash; response = sub-Q's resultHash; elementHash = XOR(req, resp). Parent's chain then has one entry per sub-Q completion, not per sub-Q observation. Walker's dispatch of this composite request needs to recursively `lookup(subQ)` and return sub's resultHash — a new dispatch branch. Retire the logResult bridging afterward.
 
-### B7. QCA emission on cb-apply result — HIGH (partial, still blocks sibling test)
+### B7. QCA emission on cb-apply result — HIGH (partial, sibling test still misses)
 
 Original description ("contra-arg observations aren't reaching cells") was wrong. Empirical trace of `cb-sibling-discrimination-via-observation` cold shows `TracingCallbackArg::whnf` fires and `logCallbackObservation` populates the cell (`obsSet=1`, `argAncestryHex` set). The break is at emission.
 
@@ -37,6 +37,8 @@ Mechanism:
 2. **Children of the wrapper don't emit QCA on their own whnf.** `TracingObject::maybeGetAttr` returns children without `applyResultSubject`, so `.whatever`'s whnf doesn't fire `emitCallbackApplyForApplyResult`. Callback-model §7 says each WHNF-producing probe on a cb-originated value emits its own QCA — the child probe should be QCA-2.
 
 Remaining work: (a) propagate `applyResultSubject` (or an equivalent QCA-emit shape) to `maybeGetAttr`/`getListElem` children of the wrapper; (b) allow emission when observations arrive after the wrapper's `whnf` — either lazy re-emit, or accepting empty-argAncestry cells at emit time.
+
+**Further partial fix landed** (2026-07-23): `queryFn` in `makeCachedFnPrimOp.impl` now skips the redundant `innerEnv.outerQuery` when the target is a `TracingObject` with `cbApplyOrigin=true`. Cold was previously recording two overlapping observations for the cb-apply's whnf — a QCA (the design's intended emission) and a generic getWHNF whose `fromStateHashes` referenced `Arg{depth}` (the contra-arg). Warm can't resolve `Arg{depth}` because it has no live cell chain for a contra-arg (the QCA obsSet is the design's contra-arg carrier). The redundant getWHNF caused warm to miss on cases where the QCA alone would have hit. Suite: 315/13/7 (+3 net vs baseline 312/16/7). Newly passing: `cb-forcedness-independence`, `cb-local-descendants`, `cb-stats-sidecar-baseline`, `cb-with-scope-and-tryeval`. Newly failing: `cb-two-sibling-distinct-callbacks` — its warm relied on the redundant getWHNF observation folding into `cur` to disambiguate sibling B's Terminal from sibling A's; without those observations sibling B's walk hits sibling A's Terminal at the same `cur`. That's a walker-algorithm interaction (trace-continuing checking Terminal at startCur before exploring outgoing Asks) rather than a B7 mechanism gap.
 
 ### B3. TracingObject lacks general Subject tracking — HIGH (blocks sibling test)
 

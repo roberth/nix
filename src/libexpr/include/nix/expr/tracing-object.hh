@@ -115,6 +115,8 @@ public:
         return *this;
     }
 
+    bool isCbApplyOrigin() const { return cbApplyOrigin; }
+
     TracingObject & withApplyContext(std::shared_ptr<ApplyContext> ctx)
     {
         applyContext = std::move(ctx);
