@@ -70,7 +70,7 @@ static nlohmann::json readResponse(
         "rlo: read %s from=%s reqHash=%s",
         Q::tag, query.from.isStateHash() ? query.from.stateHash().substr(0, 12) : "<?>",
         reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
-    /* Under the #103 redesign, every ambient probe's response is
+    /* Under the #103 redesign, every outer probe's response is
        carried in the CallbackApply query's `argObsSet` — the
        consumer at dispatch time populates `obsSetResponses` with
        that CAS content. No secondary storage. Miss here is a real

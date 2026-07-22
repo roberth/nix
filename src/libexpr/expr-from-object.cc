@@ -27,9 +27,9 @@ static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const tr
         [&](const auto & query) -> OuterQueryResult {
             using Q = std::decay_t<decltype(query)>;
             if constexpr (std::is_same_v<Q, trace::QueryApply>) {
-                throw Error("ambient query: QueryApply should go through applyFn, not queryFn");
+                throw Error("outer query: QueryApply should go through applyFn, not queryFn");
             } else if constexpr (!requires { query.from; }) {
-                throw Error("ambient query: query type has no 'from' field");
+                throw Error("outer query: query type has no 'from' field");
             } else if constexpr (std::is_same_v<Q, trace::QueryGetWHNF>) {
                 return {computeWHNFFromObject(*obj), nullptr};
             } else if constexpr (std::is_same_v<Q, trace::QueryGetAttr>) {
@@ -171,7 +171,7 @@ std::shared_ptr<Object> OuterApply::run(
        outer Object typically has no Subject. */
     auto fnId = fnStateHash;
     if (!outerState)
-        throw Error("ambient apply requires outerState");
+        throw Error("outer apply requires outerState");
 
     /* Scope-graph cell for the cb arg, rooted at the caller's
        effective argAncestry (which OuterObject::queryApply passes in
@@ -397,7 +397,7 @@ static PrimOp * makeCachedFnPrimOp(
 }
 
 /**
- * Create a PrimOp for an ambient function (from the outer evaluator).
+ * Create a PrimOp for an outer function (from the outer evaluator).
  * Calls dispatch through OuterObject::queryApply without an inner evaluator.
  */
 static PrimOp * makeOuterFnPrimOp(std::shared_ptr<Object> fnObj, std::shared_ptr<OuterResolver> resolver)
@@ -488,7 +488,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
 
     case nFunction: {
         /* Dispatch on obj's dynamic type. An OuterObject wraps an
-           outer value reached via ambient query; its apply must
+           outer value reached via outer query; its apply must
            route through queryApply (makeOuterFnPrimOp). A concrete
            fn with an inner evaluator goes through innerEval->apply
            (makeCachedFnPrimOp). A concrete fn without an inner

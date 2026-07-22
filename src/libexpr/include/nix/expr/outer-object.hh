@@ -1,9 +1,9 @@
 #pragma once
 /**
  * @file
- * OuterObject — Object backed by an ambient query callback.
+ * OuterObject — Object backed by an outer query callback.
  *
- * A value from the ambient (outer) evaluator, accessed by the local
+ * A value from the outer evaluator, accessed by the local
  * (inner) evaluator through ambient queries. Each Object method issues
  * a query through the provided callback and interprets the response.
  */
@@ -22,7 +22,7 @@
 namespace nix {
 
 /**
- * Response from an ambient query: the result plus an optional child
+ * Response from an outer query: the result plus an optional child
  * Object for queries that produce child Objects (getAttr, getListElem).
  * The child is the outer's Object at the queried position, which the
  * caller wraps in a new OuterObject.

@@ -58,7 +58,7 @@ public:
     virtual Hash getFileHash(const std::string & path);
 
     /**
-     * Issue an ambient query and return the result. `subject`
+     * Issue an outer query and return the result. `subject`
      * identifies the value the query is about (passed through to
      * the writer for state-hash computation at flush). The default
      * implementation delegates to the supplied resolve callback;

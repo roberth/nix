@@ -275,7 +275,7 @@ struct QueryLeaf
     {
         return std::holds_alternative<StateHashLeaf>(data);
     }
-    bool isAmbient() const
+    bool isOuter() const
     {
         return std::holds_alternative<OuterLeaf>(data);
     }
@@ -595,12 +595,12 @@ using ResultVariant = std::variant<
 // Ambient message pairing trace types
 //
 // These embed content tracing events into the Environment trace.
-// Outgoing: local evaluator queries the ambient (outer) evaluator.
+// Outgoing: local evaluator queries the outer evaluator.
 // Incoming: ambient evaluator accesses local values during a callback.
 // ---------------------------------------------------------------------------
 
 /**
- * Outgoing ambient query: local→external.
+ * Outgoing outer query: local→external.
  * Data queries (getType, getAttr, ...) and external calls (apply).
  */
 struct OuterValueRequest

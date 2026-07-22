@@ -132,7 +132,7 @@ public:
     struct Observation
     {
         Hash queryHash{HashAlgorithm::SHA256};
-        /* CBOR bytes of the ambient probe's response (a
+        /* CBOR bytes of the observed response (a
            `trace::ResultVariant`). Used by the walker at replay to
            serve callback probes via an obsSet-answering proxy. */
         std::string responsePayload;
@@ -247,22 +247,6 @@ public:
        FactSet hash lies on some recording for this query, without
        persisting FactSet members. */
     bool hasAnyEdge(const QueryHash & q, const SetHash & factSet);
-
-    /* ─────────────────────────────────────────────────────────────────
-       Decision graph layer: ambient layer (cb-apply)
-
-       The ambient layer trie is keyed on factSet alone (no Q), per
-       doc/design/tracing-eval-cache-subject-identity.md.
-       It records the observations the outer makes against an
-       inner-supplied LocalObject during a covariant callback.
-       Same-call sibling collapse within is intentional;
-       cross-call disambiguation is via state hash inheritance.
-
-       Unlike env layer, edges store toFactSetHash explicitly: at
-       ambient layer there is no live producer for incoming-ambient
-       observations at replay, so the walker can't reproduce the
-       transition by live dispatch.
-       ───────────────────────────────────────────────────────────────── */
 
     /* ─────────────────────────────────────────────────────────────────
        Recording and replay

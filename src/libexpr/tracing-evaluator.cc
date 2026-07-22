@@ -428,8 +428,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
                writer.envFactSetHash so cold's sibling A (applying at
                v13FactSet_A) and sibling B (applying at v13FactSet_B >
                v13FactSet_A) get distinct siblingScopes → distinct
-               inner-ambient-object inheritedScopes → distinct
-               reqhashes for observations they emit. */
+               callback-arg inheritedScopes → distinct reqhashes for
+               observations they emit. */
             auto siblingScope = TracingDecisionGraph::xorHashes(
                 TracingDecisionGraph::xorHashes(guard.oldScope, applyArgAncestryStateHash),
                 writer.getV13FactSetHash());
