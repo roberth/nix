@@ -59,6 +59,16 @@ The current code "has something quirky that it copied from state hashes, but the
 
 **Fix plan (medium confidence on shape, low on scope of touch):** rework `TracingCallbackApplyResult` so applying a callback-originated value creates a fresh CallbackCell rather than routing into the enclosing one. QCA construction at each application's sample moment then embeds the enclosing QCA as the `fn` position of the outer QCA (nested composition). Writer: cell allocation moves from "one per firing" (whatever that meant) to "one per application" with correct scope. Walker: dispatch of `QCA(QCA(...), obs)` recursively resolves the inner QCA to get `f`'s current state hash, invokes the resolved callable live, backed by a `ReplayCallbackArg` for the outer obsSet. Live callables include both outer-provided fns and inner-produced closures.
 
+### B9. Walker's TRO `applyContext` is walker-session-scoped, not per-Q-chain-scoped — HIGH (blocks sibling test)
+
+`TracingReplayObject::applyContext` is a `shared_ptr<ApplyContext>` handed to descendants (via `withApplyContextOnly` in `lookupResult` / `lookupStructuralChild`, `tracing-replay-object.cc:211,371`) so every descendant sharing that pointer reads and writes the same observation vector. Cache-hit `pushObservation` calls append into that shared vector. When `evolvedQueryFrom` on any of them folds the vector into `applyResultSubject`'s state hash, it folds in every observation any related descendant pushed anywhere in the walker session.
+
+Cold's writer stamped `from` at the point where it recorded that specific Q's edge — the state hash reflecting observations folded up to that moment in that Q's own recording chain. Warm's TRO folds a larger set (the whole walker-session accumulation into the shared context) and derives a different state hash. `evolvedQueryFrom`'s output disagrees with cold's stamped `from`, so warm's computed queryHash doesn't match cold's stored row and the lookup misses.
+
+**Fix plan (medium confidence):** replace the shared-across-descendants ApplyContext with per-Q-chain state on the walker Object side — the walker's Object analogue of the writer's `ActiveQuery::perQEnvWalk` (task #110 B1 fix). Two shapes to consider: (a) each new Q-lookup opens a fresh, walk-local observation history that `evolvedQueryFrom` reads from and `pushObservation` writes into, discarded when the Q's lookup completes; (b) keep the shared_ptr shape but filter at read time to only the observations recorded within the current Q's chain. (a) is closer to the writer side.
+
+Complements [B3](#b3-tracingobject-lacks-general-subject-tracking--high-blocks-sibling-test) (writer-side Subject exposure): together B3 + B9 align writer and walker on per-Q chain semantics. Absorbed from former task #104.
+
 ## Cosmetic / low-priority
 
 ### C4. RESOLVED — no preamble means no recursion (C3 side-effect)
