@@ -251,11 +251,11 @@ public:
     {
     }
 
-    /** Cumulative subject-id history over env layer ambient observations.
+    /** Cumulative subject-id history over Env-layer observations.
         One edge per logResult-triggered flush. Exposed so writer-side
         apply-result wrappers (TracingObject with applyResultSubject)
         can compute `stateHashAt(subject, argAncestry, history, history.size())`
-        — the per-arg evolved state hash the design's principle #3 requires
+        — the per-arg evolved state hash Design principle #3 requires
         for child queries on those wrappers. Walker's parallel handle
         is TracingReplayEvaluator::getCidasksWalk. */
     const std::vector<ObservationSet> & getD1CidasksWalk() const
@@ -311,8 +311,7 @@ public:
 
     /** Cumulative factSet hash maintained per-fact via XOR-fold.
         At cold time, advances at `noteEnvObservation` (= walker
-        dispatches), `logResponse` (= env/file recordings), and
-        `flushPending` (= inner's ambient observations).
+        dispatches) and `logResponse` (= env/file recordings).
         At warm time, advances only at `noteEnvObservation` —
         which captures every dispatched fact, mirroring cold's
         cumulative. The walker reads this as the ground-truth
@@ -613,93 +612,40 @@ public:
     }
 
     /**
-     * Flush buffered ambient facts and Requests into the pool at
-     * their natural reqHashes.
-     *
-     * Called from `closeAsksEdge` (= every cb-apply and at
-     * logResult). With `finalize=false` (= intermediate flushes),
-     * only env layer facts are drained; ambient layer facts and buffered
-     * `callbackCells` stay buffered for later. With
-     * `processApplies=true` (= logResult), callbackCells are
-     * also processed: for each, the ambient chain group is built,
-     * its terminal `cumulativeFactSet` is the AmbientResult, and
-     * the env synthetic apply Fact `(applyReqHash, AmbientResult)`
-     * is folded into envFactSet / envWalk / pendingNewRequests
-     * just like an ordinary env layer ambient observation.
+     * Insert deferred Requests into the CAS pool at their natural
+     * (payload-hash) keys. Called from `closeAsksEdge`. With
+     * `processApplies=true` the trailing file/env-read chunk is
+     * also closed; otherwise pending state stays buffered.
      */
     void flushPending(bool processApplies = false);
 
     /**
-     * End the current Asks edge at a cb-apply inside a
-     * body run. Processes pending observations (advancing
-     * envWalk by one edge if any ambient observations are
-     * pending), finalises the perQAsksEdge boundary, and resets
-     * pendingNewRequests so the next observation set starts a
-     * fresh edge.
-     *
-     * Required at every cb-apply the writer crosses
-     * during a body run — TracingEvaluator::apply,
-     * TracingObject::queryApply, OuterResolver::apply. Without
-     * this split, multiple body-level cb-applies collapse into a
-     * single Asks edge in the recorded trie, but the walker
-     * advances its cumulative `envWalk` once per dispatched
-     * Asks edge (= principle 6) — leaving writer and walker at
-     * different history indices when they each compute the
-     * apply-result's state hash, producing different queryHashes.
-     *
-     * Skip-on-empty per the principle 4 + 7 read: an Asks edge
-     * with no ambient observations doesn't move subject-id state, so
-     * walker's commitEdge is a no-op for it. Same on the writer.
+     * Close the current Asks edge. Calls flushPending, then closes
+     * any trailing file/env-read batch. Called at every cb-apply
+     * crossing and at logResult.
      */
     void closeAsksEdge(bool processApplies = false);
 
     /**
-     * Mark a cb-apply in the recording. Closes the
-     * preceding observations into their own Asks edge (= β1 via
-     * closeAsksEdge), inserts the apply Request payload into the CAS
-     * pool, and buffers a `CallbackCell` recording the
-     * applyId and reqHash.
-     *
-     * The env apply Fact itself is *not* folded into envFactSet
-     * here. Its response hash is the AmbientResult (= terminal of
-     * the ambient chain captured for this applyId), which is only known
-     * at flushPending time. Deferring synthesis keeps the
-     * env cur consistent with via-Asks §"Recording (ambient layer)":
-     * "The terminal factSet hash *is* the `AmbientResult`, which
-     * the env layer walker XOR-folds into its own `cur` as the
-     * `Response` for the enclosing `OuterQuery`."
-     *
-     * The `fromHash` of the synthetic env apply Fact's
-     * envWalk observation is `Hash(0)` — the cb-apply
-     * is a history-advance marker, not a fact about any subject, so
-     * it doesn't fold into any subject's own-loop.
+     * Push a new `CallbackCell` onto the writer's stack for a
+     * cb-apply. The cell's `applyId` is the natural hash of the
+     * apply query payload, used to route observations from the
+     * TracingCallbackArg and TracingCallbackApplyResult back into
+     * this cell's `runningObsSet` via `logCallbackObservation`.
+     * The obsSet is later snapshotted into an ObservationSet
+     * referenced from a QueryCallbackApply request.
      */
     void createCallbackCell(const nlohmann::json & applyQueryPayload);
 
     /**
-     * Log a nested cb-apply as a ambient layer fact under the enclosing
-     * cb-apply's chain. Used by TracingEvaluator::apply when the
-     * fn is a TracingCallbackArg (= inner-supplied lambda being
-     * applied by the outer). Per via-Asks Replay (ambient layer): the
-     * lambda primop at warm pulls this edge by (chainCursor,
-     * stampedReqHash). Walker-side counterpart in
-     * `<replay-local-lambda>` impl advances the ReplayCallbackArg's
-     * chainCursor by this fact's elementHash.
-     *
-     * Subject = ApplyResultSubject{fn, arg} (caller-built) so the
-     * generic flushPending stamping puts the constituents'
-     * roots into `fromStateHashes[]` and an Apply step into `path`. Matches
-     * walker stamping. No-op when there's no enclosing cb-apply.
-     */
-    /**
-     * Return the `applyId` of the cb-apply currently on top
-     * of `callbackCells`. Used by `IT::apply` when fn is a
-     * TracingCallbackArg (= the recursive cb-apply path) to capture
-     * the enclosing boundary's id before the recursive call would
-     * otherwise push a new boundary; the captured id then flows to
-     * the `TracingCallbackApplyResult` wrapping the apply result, so
-     * its observations land in the same boundary's ambient chain as the
-     * recursive apply Fact `logAmbientApplyFact` appended.
+     * Return the `applyId` of the cb-apply currently on top of
+     * `callbackCells`, or nullopt if there is none. Used by
+     * `IT::apply` when fn is a TracingCallbackArg (the recursive
+     * cb-apply path) to capture the enclosing cell's id before the
+     * recursive call would push a new one; the captured id flows
+     * to the `TracingCallbackApplyResult` wrapping the apply
+     * result, so its observations route to the enclosing cell's
+     * runningObsSet.
      */
     std::optional<Hash> getCurrentCbApplyId() const
     {
