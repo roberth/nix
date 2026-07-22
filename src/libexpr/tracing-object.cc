@@ -311,13 +311,19 @@ RootValue TracingObject::defeatCache()
 
 std::optional<FunctionInfo> TracingObject::getFunctionInfo()
 {
-    /* Note: getFunctionInfo doesn't use the Q-evolution swap because
-       inner->getFunctionInfo() is expected to not trigger callback
-       observations (it just inspects the function's formals). */
-    auto result = inner->getFunctionInfo();
+    /* Task #110: push ActiveQuery before forcing, uniform with other
+       TracingObject methods (whnf/maybeGetAttr/getListElem/…).
+       Whether or not inner->getFunctionInfo() actually fires sub-
+       observations, the swap costs at most an extra push/pop and
+       eliminates the unverified assumption. */
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetFunctionInfo query{parentHash};
-    auto [valueId, qh] = writer.logQuery(query, triePos);
+    std::optional<Subject> fromSubject;
+    Hash fromSubjectArgAncestry = getArgAncestry();
+    if (auto * s = getSubject())
+        fromSubject = *s;
+    auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
+    auto result = inner->getFunctionInfo();
     trace::ResultFunctionInfo traceResult;
     if (result) {
         traceResult = {.hasInfo = true, .formals = result->formals, .ellipsis = result->ellipsis};
