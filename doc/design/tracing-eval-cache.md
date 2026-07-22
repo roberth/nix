@@ -899,7 +899,7 @@ Performance harness under `tests/perf/tracing-cache/`:
 - `src/libcmd/command.cc` — wiring into `EvalCommand`
 - `src/libexpr/primops/cache.cc` — the `builtins.cache` primop
 - `src/libexpr/expr-from-object.cc` — `ExprFromObject`,
-  `OuterResolver`, `makeCachedFnPrimOp` / `makeAmbientFnPrimOp`
+  `OuterResolver`, `makeCachedFnPrimOp`
 - `src/libexpr/outer-object.cc` — `OuterObject` (outer-owned value
   the inner probes via Env)
 - `src/libexpr/subject-id.cc` — Subject variants, state hash /

@@ -2,12 +2,14 @@
 
 Design doc for the `builtins.cache` primop. Companion to
 [`tracing-eval-cache.md`](./tracing-eval-cache.md) (the base cache
-model) and
+model),
 [`tracing-eval-cache-vocabulary.md`](./tracing-eval-cache-vocabulary.md)
-(term glossary). Terminology from those docs — Query/Result vs
-Request/Response, FactSet, RequestSet trie, the Env and Ambient
-message pairings, Subject, state hash, argAncestry, the walker —
-is assumed below.
+(term glossary), and
+[`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
+(callback tracking). Terminology from those docs — Query/Result
+vs Request/Response, FactSet, RequestSet trie, Query and Env
+message pairings, Subject, state hash, argAncestry, the walker,
+`QueryCallbackApply` and its ObservationSet — is assumed below.
 
 ## Goal and non-goals
 
@@ -75,11 +77,11 @@ The primop's body is thin — most of the machinery lives in shared
 libexpr components that the primop wires together. Reading tour:
 
 - `src/libexpr/include/nix/expr/outer-object.hh` — `OuterObject`
-  wraps an outer-owned value behind ambient-query callbacks. Each
+  wraps an outer-owned value behind outer-query callbacks. Each
   Object method (`maybeGetAttr`, `getString`, `getInt`, …) issues a
-  `trace::QueryVariant` via the `AmbientQueryFn` and interprets the
+  `trace::QueryVariant` via the `OuterQueryFn` and interprets the
   `trace::ResultVariant` it gets back. `queryApply` covers the
-  function-application case via `AmbientApplyFn`.
+  function-application case via `OuterApplyFn`.
 - `src/libexpr/include/nix/expr/expr-from-object.hh` —
   `ExprFromObject` bridges an inner `ref<Object>` into an outer
   `Value` and creates `<cached-fn>` PrimOps for `nFunction` values.
@@ -92,23 +94,25 @@ libexpr components that the primop wires together. Reading tour:
 - `src/libexpr/include/nix/expr/tracing-environment.hh` —
   `TracingEnvironment::outerQuery(query, resolve, subject,
   argAncestry)` calls `resolve` to compute a result and then calls
-  `writer.logOuterObservation(...)`. Ambient/outer queries record
-  as Env-layer Facts on the inner writer.
+  `writer.logOuterObservation(...)`. Outer-value queries record as
+  Env-layer Facts on the inner writer.
 - `src/libexpr/include/nix/expr/tracing-writer.hh` — `TracingWriter`
   records Facts uniformly at the Env layer: file reads, env-var
   lookups, and outer-value probes all XOR-fold into `envFactSetHash`
-  and land in `sessionRequestsTrie`. Ambient records via
-  `logAmbientObservation` and `logAmbientApplyFact` (see the vocab's
-  [Ambient payload types and edges](./tracing-eval-cache-vocabulary.md#ambient-payload-types-and-edges)
-  for InnerValueResponse storage and AmbientAsk edges).
+  and land in `sessionRequestsTrie`. Observations the outer makes
+  on inner-supplied callback args during a callback firing route
+  through `logCallbackObservation` into the enclosing
+  `CallbackCell`'s running observation set.
 - `src/libexpr/tracing-callback-arg.cc` / `replay-callback-arg.cc` —
   `TracingCallbackArg` and `ReplayCallbackArg` handle the covariant
   callback case: the writer records the outer's probes on an
-  inner-supplied callback arg; replay serves those probes from the
-  `InnerValueResponse` table when the inner is no longer running.
+  inner-supplied callback arg into the cell's obsSet; at replay
+  the arg is reconstructed from the obsSet carried inside the
+  recorded `QueryCallbackApply` request.
 - `src/libexpr/tracing-replay-evaluator.cc` — `dispatchAmbientQuery`
-  routes ambient Requests through the walker, resolving `from`
-  fields via `resolveStateHash` against the `Requests` pool.
+  (name is legacy) routes recorded outer-value and
+  `QueryCallbackApply` Requests through the walker, resolving
+  `from` fields via `resolveStateHash`.
 - The functional test `tests/functional/builtins-cache.sh` covers
   the full feature surface: covariant callbacks, ambient paths, the
   `callPackageWith` self-referential pattern, function-result
@@ -212,17 +216,18 @@ Each recording produces its own `(queryHash, factSet, result)` row via
 - File reads from the inner evaluator (via
   `TracingEnvironment::getFileHash`).
 - Env-var lookups (`getEnv`).
-- Ambient queries against outer-provided values, recorded via
+- Outer-value queries against outer-provided values, recorded via
   `TracingEnvironment::outerQuery` / `writer.logOuterObservation`.
 
 Because the outer environment is wrapped by the inner
 `TracingEnvironment`, *file reads from the inner evaluator also flow
-upward through the outer cache's `TracingEnvironment`* — the "ambient
-capability fix." An outer recording that calls `builtins.cache`
-automatically has the nested call's file dependencies in its
-FactSet; no special handling required at that level.
+upward through the outer cache's `TracingEnvironment`* — the
+"outer-capability fix" (historically called "ambient capability
+fix"). An outer recording that calls `builtins.cache` automatically
+has the nested call's file dependencies in its FactSet; no special
+handling required at that level.
 
-For inner correctness, the ambient Facts are load-bearing:
+For inner correctness, the outer-value Facts are load-bearing:
 
 - A different outer value with the same fn/arg identifiers would
   otherwise pass the cache check despite producing different
@@ -241,43 +246,48 @@ No new `TracingWriter` methods are needed.
 When `replayEval->evalFile(...)` (or `evalExpr`, or `apply`) runs:
 
 1. `lookup(queryHash)` calls `walk(queryHash)`.
-2. Fast path: `dispatchedTrie.diff` against the `RequestSet`
-   reachable from `(queryHash, ∅)`. If the delta resolves and
-   `Terminal(queryHash, candidateCur)` matches, hit.
-3. Otherwise, fall back to `decisionGraph.walk(queryHash, dispatch)`.
+2. Trace-continuing attempt (task #106): if the walker's session
+   state already reaches this Query's entry point, walk the trace
+   chain from there. On hit, return the Result.
+3. Otherwise trace-discovering: start at ∅ or a structural parent
+   anchor and walk landing chains and the trace chain per
+   [`tracing-eval-cache.md`](./tracing-eval-cache.md)'s replay
+   strategies section.
 4. The `dispatch` callback in `TracingReplayEvaluator` reads each
    Request payload, calls `getCurrentResponse`, and returns the
    response hash. For Requests whose payload contains a `Query`,
-   dispatch routes to `dispatchAmbientQuery`, which:
+   dispatch routes to `dispatchAmbientQuery` (name is legacy),
+   which:
    - resolves the `from` field via `resolveStateHash` (against the
-     Subject-identity machinery: `Arg{depth}` seeds, `DerivedSubject`
-     via the `Requests` pool, `ApplyResultSubject` via live apply,
-     `PostulatedIdempotentRead` via source re-read);
+     subject-identity machinery: `Arg{depth}` positional seeds,
+     `DerivedSubject` via the `Requests` pool, `ApplyResultSubject`
+     via live apply, `PostulatedIdempotentRead` via source re-read);
    - issues the query against the resolved outer Object;
    - serialises the result.
 5. On a hit, the result payload comes back; `lookup` wraps it in a
    `TracingReplayObject`. The outer caller forces attrs/strings/…
    via that TracingReplayObject, which defers to its own
-   `lookupResult<queryHash, R>` per-method (using the recorded queryHash as
-   the parent in child Queries' Merkle chain).
+   `lookupResult<queryHash, R>` per-method (using the recorded
+   queryHash as the parent in child Queries' Merkle chain).
 
 Covariant callback replay uses the callback-arg proxies —
-`ReplayCallbackArg` is the frozen image reconstructed from
-`InnerValueResponse` storage; when the outer's callback body probes
-the inner-supplied arg, `ReplayCallbackArg` serves the recorded
-response instead of dispatching live (see the vocab's
-[Callback arg objects](./tracing-eval-cache-vocabulary.md#callback-arg-objects)).
+`ReplayCallbackArg` is the frozen image reconstructed from the
+observation set carried inside the recorded `QueryCallbackApply`
+request (see the callback-tracking model doc). When the outer's
+callback body probes the inner-supplied arg, `ReplayCallbackArg`
+serves the recorded response from the obsSet instead of dispatching
+live.
 
 **The callback-arg-lambda primop must fire when the outer applies
 it.** A `ReplayCallbackArg` for an inner-supplied lambda
 materialises via `toValueOrProxy` as a primop `Value`. Its `impl`
-is the mechanism that consults `AmbientAsk` for the recorded apply
-and either reproduces the result or throws divergence. Three sites
-cooperate to keep that primop reachable through the wrapping chain:
+looks up the recorded response and either reproduces the result or
+throws divergence. Three sites cooperate to keep that primop
+reachable through the wrapping chain:
 
-- `dispatchApplyLive` invokes the apply at Object level
-  (`fnObj->queryApply(replayLocal)`) rather than constructing an
-  Interpreter-level `mkApp` — the latter loses the
+- The walker's callbackApply-dispatch path invokes the apply at
+  Object level (`fnObj->queryApply(replayLocal)`) rather than
+  constructing an Interpreter-level `mkApp` — the latter loses the
   `ReplayCallbackArg`'s Object identity through the Value wrapper.
 - `runOn` skips the `TracingCallbackArg` wrap when `argObj` is
   already a `ReplayCallbackArg`. The wrap's purpose is recording
@@ -290,26 +300,14 @@ cooperate to keep that primop reachable through the wrapping chain:
   `ReplayCallbackArg` and returns its primop `Value` directly.
 
 Without any one of these, the primop never fires and the walker
-either serves a wrong Ambient result (warm-replay bug) or
+either serves a wrong callback result (warm-replay bug) or
 cascades into repeated fresh re-evaluations (outer-change bug).
 
-**Recording lambda apply-results goes to `InnerValueResponse`, not
-to the main-trie Terminal.** When `TracingEvaluator::apply`
-detects an inner-supplied lambda being applied at cold — the
-recursive cb-apply case — the result wrapper's method calls
-record into `InnerValueResponse` at the state hash of an
-`ApplyResultSubject` whose fn is the callback-arg's Subject and
-whose arg is the passed value's Subject. The walker's
-`<replay-callback-arg-lambda>` primop reads at that same key:
-consults `AmbientAsk` for the apply Fact's chain-advance and
-reads the per-probe responses from `InnerValueResponse` for the
-follow-up observations. Recording and reading go through the same
-`stateHashAt` formula on both sides.
+### Outer responses are capability-mediated, not cached
 
-### Ambient responses are capability-mediated, not cached
-
-The decisive design point, easy to get wrong: every ambient response
-must be **live-validated**, the same way file reads and env vars
+The decisive design point, easy to get wrong: every outer-value
+response must be **live-validated**, the same way file reads and
+env vars
 are. Serving a recorded response from a Responses pool would let
 the dispatcher always return the recorded hash, which matches the
 recorded hash by construction, and the walk would succeed every
@@ -331,19 +329,20 @@ The validation surface decomposes by the resolved subject variant:
   `fn->queryApply(arg)` live. `fn` is resolved through the chain
   above; `arg` is either chain-resolved (relay case) or served by
   a `ReplayCallbackArg` reading recorded content from the
-  `InnerValueResponse` table (local case). If the outer fn's
-  behaviour changed, the live response differs from the recorded
-  one, the walk's response-hash compare fails, and the cache
-  correctly misses.
+  `QueryCallbackApply`'s referenced observation set (local case).
+  If the outer fn's behaviour changed, the live response differs
+  from the recorded one, the walk's response-hash compare fails,
+  and the cache correctly misses.
 - **`PostulatedIdempotentRead{hash}`.** Re-reads the source
   (file/expression/literal) and resolves the value fresh.
 
-`ReplayCallbackArg` reads payloads from the `InnerValueResponse`
-table because the inner isn't running on replay — there's no live
-source for the callback-arg's content. That payload is the *content*
-of the frozen image; it's not the dispatcher's response. The
-dispatcher computes the response by calling `ReplayCallbackArg`'s
-method (`.getInt()`, etc.) and serialising the answer.
+`ReplayCallbackArg` reads payloads from the recorded
+`QueryCallbackApply`'s observation set because the inner isn't
+running on replay — there's no live source for the callback-arg's
+content. That payload is the *content* of the frozen image; it's
+not the dispatcher's response. The dispatcher computes the response
+by calling `ReplayCallbackArg`'s method (`.getInt()`, etc.) and
+serialising the answer.
 
 A successful replay still feeds the recording-side writer state
 (`envFactSet`, `sessionRequestsTrie`, `envCur`) so a *later* miss
@@ -352,14 +351,13 @@ recording chain.
 
 ### Live validation generalises; trace scope follows
 
-Live validation of ambient responses (above) is the specific case of
-a broader property: every observation the cache walks re-dispatches
-live at replay, not just Ambient responses. Env-layer probes
-(OuterValueRequests where the inner probes the outer via
-`OuterObject`, file reads, env-var lookups) all re-dispatch live at
-replay. The recording stores *what* was observed; each observation's
-validity depends on the live environment producing the same response
-now.
+Live validation of outer-value responses (above) is the specific
+case of a broader property: every observation the cache walks
+re-dispatches live at replay. Env-layer probes (OuterValueRequests
+where the inner probes the outer via `OuterObject`, file reads,
+env-var lookups) all re-dispatch live at replay. The recording
+stores *what* was observed; each observation's validity depends on
+the live environment producing the same response now.
 
 For observations whose live re-dispatch invokes an outer callback (the
 result of applying an outer-supplied function, and any subsequent
@@ -376,13 +374,13 @@ the Terminal hits.
 
 A replay whose accumulated trace is a *subset* of a recording cannot
 cheaply match that recording — acquiring the missing facts requires
-new Env requests and Ambient observations, and for observations that
-were originally callback results, that means invoking outer callbacks
-the user never asked for at those points in the evaluation. Those
-unprompted invocations surface as user-facing logs, errors, and other
-observable outer behaviour the user cannot correlate with the
-expression they wrote. The cache is meant to be invisible; unprompted
-outer evaluations aren't.
+new Env requests, and for observations that were originally callback
+results, that means invoking outer callbacks the user never asked
+for at those points in the evaluation. Those unprompted invocations
+surface as user-facing logs, errors, and other observable outer
+behaviour the user cannot correlate with the expression they wrote.
+The cache is meant to be invisible; unprompted outer evaluations
+aren't.
 
 Cross-invocation cache reuse across independent recordings works when
 replay's trace reproduces the recording's trace (or a superset — the
