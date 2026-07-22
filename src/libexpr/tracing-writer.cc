@@ -214,7 +214,7 @@ void TracingWriter::logOuterObservation(
     }
 }
 
-void TracingWriter::flushAmbient(bool processApplies)
+void TracingWriter::flushPending(bool processApplies)
 {
     if (!decisionGraph)
         return;
@@ -275,7 +275,7 @@ void TracingWriter::closeAsksEdge(bool processApplies)
        observations are present). At processApplies=true this also computes
        AmbientResults for each buffered cb-apply and folds
        the synthetic env apply Facts in. */
-    flushAmbient(processApplies);
+    flushPending(processApplies);
 
     /* Close the trailing file/env-read batch (logResponse path only —
        outer-value probes push their own Ask per probe). One Ask row

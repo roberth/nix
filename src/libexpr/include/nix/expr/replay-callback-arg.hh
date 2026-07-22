@@ -1,27 +1,28 @@
 #pragma once
 /**
  * @file
- * ReplayCallbackArg: serves recorded responses for a local arg
- * during replay-time apply invocation.
+ * ReplayCallbackArg: serves recorded responses for an inner-supplied
+ * callback arg during replay-time apply invocation.
  *
- * The OUTER's covariant callback (e.g. `f x` where `f` is an outer
+ * The outer's covariant callback (e.g. `f x` where `f` is an outer
  * lambda and `x` is an inner-supplied arg) lets the outer access
  * inner-side data. On the recording side the inner wraps the arg in
- * TracingCallbackArg so the outer's accesses land in the inner's
- * factSet as Facts. On replay the inner isn't running, so its arg
- * isn't reconstructable as a live Object — but its CONTENT was
- * persisted in InnerValueResponse. ReplayCallbackArg reads that
- * content back so the outer can invoke its callback against a
+ * TracingCallbackArg so the outer's accesses land in the enclosing
+ * CallbackCell's runningObsSet, which is later snapshotted into a
+ * QueryCallbackApply request's referenced ObservationSet. On replay
+ * the inner isn't running, so the arg isn't reconstructable as a
+ * live Object — but its content was persisted by value inside that
+ * recorded obsSet. ReplayCallbackArg reads probes back from the
+ * obsSet so the outer can invoke its callback against a
  * deterministic frozen image of the recorded arg.
  *
  * This is what makes covariant-callback caching actually validate:
- * with this object in place, `resolveStateHash` for an apply tag
- * can invoke `fn->queryApply(replayArg)` live, and downstream
- * apply-result Facts get dispatched against the live outer's
- * response. If the outer changed (different lambda body) the
- * response differs from the recorded → history falls through. Without
- * it the dispatcher would just serve the recorded response, hiding
- * outer-side changes from the validation chain.
+ * with this object in place, dispatching a recorded
+ * QueryCallbackApply materialises a ReplayCallbackArg backed by the
+ * recorded obsSet, invokes `fn->queryApply(replayArg)` live, and
+ * compares the response against the recording. If the outer changed
+ * (different lambda body) the response differs and the walker
+ * misses cleanly.
  */
 
 #include "nix/expr/arg-cell.hh"

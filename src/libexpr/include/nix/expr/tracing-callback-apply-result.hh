@@ -2,39 +2,26 @@
 /**
  * @file
  * TracingCallbackApplyResult — writer-side wrapper for the result of
- * applying a TracingCallbackArg (= an inner-supplied lambda crossing
- * back from outer's body via `<cached-fn>(TracingCallbackArg).impl`) to its contraArg.
+ * applying an inner-supplied lambda (crossing back from outer's body
+ * via `<cached-fn>(TracingCallbackArg).impl`) to its contraArg.
  *
  * Sibling of TracingObject; the difference is *where* method-level
  * observations land:
  *
  *  - TracingObject's getType/getInt/etc. record sub-Q `Terminals`
- *    rows in the main trie via `writer.logQuery + logResult`. That's
- *    env storage — appropriate for cached-fn results and other
- *    apply-results whose evolved state hash participates in the env history.
+ *    rows in the main trie via `writer.logQuery + logResult`.
+ *    Appropriate for cached-fn results and other apply-results whose
+ *    evolved state hash participates in the env history.
  *
- *  - TracingCallbackApplyResult's methods record ambient observations via
- *    `writer.logCallbackObservation`. They are grouped with the
- *    enclosing cb-apply's recursive apply Fact (= the same
- *    boundary `logAmbientApplyFact` appended to). At flushAmbient
- *    finalize the writer's ambient loop stamps each observation with
- *    `from = hex(stateHashAt(applyResultSubject, argAncestry, history, i))`,
- *    inserts the response payload into `InnerValueResponse` keyed by
- *    the resulting reqHash, and inserts an `AmbientAsks` edge.
+ *  - TracingCallbackApplyResult's methods record observations via
+ *    `writer.logCallbackObservation`, which routes them into the
+ *    enclosing CallbackCell's `runningObsSet`. Those observations
+ *    are later snapshotted (by value) into an ObservationSet and
+ *    referenced from a QueryCallbackApply request via the
+ *    `argObsSet` payload field.
  *
- * The walker's `<replay-local-lambda>` primop, when its synthetic
- * apply-result probes `getType` / `getInt` etc. via
- * `ReplayCallbackArg`, computes the same reqHash via
- * `stampPerArgFields(query, syntheticSubject, syntheticScope,
- * walkFacts, walkFacts.size())` (where `walkFacts.size() == 1` after
- * the primop pushed the recursive apply Fact). Lookup keys agree by
- * the subject-id formula on both sides; the response payload comes
- * back; the synthetic's `advanceChainAndAppendFact` consumes the
- * matching AmbientAsk edge.
- *
- * The recordings land exactly where the walker's callback-arg-lambda
- * primop reads from — see tracing-eval-cache-primop.md's "Recording
- * lambda apply-results goes to InnerValueResponse" bullet.
+ * See tracing-cache-callback-model.md for the recording protocol
+ * and the sampling moments where the obsSet is snapshotted.
  */
 
 #include "nix/expr/arg-cell.hh"
@@ -56,22 +43,19 @@ class TracingCallbackApplyResult : public Object
     TracingWriter & writer;
 
     /* ApplyResultSubject{PostulatedIdempotentRead{TracingCallbackArg.state hash}, contraArg.subject}.
-       Matches what `<replay-local-lambda>`'s primop builds for the
-       synthetic apply-result subject at warm. flushAmbient's
-       ambient loop uses this subject to stamp each observation's `from`
-       field at the appropriate edge index. */
+       Subject used to attribute observations recorded on the
+       apply-result. */
     Subject applyResultSubject;
 
     /* Scope inherited from the cb-apply — = contraArg's
-       argAncestry = the resolver's callArgAncestry. The walker's
-       sidecar lookup recovers the same argAncestry. */
+       argAncestry = the resolver's callArgAncestry. */
     Hash applyArgAncestry;
 
     /* The enclosing cb-apply's `applyId` (= what `runOn`
        computed as `queryHash(QueryApply{fn, arg})` when it pushed
-       this boundary). Captured BEFORE `IT::apply`'s
+       this call). Captured BEFORE `IT::apply`'s
        `createCallbackCell` would push a new entry, so the
-       observations route to the correct boundary's ambient chain. */
+       observations route to the correct CallbackCell. */
     Hash applyId;
 
     /* stateHashAfter(applyResultSubject, applyArgAncestry, {}) hex — the
@@ -85,7 +69,7 @@ class TracingCallbackApplyResult : public Object
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE QueryGetWHNF
-       ambient observation. Subsequent calls decode the cached result. */
+       observation. Subsequent calls decode the cached result. */
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 

@@ -17,7 +17,7 @@ class Interpreter : public Evaluator
     ref<EvalState> evalState;
 
 public:
-    /// Shared resolver for ambient interactions (set by builtins.cache).
+    /// Shared resolver for outer-value and callback interactions (set by builtins.cache).
     std::shared_ptr<struct OuterResolver> outerResolver;
 
     std::shared_ptr<struct OuterResolver> getOuterResolver() override

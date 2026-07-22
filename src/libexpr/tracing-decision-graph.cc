@@ -355,9 +355,9 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     /* Drop the previous flat-blob RequestSets table from earlier
        schema versions if present (incompatible payload format). */
     state->db.exec("DROP TABLE IF EXISTS RequestSets;");
-    /* Drop the obsolete InnerValueResponse table — ambient probe
+    /* Drop the obsolete InnerValueResponse table — callback-arg probe
        responses now live in the ObservationSet CAS via each
-       CallbackApply query's `argObsSet`. */
+       QueryCallbackApply's `argObsSet`. */
     state->db.exec("DROP TABLE IF EXISTS InnerValueResponse;");
 
     state->insertAsk.create(state->db,

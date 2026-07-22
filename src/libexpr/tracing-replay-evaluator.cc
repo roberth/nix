@@ -62,7 +62,7 @@ TracingReplayEvaluator::walk(
        appends to this in addition to session envWalk. recomputeQ
        reads from this so walker Q evolution matches writer's. */
     auto perQEnvWalk = std::make_shared<std::vector<ObservationSet>>();
-    /* Per-edge buffer: dispatch() appends ambient facts here; the
+    /* Per-edge buffer: dispatch() appends facts here; the
        history-loop promotes the buffer to a cumulative envWalk
        edge on commit (via commitEdge) or discards it on reject.
        Without the buffer, rejected-edge facts would pollute
@@ -122,9 +122,10 @@ TracingReplayEvaluator::walk(
     /* Dispatcher: turns a Request hash into the current Response
        hash. Memoised in responseFor for stable requests (file
        reads, env vars) where same request always gives same
-       response. Ambient queries are NOT memoised because the same
-       request hash can dispatch to different responses depending on
-       which proxy (cb invocation) the history is grounded in — sibling
+       response. Query-carrying requests (outer-value queries,
+       QueryCallbackApply) are NOT memoised because the same request
+       hash can dispatch to different responses depending on which
+       proxy (cb invocation) the history is grounded in — sibling
        cb apply invocations of the same fn share a request hash but
        must see their own arg's live value, not a memoised sibling's. */
     auto dispatch = [&](const Hash & requestHash, const TracingDecisionGraph::EdgeContext & edgeCtx) -> Hash {
@@ -216,7 +217,7 @@ TracingReplayEvaluator::walk(
            walker. Under DISALLOW mode this pollution was structurally
            breaking slow-path reachability (phantom curs never keyed
            by any real writer emission). */
-        /* Buffer ambient facts for this in-flight Asks edge; the
+        /* Buffer facts for this in-flight Asks edge; the
            history-loop commits them via onEdgeCommitted on success. */
         /* Decode for diffing: render the full request + response JSON
            bytes that feed `req` and `resp`. SHA256(reqJson.dump()) = req;
@@ -432,7 +433,7 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
     return std::nullopt;
 }
 
-/* Resolve a recorded ambient id (hex of a Hash) to a live Object.
+/* Resolve a recorded outer-value id (hex of a Hash) to a live Object.
    First check the per-history memo (ctx.memo) for already-resolved ids.
    Then history the proxy graph (ctx.currentProxy.parent → …) looking
    for an argCell cell whose id matches — this is the arg-lookup
@@ -859,8 +860,8 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
         return std::nullopt;
 
 
-    /* Every ambient response must be live-validated, just like file
-       reads and env vars. Resolve each fromStateHashes[] entry to a live
+    /* Every recorded outer-value response must be live-validated, just
+       like file reads and env vars. Resolve each fromStateHashes[] entry to a live
        Object (single-root falls back to `from`) and navigate by the
        recorded path. The query body (= leaf op like getAttr "x")
        then runs on the navigated child. */

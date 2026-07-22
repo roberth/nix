@@ -25,15 +25,12 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
 
 void TracingCallbackApplyResult::recordD2(const trace::QueryVariant & query, const trace::ResultVariant & result)
 {
-    /* Route through the ambient layer entry point: every observation on
-       this apply-result is grouped with the recursive apply Fact
-       under the enclosing cb-apply so that the ambient chain
-       has [recursiveApplyFact, this_obs, next_obs, ...] in the
-       order they're appended. flushAmbient's ambient loop
-       stamps each `from` at `step = i` (= position in the
-       boundary's facts vector), matching the walker's stamping at
-       `walkFacts.size()` after the synthetic-side primop pushed
-       the apply Fact. */
+    /* Route every observation on this apply-result into the enclosing
+       CallbackCell's runningObsSet via logCallbackObservation. The
+       observations are later snapshotted (by value) into an
+       ObservationSet referenced from a QueryCallbackApply request.
+       See tracing-cache-callback-model.md for the recording
+       protocol. */
     writer.logCallbackObservation(query, result, applyResultSubject, applyArgAncestry, applyId);
 }
 
@@ -148,13 +145,11 @@ std::shared_ptr<Object> TracingCallbackApplyResult::getListElem(size_t index)
 
 ObjectType TracingCallbackApplyResult::getTypeLazy()
 {
-    /* Delegate to `inner` for the type, but skip the ambient recording —
-       `getType` goes through `whnf()` which records the same
-       QueryGetWHNF payload, and the ambient layer chain has no dedup (= same
-       fact appended twice cancels via XOR-fold at flush, breaking
-       AmbientResult). Callers that need both `getTypeLazy` and
-       `getType` get exactly one observation through the `getType`
-       call. */
+    /* Delegate to `inner` for the type without recording — `getType`
+       goes through `whnf()` which records the same QueryGetWHNF
+       payload; recording here too would produce a duplicate. Callers
+       that need both `getTypeLazy` and `getType` get exactly one
+       observation through the `getType` call. */
     return inner->getTypeLazy();
 }
 

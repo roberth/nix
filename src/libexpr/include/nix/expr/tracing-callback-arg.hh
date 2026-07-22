@@ -1,15 +1,17 @@
 #pragma once
 /**
  * @file
- * TracingCallbackArg — wraps a local (inner-side) Object passed to the
+ * TracingCallbackArg — wraps an inner-owned Object passed to the
  * outer evaluator during a covariant callback. Each method call
- * records an "incoming" ambient Fact in the inner trace via the
- * writer's `logIncomingAmbientInteraction`, then delegates to the
- * wrapped Object.
+ * records an observation into the enclosing CallbackCell's
+ * runningObsSet via `writer.logCallbackObservation`, then delegates
+ * to the wrapped Object.
  *
- * Responses *are* stored to the decisionGraph's InnerValueResponse
- * here (this is the case the dispatcher can't recompute from live
- * state at replay time — the inner isn't running).
+ * The recorded observations are later snapshotted (by value) into an
+ * ObservationSet referenced from a QueryCallbackApply request. At
+ * replay the walker reconstructs the callback arg from that recorded
+ * obsSet — the inner isn't running, so probes are served from stored
+ * observations rather than dispatched live.
  */
 
 #include "nix/expr/arg-cell.hh"
@@ -30,20 +32,21 @@ class TracingWriter;
 
 /**
  * Object decorator that records every access made on it as an
- * incoming ambient Fact. Used to wrap the argObj a covariant
- * callback receives from the inner side, so the outer's accesses
- * land in the inner trace.
+ * observation on the enclosing callback firing's contra-arg. Used
+ * to wrap the argObj a covariant callback receives from the inner
+ * side, so the outer's accesses land in the enclosing CallbackCell's
+ * runningObsSet.
  */
 class TracingCallbackArg : public Object
 {
     std::shared_ptr<Object> inner;
     Subject subject;  ///< Static structural identifier
-    /* Inherited argAncestry: XOR of outer-argAncestry state hashes (state hash(Q) at the
-       cb-apply). Propagated to navigation children. */
+    /* Inherited argAncestry: XOR of outer-argAncestry state hashes
+       at the cb-apply. Propagated to navigation children. */
     Hash argAncestry;
     /* The cb apply this local belongs to (= apply's resultId). Used
-       at flush to group ambient layer facts into an AmbientAsks edge per
-       apply. Navigation children inherit. */
+       to route observations to the correct CallbackCell's
+       runningObsSet. Navigation children inherit. */
     Hash applyId;
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
@@ -59,7 +62,7 @@ class TracingCallbackArg : public Object
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE QueryGetWHNF
-       ambient observation. Subsequent calls decode the cached result. */
+       observation. Subsequent calls decode the cached result. */
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 
@@ -101,12 +104,12 @@ public:
     std::optional<FunctionInfo> getFunctionInfo() override;
     PosIdx getPos() override;
     std::optional<std::vector<std::string>> getAttrPath() override;
-    /** Object-method apply entry. Records the apply as a ambient layer
-        observation (= outer is applying this local to argObj), then
-        delegates to `inner->queryApply(argObj)` and wraps the result
-        as another TracingCallbackArg with an `ApplyResultSubject`
-        so further accesses on the result continue to land in the
-        ambient layer trace. */
+    /** Object-method apply entry. Records the apply as an observation
+        (= outer is applying this local to argObj), then delegates to
+        `inner->queryApply(argObj)` and wraps the result as another
+        TracingCallbackArg with an `ApplyResultSubject` so further
+        accesses on the result continue to route observations to the
+        enclosing CallbackCell. */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 
     OuterId getStateHash() const { return localId(); }

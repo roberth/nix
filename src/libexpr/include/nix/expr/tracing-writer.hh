@@ -102,7 +102,7 @@ class TracingWriter
     /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
        new query hash added to envFactSet since the last logResult,
        whether from `logResponse` (= env/file), `noteEnvObservation`,
-       or `flushAmbient`. OuterQueries are env layer just like
+       or `flushPending`. OuterQueries are env layer just like
        file reads; bundling them with env/file into one Asks edge per
        logResult keeps the trie's edge structure 1:1 with envWalk.
        `envAsksEdges` retains each finalized boundary so every Q's
@@ -313,7 +313,7 @@ public:
     /** Cumulative factSet hash maintained per-fact via XOR-fold.
         At cold time, advances at `noteEnvObservation` (= walker
         dispatches), `logResponse` (= env/file recordings), and
-        `flushAmbient` (= inner's ambient observations).
+        `flushPending` (= inner's ambient observations).
         At warm time, advances only at `noteEnvObservation` —
         which captures every dispatched fact, mirroring cold's
         cumulative. The walker reads this as the ground-truth
@@ -628,7 +628,7 @@ public:
      * is folded into envFactSet / envWalk / pendingNewRequests
      * just like an ordinary env layer ambient observation.
      */
-    void flushAmbient(bool processApplies = false);
+    void flushPending(bool processApplies = false);
 
     /**
      * End the current Asks edge at a cb-apply inside a
@@ -664,7 +664,7 @@ public:
      * The env apply Fact itself is *not* folded into envFactSet
      * here. Its response hash is the AmbientResult (= terminal of
      * the ambient chain captured for this applyId), which is only known
-     * at flushAmbient time. Deferring synthesis keeps the
+     * at flushPending time. Deferring synthesis keeps the
      * env cur consistent with via-Asks §"Recording (ambient layer)":
      * "The terminal factSet hash *is* the `AmbientResult`, which
      * the env layer walker XOR-folds into its own `cur` as the
@@ -688,7 +688,7 @@ public:
      * chainCursor by this fact's elementHash.
      *
      * Subject = ApplyResultSubject{fn, arg} (caller-built) so the
-     * generic flushAmbient stamping puts the constituents'
+     * generic flushPending stamping puts the constituents'
      * roots into `fromStateHashes[]` and an Apply step into `path`. Matches
      * walker stamping. No-op when there's no enclosing cb-apply.
      */
