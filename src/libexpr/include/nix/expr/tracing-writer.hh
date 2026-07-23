@@ -203,10 +203,6 @@ class TracingWriter
            reconstructs the arg's Subject at the same argAncestry —
            required for probe queryHashes to match cold's obsSet. */
         std::string argAncestryHex;
-        /* Contra-arg's reverse-De-Bruijn depth, captured from the
-           first observation's Subject. Same reason as `argAncestryHex`. */
-        int argDepth = 0;
-        bool argDepthCaptured = false;
         /* Observations made on this cell's contra-arg so far.
            Snapshotted into the ObservationSet CAS at
            CallbackApplyRef stamping time. */
@@ -312,7 +308,6 @@ public:
                 fnCurrent.to_string(HashFormat::Base16, false)};
             qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
             qca.argAncestry = cell.argAncestryHex;
-            qca.argDepth = cell.argDepth;
             logOuterObservation(
                 trace::QueryVariant{std::move(qca)},
                 trace::ResultVariant{whnf},
@@ -594,20 +589,12 @@ public:
              it != callbackCells.rend(); ++it) {
             if (it->applyId != applyId)
                 continue;
-            /* Capture argAncestry + arg depth on first observation.
-               Walker uses them to rebuild the ReplayCallbackArg's
-               Subject at the same shape so probe queryHashes match. */
+            /* Capture argAncestry on first observation. The walker
+               rebuilds the ReplayCallbackArg's Subject depth from
+               fn's argCell chain at dispatch time (under the shared-
+               computation invariant), so no depth capture here. */
             if (it->argAncestryHex.empty())
                 it->argAncestryHex = argAncestry.to_string(HashFormat::Base16, false);
-            if (!it->argDepthCaptured) {
-                auto par = pathAndRootsFromSubject(subject);
-                if (!par.roots.empty()) {
-                    if (auto * a = std::get_if<Arg>(&par.roots[0].data)) {
-                        it->argDepth = a->depth;
-                        it->argDepthCaptured = true;
-                    }
-                }
-            }
             if (it->fnStateHashHex.empty())
                 return;
             trace::QueryVariant stampedQuery = query;

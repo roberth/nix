@@ -807,7 +807,6 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
             : params.at("fn").get<std::string>();
         auto obsSetHex = params.at("argObsSet").get<std::string>();
         auto argAncestryHex = params.at("argAncestry").get<std::string>();
-        int argDepth = params.at("argDepth").get<int>();
         Hash obsSetHash{HashAlgorithm::SHA256};
         Hash argAncestry{HashAlgorithm::SHA256};
         try {
@@ -854,6 +853,13 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                 fnHex.substr(0, 12));
             return std::nullopt;
         }
+        /* Derive the contra-arg's depth from fn's cell chain — mirrors
+           `makeCachedFnPrimOp.impl`, which sets the new cell's depth to
+           `parentCell.depth + 1` where parentCell = fn's cell. Under
+           the shared-computation invariant, this reproduces the value
+           the writer captured on cold. */
+        auto parentCell = effectiveArgCell(*fnObj);
+        int argDepth = parentCell ? parentCell->depth + 1 : 0;
         Subject argSubject{Arg{argDepth}};
         auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
         auto replayArg = std::make_shared<ReplayCallbackArg>(
