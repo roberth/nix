@@ -795,171 +795,151 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
 
 std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nlohmann::json & reqJson, ResolutionContext & ctx)
 {
-    auto tag = reqJson["query"].get<std::string>();
-    auto & params = reqJson["params"];
-
-    /* Apply Facts are recorded via Request only (no Terminal); the
-       dispatcher has nothing to compare a current response against. */
-    if (tag == "apply")
+    auto qv = trace::parseQueryVariant(reqJson);
+    if (!qv)
         return std::nullopt;
 
-    /* Task #110: QueryCallbackApply request. Materialise a
-       ReplayCallbackArg backed by the referenced ObservationSet,
-       resolve fn live (state-hash-equality routing through the
-       cell chain), invoke fn->queryApply(replayArg), return a
-       marker ResultType. Downstream probes on the callback's
-       returned value chain from this observation's queryHash+respHash
-       through the normal state-hash machinery. */
-    if (tag == "callbackApply") {
-        /* Both fn's state hash and the contra-arg's argAncestry come
-           off the `fn` QueryLeaf: object form `{"stateHash", "argAncestry"}`
-           is the callback-apply shape; a bare hex string means
-           "no ancestry attached" (falls back to empty). */
-        std::string fnHex;
-        std::string argAncestryHex;
-        {
-            auto & fnJson = params.at("fn");
-            if (fnJson.is_object()) {
-                fnJson.at("stateHash").get_to(fnHex);
-                if (fnJson.contains("argAncestry"))
-                    fnJson.at("argAncestry").get_to(argAncestryHex);
-            } else {
-                fnJson.get_to(fnHex);
+    /* Resolve `q`'s per-arg roots + path into a live parent Object.
+       Producer queries (getWHNF/getAttr/getListElem/getFunctionInfo)
+       and QCA share this pattern via `perArgFrame`; QueryApply
+       resolves separately via `resolveApplyId`. */
+    auto resolveParent = [&](const trace::PerArgFrame & frame,
+                             const trace::QueryLeaf & from) -> std::shared_ptr<Object> {
+        std::vector<std::shared_ptr<Object>> roots;
+        if (!frame.fromStateHashes.empty()) {
+            for (auto & leaf : frame.fromStateHashes) {
+                auto obj = resolveStateHash(leaf.stateHash(), ctx);
+                if (!obj) return nullptr;
+                roots.push_back(std::move(obj));
             }
-        }
-        auto obsSetHex = params.at("argObsSet").get<std::string>();
-        Hash obsSetHash{HashAlgorithm::SHA256};
-        Hash argAncestry{HashAlgorithm::SHA256};
-        try {
-            obsSetHash = Hash::parseNonSRIUnprefixed(obsSetHex, HashAlgorithm::SHA256);
-            if (!argAncestryHex.empty())
-                argAncestry = Hash::parseNonSRIUnprefixed(argAncestryHex, HashAlgorithm::SHA256);
-        } catch (const std::exception &) {
-            return std::nullopt;
-        }
-        auto obsSet = decisionGraph.getObservationSet(obsSetHash);
-        if (!obsSet) {
-            tracingCacheLog(
-                "callbackApply: obsSet=%s not in pool — miss",
-                obsSetHex.substr(0, 12));
-            return std::nullopt;
-        }
-        auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
-        for (const auto & obs : *obsSet)
-            obsSetMap->emplace(obs.queryHash, obs.responsePayload);
-        /* Resolve fn by subject-navigation, not by hex lookup. The QCA
-           payload carries `fromStateHashes` (arg-side root state hashes)
-           and `path` (the DerivedSubject navigation from those roots),
-           which together describe the fn's Subject. Reconstruct
-           directly instead of routing through resolveStateHash(fnHex),
-           which would require the exact producer query at fn's evolved
-           state to be in the Requests pool — cold only emits it when a
-           probe fires at that state, which for cb-apply results isn't
-           guaranteed. Subject-navigation walks the roots via cell chain
-           (arg proxies resolve at their evolved state) and navigates
-           the path live. Falls back to the old hex lookup if roots or
-           path are missing (older payloads). */
-        std::shared_ptr<Object> fnObj;
-        if (params.contains("fromStateHashes") && params.contains("path")) {
-            auto roots = resolveRoots(params,
-                [&](const std::string & cid) { return resolveStateHash(cid, ctx); });
-            if (!roots.empty())
-                fnObj = navigatePath(roots, parsePathFromParams(params), &writer);
-        }
-        if (!fnObj)
-            fnObj = resolveStateHash(fnHex, ctx);
-        if (!fnObj) {
-            tracingCacheLog(
-                "callbackApply: fn resolution miss (fn=%s)",
-                fnHex.substr(0, 12));
-            return std::nullopt;
-        }
-        /* Derive the contra-arg's depth from fn's cell chain — mirrors
-           `makeCachedFnPrimOp.impl`, which sets the new cell's depth to
-           `parentCell.depth + 1` where parentCell = fn's cell. Under
-           the shared-computation invariant, this reproduces the value
-           the writer captured on cold. */
-        auto parentCell = effectiveArgCell(*fnObj);
-        int argDepth = parentCell ? parentCell->depth + 1 : 0;
-        Subject argSubject{Arg{argDepth}};
-        auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
-        auto replayArg = std::make_shared<ReplayCallbackArg>(
-            std::move(argSubject), argAncestry,
-            walkFacts,
-            decisionGraph, inner->getEvalState().rootFSRoot,
-            &inner->getEvalState());
-        replayArg->withObsSetResponses(obsSetMap);
-        try {
-            /* B6: narrow guard around walker-triggered live invocation. */
-            std::shared_ptr<Object> resultObj;
-            {
-                TracingWriter::SuppressApplyBoundary suppress(writer);
-                resultObj = fnObj->queryApply(replayArg);
-            }
-            if (!resultObj)
-                return std::nullopt;
-            /* Task #110 (C3): return the applyResult's WHNF so cold's
-               and warm's QCA responses match. Force to WHNF via the
-               shared computeWHNFFromObject helper. */
-            auto whnf = computeWHNFFromObject(*resultObj);
-            tracingCacheLog(
-                "callbackApply: HIT obsSet=%s argDepth=%d whnf=%s",
-                obsSetHex.substr(0, 12), argDepth, whnf.type.c_str());
-            return jsonToCborString(nlohmann::json(whnf));
-        } catch (const std::exception & e) {
-            tracingCacheLog("callbackApply: fn->queryApply failed: %s", e.what());
-            return std::nullopt;
-        }
-    }
-
-    if (!params.contains("from"))
-        return std::nullopt;
-
-
-    /* Every recorded outer-value response must be live-validated, just
-       like file reads and env vars. Resolve each fromStateHashes[] entry to a live
-       Object (single-root falls back to `from`) and navigate by the
-       recorded path. The query body (= leaf op like getAttr "x")
-       then runs on the navigated child. */
-    auto roots = resolveRoots(params,
-        [&](const std::string & cid) { return resolveStateHash(cid, ctx); });
-    if (roots.empty())
-        return std::nullopt;
-    auto obj = navigatePath(roots, parsePathFromParams(params), &writer);
-    if (!obj)
-        return std::nullopt;
-
-    nlohmann::json resultJson;
-    try {
-        if (tag == "getWHNF") {
-            resultJson = computeWHNFFromObject(*obj);
-        } else if (tag == "getAttr") {
-            /* Pure retrieval: precondition is that parent has the
-               attr; caller (walker) has projected membership from
-               parent's WHNFAttrs. Result is the child's WHNF. */
-            auto name = params["name"].get<std::string>();
-            auto child = obj->maybeGetAttr(name);
-            if (!child)
-                return std::nullopt;
-            resultJson = computeWHNFFromObject(*child);
-        } else if (tag == "getListElem") {
-            auto index = params["index"].get<size_t>();
-            auto child = obj->getListElem(index);
-            resultJson = computeWHNFFromObject(*child);
-        } else if (tag == "getFunctionInfo") {
-            auto info = obj->getFunctionInfo();
-            if (!info)
-                resultJson = trace::ResultFunctionInfo{false, {}, false};
-            else
-                resultJson = trace::ResultFunctionInfo{true, info->formals, info->ellipsis};
+        } else if (from.isStateHash() && !from.stateHash().empty()) {
+            auto obj = resolveStateHash(from.stateHash(), ctx);
+            if (!obj) return nullptr;
+            roots.push_back(std::move(obj));
         } else {
-            return std::nullopt;
+            return nullptr;
         }
-    } catch (const std::exception & e) {
-        tracingCacheLog("replay: dispatch failed for %s: %s", tag, e.what());
-        return std::nullopt;
-    }
-    return jsonToCborString(resultJson);
+        return navigatePath(roots, frame.path, &writer);
+    };
+
+    return std::visit(
+        [&](const auto & q) -> std::optional<std::string> {
+            using Q = std::decay_t<decltype(q)>;
+            /* Apply Facts are recorded via Request only (no Terminal);
+               the dispatcher has nothing to compare against. */
+            if constexpr (std::is_same_v<Q, trace::QueryApply>) {
+                return std::nullopt;
+            } else if constexpr (std::is_same_v<Q, trace::QueryCallbackApply>) {
+                /* Task #110: materialise a ReplayCallbackArg backed by
+                   the referenced ObservationSet, resolve fn live via
+                   subject-navigation, invoke fn->queryApply(replayArg),
+                   return the applyResult's WHNF. */
+                if (!q.fn.isStateHash())
+                    return std::nullopt;
+                auto & fnHex = q.fn.stateHash();
+                auto & argAncestryHex = q.fn.argAncestry();
+                Hash obsSetHash{HashAlgorithm::SHA256};
+                Hash argAncestry{HashAlgorithm::SHA256};
+                try {
+                    obsSetHash = Hash::parseNonSRIUnprefixed(q.argObsSet, HashAlgorithm::SHA256);
+                    if (!argAncestryHex.empty())
+                        argAncestry = Hash::parseNonSRIUnprefixed(argAncestryHex, HashAlgorithm::SHA256);
+                } catch (const std::exception &) {
+                    return std::nullopt;
+                }
+                auto obsSet = decisionGraph.getObservationSet(obsSetHash);
+                if (!obsSet) {
+                    tracingCacheLog(
+                        "callbackApply: obsSet=%s not in pool — miss",
+                        q.argObsSet.substr(0, 12));
+                    return std::nullopt;
+                }
+                auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
+                for (const auto & obs : *obsSet)
+                    obsSetMap->emplace(obs.queryHash, obs.responsePayload);
+                /* Prefer subject-navigation: q.perArgFrame carries the
+                   arg-side root state hashes and the path to fn's
+                   Subject. Fall back to `resolveStateHash(fnHex)` when
+                   perArgFrame is empty (older payloads). */
+                std::shared_ptr<Object> fnObj = resolveParent(q.perArgFrame, q.fn);
+                if (!fnObj)
+                    fnObj = resolveStateHash(fnHex, ctx);
+                if (!fnObj) {
+                    tracingCacheLog(
+                        "callbackApply: fn resolution miss (fn=%s)",
+                        fnHex.substr(0, 12));
+                    return std::nullopt;
+                }
+                /* Derive contra-arg depth from fn's cell chain — mirrors
+                   makeCachedFnPrimOp.impl. */
+                auto parentCell = effectiveArgCell(*fnObj);
+                int argDepth = parentCell ? parentCell->depth + 1 : 0;
+                Subject argSubject{Arg{argDepth}};
+                auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
+                auto replayArg = std::make_shared<ReplayCallbackArg>(
+                    std::move(argSubject), argAncestry,
+                    walkFacts,
+                    decisionGraph, inner->getEvalState().rootFSRoot,
+                    &inner->getEvalState());
+                replayArg->withObsSetResponses(obsSetMap);
+                try {
+                    /* B6: narrow guard around walker-triggered live invocation. */
+                    std::shared_ptr<Object> resultObj;
+                    {
+                        TracingWriter::SuppressApplyBoundary suppress(writer);
+                        resultObj = fnObj->queryApply(replayArg);
+                    }
+                    if (!resultObj)
+                        return std::nullopt;
+                    auto whnf = computeWHNFFromObject(*resultObj);
+                    tracingCacheLog(
+                        "callbackApply: HIT obsSet=%s argDepth=%d whnf=%s",
+                        q.argObsSet.substr(0, 12), argDepth, whnf.type.c_str());
+                    return jsonToCborString(nlohmann::json(whnf));
+                } catch (const std::exception & e) {
+                    tracingCacheLog("callbackApply: fn->queryApply failed: %s", e.what());
+                    return std::nullopt;
+                }
+            } else if constexpr (requires { q.perArgFrame; }) {
+                /* Producer queries: resolve the parent Object via the
+                   per-arg roots + path, then invoke the leaf op. */
+                auto obj = resolveParent(q.perArgFrame, q.from);
+                if (!obj) return std::nullopt;
+
+                nlohmann::json resultJson;
+                try {
+                    if constexpr (std::is_same_v<Q, trace::QueryGetWHNF>) {
+                        resultJson = computeWHNFFromObject(*obj);
+                    } else if constexpr (std::is_same_v<Q, trace::QueryGetAttr>) {
+                        /* Pure retrieval — caller (walker) has projected
+                           membership from parent's WHNFAttrs. */
+                        auto child = obj->maybeGetAttr(q.name);
+                        if (!child) return std::nullopt;
+                        resultJson = computeWHNFFromObject(*child);
+                    } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
+                        auto child = obj->getListElem(q.index);
+                        resultJson = computeWHNFFromObject(*child);
+                    } else if constexpr (std::is_same_v<Q, trace::QueryGetFunctionInfo>) {
+                        auto info = obj->getFunctionInfo();
+                        if (!info)
+                            resultJson = trace::ResultFunctionInfo{false, {}, false};
+                        else
+                            resultJson = trace::ResultFunctionInfo{true, info->formals, info->ellipsis};
+                    } else {
+                        return std::nullopt;
+                    }
+                } catch (const std::exception & e) {
+                    tracingCacheLog("replay: dispatch failed for %s: %s", Q::tag, e.what());
+                    return std::nullopt;
+                }
+                return jsonToCborString(resultJson);
+            } else {
+                /* QueryExpr / QueryImport aren't dispatched through this
+                   path (root queries handled elsewhere). */
+                return std::nullopt;
+            }
+        },
+        *qv);
 }
 
 template<typename Q>
