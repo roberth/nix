@@ -141,25 +141,11 @@ TracingReplayEvaluator::walk(
             isQueryRequest = reqJson.contains("query");
             if (isQueryRequest) {
                 queryTag = reqJson["query"].get<std::string>();
-                queryDescription = queryTag;
-                if (reqJson.contains("params") && reqJson["params"].is_object()) {
-                    auto & params = reqJson["params"];
-                    if (params.contains("from")) {
-                        try {
-                            outerFromHash = Hash::parseNonSRIUnprefixed(
-                                params["from"].get<std::string>(), HashAlgorithm::SHA256);
-                        } catch (...) {}
-                    }
-                    if (params.contains("name"))
-                        queryDescription += " name=\"" + params["name"].get<std::string>() + "\"";
-                    if (params.contains("index"))
-                        queryDescription += " index=" + std::to_string(params["index"].get<size_t>());
-                    if (queryTag == "apply") {
-                        if (params.contains("fn"))
-                            queryDescription += " fn=" + params["fn"].get<std::string>().substr(0, 12);
-                        if (params.contains("arg"))
-                            queryDescription += " arg=" + params["arg"].get<std::string>().substr(0, 12);
-                    }
+                if (auto qv = trace::parseQueryVariant(reqJson)) {
+                    queryDescription = trace::describe(*qv);
+                    outerFromHash = trace::fromHashOf(*qv);
+                } else {
+                    queryDescription = queryTag;
                 }
             } else if (reqJson.contains("absPath")) {
                 queryDescription = "env-file " + reqJson["absPath"].get<std::string>();
@@ -622,14 +608,15 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
         return resolveApplyId(idStr, params, ctx);
     }
 
-    std::string selector;
-    if (params.contains("name")) selector = " name=\"" + params["name"].get<std::string>() + "\"";
-    else if (params.contains("index")) selector = " index=" + std::to_string(params["index"].get<size_t>());
-    tracingCacheLog(
-        "resolve %s: producer-child via %s from %s%s",
-        idStr.substr(0, 12), tag,
-        params.contains("from") ? params["from"].get<std::string>().substr(0, 12) : std::string("?"),
-        selector);
+    if (auto qv = trace::parseQueryVariant(reqJson)) {
+        tracingCacheLog(
+            "resolve %s: producer-child %s",
+            idStr.substr(0, 12), trace::describe(*qv).c_str());
+    } else {
+        tracingCacheLog(
+            "resolve %s: producer-child via %s (unparseable)",
+            idStr.substr(0, 12), tag.c_str());
+    }
     return resolveProducerChild(idStr, tag, params, ctx);
 }
 

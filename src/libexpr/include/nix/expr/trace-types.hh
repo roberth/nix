@@ -643,6 +643,29 @@ using CorrelatedTraceEntry =
 std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j);
 
 /**
+ * Parse just an inner query object — `{"query": "<tag>", "params": {...}}` —
+ * into a `QueryVariant`. Returns nullopt if `j` doesn't have a
+ * recognised tag. Used at CBOR-payload dispatch sites where the
+ * wrapping `{"query", "v"}` envelope isn't present.
+ */
+std::optional<QueryVariant> parseQueryVariant(const nlohmann::json & j);
+
+/**
+ * Short human-readable rendering of a Query for log lines —
+ * `"tag key=value ..."`, with hashes truncated to 12 hex chars.
+ * Replaces ad-hoc `params["name"/"index"/"fn"/"arg"]` reads at
+ * every log site.
+ */
+std::string describe(const QueryVariant & query);
+
+/**
+ * The `from` state hash a Query stamps as its primary Merkle
+ * parent, if any. Returns nullopt for queries with no `from` field
+ * (roots) and for leaves whose hash string doesn't parse.
+ */
+std::optional<Hash> fromHashOf(const QueryVariant & query);
+
+/**
  * Correlate queries with their results.
  * Builds a map from value handle to result index, then transforms
  * Query<T> entries into CompletedQuery<T> with the result index.

@@ -719,4 +719,90 @@ QueryIndex::QueryIndex(const std::vector<TraceEntry> & trace)
     }
 }
 
+// ---------------------------------------------------------------------------
+// parseQueryVariant / describe / fromHashOf
+// ---------------------------------------------------------------------------
+
+namespace {
+template<typename Q>
+std::optional<QueryVariant> tryParseInner(std::string_view tag, const nlohmann::json & j)
+{
+    if (tag == Q::tag) {
+        Q q;
+        from_json(j, q);
+        return QueryVariant{std::move(q)};
+    }
+    return std::nullopt;
+}
+} // namespace
+
+std::optional<QueryVariant> parseQueryVariant(const nlohmann::json & j)
+{
+    if (!j.is_object() || !j.contains("query"))
+        return std::nullopt;
+    auto tag = j.at("query").get<std::string_view>();
+    if (auto r = tryParseInner<QueryExpr>(tag, j)) return r;
+    if (auto r = tryParseInner<QueryImport>(tag, j)) return r;
+    if (auto r = tryParseInner<QueryGetAttr>(tag, j)) return r;
+    if (auto r = tryParseInner<QueryGetListElem>(tag, j)) return r;
+    if (auto r = tryParseInner<QueryGetWHNF>(tag, j)) return r;
+    if (auto r = tryParseInner<QueryGetFunctionInfo>(tag, j)) return r;
+    if (auto r = tryParseInner<QueryCallbackApply>(tag, j)) return r;
+    if (auto r = tryParseInner<QueryApply>(tag, j)) return r;
+    return std::nullopt;
+}
+
+static std::string shortHex(const std::string & hex)
+{
+    return hex.size() > 12 ? hex.substr(0, 12) : hex;
+}
+
+std::string describe(const QueryVariant & query)
+{
+    return std::visit(
+        [](const auto & q) -> std::string {
+            using Q = std::decay_t<decltype(q)>;
+            std::string out{Q::tag};
+            if constexpr (std::is_same_v<Q, QueryGetAttr>) {
+                out += " name=\"" + q.name + "\"";
+            } else if constexpr (std::is_same_v<Q, QueryGetListElem>) {
+                out += " index=" + std::to_string(q.index);
+            } else if constexpr (std::is_same_v<Q, QueryApply>) {
+                if (q.fn.isStateHash())
+                    out += " fn=" + shortHex(q.fn.stateHash());
+                if (q.arg.isStateHash())
+                    out += " arg=" + shortHex(q.arg.stateHash());
+            } else if constexpr (std::is_same_v<Q, QueryCallbackApply>) {
+                if (q.fn.isStateHash())
+                    out += " fn=" + shortHex(q.fn.stateHash());
+            } else if constexpr (std::is_same_v<Q, QueryExpr>) {
+                out += " expr=\"" + q.expr + "\"";
+            } else if constexpr (std::is_same_v<Q, QueryImport>) {
+                out += " path=" + q.path;
+            }
+            return out;
+        },
+        query);
+}
+
+std::optional<Hash> fromHashOf(const QueryVariant & query)
+{
+    return std::visit(
+        [](const auto & q) -> std::optional<Hash> {
+            using Q = std::decay_t<decltype(q)>;
+            if constexpr (requires { q.from; }) {
+                if (!q.from.isStateHash() || q.from.stateHash().empty())
+                    return std::nullopt;
+                try {
+                    return Hash::parseNonSRIUnprefixed(q.from.stateHash(), HashAlgorithm::SHA256);
+                } catch (...) {
+                    return std::nullopt;
+                }
+            } else {
+                return std::nullopt;
+            }
+        },
+        query);
+}
+
 } // namespace nix::trace
