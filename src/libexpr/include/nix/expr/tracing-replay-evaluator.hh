@@ -101,7 +101,7 @@ class TracingReplayEvaluator : public Evaluator
        the recorded obsSet, then invoke fn->queryApply live. No
        separate live-fire method. */
 
-    std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx);
+    std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const trace::QueryVariant & qv, const nlohmann::json & params, ResolutionContext & ctx);
 
     template<typename Q>
     std::optional<std::pair<std::string, TriePosition>> lookup(const Q & query, std::shared_ptr<Object> currentProxy = nullptr);

@@ -599,7 +599,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
         return resolveApplyId(idStr, params, ctx);
     }
 
-    if (auto qv = trace::parseQueryVariant(reqJson)) {
+    auto qv = trace::parseQueryVariant(reqJson);
+    if (qv) {
         tracingCacheLog(
             "resolve %s: producer-child %s",
             idStr.substr(0, 12), trace::describe(*qv).c_str());
@@ -607,8 +608,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
         tracingCacheLog(
             "resolve %s: producer-child via %s (unparseable)",
             idStr.substr(0, 12), tag.c_str());
+        return nullptr;
     }
-    return resolveProducerChild(idStr, tag, params, ctx);
+    return resolveProducerChild(idStr, *qv, params, ctx);
 }
 
 /* Resolve an "apply" producer's result by resolving fn + arg and
@@ -750,7 +752,7 @@ static std::shared_ptr<Object> navigatePath(
 }
 
 std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
-    const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx)
+    const std::string & idStr, const trace::QueryVariant & qv, const nlohmann::json & params, ResolutionContext & ctx)
 {
     if (!params.contains("from") && !params.contains("fromStateHashes")
         && !params.contains("perArgFrame"))
@@ -767,19 +769,24 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
     if (!parent)
         return nullptr;
 
-    std::shared_ptr<Object> child;
-    try {
-        if (tag == "getAttr") {
-            child = parent->maybeGetAttr(params["name"].get<std::string>());
-        } else if (tag == "getListElem") {
-            child = parent->getListElem(params["index"].get<size_t>());
-        } else {
-            return nullptr;
-        }
-    } catch (const std::exception & e) {
-        tracingCacheLog("replay: failed to resolve %s producer for %s: %s", tag, idStr, e.what());
-        return nullptr;
-    }
+    auto child = std::visit(
+        [&](const auto & q) -> std::shared_ptr<Object> {
+            using Q = std::decay_t<decltype(q)>;
+            try {
+                if constexpr (std::is_same_v<Q, trace::QueryGetAttr>) {
+                    return parent->maybeGetAttr(q.name);
+                } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
+                    return parent->getListElem(q.index);
+                } else {
+                    return nullptr;
+                }
+            } catch (const std::exception & e) {
+                tracingCacheLog("replay: failed to resolve %s producer for %s: %s",
+                    Q::tag, idStr, e.what());
+                return nullptr;
+            }
+        },
+        qv);
 
     if (child)
         ctx.memo[idStr] = child;
