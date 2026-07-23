@@ -914,7 +914,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
             } else {
                 /* Symmetric with writer-side: record existence only,
                    not WHNF payload (see tracing-object.cc). */
-                resultJson = trace::ResultMaybeWHNF{trace::ResultWHNF{"deferred", trace::WHNFEmpty{}}};
+                resultJson = trace::ResultMaybeWHNF{trace::ResultWHNF{"deferred", std::nullopt}};
             }
         } else if (tag == "getListElem") {
             auto index = params["index"].get<size_t>();

@@ -185,9 +185,10 @@ struct ResultListOfStrings
 };
 
 /** Payload alternatives for `ResultWHNF`. One per Nix object type
-    that carries something at WHNF. nFunction/nNull/nExternal/nThunk
-    use `WHNFEmpty` (nothing to record beyond the type). */
-struct WHNFEmpty {};
+    that carries content beyond the type discriminator. Types like
+    nFunction / nNull / nExternal / nThunk carry no payload — the
+    ResultWHNF's `payload` field is nullopt for them (rather than
+    a synthetic "empty" placeholder, since "empty" isn't a value). */
 struct WHNFInt { int64_t value; };
 struct WHNFBool { bool value; };
 struct WHNFFloat { double value; };
@@ -205,7 +206,7 @@ struct WHNFList { size_t size; };
 struct ResultWHNF
 {
     std::string type;
-    std::variant<WHNFEmpty, WHNFInt, WHNFBool, WHNFFloat, WHNFPath, WHNFString, WHNFAttrs, WHNFList> payload;
+    std::optional<std::variant<WHNFInt, WHNFBool, WHNFFloat, WHNFPath, WHNFString, WHNFAttrs, WHNFList>> payload;
 };
 
 /** Result for getAttr: either the WHNF of the attribute (present) or

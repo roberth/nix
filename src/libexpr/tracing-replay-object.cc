@@ -242,7 +242,7 @@ std::vector<std::string> TracingReplayObject::getAttrNames()
         tracingCacheLog("replay fallback: getAttrNames");
         return ensureInner()->getAttrNames();
     }
-    auto * p = std::get_if<trace::WHNFAttrs>(&(*wp)->payload);
+    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFAttrs>(&*(*wp)->payload) : nullptr);
     if (!p)
         return ensureInner()->getAttrNames();
     return p->names;
@@ -255,7 +255,7 @@ std::string TracingReplayObject::getStringIgnoreContext()
         tracingCacheLog("replay fallback: getStringIgnoreContext");
         return ensureInner()->getStringIgnoreContext();
     }
-    auto * p = std::get_if<trace::WHNFString>(&(*wp)->payload);
+    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFString>(&*(*wp)->payload) : nullptr);
     if (!p)
         return ensureInner()->getStringIgnoreContext();
     return p->value;
@@ -268,7 +268,7 @@ std::string TracingReplayObject::getStringWithoutContext()
         tracingCacheLog("replay fallback: getStringWithoutContext");
         return ensureInner()->getStringWithoutContext();
     }
-    auto * p = std::get_if<trace::WHNFString>(&(*wp)->payload);
+    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFString>(&*(*wp)->payload) : nullptr);
     if (!p || !p->context.empty())
         return ensureInner()->getStringWithoutContext();
     return p->value;
@@ -281,7 +281,7 @@ std::pair<std::string, NixStringContext> TracingReplayObject::getStringWithConte
         tracingCacheLog("replay fallback: getStringWithContext");
         return ensureInner()->getStringWithContext();
     }
-    auto * p = std::get_if<trace::WHNFString>(&(*wp)->payload);
+    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFString>(&*(*wp)->payload) : nullptr);
     if (!p)
         return ensureInner()->getStringWithContext();
     NixStringContext ctx;
@@ -320,7 +320,7 @@ bool TracingReplayObject::getBool(std::string_view errorCtx)
         tracingCacheLog("replay fallback: getBool");
         return ensureInner()->getBool(errorCtx);
     }
-    auto * p = std::get_if<trace::WHNFBool>(&(*wp)->payload);
+    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFBool>(&*(*wp)->payload) : nullptr);
     if (!p)
         return ensureInner()->getBool(errorCtx);
     return p->value;
@@ -333,7 +333,7 @@ NixInt TracingReplayObject::getInt(std::string_view errorCtx)
         tracingCacheLog("replay fallback: getInt");
         return ensureInner()->getInt(errorCtx);
     }
-    auto * p = std::get_if<trace::WHNFInt>(&(*wp)->payload);
+    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFInt>(&*(*wp)->payload) : nullptr);
     if (!p)
         return ensureInner()->getInt(errorCtx);
     return NixInt{p->value};
@@ -346,7 +346,7 @@ NixFloat TracingReplayObject::getFloat(std::string_view errorCtx)
         tracingCacheLog("replay fallback: getFloat");
         return ensureInner()->getFloat(errorCtx);
     }
-    auto * p = std::get_if<trace::WHNFFloat>(&(*wp)->payload);
+    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFFloat>(&*(*wp)->payload) : nullptr);
     if (!p)
         return ensureInner()->getFloat(errorCtx);
     return p->value;
@@ -359,7 +359,7 @@ size_t TracingReplayObject::getListSize()
         tracingCacheLog("replay fallback: getListSize");
         return ensureInner()->getListSize();
     }
-    auto * p = std::get_if<trace::WHNFList>(&(*wp)->payload);
+    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFList>(&*(*wp)->payload) : nullptr);
     if (!p)
         return ensureInner()->getListSize();
     return p->size;

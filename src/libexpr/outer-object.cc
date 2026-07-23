@@ -78,7 +78,7 @@ trace::ResultWHNF & OuterObject::whnf()
 std::vector<std::string> OuterObject::getAttrNames()
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFAttrs>(&*w.payload) : nullptr);
     if (!p)
         throw Error("outer getAttrNames: WHNF payload not attrs (type %s)", w.type);
     return p->names;
@@ -87,7 +87,7 @@ std::vector<std::string> OuterObject::getAttrNames()
 std::string OuterObject::getStringIgnoreContext()
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFString>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFString>(&*w.payload) : nullptr);
     if (!p)
         throw Error("outer getStringIgnoreContext: WHNF payload not string (type %s)", w.type);
     return p->value;
@@ -101,7 +101,7 @@ std::string OuterObject::getStringWithoutContext()
 std::pair<std::string, NixStringContext> OuterObject::getStringWithContext()
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFString>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFString>(&*w.payload) : nullptr);
     if (!p)
         throw Error("outer getStringWithContext: WHNF payload not string (type %s)", w.type);
     NixStringContext ctx;
@@ -113,7 +113,7 @@ std::pair<std::string, NixStringContext> OuterObject::getStringWithContext()
 RootedPath OuterObject::getPath()
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFPath>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFPath>(&*w.payload) : nullptr);
     if (!p)
         throw Error("outer getPath: WHNF payload not path (type %s)", w.type);
     /* lazy-paths: reuse the outer EvalState's `rootFSRoot` so the
@@ -127,7 +127,7 @@ RootedPath OuterObject::getPath()
 bool OuterObject::getBool(std::string_view)
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFBool>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFBool>(&*w.payload) : nullptr);
     if (!p)
         throw Error("outer getBool: WHNF payload not bool (type %s)", w.type);
     return p->value;
@@ -136,7 +136,7 @@ bool OuterObject::getBool(std::string_view)
 NixInt OuterObject::getInt(std::string_view)
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFInt>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFInt>(&*w.payload) : nullptr);
     if (!p)
         throw Error("outer getInt: WHNF payload not int (type %s)", w.type);
     return NixInt{p->value};
@@ -145,7 +145,7 @@ NixInt OuterObject::getInt(std::string_view)
 NixFloat OuterObject::getFloat(std::string_view)
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFFloat>(&*w.payload) : nullptr);
     if (!p)
         throw Error("outer getFloat: WHNF payload not float (type %s)", w.type);
     return p->value;
@@ -154,7 +154,7 @@ NixFloat OuterObject::getFloat(std::string_view)
 size_t OuterObject::getListSize()
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFList>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFList>(&*w.payload) : nullptr);
     if (!p)
         throw Error("outer getListSize: WHNF payload not list (type %s)", w.type);
     return p->size;

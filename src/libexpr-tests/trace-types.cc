@@ -84,7 +84,7 @@ TEST(TraceTypes, AmbientOutgoingResponseWrapperRoundTrip)
 {
     Response<OuterValueRequest> traced{
         .request = {QueryGetAttr{"x", "0"}},
-        .response = {ResultMaybeWHNF{ResultWHNF{"nInt", WHNFEmpty{}}}},
+        .response = {ResultMaybeWHNF{ResultWHNF{"nInt", std::nullopt}}},
     };
     json j;
     to_json(j, traced);
@@ -101,7 +101,7 @@ TEST(TraceTypes, AmbientQueryParseTraceEntry)
 {
     Response<OuterValueRequest> original{
         .request = {QueryGetAttr{"key", "42"}},
-        .response = {ResultMaybeWHNF{ResultWHNF{"nAttrs", WHNFEmpty{}}}},
+        .response = {ResultMaybeWHNF{ResultWHNF{"nAttrs", std::nullopt}}},
     };
     json j;
     to_json(j, original);

@@ -198,6 +198,8 @@ void from_json(const nlohmann::json & j, ResultListOfStrings & r)
 void to_json(nlohmann::json & j, const ResultWHNF & r)
 {
     j = nlohmann::json{{"type", r.type}};
+    if (!r.payload)
+        return;
     std::visit([&](const auto & p) {
         using T = std::decay_t<decltype(p)>;
         if constexpr (std::is_same_v<T, WHNFInt>) {
@@ -216,8 +218,7 @@ void to_json(nlohmann::json & j, const ResultWHNF & r)
         } else if constexpr (std::is_same_v<T, WHNFList>) {
             j["size"] = p.size;
         }
-        /* WHNFEmpty: nothing to add beyond `type`. */
-    }, r.payload);
+    }, *r.payload);
 }
 
 void from_json(const nlohmann::json & j, ResultWHNF & r)
@@ -244,7 +245,7 @@ void from_json(const nlohmann::json & j, ResultWHNF & r)
     } else if (r.type == "list") {
         r.payload = WHNFList{j.at("size").get<size_t>()};
     } else {
-        r.payload = WHNFEmpty{};
+        r.payload = std::nullopt;
     }
 }
 

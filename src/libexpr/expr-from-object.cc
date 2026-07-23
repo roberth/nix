@@ -37,7 +37,7 @@ static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const tr
                 if (!child)
                     return {trace::ResultMaybeWHNF{std::nullopt}, nullptr};
                 return {
-                    trace::ResultMaybeWHNF{trace::ResultWHNF{"deferred", trace::WHNFEmpty{}}},
+                    trace::ResultMaybeWHNF{trace::ResultWHNF{"deferred", std::nullopt}},
                     std::move(child)};
             } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
                 auto child = obj->getListElem(query.index);

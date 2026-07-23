@@ -156,7 +156,7 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
 std::vector<std::string> ReplayCallbackArg::getAttrNames()
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFAttrs>(&*w.payload) : nullptr);
     if (!p)
         throw Error("rlo getAttrNames: WHNF payload not attrs (type %s)", w.type);
     return p->names;
@@ -165,7 +165,7 @@ std::vector<std::string> ReplayCallbackArg::getAttrNames()
 std::string ReplayCallbackArg::getStringIgnoreContext()
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFString>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFString>(&*w.payload) : nullptr);
     if (!p)
         throw Error("rlo getStringIgnoreContext: WHNF payload not string (type %s)", w.type);
     return p->value;
@@ -179,7 +179,7 @@ std::string ReplayCallbackArg::getStringWithoutContext()
 std::pair<std::string, NixStringContext> ReplayCallbackArg::getStringWithContext()
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFString>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFString>(&*w.payload) : nullptr);
     if (!p)
         throw Error("rlo getStringWithContext: WHNF payload not string (type %s)", w.type);
     NixStringContext ctx;
@@ -191,7 +191,7 @@ std::pair<std::string, NixStringContext> ReplayCallbackArg::getStringWithContext
 RootedPath ReplayCallbackArg::getPath()
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFPath>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFPath>(&*w.payload) : nullptr);
     if (!p)
         throw Error("rlo getPath: WHNF payload not path (type %s)", w.type);
     return RootedPath{rootFSRoot, CanonPath{p->path}};
@@ -200,7 +200,7 @@ RootedPath ReplayCallbackArg::getPath()
 bool ReplayCallbackArg::getBool(std::string_view)
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFBool>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFBool>(&*w.payload) : nullptr);
     if (!p)
         throw Error("rlo getBool: WHNF payload not bool (type %s)", w.type);
     return p->value;
@@ -209,7 +209,7 @@ bool ReplayCallbackArg::getBool(std::string_view)
 NixInt ReplayCallbackArg::getInt(std::string_view)
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFInt>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFInt>(&*w.payload) : nullptr);
     if (!p)
         throw Error("rlo getInt: WHNF payload not int (type %s)", w.type);
     return NixInt{p->value};
@@ -218,7 +218,7 @@ NixInt ReplayCallbackArg::getInt(std::string_view)
 NixFloat ReplayCallbackArg::getFloat(std::string_view)
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFFloat>(&*w.payload) : nullptr);
     if (!p)
         throw Error("rlo getFloat: WHNF payload not float (type %s)", w.type);
     return p->value;
@@ -227,7 +227,7 @@ NixFloat ReplayCallbackArg::getFloat(std::string_view)
 size_t ReplayCallbackArg::getListSize()
 {
     auto & w = whnf();
-    auto * p = std::get_if<trace::WHNFList>(&w.payload);
+    auto * p = (w.payload ? std::get_if<trace::WHNFList>(&*w.payload) : nullptr);
     if (!p)
         throw Error("rlo getListSize: WHNF payload not list (type %s)", w.type);
     return p->size;
@@ -410,75 +410,6 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    argAncestry is the same Merkle. */
                 Hash mergedApplyScope = combineArgAncestries(
                     *applyArgAncestrySaved, Hash{HashAlgorithm::SHA256});
-
-                /* Stamp the recursive apply Fact into localWalkFacts:
-                   subject = ApplyResultSubject{fn, arg} =
-                   syntheticSubject; argAncestry = mergedApplyScope;
-                   step = walkFactsSaved->size() (= the apply Fact's
-                   position in the writer's history, AFTER the
-                   ReplayCallbackArg's surface probes). Extends the
-                   synthetic's history so its `from` stamping picks up
-                   at the right edge. */
-                {
-                    size_t step = walkFactsSaved->size();
-                    Hash applyArgAncestry = mergedApplyScope;
-
-                    /* Polymorphic dispatch: subjectSaved can be a
-                       DerivedSubject when the outer accesses a fn-typed
-                       attribute of the callback arg (e.g. `arg.someFn 42`).
-                       Mirrors the writer's stamping in
-                       TracingEvaluator::apply. */
-                    auto fnSubjHex = stateHashAtSubject(
-                        subjectSaved, applyArgAncestry, *walkFactsSaved, step)
-                        .to_string(HashFormat::Base16, false);
-                    Subject argSubjLocal{
-                        Arg{*applyDepthSaved + 1}};
-                    auto argSubjHex = stateHashAt(
-                        argSubjLocal, applyArgAncestry, *walkFactsSaved, step)
-                        .to_string(HashFormat::Base16, false);
-
-                    /* Generic stamping via syntheticSubject. */
-                    auto [path, roots] = pathAndRootsFromSubject(syntheticSubject);
-                    std::vector<trace::QueryLeaf> fromStateHashes;
-                    fromStateHashes.reserve(roots.size());
-                    for (auto & root : roots) {
-                        auto cid = stateHashAt(
-                            root, applyArgAncestry, *walkFactsSaved, step);
-                        fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
-                    }
-
-                    trace::QueryApply stampedQ{fnSubjHex, argSubjHex};
-                    nlohmann::json stampedJson = stampedQ;
-                    if (!path.steps.empty())
-                        stampedJson["params"]["path"] = path;
-                    if (!fromStateHashes.empty())
-                        stampedJson["params"]["fromStateHashes"] = fromStateHashes;
-                    auto stampedReqHash = hashString(HashAlgorithm::SHA256, stampedJson.dump());
-
-                    tracingCacheLog(
-                        "walker primop applyFact: subject=%s applyArgAncestry=%s step=%zu fnHex=%s argHex=%s stampedReqHash=%s",
-                        describe(syntheticSubject),
-                        applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
-                        step,
-                        fnSubjHex.substr(0, 12),
-                        argSubjHex.substr(0, 12),
-                        stampedReqHash.to_string(HashFormat::Base16, false).substr(0, 12));
-
-                    nlohmann::json respJson = trace::ResultWHNF{"apply", trace::WHNFEmpty{}};
-                    auto respPayload = jsonToCborString(respJson);
-                    auto respHash = TracingDecisionGraph::computeResponseHash(respPayload);
-                    auto elementHash = TracingDecisionGraph::xorFactIntoHash(
-                        Hash(HashAlgorithm::SHA256), stampedReqHash, respHash);
-
-                    Hash fromStateHash = fromStateHashes.empty()
-                        ? Hash(HashAlgorithm::SHA256)
-                        : Hash::parseNonSRIUnprefixed(
-                              fromStateHashes[0].stateHash(), HashAlgorithm::SHA256);
-
-                    ObservationSet edge;
-                    edge.observations.push_back({fromStateHash, elementHash});
-                    localWalkFacts->push_back(std::move(edge));
-                }
 
                 /* Synthetic shares the LOCAL history so its probes
                    don't pollute the ReplayCallbackArg's persistent
