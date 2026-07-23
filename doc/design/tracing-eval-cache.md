@@ -679,20 +679,25 @@ question would treat hashes as outputs of lookups.
 
 ### Walk from ∅: `decisionGraph.walk(queryHash, dispatch)`
 
-Walks the chain from ∅, one Ask at a time. At each `(queryHash, cur)`:
+The Ask/Terminal decision at each `(queryHash, cur)` is deterministic
+and hermetic: a recording either continues via outgoing Asks or
+terminates via a Terminal row. Not both. Walker semantics reflect
+this — a Terminal at `(queryHash, cur)` means the walk ends there.
 
-1. `getAsks(queryHash, cur)` for outgoing Asks. If empty: miss.
-2. For each Ask's RequestSet: compute
+Walks the chain from ∅, one edge at a time. At each `(queryHash, cur)`:
+
+1. If `Terminal(queryHash, cur)` exists, return that Result. Walk ends.
+2. Otherwise, `getAsks(queryHash, cur)` for outgoing Asks. If empty: miss.
+3. For each Ask's RequestSet: compute
    `usefulDispatch(requestSet, dispatchedSoFar)`. Dispatch the
    useful Requests (via `dispatch` callback — memoised in
    `responseFor`), XOR-fold their `H_element` into a candidate
    `nextCur`.
-3. Validate: `hasAnyEdge(queryHash, nextCur)`? That is, is there some
+4. Validate: `hasAnyEdge(queryHash, nextCur)`? That is, is there some
    `Ask(queryHash, nextCur, *)` or `Terminal(queryHash, nextCur, *)` row? If yes,
    advance `cur = nextCur` and continue. If no, this branch of the
    recording isn't reachable from the current env — try the next
    outgoing Ask.
-4. If `Terminal(queryHash, cur)` exists, return that Result.
 
 The existence check is per-`queryHash` rather than per-FactSet — what
 matters is that *this* Query reached this position in some recorded
