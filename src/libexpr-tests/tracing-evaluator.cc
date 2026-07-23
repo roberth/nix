@@ -71,7 +71,7 @@ TEST_F(TracingEvaluatorTest, EvalExprTracesQueryAndResult)
     // First entry should be a query
     auto & first = sink->entries[0];
     EXPECT_TRUE(first.contains("query"));
-    EXPECT_EQ(first.at("query").at("query"), "expr");
+    EXPECT_EQ(first.at("query").at("tag"), "expr");
 
     // Second entry should be a result
     auto & second = sink->entries[1];
@@ -92,10 +92,10 @@ TEST_F(TracingEvaluatorTest, GetAttrTracesAccess)
        the name. Existence-only "hasAttr" doesn't exist as a query. */
     ASSERT_GE(sink->entries.size(), 4u);
     auto & whnfQuery = sink->entries[0];
-    EXPECT_EQ(whnfQuery.at("query").at("query"), "getWHNF");
+    EXPECT_EQ(whnfQuery.at("query").at("tag"), "getWHNF");
     auto & getAttrQuery = sink->entries[2];
-    EXPECT_EQ(getAttrQuery.at("query").at("query"), "getAttr");
-    EXPECT_EQ(getAttrQuery.at("query").at("params").at("name"), "foo");
+    EXPECT_EQ(getAttrQuery.at("query").at("tag"), "getAttr");
+    EXPECT_EQ(getAttrQuery.at("query").at("name"), "foo");
 }
 
 TEST_F(TracingEvaluatorTest, GetStringTracesValue)
@@ -192,10 +192,10 @@ TEST_F(TracingEvaluatorTest, GetListElemTracesAccess)
        project bounds), then issues getListElem (retrieval). */
     ASSERT_GE(sink->entries.size(), 4u);
     auto & whnfQuery = sink->entries[0];
-    EXPECT_EQ(whnfQuery.at("query").at("query"), "getWHNF");
+    EXPECT_EQ(whnfQuery.at("query").at("tag"), "getWHNF");
     auto & getElemQuery = sink->entries[2];
-    EXPECT_EQ(getElemQuery.at("query").at("query"), "getListElem");
-    EXPECT_EQ(getElemQuery.at("query").at("params").at("index"), 1u);
+    EXPECT_EQ(getElemQuery.at("query").at("tag"), "getListElem");
+    EXPECT_EQ(getElemQuery.at("query").at("index"), 1u);
 }
 
 TEST_F(TracingEvaluatorTest, MissingAttrProjectedFromWHNF)
@@ -211,7 +211,7 @@ TEST_F(TracingEvaluatorTest, MissingAttrProjectedFromWHNF)
        has-attr / getAttr entry. */
     ASSERT_GE(sink->entries.size(), 2u);
     auto & whnfQuery = sink->entries[0];
-    EXPECT_EQ(whnfQuery.at("query").at("query"), "getWHNF");
+    EXPECT_EQ(whnfQuery.at("query").at("tag"), "getWHNF");
     auto & whnfResult = sink->entries[1];
     EXPECT_EQ(whnfResult.at("result").at("type"), "set");
     EXPECT_EQ(whnfResult.at("result").at("names").size(), 0u);

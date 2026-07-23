@@ -629,8 +629,8 @@ bool TracingDecisionGraph::isApplyRequest(const RequestHash & h)
     try {
         auto bytes = reinterpret_cast<const uint8_t *>(payload->data());
         auto js = nlohmann::json::from_cbor(bytes, bytes + payload->size());
-        return js.contains("query") && js["query"].is_string()
-            && js["query"].get<std::string>() == "apply";
+        return js.contains("tag") && js["tag"].is_string()
+            && js["tag"].get<std::string>() == "apply";
     } catch (...) {
         return false;
     }

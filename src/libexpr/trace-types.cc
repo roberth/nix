@@ -68,34 +68,28 @@ void from_json(const nlohmann::json & j, GetEnvResponse & r)
 }
 
 // ---------------------------------------------------------------------------
-// OuterValueRequest / OuterValueResponse serialization
+// QueryVariant serialization — discriminator lives here (flat envelope)
 // ---------------------------------------------------------------------------
 
-// Shared helpers: both outgoing and incoming wrap QueryVariant/ResultVariant.
-
-static void queryVariantToJson(nlohmann::json & j, const QueryVariant & query)
+void to_json(nlohmann::json & j, const QueryVariant & q)
 {
-    nlohmann::json queryJson;
-    std::visit([&](const auto & q) { queryJson = nlohmann::json{{"tag", q.tag}, {"payload", q}}; }, query);
-    j = nlohmann::json{{"query", queryJson}};
+    /* Each per-type to_json emits `tag` alongside its fields, so
+       delegation suffices. */
+    std::visit([&](const auto & sub) { j = sub; }, q);
 }
 
-static void queryVariantFromJson(const nlohmann::json & j, QueryVariant & query)
+void from_json(const nlohmann::json & j, QueryVariant & q)
 {
-    auto & q = j.at("query");
-    auto tag = q.at("tag").get<std::string_view>();
-    auto & payload = q.at("payload");
-
+    auto tag = j.at("tag").get<std::string_view>();
     auto tryParse = [&]<typename T>() -> bool {
         if (tag == T::tag) {
             T val;
-            from_json(payload, val);
-            query = val;
+            from_json(j, val);
+            q = std::move(val);
             return true;
         }
         return false;
     };
-
     if (tryParse.template operator()<QueryExpr>() || tryParse.template operator()<QueryImport>()
         || tryParse.template operator()<QueryGetAttr>()
         || tryParse.template operator()<QueryGetListElem>()
@@ -103,10 +97,15 @@ static void queryVariantFromJson(const nlohmann::json & j, QueryVariant & query)
         || tryParse.template operator()<QueryGetWHNF>() || tryParse.template operator()<QueryApply>()
         || tryParse.template operator()<QueryCallbackApply>())
         return;
-
-    throw nlohmann::json::parse_error::create(302, 0, "unknown outer query tag: " + std::string(tag), &j);
+    throw nlohmann::json::parse_error::create(302, 0, "unknown query tag: " + std::string(tag), &j);
 }
 
+// ---------------------------------------------------------------------------
+// OuterValueRequest / OuterValueResponse serialization
+// ---------------------------------------------------------------------------
+
+/* ResultVariant currently has one alternative (ResultWHNF); no
+   discriminator needed. Add one if variants grow. */
 static void resultVariantToJson(nlohmann::json & j, const ResultVariant & result)
 {
     nlohmann::json resultJson;
@@ -117,7 +116,6 @@ static void resultVariantToJson(nlohmann::json & j, const ResultVariant & result
 static void resultVariantFromJson(const nlohmann::json & j, ResultVariant & result)
 {
     auto & res = j.at("result");
-
     auto tryParse = [&]<typename T>(T *) -> bool {
         try {
             T val;
@@ -128,7 +126,6 @@ static void resultVariantFromJson(const nlohmann::json & j, ResultVariant & resu
             return false;
         }
     };
-
     if (tryParse((ResultWHNF *) nullptr))
         return;
     throw nlohmann::json::parse_error::create(302, 0, "could not parse outer result", &j);
@@ -136,12 +133,12 @@ static void resultVariantFromJson(const nlohmann::json & j, ResultVariant & resu
 
 void to_json(nlohmann::json & j, const OuterValueRequest & r)
 {
-    queryVariantToJson(j, r.query);
+    j = nlohmann::json{{"query", r.query}};
 }
 
 void from_json(const nlohmann::json & j, OuterValueRequest & r)
 {
-    queryVariantFromJson(j, r.query);
+    j.at("query").get_to(r.query);
 }
 
 void to_json(nlohmann::json & j, const OuterValueResponse & r)
@@ -371,66 +368,70 @@ void from_json(const nlohmann::json & j, PerArgFrame & f)
 // Query payload serialization
 // ---------------------------------------------------------------------------
 
+/* Flat envelope: each Query type emits `tag` alongside its fields.
+   Same JSON regardless of whether the caller went through
+   per-type to_json directly or via QueryVariant's std::visit. */
+
 void to_json(nlohmann::json & j, const QueryExpr & q)
 {
-    j = nlohmann::json{{"query", QueryExpr::tag}, {"params", {{"expr", q.expr}, {"baseDir", q.baseDir}}}};
+    j = nlohmann::json{{"tag", QueryExpr::tag}, {"expr", q.expr}, {"baseDir", q.baseDir}};
 }
 
 void from_json(const nlohmann::json & j, QueryExpr & q)
 {
-    j.at("params").at("expr").get_to(q.expr);
-    j.at("params").at("baseDir").get_to(q.baseDir);
+    j.at("expr").get_to(q.expr);
+    j.at("baseDir").get_to(q.baseDir);
 }
 
 void to_json(nlohmann::json & j, const QueryImport & q)
 {
-    j = nlohmann::json{{"query", QueryImport::tag}, {"params", {{"path", q.path}}}};
+    j = nlohmann::json{{"tag", QueryImport::tag}, {"path", q.path}};
 }
 
 void from_json(const nlohmann::json & j, QueryImport & q)
 {
-    j.at("params").at("path").get_to(q.path);
+    j.at("path").get_to(q.path);
 }
 
 void to_json(nlohmann::json & j, const QueryGetAttr & q)
 {
     j = nlohmann::json{
-        {"query", QueryGetAttr::tag},
-        {"params", {{"name", q.name}, {"from", q.from}, {"perArgFrame", q.perArgFrame}}}};
+        {"tag", QueryGetAttr::tag},
+        {"name", q.name}, {"from", q.from}, {"perArgFrame", q.perArgFrame}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetAttr & q)
 {
-    j.at("params").at("name").get_to(q.name);
-    j.at("params").at("from").get_to(q.from);
-    j.at("params").at("perArgFrame").get_to(q.perArgFrame);
+    j.at("name").get_to(q.name);
+    j.at("from").get_to(q.from);
+    j.at("perArgFrame").get_to(q.perArgFrame);
 }
 
 void to_json(nlohmann::json & j, const QueryGetListElem & q)
 {
     j = nlohmann::json{
-        {"query", QueryGetListElem::tag},
-        {"params", {{"from", q.from}, {"index", q.index}, {"perArgFrame", q.perArgFrame}}}};
+        {"tag", QueryGetListElem::tag},
+        {"from", q.from}, {"index", q.index}, {"perArgFrame", q.perArgFrame}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetListElem & q)
 {
-    j.at("params").at("from").get_to(q.from);
-    j.at("params").at("index").get_to(q.index);
-    j.at("params").at("perArgFrame").get_to(q.perArgFrame);
+    j.at("from").get_to(q.from);
+    j.at("index").get_to(q.index);
+    j.at("perArgFrame").get_to(q.perArgFrame);
 }
 
 void to_json(nlohmann::json & j, const QueryGetFunctionInfo & q)
 {
     j = nlohmann::json{
-        {"query", QueryGetFunctionInfo::tag},
-        {"params", {{"from", q.from}, {"perArgFrame", q.perArgFrame}}}};
+        {"tag", QueryGetFunctionInfo::tag},
+        {"from", q.from}, {"perArgFrame", q.perArgFrame}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetFunctionInfo & q)
 {
-    j.at("params").at("from").get_to(q.from);
-    j.at("params").at("perArgFrame").get_to(q.perArgFrame);
+    j.at("from").get_to(q.from);
+    j.at("perArgFrame").get_to(q.perArgFrame);
 }
 
 void to_json(nlohmann::json & j, const ResultFunctionInfo & r)
@@ -448,67 +449,65 @@ void from_json(const nlohmann::json & j, ResultFunctionInfo & r)
 void to_json(nlohmann::json & j, const QueryGetWHNF & q)
 {
     j = nlohmann::json{
-        {"query", QueryGetWHNF::tag},
-        {"params", {{"from", q.from}, {"perArgFrame", q.perArgFrame}}}};
+        {"tag", QueryGetWHNF::tag},
+        {"from", q.from}, {"perArgFrame", q.perArgFrame}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetWHNF & q)
 {
-    j.at("params").at("from").get_to(q.from);
-    j.at("params").at("perArgFrame").get_to(q.perArgFrame);
+    j.at("from").get_to(q.from);
+    j.at("perArgFrame").get_to(q.perArgFrame);
 }
 
 void to_json(nlohmann::json & j, const QueryApply & q)
 {
-    j = nlohmann::json{{"query", QueryApply::tag}, {"params", {{"fn", q.fn}, {"arg", q.arg}}}};
+    j = nlohmann::json{{"tag", QueryApply::tag}, {"fn", q.fn}, {"arg", q.arg}};
     /* Per-arg mode (= ApplyResultSubject state hash computation under
        per-arg centralization) emits fromStateHashes + fn/argPath + root
        indices. Legacy direct mode leaves them empty. */
     if (!q.fromStateHashes.empty())
-        j["params"]["fromStateHashes"] = q.fromStateHashes;
+        j["fromStateHashes"] = q.fromStateHashes;
     if (!q.fnPath.steps.empty())
-        j["params"]["fnPath"] = q.fnPath;
+        j["fnPath"] = q.fnPath;
     if (!q.argPath.steps.empty())
-        j["params"]["argPath"] = q.argPath;
+        j["argPath"] = q.argPath;
     if (q.fnRootIndex != 0)
-        j["params"]["fnRootIndex"] = q.fnRootIndex;
+        j["fnRootIndex"] = q.fnRootIndex;
     if (q.argRootIndex != 0)
-        j["params"]["argRootIndex"] = q.argRootIndex;
+        j["argRootIndex"] = q.argRootIndex;
 }
 
 void from_json(const nlohmann::json & j, QueryApply & q)
 {
-    j.at("params").at("fn").get_to(q.fn);
-    j.at("params").at("arg").get_to(q.arg);
-    const auto & params = j.at("params");
-    if (params.contains("fromStateHashes"))
-        params.at("fromStateHashes").get_to(q.fromStateHashes);
-    if (params.contains("fnPath"))
-        params.at("fnPath").get_to(q.fnPath);
-    if (params.contains("argPath"))
-        params.at("argPath").get_to(q.argPath);
-    if (params.contains("fnRootIndex"))
-        params.at("fnRootIndex").get_to(q.fnRootIndex);
-    if (params.contains("argRootIndex"))
-        params.at("argRootIndex").get_to(q.argRootIndex);
+    j.at("fn").get_to(q.fn);
+    j.at("arg").get_to(q.arg);
+    if (j.contains("fromStateHashes"))
+        j.at("fromStateHashes").get_to(q.fromStateHashes);
+    if (j.contains("fnPath"))
+        j.at("fnPath").get_to(q.fnPath);
+    if (j.contains("argPath"))
+        j.at("argPath").get_to(q.argPath);
+    if (j.contains("fnRootIndex"))
+        j.at("fnRootIndex").get_to(q.fnRootIndex);
+    if (j.contains("argRootIndex"))
+        j.at("argRootIndex").get_to(q.argRootIndex);
 }
 
 void to_json(nlohmann::json & j, const QueryCallbackApply & q)
 {
     j = nlohmann::json{
-        {"query", QueryCallbackApply::tag},
-        {"params", {
-            {"fn", q.fn},
-            {"argObsSet", q.argObsSet},
-            {"perArgFrame", q.perArgFrame},
-        }}};
+        {"tag", QueryCallbackApply::tag},
+        {"fn", q.fn},
+        {"argObsSet", q.argObsSet},
+        {"perArgFrame", q.perArgFrame},
+    };
 }
 
 void from_json(const nlohmann::json & j, QueryCallbackApply & q)
 {
-    j.at("params").at("fn").get_to(q.fn);
-    j.at("params").at("argObsSet").get_to(q.argObsSet);
-    j.at("params").at("perArgFrame").get_to(q.perArgFrame);
+    j.at("fn").get_to(q.fn);
+    j.at("argObsSet").get_to(q.argObsSet);
+    j.at("perArgFrame").get_to(q.perArgFrame);
 }
 
 // ---------------------------------------------------------------------------
@@ -562,9 +561,9 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
     // Query: has "query" and "v"
     if (j.contains("query") && j.contains("v")) {
         auto & q = j["query"];
-        if (!q.contains("query"))
+        if (!q.contains("tag"))
             return std::nullopt;
-        auto type = q["query"].get<std::string_view>();
+        auto type = q["tag"].get<std::string_view>();
 
         if (auto r = tryParseQuery<QueryExpr>(type, j))
             return r;
@@ -724,33 +723,19 @@ QueryIndex::QueryIndex(const std::vector<TraceEntry> & trace)
 // parseQueryVariant / describe / fromHashOf
 // ---------------------------------------------------------------------------
 
-namespace {
-template<typename Q>
-std::optional<QueryVariant> tryParseInner(std::string_view tag, const nlohmann::json & j)
-{
-    if (tag == Q::tag) {
-        Q q;
-        from_json(j, q);
-        return QueryVariant{std::move(q)};
-    }
-    return std::nullopt;
-}
-} // namespace
-
 std::optional<QueryVariant> parseQueryVariant(const nlohmann::json & j)
 {
-    if (!j.is_object() || !j.contains("query"))
+    /* Delegate to QueryVariant's from_json — the discriminator
+       lives there. */
+    if (!j.is_object() || !j.contains("tag"))
         return std::nullopt;
-    auto tag = j.at("query").get<std::string_view>();
-    if (auto r = tryParseInner<QueryExpr>(tag, j)) return r;
-    if (auto r = tryParseInner<QueryImport>(tag, j)) return r;
-    if (auto r = tryParseInner<QueryGetAttr>(tag, j)) return r;
-    if (auto r = tryParseInner<QueryGetListElem>(tag, j)) return r;
-    if (auto r = tryParseInner<QueryGetWHNF>(tag, j)) return r;
-    if (auto r = tryParseInner<QueryGetFunctionInfo>(tag, j)) return r;
-    if (auto r = tryParseInner<QueryCallbackApply>(tag, j)) return r;
-    if (auto r = tryParseInner<QueryApply>(tag, j)) return r;
-    return std::nullopt;
+    try {
+        QueryVariant qv;
+        from_json(j, qv);
+        return qv;
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
 }
 
 static std::string shortHex(const std::string & hex)

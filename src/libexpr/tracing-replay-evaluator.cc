@@ -138,9 +138,9 @@ TracingReplayEvaluator::walk(
         std::string queryDescription;
         try {
             auto reqJson = cborStringToJson(*requestPayload);
-            isQueryRequest = reqJson.contains("query");
+            isQueryRequest = reqJson.contains("tag");
             if (isQueryRequest) {
-                queryTag = reqJson["query"].get<std::string>();
+                queryTag = reqJson["tag"].get<std::string>();
                 if (auto qv = trace::parseQueryVariant(reqJson)) {
                     queryDescription = trace::describe(*qv);
                     outerFromHash = trace::fromHashOf(*qv);
@@ -400,7 +400,14 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
 {
     try {
         auto reqJson = cborStringToJson(requestCbor);
-        if (reqJson.contains("absPath")) {
+        /* Check `tag` first: Query payloads under the flat envelope
+           carry a discriminator `tag`, and some Query types also
+           happen to have a `name` field (QueryGetAttr) — without the
+           tag check first, they'd fall into the env-var branch and
+           produce a wrong response. */
+        if (reqJson.contains("tag")) {
+            return dispatchQueryRequest(reqJson, ctx);
+        } else if (reqJson.contains("absPath")) {
             std::string path = reqJson["absPath"];
             auto currentHash = validationEnv.getFileHash(path);
             nlohmann::json respJson = trace::FileReadResponse{currentHash};
@@ -410,8 +417,6 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
             auto currentVal = validationEnv.getEnv(name);
             nlohmann::json respJson = trace::GetEnvResponse{currentVal};
             return jsonToCborString(respJson);
-        } else if (reqJson.contains("query")) {
-            return dispatchQueryRequest(reqJson, ctx);
         }
     } catch (const std::exception & e) {
         tracingCacheLog("replay: failed to get current response: %s", e.what());
@@ -591,8 +596,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
         return nullptr;
     }
 
-    auto tag = reqJson["query"].get<std::string>();
-    auto & params = reqJson["params"];
+    auto tag = reqJson["tag"].get<std::string>();
+    /* Flat envelope: query fields live at top level of reqJson (no "params" wrapper). */
+    auto & params = reqJson;
 
     if (tag == "apply") {
         tracingCacheLog("resolve %s: apply producer", idStr.substr(0, 12));

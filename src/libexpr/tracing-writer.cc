@@ -395,15 +395,13 @@ void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
        skipped). */
     std::string fnStateHashHex;
     try {
-        if (applyQueryPayload.contains("params")
-            && applyQueryPayload["params"].contains("fn")
-            && applyQueryPayload["params"]["fn"].is_object()
-            && applyQueryPayload["params"]["fn"].contains("stateHash"))
-            fnStateHashHex = applyQueryPayload["params"]["fn"]["stateHash"].get<std::string>();
-        else if (applyQueryPayload.contains("params")
-                 && applyQueryPayload["params"].contains("fn")
-                 && applyQueryPayload["params"]["fn"].is_string())
-            fnStateHashHex = applyQueryPayload["params"]["fn"].get<std::string>();
+        /* Flat envelope: fn lives at top level of applyQueryPayload. */
+        if (applyQueryPayload.contains("fn")
+            && applyQueryPayload["fn"].is_object()
+            && applyQueryPayload["fn"].contains("stateHash"))
+            fnStateHashHex = applyQueryPayload["fn"]["stateHash"].get<std::string>();
+        else if (applyQueryPayload.contains("fn") && applyQueryPayload["fn"].is_string())
+            fnStateHashHex = applyQueryPayload["fn"].get<std::string>();
     } catch (...) {}
     CallbackCell cell;
     cell.applyId = applyReqHash;
