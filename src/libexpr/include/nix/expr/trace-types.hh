@@ -246,19 +246,20 @@ struct StateHashLeaf
 /**
  * QueryLeaf: the typed `from` (and `fn`/`arg`) field of Query types.
  *
- * Implicit construction from std::string / const char* produces a
- * StateHashLeaf — most construction sites today pass a hex string for
- * `from`, and this lets them keep working without source changes during
- * the typed-leaf rollout. JSON serialisation also preserves the wire
- * format (StateHashLeaf encodes as a plain string).
+ * `StateHashLeaf` always carries an `argAncestry` alongside its
+ * hash (empty string = root context, a real value). The convenience
+ * hex-string constructors below produce a `StateHashLeaf` with
+ * empty ancestry for the common case; callsites that attach a
+ * specific ancestry construct `StateHashLeaf{hex, argAncestry}`
+ * explicitly.
  */
 struct QueryLeaf
 {
     std::variant<OuterLeaf, StateHashLeaf> data;
 
     QueryLeaf() = default;
-    QueryLeaf(std::string hex) : data(StateHashLeaf{std::move(hex)}) {}
-    QueryLeaf(const char * hex) : data(StateHashLeaf{hex}) {}
+    QueryLeaf(std::string hex) : data(StateHashLeaf{std::move(hex), {}}) {}
+    QueryLeaf(const char * hex) : data(StateHashLeaf{hex, {}}) {}
     QueryLeaf(OuterLeaf a) : data(a) {}
     QueryLeaf(StateHashLeaf c) : data(std::move(c)) {}
 

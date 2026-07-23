@@ -232,10 +232,13 @@ void from_json(const nlohmann::json & j, ResultWHNF & r)
 void to_json(nlohmann::json & j, const QueryLeaf & leaf)
 {
     if (leaf.isStateHash()) {
-        /* Bare hex string when no argAncestry — wire-compatible with
-           the pre-typing `from` field the whole codebase produces.
-           Object form only when argAncestry is attached (currently
-           only QueryCallbackApply.fn). */
+        /* Model-driven shape: bare hex when the leaf has no
+           ancestry attached (the common case — every `from` field
+           whose subject computation doesn't cross a callback
+           boundary), object form when it does (QCA.fn). Not
+           wire-compat: this reflects that a plain state hash and a
+           state-hash-with-attached-ancestry are semantically
+           different leaves. */
         if (leaf.argAncestry().empty())
             j = leaf.stateHash();
         else
@@ -255,14 +258,13 @@ void from_json(const nlohmann::json & j, QueryLeaf & leaf)
     else if (j.is_object() && j.contains("stateHash")) {
         StateHashLeaf s;
         j.at("stateHash").get_to(s.hash);
-        if (j.contains("argAncestry"))
-            j.at("argAncestry").get_to(s.argAncestry);
+        j.at("argAncestry").get_to(s.argAncestry);
         leaf = QueryLeaf{std::move(s)};
     } else
         throw nlohmann::json::type_error::create(
             302,
-            "QueryLeaf JSON must be a hex string, {\"outer\": N}, or "
-            "{\"stateHash\": \"...\", \"argAncestry\"?: \"...\"}",
+            "QueryLeaf JSON must be a bare hex string, {\"outer\": N}, or "
+            "{\"stateHash\": \"...\", \"argAncestry\": \"...\"}",
             &j);
 }
 
