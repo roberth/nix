@@ -12,7 +12,18 @@ HEAD: `8b7be0720`. Suite: 312/16/7 — matches pre-Phase-3 baseline. No net corr
 ### B1. FIXED — walker per-Q chain (`3b386adb8`)
 Walker's `recomputeQ` now reads from a walk-local `perQEnvWalk` fed by `commitEdge`, matching writer's `ActiveQuery::perQEnvWalk` basis. Session envWalk retained for fingerprint dedup and walkScope. Both sides derive the same Q trajectory under matching-until-divergence.
 
-### B2. logResult bridges Ask chain under finalQ from session-cumulative envAsksEdges — MODEL VIOLATION
+### B2. PARTIAL — composite emission landed; bridging retired
+
+Composite sub-Q observation now emitted on parent's chain at
+sub-Q's logResult (one fact per completion, folded into
+session-cumulative `envFactSetHash`). `envAsksEdges` bridging
+under `finalQ` retired. `cb-two-sibling-distinct-callbacks` passes.
+
+Cost: 5 hit-rate regressions (priority 2/3, correct results via
+fallback) — the bridging was providing unintentional landing chains.
+See [B10](#b10-landing-chain-insertion--hit-rate-follow-up-to-b2).
+
+[Original diagnosis retained below for historical context.]
 
 `tracing-writer.hh` logResult iterates `envAsksEdges` (session-cumulative) and inserts every entry under `finalQ`. Parent Q ends up with every sub-Q's observations duplicated under it — a hack to preserve walker reachability. Violates "each observation attributes to exactly one Q".
 
@@ -104,6 +115,30 @@ Cold's writer stamped `from` at the point where it recorded that specific Q's ed
 **Fix plan (medium confidence):** replace the shared-across-descendants ApplyContext with per-Q-chain state on the walker Object side — the walker's Object analogue of the writer's `ActiveQuery::perQEnvWalk` (task #110 B1 fix). Two shapes to consider: (a) each new Q-lookup opens a fresh, walk-local observation history that `evolvedQueryFrom` reads from and `pushObservation` writes into, discarded when the Q's lookup completes; (b) keep the shared_ptr shape but filter at read time to only the observations recorded within the current Q's chain. (a) is closer to the writer side.
 
 Complements [B3](#b3-tracingobject-lacks-general-subject-tracking--high-blocks-sibling-test) (writer-side Subject exposure): together B3 + B9 align writer and walker on per-Q chain semantics. Absorbed from former task #104.
+
+### B10. Landing chain insertion — hit-rate follow-up to B2
+
+Retiring [B2](#b2-partial--composite-emission-landed-bridging-retired)'s
+bridging removed the *unintentional* landing-chain coverage
+(vocab §162, main doc §457) it had been providing — Ask rows
+under a Q's key that let trace-discovering walkers reach Q's
+session-cumulative entry cur from ∅ or parent-anchor.
+
+Regressed:
+- `cb-same-shape-collapse`, `cb-forcedness-independence`,
+  `cb-stats-sidecar-baseline` — stat-count assertions fail because
+  walks that used to hit now miss and fall back.
+- `cb-local-descendants`, `cb-with-scope-and-tryeval` — fail
+  under `_NIX_DISALLOW_PARSE=1`, which disables the fallback so
+  cache-miss regressions surface as errors.
+
+All 5 still return correct values in normal mode (fallback works);
+priority 2/3, not correctness.
+
+Fix direction: insert Ask rows under each Q's key from ∅ /
+parent-anchor to Q's session-cumulative entry cur — surgical,
+covering only the path to Q's entry, not the whole session's
+Ask trail the retired bridging duplicated.
 
 ## Cosmetic / low-priority
 
