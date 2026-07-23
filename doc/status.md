@@ -145,33 +145,27 @@ Suite unchanged at 312/16/7. Walker in the 4 regressed tests now
 progresses further (e.g. cb-local-descendants: 3 landing chain folds
 succeed instead of 0), but hits a **different** failure mode.
 
-**Remaining failure: cache-boundary composite dispatch.** In
-cb-local-descendants, parent Q=56a94cd9c0b3 is the outer whnf of the
-applied cache result. Sub-Q Q=1cf553f2f62d is the inner-side getWHNF
-of the applyResult (inner's `f x`). When sub-Q completes, the
-composite is emitted on parent's outer chain, carrying sub-Q's
-Q_initial payload with `from = b6b7e26e3f24` (fn state hash from the
-inner side).
+**Remaining failure: composite dispatch response mismatch.** In
+cb-local-descendants, walker at parent Q=56a94cd9c0b3 dispatches the
+composite request `req=1cf553f2f62d` (= sub-Q's Q_initial hash). The
+dispatch resolves the fn state hash `b6b7e26e3f24` via producer-child
+fallthrough (getAttr from=666333934c25 name="f") — successfully —
+and calls `getWHNF` on the resolved outer Object. Walker's response
+serialises to `{"type":"lambda"}` (respHash=600b168f7b37). Walker's
+XOR fold gives `nextCur=1a0717b50a89`.
 
-At warm, walker's outerValue dispatch of the composite:
-- `resolve b6b7e26e3f24` falls through to producer-child resolution
-  (via `getAttr from=666333934c25 name="f"`), succeeds live.
-- Walker dispatches `getWHNF` on the resolved outer Object. Response
-  is walker's outer-side WHNF: `{"type":"lambda"}`.
-- Cold's composite response was sub-Q's actual inner-side Terminal
-  Result — a different WHNF (inner evaluated `f x` to some deeper
-  form).
+Cold's composite fact fold ended parent's cur at 1d7adc57a718 (per
+parent's logResult). Since walker's cur (1a0717b50a89) ≠ cold's
+(1d7adc57a718), cold's recorded response hash differs from walker's
+(600b168f7b37). Under matching-until-divergence with the same
+request payload, the responses should match. They don't.
 
-Walker's outer-side WHNF ≠ cold's inner-side result → different
-response hashes → different XOR fold → `nextCur=1a0717b50a89 NO
-RECORDED EDGE` where cold ended at 1d7adc57a718.
-
-Root cause: composite dispatch across the cache boundary uses outer
-probing but sub-Q was inner-side evaluation. Fix requires the
-walker to recognise cache-boundary composites and re-invoke the
-cached function via callback dispatch (rather than outer probing).
-Overlaps with the "reinvoke the function over and over" pattern the
-user has said is acceptable.
+**Not yet established**: what cold's recorded response payload for
+the composite actually was, byte-by-byte. Speculation about "inner
+vs outer side WHNF" is unproven. Concrete next step: dump cold's
+`resultNodeHash` for sub-Q=1cf553f2f62d and its recorded Result
+payload, compare with walker's response, identify the specific
+divergence.
 
 Also explored (uncommitted): per-Q Ask/Terminal keys and Q_initial
 composite payload. Neither changed the suite count; per-Q basis
