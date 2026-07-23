@@ -131,12 +131,57 @@ tests that regressed when B2's bridging was retired
 `cb-stats-sidecar-baseline`, `cb-with-scope-and-tryeval`) turn out
 to be a different failure mode — see [B11](#b11-response-mismatch-on-walker-dispatch--hit-rate).
 
-### B11. Three-basis inconsistency in fromSubject state hashing — hit-rate
+### B11. PARTIAL — Q_M unification via preconditions at push (`853ba76fb`)
 
-`cb-local-descendants`, `cb-with-scope-and-tryeval`,
-`cb-forcedness-independence`, `cb-stats-sidecar-baseline` all
-regressed when B2 retired the bridging. B10's landing chain didn't
-recover them.
+Initial diagnosis was "three-basis inconsistency in fromSubject
+state hashing" (kept below for reference). The fix landed as B11:
+at `logQuery`, fold pre-push envAsksEdges into `aq.perQEnvWalk`
+and evolve `aq.currentQ` to Q_M — per callback-model §3, Q's chain
+starts at index M > 0 carrying preconditions from prior state.
+Walker's Q at end of landing = writer's aq.currentQ = Q_M. Q's
+first own Ask under Q_M, which walker finds.
+
+Suite unchanged at 312/16/7. Walker in the 4 regressed tests now
+progresses further (e.g. cb-local-descendants: 3 landing chain folds
+succeed instead of 0), but hits a **different** failure mode.
+
+**Remaining failure: cache-boundary composite dispatch.** In
+cb-local-descendants, parent Q=56a94cd9c0b3 is the outer whnf of the
+applied cache result. Sub-Q Q=1cf553f2f62d is the inner-side getWHNF
+of the applyResult (inner's `f x`). When sub-Q completes, the
+composite is emitted on parent's outer chain, carrying sub-Q's
+Q_initial payload with `from = b6b7e26e3f24` (fn state hash from the
+inner side).
+
+At warm, walker's outerValue dispatch of the composite:
+- `resolve b6b7e26e3f24` falls through to producer-child resolution
+  (via `getAttr from=666333934c25 name="f"`), succeeds live.
+- Walker dispatches `getWHNF` on the resolved outer Object. Response
+  is walker's outer-side WHNF: `{"type":"lambda"}`.
+- Cold's composite response was sub-Q's actual inner-side Terminal
+  Result — a different WHNF (inner evaluated `f x` to some deeper
+  form).
+
+Walker's outer-side WHNF ≠ cold's inner-side result → different
+response hashes → different XOR fold → `nextCur=1a0717b50a89 NO
+RECORDED EDGE` where cold ended at 1d7adc57a718.
+
+Root cause: composite dispatch across the cache boundary uses outer
+probing but sub-Q was inner-side evaluation. Fix requires the
+walker to recognise cache-boundary composites and re-invoke the
+cached function via callback dispatch (rather than outer probing).
+Overlaps with the "reinvoke the function over and over" pattern the
+user has said is acceptable.
+
+Also explored (uncommitted): per-Q Ask/Terminal keys and Q_initial
+composite payload. Neither changed the suite count; per-Q basis
+introduced no regression but no fix either.
+
+---
+
+**Original three-basis diagnosis** (kept for reference; the
+Q_initial-basis mismatch that motivated it is addressed by B11's
+precondition fold at push):
 
 Investigation of `cb-local-descendants` (walker at Q=c0ce84694da7
 gets `NO EDGE COMMITTED` after 3 successful landing-chain folds)
@@ -158,40 +203,6 @@ matching-until-divergence:
    perQEnvWalk, size)` — walk-local perQEnvWalk populated by
    `commitEdge` on every walker commit (including landing-chain
    commits).
-
-Under matching-until-divergence these are three different obs
-sets → three different SHA-256 inputs → three different hex outputs.
-Concretely: `applyContext` is a strict subset of `envWalk` in the
-usual nested case, and walker's `perQEnvWalk` mirrors `envWalk`
-under lockstep but starts empty (per-walk B1).
-
-Result: Q_initial's `from` field (basis 1) differs from walker's
-recomputed `from` at any step (basis 3) — walker's Q evolves from
-Q_initial to a different value on the first commit even with
-lockstep bases. Writer records Q's own Asks at `aq.currentQ` which
-stays at Q_initial for the first Q-own obs (aq.perQEnvWalk starts
-empty, only Q-own obs fold in). So walker's Q at Q_entry_cur ≠
-writer's recording key for Q's first own Ask.
-
-B10's simulation faithfully tracks walker's evolution (basis 2, same
-XOR trajectory as walker's basis 3 under lockstep). But it can't
-make walker's post-landing Q equal Q_initial, because bases 1
-(payload's encoded from-field) and 2/3 (evolution's stateHashAt
-result) don't share encoding.
-
-Fix direction: unify to a single basis. Candidates:
-- (a) `evolvedQueryFrom` uses `envWalk` basis so Q_initial's from
-  matches writer's `lastState` and walker's `perQEnvWalk` under
-  lockstep.
-- (b) `evolvedQueryFrom` uses walker-compatible per-Object structure
-  that walker's `recomputeQ` also uses, replacing `perQEnvWalk`.
-- (c) Full audit of `applyContext` / `envWalk` / `perQEnvWalk`
-  relationships; may overlap with B9's walker-side per-Q-chain
-  scoping work.
-
-Not addressed here. All 4 regressed tests still return correct
-values in normal mode (fallback works); priority 2/3, not
-correctness.
 
 ## Cosmetic / low-priority
 
