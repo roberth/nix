@@ -599,6 +599,43 @@ using ResultVariant = std::variant<
     ResultFunctionInfo,
     ResultWHNF>;
 
+/** QueryVariant's own to_json/from_json — visits the variant to
+    emit an alternative's flat fields plus the `tag` discriminator,
+    and reads them back into the right alternative via the fold
+    template below. */
+void to_json(nlohmann::json & j, const QueryVariant & q);
+void from_json(const nlohmann::json & j, QueryVariant & q);
+
+namespace detail {
+
+/**
+ * Fold-based `from_json` for any `std::variant<Ts...>` whose
+ * alternatives carry a `static constexpr std::string_view tag`
+ * discriminator. `Ts...` unpacks straight from the variant type —
+ * no per-variant hand-enumeration of alternatives.
+ */
+template<typename V, typename T>
+inline bool tryVariantAlternative(const nlohmann::json & j, V & v, std::string_view tag)
+{
+    if (tag != T::tag) return false;
+    T val;
+    from_json(j, val);
+    v = std::move(val);
+    return true;
+}
+
+template<typename... Ts>
+inline void fromJsonByTag(const nlohmann::json & j, std::variant<Ts...> & v)
+{
+    auto tag = j.at("tag").template get<std::string_view>();
+    bool matched = (tryVariantAlternative<std::variant<Ts...>, Ts>(j, v, tag) || ...);
+    if (!matched)
+        throw nlohmann::json::parse_error::create(
+            302, 0, "unknown variant tag: " + std::string(tag), &j);
+}
+
+} // namespace detail
+
 // ---------------------------------------------------------------------------
 // OuterValueRequest / OuterValueResponse
 //

@@ -80,24 +80,9 @@ void to_json(nlohmann::json & j, const QueryVariant & q)
 
 void from_json(const nlohmann::json & j, QueryVariant & q)
 {
-    auto tag = j.at("tag").get<std::string_view>();
-    auto tryParse = [&]<typename T>() -> bool {
-        if (tag == T::tag) {
-            T val;
-            from_json(j, val);
-            q = std::move(val);
-            return true;
-        }
-        return false;
-    };
-    if (tryParse.template operator()<QueryExpr>() || tryParse.template operator()<QueryImport>()
-        || tryParse.template operator()<QueryGetAttr>()
-        || tryParse.template operator()<QueryGetListElem>()
-        || tryParse.template operator()<QueryGetFunctionInfo>()
-        || tryParse.template operator()<QueryGetWHNF>() || tryParse.template operator()<QueryApply>()
-        || tryParse.template operator()<QueryCallbackApply>())
-        return;
-    throw nlohmann::json::parse_error::create(302, 0, "unknown query tag: " + std::string(tag), &j);
+    /* Fold-based dispatch — see detail::fromJsonByTag. No
+       per-alternative enumeration here; the variant's Ts... drive it. */
+    detail::fromJsonByTag(j, q);
 }
 
 // ---------------------------------------------------------------------------
