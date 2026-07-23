@@ -132,9 +132,11 @@ class TracingWriter
         /** Current Q hash, updated on each observation that evolves the
             fromSubject's state. */
         Hash currentQ{HashAlgorithm::SHA256};
-        /** Q's serialisable payload. `from` gets rewritten as the
-            fromSubject's state evolves; re-hashing gives `currentQ`. */
-        nlohmann::json payloadTemplate;
+        /** Q's typed payload. `from` gets rewritten as the
+            fromSubject's state evolves; re-hashing gives `currentQ`.
+            Stored as `QueryVariant` so Q-evolution rewrites are
+            typed (`trace::rewriteFrom`) instead of raw JSON edits. */
+        trace::QueryVariant payloadTemplate;
         /** Subject that Q's `from` field's state hash is derived from.
             Not set for root queries or queries whose from is a fixed
             hash (state does not evolve for those). */
@@ -365,7 +367,7 @@ public:
             qj.dump());
         ActiveQuery aq;
         aq.currentQ = queryHash;
-        aq.payloadTemplate = qj;
+        aq.payloadTemplate = trace::QueryVariant{query};
         aq.queryTag = std::string(Q::tag);
         aq.initialPayloadTemplate = qj;
         aq.envAsksEdgesSizeAtPush = envAsksEdges.size();
@@ -406,7 +408,7 @@ public:
         }
         ActiveQuery aq;
         aq.currentQ = queryHash;
-        aq.payloadTemplate = qj;
+        aq.payloadTemplate = trace::QueryVariant{query};
         aq.fromSubject = std::move(fromSubject);
         aq.fromSubjectArgAncestry = fromSubjectArgAncestry;
         aq.fromSubjectLastState = lastState;
@@ -440,18 +442,10 @@ public:
                         aq.perQEnvWalk, aq.perQEnvWalk.size());
                     if (newState != aq.fromSubjectLastState) {
                         aq.fromSubjectLastState = newState;
-                        auto newFromHex = newState.to_string(HashFormat::Base16, false);
-                        if (aq.payloadTemplate.contains("params")
-                            && aq.payloadTemplate["params"].is_object()) {
-                            auto & p = aq.payloadTemplate["params"];
-                            if (p.contains("from"))
-                                p["from"] = newFromHex;
-                            if (p.contains("fromStateHashes")
-                                && p["fromStateHashes"].is_array()
-                                && !p["fromStateHashes"].empty())
-                                p["fromStateHashes"][0] = newFromHex;
-                        }
-                        aq.currentQ = hashString(HashAlgorithm::SHA256, aq.payloadTemplate.dump());
+                        trace::rewriteFrom(
+                            aq.payloadTemplate,
+                            newState.to_string(HashFormat::Base16, false));
+                        aq.currentQ = trace::computeQueryHash(aq.payloadTemplate);
                     }
                 }
             }
@@ -781,7 +775,7 @@ public:
            is a separate follow-up). */
         std::optional<nlohmann::json> subQueryPayload;
         if (!activeQueryStack.empty()) {
-            subQueryPayload = std::move(activeQueryStack.back().payloadTemplate);
+            subQueryPayload = trace::toJson(activeQueryStack.back().payloadTemplate);
             activeQueryStack.pop_back();
         }
 

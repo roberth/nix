@@ -805,4 +805,36 @@ std::optional<Hash> fromHashOf(const QueryVariant & query)
         query);
 }
 
+void rewriteFrom(QueryVariant & query, const std::string & newFromHex)
+{
+    std::visit(
+        [&](auto & q) {
+            using Q = std::decay_t<decltype(q)>;
+            if constexpr (requires { q.from; }) {
+                std::string ancestry = q.from.isStateHash() ? q.from.argAncestry() : std::string{};
+                q.from = QueryLeaf{StateHashLeaf{newFromHex, std::move(ancestry)}};
+            }
+            if constexpr (requires { q.fromStateHashes; }) {
+                if (!q.fromStateHashes.empty()) {
+                    auto & first = q.fromStateHashes[0];
+                    std::string ancestry = first.isStateHash() ? first.argAncestry() : std::string{};
+                    first = QueryLeaf{StateHashLeaf{newFromHex, std::move(ancestry)}};
+                }
+            }
+        },
+        query);
+}
+
+nlohmann::json toJson(const QueryVariant & query)
+{
+    nlohmann::json j;
+    std::visit([&](const auto & q) { j = q; }, query);
+    return j;
+}
+
+Hash computeQueryHash(const QueryVariant & query)
+{
+    return hashString(HashAlgorithm::SHA256, toJson(query).dump());
+}
+
 } // namespace nix::trace

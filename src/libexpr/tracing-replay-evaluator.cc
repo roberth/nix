@@ -39,7 +39,7 @@ std::optional<TracingReplayEvaluator::WalkResult>
 TracingReplayEvaluator::walk(
     const Hash & queryHash,
     std::shared_ptr<Object> currentProxy,
-    std::optional<nlohmann::json> payloadTemplate,
+    std::optional<trace::QueryVariant> payloadTemplate,
     std::optional<Subject> fromSubject,
     Hash fromSubjectArgAncestry)
 {
@@ -269,18 +269,9 @@ TracingReplayEvaluator::walk(
                       fromSubjectArgAncestry, perQEnvWalk](const Hash & preFoldQ) -> Hash {
             auto newState = stateHashAt(
                 *fromSubject, fromSubjectArgAncestry, *perQEnvWalk, perQEnvWalk->size());
-            auto newFromHex = newState.to_string(HashFormat::Base16, false);
-            nlohmann::json payload = *payloadTemplate;
-            if (payload.contains("params") && payload["params"].is_object()) {
-                auto & p = payload["params"];
-                if (p.contains("from"))
-                    p["from"] = newFromHex;
-                if (p.contains("fromStateHashes") && p["fromStateHashes"].is_array()
-                    && !p["fromStateHashes"].empty())
-                    p["fromStateHashes"][0] = newFromHex;
-            }
-            auto newQ = hashString(HashAlgorithm::SHA256, payload.dump());
-            return newQ;
+            trace::QueryVariant payload = *payloadTemplate;
+            trace::rewriteFrom(payload, newState.to_string(HashFormat::Base16, false));
+            return trace::computeQueryHash(payload);
         };
     }
 
@@ -945,13 +936,12 @@ std::optional<std::pair<std::string, TriePosition>>
 TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentProxy)
 {
     auto queryHash = TracingDecisionGraph::computeQueryHash(query);
-    /* Task #110: pass Q's payload JSON so the walker can re-derive
+    /* Task #110: pass Q's typed payload so the walker can re-derive
        Q's `from` field as observations dispatch. No subject is passed
        from lookup()'s template path — probes with applyResultSubject
        come through a different code path (TracingReplayObject) which
        calls walk() directly with the appropriate subject. */
-    nlohmann::json payloadJson = query;
-    auto walkResult = walk(queryHash, std::move(currentProxy), std::move(payloadJson));
+    auto walkResult = walk(queryHash, std::move(currentProxy), trace::QueryVariant{query});
     if (!walkResult)
         return std::nullopt;
     tracingCacheLog("replay hit: %s", Q::tag);

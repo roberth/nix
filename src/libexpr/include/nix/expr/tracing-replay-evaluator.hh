@@ -163,7 +163,7 @@ public:
     std::optional<WalkResult> walk(
         const Hash & queryHash,
         std::shared_ptr<Object> currentProxy = nullptr,
-        std::optional<nlohmann::json> payloadTemplate = std::nullopt,
+        std::optional<trace::QueryVariant> payloadTemplate = std::nullopt,
         std::optional<Subject> fromSubject = std::nullopt,
         Hash fromSubjectArgAncestry = Hash(HashAlgorithm::SHA256));
 

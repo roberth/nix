@@ -666,6 +666,27 @@ std::string describe(const QueryVariant & query);
 std::optional<Hash> fromHashOf(const QueryVariant & query);
 
 /**
+ * Rewrite a Query's `from` (and `fromStateHashes[0]` if present)
+ * to a new state hash — preserving any existing `argAncestry`
+ * attached to those leaves. Used by Q-evolution paths that update
+ * Q's identity as its fromSubject state advances. No-op on Queries
+ * with neither field (roots).
+ */
+void rewriteFrom(QueryVariant & query, const std::string & newFromHex);
+
+/**
+ * SHA-256 of the Query's JSON dump — the canonical queryHash used
+ * as its identity across the trace/store layer. Overload of the
+ * per-Q-type `computeQueryHash` on decision-graph, so callers
+ * holding a `QueryVariant` don't have to std::visit at every site.
+ */
+Hash computeQueryHash(const QueryVariant & query);
+
+/** Serialise a Query variant to its inner JSON payload
+    (`{"query": <tag>, "params": {...}}`). */
+nlohmann::json toJson(const QueryVariant & query);
+
+/**
  * Correlate queries with their results.
  * Builds a map from value handle to result index, then transforms
  * Query<T> entries into CompletedQuery<T> with the result index.

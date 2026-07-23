@@ -9,16 +9,6 @@
 
 namespace nix {
 
-namespace {
-void rewriteFromInQuery(nlohmann::json & queryJson, const std::string & fromHex)
-{
-    if (queryJson.is_object() && queryJson.contains("params")) {
-        auto & params = queryJson["params"];
-        if (params.is_object() && params.contains("from"))
-            params["from"] = fromHex;
-    }
-}
-} // namespace
 
 void TracingWriter::logOuterObservation(
     const trace::QueryVariant & query,
@@ -60,13 +50,18 @@ void TracingWriter::logOuterObservation(
         describe(subject), queryTag, fromHex.substr(0, 12),
         path.steps.size(), fromStateHashes.size());
 
-    nlohmann::json queryJson;
-    std::visit([&](const auto & q) { queryJson = q; }, query);
-    rewriteFromInQuery(queryJson, fromHex);
-    if (!path.steps.empty())
-        queryJson["params"]["path"] = path;
-    if (!fromStateHashes.empty())
-        queryJson["params"]["fromStateHashes"] = fromStateHashes;
+    trace::QueryVariant stampedQuery = query;
+    std::visit(
+        [&](auto & q) {
+            using Q = std::decay_t<decltype(q)>;
+            if constexpr (requires { q.from; })
+                q.from = trace::QueryLeaf{trace::StateHashLeaf{fromHex, {}}};
+            if constexpr (requires { q.path = path; }) q.path = path;
+            if constexpr (requires { q.fromStateHashes = fromStateHashes; })
+                q.fromStateHashes = fromStateHashes;
+        },
+        stampedQuery);
+    nlohmann::json queryJson = trace::toJson(stampedQuery);
     nlohmann::json resultJson;
     std::visit([&](const auto & r) { resultJson = r; }, result);
 
@@ -106,12 +101,18 @@ void TracingWriter::logOuterObservation(
                 initStateHash.to_string(HashFormat::Base16, false));
         }
         std::string initialFromHex = initialFromStateHashes[0].stateHash();
-        nlohmann::json initialQueryJson;
-        std::visit([&](const auto & q) { initialQueryJson = q; }, query);
-        rewriteFromInQuery(initialQueryJson, initialFromHex);
-        if (!path.steps.empty())
-            initialQueryJson["params"]["path"] = path;
-        initialQueryJson["params"]["fromStateHashes"] = initialFromStateHashes;
+        trace::QueryVariant initialStamped = query;
+        std::visit(
+            [&](auto & q) {
+                using Q = std::decay_t<decltype(q)>;
+                if constexpr (requires { q.from; })
+                    q.from = trace::QueryLeaf{trace::StateHashLeaf{initialFromHex, {}}};
+                if constexpr (requires { q.path = path; }) q.path = path;
+                if constexpr (requires { q.fromStateHashes = initialFromStateHashes; })
+                    q.fromStateHashes = initialFromStateHashes;
+            },
+            initialStamped);
+        nlohmann::json initialQueryJson = trace::toJson(initialStamped);
         auto initialReqHash = hashString(
             HashAlgorithm::SHA256, initialQueryJson.dump());
         if (initialReqHash != queryHash) {
@@ -193,16 +194,10 @@ void TracingWriter::logOuterObservation(
                 aq.perQEnvWalk, aq.perQEnvWalk.size());
             if (newState != aq.fromSubjectLastState) {
                 aq.fromSubjectLastState = newState;
-                auto newFromHex = newState.to_string(HashFormat::Base16, false);
-                if (aq.payloadTemplate.contains("params") && aq.payloadTemplate["params"].is_object()) {
-                    auto & p = aq.payloadTemplate["params"];
-                    if (p.contains("from"))
-                        p["from"] = newFromHex;
-                    if (p.contains("fromStateHashes") && p["fromStateHashes"].is_array()
-                        && !p["fromStateHashes"].empty())
-                        p["fromStateHashes"][0] = newFromHex;
-                }
-                auto newQ = hashString(HashAlgorithm::SHA256, aq.payloadTemplate.dump());
+                trace::rewriteFrom(
+                    aq.payloadTemplate,
+                    newState.to_string(HashFormat::Base16, false));
+                auto newQ = trace::computeQueryHash(aq.payloadTemplate);
                 tracingCacheLog(
                     "Q-evolution: Q %s -> %s (fromSubject state %s)",
                     aq.currentQ.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -273,17 +268,10 @@ void TracingWriter::logCompositeSubQ(
             parent.perQEnvWalk, parent.perQEnvWalk.size());
         if (newState != parent.fromSubjectLastState) {
             parent.fromSubjectLastState = newState;
-            auto newFromHex = newState.to_string(HashFormat::Base16, false);
-            if (parent.payloadTemplate.contains("params")
-                && parent.payloadTemplate["params"].is_object()) {
-                auto & p = parent.payloadTemplate["params"];
-                if (p.contains("from"))
-                    p["from"] = newFromHex;
-                if (p.contains("fromStateHashes") && p["fromStateHashes"].is_array()
-                    && !p["fromStateHashes"].empty())
-                    p["fromStateHashes"][0] = newFromHex;
-            }
-            parent.currentQ = hashString(HashAlgorithm::SHA256, parent.payloadTemplate.dump());
+            trace::rewriteFrom(
+                parent.payloadTemplate,
+                newState.to_string(HashFormat::Base16, false));
+            parent.currentQ = trace::computeQueryHash(parent.payloadTemplate);
         }
     }
 }

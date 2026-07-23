@@ -126,7 +126,7 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
     }
     auto walkResult = evaluator.walk(
         queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this(),
-        qj, std::move(fromSubject), fromSubjectArgAncestry);
+        trace::QueryVariant{query}, std::move(fromSubject), fromSubjectArgAncestry);
     if (!walkResult) {
         tracingCacheLog("walker lookup: %s MISS Q=%s",
                         Q::tag,
@@ -164,7 +164,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
     }
     auto walkResult = evaluator.walk(
         queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this(),
-        qj, std::move(fromSubject), fromSubjectArgAncestry);
+        trace::QueryVariant{query}, std::move(fromSubject), fromSubjectArgAncestry);
     if (!walkResult) {
         tracingCacheLog("walker lookup: %s MISS Q=%s",
                         Q::tag,
