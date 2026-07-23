@@ -214,6 +214,80 @@ void TracingWriter::logOuterObservation(
     }
 }
 
+void TracingWriter::logCompositeSubQ(
+    const nlohmann::json & subQueryPayload,
+    Hash subQueryHash,
+    const nlohmann::json & subResultPayload,
+    Hash subResultHash)
+{
+    if (!decisionGraph || activeQueryStack.empty())
+        return;
+
+    auto payloadCbor = jsonToCborString(subQueryPayload);
+    /* subQueryHash = SHA(payload.dump()) already by construction —
+       sub-Q's finalQ. Store the payload in the Requests pool. */
+    decisionGraph->insertRequest(subQueryHash, payloadCbor);
+
+    auto elementHash = TracingDecisionGraph::xorFactIntoHash(
+        Hash(HashAlgorithm::SHA256), subQueryHash, subResultHash);
+    auto factHash = elementHash;
+
+    if (!seenRequests.insert(factHash).second)
+        return;
+
+    envFactSet.push_back({subQueryHash, subResultHash});
+    envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
+        envFactSetHash, subQueryHash, subResultHash);
+    responseFor.emplace(subQueryHash, subResultHash);
+    sessionRequestsTrie.insert(subQueryHash);
+    allRequestHashes.insert(subQueryHash);
+
+    auto requestSetHash = decisionGraph->insertRequestSet({subQueryHash});
+    auto & parent = activeQueryStack.back();
+    decisionGraph->insertAsk(parent.currentQ, prevQFactSetHash, requestSetHash);
+    envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
+
+    /* fromHash=0: stateHashAt's `obs.fromHash == subject.stateHash`
+       filter never matches any real Subject, so the composite advances
+       cur but doesn't perturb any Subject's own-loop. Same-shape sub-Qs
+       produce identical (request, response) pairs and dedup above. */
+    ObservationSet obsSet;
+    obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), elementHash});
+    envWalk.push_back(obsSet);
+    parent.perQEnvWalk.push_back(std::move(obsSet));
+    tracingCacheLog(
+        "logCompositeSubQ: parent Q=%s from=%s req=%s (env=%zu)",
+        parent.currentQ.to_string(HashFormat::Base16, false).substr(0, 12),
+        prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        subQueryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        envWalk.size());
+    prevQFactSetHash = envFactSetHash;
+
+    /* Parent Q-evolution rederivation — mirrors logOuterObservation.
+       With obs.fromHash=0 no real Subject's own-loop matches, so
+       parent.fromSubject state won't advance and the newQ block is a
+       no-op in practice — but kept for structural symmetry. */
+    if (parent.fromSubject) {
+        auto newState = stateHashAt(
+            *parent.fromSubject, parent.fromSubjectArgAncestry,
+            parent.perQEnvWalk, parent.perQEnvWalk.size());
+        if (newState != parent.fromSubjectLastState) {
+            parent.fromSubjectLastState = newState;
+            auto newFromHex = newState.to_string(HashFormat::Base16, false);
+            if (parent.payloadTemplate.contains("params")
+                && parent.payloadTemplate["params"].is_object()) {
+                auto & p = parent.payloadTemplate["params"];
+                if (p.contains("from"))
+                    p["from"] = newFromHex;
+                if (p.contains("fromStateHashes") && p["fromStateHashes"].is_array()
+                    && !p["fromStateHashes"].empty())
+                    p["fromStateHashes"][0] = newFromHex;
+            }
+            parent.currentQ = hashString(HashAlgorithm::SHA256, parent.payloadTemplate.dump());
+        }
+    }
+}
+
 void TracingWriter::flushPending(bool processApplies)
 {
     if (!decisionGraph)

@@ -155,6 +155,10 @@ class TracingWriter
             same fromSubject-initial-state evolve to the same finalQ
             because they see the same fold from their own chains. */
         std::vector<ObservationSet> perQEnvWalk;
+        /** B2 composite emission: sub-Q's on-the-wire query tag,
+            captured at logQuery for use at logResult when synthesising
+            the composite request payload for the parent. */
+        std::string queryTag;
     };
     std::vector<ActiveQuery> activeQueryStack;
     /* Mirrors `seenRequests` but keyed by query hash, not fact hash.
@@ -358,6 +362,7 @@ public:
         ActiveQuery aq;
         aq.currentQ = queryHash;
         aq.payloadTemplate = qj;
+        aq.queryTag = std::string(Q::tag);
         activeQueryStack.push_back(std::move(aq));
         return {valueNum, {queryHash}};
     }
@@ -400,6 +405,7 @@ public:
         aq.fromSubjectArgAncestry = fromSubjectArgAncestry;
         aq.fromSubjectLastState = lastState;
         aq.structuralParentFactSetHash = qh.structuralParentFactSetHash;
+        aq.queryTag = std::string(Q::tag);
         activeQueryStack.push_back(std::move(aq));
         return {valueNum, qh};
     }
@@ -476,6 +482,26 @@ public:
         const trace::ResultVariant & result,
         Subject subject,
         Hash argAncestry = Hash(HashAlgorithm::SHA256));
+
+    /**
+     * B2 composite sub-Q emission. Records a single fact against the
+     * innermost active Q — the parent, since this is called from
+     * logResult AFTER the sub-Q's frame has been popped — using the
+     * completed sub-Q's finalQ payload verbatim (no re-stamping) as
+     * the request and its resultHash as the response.
+     *
+     * fromHash on the pushed observation is zero: stateHashAt's
+     * `obs.fromHash == subject.stateHash` filter never matches any
+     * real Subject, so the composite folds into parent's cur / env
+     * but doesn't perturb any Subject's own-loop. Same-shape sub-Qs
+     * produce identical (request, response) pairs and dedup via
+     * seenRequests.
+     */
+    void logCompositeSubQ(
+        const nlohmann::json & subQueryPayload,
+        Hash subQueryHash,
+        const nlohmann::json & subResultPayload,
+        Hash subResultHash);
 
     /**
      * Record one observation the outer made on a callback firing's
@@ -688,38 +714,31 @@ public:
         decisionGraph->installFactSet(envFactSetHash, envFactSet);
         sessionRequestsTrie.persist(*decisionGraph);
 
-        /* Task #110: Ask edges attributed to innermost Q were inserted
-           at observation time. For this Q's chain to be complete,
-           also insert every session Ask edge under this Q's finalQ —
-           parent Q's walker needs to bridge startCur→envFactSet via
-           the same obs sub-Qs saw. INSERT OR IGNORE deduplicates. Q
-           evolution stays per-Q (using perQEnvWalk); Ask coverage is
-           session-wide. */
         Hash finalQ = activeQueryStack.empty()
             ? *qh.queryHash
             : activeQueryStack.back().currentQ;
-        tracingCacheLog("logResult: Q_initial=%s Q_final=%s factSet=%s -> result (bridging %zu Asks)",
+        tracingCacheLog("logResult: Q_initial=%s Q_final=%s factSet=%s -> result",
                         qh.queryHash->to_string(HashFormat::Base16, false).substr(0, 12),
                         finalQ.to_string(HashFormat::Base16, false).substr(0, 12),
-                        envFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                        envAsksEdges.size());
-        for (const auto & edge : envAsksEdges)
-            decisionGraph->insertAsk(finalQ, edge.fromFactSetHash, edge.requestSetHash);
+                        envFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12));
         decisionGraph->insertTerminal(finalQ, envFactSetHash, resultNodeHash);
 
-        /* Empty-envAsksEdges case (Q's evaluation produced no
-           observations that got attributed to it): still need an Ask
-           from the parent's terminalCur (or ∅) to this Terminal, so
-           the walker can find it via `startCur`. Insert a single
-           "empty" edge at (Q_final, startFactSetHash) with an empty
-           requestSet — the walker would treat this as "advance to
-           envFactSetHash without dispatching anything." Actually
-           there's no observation to advance by, so this only fires
-           when startFactSetHash == envFactSetHash, in which case
-           Terminal is directly reachable and no Ask edge is needed. */
-
-        if (!activeQueryStack.empty())
+        /* B2: capture sub-Q's evolved payload so we can emit a
+           composite observation against the parent Q (if one
+           remains) after popping this frame. Composite is one fact
+           folded into session-cumulative envFactSetHash, per
+           Foundational 9. Retires the session-cumulative
+           envAsksEdges bridging (composite replaces its role
+           semantically, but landing-chain reachability from ∅/anchor
+           is a separate follow-up). */
+        std::optional<nlohmann::json> subQueryPayload;
+        if (!activeQueryStack.empty()) {
+            subQueryPayload = std::move(activeQueryStack.back().payloadTemplate);
             activeQueryStack.pop_back();
+        }
+
+        if (subQueryPayload && !activeQueryStack.empty())
+            logCompositeSubQ(*subQueryPayload, finalQ, j, resultNodeHash);
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,
