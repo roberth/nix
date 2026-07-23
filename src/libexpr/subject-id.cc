@@ -366,13 +366,13 @@ Hash producerQueryHashAt(
     nlohmann::json qj;
     if (derived.kind == DerivedSubject::Kind::GetAttr) {
         trace::QueryGetAttr q{derived.name, fromLeaf};
-        q.path = pathToParent;
-        q.fromStateHashes = fromStateHashes;
+        q.perArgFrame.path = pathToParent;
+        q.perArgFrame.fromStateHashes = fromStateHashes;
         qj = q;
     } else {
         trace::QueryGetListElem q{fromLeaf, derived.index};
-        q.path = pathToParent;
-        q.fromStateHashes = fromStateHashes;
+        q.perArgFrame.path = pathToParent;
+        q.perArgFrame.fromStateHashes = fromStateHashes;
         qj = q;
     }
     return hashString(HashAlgorithm::SHA256, qj.dump());

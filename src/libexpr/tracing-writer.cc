@@ -56,8 +56,11 @@ void TracingWriter::logOuterObservation(
             using Q = std::decay_t<decltype(q)>;
             if constexpr (requires { q.from; })
                 q.from = trace::QueryLeaf{trace::StateHashLeaf{fromHex, {}}};
-            if constexpr (requires { q.path = path; }) q.path = path;
-            if constexpr (requires { q.fromStateHashes = fromStateHashes; })
+            if constexpr (requires { q.perArgFrame; }) {
+                q.perArgFrame.path = path;
+                q.perArgFrame.fromStateHashes = fromStateHashes;
+            }
+            if constexpr (requires { q.fromStateHashes = fromStateHashes; })  // QueryApply
                 q.fromStateHashes = fromStateHashes;
         },
         stampedQuery);
@@ -107,8 +110,11 @@ void TracingWriter::logOuterObservation(
                 using Q = std::decay_t<decltype(q)>;
                 if constexpr (requires { q.from; })
                     q.from = trace::QueryLeaf{trace::StateHashLeaf{initialFromHex, {}}};
-                if constexpr (requires { q.path = path; }) q.path = path;
-                if constexpr (requires { q.fromStateHashes = initialFromStateHashes; })
+                if constexpr (requires { q.perArgFrame; }) {
+                    q.perArgFrame.path = path;
+                    q.perArgFrame.fromStateHashes = initialFromStateHashes;
+                }
+                if constexpr (requires { q.fromStateHashes = initialFromStateHashes; })  // QueryApply
                     q.fromStateHashes = initialFromStateHashes;
             },
             initialStamped);

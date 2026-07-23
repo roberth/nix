@@ -605,7 +605,12 @@ public:
                     q.from = fromStateHashes.empty()
                         ? trace::QueryLeaf{std::string{}}
                         : fromStateHashes[0];
-                    q.path = par.path;
+                }
+                if constexpr (requires { q.perArgFrame; }) {
+                    q.perArgFrame.path = par.path;
+                    q.perArgFrame.fromStateHashes = fromStateHashes;
+                }
+                if constexpr (requires { q.fromStateHashes = fromStateHashes; }) {  // QueryApply
                     q.fromStateHashes = fromStateHashes;
                 }
             }, stampedQuery);

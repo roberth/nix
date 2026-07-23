@@ -343,6 +343,27 @@ struct PathExpr
 void to_json(nlohmann::json & j, const PathExpr & p);
 void from_json(const nlohmann::json & j, PathExpr & p);
 
+/**
+ * `PerArgFrame`: the shared "reference to parent via cb_arg roots" pair
+ * that four Query types (GetAttr, GetListElem, GetWHNF,
+ * GetFunctionInfo) all carry. `fromStateHashes[i]` is the state hash
+ * of cb_arg root `i`; `path` describes the navigation from those roots
+ * to this observation.
+ *
+ * Extracted into its own struct so each of those Queries' to_json/
+ * from_json embeds one field (`perArgFrame`) instead of duplicating
+ * the same conditional emit/parse block.
+ */
+struct PerArgFrame
+{
+    std::vector<QueryLeaf> fromStateHashes;
+    PathExpr path;
+    auto operator<=>(const PerArgFrame &) const = default;
+};
+
+void to_json(nlohmann::json & j, const PerArgFrame & f);
+void from_json(const nlohmann::json & j, PerArgFrame & f);
+
 // ---------------------------------------------------------------------------
 // Query payload types and their result mappings
 // ---------------------------------------------------------------------------
@@ -374,9 +395,8 @@ struct QueryGetAttr
 {
     static constexpr std::string_view tag = "getAttr";
     std::string name;
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by perArgFrame.fromStateHashes)
+    PerArgFrame perArgFrame;
     auto operator<=>(const QueryGetAttr &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetAttr, ResultWHNF)
@@ -388,10 +408,9 @@ DECLARE_QUERY_RESULT(QueryGetAttr, ResultWHNF)
 struct QueryGetListElem
 {
     static constexpr std::string_view tag = "getListElem";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by perArgFrame.fromStateHashes)
     size_t index;
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
+    PerArgFrame perArgFrame;
     auto operator<=>(const QueryGetListElem &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetListElem, ResultWHNF)
@@ -406,8 +425,7 @@ struct QueryGetWHNF
 {
     static constexpr std::string_view tag = "getWHNF";
     QueryLeaf from;
-    std::vector<QueryLeaf> fromStateHashes;
-    PathExpr path;
+    PerArgFrame perArgFrame;
     auto operator<=>(const QueryGetWHNF &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetWHNF, ResultWHNF)
@@ -416,9 +434,8 @@ DECLARE_QUERY_RESULT(QueryGetWHNF, ResultWHNF)
 struct QueryGetFunctionInfo
 {
     static constexpr std::string_view tag = "getFunctionInfo";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by perArgFrame.fromStateHashes)
+    PerArgFrame perArgFrame;
     auto operator<=>(const QueryGetFunctionInfo &) const = default;
 };
 
@@ -499,6 +516,10 @@ struct QueryCallbackApply
         `fn` for this apply and doesn't belong at envelope level. */
     QueryLeaf fn;
     std::string argObsSet;     ///< Content hash of the observation set
+    /** fn's per-arg description — the cb_arg roots and the path from
+        them to fn's Subject. Walker uses these to resolve fn live via
+        subject-navigation when the state-hash-only lookup misses. */
+    PerArgFrame perArgFrame;
     auto operator<=>(const QueryCallbackApply &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryCallbackApply, ResultWHNF)

@@ -48,8 +48,8 @@ static Hash stampPerArgFields(
     query.from = fromStateHashes.empty()
         ? trace::QueryLeaf{std::string{}}
         : fromStateHashes[0];
-    query.path = std::move(par.path);
-    query.fromStateHashes = std::move(fromStateHashes);
+    query.perArgFrame.path = std::move(par.path);
+    query.perArgFrame.fromStateHashes = std::move(fromStateHashes);
     return fromStateHash;
 }
 

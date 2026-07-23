@@ -348,33 +348,28 @@ void from_json(const nlohmann::json & j, PathExpr & p)
 }
 
 // ---------------------------------------------------------------------------
-// Query payload serialization
+// PerArgFrame serialization
 // ---------------------------------------------------------------------------
 
-/* Conditional emission for the new path-carrying fields. Empty
-   `fromStateHashes` / `path` are omitted so existing serialized forms (=
-   pre-#86 fields) hash byte-identically to before. Emitters that
-   wire path through populate one or both; consumers read them back
-   tolerantly. */
-static void emitPathAndFromStateHashes(
-    nlohmann::json & params,
-    const std::vector<QueryLeaf> & fromStateHashes,
-    const PathExpr & path)
+void to_json(nlohmann::json & j, const PerArgFrame & f)
 {
-    if (!fromStateHashes.empty()) params["fromStateHashes"] = fromStateHashes;
-    if (!path.steps.empty()) params["path"] = path;
+    j = nlohmann::json{
+        {"fromStateHashes", f.fromStateHashes},
+        {"path", f.path}};
 }
 
-static void parsePathAndFromStateHashes(
-    const nlohmann::json & params,
-    std::vector<QueryLeaf> & fromStateHashes,
-    PathExpr & path)
+void from_json(const nlohmann::json & j, PerArgFrame & f)
 {
-    fromStateHashes.clear();
-    path = {};
-    if (params.contains("fromStateHashes")) params.at("fromStateHashes").get_to(fromStateHashes);
-    if (params.contains("path")) params.at("path").get_to(path);
+    f = {};
+    if (j.contains("fromStateHashes"))
+        j.at("fromStateHashes").get_to(f.fromStateHashes);
+    if (j.contains("path"))
+        j.at("path").get_to(f.path);
 }
+
+// ---------------------------------------------------------------------------
+// Query payload serialization
+// ---------------------------------------------------------------------------
 
 void to_json(nlohmann::json & j, const QueryExpr & q)
 {
@@ -399,40 +394,43 @@ void from_json(const nlohmann::json & j, QueryImport & q)
 
 void to_json(nlohmann::json & j, const QueryGetAttr & q)
 {
-    j = nlohmann::json{{"query", QueryGetAttr::tag}, {"params", {{"name", q.name}, {"from", q.from}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
+    j = nlohmann::json{
+        {"query", QueryGetAttr::tag},
+        {"params", {{"name", q.name}, {"from", q.from}, {"perArgFrame", q.perArgFrame}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetAttr & q)
 {
     j.at("params").at("name").get_to(q.name);
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
+    j.at("params").at("perArgFrame").get_to(q.perArgFrame);
 }
 
 void to_json(nlohmann::json & j, const QueryGetListElem & q)
 {
-    j = nlohmann::json{{"query", QueryGetListElem::tag}, {"params", {{"from", q.from}, {"index", q.index}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
+    j = nlohmann::json{
+        {"query", QueryGetListElem::tag},
+        {"params", {{"from", q.from}, {"index", q.index}, {"perArgFrame", q.perArgFrame}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetListElem & q)
 {
     j.at("params").at("from").get_to(q.from);
     j.at("params").at("index").get_to(q.index);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
+    j.at("params").at("perArgFrame").get_to(q.perArgFrame);
 }
 
 void to_json(nlohmann::json & j, const QueryGetFunctionInfo & q)
 {
-    j = nlohmann::json{{"query", QueryGetFunctionInfo::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
+    j = nlohmann::json{
+        {"query", QueryGetFunctionInfo::tag},
+        {"params", {{"from", q.from}, {"perArgFrame", q.perArgFrame}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetFunctionInfo & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
+    j.at("params").at("perArgFrame").get_to(q.perArgFrame);
 }
 
 void to_json(nlohmann::json & j, const ResultFunctionInfo & r)
@@ -449,14 +447,15 @@ void from_json(const nlohmann::json & j, ResultFunctionInfo & r)
 
 void to_json(nlohmann::json & j, const QueryGetWHNF & q)
 {
-    j = nlohmann::json{{"query", QueryGetWHNF::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
+    j = nlohmann::json{
+        {"query", QueryGetWHNF::tag},
+        {"params", {{"from", q.from}, {"perArgFrame", q.perArgFrame}}}};
 }
 
 void from_json(const nlohmann::json & j, QueryGetWHNF & q)
 {
     j.at("params").at("from").get_to(q.from);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
+    j.at("params").at("perArgFrame").get_to(q.perArgFrame);
 }
 
 void to_json(nlohmann::json & j, const QueryApply & q)
@@ -501,6 +500,7 @@ void to_json(nlohmann::json & j, const QueryCallbackApply & q)
         {"params", {
             {"fn", q.fn},
             {"argObsSet", q.argObsSet},
+            {"perArgFrame", q.perArgFrame},
         }}};
 }
 
@@ -508,6 +508,7 @@ void from_json(const nlohmann::json & j, QueryCallbackApply & q)
 {
     j.at("params").at("fn").get_to(q.fn);
     j.at("params").at("argObsSet").get_to(q.argObsSet);
+    j.at("params").at("perArgFrame").get_to(q.perArgFrame);
 }
 
 // ---------------------------------------------------------------------------
@@ -807,19 +808,22 @@ std::optional<Hash> fromHashOf(const QueryVariant & query)
 
 void rewriteFrom(QueryVariant & query, const std::string & newFromHex)
 {
+    auto rewriteLeaf = [&](QueryLeaf & leaf) {
+        std::string ancestry = leaf.isStateHash() ? leaf.argAncestry() : std::string{};
+        leaf = QueryLeaf{StateHashLeaf{newFromHex, std::move(ancestry)}};
+    };
     std::visit(
         [&](auto & q) {
             using Q = std::decay_t<decltype(q)>;
-            if constexpr (requires { q.from; }) {
-                std::string ancestry = q.from.isStateHash() ? q.from.argAncestry() : std::string{};
-                q.from = QueryLeaf{StateHashLeaf{newFromHex, std::move(ancestry)}};
+            if constexpr (requires { q.from; })
+                rewriteLeaf(q.from);
+            if constexpr (requires { q.perArgFrame; }) {
+                if (!q.perArgFrame.fromStateHashes.empty())
+                    rewriteLeaf(q.perArgFrame.fromStateHashes[0]);
             }
-            if constexpr (requires { q.fromStateHashes; }) {
-                if (!q.fromStateHashes.empty()) {
-                    auto & first = q.fromStateHashes[0];
-                    std::string ancestry = first.isStateHash() ? first.argAncestry() : std::string{};
-                    first = QueryLeaf{StateHashLeaf{newFromHex, std::move(ancestry)}};
-                }
+            if constexpr (requires { q.fromStateHashes; }) {  // QueryApply
+                if (!q.fromStateHashes.empty())
+                    rewriteLeaf(q.fromStateHashes[0]);
             }
         },
         query);

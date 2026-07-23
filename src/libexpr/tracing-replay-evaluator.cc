@@ -644,11 +644,21 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
 }
 
 
+/* `perArgFrame` accessor helpers — the sub-object is the standard
+   home for `fromStateHashes` + `path`; the top-level `fromStateHashes`
+   variant is only for QueryApply. */
+static const nlohmann::json * perArgFrameOf(const nlohmann::json & params)
+{
+    if (params.contains("perArgFrame") && params["perArgFrame"].is_object())
+        return &params["perArgFrame"];
+    return nullptr;
+}
+
 static trace::PathExpr parsePathFromParams(const nlohmann::json & params)
 {
     trace::PathExpr path;
-    if (params.contains("path"))
-        from_json(params.at("path"), path);
+    if (auto * frame = perArgFrameOf(params); frame && frame->contains("path"))
+        from_json(frame->at("path"), path);
     return path;
 }
 
@@ -657,21 +667,34 @@ static std::vector<std::shared_ptr<Object>> resolveRoots(
     std::function<std::shared_ptr<Object>(const std::string &)> resolve)
 {
     std::vector<std::shared_ptr<Object>> roots;
-    if (params.contains("fromStateHashes")) {
-        for (auto & cid : params["fromStateHashes"]) {
+    auto tryRoots = [&](const nlohmann::json & arr) -> bool {
+        for (auto & cid : arr) {
             std::string cidHex;
             if (cid.is_string())
                 cidHex = cid.get<std::string>();
             else if (cid.is_object() && cid.contains("content"))
                 cidHex = cid["content"].get<std::string>();
+            else if (cid.is_object() && cid.contains("stateHash"))
+                cidHex = cid["stateHash"].get<std::string>();
             else
-                return {};
+                return false;
             auto obj = resolve(cidHex);
             if (!obj)
-                return {};
+                return false;
             roots.push_back(std::move(obj));
         }
-        return roots;
+        return true;
+    };
+    if (auto * frame = perArgFrameOf(params); frame && frame->contains("fromStateHashes")
+        && (*frame)["fromStateHashes"].is_array()) {
+        if (tryRoots((*frame)["fromStateHashes"]))
+            return roots;
+        return {};
+    }
+    if (params.contains("fromStateHashes") && params["fromStateHashes"].is_array()) {  // QueryApply
+        if (tryRoots(params["fromStateHashes"]))
+            return roots;
+        return {};
     }
     if (params.contains("from")) {
         auto obj = resolve(params["from"].get<std::string>());
@@ -729,7 +752,8 @@ static std::shared_ptr<Object> navigatePath(
 std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
     const std::string & idStr, const std::string & tag, const nlohmann::json & params, ResolutionContext & ctx)
 {
-    if (!params.contains("from") && !params.contains("fromStateHashes"))
+    if (!params.contains("from") && !params.contains("fromStateHashes")
+        && !params.contains("perArgFrame"))
         return nullptr;
 
     /* Per-arg multi-root: resolve each fromStateHashes[] entry to a live

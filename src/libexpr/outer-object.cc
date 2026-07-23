@@ -22,8 +22,8 @@ static void stampPerArgFields(Q & q, const Subject & subject, const Hash & argAn
         fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
     }
     q.from = fromStateHashes.empty() ? trace::QueryLeaf{std::string{}} : fromStateHashes[0];
-    q.path = std::move(par.path);
-    q.fromStateHashes = std::move(fromStateHashes);
+    q.perArgFrame.path = std::move(par.path);
+    q.perArgFrame.fromStateHashes = std::move(fromStateHashes);
 }
 
 OuterObject::OuterObject(
