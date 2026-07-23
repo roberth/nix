@@ -99,7 +99,6 @@ static void queryVariantFromJson(const nlohmann::json & j, QueryVariant & query)
     if (tryParse.template operator()<QueryExpr>() || tryParse.template operator()<QueryImport>()
         || tryParse.template operator()<QueryGetAttr>()
         || tryParse.template operator()<QueryGetListElem>()
-        || tryParse.template operator()<QueryGetListOfStrings>()
         || tryParse.template operator()<QueryGetFunctionInfo>()
         || tryParse.template operator()<QueryGetWHNF>() || tryParse.template operator()<QueryApply>()
         || tryParse.template operator()<QueryCallbackApply>())
@@ -132,8 +131,6 @@ static void resultVariantFromJson(const nlohmann::json & j, ResultVariant & resu
 
     if (tryParse((ResultWHNF *) nullptr))
         return;
-    if (tryParse((ResultListOfStrings *) nullptr))
-        return;
     throw nlohmann::json::parse_error::create(302, 0, "could not parse outer result", &j);
 }
 
@@ -160,16 +157,6 @@ void from_json(const nlohmann::json & j, OuterValueResponse & r)
 // ---------------------------------------------------------------------------
 // Result payload serialization
 // ---------------------------------------------------------------------------
-
-void to_json(nlohmann::json & j, const ResultListOfStrings & r)
-{
-    j = nlohmann::json{{"values", r.values}};
-}
-
-void from_json(const nlohmann::json & j, ResultListOfStrings & r)
-{
-    j.at("values").get_to(r.values);
-}
 
 /* ResultWHNF: `type` is the discriminator; `payload`'s variant
    alternative is selected by it. The JSON shape is a flat object
@@ -416,18 +403,6 @@ void from_json(const nlohmann::json & j, QueryGetListElem & q)
     parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
 }
 
-void to_json(nlohmann::json & j, const QueryGetListOfStrings & q)
-{
-    j = nlohmann::json{{"query", QueryGetListOfStrings::tag}, {"params", {{"from", q.from}}}};
-    emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
-}
-
-void from_json(const nlohmann::json & j, QueryGetListOfStrings & q)
-{
-    j.at("params").at("from").get_to(q.from);
-    parsePathAndFromStateHashes(j.at("params"), q.fromStateHashes, q.path);
-}
-
 void to_json(nlohmann::json & j, const QueryGetFunctionInfo & q)
 {
     j = nlohmann::json{{"query", QueryGetFunctionInfo::tag}, {"params", {{"from", q.from}}}};
@@ -584,8 +559,6 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
             return r;
         if (auto r = tryParseQuery<QueryGetListElem>(type, j))
             return r;
-        if (auto r = tryParseQuery<QueryGetListOfStrings>(type, j))
-            return r;
         if (auto r = tryParseQuery<QueryGetWHNF>(type, j))
             return r;
         if (auto r = tryParseQuery<QueryGetFunctionInfo>(type, j))
@@ -602,11 +575,6 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
         auto & r = j["result"];
         if (r.contains("type")) {
             Result<ResultWHNF> e;
-            from_json(j, e);
-            return e;
-        }
-        if (r.contains("values")) {
-            Result<ResultListOfStrings> e;
             from_json(j, e);
             return e;
         }
@@ -632,10 +600,8 @@ constexpr size_t resultTypeIndex()
 {
     if constexpr (std::is_same_v<T, ResultWHNF>)
         return 0;
-    else if constexpr (std::is_same_v<T, ResultListOfStrings>)
-        return 1;
     else if constexpr (std::is_same_v<T, ResultFunctionInfo>)
-        return 2;
+        return 1;
     else
         return ~size_t(0);
 }

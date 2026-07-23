@@ -178,12 +178,6 @@ void from_json(const nlohmann::json & j, Result<T> & r)
 // Result payload types
 // ---------------------------------------------------------------------------
 
-/** Result containing a list of strings. */
-struct ResultListOfStrings
-{
-    std::vector<std::string> values;
-};
-
 /** Payload alternatives for `ResultWHNF`. One per Nix WHNF type.
     `WHNFFunction` / `WHNFNull` are tag-only (the value is entirely
     identified by its type — functions are represented indirectly
@@ -393,17 +387,6 @@ struct QueryGetListElem
 };
 DECLARE_QUERY_RESULT(QueryGetListElem, ResultWHNF)
 
-/** Get a list of strings (no context). */
-struct QueryGetListOfStrings
-{
-    static constexpr std::string_view tag = "getListOfStrings";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
-    auto operator<=>(const QueryGetListOfStrings &) const = default;
-};
-DECLARE_QUERY_RESULT(QueryGetListOfStrings, ResultListOfStrings)
-
 /** Force a value to WHNF and read its type + type-determined payload
     in one shot. Used by the cache-layer Objects to combine what would
     otherwise be separate getType + getInt/getString/etc. observations
@@ -550,7 +533,6 @@ using Queries = ApplyWrapper<
     QueryImport,
     QueryGetAttr,
     QueryGetListElem,
-    QueryGetListOfStrings,
     QueryGetFunctionInfo,
     QueryGetWHNF,
     QueryApply,
@@ -562,7 +544,6 @@ using Queries = ApplyWrapper<
 template<template<typename> class F>
 using Results = ApplyWrapper<
     F,
-    ResultListOfStrings,
     ResultFunctionInfo,
     ResultWHNF>;
 
@@ -575,14 +556,12 @@ using QueryVariant = std::variant<
     QueryImport,
     QueryGetAttr,
     QueryGetListElem,
-    QueryGetListOfStrings,
     QueryGetFunctionInfo,
     QueryGetWHNF,
     QueryApply,
     QueryCallbackApply>;
 
 using ResultVariant = std::variant<
-    ResultListOfStrings,
     ResultFunctionInfo,
     ResultWHNF>;
 

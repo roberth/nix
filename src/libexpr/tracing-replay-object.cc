@@ -421,18 +421,6 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
     return ensureInner()->getListElem(idx);
 }
 
-std::vector<std::string> TracingReplayObject::getListOfStringsNoCtx()
-{
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetListOfStrings query{parentHash};
-    if (auto r = lookupResult<trace::QueryGetListOfStrings, trace::ResultListOfStrings>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
-        return r->first.values;
-    }
-    tracingCacheLog("replay fallback: getListOfStringsNoCtx");
-    return ensureInner()->getListOfStringsNoCtx();
-}
-
 ObjectType TracingReplayObject::getTypeLazy()
 {
     return getType();

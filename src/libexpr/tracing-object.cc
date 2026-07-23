@@ -324,24 +324,6 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     return child;
 }
 
-std::vector<std::string> TracingObject::getListOfStringsNoCtx()
-{
-    auto parentHash = evolvedQueryFrom();
-    trace::QueryGetListOfStrings query{parentHash};
-    std::optional<Subject> fromSubject;
-    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
-    if (applyResultSubject) {
-        fromSubject = *applyResultSubject;
-        fromSubjectArgAncestry = applyArgAncestry;
-    }
-    auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
-    auto result = inner->getListOfStringsNoCtx();
-    trace::ResultListOfStrings resJson{result};
-    auto tp = writer.logResult(valueId, resJson, qh);
-    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
-    return result;
-}
-
 ObjectType TracingObject::getTypeLazy()
 {
     auto lazyType = inner->getTypeLazy();

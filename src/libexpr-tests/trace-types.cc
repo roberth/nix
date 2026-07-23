@@ -206,7 +206,6 @@ TEST(TraceTypes, QueryTagConstants)
     EXPECT_EQ(QueryExpr::tag, "expr");
     EXPECT_EQ(QueryImport::tag, "import");
     EXPECT_EQ(QueryGetAttr::tag, "getAttr");
-    EXPECT_EQ(QueryGetListOfStrings::tag, "getListOfStrings");
     EXPECT_EQ(QueryGetListElem::tag, "getListElem");
     EXPECT_EQ(QueryGetWHNF::tag, "getWHNF");
     EXPECT_EQ(QueryGetFunctionInfo::tag, "getFunctionInfo");
