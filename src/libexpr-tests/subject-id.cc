@@ -130,8 +130,8 @@ TEST(CidAsks, XorCommutativityWithinEdge)
 
     trace::QueryGetWHNF q1{hex(initial)};
     trace::ResultWHNF r1{"int", trace::WHNFInt{1}};
-    trace::QueryHasAttr q2{"foo", hex(initial)};
-    trace::ResultHasAttr r2{false};
+    trace::QueryGetAttr q2{"foo", hex(initial)};
+    trace::ResultWHNF r2{"int", trace::WHNFInt{2}};
 
     auto f1 = observationFromQR(q1, r1);
     auto f2 = observationFromQR(q2, r2);

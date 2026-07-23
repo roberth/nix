@@ -121,10 +121,27 @@ void TracingObject::pushObservation(const std::string & fromHex, const Hash & qu
 
 std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
 {
-    /* Task #110: push ActiveQuery before forcing (see whnf() for
-       rationale). */
+    /* Existence folds through whnf(): parent's WHNFAttrs.names answers
+       "does this attr exist?" for any name — no has-attr observation
+       is recorded, and multiple maybeGetAttr calls on the same parent
+       share one whnf recording. Only when the attr is known to exist
+       do we issue a pure-retrieval QueryGetAttr, whose result is the
+       child's WHNF. */
+    auto & w = whnf();
+    auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
+    if (!p)
+        /* Parent isn't an attrs — delegate so inner can throw its
+           usual "getAttr on non-set" error with source position. */
+        return inner->maybeGetAttr(name);
+    if (std::find(p->names.begin(), p->names.end(), name) == p->names.end())
+        return nullptr;
+    auto innerChild = inner->maybeGetAttr(name);
+    if (!innerChild)
+        /* WHNF said the attr is present but inner disagrees — shouldn't
+           happen under matching-until-divergence. */
+        return nullptr;
     auto parentHash = evolvedQueryFrom();
-    trace::QueryHasAttr query{name, parentHash};
+    trace::QueryGetAttr query{name, parentHash};
     std::optional<Subject> fromSubject;
     Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
     if (applyResultSubject) {
@@ -132,38 +149,22 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
         fromSubjectArgAncestry = applyArgAncestry;
     }
     auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
-    auto result = inner->maybeGetAttr(name);
-    if (result) {
-        /* Record only existence, not the WHNF payload — the caller
-           forces WHNF via a separate probe when it actually needs
-           the value. Preserves order-independence for deep-indep
-           patterns. */
-        trace::ResultHasAttr resJson{true};
-        auto childTriePos = writer.logResult(valueId, resJson, qh);
-        if (qh.queryHash && childTriePos)
-            pushObservation(parentHash, *qh.queryHash, childTriePos->resultNodeHash);
-        auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
-        child->withArgCell(argCell);
-        if (applyContext) child->withApplyContext(applyContext);
-        /* B3 / B7 remaining: only cb-apply-origin chains propagate
-           applyResultSubject to children. Non-cb apply results (from
-           TracingEvaluator::apply) leave children order-independent —
-           otherwise evolvedQueryFrom would fold applyContext observations
-           into their `from` field and break order-invariance
-           (cb-deep-indep-orders). Cb-apply-origin descendants keep
-           applyResultSubject so their whnf emits QCA per §7. */
-        if (cbApplyOrigin) {
-            child->withCbApplyOrigin();
-            if (applyResultSubject)
-                child->withApplyResultSubject(*applyResultSubject, applyArgAncestry);
-        }
-        return child;
+    auto childWHNF = computeWHNFFromObject(*innerChild);
+    auto childTriePos = writer.logResult(valueId, childWHNF, qh);
+    if (qh.queryHash && childTriePos)
+        pushObservation(parentHash, *qh.queryHash, childTriePos->resultNodeHash);
+    auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(innerChild), writer, valueId, childTriePos));
+    child->cachedWHNF = std::move(childWHNF);
+    child->withArgCell(argCell);
+    if (applyContext) child->withApplyContext(applyContext);
+    /* Cb-apply-origin descendants propagate the marks so their whnf
+       emits QCA per §7 of the callback model. */
+    if (cbApplyOrigin) {
+        child->withCbApplyOrigin();
+        if (applyResultSubject)
+            child->withApplyResultSubject(*applyResultSubject, applyArgAncestry);
     }
-    trace::ResultHasAttr resJson{false};
-    auto tp = writer.logResult(valueId, resJson, qh);
-    if (qh.queryHash && tp)
-        pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
-    return nullptr;
+    return child;
 }
 
 trace::ResultWHNF & TracingObject::whnf()
@@ -285,6 +286,17 @@ size_t TracingObject::getListSize()
 
 std::shared_ptr<Object> TracingObject::getListElem(size_t index)
 {
+    /* Bounds fold through whnf(): parent's WHNFList.size answers
+       "is this index valid?" for any index — no bounds-check
+       observation is recorded. Only the retrieval itself
+       (QueryGetListElem, returning the child's WHNF) is a distinct
+       observation. */
+    auto & w = whnf();
+    auto * lp = std::get_if<trace::WHNFList>(&w.payload);
+    if (!lp || index >= lp->size)
+        /* Not a list, or index out of bounds — delegate so the
+           interpreter throws the source-positioned error. */
+        return inner->getListElem(index);
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetListElem query{parentHash, index};
     std::optional<Subject> fromSubject;
@@ -295,11 +307,12 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     }
     auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto result = inner->getListElem(index);
-    trace::ResultWHNF resJson = computeWHNFFromObject(*result);
-    auto childTriePos = writer.logResult(valueId, resJson, qh);
+    trace::ResultWHNF childWHNF = computeWHNFFromObject(*result);
+    auto childTriePos = writer.logResult(valueId, childWHNF, qh);
     if (qh.queryHash && childTriePos)
         pushObservation(parentHash, *qh.queryHash, childTriePos->resultNodeHash);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
+    child->cachedWHNF = std::move(childWHNF);
     child->withArgCell(argCell);
     if (applyContext) child->withApplyContext(applyContext);
     /* B3 / B7 remaining: same cb-apply-origin gating as maybeGetAttr. */

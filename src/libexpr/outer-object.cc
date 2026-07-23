@@ -39,12 +39,22 @@ OuterObject::OuterObject(
 
 std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
 {
-    trace::QueryHasAttr q{name, std::string{}};
+    /* Existence is projected from parent WHNFAttrs.names; only if
+       present do we issue the pure-retrieval QueryGetAttr. */
+    auto & w = whnf();
+    auto * ap = std::get_if<trace::WHNFAttrs>(&w.payload);
+    if (!ap)
+        /* Not an attrs — delegate so the outer's inner throws its
+           usual "getAttr on non-set" error. */
+        return outerObj->maybeGetAttr(name);
+    if (std::find(ap->names.begin(), ap->names.end(), name) == ap->names.end())
+        return nullptr;
+    trace::QueryGetAttr q{name, std::string{}};
     stampPerArgFields(q, subject, argAncestry);
     auto qr = queryFn(outerObj, q, subject, argAncestry);
-    auto * r = std::get_if<trace::ResultHasAttr>(&qr.result);
-    if (!r || !r->exists)
-        return nullptr;
+    auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
+    if (!r)
+        throw Error("outer maybeGetAttr: queryFn returned unexpected result type");
     if (!qr.child)
         throw Error("outer maybeGetAttr: queryFn didn't return a child Object");
     Subject childSubject{DerivedSubject{
@@ -58,6 +68,7 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     /* Inherit argAncestry so the child's `from` fields include
        the same state hash(Q) the parent uses. */
     child->withInheritedScope(argAncestry);
+    child->cachedWHNF = *r;
     return child;
 }
 
@@ -162,9 +173,20 @@ size_t OuterObject::getListSize()
 
 std::shared_ptr<Object> OuterObject::getListElem(size_t index)
 {
+    /* Bounds are projected from parent WHNFList.size; retrieval is
+       QueryGetListElem returning the child's WHNF. */
+    auto & w = whnf();
+    auto * lp = std::get_if<trace::WHNFList>(&w.payload);
+    if (!lp || index >= lp->size)
+        /* Not a list, or index out of bounds — delegate so the
+           outer's inner throws the source-positioned error. */
+        return outerObj->getListElem(index);
     trace::QueryGetListElem q{std::string{}, index};
     stampPerArgFields(q, subject, argAncestry);
     auto qr = queryFn(outerObj, q, subject, argAncestry);
+    auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
+    if (!r)
+        throw Error("outer getListElem: queryFn returned unexpected result type");
     if (!qr.child)
         throw Error("outer getListElem: queryFn didn't return a child Object");
     Subject childSubject{DerivedSubject{
@@ -176,6 +198,7 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     child->withInheritedScope(argAncestry);
+    child->cachedWHNF = *r;
     return child;
 }
 

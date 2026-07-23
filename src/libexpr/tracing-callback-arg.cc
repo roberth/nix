@@ -36,14 +36,21 @@ TracingCallbackArg::TracingCallbackArg(
 
 std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & name)
 {
+    /* Existence projects from parent WHNFAttrs.names; only when
+       present do we record QueryGetAttr (retrieval) with child WHNF. */
+    auto & w = whnf();
+    auto * ap = std::get_if<trace::WHNFAttrs>(&w.payload);
+    if (!ap)
+        /* Not an attrs — delegate so inner throws its
+           source-positioned "getAttr on non-set" error. */
+        return inner->maybeGetAttr(name);
+    if (std::find(ap->names.begin(), ap->names.end(), name) == ap->names.end())
+        return nullptr;
     auto child = inner->maybeGetAttr(name);
-    trace::QueryHasAttr query{name, tracingLocalFromOf(localId())};
-    auto resultJson = child
-        ? trace::ResultHasAttr{true}
-        : trace::ResultHasAttr{false};
-    recordObservation(query, resultJson);
     if (!child)
         return nullptr;
+    trace::QueryGetAttr query{name, tracingLocalFromOf(localId())};
+    recordObservation(query, computeWHNFFromObject(*child));
     Subject childSubject{DerivedSubject{
         .parent = std::make_shared<const Subject>(subject),
         .kind = DerivedSubject::Kind::GetAttr,
@@ -149,6 +156,14 @@ size_t TracingCallbackArg::getListSize()
 
 std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
 {
+    /* Bounds project from parent WHNFList.size; retrieval records
+       QueryGetListElem with child WHNF. */
+    auto & w = whnf();
+    auto * lp = std::get_if<trace::WHNFList>(&w.payload);
+    if (!lp || index >= lp->size)
+        /* Not a list, or index out of bounds — delegate so inner
+           throws the source-positioned error. */
+        return inner->getListElem(index);
     auto child = inner->getListElem(index);
     trace::QueryGetListElem query{tracingLocalFromOf(localId()), index};
     recordObservation(query, computeWHNFFromObject(*child));

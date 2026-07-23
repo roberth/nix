@@ -107,13 +107,19 @@ static void appendFactToWalk(
 
 std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name)
 {
-    trace::QueryHasAttr query{name, std::string{}};
+    /* Existence projects from parent WHNFAttrs.names (via whnf()
+       cache lookup); only when present do we consume the recorded
+       QueryGetAttr response. */
+    auto & w = whnf();
+    auto * ap = std::get_if<trace::WHNFAttrs>(&w.payload);
+    if (!ap)
+        return nullptr;
+    if (std::find(ap->names.begin(), ap->names.end(), name) == ap->names.end())
+        return nullptr;
+    trace::QueryGetAttr query{name, std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
-    trace::ResultHasAttr r = rJson;
-    if (!r.exists)
-        return nullptr;
     /* Child Subject is DerivedSubject of THIS subject — `stateHashAt`
        on the child will recompute parent's state hash at the child's
        current edge index, so any further parent observations are
@@ -126,6 +132,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     auto child = std::make_shared<ReplayCallbackArg>(
         std::move(childSubject), argAncestry, walkFacts,
         decisionGraph, rootFSRoot, state);
+    child->cachedWHNF = rJson.get<trace::ResultWHNF>();
     /* Derived children probe within the same callback firing, so
        the same obsSet serves their responses too. */
     if (obsSetResponses)
@@ -235,6 +242,12 @@ size_t ReplayCallbackArg::getListSize()
 
 std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
 {
+    /* Bounds project from parent WHNFList.size; retrieval consumes
+       the recorded QueryGetListElem response. */
+    auto & w = whnf();
+    auto * lp = std::get_if<trace::WHNFList>(&w.payload);
+    if (!lp || index >= lp->size)
+        throw Error("rlo getListElem: parent WHNF is %s, index %zu invalid", w.type, index);
     trace::QueryGetListElem query{std::string{}, index};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
@@ -247,6 +260,7 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
     auto child = std::make_shared<ReplayCallbackArg>(
         std::move(childSubject), argAncestry, walkFacts,
         decisionGraph, rootFSRoot, state);
+    child->cachedWHNF = rJson.get<trace::ResultWHNF>();
     child->withArgCell(argCell);
     if (applyDepth && applyArgAncestry)
         child->withApplyContext(*applyDepth, *applyArgAncestry);

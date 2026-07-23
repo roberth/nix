@@ -36,10 +36,25 @@ void TracingCallbackApplyResult::recordD2(const trace::QueryVariant & query, con
 
 std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::string & name)
 {
+    /* Existence is projected from parent WHNFAttrs.names; only when
+       present do we record the pure-retrieval QueryGetAttr with the
+       child's WHNF. Absence still requires a whnf recording so the
+       apply-result's WHNFAttrs.names is on the trace — that's what
+       future warm replays will project membership from. */
+    auto & w = whnf();
+    auto * ap = std::get_if<trace::WHNFAttrs>(&w.payload);
+    if (!ap)
+        /* Not an attrs — delegate so inner throws its
+           source-positioned "getAttr on non-set" error. */
+        return inner->maybeGetAttr(name);
+    if (std::find(ap->names.begin(), ap->names.end(), name) == ap->names.end())
+        return nullptr;
     auto child = inner->maybeGetAttr(name);
-    trace::QueryHasAttr q{name, std::string{}};
-    trace::ResultHasAttr r{child != nullptr};
-    recordD2(q, r);
+    if (!child)
+        return nullptr;
+    trace::QueryGetAttr q{name, std::string{}};
+    auto childWHNF = computeWHNFFromObject(*child);
+    recordD2(q, childWHNF);
     return child;
 }
 
@@ -134,6 +149,14 @@ size_t TracingCallbackApplyResult::getListSize()
 
 std::shared_ptr<Object> TracingCallbackApplyResult::getListElem(size_t index)
 {
+    /* Bounds are projected from parent WHNFList.size; retrieval is
+       QueryGetListElem returning the child's WHNF. */
+    auto & w = whnf();
+    auto * lp = std::get_if<trace::WHNFList>(&w.payload);
+    if (!lp || index >= lp->size)
+        /* Not a list, or index out of bounds — delegate so inner
+           throws the source-positioned error. */
+        return inner->getListElem(index);
     auto child = inner->getListElem(index);
     recordD2(
         trace::QueryGetListElem{std::string{}, index},

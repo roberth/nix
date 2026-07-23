@@ -32,13 +32,13 @@ static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const tr
                 throw Error("outer query: query type has no 'from' field");
             } else if constexpr (std::is_same_v<Q, trace::QueryGetWHNF>) {
                 return {computeWHNFFromObject(*obj), nullptr};
-            } else if constexpr (std::is_same_v<Q, trace::QueryHasAttr>) {
+            } else if constexpr (std::is_same_v<Q, trace::QueryGetAttr>) {
+                /* Pure retrieval — assumes existence (caller must
+                   have projected membership from parent WHNFAttrs). */
                 auto child = obj->maybeGetAttr(query.name);
                 if (!child)
-                    return {trace::ResultHasAttr{false}, nullptr};
-                return {
-                    trace::ResultHasAttr{true},
-                    std::move(child)};
+                    throw Error("outer getAttr: attr '%s' unexpectedly missing", query.name);
+                return {computeWHNFFromObject(*child), std::move(child)};
             } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
                 auto child = obj->getListElem(query.index);
                 return {computeWHNFFromObject(*child), std::move(child)};

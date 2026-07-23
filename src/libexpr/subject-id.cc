@@ -365,7 +365,7 @@ Hash producerQueryHashAt(
     auto fromLeaf = fromStateHashes.empty() ? trace::QueryLeaf("") : fromStateHashes[0];
     nlohmann::json qj;
     if (derived.kind == DerivedSubject::Kind::GetAttr) {
-        trace::QueryHasAttr q{derived.name, fromLeaf};
+        trace::QueryGetAttr q{derived.name, fromLeaf};
         q.path = pathToParent;
         q.fromStateHashes = fromStateHashes;
         qj = q;

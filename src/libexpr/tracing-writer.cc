@@ -96,7 +96,7 @@ void TracingWriter::logOuterObservation(
 
     /* Secondary index for producer queries — see comment on the
        original loop for the reasoning. Preserved verbatim. */
-    if ((queryTag == "hasAttr" || queryTag == "getListElem") && !roots.empty()) {
+    if ((queryTag == "getAttr" || queryTag == "getListElem") && !roots.empty()) {
         std::vector<trace::QueryLeaf> initialFromStateHashes;
         initialFromStateHashes.reserve(roots.size());
         for (auto & root : roots) {

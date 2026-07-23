@@ -767,7 +767,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
 
     std::shared_ptr<Object> child;
     try {
-        if (tag == "hasAttr") {
+        if (tag == "getAttr") {
             child = parent->maybeGetAttr(params["name"].get<std::string>());
         } else if (tag == "getListElem") {
             child = parent->getListElem(params["index"].get<size_t>());
@@ -906,16 +906,15 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
     try {
         if (tag == "getWHNF") {
             resultJson = computeWHNFFromObject(*obj);
-        } else if (tag == "hasAttr") {
+        } else if (tag == "getAttr") {
+            /* Pure retrieval: precondition is that parent has the
+               attr; caller (walker) has projected membership from
+               parent's WHNFAttrs. Result is the child's WHNF. */
             auto name = params["name"].get<std::string>();
             auto child = obj->maybeGetAttr(name);
-            if (!child) {
-                resultJson = trace::ResultHasAttr{false};
-            } else {
-                /* Symmetric with writer-side: record existence only,
-                   not WHNF payload (see tracing-object.cc). */
-                resultJson = trace::ResultHasAttr{true};
-            }
+            if (!child)
+                return std::nullopt;
+            resultJson = computeWHNFFromObject(*child);
         } else if (tag == "getListElem") {
             auto index = params["index"].get<size_t>();
             auto child = obj->getListElem(index);

@@ -189,24 +189,38 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 
 std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & name)
 {
+    /* Symmetric with TracingObject::maybeGetAttr: existence is
+       projected from parent's WHNFAttrs.names (via the walker's
+       whnf() lookup); only when the attr is known to exist do we
+       issue the pure-retrieval QueryGetAttr. */
+    auto wp = whnf();
+    if (!wp) {
+        tracingCacheLog("replay fallback: maybeGetAttr '%s' (no parent whnf)", name);
+        return ensureInner()->maybeGetAttr(name);
+    }
+    auto * ap = std::get_if<trace::WHNFAttrs>(&(*wp)->payload);
+    if (!ap) {
+        tracingCacheLog("replay fallback: maybeGetAttr '%s' (parent whnf not attrs)", name);
+        return ensureInner()->maybeGetAttr(name);
+    }
+    if (std::find(ap->names.begin(), ap->names.end(), name) == ap->names.end()) {
+        tracingCacheLog("replay hit: getAttr '%s' -> missing (via whnf.names)", name);
+        return nullptr;
+    }
     auto parentHash = evolvedQueryFrom();
-    trace::QueryHasAttr query{name, parentHash};
-    auto result = lookupStructuralChild<trace::QueryHasAttr, trace::ResultHasAttr>(query);
+    trace::QueryGetAttr query{name, parentHash};
+    auto result = lookupStructuralChild<trace::QueryGetAttr, trace::ResultWHNF>(query);
     if (!result) {
-        tracingCacheLog("replay fallback: maybeGetAttr '%s'", name);
+        tracingCacheLog("replay fallback: maybeGetAttr '%s' (no getAttr recording)", name);
         return ensureInner()->maybeGetAttr(name);
     }
     auto shallowQueryHash = TracingDecisionGraph::computeQueryHash(query);
-    auto shallowResp = result->second.resultNodeHash;
-    pushObservation(parentHash, shallowQueryHash, shallowResp);
-    if (!result->first.exists) {
-        tracingCacheLog("replay hit: getAttr '%s' -> missing", name);
-        return nullptr;
-    }
+    pushObservation(parentHash, shallowQueryHash, result->second.resultNodeHash);
     tracingCacheLog("replay hit: getAttr '%s' -> found", name);
     auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
     auto child = std::make_shared<TracingReplayObject>(
         evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
+    child->cachedWHNF = std::move(result->first);
     child->withArgCell(argCell);
     if (applyContext) child->withApplyContextOnly(applyContext);
     /* Symmetric to TracingObject::maybeGetAttr's B3/B7-remaining
@@ -367,6 +381,23 @@ size_t TracingReplayObject::getListSize()
 
 std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
 {
+    /* Symmetric with TracingObject::getListElem: bounds are projected
+       from parent's WHNFList.size; retrieval is a distinct
+       QueryGetListElem observation returning the child's WHNF. */
+    auto wp = whnf();
+    if (!wp) {
+        tracingCacheLog("replay fallback: getListElem %d (no parent whnf)", idx);
+        return ensureInner()->getListElem(idx);
+    }
+    auto * lp = std::get_if<trace::WHNFList>(&(*wp)->payload);
+    if (!lp) {
+        tracingCacheLog("replay fallback: getListElem %d (parent whnf not list)", idx);
+        return ensureInner()->getListElem(idx);
+    }
+    if (idx >= lp->size) {
+        tracingCacheLog("replay fallback: getListElem %d out of bounds (size %zu)", idx, lp->size);
+        return ensureInner()->getListElem(idx);
+    }
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetListElem query{parentHash, idx};
     if (auto result = lookupStructuralChild<trace::QueryGetListElem, trace::ResultWHNF>(query)) {
@@ -375,6 +406,7 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
         auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
         auto child = std::make_shared<TracingReplayObject>(
             evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); });
+        child->cachedWHNF = std::move(result->first);
         child->withArgCell(argCell);
         if (applyContext) child->withApplyContextOnly(applyContext);
         /* B3/B7-remaining: cb-apply-origin propagation, symmetric to maybeGetAttr. */

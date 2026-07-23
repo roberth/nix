@@ -213,12 +213,6 @@ struct ResultWHNF
     std::variant<WHNFInt, WHNFBool, WHNFFloat, WHNFPath, WHNFString, WHNFAttrs, WHNFList, WHNFFunction, WHNFNull> payload;
 };
 
-/** Result of a `QueryHasAttr` existence check. */
-struct ResultHasAttr
-{
-    bool exists;
-};
-
 // ---------------------------------------------------------------------------
 // QueryLeaf: typed `from` / `fn` / `arg` field of Query types
 // ---------------------------------------------------------------------------
@@ -369,20 +363,35 @@ struct QueryImport
 };
 DECLARE_QUERY_RESULT(QueryImport, ResultWHNF)
 
-/** Check whether an attribute exists on a value. The attribute's WHNF
-    is fetched separately via a subsequent `QueryGetWHNF` on the
-    resulting Object — this query records only the existence check so
-    it doesn't force strictness the interpreter doesn't add. */
-struct QueryHasAttr
+/** Get an attribute by name from a value that has been shown (via
+    parent WHNF) to contain it. Pure retrieval — no existence check
+    is folded in; the caller must have projected membership from the
+    parent's WHNFAttrs.names first. Returns the child's WHNF. */
+struct QueryGetAttr
 {
-    static constexpr std::string_view tag = "hasAttr";
+    static constexpr std::string_view tag = "getAttr";
     std::string name;
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
     std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
-    auto operator<=>(const QueryHasAttr &) const = default;
+    auto operator<=>(const QueryGetAttr &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryHasAttr, ResultHasAttr)
+DECLARE_QUERY_RESULT(QueryGetAttr, ResultWHNF)
+
+/** Get a list element by index from a value that has been shown (via
+    parent WHNF) to have at least index+1 elements. Pure retrieval —
+    no bounds check is folded in; caller must have projected size from
+    the parent's WHNFList.size first. Returns the child's WHNF. */
+struct QueryGetListElem
+{
+    static constexpr std::string_view tag = "getListElem";
+    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
+    size_t index;
+    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
+    PathExpr path;    ///< Path from each root to this observation
+    auto operator<=>(const QueryGetListElem &) const = default;
+};
+DECLARE_QUERY_RESULT(QueryGetListElem, ResultWHNF)
 
 /** Get a list of strings (no context). */
 struct QueryGetListOfStrings
@@ -394,18 +403,6 @@ struct QueryGetListOfStrings
     auto operator<=>(const QueryGetListOfStrings &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryGetListOfStrings, ResultListOfStrings)
-
-/** Get a list element by index. */
-struct QueryGetListElem
-{
-    static constexpr std::string_view tag = "getListElem";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
-    size_t index;
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
-    PathExpr path;    ///< Path from each root to this observation
-    auto operator<=>(const QueryGetListElem &) const = default;
-};
-DECLARE_QUERY_RESULT(QueryGetListElem, ResultWHNF)
 
 /** Force a value to WHNF and read its type + type-determined payload
     in one shot. Used by the cache-layer Objects to combine what would
@@ -551,9 +548,9 @@ using Queries = ApplyWrapper<
     F,
     QueryExpr,
     QueryImport,
-    QueryHasAttr,
-    QueryGetListOfStrings,
+    QueryGetAttr,
     QueryGetListElem,
+    QueryGetListOfStrings,
     QueryGetFunctionInfo,
     QueryGetWHNF,
     QueryApply,
@@ -567,8 +564,7 @@ using Results = ApplyWrapper<
     F,
     ResultListOfStrings,
     ResultFunctionInfo,
-    ResultWHNF,
-    ResultHasAttr>;
+    ResultWHNF>;
 
 // ---------------------------------------------------------------------------
 // Variant types for QueryVariant / ResultVariant
@@ -577,9 +573,9 @@ using Results = ApplyWrapper<
 using QueryVariant = std::variant<
     QueryExpr,
     QueryImport,
-    QueryHasAttr,
-    QueryGetListOfStrings,
+    QueryGetAttr,
     QueryGetListElem,
+    QueryGetListOfStrings,
     QueryGetFunctionInfo,
     QueryGetWHNF,
     QueryApply,
@@ -588,8 +584,7 @@ using QueryVariant = std::variant<
 using ResultVariant = std::variant<
     ResultListOfStrings,
     ResultFunctionInfo,
-    ResultWHNF,
-    ResultHasAttr>;
+    ResultWHNF>;
 
 // ---------------------------------------------------------------------------
 // OuterValueRequest / OuterValueResponse

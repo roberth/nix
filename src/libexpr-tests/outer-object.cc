@@ -83,11 +83,6 @@ static OuterQueryFn mockResolver(std::map<std::string, trace::ResultVariant> res
             throw Error("mock resolver: no response for %s", key);
 
         std::shared_ptr<Object> child;
-        if (std::holds_alternative<trace::ResultHasAttr>(it->second)) {
-            auto & rmt = std::get<trace::ResultHasAttr>(it->second);
-            if (rmt.exists)
-                child = stubOuter();
-        }
         if (std::holds_alternative<trace::ResultWHNF>(it->second)) {
             child = stubOuter();
         }
@@ -153,13 +148,15 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
         }},
         Hash(HashAlgorithm::SHA256),
         {});
-    auto childHex = ambientHex(childStateHash);
+    (void)childStateHash;
+    /* Under the fold, existence is projected from parent WHNFAttrs.names;
+       retrieval is a QueryGetAttr returning child WHNF. */
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         stubOuter(),
         mockResolver({
-            {"hasAttr:" + ambientHex(arg), trace::ResultHasAttr{true}},
-            {"getWHNF:" + childHex, trace::ResultWHNF{"int", trace::WHNFInt{99}}},
+            {"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"set", trace::WHNFAttrs{{"x"}}}},
+            {"getAttr:" + ambientHex(arg), trace::ResultWHNF{"int", trace::WHNFInt{99}}},
         }),
         stubAmbientRoot());
     auto child = obj->maybeGetAttr("x");
@@ -170,9 +167,14 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
 TEST(AmbientObjectTest, GetAttrMissing)
 {
     auto arg = stateHashAfterSubject(testSubject(0), Hash(HashAlgorithm::SHA256), {});
+    /* Parent has an empty name list — projection yields "missing". No
+       getAttr query is issued. */
     auto obj = std::make_shared<OuterObject>(
         testSubject(0), stubOuter(),
-        mockResolver({{"hasAttr:" + ambientHex(arg), trace::ResultHasAttr{false}}}), stubAmbientRoot());
+        mockResolver({
+            {"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"set", trace::WHNFAttrs{{}}}},
+        }),
+        stubAmbientRoot());
     EXPECT_EQ(obj->maybeGetAttr("missing"), nullptr);
 }
 
@@ -187,13 +189,15 @@ TEST(AmbientObjectTest, GetListElem)
         }},
         Hash(HashAlgorithm::SHA256),
         {});
-    auto childHex = ambientHex(childStateHash);
+    (void)childStateHash;
+    /* Under the fold, bounds are projected from parent WHNFList.size;
+       retrieval is QueryGetListElem returning child WHNF. */
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         stubOuter(),
         mockResolver({
+            {"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"list", trace::WHNFList{5}}},
             {"getListElem:" + ambientHex(arg), trace::ResultWHNF{"string", trace::WHNFString{"world", {}}}},
-            {"getWHNF:" + childHex, trace::ResultWHNF{"string", trace::WHNFString{"world", {}}}},
         }),
         stubAmbientRoot());
     auto child = obj->getListElem(1);

@@ -87,11 +87,15 @@ TEST_F(TracingEvaluatorTest, GetAttrTracesAccess)
     auto foo = obj->maybeGetAttr("foo");
     ASSERT_NE(foo, nullptr);
 
-    // Should have a hasAttr query and result
-    ASSERT_GE(sink->entries.size(), 2u);
-    auto & query = sink->entries[0];
-    EXPECT_EQ(query.at("query").at("query"), "hasAttr");
-    EXPECT_EQ(query.at("query").at("params").at("name"), "foo");
+    /* Under the fold, maybeGetAttr fires getWHNF on the parent first
+       (to project name membership) and then getAttr (retrieval) with
+       the name. Existence-only "hasAttr" doesn't exist as a query. */
+    ASSERT_GE(sink->entries.size(), 4u);
+    auto & whnfQuery = sink->entries[0];
+    EXPECT_EQ(whnfQuery.at("query").at("query"), "getWHNF");
+    auto & getAttrQuery = sink->entries[2];
+    EXPECT_EQ(getAttrQuery.at("query").at("query"), "getAttr");
+    EXPECT_EQ(getAttrQuery.at("query").at("params").at("name"), "foo");
 }
 
 TEST_F(TracingEvaluatorTest, GetStringTracesValue)
@@ -184,13 +188,17 @@ TEST_F(TracingEvaluatorTest, GetListElemTracesAccess)
     auto elem = obj->getListElem(1);
     ASSERT_NE(elem, nullptr);
 
-    ASSERT_GE(sink->entries.size(), 2u);
-    auto & query = sink->entries[0];
-    EXPECT_EQ(query.at("query").at("query"), "getListElem");
-    EXPECT_EQ(query.at("query").at("params").at("index"), 1u);
+    /* Under the fold, getListElem forces parent WHNF first (to
+       project bounds), then issues getListElem (retrieval). */
+    ASSERT_GE(sink->entries.size(), 4u);
+    auto & whnfQuery = sink->entries[0];
+    EXPECT_EQ(whnfQuery.at("query").at("query"), "getWHNF");
+    auto & getElemQuery = sink->entries[2];
+    EXPECT_EQ(getElemQuery.at("query").at("query"), "getListElem");
+    EXPECT_EQ(getElemQuery.at("query").at("params").at("index"), 1u);
 }
 
-TEST_F(TracingEvaluatorTest, MissingAttrTracesNull)
+TEST_F(TracingEvaluatorTest, MissingAttrProjectedFromWHNF)
 {
     auto obj = evaluator->evalExpr("{ }", state->rootedPath(CanonPath::root));
     sink->entries.clear();
@@ -198,10 +206,15 @@ TEST_F(TracingEvaluatorTest, MissingAttrTracesNull)
     auto missing = obj->maybeGetAttr("nonexistent");
     EXPECT_EQ(missing, nullptr);
 
-    // Should have query and a { exists: false } result
+    /* Under the fold: existence is projected from WHNFAttrs.names on
+       the parent. Only a getWHNF observation is recorded — no
+       has-attr / getAttr entry. */
     ASSERT_GE(sink->entries.size(), 2u);
-    auto & result = sink->entries[1];
-    EXPECT_EQ(result.at("result").at("exists"), false);
+    auto & whnfQuery = sink->entries[0];
+    EXPECT_EQ(whnfQuery.at("query").at("query"), "getWHNF");
+    auto & whnfResult = sink->entries[1];
+    EXPECT_EQ(whnfResult.at("result").at("type"), "set");
+    EXPECT_EQ(whnfResult.at("result").at("names").size(), 0u);
 }
 
 TEST_F(TracingEvaluatorTest, DefeatCacheDoesNotTrace)
