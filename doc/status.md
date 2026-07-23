@@ -116,29 +116,47 @@ Cold's writer stamped `from` at the point where it recorded that specific Q's ed
 
 Complements [B3](#b3-tracingobject-lacks-general-subject-tracking--high-blocks-sibling-test) (writer-side Subject exposure): together B3 + B9 align writer and walker on per-Q chain semantics. Absorbed from former task #104.
 
-### B10. Landing chain insertion — hit-rate follow-up to B2
+### B10. FIXED — landing chain insertion via Q-evolution simulation (`13a299609`)
 
-Retiring [B2](#b2-partial--composite-emission-landed-bridging-retired)'s
-bridging removed the *unintentional* landing-chain coverage
-(vocab §162, main doc §457) it had been providing — Ask rows
-under a Q's key that let trace-discovering walkers reach Q's
-session-cumulative entry cur from ∅ or parent-anchor.
+At each Q's logResult, insert Ask rows under this Q's key for the
+session-cumulative Ask trail that preceded the Q's push. Simulates
+walker's per-step Q evolution through the trail so each row lands
+under the Q value the walker will actually look up at that step
+(walker's perQEnvWalk grows with every committed edge, including
+landing chain edges, so its recomputeQ evolves Q as it folds).
 
-Regressed:
-- `cb-same-shape-collapse`, `cb-forcedness-independence`,
-  `cb-stats-sidecar-baseline` — stat-count assertions fail because
-  walks that used to hit now miss and fall back.
-- `cb-local-descendants`, `cb-with-scope-and-tryeval` — fail
-  under `_NIX_DISALLOW_PARSE=1`, which disables the fallback so
-  cache-miss regressions surface as errors.
+Recovered `cb-same-shape-collapse`. Suite 312/16/7. The other 4
+tests that regressed when B2's bridging was retired
+(`cb-forcedness-independence`, `cb-local-descendants`,
+`cb-stats-sidecar-baseline`, `cb-with-scope-and-tryeval`) turn out
+to be a different failure mode — see [B11](#b11-response-mismatch-on-walker-dispatch--hit-rate).
 
-All 5 still return correct values in normal mode (fallback works);
-priority 2/3, not correctness.
+### B11. Response mismatch on walker dispatch — hit-rate
 
-Fix direction: insert Ask rows under each Q's key from ∅ /
-parent-anchor to Q's session-cumulative entry cur — surgical,
-covering only the path to Q's entry, not the whole session's
-Ask trail the retired bridging duplicated.
+`cb-local-descendants`, `cb-with-scope-and-tryeval`,
+`cb-forcedness-independence`, `cb-stats-sidecar-baseline` all
+regressed when B2 retired the bridging. B10's landing chain didn't
+recover them — inspection shows a different failure mode: walker
+finds outgoing Asks at (Q, cur) but "NO EDGE COMMITTED at cur=X →
+miss." The walker reaches the Ask fine; the problem is that the
+dispatched Request's live response XOR-folds to a `nextCur` that
+has no recorded edge, so the branch isn't followable and the walk
+gives up.
+
+Not a reachability issue landing chains can address. Plausible
+causes to investigate:
+- Cold's recorded response for that Request differs from warm's
+  live response (matching-until-divergence violation).
+- Cold's cell chain routed the observation through a different
+  Subject than warm's, so the fromHash on the recorded fact differs
+  from what the walker's cell chain would produce live.
+- Q evolution basis mismatch (writer's fromSubject state at cold
+  differs from walker's per-Q re-derivation at warm).
+
+All 4 still return correct values in normal mode (fallback works);
+priority 2/3, not correctness. `_NIX_DISALLOW_PARSE=1` disables
+fallback to catch cache-miss regressions, which is why 2 of them
+surface as errors in that mode.
 
 ## Cosmetic / low-priority
 
