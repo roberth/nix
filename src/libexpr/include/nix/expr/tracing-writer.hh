@@ -304,10 +304,10 @@ public:
             auto fnCurrent = stateHashAtSubject(
                 *ar->fn, applyArgAncestry, envWalk, envWalk.size());
             trace::QueryCallbackApply qca;
-            qca.fn = trace::QueryLeaf{
-                fnCurrent.to_string(HashFormat::Base16, false)};
+            qca.fn = trace::QueryLeaf{trace::StateHashLeaf{
+                fnCurrent.to_string(HashFormat::Base16, false),
+                cell.argAncestryHex}};
             qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
-            qca.argAncestry = cell.argAncestryHex;
             logOuterObservation(
                 trace::QueryVariant{std::move(qca)},
                 trace::ResultVariant{whnf},

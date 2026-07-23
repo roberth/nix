@@ -802,11 +802,23 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
        returned value chain from this observation's queryHash+respHash
        through the normal state-hash machinery. */
     if (tag == "callbackApply") {
-        auto fnHex = params.at("fn").is_object()
-            ? params.at("fn").at("stateHash").get<std::string>()
-            : params.at("fn").get<std::string>();
+        /* Both fn's state hash and the contra-arg's argAncestry come
+           off the `fn` QueryLeaf: object form `{"stateHash", "argAncestry"}`
+           is the callback-apply shape; a bare hex string means
+           "no ancestry attached" (falls back to empty). */
+        std::string fnHex;
+        std::string argAncestryHex;
+        {
+            auto & fnJson = params.at("fn");
+            if (fnJson.is_object()) {
+                fnJson.at("stateHash").get_to(fnHex);
+                if (fnJson.contains("argAncestry"))
+                    fnJson.at("argAncestry").get_to(argAncestryHex);
+            } else {
+                fnJson.get_to(fnHex);
+            }
+        }
         auto obsSetHex = params.at("argObsSet").get<std::string>();
-        auto argAncestryHex = params.at("argAncestry").get<std::string>();
         Hash obsSetHash{HashAlgorithm::SHA256};
         Hash argAncestry{HashAlgorithm::SHA256};
         try {

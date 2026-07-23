@@ -231,9 +231,18 @@ void from_json(const nlohmann::json & j, ResultWHNF & r)
    artifacts. */
 void to_json(nlohmann::json & j, const QueryLeaf & leaf)
 {
-    if (leaf.isStateHash())
-        j = leaf.stateHash();
-    else
+    if (leaf.isStateHash()) {
+        /* Bare hex string when no argAncestry — wire-compatible with
+           the pre-typing `from` field the whole codebase produces.
+           Object form only when argAncestry is attached (currently
+           only QueryCallbackApply.fn). */
+        if (leaf.argAncestry().empty())
+            j = leaf.stateHash();
+        else
+            j = nlohmann::json{
+                {"stateHash", leaf.stateHash()},
+                {"argAncestry", leaf.argAncestry()}};
+    } else
         j = nlohmann::json{{"outer", leaf.outerIndex()}};
 }
 
@@ -243,9 +252,18 @@ void from_json(const nlohmann::json & j, QueryLeaf & leaf)
         leaf = QueryLeaf{j.get<std::string>()};
     else if (j.is_object() && j.contains("outer"))
         leaf = QueryLeaf{OuterLeaf{j.at("outer").get<int>()}};
-    else
+    else if (j.is_object() && j.contains("stateHash")) {
+        StateHashLeaf s;
+        j.at("stateHash").get_to(s.hash);
+        if (j.contains("argAncestry"))
+            j.at("argAncestry").get_to(s.argAncestry);
+        leaf = QueryLeaf{std::move(s)};
+    } else
         throw nlohmann::json::type_error::create(
-            302, "QueryLeaf JSON must be a hex string or {\"outer\": N}", &j);
+            302,
+            "QueryLeaf JSON must be a hex string, {\"outer\": N}, or "
+            "{\"stateHash\": \"...\", \"argAncestry\"?: \"...\"}",
+            &j);
 }
 
 // ---------------------------------------------------------------------------
@@ -481,7 +499,6 @@ void to_json(nlohmann::json & j, const QueryCallbackApply & q)
         {"params", {
             {"fn", q.fn},
             {"argObsSet", q.argObsSet},
-            {"argAncestry", q.argAncestry},
         }}};
 }
 
@@ -489,8 +506,6 @@ void from_json(const nlohmann::json & j, QueryCallbackApply & q)
 {
     j.at("params").at("fn").get_to(q.fn);
     j.at("params").at("argObsSet").get_to(q.argObsSet);
-    if (j.at("params").contains("argAncestry"))
-        j.at("params").at("argAncestry").get_to(q.argAncestry);
 }
 
 // ---------------------------------------------------------------------------

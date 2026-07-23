@@ -229,13 +229,17 @@ struct OuterLeaf
  * Content-defined factset hash: identifies a value by the hash of its
  * accumulated observation factset.
  *
- * Stored as a hex string for wire-format compatibility with the previous
- * std::string `from` field — recorded ContentLeafs are interchangeable
- * with the strings today's code already produces.
+ * Optionally carries the `argAncestry` at which the hash was
+ * computed, so that leaves that describe a value in a specific
+ * apply context (a callback arg being invoked) can package the
+ * context inline instead of it being a top-level payload field.
+ * Empty `argAncestry` means "no ancestry attached", the common case
+ * for a plain `from`.
  */
 struct StateHashLeaf
 {
     std::string hash;
+    std::string argAncestry;
     auto operator<=>(const StateHashLeaf &) const = default;
 };
 
@@ -269,6 +273,10 @@ struct QueryLeaf
     const std::string & stateHash() const
     {
         return std::get<StateHashLeaf>(data).hash;
+    }
+    const std::string & argAncestry() const
+    {
+        return std::get<StateHashLeaf>(data).argAncestry;
     }
     int outerIndex() const
     {
@@ -482,9 +490,14 @@ DECLARE_QUERY_RESULT(QueryApply, ResultWHNF)
 struct QueryCallbackApply
 {
     static constexpr std::string_view tag = "callbackApply";
-    QueryLeaf fn;              ///< Function identity (state hash of the callback)
+    /** Function identity (state hash of the callback), with the
+        contra-arg's `callArgAncestry` attached as leaf metadata —
+        that's the ancestry the walker uses when constructing the
+        ReplayCallbackArg's Subject. Kept on the leaf, not as a
+        separate top-level field, because it is per-value context of
+        `fn` for this apply and doesn't belong at envelope level. */
+    QueryLeaf fn;
     std::string argObsSet;     ///< Content hash of the observation set
-    std::string argAncestry;   ///< callArgAncestry of the cached call — walker needs this to reconstruct the arg's subject state hashes when firing fn live with a proxy backed by obsSet.
     auto operator<=>(const QueryCallbackApply &) const = default;
 };
 DECLARE_QUERY_RESULT(QueryCallbackApply, ResultWHNF)
