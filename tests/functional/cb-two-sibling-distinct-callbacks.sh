@@ -1,21 +1,11 @@
 #!/usr/bin/env bash
 
 # Two-sibling correctness: two `builtins.cache` invocations of the
-# same cached function with DIFFERENT callback closures. Their
-# outer-probe queryHashes collide (matching-until-divergence at
-# Arg{0} initial state), so cold records two Terminals under the
-# same queryHash at distinct session-cumulative curs.
-#
-# Regression bug (fixed by "try outgoing Asks before Terminal"):
-# warm's second-sibling walk would find the first-sibling's
-# Terminal at envCur and return its Result silently → wrong hit,
-# not a miss.
-#
-# Correct behaviour: warm's second-sibling walk tries outgoing Asks
-# at envCur first. Under matching-until-divergence, the wrong
-# sibling's chain has extensions from that cur — warm dispatches
-# them under its own live cell chain and gets responses that match
-# cold's b-recording, advancing to b's Terminal.
+# same cached function with DIFFERENT callback closures. Sibling
+# discrimination for cb-apply results happens at the QCA queryHash
+# level (different obsSet content → different QCA reqHash). The
+# cache must return each sibling's own recorded result on warm
+# replay.
 #
 # Test asserts warm returns the correct value (42 + 99 = 141), not
 # the wrong-hit value (42 + 42 = 84).
