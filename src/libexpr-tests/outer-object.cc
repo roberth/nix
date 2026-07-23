@@ -83,12 +83,12 @@ static OuterQueryFn mockResolver(std::map<std::string, trace::ResultVariant> res
             throw Error("mock resolver: no response for %s", key);
 
         std::shared_ptr<Object> child;
-        if (std::holds_alternative<trace::ResultMaybeType>(it->second)) {
-            auto & rmt = std::get<trace::ResultMaybeType>(it->second);
-            if (rmt.type)
+        if (std::holds_alternative<trace::ResultMaybeWHNF>(it->second)) {
+            auto & rmt = std::get<trace::ResultMaybeWHNF>(it->second);
+            if (rmt.value)
                 child = stubOuter();
         }
-        if (std::holds_alternative<trace::ResultType>(it->second)) {
+        if (std::holds_alternative<trace::ResultWHNF>(it->second)) {
             child = stubOuter();
         }
         return {it->second, std::move(child)};
@@ -158,7 +158,7 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
         testSubject(0),
         stubOuter(),
         mockResolver({
-            {"getAttr:" + ambientHex(arg), trace::ResultMaybeType{std::optional<std::string>{"int"}}},
+            {"getAttr:" + ambientHex(arg), trace::ResultMaybeWHNF{trace::ResultWHNF{"int", trace::WHNFInt{99}}}},
             {"getWHNF:" + childHex, trace::ResultWHNF{"int", trace::WHNFInt{99}}},
         }),
         stubAmbientRoot());
@@ -172,7 +172,7 @@ TEST(AmbientObjectTest, GetAttrMissing)
     auto arg = stateHashAfterSubject(testSubject(0), Hash(HashAlgorithm::SHA256), {});
     auto obj = std::make_shared<OuterObject>(
         testSubject(0), stubOuter(),
-        mockResolver({{"getAttr:" + ambientHex(arg), trace::ResultMaybeType{std::nullopt}}}), stubAmbientRoot());
+        mockResolver({{"getAttr:" + ambientHex(arg), trace::ResultMaybeWHNF{std::nullopt}}}), stubAmbientRoot());
     EXPECT_EQ(obj->maybeGetAttr("missing"), nullptr);
 }
 
@@ -192,7 +192,7 @@ TEST(AmbientObjectTest, GetListElem)
         testSubject(0),
         stubOuter(),
         mockResolver({
-            {"getListElem:" + ambientHex(arg), trace::ResultType{"string"}},
+            {"getListElem:" + ambientHex(arg), trace::ResultWHNF{"string", trace::WHNFString{"world", {}}}},
             {"getWHNF:" + childHex, trace::ResultWHNF{"string", trace::WHNFString{"world", {}}}},
         }),
         stubAmbientRoot());

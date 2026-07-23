@@ -130,9 +130,9 @@ static void resultVariantFromJson(const nlohmann::json & j, ResultVariant & resu
         }
     };
 
-    if (tryParse((ResultType *) nullptr))
+    if (tryParse((ResultMaybeWHNF *) nullptr))
         return;
-    if (tryParse((ResultMaybeType *) nullptr))
+    if (tryParse((ResultWHNF *) nullptr))
         return;
     if (tryParse((ResultListOfStrings *) nullptr))
         return;
@@ -163,31 +163,21 @@ void from_json(const nlohmann::json & j, OuterValueResponse & r)
 // Result payload serialization
 // ---------------------------------------------------------------------------
 
-void to_json(nlohmann::json & j, const ResultType & r)
+void to_json(nlohmann::json & j, const ResultMaybeWHNF & r)
 {
-    j = nlohmann::json{{"type", r.type}};
-}
-
-void from_json(const nlohmann::json & j, ResultType & r)
-{
-    j.at("type").get_to(r.type);
-}
-
-void to_json(nlohmann::json & j, const ResultMaybeType & r)
-{
-    if (r.type)
-        j = nlohmann::json{{"attrType", *r.type}};
+    if (r.value)
+        j = nlohmann::json{{"attr", *r.value}};
     else
-        j = nlohmann::json{{"attrType", nullptr}};
+        j = nlohmann::json{{"attr", nullptr}};
 }
 
-void from_json(const nlohmann::json & j, ResultMaybeType & r)
+void from_json(const nlohmann::json & j, ResultMaybeWHNF & r)
 {
-    auto & v = j.at("attrType");
+    auto & v = j.at("attr");
     if (v.is_null())
-        r.type = std::nullopt;
+        r.value = std::nullopt;
     else
-        r.type = v.get<std::string>();
+        r.value = v.get<ResultWHNF>();
 }
 
 void to_json(nlohmann::json & j, const ResultListOfStrings & r)
@@ -624,13 +614,13 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
     // Result: has "result" and "v"
     if (j.contains("result") && j.contains("v")) {
         auto & r = j["result"];
-        if (r.contains("type")) {
-            Result<ResultType> e;
+        if (r.contains("attr")) {
+            Result<ResultMaybeWHNF> e;
             from_json(j, e);
             return e;
         }
-        if (r.contains("attrType")) {
-            Result<ResultMaybeType> e;
+        if (r.contains("type")) {
+            Result<ResultWHNF> e;
             from_json(j, e);
             return e;
         }
@@ -659,12 +649,14 @@ namespace {
 template<typename T>
 constexpr size_t resultTypeIndex()
 {
-    if constexpr (std::is_same_v<T, ResultType>)
+    if constexpr (std::is_same_v<T, ResultWHNF>)
         return 0;
-    else if constexpr (std::is_same_v<T, ResultMaybeType>)
+    else if constexpr (std::is_same_v<T, ResultMaybeWHNF>)
         return 1;
     else if constexpr (std::is_same_v<T, ResultListOfStrings>)
         return 2;
+    else if constexpr (std::is_same_v<T, ResultFunctionInfo>)
+        return 3;
     else
         return ~size_t(0);
 }

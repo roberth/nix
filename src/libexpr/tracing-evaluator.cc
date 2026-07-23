@@ -158,8 +158,7 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     tracingCacheLog("tracing: evalFile %s", displayPath);
     auto [v, qh] = writer.logRootQuery(trace::QueryImport{displayPath});
     auto result = inner->evalFile(path, displayPath);
-    auto type = result->getType();
-    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
+    auto triePos = writer.logResult(v, computeWHNFFromObject(*result), qh);
     auto obj = TracingObject::create(result, writer, v, triePos);
     /* Root scope-graph cell for the cached value. Cells now carry
        only topology (depth/parent/liveObject); state hashes are pure
@@ -175,8 +174,7 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     tracingCacheLog("tracing: evalExpr %s", expr);
     auto [v, qh] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
     auto result = inner->evalExpr(expr, basePath);
-    auto type = result->getType();
-    auto triePos = writer.logResult(v, trace::ResultType{objectTypeToString(type)}, qh);
+    auto triePos = writer.logResult(v, computeWHNFFromObject(*result), qh);
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
     return obj;

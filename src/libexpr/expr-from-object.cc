@@ -35,13 +35,13 @@ static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const tr
             } else if constexpr (std::is_same_v<Q, trace::QueryGetAttr>) {
                 auto child = obj->maybeGetAttr(query.name);
                 if (!child)
-                    return {trace::ResultMaybeType{std::nullopt}, nullptr};
+                    return {trace::ResultMaybeWHNF{std::nullopt}, nullptr};
                 return {
-                    trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}},
+                    trace::ResultMaybeWHNF{trace::ResultWHNF{"deferred", trace::WHNFEmpty{}}},
                     std::move(child)};
             } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
                 auto child = obj->getListElem(query.index);
-                return {trace::ResultType{objectTypeToString(child->getType())}, std::move(child)};
+                return {computeWHNFFromObject(*child), std::move(child)};
             } else if constexpr (std::is_same_v<Q, trace::QueryGetFunctionInfo>) {
                 auto info = obj->getFunctionInfo();
                 if (!info)

@@ -42,7 +42,7 @@ TEST_F(TraceFileTest, WritesValidJsonArray)
     {
         TraceFile tf(tracePath);
         tf.logQuery(trace::QueryExpr{"1 + 1", "/"});
-        tf.logResult(ValueHandle(0), trace::ResultType{"int"});
+        tf.logResult(ValueHandle(0), trace::ResultWHNF{"int", trace::WHNFInt{0}});
     }
 
     auto j = readTraceFile();
@@ -55,7 +55,7 @@ TEST_F(TraceFileTest, QueryAndResultLinkedByHandle)
     {
         TraceFile tf(tracePath);
         auto v = tf.logQuery(trace::QueryExpr{"42", "/"});
-        tf.logResult(v, trace::ResultType{"int"});
+        tf.logResult(v, trace::ResultWHNF{"int", trace::WHNFInt{0}});
     }
 
     auto j = readTraceFile();

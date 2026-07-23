@@ -111,8 +111,8 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
-    trace::ResultMaybeType r = rJson;
-    if (!r.type)
+    trace::ResultMaybeWHNF r = rJson;
+    if (!r.value)
         return nullptr;
     /* Child Subject is DerivedSubject of THIS subject — `stateHashAt`
        on the child will recompute parent's state hash at the child's
@@ -464,7 +464,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                         argSubjHex.substr(0, 12),
                         stampedReqHash.to_string(HashFormat::Base16, false).substr(0, 12));
 
-                    nlohmann::json respJson = trace::ResultType{"apply"};
+                    nlohmann::json respJson = trace::ResultWHNF{"apply", trace::WHNFEmpty{}};
                     auto respPayload = jsonToCborString(respJson);
                     auto respHash = TracingDecisionGraph::computeResponseHash(respPayload);
                     auto elementHash = TracingDecisionGraph::xorFactIntoHash(

@@ -191,7 +191,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
 {
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetAttr query{name, parentHash};
-    auto result = lookupStructuralChild<trace::QueryGetAttr, trace::ResultMaybeType>(query);
+    auto result = lookupStructuralChild<trace::QueryGetAttr, trace::ResultMaybeWHNF>(query);
     if (!result) {
         tracingCacheLog("replay fallback: maybeGetAttr '%s'", name);
         return ensureInner()->maybeGetAttr(name);
@@ -199,7 +199,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
     auto shallowQueryHash = TracingDecisionGraph::computeQueryHash(query);
     auto shallowResp = result->second.resultNodeHash;
     pushObservation(parentHash, shallowQueryHash, shallowResp);
-    if (!result->first.type) {
+    if (!result->first.value) {
         tracingCacheLog("replay hit: getAttr '%s' -> missing", name);
         return nullptr;
     }
@@ -369,7 +369,7 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
 {
     auto parentHash = evolvedQueryFrom();
     trace::QueryGetListElem query{parentHash, idx};
-    if (auto result = lookupStructuralChild<trace::QueryGetListElem, trace::ResultType>(query)) {
+    if (auto result = lookupStructuralChild<trace::QueryGetListElem, trace::ResultWHNF>(query)) {
         pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), result->second.resultNodeHash);
         tracingCacheLog("replay hit: getListElem %d", idx);
         auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());

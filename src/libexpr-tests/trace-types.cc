@@ -84,7 +84,7 @@ TEST(TraceTypes, AmbientOutgoingResponseWrapperRoundTrip)
 {
     Response<OuterValueRequest> traced{
         .request = {QueryGetAttr{"x", "0"}},
-        .response = {ResultMaybeType{std::optional<std::string>{"nInt"}}},
+        .response = {ResultMaybeWHNF{ResultWHNF{"nInt", WHNFEmpty{}}}},
     };
     json j;
     to_json(j, traced);
@@ -101,7 +101,7 @@ TEST(TraceTypes, AmbientQueryParseTraceEntry)
 {
     Response<OuterValueRequest> original{
         .request = {QueryGetAttr{"key", "42"}},
-        .response = {ResultMaybeType{std::optional<std::string>{"nAttrs"}}},
+        .response = {ResultMaybeWHNF{ResultWHNF{"nAttrs", WHNFEmpty{}}}},
     };
     json j;
     to_json(j, original);
@@ -166,23 +166,23 @@ TEST(TraceTypes, QueryWrapperRoundTrip)
 
 TEST(TraceTypes, ResultMaybeTypePresent)
 {
-    ResultMaybeType r{std::optional<std::string>{"attrs"}};
+    ResultMaybeWHNF r{ResultWHNF{"set", WHNFAttrs{{}}}};
     json j;
     to_json(j, r);
-    ResultMaybeType r2;
+    ResultMaybeWHNF r2;
     from_json(j, r2);
-    ASSERT_TRUE(r2.type.has_value());
-    EXPECT_EQ(*r.type, *r2.type);
+    ASSERT_TRUE(r2.value.has_value());
+    EXPECT_EQ(r.value->type, r2.value->type);
 }
 
 TEST(TraceTypes, ResultMaybeTypeAbsent)
 {
-    ResultMaybeType r{std::nullopt};
+    ResultMaybeWHNF r{std::nullopt};
     json j;
     to_json(j, r);
-    ResultMaybeType r2;
+    ResultMaybeWHNF r2;
     from_json(j, r2);
-    EXPECT_FALSE(r2.type.has_value());
+    EXPECT_FALSE(r2.value.has_value());
 }
 
 TEST(TraceTypes, QueryGetListElemRoundTrip)
@@ -198,10 +198,10 @@ TEST(TraceTypes, QueryGetListElemRoundTrip)
 
 TEST(TraceTypes, ResultWrapperRoundTrip)
 {
-    Result<ResultType> r{.result = ResultType{"int"}, .v = 7};
+    Result<ResultWHNF> r{.result = ResultWHNF{"int", WHNFInt{42}}, .v = 7};
     json j;
     to_json(j, r);
-    Result<ResultType> r2;
+    Result<ResultWHNF> r2;
     from_json(j, r2);
     EXPECT_EQ(r.result.type, r2.result.type);
     EXPECT_EQ(r.v, r2.v);
@@ -281,23 +281,22 @@ TEST(TraceTypes, ResponseEnvHasTypeTag)
 // ResultMaybeType uses "attrType" JSON field
 // ---------------------------------------------------------------------------
 
-TEST(TraceTypes, ResultMaybeTypeUsesAttrTypeField)
+TEST(TraceTypes, ResultMaybeTypeUsesAttrField)
 {
-    ResultMaybeType r{std::optional<std::string>{"set"}};
+    ResultMaybeWHNF r{ResultWHNF{"set", WHNFAttrs{{}}}};
     json j;
     to_json(j, r);
-    EXPECT_TRUE(j.contains("attrType"));
-    EXPECT_FALSE(j.contains("type"));
-    EXPECT_EQ(j.at("attrType"), "set");
+    EXPECT_TRUE(j.contains("attr"));
+    EXPECT_EQ(j.at("attr").at("type"), "set");
 }
 
-TEST(TraceTypes, ResultMaybeTypeNullUsesAttrTypeField)
+TEST(TraceTypes, ResultMaybeTypeNullUsesAttrField)
 {
-    ResultMaybeType r{std::nullopt};
+    ResultMaybeWHNF r{std::nullopt};
     json j;
     to_json(j, r);
-    EXPECT_TRUE(j.contains("attrType"));
-    EXPECT_TRUE(j.at("attrType").is_null());
+    EXPECT_TRUE(j.contains("attr"));
+    EXPECT_TRUE(j.at("attr").is_null());
 }
 
 // ---------------------------------------------------------------------------
@@ -367,31 +366,31 @@ TEST(TraceTypes, ParseQueryExpr)
 
 TEST(TraceTypes, ParseResultType)
 {
-    Result<ResultType> original{
-        .result = {.type = "set"},
+    Result<ResultWHNF> original{
+        .result = ResultWHNF{"set", WHNFAttrs{{}}},
         .v = 0,
     };
     auto j = json(original);
     auto parsed = parseTraceEntry(j);
     ASSERT_TRUE(parsed.has_value());
-    auto * r = std::get_if<Result<ResultType>>(&*parsed);
+    auto * r = std::get_if<Result<ResultWHNF>>(&*parsed);
     ASSERT_NE(r, nullptr);
     EXPECT_EQ(r->result.type, "set");
 }
 
 TEST(TraceTypes, ParseResultMaybeType)
 {
-    Result<ResultMaybeType> original{
-        .result = {.type = "int"},
+    Result<ResultMaybeWHNF> original{
+        .result = {.value = ResultWHNF{"int", WHNFInt{5}}},
         .v = 5,
     };
     auto j = json(original);
     auto parsed = parseTraceEntry(j);
     ASSERT_TRUE(parsed.has_value());
-    auto * r = std::get_if<Result<ResultMaybeType>>(&*parsed);
+    auto * r = std::get_if<Result<ResultMaybeWHNF>>(&*parsed);
     ASSERT_NE(r, nullptr);
-    ASSERT_TRUE(r->result.type.has_value());
-    EXPECT_EQ(*r->result.type, "int");
+    ASSERT_TRUE(r->result.value.has_value());
+    EXPECT_EQ(r->result.value->type, "int");
 }
 
 TEST(TraceTypes, ParseUnrecognizedReturnsNullopt)
@@ -421,16 +420,16 @@ TEST(TraceTypes, FullTraceRoundTrip)
             .query = {.expr = "{ x = 1; }", .baseDir = "/"},
             .v = 0,
         },
-        Result<ResultType>{
-            .result = {.type = "set"},
+        Result<ResultWHNF>{
+            .result = ResultWHNF{"set", WHNFAttrs{{}}},
             .v = 0,
         },
         Query<QueryGetAttr>{
             .query = {.name = "x", .from = "0"},
             .v = 1,
         },
-        Result<ResultMaybeType>{
-            .result = {.type = "int"},
+        Result<ResultMaybeWHNF>{
+            .result = {.value = ResultWHNF{"int", WHNFInt{0}}},
             .v = 1,
         },
     };
@@ -466,16 +465,16 @@ TEST(TraceTypes, CorrelateTrace)
             .query = {.expr = "{ x = 1; }", .baseDir = "/"},
             .v = 0,
         },
-        Result<ResultType>{
-            .result = {.type = "set"},
+        Result<ResultWHNF>{
+            .result = ResultWHNF{"set", WHNFAttrs{{}}},
             .v = 0,
         },
         Query<QueryGetAttr>{
             .query = {.name = "x", .from = "0"},
             .v = 1,
         },
-        Result<ResultMaybeType>{
-            .result = {.type = "int"},
+        Result<ResultMaybeWHNF>{
+            .result = {.value = ResultWHNF{"int", WHNFInt{0}}},
             .v = 1,
         },
     };
@@ -503,16 +502,16 @@ TEST(TraceTypes, QueryIndexLookup)
             .query = {.expr = "42", .baseDir = "/"},
             .v = 0,
         },
-        Result<ResultType>{
-            .result = {.type = "int"},
+        Result<ResultWHNF>{
+            .result = ResultWHNF{"int", WHNFInt{0}},
             .v = 0,
         },
         Query<QueryGetAttr>{
             .query = {.name = "foo", .from = "0"},
             .v = 1,
         },
-        Result<ResultMaybeType>{
-            .result = {.type = "set"},
+        Result<ResultMaybeWHNF>{
+            .result = {.value = ResultWHNF{"set", WHNFAttrs{{}}}},
             .v = 1,
         },
     };

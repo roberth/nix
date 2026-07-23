@@ -38,8 +38,8 @@ std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::stri
 {
     auto child = inner->maybeGetAttr(name);
     trace::QueryGetAttr q{name, std::string{}};
-    trace::ResultMaybeType r{
-        child ? std::optional<std::string>{objectTypeToString(child->getType())} : std::nullopt};
+    trace::ResultMaybeWHNF r{
+        child ? std::optional<trace::ResultWHNF>{trace::ResultWHNF{"deferred", trace::WHNFEmpty{}}} : std::nullopt};
     recordD2(q, r);
     return child;
 }
@@ -136,10 +136,9 @@ size_t TracingCallbackApplyResult::getListSize()
 std::shared_ptr<Object> TracingCallbackApplyResult::getListElem(size_t index)
 {
     auto child = inner->getListElem(index);
-    auto type = child->getType();
     recordD2(
         trace::QueryGetListElem{std::string{}, index},
-        trace::ResultType{objectTypeToString(type)});
+        computeWHNFFromObject(*child));
     return child;
 }
 

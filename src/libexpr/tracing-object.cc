@@ -125,7 +125,11 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto result = inner->maybeGetAttr(name);
     if (result) {
-        trace::ResultMaybeType resJson{std::string("deferred")};
+        /* Record only existence, not the WHNF payload — the caller
+           forces WHNF via a separate probe when it actually needs
+           the value. Preserves order-independence for deep-indep
+           patterns. */
+        trace::ResultMaybeWHNF resJson{trace::ResultWHNF{"deferred", trace::WHNFEmpty{}}};
         auto childTriePos = writer.logResult(valueId, resJson, qh);
         if (qh.queryHash && childTriePos)
             pushObservation(parentHash, *qh.queryHash, childTriePos->resultNodeHash);
@@ -146,7 +150,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
         }
         return child;
     }
-    trace::ResultMaybeType resJson{std::nullopt};
+    trace::ResultMaybeWHNF resJson{std::nullopt};
     auto tp = writer.logResult(valueId, resJson, qh);
     if (qh.queryHash && tp)
         pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
@@ -282,8 +286,7 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     }
     auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto result = inner->getListElem(index);
-    auto type = result->getType();
-    trace::ResultType resJson{objectTypeToString(type)};
+    trace::ResultWHNF resJson = computeWHNFFromObject(*result);
     auto childTriePos = writer.logResult(valueId, resJson, qh);
     if (qh.queryHash && childTriePos)
         pushObservation(parentHash, *qh.queryHash, childTriePos->resultNodeHash);

@@ -42,8 +42,8 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     trace::QueryGetAttr q{name, std::string{}};
     stampPerArgFields(q, subject, argAncestry);
     auto qr = queryFn(outerObj, q, subject, argAncestry);
-    auto * r = std::get_if<trace::ResultMaybeType>(&qr.result);
-    if (!r || !r->type)
+    auto * r = std::get_if<trace::ResultMaybeWHNF>(&qr.result);
+    if (!r || !r->value)
         return nullptr;
     if (!qr.child)
         throw Error("outer maybeGetAttr: queryFn didn't return a child Object");

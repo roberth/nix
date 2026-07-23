@@ -39,8 +39,8 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
     auto child = inner->maybeGetAttr(name);
     trace::QueryGetAttr query{name, tracingLocalFromOf(localId())};
     auto resultJson = child
-        ? trace::ResultMaybeType{std::optional{objectTypeToString(child->getType())}}
-        : trace::ResultMaybeType{std::nullopt};
+        ? trace::ResultMaybeWHNF{trace::ResultWHNF{"deferred", trace::WHNFEmpty{}}}
+        : trace::ResultMaybeWHNF{std::nullopt};
     recordObservation(query, resultJson);
     if (!child)
         return nullptr;
@@ -151,7 +151,7 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
 {
     auto child = inner->getListElem(index);
     trace::QueryGetListElem query{tracingLocalFromOf(localId()), index};
-    recordObservation(query, trace::ResultType{objectTypeToString(child->getType())});
+    recordObservation(query, computeWHNFFromObject(*child));
     Subject childSubject{DerivedSubject{
         .parent = std::make_shared<const Subject>(subject),
         .kind = DerivedSubject::Kind::GetListElem,

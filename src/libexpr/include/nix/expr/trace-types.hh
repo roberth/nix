@@ -178,18 +178,6 @@ void from_json(const nlohmann::json & j, Result<T> & r)
 // Result payload types
 // ---------------------------------------------------------------------------
 
-/** Result containing an ObjectType as string. */
-struct ResultType
-{
-    std::string type;
-};
-
-/** Result for getAttr: either a type (attribute exists) or nullopt (missing). */
-struct ResultMaybeType
-{
-    std::optional<std::string> type;
-};
-
 /** Result containing a list of strings. */
 struct ResultListOfStrings
 {
@@ -218,6 +206,15 @@ struct ResultWHNF
 {
     std::string type;
     std::variant<WHNFEmpty, WHNFInt, WHNFBool, WHNFFloat, WHNFPath, WHNFString, WHNFAttrs, WHNFList> payload;
+};
+
+/** Result for getAttr: either the WHNF of the attribute (present) or
+    nullopt (attribute missing). ResultWHNF's `type` field
+    discriminates the value's Nix type; nullopt is reserved for
+    the missing-attribute case. */
+struct ResultMaybeWHNF
+{
+    std::optional<ResultWHNF> value;
 };
 
 // ---------------------------------------------------------------------------
@@ -359,7 +356,7 @@ struct QueryExpr
     std::string baseDir;
     auto operator<=>(const QueryExpr &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryExpr, ResultType)
+DECLARE_QUERY_RESULT(QueryExpr, ResultWHNF)
 
 /** Import/evaluate a file. */
 struct QueryImport
@@ -368,7 +365,7 @@ struct QueryImport
     std::string path;
     auto operator<=>(const QueryImport &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryImport, ResultType)
+DECLARE_QUERY_RESULT(QueryImport, ResultWHNF)
 
 /** Get an attribute from a value. */
 struct QueryGetAttr
@@ -380,7 +377,7 @@ struct QueryGetAttr
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetAttr &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryGetAttr, ResultMaybeType)
+DECLARE_QUERY_RESULT(QueryGetAttr, ResultMaybeWHNF)
 
 /** Get a list of strings (no context). */
 struct QueryGetListOfStrings
@@ -403,7 +400,7 @@ struct QueryGetListElem
     PathExpr path;    ///< Path from each root to this observation
     auto operator<=>(const QueryGetListElem &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryGetListElem, ResultType)
+DECLARE_QUERY_RESULT(QueryGetListElem, ResultWHNF)
 
 /** Force a value to WHNF and read its type + type-determined payload
     in one shot. Used by the cache-layer Objects to combine what would
@@ -472,7 +469,7 @@ struct QueryApply
     size_t argRootIndex{0};
     auto operator<=>(const QueryApply &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryApply, ResultType)
+DECLARE_QUERY_RESULT(QueryApply, ResultWHNF)
 
 /** Apply a callback to a contra-arg, identified by the outer's
     observation-set on the contra-arg.
@@ -563,11 +560,10 @@ using Queries = ApplyWrapper<
 template<template<typename> class F>
 using Results = ApplyWrapper<
     F,
-    ResultType,
-    ResultMaybeType,
     ResultListOfStrings,
     ResultFunctionInfo,
-    ResultWHNF>;
+    ResultWHNF,
+    ResultMaybeWHNF>;
 
 // ---------------------------------------------------------------------------
 // Variant types for QueryVariant / ResultVariant
@@ -585,11 +581,10 @@ using QueryVariant = std::variant<
     QueryCallbackApply>;
 
 using ResultVariant = std::variant<
-    ResultType,
-    ResultMaybeType,
     ResultListOfStrings,
     ResultFunctionInfo,
-    ResultWHNF>;
+    ResultWHNF,
+    ResultMaybeWHNF>;
 
 // ---------------------------------------------------------------------------
 // OuterValueRequest / OuterValueResponse

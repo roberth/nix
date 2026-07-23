@@ -910,14 +910,16 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
             auto name = params["name"].get<std::string>();
             auto child = obj->maybeGetAttr(name);
             if (!child) {
-                resultJson = trace::ResultMaybeType{std::nullopt};
+                resultJson = trace::ResultMaybeWHNF{std::nullopt};
             } else {
-                resultJson = trace::ResultMaybeType{std::optional<std::string>{objectTypeToString(child->getType())}};
+                /* Symmetric with writer-side: record existence only,
+                   not WHNF payload (see tracing-object.cc). */
+                resultJson = trace::ResultMaybeWHNF{trace::ResultWHNF{"deferred", trace::WHNFEmpty{}}};
             }
         } else if (tag == "getListElem") {
             auto index = params["index"].get<size_t>();
             auto child = obj->getListElem(index);
-            resultJson = trace::ResultType{objectTypeToString(child->getType())};
+            resultJson = computeWHNFFromObject(*child);
         } else if (tag == "getFunctionInfo") {
             auto info = obj->getFunctionInfo();
             if (!info)
