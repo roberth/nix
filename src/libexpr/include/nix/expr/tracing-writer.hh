@@ -755,11 +755,19 @@ public:
             for (size_t i = 0; i < aq.envAsksEdgesSizeAtPush; ++i) {
                 const auto & edge = envAsksEdges[i];
                 decisionGraph->insertAsk(simQ, edge.fromFactSetHash, edge.requestSetHash);
+                tracingCacheLog("  landing[%zu] insertAsk(simQ=%s, from=%s)",
+                                i,
+                                simQ.to_string(HashFormat::Base16, false).substr(0, 12),
+                                edge.fromFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12));
                 if (aq.fromSubject && i < envWalk.size()) {
                     simPerQ.push_back(envWalk[i]);
                     auto newState = stateHashAt(
                         *aq.fromSubject, aq.fromSubjectArgAncestry,
                         simPerQ, simPerQ.size());
+                    tracingCacheLog("  landing[%zu] fold obs -> newState=%s (was=%s)",
+                                    i,
+                                    newState.to_string(HashFormat::Base16, false).substr(0, 12),
+                                    simFromState.to_string(HashFormat::Base16, false).substr(0, 12));
                     if (newState != simFromState) {
                         simFromState = newState;
                         auto newFromHex = newState.to_string(HashFormat::Base16, false);
