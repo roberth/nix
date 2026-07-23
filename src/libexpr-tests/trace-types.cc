@@ -69,12 +69,12 @@ TEST(TraceTypes, GetEnvResponseEmpty)
 
 TEST(TraceTypes, AmbientOutgoingRequestRoundTrip)
 {
-    OuterValueRequest req{QueryGetAttr{"x", "0"}};
+    OuterValueRequest req{QueryHasAttr{"x", "0"}};
     json j;
     to_json(j, req);
-    OuterValueRequest req2{QueryGetAttr{}};
+    OuterValueRequest req2{QueryHasAttr{}};
     from_json(j, req2);
-    auto * q = std::get_if<QueryGetAttr>(&req2.query);
+    auto * q = std::get_if<QueryHasAttr>(&req2.query);
     ASSERT_NE(q, nullptr);
     EXPECT_EQ(q->name, "x");
     EXPECT_EQ(q->from, "0");
@@ -83,8 +83,8 @@ TEST(TraceTypes, AmbientOutgoingRequestRoundTrip)
 TEST(TraceTypes, AmbientOutgoingResponseWrapperRoundTrip)
 {
     Response<OuterValueRequest> traced{
-        .request = {QueryGetAttr{"x", "0"}},
-        .response = {ResultMaybeWHNF{ResultWHNF{"nInt", std::nullopt}}},
+        .request = {QueryHasAttr{"x", "0"}},
+        .response = {ResultHasAttr{true}},
     };
     json j;
     to_json(j, traced);
@@ -92,7 +92,7 @@ TEST(TraceTypes, AmbientOutgoingResponseWrapperRoundTrip)
 
     Response<OuterValueRequest> traced2;
     from_json(j, traced2);
-    auto * q = std::get_if<QueryGetAttr>(&traced2.request.query);
+    auto * q = std::get_if<QueryHasAttr>(&traced2.request.query);
     ASSERT_NE(q, nullptr);
     EXPECT_EQ(q->name, "x");
 }
@@ -100,8 +100,8 @@ TEST(TraceTypes, AmbientOutgoingResponseWrapperRoundTrip)
 TEST(TraceTypes, AmbientQueryParseTraceEntry)
 {
     Response<OuterValueRequest> original{
-        .request = {QueryGetAttr{"key", "42"}},
-        .response = {ResultMaybeWHNF{ResultWHNF{"nAttrs", std::nullopt}}},
+        .request = {QueryHasAttr{"key", "42"}},
+        .response = {ResultHasAttr{true}},
     };
     json j;
     to_json(j, original);
@@ -110,7 +110,7 @@ TEST(TraceTypes, AmbientQueryParseTraceEntry)
     ASSERT_TRUE(parsed.has_value());
     auto * resp = std::get_if<Response<OuterValueRequest>>(&*parsed);
     ASSERT_NE(resp, nullptr);
-    auto * q = std::get_if<QueryGetAttr>(&resp->request.query);
+    auto * q = std::get_if<QueryHasAttr>(&resp->request.query);
     ASSERT_NE(q, nullptr);
     EXPECT_EQ(q->from, "42");
 }
@@ -154,10 +154,10 @@ TEST(TraceTypes, QueryExprRoundTrip)
 
 TEST(TraceTypes, QueryWrapperRoundTrip)
 {
-    Query<QueryGetAttr> q{.query = QueryGetAttr{"name", "42"}, .v = 99};
+    Query<QueryHasAttr> q{.query = QueryHasAttr{"name", "42"}, .v = 99};
     json j;
     to_json(j, q);
-    Query<QueryGetAttr> q2;
+    Query<QueryHasAttr> q2;
     from_json(j, q2);
     EXPECT_EQ(q.query.name, q2.query.name);
     EXPECT_EQ(q.query.from, q2.query.from);
@@ -166,23 +166,23 @@ TEST(TraceTypes, QueryWrapperRoundTrip)
 
 TEST(TraceTypes, ResultMaybeTypePresent)
 {
-    ResultMaybeWHNF r{ResultWHNF{"set", WHNFAttrs{{}}}};
+    ResultHasAttr r{true};
     json j;
     to_json(j, r);
-    ResultMaybeWHNF r2;
+    ResultHasAttr r2;
     from_json(j, r2);
-    ASSERT_TRUE(r2.value.has_value());
-    EXPECT_EQ(r.value->type, r2.value->type);
+    ASSERT_TRUE(r2.exists);
+    EXPECT_EQ(std::string{}, std::string{});
 }
 
 TEST(TraceTypes, ResultMaybeTypeAbsent)
 {
-    ResultMaybeWHNF r{std::nullopt};
+    ResultHasAttr r{false};
     json j;
     to_json(j, r);
-    ResultMaybeWHNF r2;
+    ResultHasAttr r2;
     from_json(j, r2);
-    EXPECT_FALSE(r2.value.has_value());
+    EXPECT_FALSE(r2.exists);
 }
 
 TEST(TraceTypes, QueryGetListElemRoundTrip)
@@ -215,7 +215,7 @@ TEST(TraceTypes, QueryTagConstants)
 {
     EXPECT_EQ(QueryExpr::tag, "expr");
     EXPECT_EQ(QueryImport::tag, "import");
-    EXPECT_EQ(QueryGetAttr::tag, "getAttr");
+    EXPECT_EQ(QueryHasAttr::tag, "hasAttr");
     EXPECT_EQ(QueryGetListOfStrings::tag, "getListOfStrings");
     EXPECT_EQ(QueryGetListElem::tag, "getListElem");
     EXPECT_EQ(QueryGetWHNF::tag, "getWHNF");
@@ -239,12 +239,12 @@ TEST(TraceTypes, QueryExprComparison)
     EXPECT_TRUE(a < c || c < a); // strict weak ordering
 }
 
-TEST(TraceTypes, QueryGetAttrComparison)
+TEST(TraceTypes, QueryHasAttrComparison)
 {
-    QueryGetAttr a{"name", "1"};
-    QueryGetAttr b{"name", "1"};
-    QueryGetAttr c{"other", "1"};
-    QueryGetAttr d{"name", "2"};
+    QueryHasAttr a{"name", "1"};
+    QueryHasAttr b{"name", "1"};
+    QueryHasAttr c{"other", "1"};
+    QueryHasAttr d{"name", "2"};
     EXPECT_EQ(a, b);
     EXPECT_NE(a, c);
     EXPECT_NE(a, d);
@@ -278,25 +278,25 @@ TEST(TraceTypes, ResponseEnvHasTypeTag)
 }
 
 // ---------------------------------------------------------------------------
-// ResultMaybeType uses "attrType" JSON field
+// ResultHasAttr serializes { "exists": bool }
 // ---------------------------------------------------------------------------
 
-TEST(TraceTypes, ResultMaybeTypeUsesAttrField)
+TEST(TraceTypes, ResultHasAttrExistsTrue)
 {
-    ResultMaybeWHNF r{ResultWHNF{"set", WHNFAttrs{{}}}};
+    ResultHasAttr r{true};
     json j;
     to_json(j, r);
-    EXPECT_TRUE(j.contains("attr"));
-    EXPECT_EQ(j.at("attr").at("type"), "set");
+    EXPECT_TRUE(j.contains("exists"));
+    EXPECT_EQ(j.at("exists"), true);
 }
 
-TEST(TraceTypes, ResultMaybeTypeNullUsesAttrField)
+TEST(TraceTypes, ResultHasAttrExistsFalse)
 {
-    ResultMaybeWHNF r{std::nullopt};
+    ResultHasAttr r{false};
     json j;
     to_json(j, r);
-    EXPECT_TRUE(j.contains("attr"));
-    EXPECT_TRUE(j.at("attr").is_null());
+    EXPECT_TRUE(j.contains("exists"));
+    EXPECT_EQ(j.at("exists"), false);
 }
 
 // ---------------------------------------------------------------------------
@@ -380,17 +380,16 @@ TEST(TraceTypes, ParseResultType)
 
 TEST(TraceTypes, ParseResultMaybeType)
 {
-    Result<ResultMaybeWHNF> original{
-        .result = {.value = ResultWHNF{"int", WHNFInt{5}}},
+    Result<ResultHasAttr> original{
+        .result = {.exists = true},
         .v = 5,
     };
     auto j = json(original);
     auto parsed = parseTraceEntry(j);
     ASSERT_TRUE(parsed.has_value());
-    auto * r = std::get_if<Result<ResultMaybeWHNF>>(&*parsed);
+    auto * r = std::get_if<Result<ResultHasAttr>>(&*parsed);
     ASSERT_NE(r, nullptr);
-    ASSERT_TRUE(r->result.value.has_value());
-    EXPECT_EQ(r->result.value->type, "int");
+    EXPECT_TRUE(r->result.exists);
 }
 
 TEST(TraceTypes, ParseUnrecognizedReturnsNullopt)
@@ -424,12 +423,12 @@ TEST(TraceTypes, FullTraceRoundTrip)
             .result = ResultWHNF{"set", WHNFAttrs{{}}},
             .v = 0,
         },
-        Query<QueryGetAttr>{
+        Query<QueryHasAttr>{
             .query = {.name = "x", .from = "0"},
             .v = 1,
         },
-        Result<ResultMaybeWHNF>{
-            .result = {.value = ResultWHNF{"int", WHNFInt{0}}},
+        Result<ResultHasAttr>{
+            .result = {.exists = true},
             .v = 1,
         },
     };
@@ -469,12 +468,12 @@ TEST(TraceTypes, CorrelateTrace)
             .result = ResultWHNF{"set", WHNFAttrs{{}}},
             .v = 0,
         },
-        Query<QueryGetAttr>{
+        Query<QueryHasAttr>{
             .query = {.name = "x", .from = "0"},
             .v = 1,
         },
-        Result<ResultMaybeWHNF>{
-            .result = {.value = ResultWHNF{"int", WHNFInt{0}}},
+        Result<ResultHasAttr>{
+            .result = {.exists = true},
             .v = 1,
         },
     };
@@ -486,7 +485,7 @@ TEST(TraceTypes, CorrelateTrace)
     ASSERT_NE(q0, nullptr);
     EXPECT_EQ(q0->resultIndex, 1u);
 
-    auto * q2 = std::get_if<CompletedQuery<QueryGetAttr>>(&correlated[2]);
+    auto * q2 = std::get_if<CompletedQuery<QueryHasAttr>>(&correlated[2]);
     ASSERT_NE(q2, nullptr);
     EXPECT_EQ(q2->resultIndex, 3u);
 }
@@ -506,12 +505,12 @@ TEST(TraceTypes, QueryIndexLookup)
             .result = ResultWHNF{"int", WHNFInt{0}},
             .v = 0,
         },
-        Query<QueryGetAttr>{
+        Query<QueryHasAttr>{
             .query = {.name = "foo", .from = "0"},
             .v = 1,
         },
-        Result<ResultMaybeWHNF>{
-            .result = {.value = ResultWHNF{"set", WHNFAttrs{{}}}},
+        Result<ResultHasAttr>{
+            .result = {.exists = true},
             .v = 1,
         },
     };
@@ -523,7 +522,7 @@ TEST(TraceTypes, QueryIndexLookup)
     EXPECT_EQ(e1->queryIndex, 0u);
     EXPECT_EQ(e1->resultIndex, 1u);
 
-    auto e2 = idx.lookup(QueryGetAttr{"foo", "0"});
+    auto e2 = idx.lookup(QueryHasAttr{"foo", "0"});
     ASSERT_TRUE(e2.has_value());
     EXPECT_EQ(e2->queryIndex, 2u);
     EXPECT_EQ(e2->resultIndex, 3u);

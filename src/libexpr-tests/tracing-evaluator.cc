@@ -87,10 +87,10 @@ TEST_F(TracingEvaluatorTest, GetAttrTracesAccess)
     auto foo = obj->maybeGetAttr("foo");
     ASSERT_NE(foo, nullptr);
 
-    // Should have a getAttr query and result
+    // Should have a hasAttr query and result
     ASSERT_GE(sink->entries.size(), 2u);
     auto & query = sink->entries[0];
-    EXPECT_EQ(query.at("query").at("query"), "getAttr");
+    EXPECT_EQ(query.at("query").at("query"), "hasAttr");
     EXPECT_EQ(query.at("query").at("params").at("name"), "foo");
 }
 
@@ -198,10 +198,10 @@ TEST_F(TracingEvaluatorTest, MissingAttrTracesNull)
     auto missing = obj->maybeGetAttr("nonexistent");
     EXPECT_EQ(missing, nullptr);
 
-    // Should have query and a null-type result
+    // Should have query and a { exists: false } result
     ASSERT_GE(sink->entries.size(), 2u);
     auto & result = sink->entries[1];
-    EXPECT_TRUE(result.at("result").at("attr").is_null());
+    EXPECT_EQ(result.at("result").at("exists"), false);
 }
 
 TEST_F(TracingEvaluatorTest, DefeatCacheDoesNotTrace)

@@ -83,9 +83,9 @@ static OuterQueryFn mockResolver(std::map<std::string, trace::ResultVariant> res
             throw Error("mock resolver: no response for %s", key);
 
         std::shared_ptr<Object> child;
-        if (std::holds_alternative<trace::ResultMaybeWHNF>(it->second)) {
-            auto & rmt = std::get<trace::ResultMaybeWHNF>(it->second);
-            if (rmt.value)
+        if (std::holds_alternative<trace::ResultHasAttr>(it->second)) {
+            auto & rmt = std::get<trace::ResultHasAttr>(it->second);
+            if (rmt.exists)
                 child = stubOuter();
         }
         if (std::holds_alternative<trace::ResultWHNF>(it->second)) {
@@ -158,7 +158,7 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
         testSubject(0),
         stubOuter(),
         mockResolver({
-            {"getAttr:" + ambientHex(arg), trace::ResultMaybeWHNF{trace::ResultWHNF{"int", trace::WHNFInt{99}}}},
+            {"hasAttr:" + ambientHex(arg), trace::ResultHasAttr{true}},
             {"getWHNF:" + childHex, trace::ResultWHNF{"int", trace::WHNFInt{99}}},
         }),
         stubAmbientRoot());
@@ -172,7 +172,7 @@ TEST(AmbientObjectTest, GetAttrMissing)
     auto arg = stateHashAfterSubject(testSubject(0), Hash(HashAlgorithm::SHA256), {});
     auto obj = std::make_shared<OuterObject>(
         testSubject(0), stubOuter(),
-        mockResolver({{"getAttr:" + ambientHex(arg), trace::ResultMaybeWHNF{std::nullopt}}}), stubAmbientRoot());
+        mockResolver({{"hasAttr:" + ambientHex(arg), trace::ResultHasAttr{false}}}), stubAmbientRoot());
     EXPECT_EQ(obj->maybeGetAttr("missing"), nullptr);
 }
 

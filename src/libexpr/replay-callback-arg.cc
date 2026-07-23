@@ -107,12 +107,12 @@ static void appendFactToWalk(
 
 std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name)
 {
-    trace::QueryGetAttr query{name, std::string{}};
+    trace::QueryHasAttr query{name, std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
-    trace::ResultMaybeWHNF r = rJson;
-    if (!r.value)
+    trace::ResultHasAttr r = rJson;
+    if (!r.exists)
         return nullptr;
     /* Child Subject is DerivedSubject of THIS subject — `stateHashAt`
        on the child will recompute parent's state hash at the child's
@@ -156,7 +156,7 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
 std::vector<std::string> ReplayCallbackArg::getAttrNames()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFAttrs>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
     if (!p)
         throw Error("rlo getAttrNames: WHNF payload not attrs (type %s)", w.type);
     return p->names;
@@ -165,7 +165,7 @@ std::vector<std::string> ReplayCallbackArg::getAttrNames()
 std::string ReplayCallbackArg::getStringIgnoreContext()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFString>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
     if (!p)
         throw Error("rlo getStringIgnoreContext: WHNF payload not string (type %s)", w.type);
     return p->value;
@@ -179,7 +179,7 @@ std::string ReplayCallbackArg::getStringWithoutContext()
 std::pair<std::string, NixStringContext> ReplayCallbackArg::getStringWithContext()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFString>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
     if (!p)
         throw Error("rlo getStringWithContext: WHNF payload not string (type %s)", w.type);
     NixStringContext ctx;
@@ -191,7 +191,7 @@ std::pair<std::string, NixStringContext> ReplayCallbackArg::getStringWithContext
 RootedPath ReplayCallbackArg::getPath()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFPath>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFPath>(&w.payload);
     if (!p)
         throw Error("rlo getPath: WHNF payload not path (type %s)", w.type);
     return RootedPath{rootFSRoot, CanonPath{p->path}};
@@ -200,7 +200,7 @@ RootedPath ReplayCallbackArg::getPath()
 bool ReplayCallbackArg::getBool(std::string_view)
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFBool>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFBool>(&w.payload);
     if (!p)
         throw Error("rlo getBool: WHNF payload not bool (type %s)", w.type);
     return p->value;
@@ -209,7 +209,7 @@ bool ReplayCallbackArg::getBool(std::string_view)
 NixInt ReplayCallbackArg::getInt(std::string_view)
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFInt>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFInt>(&w.payload);
     if (!p)
         throw Error("rlo getInt: WHNF payload not int (type %s)", w.type);
     return NixInt{p->value};
@@ -218,7 +218,7 @@ NixInt ReplayCallbackArg::getInt(std::string_view)
 NixFloat ReplayCallbackArg::getFloat(std::string_view)
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFFloat>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
     if (!p)
         throw Error("rlo getFloat: WHNF payload not float (type %s)", w.type);
     return p->value;
@@ -227,7 +227,7 @@ NixFloat ReplayCallbackArg::getFloat(std::string_view)
 size_t ReplayCallbackArg::getListSize()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFList>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFList>(&w.payload);
     if (!p)
         throw Error("rlo getListSize: WHNF payload not list (type %s)", w.type);
     return p->size;

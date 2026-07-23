@@ -37,9 +37,8 @@ void TracingCallbackApplyResult::recordD2(const trace::QueryVariant & query, con
 std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::string & name)
 {
     auto child = inner->maybeGetAttr(name);
-    trace::QueryGetAttr q{name, std::string{}};
-    trace::ResultMaybeWHNF r{
-        child ? std::optional<trace::ResultWHNF>{trace::ResultWHNF{"deferred", std::nullopt}} : std::nullopt};
+    trace::QueryHasAttr q{name, std::string{}};
+    trace::ResultHasAttr r{child != nullptr};
     recordD2(q, r);
     return child;
 }
@@ -57,7 +56,7 @@ trace::ResultWHNF & TracingCallbackApplyResult::whnf()
 std::vector<std::string> TracingCallbackApplyResult::getAttrNames()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFAttrs>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
     if (!p)
         throw Error("laro getAttrNames: WHNF payload not attrs (type %s)", w.type);
     return p->names;
@@ -66,7 +65,7 @@ std::vector<std::string> TracingCallbackApplyResult::getAttrNames()
 std::string TracingCallbackApplyResult::getStringIgnoreContext()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFString>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
     if (!p)
         throw Error("laro getStringIgnoreContext: WHNF payload not string (type %s)", w.type);
     return p->value;
@@ -80,7 +79,7 @@ std::string TracingCallbackApplyResult::getStringWithoutContext()
 std::pair<std::string, NixStringContext> TracingCallbackApplyResult::getStringWithContext()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFString>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
     if (!p)
         throw Error("laro getStringWithContext: WHNF payload not string (type %s)", w.type);
     NixStringContext ctx;
@@ -100,7 +99,7 @@ RootedPath TracingCallbackApplyResult::getPath()
 bool TracingCallbackApplyResult::getBool(std::string_view)
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFBool>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFBool>(&w.payload);
     if (!p)
         throw Error("laro getBool: WHNF payload not bool (type %s)", w.type);
     return p->value;
@@ -109,7 +108,7 @@ bool TracingCallbackApplyResult::getBool(std::string_view)
 NixInt TracingCallbackApplyResult::getInt(std::string_view)
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFInt>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFInt>(&w.payload);
     if (!p)
         throw Error("laro getInt: WHNF payload not int (type %s)", w.type);
     return NixInt{p->value};
@@ -118,7 +117,7 @@ NixInt TracingCallbackApplyResult::getInt(std::string_view)
 NixFloat TracingCallbackApplyResult::getFloat(std::string_view)
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFFloat>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
     if (!p)
         throw Error("laro getFloat: WHNF payload not float (type %s)", w.type);
     return p->value;
@@ -127,7 +126,7 @@ NixFloat TracingCallbackApplyResult::getFloat(std::string_view)
 size_t TracingCallbackApplyResult::getListSize()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFList>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFList>(&w.payload);
     if (!p)
         throw Error("laro getListSize: WHNF payload not list (type %s)", w.type);
     return p->size;

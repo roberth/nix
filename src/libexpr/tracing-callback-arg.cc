@@ -37,10 +37,10 @@ TracingCallbackArg::TracingCallbackArg(
 std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & name)
 {
     auto child = inner->maybeGetAttr(name);
-    trace::QueryGetAttr query{name, tracingLocalFromOf(localId())};
+    trace::QueryHasAttr query{name, tracingLocalFromOf(localId())};
     auto resultJson = child
-        ? trace::ResultMaybeWHNF{trace::ResultWHNF{"deferred", std::nullopt}}
-        : trace::ResultMaybeWHNF{std::nullopt};
+        ? trace::ResultHasAttr{true}
+        : trace::ResultHasAttr{false};
     recordObservation(query, resultJson);
     if (!child)
         return nullptr;
@@ -68,7 +68,7 @@ trace::ResultWHNF & TracingCallbackArg::whnf()
 std::vector<std::string> TracingCallbackArg::getAttrNames()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFAttrs>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
     if (!p)
         throw Error("tlo getAttrNames: WHNF payload not attrs (type %s)", w.type);
     return p->names;
@@ -77,7 +77,7 @@ std::vector<std::string> TracingCallbackArg::getAttrNames()
 std::string TracingCallbackArg::getStringIgnoreContext()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFString>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
     if (!p)
         throw Error("tlo getStringIgnoreContext: WHNF payload not string (type %s)", w.type);
     return p->value;
@@ -91,7 +91,7 @@ std::string TracingCallbackArg::getStringWithoutContext()
 std::pair<std::string, NixStringContext> TracingCallbackArg::getStringWithContext()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFString>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
     if (!p)
         throw Error("tlo getStringWithContext: WHNF payload not string (type %s)", w.type);
     NixStringContext ctx;
@@ -103,7 +103,7 @@ std::pair<std::string, NixStringContext> TracingCallbackArg::getStringWithContex
 RootedPath TracingCallbackArg::getPath()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFPath>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFPath>(&w.payload);
     if (!p)
         throw Error("tlo getPath: WHNF payload not path (type %s)", w.type);
     /* lazy-paths: reuse the cached SourceRoot so the path outlives the
@@ -114,7 +114,7 @@ RootedPath TracingCallbackArg::getPath()
 bool TracingCallbackArg::getBool(std::string_view)
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFBool>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFBool>(&w.payload);
     if (!p)
         throw Error("tlo getBool: WHNF payload not bool (type %s)", w.type);
     return p->value;
@@ -123,7 +123,7 @@ bool TracingCallbackArg::getBool(std::string_view)
 NixInt TracingCallbackArg::getInt(std::string_view)
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFInt>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFInt>(&w.payload);
     if (!p)
         throw Error("tlo getInt: WHNF payload not int (type %s)", w.type);
     return NixInt{p->value};
@@ -132,7 +132,7 @@ NixInt TracingCallbackArg::getInt(std::string_view)
 NixFloat TracingCallbackArg::getFloat(std::string_view)
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFFloat>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
     if (!p)
         throw Error("tlo getFloat: WHNF payload not float (type %s)", w.type);
     return p->value;
@@ -141,7 +141,7 @@ NixFloat TracingCallbackArg::getFloat(std::string_view)
 size_t TracingCallbackArg::getListSize()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFList>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFList>(&w.payload);
     if (!p)
         throw Error("tlo getListSize: WHNF payload not list (type %s)", w.type);
     return p->size;

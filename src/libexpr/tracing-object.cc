@@ -48,12 +48,21 @@ trace::ResultWHNF computeWHNFFromObject(Object & obj)
             r.payload = trace::WHNFList{obj.getListSize()};
             break;
         case nFunction:
+            /* Function identity is represented indirectly through
+               subsequent queries (getFunctionInfo, apply,
+               callbackApply); the payload is just the tag. */
+            r.payload = trace::WHNFFunction{};
+            break;
         case nNull:
+            r.payload = trace::WHNFNull{};
+            break;
         case nThunk:
         case nExternal:
         case nFailed:
-            r.payload = std::nullopt;
-            break;
+            throw Error(
+                "cannot record WHNF for %s — not representable in the trace cache; "
+                "caller must fall back to the interpreter",
+                objectTypeToString(type));
     }
     return r;
 }
@@ -115,7 +124,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     /* Task #110: push ActiveQuery before forcing (see whnf() for
        rationale). */
     auto parentHash = evolvedQueryFrom();
-    trace::QueryGetAttr query{name, parentHash};
+    trace::QueryHasAttr query{name, parentHash};
     std::optional<Subject> fromSubject;
     Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
     if (applyResultSubject) {
@@ -129,7 +138,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
            forces WHNF via a separate probe when it actually needs
            the value. Preserves order-independence for deep-indep
            patterns. */
-        trace::ResultMaybeWHNF resJson{trace::ResultWHNF{"deferred", std::nullopt}};
+        trace::ResultHasAttr resJson{true};
         auto childTriePos = writer.logResult(valueId, resJson, qh);
         if (qh.queryHash && childTriePos)
             pushObservation(parentHash, *qh.queryHash, childTriePos->resultNodeHash);
@@ -150,7 +159,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
         }
         return child;
     }
-    trace::ResultMaybeWHNF resJson{std::nullopt};
+    trace::ResultHasAttr resJson{false};
     auto tp = writer.logResult(valueId, resJson, qh);
     if (qh.queryHash && tp)
         pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
@@ -192,7 +201,7 @@ trace::ResultWHNF & TracingObject::whnf()
 std::vector<std::string> TracingObject::getAttrNames()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFAttrs>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
     if (!p)
         throw Error("getAttrNames on non-set value (type %s)", w.type);
     return p->names;
@@ -201,7 +210,7 @@ std::vector<std::string> TracingObject::getAttrNames()
 std::string TracingObject::getStringIgnoreContext()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFString>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
     if (!p)
         throw Error("getStringIgnoreContext on non-string value (type %s)", w.type);
     return p->value;
@@ -210,7 +219,7 @@ std::string TracingObject::getStringIgnoreContext()
 std::string TracingObject::getStringWithoutContext()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFString>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
     if (!p)
         throw Error("getStringWithoutContext on non-string value (type %s)", w.type);
     if (!p->context.empty())
@@ -221,7 +230,7 @@ std::string TracingObject::getStringWithoutContext()
 std::pair<std::string, NixStringContext> TracingObject::getStringWithContext()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFString>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFString>(&w.payload);
     if (!p)
         throw Error("getStringWithContext on non-string value (type %s)", w.type);
     NixStringContext ctx;
@@ -241,7 +250,7 @@ RootedPath TracingObject::getPath()
 bool TracingObject::getBool(std::string_view)
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFBool>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFBool>(&w.payload);
     if (!p)
         throw Error("getBool on non-bool value (type %s)", w.type);
     return p->value;
@@ -250,7 +259,7 @@ bool TracingObject::getBool(std::string_view)
 NixInt TracingObject::getInt(std::string_view)
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFInt>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFInt>(&w.payload);
     if (!p)
         throw Error("getInt on non-int value (type %s)", w.type);
     return NixInt{p->value};
@@ -259,7 +268,7 @@ NixInt TracingObject::getInt(std::string_view)
 NixFloat TracingObject::getFloat(std::string_view)
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFFloat>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFFloat>(&w.payload);
     if (!p)
         throw Error("getFloat on non-float value (type %s)", w.type);
     return p->value;
@@ -268,7 +277,7 @@ NixFloat TracingObject::getFloat(std::string_view)
 size_t TracingObject::getListSize()
 {
     auto & w = whnf();
-    auto * p = (w.payload ? std::get_if<trace::WHNFList>(&*w.payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFList>(&w.payload);
     if (!p)
         throw Error("getListSize on non-list value (type %s)", w.type);
     return p->size;

@@ -184,11 +184,13 @@ struct ResultListOfStrings
     std::vector<std::string> values;
 };
 
-/** Payload alternatives for `ResultWHNF`. One per Nix object type
-    that carries content beyond the type discriminator. Types like
-    nFunction / nNull / nExternal / nThunk carry no payload — the
-    ResultWHNF's `payload` field is nullopt for them (rather than
-    a synthetic "empty" placeholder, since "empty" isn't a value). */
+/** Payload alternatives for `ResultWHNF`. One per Nix WHNF type.
+    `WHNFFunction` / `WHNFNull` are tag-only (the value is entirely
+    identified by its type — functions are represented indirectly
+    through subsequent queries). Types the black-box model can't
+    represent — `nThunk` (unforced), `nExternal`, `nFailed` — are
+    never stored: `computeWHNFFromObject` throws so the caller
+    falls back to the interpreter. */
 struct WHNFInt { int64_t value; };
 struct WHNFBool { bool value; };
 struct WHNFFloat { double value; };
@@ -196,6 +198,8 @@ struct WHNFPath { std::string path; };
 struct WHNFString { std::string value; std::vector<std::string> context; };
 struct WHNFAttrs { std::vector<std::string> names; };
 struct WHNFList { size_t size; };
+struct WHNFFunction {};
+struct WHNFNull {};
 
 /** Result of a single WHNF (Weak Head Normal Form) force. Carries the
     type discriminator plus the type-determined payload as a tagged
@@ -206,16 +210,13 @@ struct WHNFList { size_t size; };
 struct ResultWHNF
 {
     std::string type;
-    std::optional<std::variant<WHNFInt, WHNFBool, WHNFFloat, WHNFPath, WHNFString, WHNFAttrs, WHNFList>> payload;
+    std::variant<WHNFInt, WHNFBool, WHNFFloat, WHNFPath, WHNFString, WHNFAttrs, WHNFList, WHNFFunction, WHNFNull> payload;
 };
 
-/** Result for getAttr: either the WHNF of the attribute (present) or
-    nullopt (attribute missing). ResultWHNF's `type` field
-    discriminates the value's Nix type; nullopt is reserved for
-    the missing-attribute case. */
-struct ResultMaybeWHNF
+/** Result of a `QueryHasAttr` existence check. */
+struct ResultHasAttr
 {
-    std::optional<ResultWHNF> value;
+    bool exists;
 };
 
 // ---------------------------------------------------------------------------
@@ -368,17 +369,20 @@ struct QueryImport
 };
 DECLARE_QUERY_RESULT(QueryImport, ResultWHNF)
 
-/** Get an attribute from a value. */
-struct QueryGetAttr
+/** Check whether an attribute exists on a value. The attribute's WHNF
+    is fetched separately via a subsequent `QueryGetWHNF` on the
+    resulting Object — this query records only the existence check so
+    it doesn't force strictness the interpreter doesn't add. */
+struct QueryHasAttr
 {
-    static constexpr std::string_view tag = "getAttr";
+    static constexpr std::string_view tag = "hasAttr";
     std::string name;
     QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by `fromStateHashes`)
     std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (one entry per hole in `path`)
     PathExpr path;    ///< Path from each root to this observation
-    auto operator<=>(const QueryGetAttr &) const = default;
+    auto operator<=>(const QueryHasAttr &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryGetAttr, ResultMaybeWHNF)
+DECLARE_QUERY_RESULT(QueryHasAttr, ResultHasAttr)
 
 /** Get a list of strings (no context). */
 struct QueryGetListOfStrings
@@ -547,7 +551,7 @@ using Queries = ApplyWrapper<
     F,
     QueryExpr,
     QueryImport,
-    QueryGetAttr,
+    QueryHasAttr,
     QueryGetListOfStrings,
     QueryGetListElem,
     QueryGetFunctionInfo,
@@ -564,7 +568,7 @@ using Results = ApplyWrapper<
     ResultListOfStrings,
     ResultFunctionInfo,
     ResultWHNF,
-    ResultMaybeWHNF>;
+    ResultHasAttr>;
 
 // ---------------------------------------------------------------------------
 // Variant types for QueryVariant / ResultVariant
@@ -573,7 +577,7 @@ using Results = ApplyWrapper<
 using QueryVariant = std::variant<
     QueryExpr,
     QueryImport,
-    QueryGetAttr,
+    QueryHasAttr,
     QueryGetListOfStrings,
     QueryGetListElem,
     QueryGetFunctionInfo,
@@ -585,7 +589,7 @@ using ResultVariant = std::variant<
     ResultListOfStrings,
     ResultFunctionInfo,
     ResultWHNF,
-    ResultMaybeWHNF>;
+    ResultHasAttr>;
 
 // ---------------------------------------------------------------------------
 // OuterValueRequest / OuterValueResponse

@@ -190,8 +190,8 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
 std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & name)
 {
     auto parentHash = evolvedQueryFrom();
-    trace::QueryGetAttr query{name, parentHash};
-    auto result = lookupStructuralChild<trace::QueryGetAttr, trace::ResultMaybeWHNF>(query);
+    trace::QueryHasAttr query{name, parentHash};
+    auto result = lookupStructuralChild<trace::QueryHasAttr, trace::ResultHasAttr>(query);
     if (!result) {
         tracingCacheLog("replay fallback: maybeGetAttr '%s'", name);
         return ensureInner()->maybeGetAttr(name);
@@ -199,7 +199,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
     auto shallowQueryHash = TracingDecisionGraph::computeQueryHash(query);
     auto shallowResp = result->second.resultNodeHash;
     pushObservation(parentHash, shallowQueryHash, shallowResp);
-    if (!result->first.value) {
+    if (!result->first.exists) {
         tracingCacheLog("replay hit: getAttr '%s' -> missing", name);
         return nullptr;
     }
@@ -242,7 +242,7 @@ std::vector<std::string> TracingReplayObject::getAttrNames()
         tracingCacheLog("replay fallback: getAttrNames");
         return ensureInner()->getAttrNames();
     }
-    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFAttrs>(&*(*wp)->payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFAttrs>(&(*wp)->payload);
     if (!p)
         return ensureInner()->getAttrNames();
     return p->names;
@@ -255,7 +255,7 @@ std::string TracingReplayObject::getStringIgnoreContext()
         tracingCacheLog("replay fallback: getStringIgnoreContext");
         return ensureInner()->getStringIgnoreContext();
     }
-    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFString>(&*(*wp)->payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFString>(&(*wp)->payload);
     if (!p)
         return ensureInner()->getStringIgnoreContext();
     return p->value;
@@ -268,7 +268,7 @@ std::string TracingReplayObject::getStringWithoutContext()
         tracingCacheLog("replay fallback: getStringWithoutContext");
         return ensureInner()->getStringWithoutContext();
     }
-    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFString>(&*(*wp)->payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFString>(&(*wp)->payload);
     if (!p || !p->context.empty())
         return ensureInner()->getStringWithoutContext();
     return p->value;
@@ -281,7 +281,7 @@ std::pair<std::string, NixStringContext> TracingReplayObject::getStringWithConte
         tracingCacheLog("replay fallback: getStringWithContext");
         return ensureInner()->getStringWithContext();
     }
-    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFString>(&*(*wp)->payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFString>(&(*wp)->payload);
     if (!p)
         return ensureInner()->getStringWithContext();
     NixStringContext ctx;
@@ -320,7 +320,7 @@ bool TracingReplayObject::getBool(std::string_view errorCtx)
         tracingCacheLog("replay fallback: getBool");
         return ensureInner()->getBool(errorCtx);
     }
-    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFBool>(&*(*wp)->payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFBool>(&(*wp)->payload);
     if (!p)
         return ensureInner()->getBool(errorCtx);
     return p->value;
@@ -333,7 +333,7 @@ NixInt TracingReplayObject::getInt(std::string_view errorCtx)
         tracingCacheLog("replay fallback: getInt");
         return ensureInner()->getInt(errorCtx);
     }
-    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFInt>(&*(*wp)->payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFInt>(&(*wp)->payload);
     if (!p)
         return ensureInner()->getInt(errorCtx);
     return NixInt{p->value};
@@ -346,7 +346,7 @@ NixFloat TracingReplayObject::getFloat(std::string_view errorCtx)
         tracingCacheLog("replay fallback: getFloat");
         return ensureInner()->getFloat(errorCtx);
     }
-    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFFloat>(&*(*wp)->payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFFloat>(&(*wp)->payload);
     if (!p)
         return ensureInner()->getFloat(errorCtx);
     return p->value;
@@ -359,7 +359,7 @@ size_t TracingReplayObject::getListSize()
         tracingCacheLog("replay fallback: getListSize");
         return ensureInner()->getListSize();
     }
-    auto * p = ((*wp)->payload ? std::get_if<trace::WHNFList>(&*(*wp)->payload) : nullptr);
+    auto * p = std::get_if<trace::WHNFList>(&(*wp)->payload);
     if (!p)
         return ensureInner()->getListSize();
     return p->size;

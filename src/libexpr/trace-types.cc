@@ -97,7 +97,7 @@ static void queryVariantFromJson(const nlohmann::json & j, QueryVariant & query)
     };
 
     if (tryParse.template operator()<QueryExpr>() || tryParse.template operator()<QueryImport>()
-        || tryParse.template operator()<QueryGetAttr>()
+        || tryParse.template operator()<QueryHasAttr>()
         || tryParse.template operator()<QueryGetListOfStrings>()
         || tryParse.template operator()<QueryGetListElem>()
         || tryParse.template operator()<QueryGetFunctionInfo>()
@@ -130,7 +130,7 @@ static void resultVariantFromJson(const nlohmann::json & j, ResultVariant & resu
         }
     };
 
-    if (tryParse((ResultMaybeWHNF *) nullptr))
+    if (tryParse((ResultHasAttr *) nullptr))
         return;
     if (tryParse((ResultWHNF *) nullptr))
         return;
@@ -163,21 +163,14 @@ void from_json(const nlohmann::json & j, OuterValueResponse & r)
 // Result payload serialization
 // ---------------------------------------------------------------------------
 
-void to_json(nlohmann::json & j, const ResultMaybeWHNF & r)
+void to_json(nlohmann::json & j, const ResultHasAttr & r)
 {
-    if (r.value)
-        j = nlohmann::json{{"attr", *r.value}};
-    else
-        j = nlohmann::json{{"attr", nullptr}};
+    j = nlohmann::json{{"exists", r.exists}};
 }
 
-void from_json(const nlohmann::json & j, ResultMaybeWHNF & r)
+void from_json(const nlohmann::json & j, ResultHasAttr & r)
 {
-    auto & v = j.at("attr");
-    if (v.is_null())
-        r.value = std::nullopt;
-    else
-        r.value = v.get<ResultWHNF>();
+    j.at("exists").get_to(r.exists);
 }
 
 void to_json(nlohmann::json & j, const ResultListOfStrings & r)
@@ -198,8 +191,6 @@ void from_json(const nlohmann::json & j, ResultListOfStrings & r)
 void to_json(nlohmann::json & j, const ResultWHNF & r)
 {
     j = nlohmann::json{{"type", r.type}};
-    if (!r.payload)
-        return;
     std::visit([&](const auto & p) {
         using T = std::decay_t<decltype(p)>;
         if constexpr (std::is_same_v<T, WHNFInt>) {
@@ -218,7 +209,8 @@ void to_json(nlohmann::json & j, const ResultWHNF & r)
         } else if constexpr (std::is_same_v<T, WHNFList>) {
             j["size"] = p.size;
         }
-    }, *r.payload);
+        /* WHNFFunction, WHNFNull: tag-only, nothing to add. */
+    }, r.payload);
 }
 
 void from_json(const nlohmann::json & j, ResultWHNF & r)
@@ -244,8 +236,13 @@ void from_json(const nlohmann::json & j, ResultWHNF & r)
         r.payload = std::move(a);
     } else if (r.type == "list") {
         r.payload = WHNFList{j.at("size").get<size_t>()};
+    } else if (r.type == "null") {
+        r.payload = WHNFNull{};
     } else {
-        r.payload = std::nullopt;
+        /* Function types (objectTypeToString(nFunction) = "lambda"),
+           the "deferred" marker used by getAttr existence records,
+           and any unrecognised tag. */
+        r.payload = WHNFFunction{};
     }
 }
 
@@ -406,13 +403,13 @@ void from_json(const nlohmann::json & j, QueryImport & q)
     j.at("params").at("path").get_to(q.path);
 }
 
-void to_json(nlohmann::json & j, const QueryGetAttr & q)
+void to_json(nlohmann::json & j, const QueryHasAttr & q)
 {
-    j = nlohmann::json{{"query", QueryGetAttr::tag}, {"params", {{"name", q.name}, {"from", q.from}}}};
+    j = nlohmann::json{{"query", QueryHasAttr::tag}, {"params", {{"name", q.name}, {"from", q.from}}}};
     emitPathAndFromStateHashes(j["params"], q.fromStateHashes, q.path);
 }
 
-void from_json(const nlohmann::json & j, QueryGetAttr & q)
+void from_json(const nlohmann::json & j, QueryHasAttr & q)
 {
     j.at("params").at("name").get_to(q.name);
     j.at("params").at("from").get_to(q.from);
@@ -595,7 +592,7 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
             return r;
         if (auto r = tryParseQuery<QueryImport>(type, j))
             return r;
-        if (auto r = tryParseQuery<QueryGetAttr>(type, j))
+        if (auto r = tryParseQuery<QueryHasAttr>(type, j))
             return r;
         if (auto r = tryParseQuery<QueryGetListOfStrings>(type, j))
             return r;
@@ -615,8 +612,8 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
     // Result: has "result" and "v"
     if (j.contains("result") && j.contains("v")) {
         auto & r = j["result"];
-        if (r.contains("attr")) {
-            Result<ResultMaybeWHNF> e;
+        if (r.contains("exists")) {
+            Result<ResultHasAttr> e;
             from_json(j, e);
             return e;
         }
@@ -652,7 +649,7 @@ constexpr size_t resultTypeIndex()
 {
     if constexpr (std::is_same_v<T, ResultWHNF>)
         return 0;
-    else if constexpr (std::is_same_v<T, ResultMaybeWHNF>)
+    else if constexpr (std::is_same_v<T, ResultHasAttr>)
         return 1;
     else if constexpr (std::is_same_v<T, ResultListOfStrings>)
         return 2;
