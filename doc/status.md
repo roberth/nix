@@ -5,7 +5,7 @@
 
 
 
-HEAD: `8b7be0720`. Suite: 312/16/7 — matches pre-Phase-3 baseline. No net correctness regressions from the redesign.
+HEAD: `7c003f39f`. Suite: 311/17/7 — one net regression (`cb-deep-indep-orders`) from the has-attr/get-list-elem-precondition fold into `QueryGetWHNF`. See B12.
 
 ## Known bugs
 
@@ -130,6 +130,85 @@ tests that regressed when B2's bridging was retired
 (`cb-forcedness-independence`, `cb-local-descendants`,
 `cb-stats-sidecar-baseline`, `cb-with-scope-and-tryeval`) turn out
 to be a different failure mode — see [B11](#b11-response-mismatch-on-walker-dispatch--hit-rate).
+
+### B12. Fold-into-WHNF exposes writer/walker Q-evolution basis mismatch — LOW (hit rate, DISALLOW-only)
+
+`cb-deep-indep-orders` regressed at fold commit `7c003f39f`. Warm
+under `_NIX_DISALLOW_PARSE=1` misses at Q=8873fed7e339 (getAttr
+"a" on r); cold recorded the chain with 3 outer observations under
+Q=8873 without evolving Q, but the walker evolves Q after commit-1
+and finds no chain past the evolved hash.
+
+**Traced contents (not just hashes):**
+
+- Cold at `logQuery` for Q=8873fed7e339 stamps
+  `from=bc4d5781b2be` (= applyResult state after r.whnf's
+  applyContext fold). Precondition fold folds 2 session-history
+  observations; state stays the same; `Q_M = Q_initial = 8873`.
+- Cold then adds 3 outer observations under Q=8873's window: a
+  getAttr "args" on arg(1), then getAttr "x" on the "args" child,
+  then getAttr "val" on "x". Each observation's `obs.from` is
+  keyed on `arg(1)`-family state hashes (e.g. `44e8e73773e9`), not
+  applyResult's (`1abc70ad96aa`). `stateHashAt`'s
+  match-by-fromHash filter skips every one for the applyResult
+  Subject. Cold's `fromSubjectLastState` never changes → Q stays
+  at 8873 through the whole recording. `logResult: Q_initial=8873
+  Q_final=8873 factSet=1537def2ade3`.
+- Warm walks Q=8873 at cur=1ca682fe746a. Commits one edge
+  (dispatches the getAttr "args" obs). Then `recomputeQ`
+  computes `newState = stateHashAt(applyResult, argAncestry,
+  perQEnvWalk[0:1], 1) = 1abc70ad96aa` (empty perQEnvWalk basis
+  → applyResult's structural initial). Since `1abc70ad96aa !=
+  bc4d5781b2be` (cold's Q payload from), walker rewrites payload
+  and rehashes → new Q = `efe98277141f`. Cold never recorded a
+  chain under efe98277141f → walker misses.
+
+**Root:** cold's `fromSubject` state gets its initial value from
+`evolvedQueryFrom()` (applyContext-based, includes the r.whnf
+observation fold that produced bc4d5781b2be), but the writer's
+`fromSubjectLastState` tracker was initialised from `envWalk`
+(session-cumulative) at logQuery. The two disagree on
+`bc4d5781b2be`. Walker's recomputeQ, by contrast, uses walk-local
+`perQEnvWalk` from ∅, which matches the applyContext basis only if
+applyContext's contributing observations are also in perQEnvWalk —
+and here they aren't (the whnf observation lives in envWalk pre-Q,
+not in Q's own perQEnvWalk).
+
+The three-basis problem below (B11 pre-fix diagnosis) predicted
+exactly this: three different observation histories can disagree at
+Q boundaries. B11's precondition-fold fix aligned the two writer
+bases at logQuery time when the writer's own fold walks the
+preconditions. But that alignment only holds if pre-push
+observations that contributed to the applyContext-basis are the
+same ones that appear in the envWalk-preconditions the writer folds.
+For cb-deep-indep-orders, the r.whnf observation contributes to
+applyContext (folding applyResult 1abc70ad96aa → bc4d5781b2be) but
+does not appear in envAsksEdges at the moment Q=8873 pushes (r.whnf
+is a d0 query with observations under IT, not sibling preconditions
+of Q=8873). So Q_initial's `from` was applyContext-derived, but
+`fromSubjectLastState` from envWalk-derived — no fold reconciles
+them, and cold's own-chain state stays at whichever basis
+`stateHashAt` returns for envWalk[N], which happens to skip every
+observation and yield applyResult's structural initial.
+
+**Fold's role:** the fold changed the shape of Q=8873's payload
+(QueryHasAttr with bool response → QueryGetAttr with WHNF response)
+and the shape of subsequent observations under it. Under the old
+observation set, walker's recomputeQ happened to produce the same
+Q hash cold recorded (either by luck or because prior perQEnvWalk
+contents cancelled to the same fold result). Under the new
+observation set they diverge.
+
+**Confidence:** high on the mechanism; the three-basis mismatch is
+the pre-existing latent bug B11 partially addressed. Fold exposed
+a case B11's precondition fold doesn't cover.
+
+**Fix direction:** align writer's `fromSubjectLastState` initial
+value with the applyContext-derived Q payload `from` — either by
+using `evolvedQueryFrom`-style applyContext basis at logQuery, or
+by ensuring all observations that contributed to the payload's
+from are also in the envAsksEdges preconditions folded at push. Not
+yet drafted.
 
 ### B11. PARTIAL — Q_M unification via preconditions at push (`853ba76fb`)
 
