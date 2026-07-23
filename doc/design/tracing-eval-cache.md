@@ -30,6 +30,44 @@ Enable with `--option tracing-eval-cache true` plus the
 cache is non-destructive: misses fall through to the inner evaluator
 and the answer is correct either way.
 
+## Foundational invariant: recording and replay compute
+
+Recording and replay perform the same computations to determine the
+trace representation. Both sides run the same code (state hashing,
+observation folding, Q evolution, RequestSet Merkle, `factSetHash`
+XOR) on the same inputs (Subjects, argAncestry, observations). A
+value either side computes deterministically from other inputs
+already on the payload doesn't need to be transmitted — the other
+side recomputes it identically.
+
+Consequences that shape everything downstream:
+
+- **Payload minimality.** A field belongs in a Query or Result
+  payload only if it isn't a deterministic function of the other
+  fields plus the Subject / observation state both sides share.
+  Redundant fields grow cache entropy and open a divergence-risk
+  seam if one side's derivation ever drifts. Cleanup work is
+  therefore biased toward folding: `QueryHasAttr` disappears
+  because parent's `WHNFAttrs.names` derives it;
+  `QueryGetListOfStrings` disappears because `getListSize` +
+  per-index `getListElem` + per-child `WHNFString` cover it. Fields
+  like `QueryCallbackApply::argDepth` deserve the same scrutiny.
+- **No side-channel state.** Any recording-time convenience field
+  (an incrementing counter, an allocation-order id, a pointer) is a
+  breach of the invariant — the walker has no way to produce the
+  same value. Content-defined identity (state hashes, XOR folds
+  over observations) is what survives the round trip.
+- **Debugging asymmetry is a bug.** When cold's writer and warm's
+  walker disagree on a hash they should have computed identically,
+  either an input diverged or the code diverged. The fix is on the
+  input-alignment side or the code-alignment side — never by
+  adding stored data to plaster over the disagreement.
+
+Sections below describe the specific computations both sides run
+(RequestSet trie, FactSet XOR fold, Q evolution). The invariant is
+that both sides run *exactly those computations*, from the same
+starting inputs, so their outputs agree.
+
 ## Vocabulary recap
 
 Full definitions in
