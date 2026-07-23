@@ -18,6 +18,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <array>
 #include <map>
 #include <memory>
 #include <optional>
@@ -634,7 +635,34 @@ inline void fromJsonByTag(const nlohmann::json & j, std::variant<Ts...> & v)
             302, 0, "unknown variant tag: " + std::string(tag), &j);
 }
 
+/**
+ * `true` if every `Ts::tag` differs from every other. A tag
+ * collision would let `fromJsonByTag` silently pick whichever
+ * alternative appears first in `Ts...` for the colliding tag —
+ * enforce distinctness at compile time instead.
+ */
+template<typename... Ts>
+consteval bool tagsAreDistinct()
+{
+    constexpr std::array tags{std::string_view{Ts::tag}...};
+    for (size_t i = 0; i < tags.size(); ++i)
+        for (size_t j = i + 1; j < tags.size(); ++j)
+            if (tags[i] == tags[j]) return false;
+    return true;
+}
+
+template<typename V> struct VariantTagsDistinct;
+template<typename... Ts> struct VariantTagsDistinct<std::variant<Ts...>>
+{
+    static constexpr bool value = tagsAreDistinct<Ts...>();
+};
+
 } // namespace detail
+
+static_assert(
+    detail::VariantTagsDistinct<QueryVariant>::value,
+    "QueryVariant alternatives must have distinct `tag` values — "
+    "duplicated tags cause silent misroute in fromJsonByTag.");
 
 // ---------------------------------------------------------------------------
 // OuterValueRequest / OuterValueResponse
