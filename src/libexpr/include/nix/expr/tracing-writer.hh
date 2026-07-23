@@ -420,6 +420,52 @@ public:
         aq.initialPayloadTemplate = qj;
         aq.initialFromSubjectState = lastState;
         aq.envAsksEdgesSizeAtPush = envAsksEdges.size();
+
+        /* B11: preconditions. Under callback-model §3, Q's chain
+           starts at index M > 0 carrying preconditions from prior
+           state. Fold pre-push session observations into aq's per-Q
+           chain, evolving aq.currentQ to Q_M and inserting Ask rows
+           under each intermediate Q value so walkers starting at
+           (Q_initial, ∅) can fold their way to (Q_M, Q_entry_cur).
+
+           Under matching-until-divergence, walker's per-walk perQEnvWalk
+           after committing the same N landing-chain obs contains the
+           same ObservationSets → stateHashAt gives the same evolved
+           state → walker's Q at end of landing == aq.currentQ (Q_M).
+           Q's first own Ask (later, at logOuterObservation) is then
+           recorded under aq.currentQ = Q_M, which walker finds. */
+        if (aq.fromSubject) {
+            for (size_t i = 0; i < envAsksEdges.size(); ++i) {
+                const auto & edge = envAsksEdges[i];
+                decisionGraph->insertAsk(aq.currentQ, edge.fromFactSetHash, edge.requestSetHash);
+                if (i < envWalk.size()) {
+                    aq.perQEnvWalk.push_back(envWalk[i]);
+                    auto newState = stateHashAt(
+                        *aq.fromSubject, aq.fromSubjectArgAncestry,
+                        aq.perQEnvWalk, aq.perQEnvWalk.size());
+                    if (newState != aq.fromSubjectLastState) {
+                        aq.fromSubjectLastState = newState;
+                        auto newFromHex = newState.to_string(HashFormat::Base16, false);
+                        if (aq.payloadTemplate.contains("params")
+                            && aq.payloadTemplate["params"].is_object()) {
+                            auto & p = aq.payloadTemplate["params"];
+                            if (p.contains("from"))
+                                p["from"] = newFromHex;
+                            if (p.contains("fromStateHashes")
+                                && p["fromStateHashes"].is_array()
+                                && !p["fromStateHashes"].empty())
+                                p["fromStateHashes"][0] = newFromHex;
+                        }
+                        aq.currentQ = hashString(HashAlgorithm::SHA256, aq.payloadTemplate.dump());
+                    }
+                }
+            }
+            if (envAsksEdges.size() > 0)
+                tracingCacheLog("logQuery: precondition fold %zu obs -> Q_M=%s",
+                                envAsksEdges.size(),
+                                aq.currentQ.to_string(HashFormat::Base16, false).substr(0, 12));
+        }
+
         activeQueryStack.push_back(std::move(aq));
         return {valueNum, qh};
     }
@@ -735,58 +781,6 @@ public:
                         qh.queryHash->to_string(HashFormat::Base16, false).substr(0, 12),
                         finalQ.to_string(HashFormat::Base16, false).substr(0, 12),
                         envFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12));
-
-        /* B10 landing chain: session-cumulative Ask trail recorded
-           BEFORE this Q was pushed lives under other Qs' keys. A
-           walker of THIS Q from ∅ can't reach the trail's endpoint
-           (= this Q's session-cumulative entry cur) without Ask rows
-           under THIS Q's key. Insert them here, simulating walker's
-           per-step Q evolution through the trail so each Ask row
-           lands under the Q value the walker will actually look up.
-
-           Skip if activeQueryStack is empty (Q already popped in
-           degenerate path) or no pre-push Ask trail. */
-        if (!activeQueryStack.empty() && activeQueryStack.back().envAsksEdgesSizeAtPush > 0) {
-            auto & aq = activeQueryStack.back();
-            Hash simQ = *qh.queryHash;
-            nlohmann::json simPayload = aq.initialPayloadTemplate;
-            Hash simFromState = aq.initialFromSubjectState;
-            std::vector<ObservationSet> simPerQ;
-            for (size_t i = 0; i < aq.envAsksEdgesSizeAtPush; ++i) {
-                const auto & edge = envAsksEdges[i];
-                decisionGraph->insertAsk(simQ, edge.fromFactSetHash, edge.requestSetHash);
-                tracingCacheLog("  landing[%zu] insertAsk(simQ=%s, from=%s)",
-                                i,
-                                simQ.to_string(HashFormat::Base16, false).substr(0, 12),
-                                edge.fromFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12));
-                if (aq.fromSubject && i < envWalk.size()) {
-                    simPerQ.push_back(envWalk[i]);
-                    auto newState = stateHashAt(
-                        *aq.fromSubject, aq.fromSubjectArgAncestry,
-                        simPerQ, simPerQ.size());
-                    tracingCacheLog("  landing[%zu] fold obs -> newState=%s (was=%s)",
-                                    i,
-                                    newState.to_string(HashFormat::Base16, false).substr(0, 12),
-                                    simFromState.to_string(HashFormat::Base16, false).substr(0, 12));
-                    if (newState != simFromState) {
-                        simFromState = newState;
-                        auto newFromHex = newState.to_string(HashFormat::Base16, false);
-                        if (simPayload.contains("params") && simPayload["params"].is_object()) {
-                            auto & p = simPayload["params"];
-                            if (p.contains("from"))
-                                p["from"] = newFromHex;
-                            if (p.contains("fromStateHashes") && p["fromStateHashes"].is_array()
-                                && !p["fromStateHashes"].empty())
-                                p["fromStateHashes"][0] = newFromHex;
-                        }
-                        simQ = hashString(HashAlgorithm::SHA256, simPayload.dump());
-                    }
-                }
-            }
-            tracingCacheLog("logResult: landing chain inserted %zu Asks (final simQ=%s)",
-                            aq.envAsksEdgesSizeAtPush,
-                            simQ.to_string(HashFormat::Base16, false).substr(0, 12));
-        }
 
         decisionGraph->insertTerminal(finalQ, envFactSetHash, resultNodeHash);
 
