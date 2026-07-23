@@ -131,32 +131,67 @@ tests that regressed when B2's bridging was retired
 `cb-stats-sidecar-baseline`, `cb-with-scope-and-tryeval`) turn out
 to be a different failure mode — see [B11](#b11-response-mismatch-on-walker-dispatch--hit-rate).
 
-### B11. Response mismatch on walker dispatch — hit-rate
+### B11. Three-basis inconsistency in fromSubject state hashing — hit-rate
 
 `cb-local-descendants`, `cb-with-scope-and-tryeval`,
 `cb-forcedness-independence`, `cb-stats-sidecar-baseline` all
 regressed when B2 retired the bridging. B10's landing chain didn't
-recover them — inspection shows a different failure mode: walker
-finds outgoing Asks at (Q, cur) but "NO EDGE COMMITTED at cur=X →
-miss." The walker reaches the Ask fine; the problem is that the
-dispatched Request's live response XOR-folds to a `nextCur` that
-has no recorded edge, so the branch isn't followable and the walk
-gives up.
+recover them.
 
-Not a reachability issue landing chains can address. Plausible
-causes to investigate:
-- Cold's recorded response for that Request differs from warm's
-  live response (matching-until-divergence violation).
-- Cold's cell chain routed the observation through a different
-  Subject than warm's, so the fromHash on the recorded fact differs
-  from what the walker's cell chain would produce live.
-- Q evolution basis mismatch (writer's fromSubject state at cold
-  differs from walker's per-Q re-derivation at warm).
+Investigation of `cb-local-descendants` (walker at Q=c0ce84694da7
+gets `NO EDGE COMMITTED` after 3 successful landing-chain folds)
+revealed the underlying issue: **`fromSubject` state hashes are
+derived from three different observation histories at three
+different code paths**, and they don't unify under
+matching-until-divergence:
 
-All 4 still return correct values in normal mode (fallback works);
-priority 2/3, not correctness. `_NIX_DISALLOW_PARSE=1` disables
-fallback to catch cache-miss regressions, which is why 2 of them
-surface as errors in that mode.
+1. **`TracingObject::evolvedQueryFrom()`** (`tracing-object.cc:76-97`)
+   sets Q_initial's `from` field via `stateHashAt(fromSubject,
+   argAncestry, applyContext->observations, size)` — per-Object
+   history, populated by `pushObservation` at this Object's own
+   probes and its children's.
+2. **`TracingWriter::logQuery`** captures `fromSubjectLastState =
+   stateHashAt(fromSubject, argAncestry, envWalk, envWalk.size())` —
+   session-cumulative envWalk on the writer.
+3. **Walker's `recomputeQ`** (`tracing-replay-evaluator.cc:282-298`)
+   computes `newFromHex = stateHashAt(fromSubject, argAncestry,
+   perQEnvWalk, size)` — walk-local perQEnvWalk populated by
+   `commitEdge` on every walker commit (including landing-chain
+   commits).
+
+Under matching-until-divergence these are three different obs
+sets → three different SHA-256 inputs → three different hex outputs.
+Concretely: `applyContext` is a strict subset of `envWalk` in the
+usual nested case, and walker's `perQEnvWalk` mirrors `envWalk`
+under lockstep but starts empty (per-walk B1).
+
+Result: Q_initial's `from` field (basis 1) differs from walker's
+recomputed `from` at any step (basis 3) — walker's Q evolves from
+Q_initial to a different value on the first commit even with
+lockstep bases. Writer records Q's own Asks at `aq.currentQ` which
+stays at Q_initial for the first Q-own obs (aq.perQEnvWalk starts
+empty, only Q-own obs fold in). So walker's Q at Q_entry_cur ≠
+writer's recording key for Q's first own Ask.
+
+B10's simulation faithfully tracks walker's evolution (basis 2, same
+XOR trajectory as walker's basis 3 under lockstep). But it can't
+make walker's post-landing Q equal Q_initial, because bases 1
+(payload's encoded from-field) and 2/3 (evolution's stateHashAt
+result) don't share encoding.
+
+Fix direction: unify to a single basis. Candidates:
+- (a) `evolvedQueryFrom` uses `envWalk` basis so Q_initial's from
+  matches writer's `lastState` and walker's `perQEnvWalk` under
+  lockstep.
+- (b) `evolvedQueryFrom` uses walker-compatible per-Object structure
+  that walker's `recomputeQ` also uses, replacing `perQEnvWalk`.
+- (c) Full audit of `applyContext` / `envWalk` / `perQEnvWalk`
+  relationships; may overlap with B9's walker-side per-Q-chain
+  scoping work.
+
+Not addressed here. All 4 regressed tests still return correct
+values in normal mode (fallback works); priority 2/3, not
+correctness.
 
 ## Cosmetic / low-priority
 
