@@ -184,14 +184,13 @@ trace::ResultWHNF & TracingObject::whnf()
     }
     auto [valueId, qh] = writer.logSelector(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto whnfResult = computeWHNFFromObject(*inner);
-    /* Task #110 (C3): if this whnf is on an applyResult, emit a
-       SelectorCallbackApply observation carrying the WHNF directly.
-       That combines what would otherwise be two probes (QCA +
-       getWHNF-of-applyResult) into one, reducing DB spam. Downstream
-       structural probes chain through the applyResult's state hash
-       which now folds in this WHNF. */
-    if (applyResultSubject)
-        writer.emitCallbackApplyForApplyResult(*applyResultSubject, applyArgAncestry, whnfResult);
+    /* Cell-migration Phase B: QCA emission for applyResults moved to
+       TracingEvaluator::apply, which computes WHNF and calls
+       emitCallbackApplyForApplyResult at apply-time. Under Phase B
+       the wrapper's cachedWHNF is pre-populated, so this whnf() body
+       only runs for non-apply-result values (roots, getAttr children
+       before they got their cachedWHNF pre-populated, etc.), where
+       there's no applyResultSubject to emit QCA for. */
     auto tp = writer.logResult(valueId, whnfResult, qh);
     if (qh.selectorHash && tp)
         pushObservation(parentHash, *qh.selectorHash, tp->resultNodeHash);

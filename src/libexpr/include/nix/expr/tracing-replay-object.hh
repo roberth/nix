@@ -124,6 +124,19 @@ public:
         return *this;
     }
 
+    /** Pre-populate `cachedWHNF` at wrapper construction. Used by
+        cell-migration Phase B: `TracingReplayEvaluator::apply`
+        pre-invokes lookup(SelectorApply{...}) via the cell and, on
+        hit, populates the walker-side applyResult wrapper's cached
+        WHNF from the Terminal's Result payload. Downstream `.foo`
+        probes on this wrapper use the cached WHNF for membership
+        without invoking a separate SelectorGetWHNF walk. */
+    TracingReplayObject & withCachedWHNF(trace::ResultWHNF whnf_)
+    {
+        cachedWHNF = std::move(whnf_);
+        return *this;
+    }
+
     /** Attach just the ApplyContext (for the finalised side-channel),
         leaving applyResultSubject/applyArgAncestry alone. Used by
         TracingReplayEvaluator::apply after it has already set the

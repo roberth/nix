@@ -394,7 +394,21 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
             applyArgAncestryStateHashHex.substr(0, 16));
     }
 
-    auto v = writer.getSink().logSelector(trace::SelectorApply{fnStateHashStr, argStateHashStr});
+    /* Cell-migration Phase B: apply now records SelectorApply as a
+       proper Selector with its own Terminal, keyed on the ArgCell
+       created below. The pushed ActiveSelector shared_ptr is aliased
+       onto cell->qState via `logSelectorOnCell`. Observations during
+       inner->apply attribute to this Q's chain (activeQueryStack.back()
+       IS cell->qState). After inner returns with body-in-WHNF, we
+       compute the WHNF and logResult to insert SelectorApply's
+       Terminal. The applyResult wrapper is constructed with
+       cachedWHNF pre-populated so subsequent whnf() on it
+       short-circuits without invoking SelectorGetWHNF. */
+    auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
+    trace::SelectorApply applySelector{fnStateHashStr, argStateHashStr};
+    auto [v, qh] = writer.logSelectorOnCell(
+        cell, applySelector, /*parent=*/std::nullopt,
+        resultSubject, applyArgAncestry);
 
     /* Per-invocation callArgAncestry for GENUINE cb-apply (not curried
        follow-up): sibling cb-apply invocations of the SAME cached
@@ -436,28 +450,53 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     }
 
     auto result = inner->apply(fn, arg);
-    auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
 
     /* For the TracingCallbackArg-fn case (cb-higher-order's recursive
        cb-apply): wrap the result in a TracingCallbackApplyResult so
        subsequent method calls (`getType`, `getInt`, etc.) route their
        observations into the enclosing CallbackCell's runningObsSet
        rather than into env main-trie Terminals. See
-       tracing-callback-apply-result.hh for the recording flow. */
+       tracing-callback-apply-result.hh for the recording flow.
+
+       Phase B note: the ActiveSelector we pushed via
+       logSelectorOnCell above still needs to pop. TLO path
+       doesn't compute/log a SelectorApply Terminal (its result is
+       routed via the callback cell), so we pop by discarding qh
+       without a matching logResult — that would leave the stack
+       inconsistent. Instead, log a trivial "function"-typed WHNF
+       so the frame closes cleanly with a Terminal-of-record; the
+       TLO path's downstream doesn't consult this Terminal. */
     if (fnIsTlo) {
+        trace::ResultWHNF placeholderWhnf;
+        placeholderWhnf.type = "lambda";
+        placeholderWhnf.payload = trace::WHNFFunction{};
+        writer.logResult(v, placeholderWhnf, qh);
         auto laro = std::make_shared<TracingCallbackApplyResult>(
             result, writer, std::move(resultSubject), applyArgAncestry, enclosingApplyId);
         laro->withArgCell(std::move(cell));
         return ref<Object>(laro);
     }
 
-    TriePosition triePos{
-        .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel; not keyed off this
-        .queryHashStr = applyArgAncestryStateHashHex,
-    };
+    /* Non-TLO path: compute WHNF from the (already-forced-by-inner)
+       result, emit QCA against the applyResult (moved here from
+       TracingObject::whnf so it still fires when the wrapper's
+       cachedWHNF is pre-populated below), logResult inserts
+       SelectorApply's Terminal, wrapper is constructed with
+       cachedWHNF ready. */
+    auto whnfResult = computeWHNFFromObject(*result);
+    writer.emitCallbackApplyForApplyResult(resultSubject, applyArgAncestry, whnfResult);
+    auto tp = writer.logResult(v, whnfResult, qh);
+
+    TriePosition triePos = tp
+        ? *tp
+        : TriePosition{
+              .resultNodeHash = Hash{HashAlgorithm::SHA256},
+              .queryHashStr = applyArgAncestryStateHashHex,
+          };
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withArgCell(std::move(cell));
     obj->withApplyResultSubject(std::move(resultSubject), applyArgAncestry);
+    obj->withCachedWHNF(std::move(whnfResult));
     if (auto * argAmb = dynamic_cast<OuterObject *>(arg.get_ptr().get())) {
         if (auto ctx = argAmb->getApplyContext())
             obj->withApplyContext(std::move(ctx));

@@ -163,14 +163,11 @@ TracingReplayEvaluator::walk(
             if (auto it = responseFor.find(requestHash); it != responseFor.end())
                 return it->second;
         }
-        /* Bare "apply" Requests (recorded but with no Terminal) have
-           no live-fire dispatch path — miss cleanly. */
-        if (isQueryRequest && queryTag == "apply") {
-            tracingCacheLog(
-                "dispatch: apply Request req=%s — miss",
-                requestHash.to_string(HashFormat::Base16, false).substr(0, 12));
-            return Hash(HashAlgorithm::SHA256);
-        }
+        /* Cell-migration Phase B: SelectorApply is now walkable (its
+           Terminal is inserted by TracingEvaluator::apply after
+           computing the applyResult's WHNF). Dispatch falls through
+           to getCurrentResponse → dispatchQueryRequest's SelectorApply
+           branch, which resolves fn+arg live and returns the WHNF. */
         auto currentResp = getCurrentResponse(*requestPayload, ctx);
         if (!currentResp) {
             tracingCacheLog(
@@ -833,10 +830,46 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
     return std::visit(
         [&](const auto & q) -> std::optional<std::string> {
             using Q = std::decay_t<decltype(q)>;
-            /* Apply Facts are recorded via Request only (no Terminal);
-               the dispatcher has nothing to compare against. */
             if constexpr (std::is_same_v<Q, trace::SelectorApply>) {
-                return std::nullopt;
+                /* Cell-migration Phase B: resolve fn+arg via the
+                   inline SelectorLeaf identities (walker-side cell
+                   chain provides the live proxies) and invoke live
+                   apply. Return WHNF of the applyResult. Symmetric
+                   with the callbackApply branch below but arg comes
+                   from resolveStateHash rather than a ReplayCallbackArg
+                   materialised from an ObservationSet. */
+                if (!q.fn.isStateHash() || !q.arg.isStateHash())
+                    return std::nullopt;
+                auto fnObj = resolveStateHash(q.fn.stateHash(), ctx);
+                if (!fnObj) {
+                    tracingCacheLog(
+                        "apply: fn resolution miss (fn=%s)",
+                        q.fn.stateHash().substr(0, 12));
+                    return std::nullopt;
+                }
+                auto argObj = resolveStateHash(q.arg.stateHash(), ctx);
+                if (!argObj) {
+                    tracingCacheLog(
+                        "apply: arg resolution miss (arg=%s)",
+                        q.arg.stateHash().substr(0, 12));
+                    return std::nullopt;
+                }
+                try {
+                    TracingWriter::SuppressApplyBoundary suppress(writer);
+                    auto resultObj = fnObj->queryApply(argObj);
+                    if (!resultObj)
+                        return std::nullopt;
+                    auto whnf = computeWHNFFromObject(*resultObj);
+                    tracingCacheLog(
+                        "apply: HIT fn=%s arg=%s whnf=%s",
+                        q.fn.stateHash().substr(0, 12),
+                        q.arg.stateHash().substr(0, 12),
+                        whnf.type.c_str());
+                    return jsonToCborString(nlohmann::json(whnf));
+                } catch (const std::exception & e) {
+                    tracingCacheLog("apply: fn->queryApply failed: %s", e.what());
+                    return std::nullopt;
+                }
             } else if constexpr (std::is_same_v<Q, trace::SelectorCallbackApply>) {
                 /* Task #110: materialise a ReplayCallbackArg backed by
                    the referenced ObservationSet, resolve fn live via
@@ -1145,16 +1178,40 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
             applyArgAncestryStateHashHex.substr(0, 16));
     }
 
+    /* Cell-migration Phase B: pre-invoke SelectorApply's lookup so the
+       applyResult wrapper can be constructed with its cached WHNF
+       already populated from cold's Terminal — mirrors the writer
+       side's eager WHNF computation. On hit, downstream `.foo` probes
+       on the wrapper use cachedWHNF for membership without invoking a
+       separate SelectorGetWHNF walk. On miss, we fall back to the
+       lazy-inner-apply TRO (with no cachedWHNF), which will trigger
+       inner->apply when forced. */
+    trace::SelectorApply applySelector{fnStateHashStr, argStateHashStr};
+    auto applyLookup = lookup(applySelector, /*currentProxy=*/nullptr);
+    std::optional<trace::ResultWHNF> cachedWHNF;
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
         .queryHashStr = applyArgAncestryStateHashHex,
     };
+    if (applyLookup) {
+        try {
+            auto whnfJson = cborStringToJson(applyLookup->first);
+            trace::ResultWHNF parsed;
+            from_json(whnfJson, parsed);
+            cachedWHNF = std::move(parsed);
+            triePos = applyLookup->second;
+        } catch (const std::exception &) {
+            /* Parse failure — fall through to lazy path. */
+        }
+    }
     auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
     /* Apply-result argAncestry cell. Parent = fn proxy's cell. */
     auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
     obj->withArgCell(std::move(cell));
     obj->withApplyResultSubject(std::move(resultSubject), applyArgAncestry);
+    if (cachedWHNF)
+        obj->withCachedWHNF(std::move(*cachedWHNF));
     /* Keep the applyContext attachment for the ensureInner-finalisation
        side-channel that other paths still inspect (e.g. tests that
        check applyContext->finalized). Pre-population of observations
