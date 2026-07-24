@@ -168,7 +168,7 @@ void TracingWriter::logOuterObservation(
        empty (no attributable Q). */
     if (!activeQueryStack.empty()) {
         auto & innermost = activeQueryStack.back();
-        decisionGraph->insertAsk(innermost.currentQ, prevQFactSetHash, requestSetHash);
+        decisionGraph->insertAsk(innermost->currentQ, prevQFactSetHash, requestSetHash);
     }
     envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
     ObservationSet obsSet;
@@ -177,7 +177,7 @@ void TracingWriter::logOuterObservation(
     /* Task #110: append to innermost Q's perQEnvWalk. Session envWalk
        stays 1:1-aligned with envAsksEdges for other bookkeeping. */
     if (!activeQueryStack.empty()) {
-        activeQueryStack.back().perQEnvWalk.push_back(std::move(obsSet));
+        activeQueryStack.back()->perQEnvWalk.push_back(std::move(obsSet));
     }
     tracingCacheLog(
         "logOuterObservation: inserted Ask under %zu active Q(s) from=%s (env=%zu)",
@@ -194,22 +194,22 @@ void TracingWriter::logOuterObservation(
        what other Qs did in the session. */
     if (!activeQueryStack.empty()) {
         auto & aq = activeQueryStack.back();
-        if (aq.fromSubject) {
+        if (aq->fromSubject) {
             auto newState = stateHashAt(
-                *aq.fromSubject, aq.fromSubjectArgAncestry,
-                aq.perQEnvWalk, aq.perQEnvWalk.size());
-            if (newState != aq.fromSubjectLastState) {
-                aq.fromSubjectLastState = newState;
+                *aq->fromSubject, aq->fromSubjectArgAncestry,
+                aq->perQEnvWalk, aq->perQEnvWalk.size());
+            if (newState != aq->fromSubjectLastState) {
+                aq->fromSubjectLastState = newState;
                 trace::rewriteFrom(
-                    aq.payloadTemplate,
+                    aq->payloadTemplate,
                     newState.to_string(HashFormat::Base16, false));
-                auto newQ = trace::computeSelectorHash(aq.payloadTemplate);
+                auto newQ = trace::computeSelectorHash(aq->payloadTemplate);
                 tracingCacheLog(
                     "Q-evolution: Q %s -> %s (fromSubject state %s)",
-                    aq.currentQ.to_string(HashFormat::Base16, false).substr(0, 12),
+                    aq->currentQ.to_string(HashFormat::Base16, false).substr(0, 12),
                     newQ.to_string(HashFormat::Base16, false).substr(0, 12),
                     newState.to_string(HashFormat::Base16, false).substr(0, 12));
-                aq.currentQ = newQ;
+                aq->currentQ = newQ;
             }
         }
     }
@@ -245,7 +245,7 @@ void TracingWriter::logCompositeSubQ(
 
     auto requestSetHash = decisionGraph->insertRequestSet({subQueryHash});
     auto & parent = activeQueryStack.back();
-    decisionGraph->insertAsk(parent.currentQ, prevQFactSetHash, requestSetHash);
+    decisionGraph->insertAsk(parent->currentQ, prevQFactSetHash, requestSetHash);
     envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
 
     /* fromHash=0: stateHashAt's `obs.fromHash == subject.stateHash`
@@ -255,10 +255,10 @@ void TracingWriter::logCompositeSubQ(
     ObservationSet obsSet;
     obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), elementHash});
     envWalk.push_back(obsSet);
-    parent.perQEnvWalk.push_back(std::move(obsSet));
+    parent->perQEnvWalk.push_back(std::move(obsSet));
     tracingCacheLog(
         "logCompositeSubQ: parent Q=%s from=%s req=%s (env=%zu)",
-        parent.currentQ.to_string(HashFormat::Base16, false).substr(0, 12),
+        parent->currentQ.to_string(HashFormat::Base16, false).substr(0, 12),
         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
         subQueryHash.to_string(HashFormat::Base16, false).substr(0, 12),
         envWalk.size());
@@ -266,18 +266,18 @@ void TracingWriter::logCompositeSubQ(
 
     /* Parent Q-evolution rederivation — mirrors logOuterObservation.
        With obs.fromHash=0 no real Subject's own-loop matches, so
-       parent.fromSubject state won't advance and the newQ block is a
+       parent->fromSubject state won't advance and the newQ block is a
        no-op in practice — but kept for structural symmetry. */
-    if (parent.fromSubject) {
+    if (parent->fromSubject) {
         auto newState = stateHashAt(
-            *parent.fromSubject, parent.fromSubjectArgAncestry,
-            parent.perQEnvWalk, parent.perQEnvWalk.size());
-        if (newState != parent.fromSubjectLastState) {
-            parent.fromSubjectLastState = newState;
+            *parent->fromSubject, parent->fromSubjectArgAncestry,
+            parent->perQEnvWalk, parent->perQEnvWalk.size());
+        if (newState != parent->fromSubjectLastState) {
+            parent->fromSubjectLastState = newState;
             trace::rewriteFrom(
-                parent.payloadTemplate,
+                parent->payloadTemplate,
                 newState.to_string(HashFormat::Base16, false));
-            parent.currentQ = trace::computeSelectorHash(parent.payloadTemplate);
+            parent->currentQ = trace::computeSelectorHash(parent->payloadTemplate);
         }
     }
 }
@@ -316,7 +316,7 @@ void TracingWriter::flushPending(bool processApplies)
         /* Task #110 (correct model): innermost active Q only. */
         if (!activeQueryStack.empty()) {
             auto & innermost = activeQueryStack.back();
-            decisionGraph->insertAsk(innermost.currentQ, prevQFactSetHash, requestSetHash);
+            decisionGraph->insertAsk(innermost->currentQ, prevQFactSetHash, requestSetHash);
         }
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         envWalk.push_back({});  // 1:1 with envAsksEdges; empty is harmless for stateHashAt.
@@ -349,7 +349,7 @@ void TracingWriter::closeAsksEdge(bool processApplies)
         /* Task #110 (correct model): innermost active Q only. */
         if (!activeQueryStack.empty()) {
             auto & innermost = activeQueryStack.back();
-            decisionGraph->insertAsk(innermost.currentQ, prevQFactSetHash, requestSetHash);
+            decisionGraph->insertAsk(innermost->currentQ, prevQFactSetHash, requestSetHash);
         }
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         envWalk.push_back({});  // 1:1 with envAsksEdges; empty is harmless for stateHashAt.
