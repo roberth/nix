@@ -2,6 +2,7 @@
 #include "nix/expr/trace-types.hh"
 
 #include "nix/util/logging.hh"
+#include "nix/util/util.hh"
 
 #include <map>
 
@@ -752,6 +753,32 @@ std::string describe(const SelectorVariant & query)
                 out += " path=" + q.path;
             }
             return out;
+        },
+        query);
+}
+
+/**
+ * True iff a probe's response depends on the referenced Subject's
+ * state — i.e. this Selector carries a `from`/`fn`/`arg` state hash
+ * that a dispatcher resolves against the caller's cell chain. The
+ * response bytes may then differ across callers with the same
+ * requestHash at the moment of divergence (see the walker
+ * dispatcher's comment on memoization). Root queries without a
+ * from-style reference (`SelectorExpr`, `SelectorImport`) never
+ * move state and are always safe to memoize.
+ */
+bool willMoveStateHash(const SelectorVariant & query)
+{
+    return std::visit(
+        overloaded{
+            [](const SelectorExpr &) { return false; },
+            [](const SelectorImport &) { return false; },
+            [](const SelectorGetAttr &) { return true; },
+            [](const SelectorGetListElem &) { return true; },
+            [](const SelectorGetFunctionInfo &) { return true; },
+            [](const SelectorGetWHNF &) { return true; },
+            [](const SelectorApply &) { return true; },
+            [](const SelectorCallbackApply &) { return true; },
         },
         query);
 }

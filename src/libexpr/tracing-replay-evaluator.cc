@@ -133,6 +133,7 @@ TracingReplayEvaluator::walk(
         if (!requestPayload)
             return Hash(HashAlgorithm::SHA256);
         bool isQueryRequest = false;
+        bool willMoveStateHash = false;
         std::optional<Hash> outerFromHash;
         std::string queryTag;
         std::string queryDescription;
@@ -144,6 +145,7 @@ TracingReplayEvaluator::walk(
                 if (auto qv = trace::parseSelectorVariant(reqJson)) {
                     queryDescription = trace::describe(*qv);
                     outerFromHash = trace::fromHashOf(*qv);
+                    willMoveStateHash = trace::willMoveStateHash(*qv);
                 } else {
                     queryDescription = queryTag;
                 }
@@ -157,7 +159,7 @@ TracingReplayEvaluator::walk(
         } catch (...) {
             queryDescription = "(parse-failed)";
         }
-        if (!isQueryRequest) {
+        if (!willMoveStateHash) {
             if (auto it = responseFor.find(requestHash); it != responseFor.end())
                 return it->second;
         }
@@ -191,7 +193,7 @@ TracingReplayEvaluator::walk(
            Only substitute on DISPATCH FAILURE (see the block above),
            not on mismatch. */
         (void) edgeCtx;
-        if (!isQueryRequest)
+        if (!willMoveStateHash)
             responseFor.emplace(requestHash, h);
         /* Walker-side dispatch is validation, not new recording.
            The observation being validated was already emitted by the

@@ -745,6 +745,18 @@ std::optional<SelectorVariant> parseSelectorVariant(const nlohmann::json & j);
 std::string describe(const SelectorVariant & query);
 
 /**
+ * True iff a probe's response depends on the referenced Subject's
+ * state — i.e. this Selector carries a `from`/`fn`/`arg` state
+ * hash that a dispatcher resolves against the caller's cell chain.
+ * Two sibling probes that share their requestHash (matching state
+ * at that moment) can still yield different responses at the
+ * probe that introduces divergence, so caching by requestHash
+ * alone would serve one sibling's bytes to the other. Root
+ * queries (`SelectorExpr`, `SelectorImport`) never move state.
+ */
+bool willMoveStateHash(const SelectorVariant & query);
+
+/**
  * The `from` state hash a Query stamps as its primary Merkle
  * parent, if any. Returns nullopt for queries with no `from` field
  * (roots) and for leaves whose hash string doesn't parse.
