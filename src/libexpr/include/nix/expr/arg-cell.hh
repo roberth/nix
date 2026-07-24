@@ -18,6 +18,9 @@
 
 namespace nix {
 
+struct QState; // defined in q-state.hh; forward-declared here so
+               // topology-only cells don't pull the heavy dependencies.
+
 struct ArgCell : std::enable_shared_from_this<ArgCell>
 {
     /** Reverse-De-Bruijn depth: 0 at the cache call's argument,
@@ -34,6 +37,23 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         cell-chain resolution returns this to identify the live
         proxy for a recorded positional handle. */
     std::shared_ptr<Object> liveObject;
+
+    /** Per-Selector-invocation Q-evolution state. Non-null on cells
+        that represent an application (SelectorApply / SelectorCallbackApply /
+        root SelectorImport / SelectorExpr) and thus own a Selector
+        chain. Null on topology-only cells (localCell / seedCell in
+        expr-from-object.cc) that carry proxy identity through a
+        boundary without owning a Selector chain.
+
+        `mutable` because ArgCells are held throughout via
+        `shared_ptr<const ArgCell>`; the pointer needs to be
+        assignable through a const cell. The QState pointee itself is
+        not const — its fields evolve as observations attribute to
+        this cell.
+
+        See q-state.hh for the field breakdown and the concurrency
+        rationale. */
+    mutable std::shared_ptr<QState> qState;
 
     /** Construct a cell whose parent is `parent_`. depth is one
         deeper than parent (or 0 if parent is null). `liveObject_`
