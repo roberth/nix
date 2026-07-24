@@ -156,14 +156,16 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     guardCacheRecording("evalFile", displayPath);
     ensurePreloaded();
     tracingCacheLog("tracing: evalFile %s", displayPath);
-    auto [v, qh] = writer.logRootSelector(trace::SelectorImport{displayPath});
+    /* Cell-migration Phase C: root cell owns SelectorImport's qState. */
+    auto rootCell = ArgCell::make(nullptr, nullptr);
+    auto [v, qh] = writer.logRootSelectorOnCell(rootCell, trace::SelectorImport{displayPath});
     auto result = inner->evalFile(path, displayPath);
-    auto triePos = writer.logResult(v, computeWHNFFromObject(*result), qh);
+    auto whnf = computeWHNFFromObject(*result);
+    auto triePos = writer.logResult(v, whnf, qh);
     auto obj = TracingObject::create(result, writer, v, triePos);
-    /* Root scope-graph cell for the cached value. Cells now carry
-       only topology (depth/parent/liveObject); state hashes are pure
-       functions of the proxy's Subject under the via-Asks design. */
-    obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
+    const_cast<ArgCell &>(*rootCell).liveObject = obj.get_ptr();
+    obj->withArgCell(std::move(rootCell));
+    obj->withCachedWHNF(std::move(whnf));
     return obj;
 }
 
@@ -172,11 +174,15 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     guardCacheRecording("evalExpr", expr);
     ensurePreloaded();
     tracingCacheLog("tracing: evalExpr %s", expr);
-    auto [v, qh] = writer.logRootSelector(trace::SelectorExpr{expr, basePath.path.abs()});
+    auto rootCell = ArgCell::make(nullptr, nullptr);
+    auto [v, qh] = writer.logRootSelectorOnCell(rootCell, trace::SelectorExpr{expr, basePath.path.abs()});
     auto result = inner->evalExpr(expr, basePath);
-    auto triePos = writer.logResult(v, computeWHNFFromObject(*result), qh);
+    auto whnf = computeWHNFFromObject(*result);
+    auto triePos = writer.logResult(v, whnf, qh);
     auto obj = TracingObject::create(result, writer, v, triePos);
-    obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
+    const_cast<ArgCell &>(*rootCell).liveObject = obj.get_ptr();
+    obj->withArgCell(std::move(rootCell));
+    obj->withCachedWHNF(std::move(whnf));
     return obj;
 }
 

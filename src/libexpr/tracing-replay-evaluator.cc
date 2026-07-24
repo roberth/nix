@@ -1032,12 +1032,14 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
         tracingCacheLog("replay hit: evalFile %s", displayPath);
         auto obj = make_ref<TracingReplayObject>(
             *this, result->second, [this, path, displayPath]() { return inner->evalFile(path, displayPath); });
-        /* Root cell for the cached value; mirrors TracingEvaluator's
-           recording side. Observations the outer makes on this proxy
-           (and navigation children that inherit this cell) absorb into
-           the root, so cb apply cells opened with parent=this root
-           carry the outer's intervening-observation state via XOR
-           state-creep — distinguishing sibling cb invocations. */
+        /* Cell-migration Phase C: pre-populate cachedWHNF from the
+           Terminal's Result payload — mirrors the writer side. */
+        try {
+            auto whnfJson = cborStringToJson(result->first);
+            trace::ResultWHNF parsed;
+            from_json(whnfJson, parsed);
+            obj->withCachedWHNF(std::move(parsed));
+        } catch (const std::exception &) { /* fall through */ }
         obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
         return obj;
     }
@@ -1051,6 +1053,12 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Roo
         tracingCacheLog("replay hit: evalExpr");
         auto obj = make_ref<TracingReplayObject>(
             *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); });
+        try {
+            auto whnfJson = cborStringToJson(result->first);
+            trace::ResultWHNF parsed;
+            from_json(whnfJson, parsed);
+            obj->withCachedWHNF(std::move(parsed));
+        } catch (const std::exception &) { /* fall through */ }
         obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
         return obj;
     }

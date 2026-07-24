@@ -341,6 +341,22 @@ public:
     }
 
     /**
+     * Cell-migration Phase C: root selector variant that also aliases
+     * the pushed ActiveSelector shared_ptr onto the given cell's
+     * qState. Mirrors `logSelectorOnCell` for root queries.
+     */
+    template<typename Q>
+    std::pair<ValueHandle, SelectorHandle> logRootSelectorOnCell(
+        const std::shared_ptr<const ArgCell> & cell,
+        const Q & query)
+    {
+        auto pair = logRootSelector(query);
+        if (cell && !activeQueryStack.empty())
+            cell->qState = activeQueryStack.back();
+        return pair;
+    }
+
+    /**
      * Log a query on an existing value (getAttr, getString, etc.). If
      * `fromSubject` is provided, the writer will re-derive Q's `from`
      * field after each observation that evolves that subject's state
