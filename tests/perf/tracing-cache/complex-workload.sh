@@ -105,4 +105,4 @@ run_eval "warm after config edit"
 
 echo
 db="$dir/decision-graph.sqlite"
-echo "db: $(sqlite3 "$db" "SELECT 'ask=' || COUNT(*) FROM Ask UNION ALL SELECT 'terminal=' || COUNT(*) FROM Terminal UNION ALL SELECT 'requests=' || COUNT(*) FROM Requests UNION ALL SELECT 'results=' || COUNT(*) FROM Results UNION ALL SELECT 'queries=' || COUNT(*) FROM Queries" | paste -sd ' ' -)"
+echo "db: $(sqlite3 "$db" "SELECT 'ask=' || COUNT(*) FROM Ask UNION ALL SELECT 'terminal=' || COUNT(*) FROM Terminal UNION ALL SELECT 'requests=' || COUNT(*) FROM Requests UNION ALL SELECT 'results=' || COUNT(*) FROM Results UNION ALL SELECT 'queries=' || COUNT(*) FROM Selectors" | paste -sd ' ' -)"

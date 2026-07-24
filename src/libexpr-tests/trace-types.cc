@@ -458,7 +458,7 @@ TEST(TraceTypes, CorrelateTrace)
 }
 
 // ---------------------------------------------------------------------------
-// QueryIndex
+// SelectorIndex
 // ---------------------------------------------------------------------------
 
 TEST(TraceTypes, QueryIndexLookup)
@@ -482,7 +482,7 @@ TEST(TraceTypes, QueryIndexLookup)
         },
     };
 
-    QueryIndex idx(trace);
+    SelectorIndex idx(trace);
 
     auto e1 = idx.lookup(SelectorExpr{"42", "/"});
     ASSERT_TRUE(e1.has_value());
@@ -509,7 +509,7 @@ TEST(TraceTypes, QueryIndexSkipsOrphanedQueries)
         // No matching result for v=99
     };
 
-    QueryIndex idx(trace);
+    SelectorIndex idx(trace);
     auto e = idx.lookup(SelectorExpr{"orphan", "/"});
     EXPECT_FALSE(e.has_value());
 }

@@ -662,10 +662,10 @@ std::vector<CorrelatedTraceEntry> correlateTrace(const std::vector<TraceEntry> &
 }
 
 // ---------------------------------------------------------------------------
-// QueryIndex
+// SelectorIndex
 // ---------------------------------------------------------------------------
 
-QueryIndex::QueryIndex(const std::vector<TraceEntry> & trace)
+SelectorIndex::SelectorIndex(const std::vector<TraceEntry> & trace)
 {
     // First pass: build result index (result_type_index, v) -> trace index
     std::map<std::pair<size_t, uint64_t>, size_t> resultLookup;
@@ -705,10 +705,10 @@ QueryIndex::QueryIndex(const std::vector<TraceEntry> & trace)
 }
 
 // ---------------------------------------------------------------------------
-// parseQueryVariant / describe / fromHashOf
+// parseSelectorVariant / describe / fromHashOf
 // ---------------------------------------------------------------------------
 
-std::optional<SelectorVariant> parseQueryVariant(const nlohmann::json & j)
+std::optional<SelectorVariant> parseSelectorVariant(const nlohmann::json & j)
 {
     /* Delegate to SelectorVariant's from_json — the discriminator
        lives there. */
@@ -806,7 +806,7 @@ nlohmann::json toJson(const SelectorVariant & query)
     return j;
 }
 
-Hash computeQueryHash(const SelectorVariant & query)
+Hash computeSelectorHash(const SelectorVariant & query)
 {
     return hashString(HashAlgorithm::SHA256, toJson(query).dump());
 }

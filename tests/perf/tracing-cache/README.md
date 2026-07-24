@@ -25,7 +25,7 @@ These are developer tools, not automated tests: they need a built
   subcommand it originally used is removed and listed under Future
   Work in `doc/design/tracing-eval-cache-primop.md`).
 - `cold-warm.sh` — cold vs three warm runs of the same trivial eval;
-  timings + Ask / Terminal / Requests / Results / Queries row counts.
+  timings + Ask / Terminal / Requests / Results / Selectors row counts.
 - `hit-rate.sh` — file-edit-driven workload; counts `replay hit` /
   `replay miss` / `replay fallback` log lines per pass.
 - `complex-workload.sh` — larger eval with lib import, conditionals,

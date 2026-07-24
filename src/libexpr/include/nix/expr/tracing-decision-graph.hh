@@ -76,7 +76,7 @@ public:
     /* Compute the canonical Query hash for a Query type. JSON-serialise
        and SHA-256. */
     template<typename Q>
-    static QueryHash computeQueryHash(const Q & query);
+    static QueryHash computeSelectorHash(const Q & query);
 
     /* Compute the canonical Response hash for a serialised payload. */
     static Hash computeResponseHash(const std::string & payload);
@@ -431,7 +431,7 @@ public:
 };
 
 template<typename Q>
-TracingDecisionGraph::QueryHash TracingDecisionGraph::computeQueryHash(const Q & query)
+TracingDecisionGraph::QueryHash TracingDecisionGraph::computeSelectorHash(const Q & query)
 {
     /* Serialise the query to JSON and SHA-256 it. The Query's
        "from" field carries the parent's queryHash (Merkle identity),

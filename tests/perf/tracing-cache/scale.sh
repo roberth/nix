@@ -83,7 +83,7 @@ db_stats() {
                ' terminal=' || (SELECT COUNT(*) FROM Terminal) ||
                ' reqs=' || (SELECT COUNT(*) FROM Requests) ||
                ' results=' || (SELECT COUNT(*) FROM Results) ||
-               ' queries=' || (SELECT COUNT(*) FROM Queries);
+               ' queries=' || (SELECT COUNT(*) FROM Selectors);
     ")
     printf ">>> %-22s db=%6dKB %s\n" "$label" "$size_kb" "$rows"
 }

@@ -221,7 +221,7 @@ std::shared_ptr<Object> OuterApply::run(
         innerWriter->createCallbackCell(applyQ);
     }
     trace::SelectorApply applyQuery{fnIdStr, argStateHashStr};
-    auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
+    auto resultId = TracingDecisionGraph::computeSelectorHash(applyQuery);
 
     /* Wrap the argObj in TracingCallbackArg so the outer's
        accesses on it during the apply land in the inner trace

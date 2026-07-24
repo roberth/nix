@@ -181,7 +181,7 @@ Hash stateHashConverged(
     the `SelectorGetAttr` / `SelectorGetListElem` that would produce this
     derived value from its parent chain. This is not a state hash
     (derived values don't have one); it's a payload hash serving as
-    the Queries-pool key. Callers that already know their subject is
+    the Selectors-pool key. Callers that already know their subject is
     derived use this directly; polymorphic callers dispatch via
     `stateHashAtSubject`. */
 Hash producerQueryHashAt(

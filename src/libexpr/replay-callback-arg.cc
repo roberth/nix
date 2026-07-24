@@ -62,7 +62,7 @@ static nlohmann::json readResponse(
     TracingDecisionGraph & dg, const Q & query,
     const std::shared_ptr<std::map<Hash, std::string>> & obsSetResponses = {})
 {
-    auto reqHash = TracingDecisionGraph::computeQueryHash(query);
+    auto reqHash = TracingDecisionGraph::computeSelectorHash(query);
     tracingCacheLog(
         "rlo: read %s from=%s reqHash=%s",
         Q::tag, query.from.isStateHash() ? query.from.stateHash().substr(0, 12) : "<?>",
@@ -95,7 +95,7 @@ static void appendFactToWalk(
     const Q & query, const Hash & fromStateHash, const nlohmann::json & responseJson,
     std::vector<ObservationSet> & walkFacts)
 {
-    auto reqHash = TracingDecisionGraph::computeQueryHash(query);
+    auto reqHash = TracingDecisionGraph::computeSelectorHash(query);
     auto responsePayload = jsonToCborString(responseJson);
     auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
     auto elementHash = TracingDecisionGraph::xorFactIntoHash(

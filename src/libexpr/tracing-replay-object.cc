@@ -108,7 +108,7 @@ void TracingReplayObject::pushObservation(const std::string & fromHex, const Has
 template<typename Q, typename R>
 std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & query) const
 {
-    auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+    auto queryHash = TracingDecisionGraph::computeSelectorHash(query);
     nlohmann::json qj = query;
     tracingCacheLog("walker lookup: %s Q=%s queryJSON=%s",
                     Q::tag,
@@ -146,7 +146,7 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
 template<typename Q, typename R>
 std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralChild(const Q & query) const
 {
-    auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+    auto queryHash = TracingDecisionGraph::computeSelectorHash(query);
     nlohmann::json qj = query;
     tracingCacheLog("walker lookup: %s Q=%s queryJSON=%s",
                     Q::tag,
@@ -214,7 +214,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
         tracingCacheLog("replay fallback: maybeGetAttr '%s' (no getAttr recording)", name);
         return ensureInner()->maybeGetAttr(name);
     }
-    auto shallowQueryHash = TracingDecisionGraph::computeQueryHash(query);
+    auto shallowQueryHash = TracingDecisionGraph::computeSelectorHash(query);
     pushObservation(parentHash, shallowQueryHash, result->second.resultNodeHash);
     tracingCacheLog("replay hit: getAttr '%s' -> found", name);
     auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
@@ -243,7 +243,7 @@ std::optional<const trace::ResultWHNF *> TracingReplayObject::whnf()
     auto r = lookupResult<trace::SelectorGetWHNF, trace::ResultWHNF>(query);
     if (!r)
         return std::nullopt;
-    auto shallowQueryHash = TracingDecisionGraph::computeQueryHash(query);
+    auto shallowQueryHash = TracingDecisionGraph::computeSelectorHash(query);
     pushObservation(parentHash, shallowQueryHash, r->second);
     cachedWHNF = std::move(r->first);
     return &*cachedWHNF;
@@ -401,7 +401,7 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
     auto parentHash = evolvedQueryFrom();
     trace::SelectorGetListElem query{parentHash, idx};
     if (auto result = lookupStructuralChild<trace::SelectorGetListElem, trace::ResultWHNF>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), result->second.resultNodeHash);
+        pushObservation(parentHash, TracingDecisionGraph::computeSelectorHash(query), result->second.resultNodeHash);
         tracingCacheLog("replay hit: getListElem %d", idx);
         auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
         auto child = std::make_shared<TracingReplayObject>(
@@ -447,7 +447,7 @@ std::optional<FunctionInfo> TracingReplayObject::getFunctionInfo()
     auto parentHash = evolvedQueryFrom();
     trace::SelectorGetFunctionInfo query{parentHash};
     if (auto r = lookupResult<trace::SelectorGetFunctionInfo, trace::ResultFunctionInfo>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeQueryHash(query), r->second);
+        pushObservation(parentHash, TracingDecisionGraph::computeSelectorHash(query), r->second);
         if (!r->first.hasInfo)
             return std::nullopt;
         return FunctionInfo{.formals = r->first.formals, .ellipsis = r->first.ellipsis};

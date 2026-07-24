@@ -203,7 +203,7 @@ void TracingWriter::logOuterObservation(
                 trace::rewriteFrom(
                     aq.payloadTemplate,
                     newState.to_string(HashFormat::Base16, false));
-                auto newQ = trace::computeQueryHash(aq.payloadTemplate);
+                auto newQ = trace::computeSelectorHash(aq.payloadTemplate);
                 tracingCacheLog(
                     "Q-evolution: Q %s -> %s (fromSubject state %s)",
                     aq.currentQ.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -277,7 +277,7 @@ void TracingWriter::logCompositeSubQ(
             trace::rewriteFrom(
                 parent.payloadTemplate,
                 newState.to_string(HashFormat::Base16, false));
-            parent.currentQ = trace::computeQueryHash(parent.payloadTemplate);
+            parent.currentQ = trace::computeSelectorHash(parent.payloadTemplate);
         }
     }
 }

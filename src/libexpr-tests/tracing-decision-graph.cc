@@ -529,7 +529,7 @@ TEST_F(TracingDecisionGraphTest, PersistsAcrossReopen)
 
 TEST_F(TracingDecisionGraphTest, ManyQueriesAreIsolated)
 {
-    /* Record N distinct Queries, each with a different FactSet and
+    /* Record N distinct Selectors, each with a different FactSet and
        Result. Verify each can be replayed back to its own Result
        and that no cross-contamination happens. */
     TracingDecisionGraph g(dbPath);
@@ -742,7 +742,7 @@ TEST_F(TracingDecisionGraphTest, EndToEndOnEventThenWalk)
 
 TEST_F(TracingDecisionGraphTest, EndToEndNestedQueries)
 {
-    /* Simulates nested Queries within one session: outer Q invokes
+    /* Simulates nested Selectors within one session: outer Q invokes
        sub-Q1 and sub-Q2 as recursive d=0 evaluations.
 
        In our global-factSet model, sub-Q's recorded factSet

@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS Requests (
     payload     BLOB NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS Queries (
+CREATE TABLE IF NOT EXISTS Selectors (
     queryHash BLOB PRIMARY KEY,
     payload   BLOB NOT NULL
 );
@@ -328,13 +328,13 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     state->insertRequest.create(state->db,
         "INSERT OR IGNORE INTO Requests(requestHash, payload) VALUES (?, ?)");
     state->insertQuery.create(state->db,
-        "INSERT OR IGNORE INTO Queries(queryHash, payload) VALUES (?, ?)");
+        "INSERT OR IGNORE INTO Selectors(queryHash, payload) VALUES (?, ?)");
     state->insertResult.create(state->db,
         "INSERT OR IGNORE INTO Results(resultHash, payload) VALUES (?, ?)");
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
     state->selectQuery.create(state->db,
-        "SELECT payload FROM Queries WHERE queryHash = ?");
+        "SELECT payload FROM Selectors WHERE queryHash = ?");
     state->selectResult.create(state->db,
         "SELECT payload FROM Results WHERE resultHash = ?");
     state->insertObservationSet.create(state->db,

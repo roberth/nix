@@ -46,7 +46,7 @@ sqlite3 "$db" <<'SQL'
 .headers on
 
 SELECT 'Requests' AS table_name, COUNT(*) AS rows FROM Requests
-UNION ALL SELECT 'Queries', COUNT(*) FROM Queries
+UNION ALL SELECT 'Selectors', COUNT(*) FROM Selectors
 UNION ALL SELECT 'Results', COUNT(*) FROM Results
 UNION ALL SELECT 'RequestSetNodes', COUNT(*) FROM RequestSetNodes
 UNION ALL SELECT 'Ask', COUNT(*) FROM Ask

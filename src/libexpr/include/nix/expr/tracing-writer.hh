@@ -359,7 +359,7 @@ public:
         auto valueNum = sink.logQuery(query);
         if (!decisionGraph)
             return {valueNum, {}};
-        auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+        auto queryHash = TracingDecisionGraph::computeSelectorHash(query);
         nlohmann::json qj = query;
         tracingCacheLog(
             "writer logRootQuery: Q=%s queryJSON=%s",
@@ -392,7 +392,7 @@ public:
         auto valueNum = sink.logQuery(query);
         if (!decisionGraph)
             return {valueNum, {}};
-        auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+        auto queryHash = TracingDecisionGraph::computeSelectorHash(query);
         nlohmann::json qj = query;
         tracingCacheLog(
             "writer logQuery: Q=%s queryJSON=%s",
@@ -445,7 +445,7 @@ public:
                         trace::rewriteFrom(
                             aq.payloadTemplate,
                             newState.to_string(HashFormat::Base16, false));
-                        aq.currentQ = trace::computeQueryHash(aq.payloadTemplate);
+                        aq.currentQ = trace::computeSelectorHash(aq.payloadTemplate);
                     }
                 }
             }
@@ -478,7 +478,7 @@ public:
             return;
         nlohmann::json reqJson = resp.request;
         nlohmann::json respJson = resp.response;
-        auto queryHash = TracingDecisionGraph::computeQueryHash(resp.request);
+        auto queryHash = TracingDecisionGraph::computeSelectorHash(resp.request);
         auto responsePayload = jsonToCborString(respJson);
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
         decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
@@ -616,7 +616,7 @@ public:
             }, stampedQuery);
             auto qh = std::visit(
                 [](const auto & q) {
-                    return TracingDecisionGraph::computeQueryHash(q);
+                    return TracingDecisionGraph::computeSelectorHash(q);
                 }, stampedQuery);
             nlohmann::json rJson = std::visit(
                 [](const auto & r) -> nlohmann::json { return r; },

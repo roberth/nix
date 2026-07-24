@@ -164,7 +164,7 @@ void from_json(const nlohmann::json & j, Result<T> & r)
     j.at("v").get_to(r.v);
 }
 
-#define DECLARE_QUERY_RESULT(QueryType, ResultType)          \
+#define DECLARE_SELECTOR_RESULT(QueryType, ResultType)          \
     template<>                                               \
     struct ResultOf<QueryType>                               \
     {                                                        \
@@ -351,7 +351,7 @@ void from_json(const nlohmann::json & j, PathExpr & p);
  * of cb_arg root `i`; `path` describes the navigation from those roots
  * to this observation.
  *
- * Extracted into its own struct so each of those Queries' to_json/
+ * Extracted into its own struct so each of those Selectors' to_json/
  * from_json embeds one field (`perArgFrame`) instead of duplicating
  * the same conditional emit/parse block.
  */
@@ -377,7 +377,7 @@ struct SelectorExpr
     std::string baseDir;
     auto operator<=>(const SelectorExpr &) const = default;
 };
-DECLARE_QUERY_RESULT(SelectorExpr, ResultWHNF)
+DECLARE_SELECTOR_RESULT(SelectorExpr, ResultWHNF)
 
 /** Import/evaluate a file. */
 struct SelectorImport
@@ -386,7 +386,7 @@ struct SelectorImport
     std::string path;
     auto operator<=>(const SelectorImport &) const = default;
 };
-DECLARE_QUERY_RESULT(SelectorImport, ResultWHNF)
+DECLARE_SELECTOR_RESULT(SelectorImport, ResultWHNF)
 
 /** Get an attribute by name from a value that has been shown (via
     parent WHNF) to contain it. Pure retrieval — no existence check
@@ -400,7 +400,7 @@ struct SelectorGetAttr
     PerArgFrame perArgFrame;
     auto operator<=>(const SelectorGetAttr &) const = default;
 };
-DECLARE_QUERY_RESULT(SelectorGetAttr, ResultWHNF)
+DECLARE_SELECTOR_RESULT(SelectorGetAttr, ResultWHNF)
 
 /** Get a list element by index from a value that has been shown (via
     parent WHNF) to have at least index+1 elements. Pure retrieval —
@@ -414,7 +414,7 @@ struct SelectorGetListElem
     PerArgFrame perArgFrame;
     auto operator<=>(const SelectorGetListElem &) const = default;
 };
-DECLARE_QUERY_RESULT(SelectorGetListElem, ResultWHNF)
+DECLARE_SELECTOR_RESULT(SelectorGetListElem, ResultWHNF)
 
 /** Force a value to WHNF and read its type + type-determined payload
     in one shot. Used by the cache-layer Objects to combine what would
@@ -429,7 +429,7 @@ struct SelectorGetWHNF
     PerArgFrame perArgFrame;
     auto operator<=>(const SelectorGetWHNF &) const = default;
 };
-DECLARE_QUERY_RESULT(SelectorGetWHNF, ResultWHNF)
+DECLARE_SELECTOR_RESULT(SelectorGetWHNF, ResultWHNF)
 
 /** Get function argument info (formals). */
 struct SelectorGetFunctionInfo
@@ -448,7 +448,7 @@ struct ResultFunctionInfo
     bool ellipsis = false;
 };
 
-DECLARE_QUERY_RESULT(SelectorGetFunctionInfo, ResultFunctionInfo)
+DECLARE_SELECTOR_RESULT(SelectorGetFunctionInfo, ResultFunctionInfo)
 
 /** Apply a function to an argument.
 
@@ -481,7 +481,7 @@ struct SelectorApply
     size_t argRootIndex{0};
     auto operator<=>(const SelectorApply &) const = default;
 };
-DECLARE_QUERY_RESULT(SelectorApply, ResultWHNF)
+DECLARE_SELECTOR_RESULT(SelectorApply, ResultWHNF)
 
 /** Apply a callback to a contra-arg, identified by the outer's
     observation-set on the contra-arg.
@@ -523,7 +523,7 @@ struct SelectorCallbackApply
     PerArgFrame perArgFrame;
     auto operator<=>(const SelectorCallbackApply &) const = default;
 };
-DECLARE_QUERY_RESULT(SelectorCallbackApply, ResultWHNF)
+DECLARE_SELECTOR_RESULT(SelectorCallbackApply, ResultWHNF)
 
 // ---------------------------------------------------------------------------
 // CompletedQuery: a query correlated with its result
@@ -562,7 +562,7 @@ using EnvRequests = ApplyWrapper<F, FileReadRequest, GetEnvRequest>;
  * All query payload types.
  */
 template<template<typename> class F>
-using Queries = ApplyWrapper<
+using Selectors = ApplyWrapper<
     F,
     SelectorExpr,
     SelectorImport,
@@ -714,13 +714,13 @@ struct CombineVariants<std::variant<Ts...>, std::variant<Us...>, Rest...>
 /**
  * Combined trace entry type containing all Response, Query, and Result variants.
  */
-using TraceEntry = detail::CombineVariants<AllEnvRequests<Response>, Queries<Query>, Results<Result>>::type;
+using TraceEntry = detail::CombineVariants<AllEnvRequests<Response>, Selectors<Query>, Results<Result>>::type;
 
 /**
  * Trace entry with queries correlated to their results.
  */
 using CorrelatedTraceEntry =
-    detail::CombineVariants<AllEnvRequests<Response>, Queries<CompletedQuery>, Results<Result>>::type;
+    detail::CombineVariants<AllEnvRequests<Response>, Selectors<CompletedQuery>, Results<Result>>::type;
 
 /**
  * Parse a JSON entry into a typed TraceEntry.
@@ -734,7 +734,7 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j);
  * recognised tag. Used at CBOR-payload dispatch sites where the
  * wrapping `{"query", "v"}` envelope isn't present.
  */
-std::optional<SelectorVariant> parseQueryVariant(const nlohmann::json & j);
+std::optional<SelectorVariant> parseSelectorVariant(const nlohmann::json & j);
 
 /**
  * Short human-readable rendering of a Query for log lines —
@@ -755,7 +755,7 @@ std::optional<Hash> fromHashOf(const SelectorVariant & query);
  * Rewrite a Query's `from` (and `fromStateHashes[0]` if present)
  * to a new state hash — preserving any existing `argAncestry`
  * attached to those leaves. Used by Q-evolution paths that update
- * Q's identity as its fromSubject state advances. No-op on Queries
+ * Q's identity as its fromSubject state advances. No-op on Selectors
  * with neither field (roots).
  */
 void rewriteFrom(SelectorVariant & query, const std::string & newFromHex);
@@ -763,10 +763,10 @@ void rewriteFrom(SelectorVariant & query, const std::string & newFromHex);
 /**
  * SHA-256 of the Query's JSON dump — the canonical queryHash used
  * as its identity across the trace/store layer. Overload of the
- * per-Q-type `computeQueryHash` on decision-graph, so callers
+ * per-Q-type `computeSelectorHash` on decision-graph, so callers
  * holding a `SelectorVariant` don't have to std::visit at every site.
  */
-Hash computeQueryHash(const SelectorVariant & query);
+Hash computeSelectorHash(const SelectorVariant & query);
 
 /** Serialise a Query variant to its inner JSON payload
     (`{"query": <tag>, "params": {...}}`). */
@@ -795,12 +795,12 @@ struct IndexEntry
 /**
  * Index for fast query lookup in a trace.
  */
-class QueryIndex
+class SelectorIndex
 {
     std::map<SelectorVariant, IndexEntry> index;
 
 public:
-    explicit QueryIndex(const std::vector<TraceEntry> & trace);
+    explicit SelectorIndex(const std::vector<TraceEntry> & trace);
 
     template<typename Q>
     std::optional<IndexEntry> lookup(const Q & q) const

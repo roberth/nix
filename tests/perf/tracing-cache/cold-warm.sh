@@ -36,7 +36,7 @@ report_db() {
         SELECT 'terminal=' || COUNT(*) FROM Terminal UNION ALL
         SELECT 'requests=' || COUNT(*) FROM Requests UNION ALL
         SELECT 'results=' || COUNT(*) FROM Results UNION ALL
-        SELECT 'queries=' || COUNT(*) FROM Queries
+        SELECT 'queries=' || COUNT(*) FROM Selectors
     " | paste -sd ' ' -)
     echo "  db: $counts"
 }

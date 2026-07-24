@@ -567,7 +567,7 @@ protected:
 public:
 
     /**
-     * Queries the set of incoming FS references for a store path.
+     * Selectors the set of incoming FS references for a store path.
      * The result is not cleared.
      */
     virtual void queryReferrers(const StorePath & path, StorePathSet & referrers)

@@ -141,7 +141,7 @@ TracingReplayEvaluator::walk(
             isQueryRequest = reqJson.contains("tag");
             if (isQueryRequest) {
                 queryTag = reqJson["tag"].get<std::string>();
-                if (auto qv = trace::parseQueryVariant(reqJson)) {
+                if (auto qv = trace::parseSelectorVariant(reqJson)) {
                     queryDescription = trace::describe(*qv);
                     outerFromHash = trace::fromHashOf(*qv);
                 } else {
@@ -271,7 +271,7 @@ TracingReplayEvaluator::walk(
                 *fromSubject, fromSubjectArgAncestry, *perQEnvWalk, perQEnvWalk->size());
             trace::SelectorVariant payload = *payloadTemplate;
             trace::rewriteFrom(payload, newState.to_string(HashFormat::Base16, false));
-            return trace::computeQueryHash(payload);
+            return trace::computeSelectorHash(payload);
         };
     }
 
@@ -605,7 +605,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
         return resolveApplyId(idStr, params, ctx);
     }
 
-    auto qv = trace::parseQueryVariant(reqJson);
+    auto qv = trace::parseSelectorVariant(reqJson);
     if (qv) {
         tracingCacheLog(
             "resolve %s: producer-child %s",
@@ -801,7 +801,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
 
 std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nlohmann::json & reqJson, ResolutionContext & ctx)
 {
-    auto qv = trace::parseQueryVariant(reqJson);
+    auto qv = trace::parseSelectorVariant(reqJson);
     if (!qv)
         return std::nullopt;
 
@@ -952,7 +952,7 @@ template<typename Q>
 std::optional<std::pair<std::string, TriePosition>>
 TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentProxy)
 {
-    auto queryHash = TracingDecisionGraph::computeQueryHash(query);
+    auto queryHash = TracingDecisionGraph::computeSelectorHash(query);
     /* Task #110: pass Q's typed payload so the walker can re-derive
        Q's `from` field as observations dispatch. No subject is passed
        from lookup()'s template path — probes with applyResultSubject
