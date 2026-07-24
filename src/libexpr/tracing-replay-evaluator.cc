@@ -64,22 +64,21 @@ TracingReplayEvaluator::walk(
        Concurrency invariant: only one walk active at a time; the
        active walk's cell is the state carrier (parent-chain reachable
        from currentProxy). Switching walks = switching active cell. */
-    std::shared_ptr<QState> qState;
-    if (cell) {
-        /* Install a fresh QState for this walk. Overwrites any prior
-           qState — under matching-until-divergence the writer's cold
-           qState (if any) is not reused by the walker; each walk
-           starts fresh, mirroring the writer's per-logSelector push. */
-        qState = std::make_shared<QState>();
-        qState->currentQ = selectorHash;
-        if (payloadTemplate)
-            qState->payloadTemplate = *payloadTemplate;
-        qState->fromSubject = fromSubject;
-        qState->fromSubjectArgAncestry = fromSubjectArgAncestry;
+    std::shared_ptr<QState> qState = std::make_shared<QState>();
+    qState->currentQ = selectorHash;
+    if (payloadTemplate)
+        qState->payloadTemplate = *payloadTemplate;
+    qState->fromSubject = fromSubject;
+    qState->fromSubjectArgAncestry = fromSubjectArgAncestry;
+    if (cell)
         cell->qState = qState;
-    } else {
-        qState = std::make_shared<QState>();
-    }
+
+    /* No pre-push seeding on walker side. Writer's B11 seeds aq's
+       perQEnvWalk from pre-push envWalk to align writer's aq->currentQ
+       with what the walker naturally reaches — walker folds through
+       the landing chain edge-by-edge (commitEdge appends to
+       perQEnvWalk on each dispatched edge, recomputeQ evolves
+       currentQ after each). Seeding here would double-fold. */
     /* Task #110 B1: per-Q chain observation history for this walk,
        matching the writer's ActiveSelector::perQEnvWalk basis. commitEdge
        appends to this in addition to session envWalk. recomputeQ
