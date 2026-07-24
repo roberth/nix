@@ -119,15 +119,15 @@ TracingReplayEvaluator::walk(
             tryPush({std::move(obs)});
     };
 
-    /* Dispatcher: turns a Request hash into the current Response
-       hash. Memoised in responseFor for stable requests (file
-       reads, env vars) where same request always gives same
-       response. Query-carrying requests (outer-value queries,
-       SelectorCallbackApply) are NOT memoised because the same request
-       hash can dispatch to different responses depending on which
-       proxy (cb invocation) the history is grounded in — sibling
-       cb apply invocations of the same fn share a request hash but
-       must see their own arg's live value, not a memoised sibling's. */
+    /* Dispatcher: Request hash → Response hash. Memoised in
+       responseFor for file reads and env vars — no `from` state,
+       response is a pure function of request.
+
+       Outer-value requests skip memo: `from` is pre-response, so
+       at the divergent probe two siblings share requestHash while
+       their responses differ. After that probe the fold
+       advances state hashes, so subsequent probes discriminate
+       via requestHash naturally. */
     auto dispatch = [&](const Hash & requestHash, const TracingDecisionGraph::EdgeContext & edgeCtx) -> Hash {
         auto requestPayload = decisionGraph.getRequestPayload(requestHash);
         if (!requestPayload)
