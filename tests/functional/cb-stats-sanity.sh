@@ -32,10 +32,12 @@ assertCacheStats 0 1 0 -- \
 # The exact count depends on how many Q's the trie has for this path
 # (file hash dispatch + outer's reads on the attrset + reads on the
 # int child). Calibrated against current behaviour.
-echo "=== warm replay (expect 3 hits, 0 misses, 0 fallbacks) ==="
-# One fewer hit than before the getAttr/getListElem fold: the walker
-# used to look up hasAttr (existence) AND child getWHNF; now maybeGetAttr
-# projects existence from the already-cached parent WHNF and a single
-# retrieval query returns the child WHNF.
-assertCacheStats 3 0 0 -- \
+echo "=== warm replay (expect 2 hits, 0 misses, 0 fallbacks) ==="
+# One fewer hit than before the cell-migration: evalFile now
+# pre-populates the root wrapper's cachedWHNF from SelectorImport's
+# Terminal (Phase C), so the previously-separate SelectorGetWHNF walk
+# on the root is elided. Walker sees:
+#   1. lookup(SelectorImport) — hit.
+#   2. lookup(SelectorGetAttr{"x", from=root}) — hit.
+assertCacheStats 2 0 0 -- \
     nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/simple.nix; }).x'

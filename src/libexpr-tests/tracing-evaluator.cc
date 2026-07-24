@@ -87,13 +87,12 @@ TEST_F(TracingEvaluatorTest, GetAttrTracesAccess)
     auto foo = obj->maybeGetAttr("foo");
     ASSERT_NE(foo, nullptr);
 
-    /* Under the fold, maybeGetAttr fires getWHNF on the parent first
-       (to project name membership) and then getAttr (retrieval) with
-       the name. Existence-only "hasAttr" doesn't exist as a query. */
-    ASSERT_GE(sink->entries.size(), 4u);
-    auto & whnfQuery = sink->entries[0];
-    EXPECT_EQ(whnfQuery.at("query").at("tag"), "getWHNF");
-    auto & getAttrQuery = sink->entries[2];
+    /* Under cell-migration Phase C, evalExpr pre-populates the
+       wrapper's cachedWHNF, so `whnf()` short-circuits without
+       emitting a SelectorGetWHNF. Only the retrieval SelectorGetAttr
+       fires. */
+    ASSERT_GE(sink->entries.size(), 2u);
+    auto & getAttrQuery = sink->entries[0];
     EXPECT_EQ(getAttrQuery.at("query").at("tag"), "getAttr");
     EXPECT_EQ(getAttrQuery.at("query").at("name"), "foo");
 }
@@ -101,83 +100,88 @@ TEST_F(TracingEvaluatorTest, GetAttrTracesAccess)
 TEST_F(TracingEvaluatorTest, GetStringTracesValue)
 {
     auto obj = evaluator->evalExpr("\"hello\"", state->rootedPath(CanonPath::root));
-    sink->entries.clear();
 
+    /* Under cell-migration Phase C, evalExpr computes the WHNF eagerly
+       (one-atomic-until-body-WHNF) and pre-populates the wrapper's
+       cachedWHNF. Verify the emission via the evalExpr result entry
+       BEFORE clearing, so we can still confirm the value round-tripped
+       through the trace layer. */
+    ASSERT_GE(sink->entries.size(), 2u);
+    auto & evalResult = sink->entries[1];
+    EXPECT_EQ(evalResult.at("result").at("value"), "hello");
+
+    sink->entries.clear();
     auto s = obj->getStringIgnoreContext();
     EXPECT_EQ(s, "hello");
-
-    ASSERT_GE(sink->entries.size(), 2u);
-    auto & result = sink->entries[1];
-    EXPECT_EQ(result.at("result").at("value"), "hello");
+    /* Cached WHNF short-circuits — no additional entries. */
+    EXPECT_EQ(sink->entries.size(), 0u);
 }
 
 TEST_F(TracingEvaluatorTest, GetIntTracesValue)
 {
     auto obj = evaluator->evalExpr("42", state->rootedPath(CanonPath::root));
-    sink->entries.clear();
+    ASSERT_GE(sink->entries.size(), 2u);
+    auto & evalResult = sink->entries[1];
+    EXPECT_EQ(evalResult.at("result").at("value"), 42);
 
+    sink->entries.clear();
     auto i = obj->getInt();
     EXPECT_EQ(i.value, 42);
-
-    ASSERT_GE(sink->entries.size(), 2u);
-    auto & result = sink->entries[1];
-    EXPECT_EQ(result.at("result").at("value"), 42);
+    EXPECT_EQ(sink->entries.size(), 0u);
 }
 
 TEST_F(TracingEvaluatorTest, GetBoolTracesValue)
 {
     auto obj = evaluator->evalExpr("true", state->rootedPath(CanonPath::root));
-    sink->entries.clear();
+    ASSERT_GE(sink->entries.size(), 2u);
+    auto & evalResult = sink->entries[1];
+    EXPECT_EQ(evalResult.at("result").at("value"), true);
 
+    sink->entries.clear();
     auto b = obj->getBool();
     EXPECT_TRUE(b);
-
-    ASSERT_GE(sink->entries.size(), 2u);
-    auto & result = sink->entries[1];
-    EXPECT_EQ(result.at("result").at("value"), true);
+    EXPECT_EQ(sink->entries.size(), 0u);
 }
 
 TEST_F(TracingEvaluatorTest, GetTypeTracesType)
 {
     auto obj = evaluator->evalExpr("{ }", state->rootedPath(CanonPath::root));
-    sink->entries.clear();
+    ASSERT_GE(sink->entries.size(), 2u);
+    auto & evalResult = sink->entries[1];
+    EXPECT_EQ(evalResult.at("result").at("type"), "set");
 
+    sink->entries.clear();
     auto type = obj->getType();
     EXPECT_EQ(type, nAttrs);
-
-    ASSERT_GE(sink->entries.size(), 2u);
-    auto & result = sink->entries[1];
-    EXPECT_EQ(result.at("result").at("type"), "set");
+    EXPECT_EQ(sink->entries.size(), 0u);
 }
 
 TEST_F(TracingEvaluatorTest, GetAttrNamesTracesNames)
 {
     auto obj = evaluator->evalExpr("{ a = 1; b = 2; }", state->rootedPath(CanonPath::root));
-    sink->entries.clear();
+    ASSERT_GE(sink->entries.size(), 2u);
+    auto & evalResult = sink->entries[1];
+    EXPECT_EQ(evalResult.at("result").at("type"), "set");
+    auto attrNames = evalResult.at("result").at("names").get<std::vector<std::string>>();
+    EXPECT_EQ(attrNames.size(), 2u);
 
+    sink->entries.clear();
     auto names = obj->getAttrNames();
     EXPECT_EQ(names.size(), 2u);
-
-    /* getAttrNames now goes through whnf() — the result entry carries a
-       ResultWHNF with type="set" and a names[] payload. */
-    ASSERT_GE(sink->entries.size(), 2u);
-    auto & result = sink->entries[1];
-    EXPECT_EQ(result.at("result").at("type"), "set");
-    auto attrNames = result.at("result").at("names").get<std::vector<std::string>>();
-    EXPECT_EQ(attrNames.size(), 2u);
+    EXPECT_EQ(sink->entries.size(), 0u);
 }
 
 TEST_F(TracingEvaluatorTest, GetListSizeTracesSize)
 {
     auto obj = evaluator->evalExpr("[1 2 3]", state->rootedPath(CanonPath::root));
-    sink->entries.clear();
+    ASSERT_GE(sink->entries.size(), 2u);
+    auto & evalResult = sink->entries[1];
+    EXPECT_EQ(evalResult.at("result").at("size"), 3u);
 
+    sink->entries.clear();
     auto sz = obj->getListSize();
     EXPECT_EQ(sz, 3u);
-
-    ASSERT_GE(sink->entries.size(), 2u);
-    auto & result = sink->entries[1];
-    EXPECT_EQ(result.at("result").at("size"), 3u);
+    EXPECT_EQ(sink->entries.size(), 0u);
 }
 
 TEST_F(TracingEvaluatorTest, GetListElemTracesAccess)
@@ -188,12 +192,11 @@ TEST_F(TracingEvaluatorTest, GetListElemTracesAccess)
     auto elem = obj->getListElem(1);
     ASSERT_NE(elem, nullptr);
 
-    /* Under the fold, getListElem forces parent WHNF first (to
-       project bounds), then issues getListElem (retrieval). */
-    ASSERT_GE(sink->entries.size(), 4u);
-    auto & whnfQuery = sink->entries[0];
-    EXPECT_EQ(whnfQuery.at("query").at("tag"), "getWHNF");
-    auto & getElemQuery = sink->entries[2];
+    /* Under cell-migration Phase C, evalExpr's cachedWHNF short-circuits
+       the parent whnf() call in getListElem — only SelectorGetListElem
+       (retrieval) fires. */
+    ASSERT_GE(sink->entries.size(), 2u);
+    auto & getElemQuery = sink->entries[0];
     EXPECT_EQ(getElemQuery.at("query").at("tag"), "getListElem");
     EXPECT_EQ(getElemQuery.at("query").at("index"), 1u);
 }
@@ -201,20 +204,19 @@ TEST_F(TracingEvaluatorTest, GetListElemTracesAccess)
 TEST_F(TracingEvaluatorTest, MissingAttrProjectedFromWHNF)
 {
     auto obj = evaluator->evalExpr("{ }", state->rootedPath(CanonPath::root));
-    sink->entries.clear();
+    /* Under cell-migration Phase C, the cachedWHNF is populated during
+       evalExpr — verify the parent WHNF is an empty set BEFORE
+       clearing so we can still assert on the projection. */
+    ASSERT_GE(sink->entries.size(), 2u);
+    auto & evalResult = sink->entries[1];
+    EXPECT_EQ(evalResult.at("result").at("type"), "set");
+    EXPECT_EQ(evalResult.at("result").at("names").size(), 0u);
 
+    sink->entries.clear();
     auto missing = obj->maybeGetAttr("nonexistent");
     EXPECT_EQ(missing, nullptr);
-
-    /* Under the fold: existence is projected from WHNFAttrs.names on
-       the parent. Only a getWHNF observation is recorded — no
-       has-attr / getAttr entry. */
-    ASSERT_GE(sink->entries.size(), 2u);
-    auto & whnfQuery = sink->entries[0];
-    EXPECT_EQ(whnfQuery.at("query").at("tag"), "getWHNF");
-    auto & whnfResult = sink->entries[1];
-    EXPECT_EQ(whnfResult.at("result").at("type"), "set");
-    EXPECT_EQ(whnfResult.at("result").at("names").size(), 0u);
+    /* Membership projected from cachedWHNF: no probe emitted. */
+    EXPECT_EQ(sink->entries.size(), 0u);
 }
 
 TEST_F(TracingEvaluatorTest, DefeatCacheDoesNotTrace)
@@ -231,14 +233,14 @@ TEST_F(TracingEvaluatorTest, DefeatCacheDoesNotTrace)
 TEST_F(TracingEvaluatorTest, GetFloatTracesValue)
 {
     auto obj = evaluator->evalExpr("3.14", state->rootedPath(CanonPath::root));
-    sink->entries.clear();
+    ASSERT_GE(sink->entries.size(), 2u);
+    auto & evalResult = sink->entries[1];
+    EXPECT_DOUBLE_EQ(evalResult.at("result").at("value").get<double>(), 3.14);
 
+    sink->entries.clear();
     auto f = obj->getFloat();
     EXPECT_DOUBLE_EQ(f, 3.14);
-
-    ASSERT_GE(sink->entries.size(), 2u);
-    auto & result = sink->entries[1];
-    EXPECT_DOUBLE_EQ(result.at("result").at("value").get<double>(), 3.14);
+    EXPECT_EQ(sink->entries.size(), 0u);
 }
 
 } // namespace nix
