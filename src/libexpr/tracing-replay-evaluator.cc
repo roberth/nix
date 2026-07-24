@@ -41,7 +41,8 @@ TracingReplayEvaluator::walk(
     std::shared_ptr<Object> currentProxy,
     std::optional<trace::SelectorVariant> payloadTemplate,
     std::optional<Subject> fromSubject,
-    Hash fromSubjectArgAncestry)
+    Hash fromSubjectArgAncestry,
+    std::shared_ptr<const ArgCell> cell)
 {
     /* Task #110 B6: the SuppressApplyBoundary guard used to wrap the
        entire walk() body. That was fragile: fallback triggered
@@ -57,17 +58,43 @@ TracingReplayEvaluator::walk(
         std::move(currentProxy),
         {},
     };
+    /* Cell-migration Phase F: walker's per-walk state lives on the
+       cell's qState when a cell is provided. When null, fall back to
+       a locally-owned QState so no caller is broken by the migration.
+       Concurrency invariant: only one walk active at a time; the
+       active walk's cell is the state carrier (parent-chain reachable
+       from currentProxy). Switching walks = switching active cell. */
+    std::shared_ptr<QState> qState;
+    if (cell) {
+        /* Install a fresh QState for this walk. Overwrites any prior
+           qState — under matching-until-divergence the writer's cold
+           qState (if any) is not reused by the walker; each walk
+           starts fresh, mirroring the writer's per-logSelector push. */
+        qState = std::make_shared<QState>();
+        qState->currentQ = selectorHash;
+        if (payloadTemplate)
+            qState->payloadTemplate = *payloadTemplate;
+        qState->fromSubject = fromSubject;
+        qState->fromSubjectArgAncestry = fromSubjectArgAncestry;
+        cell->qState = qState;
+    } else {
+        qState = std::make_shared<QState>();
+    }
     /* Task #110 B1: per-Q chain observation history for this walk,
        matching the writer's ActiveSelector::perQEnvWalk basis. commitEdge
        appends to this in addition to session envWalk. recomputeQ
-       reads from this so walker Q evolution matches writer's. */
-    auto perQEnvWalk = std::make_shared<std::vector<ObservationSet>>();
+       reads from this so walker Q evolution matches writer's.
+
+       Phase F: the vector lives on qState (cell's or local). We hold
+       a shared_ptr to qState so recomputeQ's closure captures shared
+       ownership and can dereference perQEnvWalk safely. */
+    auto & perQEnvWalk = qState->perQEnvWalk;
     /* Per-edge buffer: dispatch() appends facts here; the
        history-loop promotes the buffer to a cumulative envWalk
        edge on commit (via commitEdge) or discards it on reject.
        Without the buffer, rejected-edge facts would pollute
        envWalk and throw off the cell-chain state hash computations. */
-    std::vector<Observation> pendingEdgeObservations;
+    auto & pendingEdgeObservations = qState->pendingEdgeObservations;
 
     auto commitEdge = [&]() {
         /* 1:1 alignment with writer's envWalk: writer inserts each
@@ -101,12 +128,12 @@ TracingReplayEvaluator::walk(
             for (const auto & f : obs)
                 fingerprint = TracingDecisionGraph::xorFactIntoHash(
                     fingerprint, f.fromHash, f.elementHash);
-            if (committedEdgeFingerprints.insert(fingerprint).second) {
+            if (qState->committedEdgeFingerprints.insert(fingerprint).second) {
                 ObservationSet edge;
                 edge.observations = std::move(obs);
                 envWalk.push_back(edge);
                 /* B1: also append to per-Q chain for Q evolution basis. */
-                perQEnvWalk->push_back(std::move(edge));
+                perQEnvWalk.push_back(std::move(edge));
                 tracingCacheLog("dispatch: committed edge, envWalk=%zu (obs=%zu)",
                                 envWalk.size(), envWalk.back().observations.size());
             } else {
@@ -264,10 +291,14 @@ TracingReplayEvaluator::walk(
        alignment with writer's ActiveSelector::perQEnvWalk basis. */
     std::function<Hash(const Hash &)> recomputeQ;
     if (payloadTemplate && fromSubject) {
+        /* Capture qState by shared_ptr so recomputeQ can dereference
+           perQEnvWalk (which lives on qState — either cell-owned or
+           local) across dispatch/commit callbacks. */
         recomputeQ = [payloadTemplate, fromSubject,
-                      fromSubjectArgAncestry, perQEnvWalk](const Hash & preFoldQ) -> Hash {
+                      fromSubjectArgAncestry, qState](const Hash & preFoldQ) -> Hash {
+            auto & pqw = qState->perQEnvWalk;
             auto newState = stateHashAt(
-                *fromSubject, fromSubjectArgAncestry, *perQEnvWalk, perQEnvWalk->size());
+                *fromSubject, fromSubjectArgAncestry, pqw, pqw.size());
             trace::SelectorVariant payload = *payloadTemplate;
             trace::rewriteFrom(payload, newState.to_string(HashFormat::Base16, false));
             return trace::computeSelectorHash(payload);
@@ -286,13 +317,13 @@ TracingReplayEvaluator::walk(
     {
         auto fastPathSavedEnvWalkSize = envWalk.size();
         auto fastPathSavedEnvCur = envCur;
-        auto fastPathSavedFingerprints = committedEdgeFingerprints;
-        /* B5: perQEnvWalk is a walk-local shared vector captured by
-           recomputeQ; commitEdge appends to it in lockstep with
-           envWalk. Trace-continuing partial commits would otherwise
+        auto fastPathSavedFingerprints = qState->committedEdgeFingerprints;
+        /* B5: perQEnvWalk lives on qState (cell-owned or local, per
+           Phase F); recomputeQ captures qState and reads perQEnvWalk
+           through it. Trace-continuing partial commits would otherwise
            leave residue that trace-discovering's Q evolution folds
            in, deriving Q hashes at a trajectory no recording anchors. */
-        auto fastPathSavedPerQEnvWalkSize = perQEnvWalk->size();
+        auto fastPathSavedPerQEnvWalkSize = perQEnvWalk.size();
         walkHit = decisionGraph.walk(selectorHash, dispatch,
             [&](bool committed, const std::vector<Hash> & useful) {
                 if (committed) commitEdge();
@@ -320,8 +351,8 @@ TracingReplayEvaluator::walk(
            session state. */
         envWalk.resize(fastPathSavedEnvWalkSize);
         envCur = fastPathSavedEnvCur;
-        committedEdgeFingerprints = std::move(fastPathSavedFingerprints);
-        perQEnvWalk->resize(fastPathSavedPerQEnvWalkSize);
+        qState->committedEdgeFingerprints = std::move(fastPathSavedFingerprints);
+        perQEnvWalk.resize(fastPathSavedPerQEnvWalkSize);
         pendingEdgeObservations.clear();
         rejectedObs.clear();
         walkHit.reset();
@@ -338,8 +369,8 @@ TracingReplayEvaluator::walk(
        the reasoning. */
     auto savedEnvWalk = std::move(envWalk);
     envWalk.clear();
-    auto savedFingerprints = std::move(committedEdgeFingerprints);
-    committedEdgeFingerprints.clear();
+    auto savedFingerprints = std::move(qState->committedEdgeFingerprints);
+    qState->committedEdgeFingerprints.clear();
     struct WalkScope
     {
         std::vector<ObservationSet> & envWalk;
@@ -351,7 +382,7 @@ TracingReplayEvaluator::walk(
             envWalk = std::move(savedEnvWalk);
             committedEdgeFingerprints = std::move(savedFingerprints);
         }
-    } walkScope{envWalk, committedEdgeFingerprints,
+    } walkScope{envWalk, qState->committedEdgeFingerprints,
                 std::move(savedEnvWalk), std::move(savedFingerprints)};
 
     /* Walk with two anchor candidates in order:
@@ -985,15 +1016,20 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
 
 template<typename Q>
 std::optional<std::pair<std::string, TriePosition>>
-TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentProxy)
+TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentProxy, std::shared_ptr<const ArgCell> cell)
 {
     auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
     /* Task #110: pass Q's typed payload so the walker can re-derive
        Q's `from` field as observations dispatch. No subject is passed
        from lookup()'s template path — probes with applyResultSubject
        come through a different code path (TracingReplayObject) which
-       calls walk() directly with the appropriate subject. */
-    auto walkResult = walk(selectorHash, std::move(currentProxy), trace::SelectorVariant{query});
+       calls walk() directly with the appropriate subject.
+
+       Phase F: forward the cell so walker's per-walk state lives on
+       cell.qState. Callers with a cell (evalFile/evalExpr root cell,
+       apply's applyResult cell) pass it; others pass nullptr. */
+    auto walkResult = walk(selectorHash, std::move(currentProxy), trace::SelectorVariant{query},
+                           std::nullopt, Hash(HashAlgorithm::SHA256), std::move(cell));
     if (!walkResult)
         return std::nullopt;
     tracingCacheLog("replay hit: %s", Q::tag);
@@ -1028,7 +1064,11 @@ EvalState & TracingReplayEvaluator::getEvalState()
 
 ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std::string & displayPath)
 {
-    if (auto result = lookup(trace::SelectorImport{displayPath})) {
+    /* Phase F: create the root cell BEFORE the lookup so walker's
+       per-walk state lives on cell.qState. liveObject is back-filled
+       after the TracingReplayObject wrapper is constructed. */
+    auto rootCell = ArgCell::make(nullptr, nullptr);
+    if (auto result = lookup(trace::SelectorImport{displayPath}, nullptr, rootCell)) {
         tracingCacheLog("replay hit: evalFile %s", displayPath);
         auto obj = make_ref<TracingReplayObject>(
             *this, result->second, [this, path, displayPath]() { return inner->evalFile(path, displayPath); });
@@ -1040,7 +1080,8 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
             from_json(whnfJson, parsed);
             obj->withCachedWHNF(std::move(parsed));
         } catch (const std::exception &) { /* fall through */ }
-        obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
+        rootCell->liveObject = obj.get_ptr();
+        obj->withArgCell(rootCell);
         return obj;
     }
     tracingCacheLog("replay miss: evalFile %s", displayPath);
@@ -1049,7 +1090,10 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
 
 ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const RootedPath & basePath)
 {
-    if (auto result = lookup(trace::SelectorExpr{expr, basePath.path.abs()})) {
+    /* Phase F: create root cell before lookup; back-fill liveObject
+       after wrapping. */
+    auto rootCell = ArgCell::make(nullptr, nullptr);
+    if (auto result = lookup(trace::SelectorExpr{expr, basePath.path.abs()}, nullptr, rootCell)) {
         tracingCacheLog("replay hit: evalExpr");
         auto obj = make_ref<TracingReplayObject>(
             *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); });
@@ -1059,7 +1103,8 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Roo
             from_json(whnfJson, parsed);
             obj->withCachedWHNF(std::move(parsed));
         } catch (const std::exception &) { /* fall through */ }
-        obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
+        rootCell->liveObject = obj.get_ptr();
+        obj->withArgCell(rootCell);
         return obj;
     }
     tracingCacheLog("replay miss: evalExpr");
@@ -1206,7 +1251,10 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        Apply-result argAncestry cell. Parent = fn proxy's cell. */
     auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
     trace::SelectorApply applySelector{fnStateHashStr, argStateHashStr};
-    auto applyLookup = lookup(applySelector, fn.get_ptr());
+    /* Phase F: pass the applyResult cell so walker's per-walk state
+       lives on cell.qState — cell chain reachable from parent (fn's
+       cell), qState reset for this walk's dispatches. */
+    auto applyLookup = lookup(applySelector, fn.get_ptr(), cell);
     std::optional<trace::ResultWHNF> cachedWHNF;
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel

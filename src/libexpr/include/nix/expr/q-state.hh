@@ -34,6 +34,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -104,6 +105,23 @@ struct QState
         completion to slice the trailing edges that belong to this
         Selector's chain vs. to earlier cells. */
     std::size_t envAsksEdgesSizeAtPush{0};
+
+    /* -------------------- Walker-side (Phase F) --------------------
+       Fields below are used by TracingReplayEvaluator::walk when the
+       cell is the active walk's state carrier. Writer-side fields
+       above stay untouched — writer and walker allocate distinct
+       QState instances (writer on cold via TracingWriter::logSelector,
+       walker on warm via walk() install). */
+
+    /** Per-edge buffer: dispatch() appends facts here; the walker's
+        edge-commit callback promotes them into perQEnvWalk. Rejected
+        edges discard the buffer. Was walk-local before Phase F. */
+    std::vector<Observation> pendingEdgeObservations;
+
+    /** Dedup for committed edges by fingerprint — prevents double-
+        folding a shared-prefix edge when trace-continuing re-traverses
+        cold's chain. Was walk-local before Phase F. */
+    std::unordered_set<Hash> committedEdgeFingerprints;
 };
 
 } // namespace nix

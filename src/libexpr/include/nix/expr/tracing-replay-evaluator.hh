@@ -13,6 +13,7 @@
 namespace nix {
 
 class Environment;
+struct ArgCell;
 
 /**
  * Evaluator that replays cached results from the decision graph.
@@ -104,7 +105,10 @@ class TracingReplayEvaluator : public Evaluator
     std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const trace::SelectorVariant & qv, const nlohmann::json & params, ResolutionContext & ctx);
 
     template<typename Q>
-    std::optional<std::pair<std::string, TriePosition>> lookup(const Q & query, std::shared_ptr<Object> currentProxy = nullptr);
+    std::optional<std::pair<std::string, TriePosition>> lookup(
+        const Q & query,
+        std::shared_ptr<Object> currentProxy = nullptr,
+        std::shared_ptr<const ArgCell> cell = nullptr);
 
 public:
     TracingReplayEvaluator(
@@ -165,7 +169,8 @@ public:
         std::shared_ptr<Object> currentProxy = nullptr,
         std::optional<trace::SelectorVariant> payloadTemplate = std::nullopt,
         std::optional<Subject> fromSubject = std::nullopt,
-        Hash fromSubjectArgAncestry = Hash(HashAlgorithm::SHA256));
+        Hash fromSubjectArgAncestry = Hash(HashAlgorithm::SHA256),
+        std::shared_ptr<const ArgCell> cell = nullptr);
 
     bool isReadOnly() const override;
     Store & getStore() override;
