@@ -105,7 +105,7 @@ std::string TracingObject::evolvedQueryFrom() const
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());
 }
 
-void TracingObject::pushObservation(const std::string & fromHex, const Hash & queryHash, const Hash & responseHash)
+void TracingObject::pushObservation(const std::string & fromHex, const Hash & selectorHash, const Hash & responseHash)
 {
     if (!applyContext) return;
     Hash fromHash{HashAlgorithm::SHA256};
@@ -115,7 +115,7 @@ void TracingObject::pushObservation(const std::string & fromHex, const Hash & qu
         return;
     }
     auto elementHash = TracingDecisionGraph::xorFactIntoHash(
-        Hash(HashAlgorithm::SHA256), queryHash, responseHash);
+        Hash(HashAlgorithm::SHA256), selectorHash, responseHash);
     applyContext->observations.push_back({fromHash, elementHash});
 }
 
@@ -148,11 +148,11 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
         fromSubject = *applyResultSubject;
         fromSubjectArgAncestry = applyArgAncestry;
     }
-    auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
+    auto [valueId, qh] = writer.logSelector(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto childWHNF = computeWHNFFromObject(*innerChild);
     auto childTriePos = writer.logResult(valueId, childWHNF, qh);
-    if (qh.queryHash && childTriePos)
-        pushObservation(parentHash, *qh.queryHash, childTriePos->resultNodeHash);
+    if (qh.selectorHash && childTriePos)
+        pushObservation(parentHash, *qh.selectorHash, childTriePos->resultNodeHash);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(innerChild), writer, valueId, childTriePos));
     child->cachedWHNF = std::move(childWHNF);
     child->withArgCell(argCell);
@@ -171,7 +171,7 @@ trace::ResultWHNF & TracingObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    /* Task #110: push ActiveQuery BEFORE forcing so that sub-
+    /* Task #110: push ActiveSelector BEFORE forcing so that sub-
        observations happening during computeWHNFFromObject attribute
        to this Q's chain and evolve its fromSubject's state hash. */
     auto parentHash = evolvedQueryFrom();
@@ -182,7 +182,7 @@ trace::ResultWHNF & TracingObject::whnf()
         fromSubject = *applyResultSubject;
         fromSubjectArgAncestry = applyArgAncestry;
     }
-    auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
+    auto [valueId, qh] = writer.logSelector(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto whnfResult = computeWHNFFromObject(*inner);
     /* Task #110 (C3): if this whnf is on an applyResult, emit a
        SelectorCallbackApply observation carrying the WHNF directly.
@@ -193,8 +193,8 @@ trace::ResultWHNF & TracingObject::whnf()
     if (applyResultSubject)
         writer.emitCallbackApplyForApplyResult(*applyResultSubject, applyArgAncestry, whnfResult);
     auto tp = writer.logResult(valueId, whnfResult, qh);
-    if (qh.queryHash && tp)
-        pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
+    if (qh.selectorHash && tp)
+        pushObservation(parentHash, *qh.selectorHash, tp->resultNodeHash);
     cachedWHNF = std::move(whnfResult);
     return *cachedWHNF;
 }
@@ -305,12 +305,12 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
         fromSubject = *applyResultSubject;
         fromSubjectArgAncestry = applyArgAncestry;
     }
-    auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
+    auto [valueId, qh] = writer.logSelector(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto result = inner->getListElem(index);
     trace::ResultWHNF childWHNF = computeWHNFFromObject(*result);
     auto childTriePos = writer.logResult(valueId, childWHNF, qh);
-    if (qh.queryHash && childTriePos)
-        pushObservation(parentHash, *qh.queryHash, childTriePos->resultNodeHash);
+    if (qh.selectorHash && childTriePos)
+        pushObservation(parentHash, *qh.selectorHash, childTriePos->resultNodeHash);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
     child->cachedWHNF = std::move(childWHNF);
     child->withArgCell(argCell);
@@ -344,7 +344,7 @@ RootValue TracingObject::defeatCache()
 
 std::optional<FunctionInfo> TracingObject::getFunctionInfo()
 {
-    /* Task #110: push ActiveQuery before forcing, uniform with other
+    /* Task #110: push ActiveSelector before forcing, uniform with other
        TracingObject methods (whnf/maybeGetAttr/getListElem/…).
        Whether or not inner->getFunctionInfo() actually fires sub-
        observations, the swap costs at most an extra push/pop and
@@ -355,7 +355,7 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
     Hash fromSubjectArgAncestry = getArgAncestry();
     if (auto * s = getSubject())
         fromSubject = *s;
-    auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
+    auto [valueId, qh] = writer.logSelector(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto result = inner->getFunctionInfo();
     trace::ResultFunctionInfo traceResult;
     if (result) {
@@ -364,7 +364,7 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
         traceResult = {.hasInfo = false};
     }
     auto tp = writer.logResult(valueId, traceResult, qh);
-    if (qh.queryHash && tp) pushObservation(parentHash, *qh.queryHash, tp->resultNodeHash);
+    if (qh.selectorHash && tp) pushObservation(parentHash, *qh.selectorHash, tp->resultNodeHash);
     return result;
 }
 
@@ -430,7 +430,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
        fnId/argSubject fields remain for the dispatcher's resolveStateHash
        chain. */
     trace::SelectorApply applyQ{*fnIdOpt, *argIdOpt};
-    auto v = writer.getSink().logQuery(applyQ);
+    auto v = writer.getSink().logSelector(applyQ);
     auto result = inner->queryApply(argObj);
     TriePosition applyTriePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel

@@ -58,7 +58,7 @@ class TracingReplayObject : public Object
     ref<Object> ensureInner() const;
 
     std::string evolvedQueryFrom() const;
-    void pushObservation(const std::string & fromHex, const Hash & queryHash, const Hash & responseHash);
+    void pushObservation(const std::string & fromHex, const Hash & selectorHash, const Hash & responseHash);
 
     /**
      * Cascading lookup for leaf results. Returns the parsed R plus

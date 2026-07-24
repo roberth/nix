@@ -62,7 +62,7 @@ class TracingObject : public Object
        applyContext->observations. */
     std::string evolvedQueryFrom() const;
 
-    void pushObservation(const std::string & fromHex, const Hash & queryHash, const Hash & responseHash);
+    void pushObservation(const std::string & fromHex, const Hash & selectorHash, const Hash & responseHash);
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE SelectorGetWHNF

@@ -161,7 +161,7 @@ public:
        after each Ask-edge commit, and lookup subsequent Ask/Terminal
        rows at the evolved Q. Matches the writer's Q-evolution protocol. */
     std::optional<WalkResult> walk(
-        const Hash & queryHash,
+        const Hash & selectorHash,
         std::shared_ptr<Object> currentProxy = nullptr,
         std::optional<trace::SelectorVariant> payloadTemplate = std::nullopt,
         std::optional<Subject> fromSubject = std::nullopt,

@@ -43,11 +43,11 @@ TEST_F(TracingDecisionGraphTest, AtomInsertAndGetRoundTrip)
     auto rHash = sha("result-payload-1");
 
     g.insertRequest(reqHash, "request-payload-1");
-    g.insertQuery(qHash, "query-payload-1");
+    g.insertSelector(qHash, "query-payload-1");
     g.insertResult(rHash, "result-payload-1");
 
     EXPECT_EQ(*g.getRequestPayload(reqHash), "request-payload-1");
-    EXPECT_EQ(*g.getQueryPayload(qHash), "query-payload-1");
+    EXPECT_EQ(*g.getSelectorPayload(qHash), "query-payload-1");
     EXPECT_EQ(*g.getResultPayload(rHash), "result-payload-1");
 }
 
@@ -56,7 +56,7 @@ TEST_F(TracingDecisionGraphTest, AtomLookupMissesReturnNullopt)
     TracingDecisionGraph g(dbPath);
     auto h = sha("never-inserted");
     EXPECT_FALSE(g.getRequestPayload(h).has_value());
-    EXPECT_FALSE(g.getQueryPayload(h).has_value());
+    EXPECT_FALSE(g.getSelectorPayload(h).has_value());
     EXPECT_FALSE(g.getResultPayload(h).has_value());
 }
 
@@ -672,10 +672,10 @@ struct OnEventRecorder
         factSet.push_back({request, response});
     }
 
-    void onResult(const Hash & queryHash, const Hash & resultHash)
+    void onResult(const Hash & selectorHash, const Hash & resultHash)
     {
         auto fsHash = graph.insertFactSet(factSet);
-        graph.record(queryHash, fsHash, resultHash);
+        graph.record(selectorHash, fsHash, resultHash);
     }
 };
 

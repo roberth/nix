@@ -68,29 +68,29 @@ void TracingWriter::logOuterObservation(
     nlohmann::json resultJson;
     std::visit([&](const auto & r) { resultJson = r; }, result);
 
-    auto queryHash = hashString(HashAlgorithm::SHA256, queryJson.dump());
+    auto selectorHash = hashString(HashAlgorithm::SHA256, queryJson.dump());
     auto responsePayload = jsonToCborString(resultJson);
     auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
 
     tracingCacheLog(
         "  reqHash=%s reqJSON=%s",
-        queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
         queryJson.dump());
     tracingCacheLog(
         "  respHash=%s respJSON=%s",
         responseHash.to_string(HashFormat::Base16, false).substr(0, 12),
         resultJson.dump());
     if (provenanceEnabled()) {
-        recordProvenance(queryHash, "requestHash-d1",
+        recordProvenance(selectorHash, "requestHash-d1",
                          {{"queryJson", queryJson},
                           {"subject", describe(subject)},
                           {"argAncestry", argAncestry.to_string(HashFormat::Base16, false)}});
         recordProvenance(responseHash, "responseHash-d1",
                          {{"resultJson", resultJson},
-                          {"queryHash", queryHash.to_string(HashFormat::Base16, false)}});
+                          {"selectorHash", selectorHash.to_string(HashFormat::Base16, false)}});
     }
 
-    decisionGraph->insertRequest(queryHash, jsonToCborString(queryJson));
+    decisionGraph->insertRequest(selectorHash, jsonToCborString(queryJson));
 
     /* Secondary index for producer queries — see comment on the
        original loop for the reasoning. Preserved verbatim. */
@@ -121,7 +121,7 @@ void TracingWriter::logOuterObservation(
         nlohmann::json initialQueryJson = trace::toJson(initialStamped);
         auto initialReqHash = hashString(
             HashAlgorithm::SHA256, initialQueryJson.dump());
-        if (initialReqHash != queryHash) {
+        if (initialReqHash != selectorHash) {
             tracingCacheLog(
                 "  secondary insert at initial-history reqHash=%s from=%s",
                 initialReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -132,7 +132,7 @@ void TracingWriter::logOuterObservation(
     }
 
     auto elementHash = TracingDecisionGraph::xorFactIntoHash(
-        Hash(HashAlgorithm::SHA256), queryHash, responseHash);
+        Hash(HashAlgorithm::SHA256), selectorHash, responseHash);
     auto factHash = elementHash;
 
     /* Dedup by (request, response). If already recorded this session,
@@ -142,12 +142,12 @@ void TracingWriter::logOuterObservation(
     if (!seenRequests.insert(factHash).second)
         return;
 
-    envFactSet.push_back({queryHash, responseHash});
+    envFactSet.push_back({selectorHash, responseHash});
     envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-        envFactSetHash, queryHash, responseHash);
-    responseFor.emplace(queryHash, responseHash);
-    sessionRequestsTrie.insert(queryHash);
-    allRequestHashes.insert(queryHash);
+        envFactSetHash, selectorHash, responseHash);
+    responseFor.emplace(selectorHash, responseHash);
+    sessionRequestsTrie.insert(selectorHash);
+    allRequestHashes.insert(selectorHash);
 
     /* Per-probe Ask push. Task #110 Q-evolution: an observation
        happening during Q's walk is part of Q's Ask chain — for EVERY
@@ -159,7 +159,7 @@ void TracingWriter::logOuterObservation(
        Order per active Q: (1) record Ask at (Q_before-fold, cur_before),
        (2) fold observation into cur/envWalk, (3) re-derive Q_after-fold
        (see below). */
-    auto requestSetHash = decisionGraph->insertRequestSet({queryHash});
+    auto requestSetHash = decisionGraph->insertRequestSet({selectorHash});
     /* Task #110 (correct model): each observation belongs to exactly
        one Q — the innermost active one. Sub-Qs' observations are
        NOT part of parent Q's chain; parent observes the sub-Q as a

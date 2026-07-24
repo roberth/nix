@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS Requests (
 );
 
 CREATE TABLE IF NOT EXISTS Selectors (
-    queryHash BLOB PRIMARY KEY,
+    selectorHash BLOB PRIMARY KEY,
     payload   BLOB NOT NULL
 );
 
@@ -39,7 +39,7 @@ CREATE TABLE IF NOT EXISTS Results (
     payload    BLOB NOT NULL
 );
 
--- ObservationSet CAS pool: content-addressed sets of (queryHash,
+-- ObservationSet CAS pool: content-addressed sets of (selectorHash,
 -- responseHash) tuples. Referenced from SelectorCallbackApply payloads
 -- to identify the specific observations an outer callback made on
 -- an inner-supplied contra-arg during one callback firing. Distinct
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS ObservationSet (
 -- FactSet per step, growing 1..N. Storing every intermediate cost
 -- O(N²) bytes per query. The decision-graph layer doesn't need
 -- FactSet members on disk: the Asks and Terminals tables are keyed
--- by (queryHash, factSetHash), so a recording reaching some
+-- by (selectorHash, factSetHash), so a recording reaching some
 -- intermediate position is detectable via "any Asks/Terminal row at
 -- (Q, factSetHash)?". walk() maintains the current FactSet members
 -- in-process.
@@ -79,25 +79,25 @@ CREATE TABLE IF NOT EXISTS RequestSetNodes (
     payload  BLOB NOT NULL
 ) WITHOUT ROWID;
 
--- Decision graph layer: two edge tables, both keyed by (queryHash, factSetHash).
+-- Decision graph layer: two edge tables, both keyed by (selectorHash, factSetHash).
 
--- No separate (queryHash, factSetHash) index is needed: the primary
--- key prefix already covers WHERE-by-(queryHash, factSetHash) lookups.
+-- No separate (selectorHash, factSetHash) index is needed: the primary
+-- key prefix already covers WHERE-by-(selectorHash, factSetHash) lookups.
 -- WITHOUT ROWID stores rows directly in the PK B-tree instead of in a
 -- separate heap with a duplicate PK index — a ~50% reduction in
 -- on-disk size for these all-blob, no-other-payload tables.
 CREATE TABLE IF NOT EXISTS Ask (
-    queryHash      BLOB NOT NULL,
+    selectorHash      BLOB NOT NULL,
     factSetHash    BLOB NOT NULL,
     requestSetHash BLOB NOT NULL,
-    PRIMARY KEY (queryHash, factSetHash, requestSetHash)
+    PRIMARY KEY (selectorHash, factSetHash, requestSetHash)
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS Terminal (
-    queryHash   BLOB NOT NULL,
+    selectorHash   BLOB NOT NULL,
     factSetHash BLOB NOT NULL,
     resultHash  BLOB NOT NULL,
-    PRIMARY KEY (queryHash, factSetHash, resultHash)
+    PRIMARY KEY (selectorHash, factSetHash, resultHash)
 ) WITHOUT ROWID;
 
 -- Clean up indexes from earlier schema versions, if present.
@@ -115,8 +115,8 @@ struct TracingDecisionGraph::State
     SQLite db;
 
     /* Storage layer */
-    SQLiteStmt insertRequest, insertQuery, insertResult;
-    SQLiteStmt selectRequest, selectQuery, selectResult;
+    SQLiteStmt insertRequest, insertSelector, insertResult;
+    SQLiteStmt selectRequest, selectSelector, selectResult;
     SQLiteStmt insertObservationSet, selectObservationSet;
     SQLiteStmt insertRequestSetNode;
     SQLiteStmt selectRequestSetNode;
@@ -327,14 +327,14 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
 
     state->insertRequest.create(state->db,
         "INSERT OR IGNORE INTO Requests(requestHash, payload) VALUES (?, ?)");
-    state->insertQuery.create(state->db,
-        "INSERT OR IGNORE INTO Selectors(queryHash, payload) VALUES (?, ?)");
+    state->insertSelector.create(state->db,
+        "INSERT OR IGNORE INTO Selectors(selectorHash, payload) VALUES (?, ?)");
     state->insertResult.create(state->db,
         "INSERT OR IGNORE INTO Results(resultHash, payload) VALUES (?, ?)");
     state->selectRequest.create(state->db,
         "SELECT payload FROM Requests WHERE requestHash = ?");
-    state->selectQuery.create(state->db,
-        "SELECT payload FROM Selectors WHERE queryHash = ?");
+    state->selectSelector.create(state->db,
+        "SELECT payload FROM Selectors WHERE selectorHash = ?");
     state->selectResult.create(state->db,
         "SELECT payload FROM Results WHERE resultHash = ?");
     state->insertObservationSet.create(state->db,
@@ -361,19 +361,19 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     state->db.exec("DROP TABLE IF EXISTS InnerValueResponse;");
 
     state->insertAsk.create(state->db,
-        "INSERT OR IGNORE INTO Ask(queryHash, factSetHash, requestSetHash) VALUES (?, ?, ?)");
+        "INSERT OR IGNORE INTO Ask(selectorHash, factSetHash, requestSetHash) VALUES (?, ?, ?)");
     state->selectAsks.create(state->db,
-        "SELECT requestSetHash FROM Ask WHERE queryHash = ? AND factSetHash = ?");
+        "SELECT requestSetHash FROM Ask WHERE selectorHash = ? AND factSetHash = ?");
     state->deleteAsks.create(state->db,
-        "DELETE FROM Ask WHERE queryHash = ? AND factSetHash = ? AND requestSetHash = ?");
+        "DELETE FROM Ask WHERE selectorHash = ? AND factSetHash = ? AND requestSetHash = ?");
     state->insertTerminal.create(state->db,
-        "INSERT OR IGNORE INTO Terminal(queryHash, factSetHash, resultHash) VALUES (?, ?, ?)");
+        "INSERT OR IGNORE INTO Terminal(selectorHash, factSetHash, resultHash) VALUES (?, ?, ?)");
     state->selectTerminal.create(state->db,
-        "SELECT resultHash FROM Terminal WHERE queryHash = ? AND factSetHash = ?");
+        "SELECT resultHash FROM Terminal WHERE selectorHash = ? AND factSetHash = ?");
     state->countAsks.create(state->db,
-        "SELECT 1 FROM Ask WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
+        "SELECT 1 FROM Ask WHERE selectorHash = ? AND factSetHash = ? LIMIT 1");
     state->countTerminals.create(state->db,
-        "SELECT 1 FROM Terminal WHERE queryHash = ? AND factSetHash = ? LIMIT 1");
+        "SELECT 1 FROM Terminal WHERE selectorHash = ? AND factSetHash = ? LIMIT 1");
 }
 
 TracingDecisionGraph::~TracingDecisionGraph() = default;
@@ -426,7 +426,7 @@ void TracingDecisionGraph::waitForWrites()
     }
 
 ATOM_INSERT_CACHED(Request, requestPayloadCache)
-ATOM_INSERT_PLAIN(Query)
+ATOM_INSERT_PLAIN(Selector)
 ATOM_INSERT_CACHED(Result, resultPayloadCache)
 #undef ATOM_INSERT_CACHED
 #undef ATOM_INSERT_PLAIN
@@ -460,7 +460,7 @@ ATOM_INSERT_CACHED(Result, resultPayloadCache)
     }
 
 ATOM_GET_CACHED(Request, requestPayloadCache)
-ATOM_GET_PLAIN(Query)
+ATOM_GET_PLAIN(Selector)
 ATOM_GET_CACHED(Result, resultPayloadCache)
 #undef ATOM_GET_CACHED
 #undef ATOM_GET_PLAIN
@@ -492,7 +492,7 @@ static std::string dg_observationSetPayload(
            byte string. Preserves exact CBOR bytes without any hex
            encoding overhead. */
         arr.push_back({
-            {"q", m.queryHash.to_string(HashFormat::Base16, false)},
+            {"q", m.selectorHash.to_string(HashFormat::Base16, false)},
             {"p", nlohmann::json::binary(std::vector<std::uint8_t>(
                 m.responsePayload.begin(), m.responsePayload.end()))},
         });
@@ -543,7 +543,7 @@ TracingDecisionGraph::getObservationSet(const Hash & h)
     members.reserve(arr.size());
     for (const auto & elt : arr) {
         Observation m;
-        m.queryHash = Hash::parseNonSRIUnprefixed(elt.at("q").get<std::string>(), HashAlgorithm::SHA256);
+        m.selectorHash = Hash::parseNonSRIUnprefixed(elt.at("q").get<std::string>(), HashAlgorithm::SHA256);
         auto & binVal = elt.at("p").get_binary();
         m.responsePayload.assign(binVal.begin(), binVal.end());
         members.push_back(std::move(m));
@@ -1260,7 +1260,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
 
             /* Trie navigation per design (see
                `doc/design/tracing-eval-cache.md`, "Walk from ∅",
-               step 3): "Validate: hasAnyEdge(queryHash, nextCur)? ...
+               step 3): "Validate: hasAnyEdge(selectorHash, nextCur)? ...
                If yes, advance cur = nextCur and continue. If no,
                this branch of the recording isn't reachable from
                the current env — try the next outgoing edge."

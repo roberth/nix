@@ -177,7 +177,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
 Hash stateHashConverged(
     const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history);
 
-/** The producer query hash for a `DerivedSubject` — the queryHash of
+/** The producer query hash for a `DerivedSubject` — the selectorHash of
     the `SelectorGetAttr` / `SelectorGetListElem` that would produce this
     derived value from its parent chain. This is not a state hash
     (derived values don't have one); it's a payload hash serving as

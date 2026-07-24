@@ -9,7 +9,7 @@
  * observations land:
  *
  *  - TracingObject's getType/getInt/etc. record sub-Q `Terminals`
- *    rows in the main trie via `writer.logQuery + logResult`.
+ *    rows in the main trie via `writer.logSelector + logResult`.
  *    Appropriate for cached-fn results and other apply-results whose
  *    evolved state hash participates in the env history.
  *
@@ -52,7 +52,7 @@ class TracingCallbackApplyResult : public Object
     Hash applyArgAncestry;
 
     /* The enclosing cb-apply's `applyId` (= what `runOn`
-       computed as `queryHash(SelectorApply{fn, arg})` when it pushed
+       computed as `selectorHash(SelectorApply{fn, arg})` when it pushed
        this call). Captured BEFORE `IT::apply`'s
        `createCallbackCell` would push a new entry, so the
        observations route to the correct CallbackCell. */

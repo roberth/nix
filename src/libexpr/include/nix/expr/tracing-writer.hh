@@ -41,13 +41,13 @@ inline nlohmann::json cborStringToJson(const std::string & s)
 
 /**
  * A handle identifying a recorded d=0 Result, kept for back-compat with
- * a hex string of the queryHash that produced it (used by child queries
- * to compute their own queryHash with Merkle provenance).
+ * a hex string of the selectorHash that produced it (used by child queries
+ * to compute their own selectorHash with Merkle provenance).
  */
 struct TriePosition
 {
     Hash resultNodeHash;          // ResultHash for this result
-    std::string queryHashStr;     // hex of the queryHash that produced it
+    std::string queryHashStr;     // hex of the selectorHash that produced it
     /* Walker-side: the cur the history landed on when committing
        this terminal. Used by child Q lookups as a candidate startCur
        (= structurally-anchored lookup position) so a child history
@@ -118,16 +118,16 @@ class TracingWriter
     };
     std::vector<AsksEdgeRecord> envAsksEdges;
 
-    /** Per-active-query state. Each `logQuery` pushes; each `logResult`
+    /** Per-active-query state. Each `logSelector` pushes; each `logResult`
         pops. LIFO nesting matches the evaluator's Q hierarchy (parent
-        Q's evaluation triggers child Q's logQuery inside). Observations
+        Q's evaluation triggers child Q's logSelector inside). Observations
         that fire while a Q is active are attributed to that Q's
         current `currentQ`. When an observation folds into `envWalk`
         and evolves the fromSubject's state hash, the writer re-derives
         `currentQ` (by updating the payload's `from` field and re-
         hashing). Subsequent Ask edges land at the new `currentQ`, and
         `logResult` inserts Terminal at the final `currentQ`. */
-    struct ActiveQuery
+    struct ActiveSelector
     {
         /** Current Q hash, updated on each observation that evolves the
             fromSubject's state. */
@@ -158,7 +158,7 @@ class TracingWriter
             because they see the same fold from their own chains. */
         std::vector<ObservationSet> perQEnvWalk;
         /** B2 composite emission: sub-Q's on-the-wire query tag,
-            captured at logQuery for use at logResult when synthesising
+            captured at logSelector for use at logResult when synthesising
             the composite request payload for the parent. */
         std::string queryTag;
         /** B10 landing-chain simulation: captured at push time,
@@ -171,7 +171,7 @@ class TracingWriter
         Hash initialFromSubjectState{HashAlgorithm::SHA256};
         size_t envAsksEdgesSizeAtPush{0};
     };
-    std::vector<ActiveQuery> activeQueryStack;
+    std::vector<ActiveSelector> activeQueryStack;
     /* Mirrors `seenRequests` but keyed by query hash, not fact hash.
        record()'s slow path iterates this to build the trailing
        remaining-edge — an Asks edge's requestSet is a set of query
@@ -282,7 +282,7 @@ public:
         into the ObservationSet CAS, constructs the QCA payload with
         fn's current state hash as `fn`, and emits via the standard
         logOuterObservation path. Under content addressing, same
-        (fn, obsSet) pair produces the same QCA queryHash across
+        (fn, obsSet) pair produces the same QCA selectorHash across
         callers — parent's chain sees a single QCA-per-firing. */
     void emitCallbackApplyForApplyResult(
         const Subject & applyResultSubject,
@@ -337,10 +337,10 @@ public:
     /**
      * Opaque handle linking a query to its result.
      */
-    struct QueryHandle
+    struct SelectorHandle
     {
-        std::optional<Hash> queryHash;
-        /* Parent Query's terminalCur, captured at logQuery time. Used
+        std::optional<Hash> selectorHash;
+        /* Parent Query's terminalCur, captured at logSelector time. Used
            at logResult as the explicit start point of this Q's Ask
            chain — the "structural parent factSet" the walker's
            parentAnchor path lands on. std::nullopt for root queries
@@ -354,25 +354,25 @@ public:
      * as fixed.
      */
     template<typename Q>
-    std::pair<ValueHandle, QueryHandle> logRootQuery(const Q & query)
+    std::pair<ValueHandle, SelectorHandle> logRootSelector(const Q & query)
     {
-        auto valueNum = sink.logQuery(query);
+        auto valueNum = sink.logSelector(query);
         if (!decisionGraph)
             return {valueNum, {}};
-        auto queryHash = TracingDecisionGraph::computeSelectorHash(query);
+        auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
         nlohmann::json qj = query;
         tracingCacheLog(
-            "writer logRootQuery: Q=%s queryJSON=%s",
-            queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            "writer logRootSelector: Q=%s queryJSON=%s",
+            selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
             qj.dump());
-        ActiveQuery aq;
-        aq.currentQ = queryHash;
+        ActiveSelector aq;
+        aq.currentQ = selectorHash;
         aq.payloadTemplate = trace::SelectorVariant{query};
         aq.queryTag = std::string(Q::tag);
         aq.initialPayloadTemplate = qj;
         aq.envAsksEdgesSizeAtPush = envAsksEdges.size();
         activeQueryStack.push_back(std::move(aq));
-        return {valueNum, {queryHash}};
+        return {valueNum, {selectorHash}};
     }
 
     /**
@@ -383,22 +383,22 @@ public:
      * evolved Q at each step (Q evolution protocol).
      */
     template<typename Q>
-    std::pair<ValueHandle, QueryHandle> logQuery(
+    std::pair<ValueHandle, SelectorHandle> logSelector(
         const Q & query,
         const std::optional<TriePosition> & parent,
         std::optional<Subject> fromSubject = std::nullopt,
         Hash fromSubjectArgAncestry = Hash(HashAlgorithm::SHA256))
     {
-        auto valueNum = sink.logQuery(query);
+        auto valueNum = sink.logSelector(query);
         if (!decisionGraph)
             return {valueNum, {}};
-        auto queryHash = TracingDecisionGraph::computeSelectorHash(query);
+        auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
         nlohmann::json qj = query;
         tracingCacheLog(
-            "writer logQuery: Q=%s queryJSON=%s",
-            queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            "writer logSelector: Q=%s queryJSON=%s",
+            selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
             qj.dump());
-        QueryHandle qh{queryHash};
+        SelectorHandle qh{selectorHash};
         if (parent)
             qh.structuralParentFactSetHash = parent->factSetHash;
         Hash lastState(HashAlgorithm::SHA256);
@@ -406,8 +406,8 @@ public:
             lastState = stateHashAt(
                 *fromSubject, fromSubjectArgAncestry, envWalk, envWalk.size());
         }
-        ActiveQuery aq;
-        aq.currentQ = queryHash;
+        ActiveSelector aq;
+        aq.currentQ = selectorHash;
         aq.payloadTemplate = trace::SelectorVariant{query};
         aq.fromSubject = std::move(fromSubject);
         aq.fromSubjectArgAncestry = fromSubjectArgAncestry;
@@ -450,7 +450,7 @@ public:
                 }
             }
             if (envAsksEdges.size() > 0)
-                tracingCacheLog("logQuery: precondition fold %zu obs -> Q_M=%s",
+                tracingCacheLog("logSelector: precondition fold %zu obs -> Q_M=%s",
                                 envAsksEdges.size(),
                                 aq.currentQ.to_string(HashFormat::Base16, false).substr(0, 12));
         }
@@ -478,21 +478,21 @@ public:
             return;
         nlohmann::json reqJson = resp.request;
         nlohmann::json respJson = resp.response;
-        auto queryHash = TracingDecisionGraph::computeSelectorHash(resp.request);
+        auto selectorHash = TracingDecisionGraph::computeSelectorHash(resp.request);
         auto responsePayload = jsonToCborString(respJson);
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
-        decisionGraph->insertRequest(queryHash, jsonToCborString(reqJson));
+        decisionGraph->insertRequest(selectorHash, jsonToCborString(reqJson));
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
-            Hash(HashAlgorithm::SHA256), queryHash, responseHash);
+            Hash(HashAlgorithm::SHA256), selectorHash, responseHash);
         if (!seenRequests.insert(factHash).second)
             return;
-        envFactSet.push_back({queryHash, responseHash});
+        envFactSet.push_back({selectorHash, responseHash});
         envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-            envFactSetHash, queryHash, responseHash);
-        responseFor.emplace(queryHash, responseHash);
-        sessionRequestsTrie.insert(queryHash);
-        allRequestHashes.insert(queryHash);
-        auto requestSetHash = decisionGraph->insertRequestSet({queryHash});
+            envFactSetHash, selectorHash, responseHash);
+        responseFor.emplace(selectorHash, responseHash);
+        sessionRequestsTrie.insert(selectorHash);
+        allRequestHashes.insert(selectorHash);
+        auto requestSetHash = decisionGraph->insertRequestSet({selectorHash});
         /* Task #110 (correct model): attribute to the innermost active
            Q only (see logOuterObservation). */
         if (!activeQueryStack.empty()) {
@@ -555,7 +555,7 @@ public:
     /**
      * Record one observation the outer made on a callback firing's
      * contra-arg. Routes to the matching CallbackCell by `applyId`
-     * and pushes an `{queryHash, responsePayload}` entry into that
+     * and pushes an `{selectorHash, responsePayload}` entry into that
      * cell's `runningObsSet`. `logOuterObservation` later snapshots
      * that set into the ObservationSet CAS when it stamps a
      * CallbackApplyRef into an outer probe reaching this apply's
@@ -600,7 +600,6 @@ public:
                 fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
             }
             std::visit([&](auto & q) {
-                using QT = std::decay_t<decltype(q)>;
                 if constexpr (requires { q.from; }) {
                     q.from = fromStateHashes.empty()
                         ? trace::SelectorLeaf{std::string{}}
@@ -674,7 +673,7 @@ public:
 
     /**
      * Defer a Requests-pool insert until logResult. Insert key is the
-     * hash of the payload (the apply Q's own queryHash).
+     * hash of the payload (the apply Q's own selectorHash).
      */
     void deferRequest(nlohmann::json payload)
     {
@@ -732,14 +731,14 @@ public:
      * child queries. Under the Q-evolution protocol, Q_final is the
      * activeQuery's `currentQ` after all this Q's observations have
      * folded — which may differ from the Q hash returned at
-     * `logQuery` time.
+     * `logSelector` time.
      */
     template<typename R>
-    std::optional<TriePosition> logResult(ValueHandle valueNum, const R & result, const QueryHandle & qh)
+    std::optional<TriePosition> logResult(ValueHandle valueNum, const R & result, const SelectorHandle & qh)
     {
         sink.logResult(valueNum, result);
 
-        if (!decisionGraph || !qh.queryHash) {
+        if (!decisionGraph || !qh.selectorHash) {
             if (!activeQueryStack.empty())
                 activeQueryStack.pop_back();
             return std::nullopt;
@@ -761,10 +760,10 @@ public:
         sessionRequestsTrie.persist(*decisionGraph);
 
         Hash finalQ = activeQueryStack.empty()
-            ? *qh.queryHash
+            ? *qh.selectorHash
             : activeQueryStack.back().currentQ;
         tracingCacheLog("logResult: Q_initial=%s Q_final=%s factSet=%s -> result",
-                        qh.queryHash->to_string(HashFormat::Base16, false).substr(0, 12),
+                        qh.selectorHash->to_string(HashFormat::Base16, false).substr(0, 12),
                         finalQ.to_string(HashFormat::Base16, false).substr(0, 12),
                         envFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12));
 

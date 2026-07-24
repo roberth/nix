@@ -102,7 +102,7 @@ public:
        computed by the caller (SHA-256 of the payload). Idempotent:
        INSERT OR IGNORE on the hash. */
     void insertRequest(const RequestHash & h, std::string_view payload);
-    void insertQuery(const QueryHash & h, std::string_view payload);
+    void insertSelector(const QueryHash & h, std::string_view payload);
     void insertResult(const ResultHash & h, std::string_view payload);
 
     /* Atom payload lookup by hash. Returns nullopt if not present. */
@@ -114,11 +114,11 @@ public:
        walker no longer needs to guess sibling cb-apply positions.
        If that path goes, this method goes with it. */
     bool isApplyRequest(const RequestHash & h);
-    std::optional<std::string> getQueryPayload(const QueryHash & h);
+    std::optional<std::string> getSelectorPayload(const QueryHash & h);
     std::optional<std::string> getResultPayload(const ResultHash & h);
 
     /* ObservationSet CAS pool. An observation set is the set of
-       (queryHash, responsePayload) tuples the outer's callback
+       (selectorHash, responsePayload) tuples the outer's callback
        probed on an inner-supplied contra-arg during one callback
        firing. Payload is inline so the walker reconstructs arg
        responses directly from this CAS.
@@ -127,11 +127,11 @@ public:
        observation sets give different queryHashes → distinct DB
        rows.
 
-       Members hash: SHA-256 of the sorted-by-queryHash CBOR of the
+       Members hash: SHA-256 of the sorted-by-selectorHash CBOR of the
        member list. Idempotent via INSERT OR IGNORE. */
     struct Observation
     {
-        Hash queryHash{HashAlgorithm::SHA256};
+        Hash selectorHash{HashAlgorithm::SHA256};
         /* CBOR bytes of the observed response (a
            `trace::ResultVariant`). Used by the walker at replay to
            serve callback probes via an obsSet-answering proxy. */
@@ -139,13 +139,13 @@ public:
 
         bool operator==(const Observation & o) const
         {
-            return queryHash == o.queryHash && responsePayload == o.responsePayload;
+            return selectorHash == o.selectorHash && responsePayload == o.responsePayload;
         }
 
         bool operator<(const Observation & o) const
         {
-            if (queryHash != o.queryHash)
-                return queryHash < o.queryHash;
+            if (selectorHash != o.selectorHash)
+                return selectorHash < o.selectorHash;
             return responsePayload < o.responsePayload;
         }
     };
@@ -221,7 +221,7 @@ public:
 
     /* Insert an Asks edge: at (Q, factSet), the box's next set of
        Requests is `requestSet`. Idempotent on
-       (queryHash, factSetHash, requestSetHash). */
+       (selectorHash, factSetHash, requestSetHash). */
     void insertAsk(const QueryHash & q, const SetHash & factSet, const SetHash & requestSet);
 
     /* Look up the outgoing RequestSet edges at (Q, factSet). */
@@ -234,7 +234,7 @@ public:
 
     /* Insert a Terminal: at (Q, factSet), the recorded Result for
        Q is `result`. Idempotent on
-       (queryHash, factSetHash, resultHash). */
+       (selectorHash, factSetHash, resultHash). */
     void insertTerminal(const QueryHash & q, const SetHash & factSet, const ResultHash & result);
 
     /* Look up the Terminal at (Q, factSet). Returns the Result hash
@@ -322,7 +322,7 @@ public:
        edge whose requests are being dispatched. */
     struct EdgeContext
     {
-        QueryHash queryHash;
+        QueryHash selectorHash;
         SetHash fromFactSetHash;
         SetHash requestSetHash;
     };
@@ -434,7 +434,7 @@ template<typename Q>
 TracingDecisionGraph::QueryHash TracingDecisionGraph::computeSelectorHash(const Q & query)
 {
     /* Serialise the query to JSON and SHA-256 it. The Query's
-       "from" field carries the parent's queryHash (Merkle identity),
+       "from" field carries the parent's selectorHash (Merkle identity),
        so the resulting hash encodes the full provenance chain. */
     nlohmann::json j = query;
     auto serialised = j.dump();

@@ -41,7 +41,7 @@ TEST_F(TraceFileTest, WritesValidJsonArray)
 {
     {
         TraceFile tf(tracePath);
-        tf.logQuery(trace::SelectorExpr{"1 + 1", "/"});
+        tf.logSelector(trace::SelectorExpr{"1 + 1", "/"});
         tf.logResult(ValueHandle(0), trace::ResultWHNF{"int", trace::WHNFInt{0}});
     }
 
@@ -54,7 +54,7 @@ TEST_F(TraceFileTest, QueryAndResultLinkedByHandle)
 {
     {
         TraceFile tf(tracePath);
-        auto v = tf.logQuery(trace::SelectorExpr{"42", "/"});
+        auto v = tf.logSelector(trace::SelectorExpr{"42", "/"});
         tf.logResult(v, trace::ResultWHNF{"int", trace::WHNFInt{0}});
     }
 
@@ -69,8 +69,8 @@ TEST_F(TraceFileTest, AllocatesIncreasingHandles)
 {
     {
         TraceFile tf(tracePath);
-        auto v1 = tf.logQuery(trace::SelectorExpr{"1", "/"});
-        auto v2 = tf.logQuery(trace::SelectorImport{"/tmp/test.nix"});
+        auto v1 = tf.logSelector(trace::SelectorExpr{"1", "/"});
+        auto v2 = tf.logSelector(trace::SelectorImport{"/tmp/test.nix"});
         EXPECT_EQ(v1, ValueHandle(0));
         EXPECT_EQ(v2, ValueHandle(1));
     }

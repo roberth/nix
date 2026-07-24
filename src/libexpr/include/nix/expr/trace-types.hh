@@ -499,7 +499,7 @@ DECLARE_SELECTOR_RESULT(SelectorApply, ResultWHNF)
     observation-set identity discriminates by construction.
 
     `argObsSet` is a content hash referring to an entry in the
-    ObservationSet CAS pool. The pool entry lists the (queryHash,
+    ObservationSet CAS pool. The pool entry lists the (selectorHash,
     responseHash) tuples of the outer's probes on the contra-arg
     during this call.
 
@@ -761,7 +761,7 @@ std::optional<Hash> fromHashOf(const SelectorVariant & query);
 void rewriteFrom(SelectorVariant & query, const std::string & newFromHex);
 
 /**
- * SHA-256 of the Query's JSON dump — the canonical queryHash used
+ * SHA-256 of the Query's JSON dump — the canonical selectorHash used
  * as its identity across the trace/store layer. Overload of the
  * per-Q-type `computeSelectorHash` on decision-graph, so callers
  * holding a `SelectorVariant` don't have to std::visit at every site.

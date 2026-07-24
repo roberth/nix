@@ -137,7 +137,7 @@ TEST(AmbientObjectTest, GetBool)
 TEST(AmbientObjectTest, GetAttrReturnsChild)
 {
     auto arg = stateHashAfterSubject(testSubject(0), Hash(HashAlgorithm::SHA256), {});
-    /* Child scopeStateId is the producer query's queryHash. With Subject-based
+    /* Child scopeStateId is the producer query's selectorHash. With Subject-based
        construction the OuterObject derives this from DerivedSubject
        at construction time. */
     auto childStateHash = stateHashAfterSubject(

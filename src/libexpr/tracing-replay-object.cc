@@ -78,7 +78,7 @@ std::string TracingReplayObject::evolvedQueryFrom() const
     return triePos.queryHashStr;
 }
 
-void TracingReplayObject::pushObservation(const std::string & fromHex, const Hash & queryHash, const Hash & responseHash)
+void TracingReplayObject::pushObservation(const std::string & fromHex, const Hash & selectorHash, const Hash & responseHash)
 {
     Hash fromHash{HashAlgorithm::SHA256};
     try {
@@ -87,7 +87,7 @@ void TracingReplayObject::pushObservation(const std::string & fromHex, const Has
         return;
     }
     auto elementHash = TracingDecisionGraph::xorFactIntoHash(
-        Hash(HashAlgorithm::SHA256), queryHash, responseHash);
+        Hash(HashAlgorithm::SHA256), selectorHash, responseHash);
     /* Mirror evolvedQueryFrom's inner-first preference: if inner is
        an activated TracingObject with an applyContext, push into IT
        so both TRO and cold's TracingObject share the same evolution
@@ -108,11 +108,11 @@ void TracingReplayObject::pushObservation(const std::string & fromHex, const Has
 template<typename Q, typename R>
 std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & query) const
 {
-    auto queryHash = TracingDecisionGraph::computeSelectorHash(query);
+    auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
     nlohmann::json qj = query;
     tracingCacheLog("walker lookup: %s Q=%s queryJSON=%s",
                     Q::tag,
-                    queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                    selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
                     qj.dump());
     /* Task #110: pass Q's payload + applyResultSubject/argAncestry so
        the walker re-derives Q's `from` as observations dispatch,
@@ -125,12 +125,12 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
         fromSubjectArgAncestry = applyArgAncestry;
     }
     auto walkResult = evaluator.walk(
-        queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this(),
+        selectorHash, const_cast<TracingReplayObject *>(this)->shared_from_this(),
         trace::SelectorVariant{query}, std::move(fromSubject), fromSubjectArgAncestry);
     if (!walkResult) {
         tracingCacheLog("walker lookup: %s MISS Q=%s",
                         Q::tag,
-                        queryHash.to_string(HashFormat::Base16, false).substr(0, 12));
+                        selectorHash.to_string(HashFormat::Base16, false).substr(0, 12));
         return std::nullopt;
     }
     try {
@@ -146,11 +146,11 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
 template<typename Q, typename R>
 std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralChild(const Q & query) const
 {
-    auto queryHash = TracingDecisionGraph::computeSelectorHash(query);
+    auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
     nlohmann::json qj = query;
     tracingCacheLog("walker lookup: %s Q=%s queryJSON=%s",
                     Q::tag,
-                    queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                    selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
                     qj.dump());
     /* Task #110: pass Q's payload + applyResultSubject/argAncestry so
        the walker re-derives Q's `from` as observations dispatch,
@@ -163,12 +163,12 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
         fromSubjectArgAncestry = applyArgAncestry;
     }
     auto walkResult = evaluator.walk(
-        queryHash, const_cast<TracingReplayObject *>(this)->shared_from_this(),
+        selectorHash, const_cast<TracingReplayObject *>(this)->shared_from_this(),
         trace::SelectorVariant{query}, std::move(fromSubject), fromSubjectArgAncestry);
     if (!walkResult) {
         tracingCacheLog("walker lookup: %s MISS Q=%s",
                         Q::tag,
-                        queryHash.to_string(HashFormat::Base16, false).substr(0, 12));
+                        selectorHash.to_string(HashFormat::Base16, false).substr(0, 12));
         return std::nullopt;
     }
     try {
@@ -178,7 +178,7 @@ std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralC
             j.template get<R>(),
             TriePosition{
                 .resultNodeHash = walkResult->resultNodeHash,
-                .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
+                .queryHashStr = selectorHash.to_string(HashFormat::Base16, false),
                 .factSetHash = walkResult->terminalCur,
             });
     } catch (const nlohmann::json::exception & e) {

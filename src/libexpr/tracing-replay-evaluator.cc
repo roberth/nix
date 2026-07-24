@@ -37,7 +37,7 @@ TracingReplayEvaluator::TracingReplayEvaluator(
 
 std::optional<TracingReplayEvaluator::WalkResult>
 TracingReplayEvaluator::walk(
-    const Hash & queryHash,
+    const Hash & selectorHash,
     std::shared_ptr<Object> currentProxy,
     std::optional<trace::SelectorVariant> payloadTemplate,
     std::optional<Subject> fromSubject,
@@ -58,7 +58,7 @@ TracingReplayEvaluator::walk(
         {},
     };
     /* Task #110 B1: per-Q chain observation history for this walk,
-       matching the writer's ActiveQuery::perQEnvWalk basis. commitEdge
+       matching the writer's ActiveSelector::perQEnvWalk basis. commitEdge
        appends to this in addition to session envWalk. recomputeQ
        reads from this so walker Q evolution matches writer's. */
     auto perQEnvWalk = std::make_shared<std::vector<ObservationSet>>();
@@ -262,7 +262,7 @@ TracingReplayEvaluator::walk(
 
     /* Task #110 Q-evolution: recomputeQ reads from walk-local
        perQEnvWalk (defined above; populated by commitEdge) — B1
-       alignment with writer's ActiveQuery::perQEnvWalk basis. */
+       alignment with writer's ActiveSelector::perQEnvWalk basis. */
     std::function<Hash(const Hash &)> recomputeQ;
     if (payloadTemplate && fromSubject) {
         recomputeQ = [payloadTemplate, fromSubject,
@@ -294,7 +294,7 @@ TracingReplayEvaluator::walk(
            leave residue that trace-discovering's Q evolution folds
            in, deriving Q hashes at a trajectory no recording anchors. */
         auto fastPathSavedPerQEnvWalkSize = perQEnvWalk->size();
-        walkHit = decisionGraph.walk(queryHash, dispatch,
+        walkHit = decisionGraph.walk(selectorHash, dispatch,
             [&](bool committed, const std::vector<Hash> & useful) {
                 if (committed) commitEdge();
                 else commitRejected(useful);
@@ -307,9 +307,9 @@ TracingReplayEvaluator::walk(
                 envCur = walkHit->terminalCur;
                 tracingCacheStats().hits++;
                 tracingCacheLog(
-                    "trace-continuing HIT queryHash=%s startCur=%s terminalCur=%s "
+                    "trace-continuing HIT selectorHash=%s startCur=%s terminalCur=%s "
                     "(envWalk grew %zu -> %zu)",
-                    queryHash.to_string(HashFormat::Base16, false).substr(0, 12),
+                    selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
                     fastPathSavedEnvCur.to_string(HashFormat::Base16, false).substr(0, 12),
                     envCur.to_string(HashFormat::Base16, false).substr(0, 12),
                     fastPathSavedEnvWalkSize, envWalk.size());
@@ -367,7 +367,7 @@ TracingReplayEvaluator::walk(
     if (auto * parentTR = dynamic_cast<TracingReplayObject *>(ctx.currentProxy.get())) {
         parentAnchor = parentTR->getTriePos().factSetHash;
     }
-    walkHit = decisionGraph.walk(queryHash, dispatch,
+    walkHit = decisionGraph.walk(selectorHash, dispatch,
         [&](bool committed, const std::vector<Hash> & useful) {
             if (committed) commitEdge();
             else commitRejected(useful);
@@ -375,7 +375,7 @@ TracingReplayEvaluator::walk(
         parentAnchor,
         recomputeQ);
     if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
-        walkHit = decisionGraph.walk(queryHash, dispatch,
+        walkHit = decisionGraph.walk(selectorHash, dispatch,
             [&](bool committed, const std::vector<Hash> & useful) {
                 if (committed) commitEdge();
                 else commitRejected(useful);
@@ -862,7 +862,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                 }
                 auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
                 for (const auto & obs : *obsSet)
-                    obsSetMap->emplace(obs.queryHash, obs.responsePayload);
+                    obsSetMap->emplace(obs.selectorHash, obs.responsePayload);
                 /* Prefer subject-navigation: q.perArgFrame carries the
                    arg-side root state hashes and the path to fn's
                    Subject. Fall back to `resolveStateHash(fnHex)` when
@@ -952,13 +952,13 @@ template<typename Q>
 std::optional<std::pair<std::string, TriePosition>>
 TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentProxy)
 {
-    auto queryHash = TracingDecisionGraph::computeSelectorHash(query);
+    auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
     /* Task #110: pass Q's typed payload so the walker can re-derive
        Q's `from` field as observations dispatch. No subject is passed
        from lookup()'s template path — probes with applyResultSubject
        come through a different code path (TracingReplayObject) which
        calls walk() directly with the appropriate subject. */
-    auto walkResult = walk(queryHash, std::move(currentProxy), trace::SelectorVariant{query});
+    auto walkResult = walk(selectorHash, std::move(currentProxy), trace::SelectorVariant{query});
     if (!walkResult)
         return std::nullopt;
     tracingCacheLog("replay hit: %s", Q::tag);
@@ -966,7 +966,7 @@ TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentP
         walkResult->payload,
         TriePosition{
             .resultNodeHash = walkResult->resultNodeHash,
-            .queryHashStr = queryHash.to_string(HashFormat::Base16, false),
+            .queryHashStr = selectorHash.to_string(HashFormat::Base16, false),
             .factSetHash = walkResult->terminalCur,
         });
 }

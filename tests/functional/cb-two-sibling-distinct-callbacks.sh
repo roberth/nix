@@ -2,7 +2,7 @@
 
 # Two-sibling correctness: two `builtins.cache` invocations of the
 # same cached function with DIFFERENT callback closures. Sibling
-# discrimination for cb-apply results happens at the QCA queryHash
+# discrimination for cb-apply results happens at the QCA selectorHash
 # level (different obsSet content → different QCA reqHash). The
 # cache must return each sibling's own recorded result on warm
 # replay.

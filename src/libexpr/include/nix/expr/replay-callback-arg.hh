@@ -81,9 +81,9 @@ class ReplayCallbackArg : public Object
     EvalState * state;
 
     /* obsSet response source: method responses are looked up in
-       this map by queryHash. Populated by the walker's
+       this map by selectorHash. Populated by the walker's
        callbackApply dispatch from the SelectorCallbackApply's
-       referenced observation set — each entry is (queryHash →
+       referenced observation set — each entry is (selectorHash →
        CBOR response payload). */
     std::shared_ptr<std::map<Hash, std::string>> obsSetResponses;
 
@@ -161,7 +161,7 @@ public:
 
     /** Attach an obsSet response source. Each probe on this
         ReplayCallbackArg (or its derived children, if the
-        shared_ptr is passed through) looks up its queryHash in
+        shared_ptr is passed through) looks up its selectorHash in
         this map and decodes the CBOR payload as the response
         Result. Enables live outer validation from the recorded
         obsSet content. */

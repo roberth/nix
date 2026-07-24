@@ -36,7 +36,7 @@ public:
      * Log a query and return its value handle.
      */
     template<typename T>
-    ValueHandle logQuery(const T & queryPayload)
+    ValueHandle logSelector(const T & queryPayload)
     {
         auto v = allocValue();
         nlohmann::json j;

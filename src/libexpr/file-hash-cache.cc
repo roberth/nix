@@ -23,7 +23,7 @@ struct FileHashCache::State
     bool opened = false;
     std::filesystem::path dbPath;
     SQLite db;
-    SQLiteStmt queryHash;
+    SQLiteStmt selectorHash;
     SQLiteStmt insertHash;
     SQLiteStmt deleteHash;
 };
@@ -67,7 +67,7 @@ void FileHashCache::ensureOpen(FileHashCache::State & state)
         state.db.exec(fileHashCacheSchema);
     }
 
-    state.queryHash.create(state.db, "select mtime, hash from FileHashes where path = ?");
+    state.selectorHash.create(state.db, "select mtime, hash from FileHashes where path = ?");
     state.insertHash.create(state.db, "insert or replace into FileHashes(path, mtime, hash) values (?, ?, ?)");
     state.deleteHash.create(state.db, "delete from FileHashes where path = ?");
 }
@@ -88,7 +88,7 @@ std::optional<Hash> FileHashCache::lookup(const std::filesystem::path & path)
 
     auto state(_state->lock());
     ensureOpen(*state);
-    auto query = state->queryHash.use()(path.string());
+    auto query = state->selectorHash.use()(path.string());
     if (!query.next())
         return std::nullopt;
 

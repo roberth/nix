@@ -299,7 +299,7 @@ std::shared_ptr<Object> OuterApply::run(
             .fn = std::make_shared<const Subject>(fnSubject),
             .arg = std::make_shared<const Subject>(std::move(argResultSubject)),
         }};
-        auto v = innerWriter->getSink().logQuery(applyQuery);
+        auto v = innerWriter->getSink().logSelector(applyQuery);
         TriePosition triePos{
             .resultNodeHash = Hash{HashAlgorithm::SHA256},
             .queryHashStr = fnIdStr,
