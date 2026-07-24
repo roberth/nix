@@ -5,6 +5,7 @@
  * decision-graph index.
  */
 
+#include "nix/expr/arg-cell.hh"
 #include "nix/expr/q-state.hh"
 #include "nix/expr/subject-id.hh"
 #include "nix/expr/trace-sink.hh"
@@ -421,6 +422,34 @@ public:
 
         activeQueryStack.push_back(std::move(aq));
         return {valueNum, qh};
+    }
+
+    /**
+     * Cell-migration Phase B variant: same as `logSelector`, but also
+     * aliases the pushed `ActiveSelector` shared_ptr onto the given
+     * cell's `qState`. Mutations on either side (writer's stack via
+     * `activeQueryStack.back()->...`, or cell via `cell->qState->...`)
+     * are visible to both — they're the same `QState`.
+     *
+     * Callers that create an ArgCell for an application (SelectorApply,
+     * SelectorCallbackApply, root SelectorImport/SelectorExpr in later
+     * phases) use this to associate the Selector's chain state with
+     * the cell. Cell-only lookups (walker after Phase E) will read
+     * qState directly from the cell without going through the writer's
+     * stack.
+     */
+    template<typename Q>
+    std::pair<ValueHandle, SelectorHandle> logSelectorOnCell(
+        const std::shared_ptr<const ArgCell> & cell,
+        const Q & query,
+        const std::optional<TriePosition> & parent,
+        std::optional<Subject> fromSubject = std::nullopt,
+        Hash fromSubjectArgAncestry = Hash(HashAlgorithm::SHA256))
+    {
+        auto pair = logSelector(query, parent, std::move(fromSubject), std::move(fromSubjectArgAncestry));
+        if (cell && !activeQueryStack.empty())
+            cell->qState = activeQueryStack.back();
+        return pair;
     }
 
     /**

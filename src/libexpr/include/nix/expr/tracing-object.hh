@@ -98,6 +98,17 @@ public:
         return *this;
     }
 
+    /** Pre-populate `cachedWHNF` at wrapper construction. Used by
+        cell-migration Phase B: `TracingEvaluator::apply` computes the
+        applyResult's WHNF as part of the atomic apply operation and
+        pre-populates the wrapper, so subsequent `.whnf()` short-
+        circuits without invoking `SelectorGetWHNF`. */
+    TracingObject & withCachedWHNF(trace::ResultWHNF whnf_)
+    {
+        cachedWHNF = std::move(whnf_);
+        return *this;
+    }
+
     /** Mark this wrapper as originating from a callback-application
         boundary (OuterApply::run). Descendants of a cb-apply-marked
         wrapper inherit the mark and inherit `applyResultSubject`
