@@ -34,8 +34,8 @@ public:
     Hash getFileHash(const std::string & path) override;
     std::optional<std::string> getEnv(const std::string & name) override;
     trace::ResultVariant outerQuery(
-        const trace::QueryVariant & query,
-        std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
+        const trace::SelectorVariant & query,
+        std::function<trace::ResultVariant(const trace::SelectorVariant &)> resolve,
         Subject subject,
         Hash argAncestry = Hash(HashAlgorithm::SHA256)) override;
     TraceSink * getTraceSink() override;

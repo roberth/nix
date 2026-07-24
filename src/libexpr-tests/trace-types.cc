@@ -69,12 +69,12 @@ TEST(TraceTypes, GetEnvResponseEmpty)
 
 TEST(TraceTypes, AmbientOutgoingRequestRoundTrip)
 {
-    OuterValueRequest req{QueryGetAttr{"x", "0"}};
+    OuterValueRequest req{SelectorGetAttr{"x", "0"}};
     json j;
     to_json(j, req);
-    OuterValueRequest req2{QueryGetAttr{}};
+    OuterValueRequest req2{SelectorGetAttr{}};
     from_json(j, req2);
-    auto * q = std::get_if<QueryGetAttr>(&req2.query);
+    auto * q = std::get_if<SelectorGetAttr>(&req2.query);
     ASSERT_NE(q, nullptr);
     EXPECT_EQ(q->name, "x");
     EXPECT_EQ(q->from, "0");
@@ -83,7 +83,7 @@ TEST(TraceTypes, AmbientOutgoingRequestRoundTrip)
 TEST(TraceTypes, AmbientOutgoingResponseWrapperRoundTrip)
 {
     Response<OuterValueRequest> traced{
-        .request = {QueryGetAttr{"x", "0"}},
+        .request = {SelectorGetAttr{"x", "0"}},
         .response = {ResultWHNF{"int", WHNFInt{7}}},
     };
     json j;
@@ -92,7 +92,7 @@ TEST(TraceTypes, AmbientOutgoingResponseWrapperRoundTrip)
 
     Response<OuterValueRequest> traced2;
     from_json(j, traced2);
-    auto * q = std::get_if<QueryGetAttr>(&traced2.request.query);
+    auto * q = std::get_if<SelectorGetAttr>(&traced2.request.query);
     ASSERT_NE(q, nullptr);
     EXPECT_EQ(q->name, "x");
 }
@@ -100,7 +100,7 @@ TEST(TraceTypes, AmbientOutgoingResponseWrapperRoundTrip)
 TEST(TraceTypes, AmbientQueryParseTraceEntry)
 {
     Response<OuterValueRequest> original{
-        .request = {QueryGetAttr{"key", "42"}},
+        .request = {SelectorGetAttr{"key", "42"}},
         .response = {ResultWHNF{"int", WHNFInt{9}}},
     };
     json j;
@@ -110,7 +110,7 @@ TEST(TraceTypes, AmbientQueryParseTraceEntry)
     ASSERT_TRUE(parsed.has_value());
     auto * resp = std::get_if<Response<OuterValueRequest>>(&*parsed);
     ASSERT_NE(resp, nullptr);
-    auto * q = std::get_if<QueryGetAttr>(&resp->request.query);
+    auto * q = std::get_if<SelectorGetAttr>(&resp->request.query);
     ASSERT_NE(q, nullptr);
     EXPECT_EQ(q->from, "42");
 }
@@ -143,10 +143,10 @@ TEST(TraceTypes, ResponseWrapperRoundTrip)
 
 TEST(TraceTypes, QueryExprRoundTrip)
 {
-    QueryExpr q{"1 + 1", "/some/dir"};
+    SelectorExpr q{"1 + 1", "/some/dir"};
     json j;
     to_json(j, q);
-    QueryExpr q2;
+    SelectorExpr q2;
     from_json(j, q2);
     EXPECT_EQ(q.expr, q2.expr);
     EXPECT_EQ(q.baseDir, q2.baseDir);
@@ -154,10 +154,10 @@ TEST(TraceTypes, QueryExprRoundTrip)
 
 TEST(TraceTypes, QueryWrapperRoundTrip)
 {
-    Query<QueryGetAttr> q{.query = QueryGetAttr{"name", "42"}, .v = 99};
+    Query<SelectorGetAttr> q{.query = SelectorGetAttr{"name", "42"}, .v = 99};
     json j;
     to_json(j, q);
-    Query<QueryGetAttr> q2;
+    Query<SelectorGetAttr> q2;
     from_json(j, q2);
     EXPECT_EQ(q.query.name, q2.query.name);
     EXPECT_EQ(q.query.from, q2.query.from);
@@ -166,10 +166,10 @@ TEST(TraceTypes, QueryWrapperRoundTrip)
 
 TEST(TraceTypes, QueryGetAttrRoundTrip)
 {
-    QueryGetAttr q{"foo", "42"};
+    SelectorGetAttr q{"foo", "42"};
     json j;
     to_json(j, q);
-    QueryGetAttr q2;
+    SelectorGetAttr q2;
     from_json(j, q2);
     EXPECT_EQ(q.name, q2.name);
     EXPECT_EQ(q.from, q2.from);
@@ -177,10 +177,10 @@ TEST(TraceTypes, QueryGetAttrRoundTrip)
 
 TEST(TraceTypes, QueryGetListElemRoundTrip)
 {
-    QueryGetListElem q{"99", 5};
+    SelectorGetListElem q{"99", 5};
     json j;
     to_json(j, q);
-    QueryGetListElem q2;
+    SelectorGetListElem q2;
     from_json(j, q2);
     EXPECT_EQ(q.from, q2.from);
     EXPECT_EQ(q.index, q2.index);
@@ -203,13 +203,13 @@ TEST(TraceTypes, ResultWrapperRoundTrip)
 
 TEST(TraceTypes, QueryTagConstants)
 {
-    EXPECT_EQ(QueryExpr::tag, "expr");
-    EXPECT_EQ(QueryImport::tag, "import");
-    EXPECT_EQ(QueryGetAttr::tag, "getAttr");
-    EXPECT_EQ(QueryGetListElem::tag, "getListElem");
-    EXPECT_EQ(QueryGetWHNF::tag, "getWHNF");
-    EXPECT_EQ(QueryGetFunctionInfo::tag, "getFunctionInfo");
-    EXPECT_EQ(QueryApply::tag, "apply");
+    EXPECT_EQ(SelectorExpr::tag, "expr");
+    EXPECT_EQ(SelectorImport::tag, "import");
+    EXPECT_EQ(SelectorGetAttr::tag, "getAttr");
+    EXPECT_EQ(SelectorGetListElem::tag, "getListElem");
+    EXPECT_EQ(SelectorGetWHNF::tag, "getWHNF");
+    EXPECT_EQ(SelectorGetFunctionInfo::tag, "getFunctionInfo");
+    EXPECT_EQ(SelectorApply::tag, "apply");
     EXPECT_EQ(FileReadRequest::tag, "fileRead");
     EXPECT_EQ(GetEnvRequest::tag, "getEnv");
 }
@@ -220,9 +220,9 @@ TEST(TraceTypes, QueryTagConstants)
 
 TEST(TraceTypes, QueryExprComparison)
 {
-    QueryExpr a{"1 + 1", "/"};
-    QueryExpr b{"1 + 1", "/"};
-    QueryExpr c{"2 + 2", "/"};
+    SelectorExpr a{"1 + 1", "/"};
+    SelectorExpr b{"1 + 1", "/"};
+    SelectorExpr c{"2 + 2", "/"};
     EXPECT_EQ(a, b);
     EXPECT_NE(a, c);
     EXPECT_TRUE(a < c || c < a); // strict weak ordering
@@ -230,10 +230,10 @@ TEST(TraceTypes, QueryExprComparison)
 
 TEST(TraceTypes, QueryGetAttrComparison)
 {
-    QueryGetAttr a{"name", "1"};
-    QueryGetAttr b{"name", "1"};
-    QueryGetAttr c{"other", "1"};
-    QueryGetAttr d{"name", "2"};
+    SelectorGetAttr a{"name", "1"};
+    SelectorGetAttr b{"name", "1"};
+    SelectorGetAttr c{"other", "1"};
+    SelectorGetAttr d{"name", "2"};
     EXPECT_EQ(a, b);
     EXPECT_NE(a, c);
     EXPECT_NE(a, d);
@@ -318,14 +318,14 @@ TEST(TraceTypes, ParseGetEnvResponseNullopt)
 
 TEST(TraceTypes, ParseQueryExpr)
 {
-    Query<QueryExpr> original{
+    Query<SelectorExpr> original{
         .query = {.expr = "1 + 1", .baseDir = "/home/user"},
         .v = 42,
     };
     auto j = json(original);
     auto parsed = parseTraceEntry(j);
     ASSERT_TRUE(parsed.has_value());
-    auto * q = std::get_if<Query<QueryExpr>>(&*parsed);
+    auto * q = std::get_if<Query<SelectorExpr>>(&*parsed);
     ASSERT_NE(q, nullptr);
     EXPECT_EQ(q->query.expr, "1 + 1");
     EXPECT_EQ(q->v, 42u);
@@ -382,7 +382,7 @@ TEST(TraceTypes, FullTraceRoundTrip)
             .request = {.name = "HOME"},
             .response = {.value = "/home/user"},
         },
-        Query<QueryExpr>{
+        Query<SelectorExpr>{
             .query = {.expr = "{ x = 1; }", .baseDir = "/"},
             .v = 0,
         },
@@ -390,7 +390,7 @@ TEST(TraceTypes, FullTraceRoundTrip)
             .result = ResultWHNF{"set", WHNFAttrs{{}}},
             .v = 0,
         },
-        Query<QueryGetAttr>{
+        Query<SelectorGetAttr>{
             .query = {.name = "x", .from = "0"},
             .v = 1,
         },
@@ -427,7 +427,7 @@ TEST(TraceTypes, FullTraceRoundTrip)
 TEST(TraceTypes, CorrelateTrace)
 {
     std::vector<TraceEntry> trace = {
-        Query<QueryExpr>{
+        Query<SelectorExpr>{
             .query = {.expr = "{ x = 1; }", .baseDir = "/"},
             .v = 0,
         },
@@ -435,7 +435,7 @@ TEST(TraceTypes, CorrelateTrace)
             .result = ResultWHNF{"set", WHNFAttrs{{}}},
             .v = 0,
         },
-        Query<QueryGetAttr>{
+        Query<SelectorGetAttr>{
             .query = {.name = "x", .from = "0"},
             .v = 1,
         },
@@ -448,11 +448,11 @@ TEST(TraceTypes, CorrelateTrace)
     auto correlated = correlateTrace(trace);
     ASSERT_EQ(correlated.size(), 4u);
 
-    auto * q0 = std::get_if<CompletedQuery<QueryExpr>>(&correlated[0]);
+    auto * q0 = std::get_if<CompletedQuery<SelectorExpr>>(&correlated[0]);
     ASSERT_NE(q0, nullptr);
     EXPECT_EQ(q0->resultIndex, 1u);
 
-    auto * q2 = std::get_if<CompletedQuery<QueryGetAttr>>(&correlated[2]);
+    auto * q2 = std::get_if<CompletedQuery<SelectorGetAttr>>(&correlated[2]);
     ASSERT_NE(q2, nullptr);
     EXPECT_EQ(q2->resultIndex, 3u);
 }
@@ -464,7 +464,7 @@ TEST(TraceTypes, CorrelateTrace)
 TEST(TraceTypes, QueryIndexLookup)
 {
     std::vector<TraceEntry> trace = {
-        Query<QueryExpr>{
+        Query<SelectorExpr>{
             .query = {.expr = "42", .baseDir = "/"},
             .v = 0,
         },
@@ -472,7 +472,7 @@ TEST(TraceTypes, QueryIndexLookup)
             .result = ResultWHNF{"int", WHNFInt{0}},
             .v = 0,
         },
-        Query<QueryGetAttr>{
+        Query<SelectorGetAttr>{
             .query = {.name = "foo", .from = "0"},
             .v = 1,
         },
@@ -484,25 +484,25 @@ TEST(TraceTypes, QueryIndexLookup)
 
     QueryIndex idx(trace);
 
-    auto e1 = idx.lookup(QueryExpr{"42", "/"});
+    auto e1 = idx.lookup(SelectorExpr{"42", "/"});
     ASSERT_TRUE(e1.has_value());
     EXPECT_EQ(e1->queryIndex, 0u);
     EXPECT_EQ(e1->resultIndex, 1u);
 
-    auto e2 = idx.lookup(QueryGetAttr{"foo", "0"});
+    auto e2 = idx.lookup(SelectorGetAttr{"foo", "0"});
     ASSERT_TRUE(e2.has_value());
     EXPECT_EQ(e2->queryIndex, 2u);
     EXPECT_EQ(e2->resultIndex, 3u);
 
     // Miss
-    auto e3 = idx.lookup(QueryExpr{"999", "/"});
+    auto e3 = idx.lookup(SelectorExpr{"999", "/"});
     EXPECT_FALSE(e3.has_value());
 }
 
 TEST(TraceTypes, QueryIndexSkipsOrphanedQueries)
 {
     std::vector<TraceEntry> trace = {
-        Query<QueryExpr>{
+        Query<SelectorExpr>{
             .query = {.expr = "orphan", .baseDir = "/"},
             .v = 99,
         },
@@ -510,7 +510,7 @@ TEST(TraceTypes, QueryIndexSkipsOrphanedQueries)
     };
 
     QueryIndex idx(trace);
-    auto e = idx.lookup(QueryExpr{"orphan", "/"});
+    auto e = idx.lookup(SelectorExpr{"orphan", "/"});
     EXPECT_FALSE(e.has_value());
 }
 

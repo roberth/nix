@@ -209,7 +209,7 @@ struct ResultWHNF
 };
 
 // ---------------------------------------------------------------------------
-// QueryLeaf: typed `from` / `fn` / `arg` field of Query types
+// SelectorLeaf: typed `from` / `fn` / `arg` field of Query types
 // ---------------------------------------------------------------------------
 
 /**
@@ -245,7 +245,7 @@ struct StateHashLeaf
 };
 
 /**
- * QueryLeaf: the typed `from` (and `fn`/`arg`) field of Query types.
+ * SelectorLeaf: the typed `from` (and `fn`/`arg`) field of Query types.
  *
  * `StateHashLeaf` always carries an `argAncestry` alongside its
  * hash (empty string = root context, a real value). The convenience
@@ -254,15 +254,15 @@ struct StateHashLeaf
  * specific ancestry construct `StateHashLeaf{hex, argAncestry}`
  * explicitly.
  */
-struct QueryLeaf
+struct SelectorLeaf
 {
     std::variant<OuterLeaf, StateHashLeaf> data;
 
-    QueryLeaf() = default;
-    QueryLeaf(std::string hex) : data(StateHashLeaf{std::move(hex), {}}) {}
-    QueryLeaf(const char * hex) : data(StateHashLeaf{hex, {}}) {}
-    QueryLeaf(OuterLeaf a) : data(a) {}
-    QueryLeaf(StateHashLeaf c) : data(std::move(c)) {}
+    SelectorLeaf() = default;
+    SelectorLeaf(std::string hex) : data(StateHashLeaf{std::move(hex), {}}) {}
+    SelectorLeaf(const char * hex) : data(StateHashLeaf{hex, {}}) {}
+    SelectorLeaf(OuterLeaf a) : data(a) {}
+    SelectorLeaf(StateHashLeaf c) : data(std::move(c)) {}
 
     bool isStateHash() const
     {
@@ -285,11 +285,11 @@ struct QueryLeaf
         return std::get<OuterLeaf>(data).index;
     }
 
-    auto operator<=>(const QueryLeaf &) const = default;
+    auto operator<=>(const SelectorLeaf &) const = default;
 };
 
-void to_json(nlohmann::json & j, const QueryLeaf & leaf);
-void from_json(const nlohmann::json & j, QueryLeaf & leaf);
+void to_json(nlohmann::json & j, const SelectorLeaf & leaf);
+void from_json(const nlohmann::json & j, SelectorLeaf & leaf);
 
 // ---------------------------------------------------------------------------
 // PathExpr: a structured access path from a cb_arg root
@@ -357,7 +357,7 @@ void from_json(const nlohmann::json & j, PathExpr & p);
  */
 struct PerArgFrame
 {
-    std::vector<QueryLeaf> fromStateHashes;
+    std::vector<SelectorLeaf> fromStateHashes;
     PathExpr path;
     auto operator<=>(const PerArgFrame &) const = default;
 };
@@ -370,51 +370,51 @@ void from_json(const nlohmann::json & j, PerArgFrame & f);
 // ---------------------------------------------------------------------------
 
 /** Evaluate an expression string. */
-struct QueryExpr
+struct SelectorExpr
 {
     static constexpr std::string_view tag = "expr";
     std::string expr;
     std::string baseDir;
-    auto operator<=>(const QueryExpr &) const = default;
+    auto operator<=>(const SelectorExpr &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryExpr, ResultWHNF)
+DECLARE_QUERY_RESULT(SelectorExpr, ResultWHNF)
 
 /** Import/evaluate a file. */
-struct QueryImport
+struct SelectorImport
 {
     static constexpr std::string_view tag = "import";
     std::string path;
-    auto operator<=>(const QueryImport &) const = default;
+    auto operator<=>(const SelectorImport &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryImport, ResultWHNF)
+DECLARE_QUERY_RESULT(SelectorImport, ResultWHNF)
 
 /** Get an attribute by name from a value that has been shown (via
     parent WHNF) to contain it. Pure retrieval — no existence check
     is folded in; the caller must have projected membership from the
     parent's WHNFAttrs.names first. Returns the child's WHNF. */
-struct QueryGetAttr
+struct SelectorGetAttr
 {
     static constexpr std::string_view tag = "getAttr";
     std::string name;
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by perArgFrame.fromStateHashes)
+    SelectorLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by perArgFrame.fromStateHashes)
     PerArgFrame perArgFrame;
-    auto operator<=>(const QueryGetAttr &) const = default;
+    auto operator<=>(const SelectorGetAttr &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryGetAttr, ResultWHNF)
+DECLARE_QUERY_RESULT(SelectorGetAttr, ResultWHNF)
 
 /** Get a list element by index from a value that has been shown (via
     parent WHNF) to have at least index+1 elements. Pure retrieval —
     no bounds check is folded in; caller must have projected size from
     the parent's WHNFList.size first. Returns the child's WHNF. */
-struct QueryGetListElem
+struct SelectorGetListElem
 {
     static constexpr std::string_view tag = "getListElem";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by perArgFrame.fromStateHashes)
+    SelectorLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by perArgFrame.fromStateHashes)
     size_t index;
     PerArgFrame perArgFrame;
-    auto operator<=>(const QueryGetListElem &) const = default;
+    auto operator<=>(const SelectorGetListElem &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryGetListElem, ResultWHNF)
+DECLARE_QUERY_RESULT(SelectorGetListElem, ResultWHNF)
 
 /** Force a value to WHNF and read its type + type-determined payload
     in one shot. Used by the cache-layer Objects to combine what would
@@ -422,22 +422,22 @@ DECLARE_QUERY_RESULT(QueryGetListElem, ResultWHNF)
     — a single WHNF probe per value force, recorded once. The
     individual getType/getInt/etc. paths remain for callers that don't
     need WHNF semantics. */
-struct QueryGetWHNF
+struct SelectorGetWHNF
 {
     static constexpr std::string_view tag = "getWHNF";
-    QueryLeaf from;
+    SelectorLeaf from;
     PerArgFrame perArgFrame;
-    auto operator<=>(const QueryGetWHNF &) const = default;
+    auto operator<=>(const SelectorGetWHNF &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryGetWHNF, ResultWHNF)
+DECLARE_QUERY_RESULT(SelectorGetWHNF, ResultWHNF)
 
 /** Get function argument info (formals). */
-struct QueryGetFunctionInfo
+struct SelectorGetFunctionInfo
 {
     static constexpr std::string_view tag = "getFunctionInfo";
-    QueryLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by perArgFrame.fromStateHashes)
+    SelectorLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by perArgFrame.fromStateHashes)
     PerArgFrame perArgFrame;
-    auto operator<=>(const QueryGetFunctionInfo &) const = default;
+    auto operator<=>(const SelectorGetFunctionInfo &) const = default;
 };
 
 /** Result for getFunctionInfo: optional formals map + ellipsis. */
@@ -448,7 +448,7 @@ struct ResultFunctionInfo
     bool ellipsis = false;
 };
 
-DECLARE_QUERY_RESULT(QueryGetFunctionInfo, ResultFunctionInfo)
+DECLARE_QUERY_RESULT(SelectorGetFunctionInfo, ResultFunctionInfo)
 
 /** Apply a function to an argument.
 
@@ -469,26 +469,26 @@ DECLARE_QUERY_RESULT(QueryGetFunctionInfo, ResultFunctionInfo)
 
     Both modes share the same JSON envelope; consumers distinguish by
     whether `fromStateHashes` is populated. */
-struct QueryApply
+struct SelectorApply
 {
     static constexpr std::string_view tag = "apply";
-    QueryLeaf fn;  ///< Function identity (legacy direct mode)
-    QueryLeaf arg; ///< Argument identity (legacy direct mode)
-    std::vector<QueryLeaf> fromStateHashes;  ///< Root cb_arg state hashes (per-arg mode)
+    SelectorLeaf fn;  ///< Function identity (legacy direct mode)
+    SelectorLeaf arg; ///< Argument identity (legacy direct mode)
+    std::vector<SelectorLeaf> fromStateHashes;  ///< Root cb_arg state hashes (per-arg mode)
     PathExpr fnPath;                  ///< Path from `fromStateHashes[fnRootIndex]` to fn
     PathExpr argPath;                 ///< Path from `fromStateHashes[argRootIndex]` to arg
     size_t fnRootIndex{0};
     size_t argRootIndex{0};
-    auto operator<=>(const QueryApply &) const = default;
+    auto operator<=>(const SelectorApply &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryApply, ResultWHNF)
+DECLARE_QUERY_RESULT(SelectorApply, ResultWHNF)
 
 /** Apply a callback to a contra-arg, identified by the outer's
     observation-set on the contra-arg.
 
-    Distinct from `QueryApply` in identity semantics: a regular
-    `QueryApply` identifies the arg by its state hash (evolving via
-    Env-layer observation folding), while `QueryCallbackApply`
+    Distinct from `SelectorApply` in identity semantics: a regular
+    `SelectorApply` identifies the arg by its state hash (evolving via
+    Env-layer observation folding), while `SelectorCallbackApply`
     identifies the arg by the SET of observations the outer's
     callback made on it during this call. Different observation sets
     → different queryHashes → distinct DB rows.
@@ -506,7 +506,7 @@ DECLARE_QUERY_RESULT(QueryApply, ResultWHNF)
     Payload consumers: writer emits this at callback firing end
     with the accumulated observation set. Walker constructs a proxy
     that answers exactly those observations, invokes fn live. */
-struct QueryCallbackApply
+struct SelectorCallbackApply
 {
     static constexpr std::string_view tag = "callbackApply";
     /** Function identity (state hash of the callback), with the
@@ -515,15 +515,15 @@ struct QueryCallbackApply
         ReplayCallbackArg's Subject. Kept on the leaf, not as a
         separate top-level field, because it is per-value context of
         `fn` for this apply and doesn't belong at envelope level. */
-    QueryLeaf fn;
+    SelectorLeaf fn;
     std::string argObsSet;     ///< Content hash of the observation set
     /** fn's per-arg description — the cb_arg roots and the path from
         them to fn's Subject. Walker uses these to resolve fn live via
         subject-navigation when the state-hash-only lookup misses. */
     PerArgFrame perArgFrame;
-    auto operator<=>(const QueryCallbackApply &) const = default;
+    auto operator<=>(const SelectorCallbackApply &) const = default;
 };
-DECLARE_QUERY_RESULT(QueryCallbackApply, ResultWHNF)
+DECLARE_QUERY_RESULT(SelectorCallbackApply, ResultWHNF)
 
 // ---------------------------------------------------------------------------
 // CompletedQuery: a query correlated with its result
@@ -564,14 +564,14 @@ using EnvRequests = ApplyWrapper<F, FileReadRequest, GetEnvRequest>;
 template<template<typename> class F>
 using Queries = ApplyWrapper<
     F,
-    QueryExpr,
-    QueryImport,
-    QueryGetAttr,
-    QueryGetListElem,
-    QueryGetFunctionInfo,
-    QueryGetWHNF,
-    QueryApply,
-    QueryCallbackApply>;
+    SelectorExpr,
+    SelectorImport,
+    SelectorGetAttr,
+    SelectorGetListElem,
+    SelectorGetFunctionInfo,
+    SelectorGetWHNF,
+    SelectorApply,
+    SelectorCallbackApply>;
 
 /**
  * All result payload types.
@@ -583,29 +583,29 @@ using Results = ApplyWrapper<
     ResultWHNF>;
 
 // ---------------------------------------------------------------------------
-// Variant types for QueryVariant / ResultVariant
+// Variant types for SelectorVariant / ResultVariant
 // ---------------------------------------------------------------------------
 
-using QueryVariant = std::variant<
-    QueryExpr,
-    QueryImport,
-    QueryGetAttr,
-    QueryGetListElem,
-    QueryGetFunctionInfo,
-    QueryGetWHNF,
-    QueryApply,
-    QueryCallbackApply>;
+using SelectorVariant = std::variant<
+    SelectorExpr,
+    SelectorImport,
+    SelectorGetAttr,
+    SelectorGetListElem,
+    SelectorGetFunctionInfo,
+    SelectorGetWHNF,
+    SelectorApply,
+    SelectorCallbackApply>;
 
 using ResultVariant = std::variant<
     ResultFunctionInfo,
     ResultWHNF>;
 
-/** QueryVariant's own to_json/from_json — visits the variant to
+/** SelectorVariant's own to_json/from_json — visits the variant to
     emit an alternative's flat fields plus the `tag` discriminator,
     and reads them back into the right alternative via the fold
     template below. */
-void to_json(nlohmann::json & j, const QueryVariant & q);
-void from_json(const nlohmann::json & j, QueryVariant & q);
+void to_json(nlohmann::json & j, const SelectorVariant & q);
+void from_json(const nlohmann::json & j, SelectorVariant & q);
 
 namespace detail {
 
@@ -660,8 +660,8 @@ template<typename... Ts> struct VariantTagsDistinct<std::variant<Ts...>>
 } // namespace detail
 
 static_assert(
-    detail::VariantTagsDistinct<QueryVariant>::value,
-    "QueryVariant alternatives must have distinct `tag` values — "
+    detail::VariantTagsDistinct<SelectorVariant>::value,
+    "SelectorVariant alternatives must have distinct `tag` values — "
     "duplicated tags cause silent misroute in fromJsonByTag.");
 
 // ---------------------------------------------------------------------------
@@ -679,7 +679,7 @@ static_assert(
 struct OuterValueRequest
 {
     static constexpr std::string_view tag = "outerValue";
-    QueryVariant query;
+    SelectorVariant query;
 };
 
 struct OuterValueResponse
@@ -730,11 +730,11 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j);
 
 /**
  * Parse just an inner query object — `{"query": "<tag>", "params": {...}}` —
- * into a `QueryVariant`. Returns nullopt if `j` doesn't have a
+ * into a `SelectorVariant`. Returns nullopt if `j` doesn't have a
  * recognised tag. Used at CBOR-payload dispatch sites where the
  * wrapping `{"query", "v"}` envelope isn't present.
  */
-std::optional<QueryVariant> parseQueryVariant(const nlohmann::json & j);
+std::optional<SelectorVariant> parseQueryVariant(const nlohmann::json & j);
 
 /**
  * Short human-readable rendering of a Query for log lines —
@@ -742,14 +742,14 @@ std::optional<QueryVariant> parseQueryVariant(const nlohmann::json & j);
  * Replaces ad-hoc `params["name"/"index"/"fn"/"arg"]` reads at
  * every log site.
  */
-std::string describe(const QueryVariant & query);
+std::string describe(const SelectorVariant & query);
 
 /**
  * The `from` state hash a Query stamps as its primary Merkle
  * parent, if any. Returns nullopt for queries with no `from` field
  * (roots) and for leaves whose hash string doesn't parse.
  */
-std::optional<Hash> fromHashOf(const QueryVariant & query);
+std::optional<Hash> fromHashOf(const SelectorVariant & query);
 
 /**
  * Rewrite a Query's `from` (and `fromStateHashes[0]` if present)
@@ -758,19 +758,19 @@ std::optional<Hash> fromHashOf(const QueryVariant & query);
  * Q's identity as its fromSubject state advances. No-op on Queries
  * with neither field (roots).
  */
-void rewriteFrom(QueryVariant & query, const std::string & newFromHex);
+void rewriteFrom(SelectorVariant & query, const std::string & newFromHex);
 
 /**
  * SHA-256 of the Query's JSON dump — the canonical queryHash used
  * as its identity across the trace/store layer. Overload of the
  * per-Q-type `computeQueryHash` on decision-graph, so callers
- * holding a `QueryVariant` don't have to std::visit at every site.
+ * holding a `SelectorVariant` don't have to std::visit at every site.
  */
-Hash computeQueryHash(const QueryVariant & query);
+Hash computeQueryHash(const SelectorVariant & query);
 
 /** Serialise a Query variant to its inner JSON payload
     (`{"query": <tag>, "params": {...}}`). */
-nlohmann::json toJson(const QueryVariant & query);
+nlohmann::json toJson(const SelectorVariant & query);
 
 /**
  * Correlate queries with their results.
@@ -797,7 +797,7 @@ struct IndexEntry
  */
 class QueryIndex
 {
-    std::map<QueryVariant, IndexEntry> index;
+    std::map<SelectorVariant, IndexEntry> index;
 
 public:
     explicit QueryIndex(const std::vector<TraceEntry> & trace);

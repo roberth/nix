@@ -15,13 +15,13 @@ template <typename Q>
 static void stampPerArgFields(Q & q, const Subject & subject, const Hash & argAncestry)
 {
     auto par = pathAndRootsFromSubject(subject);
-    std::vector<trace::QueryLeaf> fromStateHashes;
+    std::vector<trace::SelectorLeaf> fromStateHashes;
     fromStateHashes.reserve(par.roots.size());
     for (size_t i = 0; i < par.roots.size(); ++i) {
         auto cid = stateHashAfter(par.roots[i], argAncestry, {});
         fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
     }
-    q.from = fromStateHashes.empty() ? trace::QueryLeaf{std::string{}} : fromStateHashes[0];
+    q.from = fromStateHashes.empty() ? trace::SelectorLeaf{std::string{}} : fromStateHashes[0];
     q.perArgFrame.path = std::move(par.path);
     q.perArgFrame.fromStateHashes = std::move(fromStateHashes);
 }
@@ -40,7 +40,7 @@ OuterObject::OuterObject(
 std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
 {
     /* Existence is projected from parent WHNFAttrs.names; only if
-       present do we issue the pure-retrieval QueryGetAttr. */
+       present do we issue the pure-retrieval SelectorGetAttr. */
     auto & w = whnf();
     auto * ap = std::get_if<trace::WHNFAttrs>(&w.payload);
     if (!ap)
@@ -49,7 +49,7 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
         return outerObj->maybeGetAttr(name);
     if (std::find(ap->names.begin(), ap->names.end(), name) == ap->names.end())
         return nullptr;
-    trace::QueryGetAttr q{name, std::string{}};
+    trace::SelectorGetAttr q{name, std::string{}};
     stampPerArgFields(q, subject, argAncestry);
     auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
@@ -76,7 +76,7 @@ trace::ResultWHNF & OuterObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    trace::QueryGetWHNF q{std::string{}};
+    trace::SelectorGetWHNF q{std::string{}};
     stampPerArgFields(q, subject, argAncestry);
     auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
@@ -174,14 +174,14 @@ size_t OuterObject::getListSize()
 std::shared_ptr<Object> OuterObject::getListElem(size_t index)
 {
     /* Bounds are projected from parent WHNFList.size; retrieval is
-       QueryGetListElem returning the child's WHNF. */
+       SelectorGetListElem returning the child's WHNF. */
     auto & w = whnf();
     auto * lp = std::get_if<trace::WHNFList>(&w.payload);
     if (!lp || index >= lp->size)
         /* Not a list, or index out of bounds — delegate so the
            outer's inner throws the source-positioned error. */
         return outerObj->getListElem(index);
-    trace::QueryGetListElem q{std::string{}, index};
+    trace::SelectorGetListElem q{std::string{}, index};
     stampPerArgFields(q, subject, argAncestry);
     auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
@@ -231,7 +231,7 @@ RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<OuterRe
 
 std::optional<FunctionInfo> OuterObject::getFunctionInfo()
 {
-    trace::QueryGetFunctionInfo q{std::string{}};
+    trace::SelectorGetFunctionInfo q{std::string{}};
     stampPerArgFields(q, subject, argAncestry);
     auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);

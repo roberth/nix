@@ -21,28 +21,28 @@ namespace nix {
    response plus (for producer queries) the outer's child Object at
    the queried position. No lookup table, no id round-trip — the
    caller passes the outer Object it already holds. */
-static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::QueryVariant & q)
+static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::SelectorVariant & q)
 {
     return std::visit(
         [&](const auto & query) -> OuterQueryResult {
             using Q = std::decay_t<decltype(query)>;
-            if constexpr (std::is_same_v<Q, trace::QueryApply>) {
-                throw Error("outer query: QueryApply should go through applyFn, not queryFn");
+            if constexpr (std::is_same_v<Q, trace::SelectorApply>) {
+                throw Error("outer query: SelectorApply should go through applyFn, not queryFn");
             } else if constexpr (!requires { query.from; }) {
                 throw Error("outer query: query type has no 'from' field");
-            } else if constexpr (std::is_same_v<Q, trace::QueryGetWHNF>) {
+            } else if constexpr (std::is_same_v<Q, trace::SelectorGetWHNF>) {
                 return {computeWHNFFromObject(*obj), nullptr};
-            } else if constexpr (std::is_same_v<Q, trace::QueryGetAttr>) {
+            } else if constexpr (std::is_same_v<Q, trace::SelectorGetAttr>) {
                 /* Pure retrieval — assumes existence (caller must
                    have projected membership from parent WHNFAttrs). */
                 auto child = obj->maybeGetAttr(query.name);
                 if (!child)
                     throw Error("outer getAttr: attr '%s' unexpectedly missing", query.name);
                 return {computeWHNFFromObject(*child), std::move(child)};
-            } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
+            } else if constexpr (std::is_same_v<Q, trace::SelectorGetListElem>) {
                 auto child = obj->getListElem(query.index);
                 return {computeWHNFFromObject(*child), std::move(child)};
-            } else if constexpr (std::is_same_v<Q, trace::QueryGetFunctionInfo>) {
+            } else if constexpr (std::is_same_v<Q, trace::SelectorGetFunctionInfo>) {
                 auto info = obj->getFunctionInfo();
                 if (!info)
                     return {trace::ResultFunctionInfo{false, {}, false}, nullptr};
@@ -98,7 +98,7 @@ struct OuterApply
     /** Invoke `fnObj` on `argObj`. `fnObj` is the outer Object to
         apply (passed by the caller who already holds it — no id
         round-trip). `fnStateHash` is the Subject-derived state hash
-        used to build the QueryApply payload (the outer Object typically
+        used to build the SelectorApply payload (the outer Object typically
         has no Subject; the wrapping OuterObject computes it).
         `fnSubject` and `fnArgAncestry` are the caller's OuterObject's
         real Subject and inherited argAncestry — used by the wrapper
@@ -150,7 +150,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
 
     /** Invoke the outer fn Object `fnObj` on `argObj`. `fnStateHash`
         is the Subject-derived state hash of the wrapping
-        OuterObject, used to build the QueryApply payload.
+        OuterObject, used to build the SelectorApply payload.
         `fnSubject`/`fnArgAncestry` are the wrapping OuterObject's
         real Subject/argAncestry. Returns the outer's apply-result
         Object. */
@@ -171,7 +171,7 @@ std::shared_ptr<Object> OuterApply::run(
     std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
 {
     /* fnId — the Subject-derived state hash of the wrapping OuterObject,
-       used for the QueryApply payload's `fn` field. The caller
+       used for the SelectorApply payload's `fn` field. The caller
        computed this from its own Subject + argAncestry; the raw
        outer Object typically has no Subject. */
     auto fnId = fnStateHash;
@@ -215,12 +215,12 @@ std::shared_ptr<Object> OuterApply::run(
        edge (= ε) now that we have fnIdStr and argStateHashStr. See parallel
        call in TracingEvaluator::apply for the principle. */
     if (innerWriter) {
-        nlohmann::json applyQ = trace::QueryApply{fnIdStr, argStateHashStr};
+        nlohmann::json applyQ = trace::SelectorApply{fnIdStr, argStateHashStr};
         tracingCacheLog("createCallbackCell callsite=OuterApply::run fn=%s arg=%s",
                         fnIdStr.substr(0, 12), argStateHashStr.substr(0, 12));
         innerWriter->createCallbackCell(applyQ);
     }
-    trace::QueryApply applyQuery{fnIdStr, argStateHashStr};
+    trace::SelectorApply applyQuery{fnIdStr, argStateHashStr};
     auto resultId = TracingDecisionGraph::computeQueryHash(applyQuery);
 
     /* Wrap the argObj in TracingCallbackArg so the outer's
@@ -266,7 +266,7 @@ std::shared_ptr<Object> OuterApply::run(
     resultVal->mkApp(*fnVal, argThunk);
     auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
 
-    /* Defer the QueryApply Request to the writer's flush at
+    /* Defer the SelectorApply Request to the writer's flush at
        logResult. Pool entries land at the natural reqHashes. */
     if (innerWriter) {
         nlohmann::json applyJson = applyQuery;
@@ -389,7 +389,7 @@ static PrimOp * makeCachedFnPrimOp(
                            holds its outerObj, and passes it in. */
                         OuterQueryFn queryFn = [&innerEnv, applyContext](
                             std::shared_ptr<Object> outerObj,
-                            const trace::QueryVariant & q,
+                            const trace::SelectorVariant & q,
                             Subject subject,
                             Hash argAncestry) {
                             /* Skip the redundant `innerEnv.outerQuery` when
@@ -413,7 +413,7 @@ static PrimOp * makeCachedFnPrimOp(
                             if (!cbApplyOrigin) {
                                 innerEnv.outerQuery(
                                     q,
-                                    [&](const trace::QueryVariant &) { return qr.result; },
+                                    [&](const trace::SelectorVariant &) { return qr.result; },
                                     subject,
                                     argAncestry);
                             }
@@ -425,7 +425,7 @@ static PrimOp * makeCachedFnPrimOp(
                            passes fnObj — the outer's fn Object it
                            already holds — plus the wrapping
                            OuterObject's Subject-derived state hash
-                           used for the QueryApply payload. */
+                           used for the SelectorApply payload. */
                         OuterApplyFn applyFn = [resolver](
                             std::shared_ptr<Object> fnObj,
                             Hash fnStateHash,

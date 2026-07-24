@@ -39,7 +39,7 @@ std::optional<TracingReplayEvaluator::WalkResult>
 TracingReplayEvaluator::walk(
     const Hash & queryHash,
     std::shared_ptr<Object> currentProxy,
-    std::optional<trace::QueryVariant> payloadTemplate,
+    std::optional<trace::SelectorVariant> payloadTemplate,
     std::optional<Subject> fromSubject,
     Hash fromSubjectArgAncestry)
 {
@@ -123,7 +123,7 @@ TracingReplayEvaluator::walk(
        hash. Memoised in responseFor for stable requests (file
        reads, env vars) where same request always gives same
        response. Query-carrying requests (outer-value queries,
-       QueryCallbackApply) are NOT memoised because the same request
+       SelectorCallbackApply) are NOT memoised because the same request
        hash can dispatch to different responses depending on which
        proxy (cb invocation) the history is grounded in — sibling
        cb apply invocations of the same fn share a request hash but
@@ -269,7 +269,7 @@ TracingReplayEvaluator::walk(
                       fromSubjectArgAncestry, perQEnvWalk](const Hash & preFoldQ) -> Hash {
             auto newState = stateHashAt(
                 *fromSubject, fromSubjectArgAncestry, *perQEnvWalk, perQEnvWalk->size());
-            trace::QueryVariant payload = *payloadTemplate;
+            trace::SelectorVariant payload = *payloadTemplate;
             trace::rewriteFrom(payload, newState.to_string(HashFormat::Base16, false));
             return trace::computeQueryHash(payload);
         };
@@ -402,7 +402,7 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
         auto reqJson = cborStringToJson(requestCbor);
         /* Check `tag` first: Query payloads under the flat envelope
            carry a discriminator `tag`, and some Query types also
-           happen to have a `name` field (QueryGetAttr) — without the
+           happen to have a `name` field (SelectorGetAttr) — without the
            tag check first, they'd fall into the env-var branch and
            produce a wrong response. */
         if (reqJson.contains("tag")) {
@@ -432,7 +432,7 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
    rather than in any evaluator-global state.
    Then fall through to producer-Request resolution: find idStr in
    the Requests pool, resolve the parent recursively, dispatch the
-   producer's query on the parent. QueryApply payloads invoke the
+   producer's query on the parent. SelectorApply payloads invoke the
    live apply against a (frozen) ReplayCallbackArg arg. localArg
    sidecars chase to the apply. */
 std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::string & idStr, ResolutionContext & ctx)
@@ -654,7 +654,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
 
 /* `perArgFrame` accessor helpers — the sub-object is the standard
    home for `fromStateHashes` + `path`; the top-level `fromStateHashes`
-   variant is only for QueryApply. */
+   variant is only for SelectorApply. */
 static const nlohmann::json * perArgFrameOf(const nlohmann::json & params)
 {
     if (params.contains("perArgFrame") && params["perArgFrame"].is_object())
@@ -699,7 +699,7 @@ static std::vector<std::shared_ptr<Object>> resolveRoots(
             return roots;
         return {};
     }
-    if (params.contains("fromStateHashes") && params["fromStateHashes"].is_array()) {  // QueryApply
+    if (params.contains("fromStateHashes") && params["fromStateHashes"].is_array()) {  // SelectorApply
         if (tryRoots(params["fromStateHashes"]))
             return roots;
         return {};
@@ -758,7 +758,7 @@ static std::shared_ptr<Object> navigatePath(
 }
 
 std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
-    const std::string & idStr, const trace::QueryVariant & qv, const nlohmann::json & params, ResolutionContext & ctx)
+    const std::string & idStr, const trace::SelectorVariant & qv, const nlohmann::json & params, ResolutionContext & ctx)
 {
     if (!params.contains("from") && !params.contains("fromStateHashes")
         && !params.contains("perArgFrame"))
@@ -779,9 +779,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
         [&](const auto & q) -> std::shared_ptr<Object> {
             using Q = std::decay_t<decltype(q)>;
             try {
-                if constexpr (std::is_same_v<Q, trace::QueryGetAttr>) {
+                if constexpr (std::is_same_v<Q, trace::SelectorGetAttr>) {
                     return parent->maybeGetAttr(q.name);
-                } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
+                } else if constexpr (std::is_same_v<Q, trace::SelectorGetListElem>) {
                     return parent->getListElem(q.index);
                 } else {
                     return nullptr;
@@ -807,10 +807,10 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
 
     /* Resolve `q`'s per-arg roots + path into a live parent Object.
        Producer queries (getWHNF/getAttr/getListElem/getFunctionInfo)
-       and QCA share this pattern via `perArgFrame`; QueryApply
+       and QCA share this pattern via `perArgFrame`; SelectorApply
        resolves separately via `resolveApplyId`. */
     auto resolveParent = [&](const trace::PerArgFrame & frame,
-                             const trace::QueryLeaf & from) -> std::shared_ptr<Object> {
+                             const trace::SelectorLeaf & from) -> std::shared_ptr<Object> {
         std::vector<std::shared_ptr<Object>> roots;
         if (!frame.fromStateHashes.empty()) {
             for (auto & leaf : frame.fromStateHashes) {
@@ -833,9 +833,9 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
             using Q = std::decay_t<decltype(q)>;
             /* Apply Facts are recorded via Request only (no Terminal);
                the dispatcher has nothing to compare against. */
-            if constexpr (std::is_same_v<Q, trace::QueryApply>) {
+            if constexpr (std::is_same_v<Q, trace::SelectorApply>) {
                 return std::nullopt;
-            } else if constexpr (std::is_same_v<Q, trace::QueryCallbackApply>) {
+            } else if constexpr (std::is_same_v<Q, trace::SelectorCallbackApply>) {
                 /* Task #110: materialise a ReplayCallbackArg backed by
                    the referenced ObservationSet, resolve fn live via
                    subject-navigation, invoke fn->queryApply(replayArg),
@@ -914,18 +914,18 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
 
                 nlohmann::json resultJson;
                 try {
-                    if constexpr (std::is_same_v<Q, trace::QueryGetWHNF>) {
+                    if constexpr (std::is_same_v<Q, trace::SelectorGetWHNF>) {
                         resultJson = computeWHNFFromObject(*obj);
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetAttr>) {
+                    } else if constexpr (std::is_same_v<Q, trace::SelectorGetAttr>) {
                         /* Pure retrieval — caller (walker) has projected
                            membership from parent's WHNFAttrs. */
                         auto child = obj->maybeGetAttr(q.name);
                         if (!child) return std::nullopt;
                         resultJson = computeWHNFFromObject(*child);
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetListElem>) {
+                    } else if constexpr (std::is_same_v<Q, trace::SelectorGetListElem>) {
                         auto child = obj->getListElem(q.index);
                         resultJson = computeWHNFFromObject(*child);
-                    } else if constexpr (std::is_same_v<Q, trace::QueryGetFunctionInfo>) {
+                    } else if constexpr (std::is_same_v<Q, trace::SelectorGetFunctionInfo>) {
                         auto info = obj->getFunctionInfo();
                         if (!info)
                             resultJson = trace::ResultFunctionInfo{false, {}, false};
@@ -940,7 +940,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                 }
                 return jsonToCborString(resultJson);
             } else {
-                /* QueryExpr / QueryImport aren't dispatched through this
+                /* SelectorExpr / SelectorImport aren't dispatched through this
                    path (root queries handled elsewhere). */
                 return std::nullopt;
             }
@@ -958,7 +958,7 @@ TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentP
        from lookup()'s template path — probes with applyResultSubject
        come through a different code path (TracingReplayObject) which
        calls walk() directly with the appropriate subject. */
-    auto walkResult = walk(queryHash, std::move(currentProxy), trace::QueryVariant{query});
+    auto walkResult = walk(queryHash, std::move(currentProxy), trace::SelectorVariant{query});
     if (!walkResult)
         return std::nullopt;
     tracingCacheLog("replay hit: %s", Q::tag);
@@ -993,7 +993,7 @@ EvalState & TracingReplayEvaluator::getEvalState()
 
 ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std::string & displayPath)
 {
-    if (auto result = lookup(trace::QueryImport{displayPath})) {
+    if (auto result = lookup(trace::SelectorImport{displayPath})) {
         tracingCacheLog("replay hit: evalFile %s", displayPath);
         auto obj = make_ref<TracingReplayObject>(
             *this, result->second, [this, path, displayPath]() { return inner->evalFile(path, displayPath); });
@@ -1012,7 +1012,7 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
 
 ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const RootedPath & basePath)
 {
-    if (auto result = lookup(trace::QueryExpr{expr, basePath.path.abs()})) {
+    if (auto result = lookup(trace::SelectorExpr{expr, basePath.path.abs()})) {
         tracingCacheLog("replay hit: evalExpr");
         auto obj = make_ref<TracingReplayObject>(
             *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); });

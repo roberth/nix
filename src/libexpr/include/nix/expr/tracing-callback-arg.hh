@@ -8,7 +8,7 @@
  * to the wrapped Object.
  *
  * The recorded observations are later snapshotted (by value) into an
- * ObservationSet referenced from a QueryCallbackApply request. At
+ * ObservationSet referenced from a SelectorCallbackApply request. At
  * replay the walker reconstructs the callback arg from that recorded
  * obsSet — the inner isn't running, so probes are served from stored
  * observations rather than dispatched live.
@@ -61,12 +61,12 @@ class TracingCallbackArg : public Object
     std::shared_ptr<const ArgCell> argCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
-       getString / etc. fires `whnf()`, which records ONE QueryGetWHNF
+       getString / etc. fires `whnf()`, which records ONE SelectorGetWHNF
        observation. Subsequent calls decode the cached result. */
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 
-    void recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result);
+    void recordObservation(const trace::SelectorVariant & query, const trace::ResultVariant & result);
 
 public:
     TracingCallbackArg(

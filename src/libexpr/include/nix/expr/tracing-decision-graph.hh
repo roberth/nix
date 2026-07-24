@@ -123,7 +123,7 @@ public:
        firing. Payload is inline so the walker reconstructs arg
        responses directly from this CAS.
 
-       Referenced by `QueryCallbackApply.argObsSet` — different
+       Referenced by `SelectorCallbackApply.argObsSet` — different
        observation sets give different queryHashes → distinct DB
        rows.
 

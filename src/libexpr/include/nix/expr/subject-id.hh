@@ -121,9 +121,9 @@ struct ObservationSet
     std::vector<Observation> observations;
 };
 
-/** Build an Observation from a QueryVariant/ResultVariant pair. Used by
+/** Build an Observation from a SelectorVariant/ResultVariant pair. Used by
     the writer at flush time where it already holds the variants. */
-Observation observationFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result);
+Observation observationFromQR(const trace::SelectorVariant & query, const trace::ResultVariant & result);
 
 /** Compute the state hash of `subject` after walking through all
     `edges`, inheriting `argAncestry` (the XOR of outer-argAncestry state hashes — e.g.
@@ -178,7 +178,7 @@ Hash stateHashConverged(
     const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history);
 
 /** The producer query hash for a `DerivedSubject` — the queryHash of
-    the `QueryGetAttr` / `QueryGetListElem` that would produce this
+    the `SelectorGetAttr` / `SelectorGetListElem` that would produce this
     derived value from its parent chain. This is not a state hash
     (derived values don't have one); it's a payload hash serving as
     the Queries-pool key. Callers that already know their subject is
@@ -206,7 +206,7 @@ Hash stateHashAtSubject(const Subject & subject, const Hash & argAncestry, const
     (= step = history.size()). */
 Hash stateHashAfterSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history);
 
-/** Build the per-arg-encoded `QueryApply` payload for an apply-result
+/** Build the per-arg-encoded `SelectorApply` payload for an apply-result
     subject at a given history edge index. The returned query's JSON
     hash equals `stateHashAt(applyResult, argAncestry, history, step)`,
     so callers can use the same value as both the Requests-pool key
@@ -217,7 +217,7 @@ Hash stateHashAfterSubject(const Subject & subject, const Hash & argAncestry, co
     leaves `fn`/`arg` populated only if the caller passes them for
     the legacy direct payload's readability — the per-arg fields
     alone determine the hash. */
-trace::QueryApply makeApplyResultQuery(
+trace::SelectorApply makeApplyResultQuery(
     const Subject & applyResultSubject,
     const Hash & argAncestry,
     const std::vector<ObservationSet> & history,
@@ -225,7 +225,7 @@ trace::QueryApply makeApplyResultQuery(
 
 /** Convenience: extract a query's `from` field as a Hash, if it has
     one. Apply queries don't have a `from`; throws. */
-Hash fromStateHashOf(const trace::QueryVariant & query);
+Hash fromStateHashOf(const trace::SelectorVariant & query);
 
 /** Convenience wrapper around `pathAndRootsFromSubject`: returns just
     the path. Use the full helper when roots are also needed (= writer

@@ -68,7 +68,7 @@ static OuterQueryFn mockResolver(std::map<std::string, trace::ResultVariant> res
 {
     return [responses = std::move(responses)](
                std::shared_ptr<Object> /*outerObj*/,
-               const trace::QueryVariant & q,
+               const trace::SelectorVariant & q,
                Subject subject,
                Hash argAncestry) -> OuterQueryResult {
         auto stateHash = stateHashAfterSubject(subject, argAncestry, {});
@@ -150,7 +150,7 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
         {});
     (void)childStateHash;
     /* Under the fold, existence is projected from parent WHNFAttrs.names;
-       retrieval is a QueryGetAttr returning child WHNF. */
+       retrieval is a SelectorGetAttr returning child WHNF. */
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         stubOuter(),
@@ -191,7 +191,7 @@ TEST(AmbientObjectTest, GetListElem)
         {});
     (void)childStateHash;
     /* Under the fold, bounds are projected from parent WHNFList.size;
-       retrieval is QueryGetListElem returning child WHNF. */
+       retrieval is SelectorGetListElem returning child WHNF. */
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         stubOuter(),

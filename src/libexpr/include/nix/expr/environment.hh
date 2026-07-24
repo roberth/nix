@@ -65,8 +65,8 @@ public:
      * TracingEnvironment overrides to record the interaction.
      */
     virtual trace::ResultVariant outerQuery(
-        const trace::QueryVariant & query,
-        std::function<trace::ResultVariant(const trace::QueryVariant &)> resolve,
+        const trace::SelectorVariant & query,
+        std::function<trace::ResultVariant(const trace::SelectorVariant &)> resolve,
         Subject subject,
         Hash argAncestry = Hash(HashAlgorithm::SHA256))
     {

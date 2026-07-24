@@ -101,7 +101,7 @@ class TracingReplayEvaluator : public Evaluator
        the recorded obsSet, then invoke fn->queryApply live. No
        separate live-fire method. */
 
-    std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const trace::QueryVariant & qv, const nlohmann::json & params, ResolutionContext & ctx);
+    std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const trace::SelectorVariant & qv, const nlohmann::json & params, ResolutionContext & ctx);
 
     template<typename Q>
     std::optional<std::pair<std::string, TriePosition>> lookup(const Q & query, std::shared_ptr<Object> currentProxy = nullptr);
@@ -136,7 +136,7 @@ public:
 
     /**
      * Compute the current response for a recorded request (file hash,
-     * env var, outer-value probe, or QueryCallbackApply) by executing
+     * env var, outer-value probe, or SelectorCallbackApply) by executing
      * against the current validation environment. Query-carrying
      * requests route through proxy-graph resolution using `ctx`.
      */
@@ -163,7 +163,7 @@ public:
     std::optional<WalkResult> walk(
         const Hash & queryHash,
         std::shared_ptr<Object> currentProxy = nullptr,
-        std::optional<trace::QueryVariant> payloadTemplate = std::nullopt,
+        std::optional<trace::SelectorVariant> payloadTemplate = std::nullopt,
         std::optional<Subject> fromSubject = std::nullopt,
         Hash fromSubjectArgAncestry = Hash(HashAlgorithm::SHA256));
 

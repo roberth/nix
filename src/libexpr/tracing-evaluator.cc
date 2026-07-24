@@ -156,7 +156,7 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     guardCacheRecording("evalFile", displayPath);
     ensurePreloaded();
     tracingCacheLog("tracing: evalFile %s", displayPath);
-    auto [v, qh] = writer.logRootQuery(trace::QueryImport{displayPath});
+    auto [v, qh] = writer.logRootQuery(trace::SelectorImport{displayPath});
     auto result = inner->evalFile(path, displayPath);
     auto triePos = writer.logResult(v, computeWHNFFromObject(*result), qh);
     auto obj = TracingObject::create(result, writer, v, triePos);
@@ -172,7 +172,7 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     guardCacheRecording("evalExpr", expr);
     ensurePreloaded();
     tracingCacheLog("tracing: evalExpr %s", expr);
-    auto [v, qh] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
+    auto [v, qh] = writer.logRootQuery(trace::SelectorExpr{expr, basePath.path.abs()});
     auto result = inner->evalExpr(expr, basePath);
     auto triePos = writer.logResult(v, computeWHNFFromObject(*result), qh);
     auto obj = TracingObject::create(result, writer, v, triePos);
@@ -184,7 +184,7 @@ ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const Roote
 {
     guardCacheRecording("evalExprLazy", expr);
     ensurePreloaded();
-    auto [v, qh] = writer.logRootQuery(trace::QueryExpr{expr, basePath.path.abs()});
+    auto [v, qh] = writer.logRootQuery(trace::SelectorExpr{expr, basePath.path.abs()});
     auto result = inner->evalExprLazy(expr, basePath);
     // Lazy: don't force type yet, just wrap
     auto obj = TracingObject::create(result, writer, v);
@@ -301,7 +301,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        advance their cumulative subject-id history by one for ε, so the
        apply-result's state hash is computed at a history step the walker
        can reach via the recorded chain. */
-    nlohmann::json applyQ = trace::QueryApply{fnStateHashStr, argStateHashStr};
+    nlohmann::json applyQ = trace::SelectorApply{fnStateHashStr, argStateHashStr};
 
     /* If fn is a TracingCallbackArg (= inner-supplied lambda the
        outer is now applying — the cb-higher-order case), capture the
@@ -394,7 +394,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
             applyArgAncestryStateHashHex.substr(0, 16));
     }
 
-    auto v = writer.getSink().logQuery(trace::QueryApply{fnStateHashStr, argStateHashStr});
+    auto v = writer.getSink().logQuery(trace::SelectorApply{fnStateHashStr, argStateHashStr});
 
     /* Per-invocation callArgAncestry for GENUINE cb-apply (not curried
        follow-up): sibling cb-apply invocations of the SAME cached

@@ -14,8 +14,8 @@ namespace nix {
 
 /** Compute a value's WHNF in one pass by calling the Object's
     per-type getters. Used by TracingObject::whnf to record a single
-    QueryGetWHNF observation, and by the walker's dispatch to compute
-    the live response for a recorded QueryGetWHNF. */
+    SelectorGetWHNF observation, and by the walker's dispatch to compute
+    the live response for a recorded SelectorGetWHNF. */
 trace::ResultWHNF computeWHNFFromObject(Object & obj);
 
 /**
@@ -65,7 +65,7 @@ class TracingObject : public Object
     void pushObservation(const std::string & fromHex, const Hash & queryHash, const Hash & responseHash);
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
-       getString / etc. fires `whnf()`, which records ONE QueryGetWHNF
+       getString / etc. fires `whnf()`, which records ONE SelectorGetWHNF
        observation against this Object's identity carrying the type
        discriminator plus the type-determined payload. Subsequent calls
        on this Object decode the cached result without re-recording. */

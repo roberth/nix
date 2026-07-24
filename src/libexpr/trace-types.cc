@@ -68,17 +68,17 @@ void from_json(const nlohmann::json & j, GetEnvResponse & r)
 }
 
 // ---------------------------------------------------------------------------
-// QueryVariant serialization — discriminator lives here (flat envelope)
+// SelectorVariant serialization — discriminator lives here (flat envelope)
 // ---------------------------------------------------------------------------
 
-void to_json(nlohmann::json & j, const QueryVariant & q)
+void to_json(nlohmann::json & j, const SelectorVariant & q)
 {
     /* Each per-type to_json emits `tag` alongside its fields, so
        delegation suffices. */
     std::visit([&](const auto & sub) { j = sub; }, q);
 }
 
-void from_json(const nlohmann::json & j, QueryVariant & q)
+void from_json(const nlohmann::json & j, SelectorVariant & q)
 {
     /* Fold-based dispatch — see detail::fromJsonByTag. No
        per-alternative enumeration here; the variant's Ts... drive it. */
@@ -203,7 +203,7 @@ void from_json(const nlohmann::json & j, ResultWHNF & r)
 }
 
 // ---------------------------------------------------------------------------
-// QueryLeaf serialization
+// SelectorLeaf serialization
 // ---------------------------------------------------------------------------
 
 /* StateHashLeaf encodes as the bare hex string (wire-format compatible with
@@ -211,7 +211,7 @@ void from_json(const nlohmann::json & j, ResultWHNF & r)
    object so a parser can distinguish the two on the rare cases where it
    matters during transition; OuterLeafs should not appear in recorded
    artifacts. */
-void to_json(nlohmann::json & j, const QueryLeaf & leaf)
+void to_json(nlohmann::json & j, const SelectorLeaf & leaf)
 {
     if (leaf.isStateHash()) {
         /* Model-driven shape: bare hex when the leaf has no
@@ -231,21 +231,21 @@ void to_json(nlohmann::json & j, const QueryLeaf & leaf)
         j = nlohmann::json{{"outer", leaf.outerIndex()}};
 }
 
-void from_json(const nlohmann::json & j, QueryLeaf & leaf)
+void from_json(const nlohmann::json & j, SelectorLeaf & leaf)
 {
     if (j.is_string())
-        leaf = QueryLeaf{j.get<std::string>()};
+        leaf = SelectorLeaf{j.get<std::string>()};
     else if (j.is_object() && j.contains("outer"))
-        leaf = QueryLeaf{OuterLeaf{j.at("outer").get<int>()}};
+        leaf = SelectorLeaf{OuterLeaf{j.at("outer").get<int>()}};
     else if (j.is_object() && j.contains("stateHash")) {
         StateHashLeaf s;
         j.at("stateHash").get_to(s.hash);
         j.at("argAncestry").get_to(s.argAncestry);
-        leaf = QueryLeaf{std::move(s)};
+        leaf = SelectorLeaf{std::move(s)};
     } else
         throw nlohmann::json::type_error::create(
             302,
-            "QueryLeaf JSON must be a bare hex string, {\"outer\": N}, or "
+            "SelectorLeaf JSON must be a bare hex string, {\"outer\": N}, or "
             "{\"stateHash\": \"...\", \"argAncestry\": \"...\"}",
             &j);
 }
@@ -355,65 +355,65 @@ void from_json(const nlohmann::json & j, PerArgFrame & f)
 
 /* Flat envelope: each Query type emits `tag` alongside its fields.
    Same JSON regardless of whether the caller went through
-   per-type to_json directly or via QueryVariant's std::visit. */
+   per-type to_json directly or via SelectorVariant's std::visit. */
 
-void to_json(nlohmann::json & j, const QueryExpr & q)
+void to_json(nlohmann::json & j, const SelectorExpr & q)
 {
-    j = nlohmann::json{{"tag", QueryExpr::tag}, {"expr", q.expr}, {"baseDir", q.baseDir}};
+    j = nlohmann::json{{"tag", SelectorExpr::tag}, {"expr", q.expr}, {"baseDir", q.baseDir}};
 }
 
-void from_json(const nlohmann::json & j, QueryExpr & q)
+void from_json(const nlohmann::json & j, SelectorExpr & q)
 {
     j.at("expr").get_to(q.expr);
     j.at("baseDir").get_to(q.baseDir);
 }
 
-void to_json(nlohmann::json & j, const QueryImport & q)
+void to_json(nlohmann::json & j, const SelectorImport & q)
 {
-    j = nlohmann::json{{"tag", QueryImport::tag}, {"path", q.path}};
+    j = nlohmann::json{{"tag", SelectorImport::tag}, {"path", q.path}};
 }
 
-void from_json(const nlohmann::json & j, QueryImport & q)
+void from_json(const nlohmann::json & j, SelectorImport & q)
 {
     j.at("path").get_to(q.path);
 }
 
-void to_json(nlohmann::json & j, const QueryGetAttr & q)
+void to_json(nlohmann::json & j, const SelectorGetAttr & q)
 {
     j = nlohmann::json{
-        {"tag", QueryGetAttr::tag},
+        {"tag", SelectorGetAttr::tag},
         {"name", q.name}, {"from", q.from}, {"perArgFrame", q.perArgFrame}};
 }
 
-void from_json(const nlohmann::json & j, QueryGetAttr & q)
+void from_json(const nlohmann::json & j, SelectorGetAttr & q)
 {
     j.at("name").get_to(q.name);
     j.at("from").get_to(q.from);
     j.at("perArgFrame").get_to(q.perArgFrame);
 }
 
-void to_json(nlohmann::json & j, const QueryGetListElem & q)
+void to_json(nlohmann::json & j, const SelectorGetListElem & q)
 {
     j = nlohmann::json{
-        {"tag", QueryGetListElem::tag},
+        {"tag", SelectorGetListElem::tag},
         {"from", q.from}, {"index", q.index}, {"perArgFrame", q.perArgFrame}};
 }
 
-void from_json(const nlohmann::json & j, QueryGetListElem & q)
+void from_json(const nlohmann::json & j, SelectorGetListElem & q)
 {
     j.at("from").get_to(q.from);
     j.at("index").get_to(q.index);
     j.at("perArgFrame").get_to(q.perArgFrame);
 }
 
-void to_json(nlohmann::json & j, const QueryGetFunctionInfo & q)
+void to_json(nlohmann::json & j, const SelectorGetFunctionInfo & q)
 {
     j = nlohmann::json{
-        {"tag", QueryGetFunctionInfo::tag},
+        {"tag", SelectorGetFunctionInfo::tag},
         {"from", q.from}, {"perArgFrame", q.perArgFrame}};
 }
 
-void from_json(const nlohmann::json & j, QueryGetFunctionInfo & q)
+void from_json(const nlohmann::json & j, SelectorGetFunctionInfo & q)
 {
     j.at("from").get_to(q.from);
     j.at("perArgFrame").get_to(q.perArgFrame);
@@ -431,22 +431,22 @@ void from_json(const nlohmann::json & j, ResultFunctionInfo & r)
     j.at("ellipsis").get_to(r.ellipsis);
 }
 
-void to_json(nlohmann::json & j, const QueryGetWHNF & q)
+void to_json(nlohmann::json & j, const SelectorGetWHNF & q)
 {
     j = nlohmann::json{
-        {"tag", QueryGetWHNF::tag},
+        {"tag", SelectorGetWHNF::tag},
         {"from", q.from}, {"perArgFrame", q.perArgFrame}};
 }
 
-void from_json(const nlohmann::json & j, QueryGetWHNF & q)
+void from_json(const nlohmann::json & j, SelectorGetWHNF & q)
 {
     j.at("from").get_to(q.from);
     j.at("perArgFrame").get_to(q.perArgFrame);
 }
 
-void to_json(nlohmann::json & j, const QueryApply & q)
+void to_json(nlohmann::json & j, const SelectorApply & q)
 {
-    j = nlohmann::json{{"tag", QueryApply::tag}, {"fn", q.fn}, {"arg", q.arg}};
+    j = nlohmann::json{{"tag", SelectorApply::tag}, {"fn", q.fn}, {"arg", q.arg}};
     /* Per-arg mode (= ApplyResultSubject state hash computation under
        per-arg centralization) emits fromStateHashes + fn/argPath + root
        indices. Legacy direct mode leaves them empty. */
@@ -462,7 +462,7 @@ void to_json(nlohmann::json & j, const QueryApply & q)
         j["argRootIndex"] = q.argRootIndex;
 }
 
-void from_json(const nlohmann::json & j, QueryApply & q)
+void from_json(const nlohmann::json & j, SelectorApply & q)
 {
     j.at("fn").get_to(q.fn);
     j.at("arg").get_to(q.arg);
@@ -478,17 +478,17 @@ void from_json(const nlohmann::json & j, QueryApply & q)
         j.at("argRootIndex").get_to(q.argRootIndex);
 }
 
-void to_json(nlohmann::json & j, const QueryCallbackApply & q)
+void to_json(nlohmann::json & j, const SelectorCallbackApply & q)
 {
     j = nlohmann::json{
-        {"tag", QueryCallbackApply::tag},
+        {"tag", SelectorCallbackApply::tag},
         {"fn", q.fn},
         {"argObsSet", q.argObsSet},
         {"perArgFrame", q.perArgFrame},
     };
 }
 
-void from_json(const nlohmann::json & j, QueryCallbackApply & q)
+void from_json(const nlohmann::json & j, SelectorCallbackApply & q)
 {
     j.at("fn").get_to(q.fn);
     j.at("argObsSet").get_to(q.argObsSet);
@@ -550,21 +550,21 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
             return std::nullopt;
         auto type = q["tag"].get<std::string_view>();
 
-        if (auto r = tryParseQuery<QueryExpr>(type, j))
+        if (auto r = tryParseQuery<SelectorExpr>(type, j))
             return r;
-        if (auto r = tryParseQuery<QueryImport>(type, j))
+        if (auto r = tryParseQuery<SelectorImport>(type, j))
             return r;
-        if (auto r = tryParseQuery<QueryGetAttr>(type, j))
+        if (auto r = tryParseQuery<SelectorGetAttr>(type, j))
             return r;
-        if (auto r = tryParseQuery<QueryGetListElem>(type, j))
+        if (auto r = tryParseQuery<SelectorGetListElem>(type, j))
             return r;
-        if (auto r = tryParseQuery<QueryGetWHNF>(type, j))
+        if (auto r = tryParseQuery<SelectorGetWHNF>(type, j))
             return r;
-        if (auto r = tryParseQuery<QueryGetFunctionInfo>(type, j))
+        if (auto r = tryParseQuery<SelectorGetFunctionInfo>(type, j))
             return r;
-        if (auto r = tryParseQuery<QueryCallbackApply>(type, j))
+        if (auto r = tryParseQuery<SelectorCallbackApply>(type, j))
             return r;
-        if (auto r = tryParseQuery<QueryApply>(type, j))
+        if (auto r = tryParseQuery<SelectorApply>(type, j))
             return r;
         return std::nullopt;
     }
@@ -708,14 +708,14 @@ QueryIndex::QueryIndex(const std::vector<TraceEntry> & trace)
 // parseQueryVariant / describe / fromHashOf
 // ---------------------------------------------------------------------------
 
-std::optional<QueryVariant> parseQueryVariant(const nlohmann::json & j)
+std::optional<SelectorVariant> parseQueryVariant(const nlohmann::json & j)
 {
-    /* Delegate to QueryVariant's from_json — the discriminator
+    /* Delegate to SelectorVariant's from_json — the discriminator
        lives there. */
     if (!j.is_object() || !j.contains("tag"))
         return std::nullopt;
     try {
-        QueryVariant qv;
+        SelectorVariant qv;
         from_json(j, qv);
         return qv;
     } catch (const std::exception &) {
@@ -728,27 +728,27 @@ static std::string shortHex(const std::string & hex)
     return hex.size() > 12 ? hex.substr(0, 12) : hex;
 }
 
-std::string describe(const QueryVariant & query)
+std::string describe(const SelectorVariant & query)
 {
     return std::visit(
         [](const auto & q) -> std::string {
             using Q = std::decay_t<decltype(q)>;
             std::string out{Q::tag};
-            if constexpr (std::is_same_v<Q, QueryGetAttr>) {
+            if constexpr (std::is_same_v<Q, SelectorGetAttr>) {
                 out += " name=\"" + q.name + "\"";
-            } else if constexpr (std::is_same_v<Q, QueryGetListElem>) {
+            } else if constexpr (std::is_same_v<Q, SelectorGetListElem>) {
                 out += " index=" + std::to_string(q.index);
-            } else if constexpr (std::is_same_v<Q, QueryApply>) {
+            } else if constexpr (std::is_same_v<Q, SelectorApply>) {
                 if (q.fn.isStateHash())
                     out += " fn=" + shortHex(q.fn.stateHash());
                 if (q.arg.isStateHash())
                     out += " arg=" + shortHex(q.arg.stateHash());
-            } else if constexpr (std::is_same_v<Q, QueryCallbackApply>) {
+            } else if constexpr (std::is_same_v<Q, SelectorCallbackApply>) {
                 if (q.fn.isStateHash())
                     out += " fn=" + shortHex(q.fn.stateHash());
-            } else if constexpr (std::is_same_v<Q, QueryExpr>) {
+            } else if constexpr (std::is_same_v<Q, SelectorExpr>) {
                 out += " expr=\"" + q.expr + "\"";
-            } else if constexpr (std::is_same_v<Q, QueryImport>) {
+            } else if constexpr (std::is_same_v<Q, SelectorImport>) {
                 out += " path=" + q.path;
             }
             return out;
@@ -756,7 +756,7 @@ std::string describe(const QueryVariant & query)
         query);
 }
 
-std::optional<Hash> fromHashOf(const QueryVariant & query)
+std::optional<Hash> fromHashOf(const SelectorVariant & query)
 {
     return std::visit(
         [](const auto & q) -> std::optional<Hash> {
@@ -776,11 +776,11 @@ std::optional<Hash> fromHashOf(const QueryVariant & query)
         query);
 }
 
-void rewriteFrom(QueryVariant & query, const std::string & newFromHex)
+void rewriteFrom(SelectorVariant & query, const std::string & newFromHex)
 {
-    auto rewriteLeaf = [&](QueryLeaf & leaf) {
+    auto rewriteLeaf = [&](SelectorLeaf & leaf) {
         std::string ancestry = leaf.isStateHash() ? leaf.argAncestry() : std::string{};
-        leaf = QueryLeaf{StateHashLeaf{newFromHex, std::move(ancestry)}};
+        leaf = SelectorLeaf{StateHashLeaf{newFromHex, std::move(ancestry)}};
     };
     std::visit(
         [&](auto & q) {
@@ -791,7 +791,7 @@ void rewriteFrom(QueryVariant & query, const std::string & newFromHex)
                 if (!q.perArgFrame.fromStateHashes.empty())
                     rewriteLeaf(q.perArgFrame.fromStateHashes[0]);
             }
-            if constexpr (requires { q.fromStateHashes; }) {  // QueryApply
+            if constexpr (requires { q.fromStateHashes; }) {  // SelectorApply
                 if (!q.fromStateHashes.empty())
                     rewriteLeaf(q.fromStateHashes[0]);
             }
@@ -799,14 +799,14 @@ void rewriteFrom(QueryVariant & query, const std::string & newFromHex)
         query);
 }
 
-nlohmann::json toJson(const QueryVariant & query)
+nlohmann::json toJson(const SelectorVariant & query)
 {
     nlohmann::json j;
     std::visit([&](const auto & q) { j = q; }, query);
     return j;
 }
 
-Hash computeQueryHash(const QueryVariant & query)
+Hash computeQueryHash(const SelectorVariant & query)
 {
     return hashString(HashAlgorithm::SHA256, toJson(query).dump());
 }

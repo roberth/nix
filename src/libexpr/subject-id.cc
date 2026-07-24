@@ -14,7 +14,7 @@ static std::string hashHex(const Hash & h)
     return h.to_string(HashFormat::Base16, false);
 }
 
-Hash fromStateHashOf(const trace::QueryVariant & query)
+Hash fromStateHashOf(const trace::SelectorVariant & query)
 {
     return std::visit(
         [](const auto & q) -> Hash {
@@ -135,7 +135,7 @@ trace::PathExpr pathFromSubject(const Subject & subject)
     return pathAndRootsFromSubject(subject).path;
 }
 
-Observation observationFromQR(const trace::QueryVariant & query, const trace::ResultVariant & result)
+Observation observationFromQR(const trace::SelectorVariant & query, const trace::ResultVariant & result)
 {
     nlohmann::json qj;
     std::visit([&](const auto & q) { qj = q; }, query);
@@ -152,7 +152,7 @@ Observation observationFromQR(const trace::QueryVariant & query, const trace::Re
     };
 }
 
-trace::QueryApply makeApplyResultQuery(
+trace::SelectorApply makeApplyResultQuery(
     const Subject & applyResultSubject, const Hash & argAncestry,
     const std::vector<ObservationSet> & history, size_t step)
 {
@@ -167,7 +167,7 @@ trace::QueryApply makeApplyResultQuery(
         throw Error("makeApplyResultQuery: unexpected path shape");
     const auto & applyStep = par.path.steps[0];
 
-    trace::QueryApply q;
+    trace::SelectorApply q;
     q.fromStateHashes.reserve(par.roots.size());
     for (auto & root : par.roots) {
         auto cid = stateHashAt(root, argAncestry, history, step);
@@ -235,7 +235,7 @@ Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::v
                        the producer-query-hash path). */
                     auto fnAtK = stateHashAtSubject(*alt.fn, argAncestry, history, k);
                     auto argAtK = stateHashAtSubject(*alt.arg, argAncestry, history, k);
-                    nlohmann::json qj = trace::QueryApply{hashHex(fnAtK), hashHex(argAtK)};
+                    nlohmann::json qj = trace::SelectorApply{hashHex(fnAtK), hashHex(argAtK)};
                     return hashString(HashAlgorithm::SHA256, qj.dump());
                 } else if constexpr (std::is_same_v<T, PostulatedIdempotentRead>) {
                     /* X is treated as argAncestry-saturated. Callers pass
@@ -356,21 +356,21 @@ Hash producerQueryHashAt(
     size_t step)
 {
     auto [pathToParent, parentRoots] = pathAndRootsFromSubject(*derived.parent);
-    std::vector<trace::QueryLeaf> fromStateHashes;
+    std::vector<trace::SelectorLeaf> fromStateHashes;
     fromStateHashes.reserve(parentRoots.size());
     for (auto & root : parentRoots) {
         auto rootStateHash = stateHashAt(root, argAncestry, history, step);
         fromStateHashes.emplace_back(hashHex(rootStateHash));
     }
-    auto fromLeaf = fromStateHashes.empty() ? trace::QueryLeaf("") : fromStateHashes[0];
+    auto fromLeaf = fromStateHashes.empty() ? trace::SelectorLeaf("") : fromStateHashes[0];
     nlohmann::json qj;
     if (derived.kind == DerivedSubject::Kind::GetAttr) {
-        trace::QueryGetAttr q{derived.name, fromLeaf};
+        trace::SelectorGetAttr q{derived.name, fromLeaf};
         q.perArgFrame.path = pathToParent;
         q.perArgFrame.fromStateHashes = fromStateHashes;
         qj = q;
     } else {
-        trace::QueryGetListElem q{fromLeaf, derived.index};
+        trace::SelectorGetListElem q{fromLeaf, derived.index};
         q.perArgFrame.path = pathToParent;
         q.perArgFrame.fromStateHashes = fromStateHashes;
         qj = q;

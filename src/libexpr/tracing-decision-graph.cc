@@ -40,10 +40,10 @@ CREATE TABLE IF NOT EXISTS Results (
 );
 
 -- ObservationSet CAS pool: content-addressed sets of (queryHash,
--- responseHash) tuples. Referenced from QueryCallbackApply payloads
+-- responseHash) tuples. Referenced from SelectorCallbackApply payloads
 -- to identify the specific observations an outer callback made on
 -- an inner-supplied contra-arg during one callback firing. Distinct
--- observation sets → distinct QueryCallbackApply queryHashes →
+-- observation sets → distinct SelectorCallbackApply queryHashes →
 -- distinct DB rows. Same set → same hash → shared row.
 CREATE TABLE IF NOT EXISTS ObservationSet (
     setHash BLOB PRIMARY KEY,
@@ -357,7 +357,7 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     state->db.exec("DROP TABLE IF EXISTS RequestSets;");
     /* Drop the obsolete InnerValueResponse table — callback-arg probe
        responses now live in the ObservationSet CAS via each
-       QueryCallbackApply's `argObsSet`. */
+       SelectorCallbackApply's `argObsSet`. */
     state->db.exec("DROP TABLE IF EXISTS InnerValueResponse;");
 
     state->insertAsk.create(state->db,

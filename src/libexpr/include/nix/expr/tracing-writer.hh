@@ -134,9 +134,9 @@ class TracingWriter
         Hash currentQ{HashAlgorithm::SHA256};
         /** Q's typed payload. `from` gets rewritten as the
             fromSubject's state evolves; re-hashing gives `currentQ`.
-            Stored as `QueryVariant` so Q-evolution rewrites are
+            Stored as `SelectorVariant` so Q-evolution rewrites are
             typed (`trace::rewriteFrom`) instead of raw JSON edits. */
-        trace::QueryVariant payloadTemplate;
+        trace::SelectorVariant payloadTemplate;
         /** Subject that Q's `from` field's state hash is derived from.
             Not set for root queries or queries whose from is a fixed
             hash (state does not evolve for those). */
@@ -184,7 +184,7 @@ class TracingWriter
        at cache-boundary apply; `logCallbackObservation` appends each
        observation the outer makes on the arg to the cell's
        `runningObsSet`; at sampling moments the writer snapshots that
-       set into the ObservationSet CAS and emits a QueryCallbackApply
+       set into the ObservationSet CAS and emits a SelectorCallbackApply
        request referencing it. Cell lookup at sampling time is by
        `fnStateHashHex` — the fn's initial state hash captured at
        apply time. */
@@ -274,7 +274,7 @@ public:
         return envWalk;
     }
 
-    /** Task #110 (C3): emit a QueryCallbackApply observation for an
+    /** Task #110 (C3): emit a SelectorCallbackApply observation for an
         applyResult, carrying the applyResult's WHNF as the Result.
         Called from TracingObject::whnf() when it has an
         applyResultSubject. Looks up the matching CallbackCell by
@@ -305,13 +305,13 @@ public:
             auto obsSetHash = decisionGraph->insertObservationSet(cell.runningObsSet);
             auto fnCurrent = stateHashAtSubject(
                 *ar->fn, applyArgAncestry, envWalk, envWalk.size());
-            trace::QueryCallbackApply qca;
-            qca.fn = trace::QueryLeaf{trace::StateHashLeaf{
+            trace::SelectorCallbackApply qca;
+            qca.fn = trace::SelectorLeaf{trace::StateHashLeaf{
                 fnCurrent.to_string(HashFormat::Base16, false),
                 cell.argAncestryHex}};
             qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
             logOuterObservation(
-                trace::QueryVariant{std::move(qca)},
+                trace::SelectorVariant{std::move(qca)},
                 trace::ResultVariant{whnf},
                 *ar->fn,
                 applyArgAncestry);
@@ -367,7 +367,7 @@ public:
             qj.dump());
         ActiveQuery aq;
         aq.currentQ = queryHash;
-        aq.payloadTemplate = trace::QueryVariant{query};
+        aq.payloadTemplate = trace::SelectorVariant{query};
         aq.queryTag = std::string(Q::tag);
         aq.initialPayloadTemplate = qj;
         aq.envAsksEdgesSizeAtPush = envAsksEdges.size();
@@ -408,7 +408,7 @@ public:
         }
         ActiveQuery aq;
         aq.currentQ = queryHash;
-        aq.payloadTemplate = trace::QueryVariant{query};
+        aq.payloadTemplate = trace::SelectorVariant{query};
         aq.fromSubject = std::move(fromSubject);
         aq.fromSubjectArgAncestry = fromSubjectArgAncestry;
         aq.fromSubjectLastState = lastState;
@@ -527,7 +527,7 @@ public:
      * requestHashes depend on evolved Subject state — so those go
      * per-probe here. */
     void logOuterObservation(
-        const trace::QueryVariant & query,
+        const trace::SelectorVariant & query,
         const trace::ResultVariant & result,
         Subject subject,
         Hash argAncestry = Hash(HashAlgorithm::SHA256));
@@ -569,7 +569,7 @@ public:
      * CallbackApply, not via arg-side state hash evolution.
      */
     void logCallbackObservation(
-        const trace::QueryVariant & query,
+        const trace::SelectorVariant & query,
         const trace::ResultVariant & result,
         Subject subject,
         Hash argAncestry,
@@ -591,9 +591,9 @@ public:
                 it->argAncestryHex = argAncestry.to_string(HashFormat::Base16, false);
             if (it->fnStateHashHex.empty())
                 return;
-            trace::QueryVariant stampedQuery = query;
+            trace::SelectorVariant stampedQuery = query;
             auto par = pathAndRootsFromSubject(subject);
-            std::vector<trace::QueryLeaf> fromStateHashes;
+            std::vector<trace::SelectorLeaf> fromStateHashes;
             fromStateHashes.reserve(par.roots.size());
             for (auto & root : par.roots) {
                 auto cid = stateHashAfter(root, argAncestry, {});
@@ -603,14 +603,14 @@ public:
                 using QT = std::decay_t<decltype(q)>;
                 if constexpr (requires { q.from; }) {
                     q.from = fromStateHashes.empty()
-                        ? trace::QueryLeaf{std::string{}}
+                        ? trace::SelectorLeaf{std::string{}}
                         : fromStateHashes[0];
                 }
                 if constexpr (requires { q.perArgFrame; }) {
                     q.perArgFrame.path = par.path;
                     q.perArgFrame.fromStateHashes = fromStateHashes;
                 }
-                if constexpr (requires { q.fromStateHashes = fromStateHashes; }) {  // QueryApply
+                if constexpr (requires { q.fromStateHashes = fromStateHashes; }) {  // SelectorApply
                     q.fromStateHashes = fromStateHashes;
                 }
             }, stampedQuery);
@@ -705,7 +705,7 @@ public:
      * TracingCallbackArg and TracingCallbackApplyResult back into
      * this cell's `runningObsSet` via `logCallbackObservation`.
      * The obsSet is later snapshotted into an ObservationSet
-     * referenced from a QueryCallbackApply request.
+     * referenced from a SelectorCallbackApply request.
      */
     void createCallbackCell(const nlohmann::json & applyQueryPayload);
 

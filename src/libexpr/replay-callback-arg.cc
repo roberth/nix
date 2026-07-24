@@ -36,7 +36,7 @@ static Hash stampPerArgFields(
     (void) walkFacts;
     (void) step;
     auto par = pathAndRootsFromSubject(subject);
-    std::vector<trace::QueryLeaf> fromStateHashes;
+    std::vector<trace::SelectorLeaf> fromStateHashes;
     fromStateHashes.reserve(par.roots.size());
     Hash fromStateHash(HashAlgorithm::SHA256);
     for (size_t i = 0; i < par.roots.size(); ++i) {
@@ -46,7 +46,7 @@ static Hash stampPerArgFields(
         fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
     }
     query.from = fromStateHashes.empty()
-        ? trace::QueryLeaf{std::string{}}
+        ? trace::SelectorLeaf{std::string{}}
         : fromStateHashes[0];
     query.perArgFrame.path = std::move(par.path);
     query.perArgFrame.fromStateHashes = std::move(fromStateHashes);
@@ -109,14 +109,14 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
 {
     /* Existence projects from parent WHNFAttrs.names (via whnf()
        cache lookup); only when present do we consume the recorded
-       QueryGetAttr response. */
+       SelectorGetAttr response. */
     auto & w = whnf();
     auto * ap = std::get_if<trace::WHNFAttrs>(&w.payload);
     if (!ap)
         return nullptr;
     if (std::find(ap->names.begin(), ap->names.end(), name) == ap->names.end())
         return nullptr;
-    trace::QueryGetAttr query{name, std::string{}};
+    trace::SelectorGetAttr query{name, std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
@@ -152,7 +152,7 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    trace::QueryGetWHNF query{std::string{}};
+    trace::SelectorGetWHNF query{std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
@@ -243,12 +243,12 @@ size_t ReplayCallbackArg::getListSize()
 std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
 {
     /* Bounds project from parent WHNFList.size; retrieval consumes
-       the recorded QueryGetListElem response. */
+       the recorded SelectorGetListElem response. */
     auto & w = whnf();
     auto * lp = std::get_if<trace::WHNFList>(&w.payload);
     if (!lp || index >= lp->size)
         throw Error("rlo getListElem: parent WHNF is %s, index %zu invalid", w.type, index);
-    trace::QueryGetListElem query{std::string{}, index};
+    trace::SelectorGetListElem query{std::string{}, index};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
@@ -453,7 +453,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
 
 std::optional<FunctionInfo> ReplayCallbackArg::getFunctionInfo()
 {
-    trace::QueryGetFunctionInfo query{std::string{}};
+    trace::SelectorGetFunctionInfo query{std::string{}};
     auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);

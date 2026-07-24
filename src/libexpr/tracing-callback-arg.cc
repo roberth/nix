@@ -37,7 +37,7 @@ TracingCallbackArg::TracingCallbackArg(
 std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & name)
 {
     /* Existence projects from parent WHNFAttrs.names; only when
-       present do we record QueryGetAttr (retrieval) with child WHNF. */
+       present do we record SelectorGetAttr (retrieval) with child WHNF. */
     auto & w = whnf();
     auto * ap = std::get_if<trace::WHNFAttrs>(&w.payload);
     if (!ap)
@@ -49,7 +49,7 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
     auto child = inner->maybeGetAttr(name);
     if (!child)
         return nullptr;
-    trace::QueryGetAttr query{name, tracingLocalFromOf(localId())};
+    trace::SelectorGetAttr query{name, tracingLocalFromOf(localId())};
     recordObservation(query, computeWHNFFromObject(*child));
     Subject childSubject{DerivedSubject{
         .parent = std::make_shared<const Subject>(subject),
@@ -66,7 +66,7 @@ trace::ResultWHNF & TracingCallbackArg::whnf()
         return *cachedWHNF;
     auto whnfResult = computeWHNFFromObject(*inner);
     recordObservation(
-        trace::QueryGetWHNF{tracingLocalFromOf(localId())},
+        trace::SelectorGetWHNF{tracingLocalFromOf(localId())},
         whnfResult);
     cachedWHNF = std::move(whnfResult);
     return *cachedWHNF;
@@ -157,7 +157,7 @@ size_t TracingCallbackArg::getListSize()
 std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
 {
     /* Bounds project from parent WHNFList.size; retrieval records
-       QueryGetListElem with child WHNF. */
+       SelectorGetListElem with child WHNF. */
     auto & w = whnf();
     auto * lp = std::get_if<trace::WHNFList>(&w.payload);
     if (!lp || index >= lp->size)
@@ -165,7 +165,7 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
            throws the source-positioned error. */
         return inner->getListElem(index);
     auto child = inner->getListElem(index);
-    trace::QueryGetListElem query{tracingLocalFromOf(localId()), index};
+    trace::SelectorGetListElem query{tracingLocalFromOf(localId()), index};
     recordObservation(query, computeWHNFFromObject(*child));
     Subject childSubject{DerivedSubject{
         .parent = std::make_shared<const Subject>(subject),
@@ -203,7 +203,7 @@ std::optional<FunctionInfo> TracingCallbackArg::getFunctionInfo()
     auto info = inner->getFunctionInfo();
     trace::ResultFunctionInfo rfi{
         info.has_value(), info ? info->formals : std::map<std::string, bool>{}, info ? info->ellipsis : false};
-    recordObservation(trace::QueryGetFunctionInfo{tracingLocalFromOf(localId())}, rfi);
+    recordObservation(trace::SelectorGetFunctionInfo{tracingLocalFromOf(localId())}, rfi);
     return info;
 }
 
@@ -217,12 +217,12 @@ std::optional<std::vector<std::string>> TracingCallbackArg::getAttrPath()
     return inner->getAttrPath();
 }
 
-void TracingCallbackArg::recordObservation(const trace::QueryVariant & query, const trace::ResultVariant & result)
+void TracingCallbackArg::recordObservation(const trace::SelectorVariant & query, const trace::ResultVariant & result)
 {
     /* Route the observation into the enclosing CallbackCell's
        runningObsSet (via `applyId`); the writer later snapshots the
        obsSet into an ObservationSet referenced from a
-       QueryCallbackApply request. */
+       SelectorCallbackApply request. */
     writer.logCallbackObservation(query, result, subject, argAncestry, applyId);
 }
 

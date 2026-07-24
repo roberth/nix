@@ -17,7 +17,7 @@
  *    `writer.logCallbackObservation`, which routes them into the
  *    enclosing CallbackCell's `runningObsSet`. Those observations
  *    are later snapshotted (by value) into an ObservationSet and
- *    referenced from a QueryCallbackApply request via the
+ *    referenced from a SelectorCallbackApply request via the
  *    `argObsSet` payload field.
  *
  * See tracing-cache-callback-model.md for the recording protocol
@@ -52,7 +52,7 @@ class TracingCallbackApplyResult : public Object
     Hash applyArgAncestry;
 
     /* The enclosing cb-apply's `applyId` (= what `runOn`
-       computed as `queryHash(QueryApply{fn, arg})` when it pushed
+       computed as `queryHash(SelectorApply{fn, arg})` when it pushed
        this call). Captured BEFORE `IT::apply`'s
        `createCallbackCell` would push a new entry, so the
        observations route to the correct CallbackCell. */
@@ -68,12 +68,12 @@ class TracingCallbackApplyResult : public Object
     std::shared_ptr<const ArgCell> argCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
-       getString / etc. fires `whnf()`, which records ONE QueryGetWHNF
+       getString / etc. fires `whnf()`, which records ONE SelectorGetWHNF
        observation. Subsequent calls decode the cached result. */
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 
-    void recordD2(const trace::QueryVariant & query, const trace::ResultVariant & result);
+    void recordD2(const trace::SelectorVariant & query, const trace::ResultVariant & result);
 
 public:
     TracingCallbackApplyResult(

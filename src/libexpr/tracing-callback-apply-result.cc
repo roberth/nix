@@ -23,12 +23,12 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
     applyArgAncestryStateHashHex = stateHash.to_string(HashFormat::Base16, false);
 }
 
-void TracingCallbackApplyResult::recordD2(const trace::QueryVariant & query, const trace::ResultVariant & result)
+void TracingCallbackApplyResult::recordD2(const trace::SelectorVariant & query, const trace::ResultVariant & result)
 {
     /* Route every observation on this apply-result into the enclosing
        CallbackCell's runningObsSet via logCallbackObservation. The
        observations are later snapshotted (by value) into an
-       ObservationSet referenced from a QueryCallbackApply request.
+       ObservationSet referenced from a SelectorCallbackApply request.
        See tracing-cache-callback-model.md for the recording
        protocol. */
     writer.logCallbackObservation(query, result, applyResultSubject, applyArgAncestry, applyId);
@@ -37,7 +37,7 @@ void TracingCallbackApplyResult::recordD2(const trace::QueryVariant & query, con
 std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::string & name)
 {
     /* Existence is projected from parent WHNFAttrs.names; only when
-       present do we record the pure-retrieval QueryGetAttr with the
+       present do we record the pure-retrieval SelectorGetAttr with the
        child's WHNF. Absence still requires a whnf recording so the
        apply-result's WHNFAttrs.names is on the trace — that's what
        future warm replays will project membership from. */
@@ -52,7 +52,7 @@ std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::stri
     auto child = inner->maybeGetAttr(name);
     if (!child)
         return nullptr;
-    trace::QueryGetAttr q{name, std::string{}};
+    trace::SelectorGetAttr q{name, std::string{}};
     auto childWHNF = computeWHNFFromObject(*child);
     recordD2(q, childWHNF);
     return child;
@@ -63,7 +63,7 @@ trace::ResultWHNF & TracingCallbackApplyResult::whnf()
     if (cachedWHNF)
         return *cachedWHNF;
     auto whnfResult = computeWHNFFromObject(*inner);
-    recordD2(trace::QueryGetWHNF{std::string{}}, whnfResult);
+    recordD2(trace::SelectorGetWHNF{std::string{}}, whnfResult);
     cachedWHNF = std::move(whnfResult);
     return *cachedWHNF;
 }
@@ -150,7 +150,7 @@ size_t TracingCallbackApplyResult::getListSize()
 std::shared_ptr<Object> TracingCallbackApplyResult::getListElem(size_t index)
 {
     /* Bounds are projected from parent WHNFList.size; retrieval is
-       QueryGetListElem returning the child's WHNF. */
+       SelectorGetListElem returning the child's WHNF. */
     auto & w = whnf();
     auto * lp = std::get_if<trace::WHNFList>(&w.payload);
     if (!lp || index >= lp->size)
@@ -159,7 +159,7 @@ std::shared_ptr<Object> TracingCallbackApplyResult::getListElem(size_t index)
         return inner->getListElem(index);
     auto child = inner->getListElem(index);
     recordD2(
-        trace::QueryGetListElem{std::string{}, index},
+        trace::SelectorGetListElem{std::string{}, index},
         computeWHNFFromObject(*child));
     return child;
 }
@@ -167,7 +167,7 @@ std::shared_ptr<Object> TracingCallbackApplyResult::getListElem(size_t index)
 ObjectType TracingCallbackApplyResult::getTypeLazy()
 {
     /* Delegate to `inner` for the type without recording — `getType`
-       goes through `whnf()` which records the same QueryGetWHNF
+       goes through `whnf()` which records the same SelectorGetWHNF
        payload; recording here too would produce a duplicate. Callers
        that need both `getTypeLazy` and `getType` get exactly one
        observation through the `getType` call. */
@@ -194,7 +194,7 @@ std::optional<FunctionInfo> TracingCallbackApplyResult::getFunctionInfo()
         info.has_value(),
         info ? info->formals : std::map<std::string, bool>{},
         info ? info->ellipsis : false};
-    recordD2(trace::QueryGetFunctionInfo{std::string{}}, rfi);
+    recordD2(trace::SelectorGetFunctionInfo{std::string{}}, rfi);
     return info;
 }
 

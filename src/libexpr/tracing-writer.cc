@@ -11,7 +11,7 @@ namespace nix {
 
 
 void TracingWriter::logOuterObservation(
-    const trace::QueryVariant & query,
+    const trace::SelectorVariant & query,
     const trace::ResultVariant & result,
     Subject subject,
     Hash argAncestry)
@@ -19,7 +19,7 @@ void TracingWriter::logOuterObservation(
     if (!decisionGraph)
         return;
 
-    /* Task #110 (C3): QueryCallbackApply emission moved to
+    /* Task #110 (C3): SelectorCallbackApply emission moved to
        TracingObject::whnf() where the applyResult's WHNF is
        actually known. No preamble here — a WHNF query always
        precedes any structural access on an applyResult, so cold
@@ -31,7 +31,7 @@ void TracingWriter::logOuterObservation(
        so successive probes on the same Subject stamp against evolved
        state — the design's per-observation state evolution. */
     auto [path, roots] = pathAndRootsFromSubject(subject);
-    std::vector<trace::QueryLeaf> fromStateHashes;
+    std::vector<trace::SelectorLeaf> fromStateHashes;
     fromStateHashes.reserve(roots.size());
     for (auto & root : roots) {
         auto cid = stateHashAt(
@@ -50,17 +50,17 @@ void TracingWriter::logOuterObservation(
         describe(subject), queryTag, fromHex.substr(0, 12),
         path.steps.size(), fromStateHashes.size());
 
-    trace::QueryVariant stampedQuery = query;
+    trace::SelectorVariant stampedQuery = query;
     std::visit(
         [&](auto & q) {
             using Q = std::decay_t<decltype(q)>;
             if constexpr (requires { q.from; })
-                q.from = trace::QueryLeaf{trace::StateHashLeaf{fromHex, {}}};
+                q.from = trace::SelectorLeaf{trace::StateHashLeaf{fromHex, {}}};
             if constexpr (requires { q.perArgFrame; }) {
                 q.perArgFrame.path = path;
                 q.perArgFrame.fromStateHashes = fromStateHashes;
             }
-            if constexpr (requires { q.fromStateHashes = fromStateHashes; })  // QueryApply
+            if constexpr (requires { q.fromStateHashes = fromStateHashes; })  // SelectorApply
                 q.fromStateHashes = fromStateHashes;
         },
         stampedQuery);
@@ -95,7 +95,7 @@ void TracingWriter::logOuterObservation(
     /* Secondary index for producer queries — see comment on the
        original loop for the reasoning. Preserved verbatim. */
     if ((queryTag == "getAttr" || queryTag == "getListElem") && !roots.empty()) {
-        std::vector<trace::QueryLeaf> initialFromStateHashes;
+        std::vector<trace::SelectorLeaf> initialFromStateHashes;
         initialFromStateHashes.reserve(roots.size());
         for (auto & root : roots) {
             auto initStateHash = stateHashAt(
@@ -104,17 +104,17 @@ void TracingWriter::logOuterObservation(
                 initStateHash.to_string(HashFormat::Base16, false));
         }
         std::string initialFromHex = initialFromStateHashes[0].stateHash();
-        trace::QueryVariant initialStamped = query;
+        trace::SelectorVariant initialStamped = query;
         std::visit(
             [&](auto & q) {
                 using Q = std::decay_t<decltype(q)>;
                 if constexpr (requires { q.from; })
-                    q.from = trace::QueryLeaf{trace::StateHashLeaf{initialFromHex, {}}};
+                    q.from = trace::SelectorLeaf{trace::StateHashLeaf{initialFromHex, {}}};
                 if constexpr (requires { q.perArgFrame; }) {
                     q.perArgFrame.path = path;
                     q.perArgFrame.fromStateHashes = initialFromStateHashes;
                 }
-                if constexpr (requires { q.fromStateHashes = initialFromStateHashes; })  // QueryApply
+                if constexpr (requires { q.fromStateHashes = initialFromStateHashes; })  // SelectorApply
                     q.fromStateHashes = initialFromStateHashes;
             },
             initialStamped);

@@ -86,7 +86,7 @@ TEST(CidAsks, ObservationOnSeedAdvancesContentId)
     auto initial = stateHashAfter(s, noScope(), {});
 
     // A getInt fact whose from matches the arg's initial id.
-    trace::QueryGetWHNF q{hex(initial)};
+    trace::SelectorGetWHNF q{hex(initial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{42}};
     ObservationSet e{.observations = {observationFromQR(q, r)}};
 
@@ -106,7 +106,7 @@ TEST(CidAsks, FactOnUnrelatedSubjectDoesNotAdvance)
     auto s1Initial = stateHashAfter(s1, noScope(), {});
 
     // Fact whose from matches s1, not s0.
-    trace::QueryGetWHNF q{hex(s1Initial)};
+    trace::SelectorGetWHNF q{hex(s1Initial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{99}};
     ObservationSet e{.observations = {observationFromQR(q, r)}};
 
@@ -128,9 +128,9 @@ TEST(CidAsks, XorCommutativityWithinEdge)
     auto s = argAt(0);
     auto initial = stateHashAfter(s, noScope(), {});
 
-    trace::QueryGetWHNF q1{hex(initial)};
+    trace::SelectorGetWHNF q1{hex(initial)};
     trace::ResultWHNF r1{"int", trace::WHNFInt{1}};
-    trace::QueryGetAttr q2{"foo", hex(initial)};
+    trace::SelectorGetAttr q2{"foo", hex(initial)};
     trace::ResultWHNF r2{"int", trace::WHNFInt{2}};
 
     auto f1 = observationFromQR(q1, r1);
@@ -153,7 +153,7 @@ TEST(CidAsks, DerivedAdvancesWhenParentAdvances)
     auto childInitial = stateHashAfterSubject(child, noScope(), {});
 
     // A fact on the parent.
-    trace::QueryGetWHNF q{hex(parentInitial)};
+    trace::SelectorGetWHNF q{hex(parentInitial)};
     trace::ResultWHNF r{"set", trace::WHNFAttrs{{"x"}}};
     ObservationSet e{.observations = {observationFromQR(q, r)}};
 
@@ -174,7 +174,7 @@ TEST(CidAsks, DerivedDoesNotAdvanceOnFactsTargetedAtItself)
     auto childInitial = stateHashAfterSubject(child, noScope(), {});
 
     // A fact whose `from` matches the child's address (not the root's).
-    trace::QueryGetWHNF q{hex(childInitial)};
+    trace::SelectorGetWHNF q{hex(childInitial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{7}};
     ObservationSet e{.observations = {observationFromQR(q, r)}};
 
@@ -261,8 +261,8 @@ TEST(CidAsks, ObservationOnScopedSeedRequiresMatchingScopedFromHash)
     auto unscopedInitial = stateHashAfter(s, noScope(), {});
     EXPECT_NE(scopedInitial, unscopedInitial);
 
-    trace::QueryGetWHNF qScoped{hex(scopedInitial)};
-    trace::QueryGetWHNF qUnscoped{hex(unscopedInitial)};
+    trace::SelectorGetWHNF qScoped{hex(scopedInitial)};
+    trace::SelectorGetWHNF qUnscoped{hex(unscopedInitial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{1}};
     ObservationSet eScoped{.observations = {observationFromQR(qScoped, r)}};
     ObservationSet eUnscoped{.observations = {observationFromQR(qUnscoped, r)}};

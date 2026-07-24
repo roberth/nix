@@ -77,7 +77,7 @@ class TracingReplayObject : public Object
 
     /* Memoized WHNF lookup. First call to any of the WHNF-subsumed
        getters (getType / getInt / getString / etc.) fires `whnf()`
-       which looks up the recorded QueryGetWHNF response. */
+       which looks up the recorded SelectorGetWHNF response. */
     mutable std::optional<trace::ResultWHNF> cachedWHNF;
     std::optional<const trace::ResultWHNF *> whnf();
 

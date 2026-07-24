@@ -13,8 +13,8 @@ namespace nix {
 
 /* Compute a value's WHNF in one pass by calling the Object's
    per-type getters. Used by TracingObject::whnf to record a single
-   QueryGetWHNF observation, and by the walker's dispatch to compute
-   the live response for a recorded QueryGetWHNF. */
+   SelectorGetWHNF observation, and by the walker's dispatch to compute
+   the live response for a recorded SelectorGetWHNF. */
 trace::ResultWHNF computeWHNFFromObject(Object & obj)
 {
     auto type = obj.getType();
@@ -125,7 +125,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
        "does this attr exist?" for any name — no has-attr observation
        is recorded, and multiple maybeGetAttr calls on the same parent
        share one whnf recording. Only when the attr is known to exist
-       do we issue a pure-retrieval QueryGetAttr, whose result is the
+       do we issue a pure-retrieval SelectorGetAttr, whose result is the
        child's WHNF. */
     auto & w = whnf();
     auto * p = std::get_if<trace::WHNFAttrs>(&w.payload);
@@ -141,7 +141,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
            happen under matching-until-divergence. */
         return nullptr;
     auto parentHash = evolvedQueryFrom();
-    trace::QueryGetAttr query{name, parentHash};
+    trace::SelectorGetAttr query{name, parentHash};
     std::optional<Subject> fromSubject;
     Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
     if (applyResultSubject) {
@@ -175,7 +175,7 @@ trace::ResultWHNF & TracingObject::whnf()
        observations happening during computeWHNFFromObject attribute
        to this Q's chain and evolve its fromSubject's state hash. */
     auto parentHash = evolvedQueryFrom();
-    trace::QueryGetWHNF query{parentHash};
+    trace::SelectorGetWHNF query{parentHash};
     std::optional<Subject> fromSubject;
     Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
     if (applyResultSubject) {
@@ -185,7 +185,7 @@ trace::ResultWHNF & TracingObject::whnf()
     auto [valueId, qh] = writer.logQuery(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto whnfResult = computeWHNFFromObject(*inner);
     /* Task #110 (C3): if this whnf is on an applyResult, emit a
-       QueryCallbackApply observation carrying the WHNF directly.
+       SelectorCallbackApply observation carrying the WHNF directly.
        That combines what would otherwise be two probes (QCA +
        getWHNF-of-applyResult) into one, reducing DB spam. Downstream
        structural probes chain through the applyResult's state hash
@@ -289,7 +289,7 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     /* Bounds fold through whnf(): parent's WHNFList.size answers
        "is this index valid?" for any index — no bounds-check
        observation is recorded. Only the retrieval itself
-       (QueryGetListElem, returning the child's WHNF) is a distinct
+       (SelectorGetListElem, returning the child's WHNF) is a distinct
        observation. */
     auto & w = whnf();
     auto * lp = std::get_if<trace::WHNFList>(&w.payload);
@@ -298,7 +298,7 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
            interpreter throws the source-positioned error. */
         return inner->getListElem(index);
     auto parentHash = evolvedQueryFrom();
-    trace::QueryGetListElem query{parentHash, index};
+    trace::SelectorGetListElem query{parentHash, index};
     std::optional<Subject> fromSubject;
     Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
     if (applyResultSubject) {
@@ -350,7 +350,7 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
        observations, the swap costs at most an extra push/pop and
        eliminates the unverified assumption. */
     auto parentHash = evolvedQueryFrom();
-    trace::QueryGetFunctionInfo query{parentHash};
+    trace::SelectorGetFunctionInfo query{parentHash};
     std::optional<Subject> fromSubject;
     Hash fromSubjectArgAncestry = getArgAncestry();
     if (auto * s = getSubject())
@@ -390,7 +390,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
 
     /* cb-apply: record an explicit ε edge for this apply.
        See parallel call in TracingEvaluator::apply. */
-    nlohmann::json applyBoundaryJson = trace::QueryApply{*fnIdOpt, *argIdOpt};
+    nlohmann::json applyBoundaryJson = trace::SelectorApply{*fnIdOpt, *argIdOpt};
     tracingCacheLog("createCallbackCell callsite=TracingObject::queryApply fn=%s arg=%s",
                     fnIdOpt->substr(0, 12), argIdOpt->substr(0, 12));
     writer.createCallbackCell(applyBoundaryJson);
@@ -426,10 +426,10 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
 
     /* Record the apply Request payload at the subject-id hash so dispatch
-       and the legacy QueryApply{fn, arg} payload coincide. The legacy
+       and the legacy SelectorApply{fn, arg} payload coincide. The legacy
        fnId/argSubject fields remain for the dispatcher's resolveStateHash
        chain. */
-    trace::QueryApply applyQ{*fnIdOpt, *argIdOpt};
+    trace::SelectorApply applyQ{*fnIdOpt, *argIdOpt};
     auto v = writer.getSink().logQuery(applyQ);
     auto result = inner->queryApply(argObj);
     TriePosition applyTriePos{

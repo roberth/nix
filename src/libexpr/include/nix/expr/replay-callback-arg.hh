@@ -9,7 +9,7 @@
  * inner-side data. On the recording side the inner wraps the arg in
  * TracingCallbackArg so the outer's accesses land in the enclosing
  * CallbackCell's runningObsSet, which is later snapshotted into a
- * QueryCallbackApply request's referenced ObservationSet. On replay
+ * SelectorCallbackApply request's referenced ObservationSet. On replay
  * the inner isn't running, so the arg isn't reconstructable as a
  * live Object — but its content was persisted by value inside that
  * recorded obsSet. ReplayCallbackArg reads probes back from the
@@ -18,7 +18,7 @@
  *
  * This is what makes covariant-callback caching actually validate:
  * with this object in place, dispatching a recorded
- * QueryCallbackApply materialises a ReplayCallbackArg backed by the
+ * SelectorCallbackApply materialises a ReplayCallbackArg backed by the
  * recorded obsSet, invokes `fn->queryApply(replayArg)` live, and
  * compares the response against the recording. If the outer changed
  * (different lambda body) the response differs and the walker
@@ -82,12 +82,12 @@ class ReplayCallbackArg : public Object
 
     /* obsSet response source: method responses are looked up in
        this map by queryHash. Populated by the walker's
-       callbackApply dispatch from the QueryCallbackApply's
+       callbackApply dispatch from the SelectorCallbackApply's
        referenced observation set — each entry is (queryHash →
        CBOR response payload). */
     std::shared_ptr<std::map<Hash, std::string>> obsSetResponses;
 
-    /* Memoized WHNF response. The recorder logs ONE QueryGetWHNF
+    /* Memoized WHNF response. The recorder logs ONE SelectorGetWHNF
        observation per value force; the walker must reuse the cached
        response on any subsequent call. Without this, when
        `dispatchQueryRequest::navigatePath` invokes `queryApply`

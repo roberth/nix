@@ -42,14 +42,14 @@ struct OuterQueryResult
  */
 using OuterQueryFn = std::function<OuterQueryResult(
     std::shared_ptr<Object> outerObj,
-    const trace::QueryVariant &,
+    const trace::SelectorVariant &,
     Subject,
     Hash argAncestry)>;
 
 /**
  * Callback type for outer function application. Takes the outer fn
  * Object, its Subject-derived state hash (used to build the
- * QueryApply payload — the outer Object itself typically has no
+ * SelectorApply payload — the outer Object itself typically has no
  * Subject, so the wrapping OuterObject computes and passes this),
  * `fnSubject` and `fnArgAncestry` (the calling OuterObject's own
  * Subject and inherited argAncestry — used to construct the
@@ -119,7 +119,7 @@ class OuterObject : public Object
     std::shared_ptr<const ArgCell> argCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
-       getString / etc. fires `whnf()`, which issues ONE QueryGetWHNF
+       getString / etc. fires `whnf()`, which issues ONE SelectorGetWHNF
        through `queryFn`. Subsequent calls decode the cached result
        without re-querying. */
     std::optional<trace::ResultWHNF> cachedWHNF;
@@ -188,7 +188,7 @@ public:
     std::optional<std::vector<std::string>> getAttrPath() override;
 
     /**
-     * Issue a QueryApply. The resolver registers the arg and creates
+     * Issue a SelectorApply. The resolver registers the arg and creates
      * the lazy application. Returns an OuterObject wrapping the result.
      */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
