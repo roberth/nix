@@ -5,12 +5,12 @@
 
 
 
-HEAD: `7c003f39f`. Suite: 311/17/7 — one net regression (`cb-deep-indep-orders`) from the has-attr/get-list-elem-precondition fold into `QueryGetWHNF`. See B12.
+HEAD: `7c003f39f`. Suite: 311/17/7 — one net regression (`cb-deep-indep-orders`) from the has-attr/get-list-elem-precondition fold into `SelectorGetWHNF`. See B12.
 
 ## Known bugs
 
 ### B1. FIXED — walker per-Q chain (`3b386adb8`)
-Walker's `recomputeQ` now reads from a walk-local `perQEnvWalk` fed by `commitEdge`, matching writer's `ActiveQuery::perQEnvWalk` basis. Session envWalk retained for fingerprint dedup and walkScope. Both sides derive the same Q trajectory under matching-until-divergence.
+Walker's `recomputeQ` now reads from a walk-local `perQEnvWalk` fed by `commitEdge`, matching writer's `ActiveSelector::perQEnvWalk` basis. Session envWalk retained for fingerprint dedup and walkScope. Both sides derive the same Q trajectory under matching-until-divergence.
 
 ### B2. PARTIAL — composite emission landed; bridging retired
 
@@ -27,7 +27,7 @@ See [B10](#b10-landing-chain-insertion--hit-rate-follow-up-to-b2).
 
 `tracing-writer.hh` logResult iterates `envAsksEdges` (session-cumulative) and inserts every entry under `finalQ`. Parent Q ends up with every sub-Q's observations duplicated under it — a hack to preserve walker reachability. Violates "each observation attributes to exactly one Q".
 
-**Fix plan (high confidence, requires walker-side change too):** at sub-Q's logResult, insert *one* composite observation into the newly-innermost Q. request = sub-Q's queryHash; response = sub-Q's resultHash; elementHash = XOR(req, resp). Parent's chain then has one entry per sub-Q completion, not per sub-Q observation. Walker's dispatch of this composite request needs to recursively `lookup(subQ)` and return sub's resultHash — a new dispatch branch. Retire the logResult bridging afterward.
+**Fix plan (high confidence, requires walker-side change too):** at sub-Q's logResult, insert *one* composite observation into the newly-innermost Q. request = sub-Q's selectorHash; response = sub-Q's resultHash; elementHash = XOR(req, resp). Parent's chain then has one entry per sub-Q completion, not per sub-Q observation. Walker's dispatch of this composite request needs to recursively `lookup(subQ)` and return sub's resultHash — a new dispatch branch. Retire the logResult bridging afterward.
 
 ### B7. QCA emission on cb-apply result — HIGH (partial, sibling test still misses)
 
@@ -67,7 +67,7 @@ The sibling test still misses because a *later* Ask edge in the chain has no rec
 
 **cb-two-sibling-distinct-callbacks — depends on B2.** Cold correctly emits distinct QCAs at the query-identity level (per callback-model §7b: obsSet differences → distinct QCA queryHashes → distinct DB rows). Sibling A's QCA reqHash 2023aaf0427d; sibling B's d03d71e0189b. That mechanism works.
 
-The failure is because B2 isn't implemented. Under the design (callback-model §11), each `c { ... }` invocation is a sub-Q of the outer expression's Q, and the parent Q observes each sub-Q's completion as ONE composite observation `(subQ.queryHash, subQ.resultHash)`. Sub-Q_A and Sub-Q_B have distinct queryHashes/resultHashes → distinct composite observations → distinct fold into parent's cur → parent walks to the right sibling-specific answer.
+The failure is because B2 isn't implemented. Under the design (callback-model §11), each `c { ... }` invocation is a sub-Q of the outer expression's Q, and the parent Q observes each sub-Q's completion as ONE composite observation `(subQ.selectorHash, subQ.resultHash)`. Sub-Q_A and Sub-Q_B have distinct queryHashes/resultHashes → distinct composite observations → distinct fold into parent's cur → parent walks to the right sibling-specific answer.
 
 Under the current B2 workaround (session-cumulative Ask insertion at logResult), sibling A's and sibling B's Ask chains are both bridged under the same finalQ=641d026a7575. Sibling B's walker starts at session-cumulative envCur = sibling A's terminalCur (via the shared innerReplayEval), reaches `getTerminal(Q, cur_A)` = Terminal_A, returns A's result. That's a correct return AT that `(Q, cur)` key — the recording is what puts sibling A's Terminal there. The walker isn't wrong; the recording shape is wrong.
 
@@ -75,7 +75,7 @@ Real fix: implement B2's composite sub-Q observation. Retire the session-cumulat
 
 ### B3. TracingObject lacks general Subject tracking — HIGH (blocks sibling test)
 
-`TracingObject::getSubject()` returns non-null only when `applyResultSubject` is set. All other TracingObjects (arg wrappers, navigation children, evalFile results) return null → their `logQuery` passes nullopt `fromSubject` → their Q doesn't participate in evolution. Q evolution never fires in cold for `cb-sibling-discrimination-via-observation` because of this.
+`TracingObject::getSubject()` returns non-null only when `applyResultSubject` is set. All other TracingObjects (arg wrappers, navigation children, evalFile results) return null → their `logSelector` passes nullopt `fromSubject` → their Q doesn't participate in evolution. Q evolution never fires in cold for `cb-sibling-discrimination-via-observation` because of this.
 
 **Fix plan (medium confidence on exact shape):** add general `Subject subject` + `Hash argAncestry` fields to TracingObject. Set at construction:
 - root (evalFile): `PostulatedIdempotentRead{file-content-hash}` (leaf, doesn't evolve)
@@ -88,7 +88,7 @@ Real fix: implement B2's composite sub-Q observation. Retire the session-cumulat
 
 Callback body observations happen during inner's `evalFile fn.nix` walk. At that moment, the innermost active Q on the writer's stack is the evalFile Q (no fromSubject) or an arg attrset probe (no Subject per B3). The applyResult TracingObject's Q — where these observations should attribute for sibling discrimination — isn't pushed until AFTER callback body returns.
 
-**Fix plan (medium confidence):** structural refactor in `TracingEvaluator::apply` (non-fnIsTlo path). Push an ActiveQuery for the QueryCallbackApply/applyResult *around* the entire `inner->apply(fn, arg)` invocation, not around later probes on the wrapped result. That way callback body's observations attribute to the QueryCallbackApply's Q while its firing is in progress.
+**Fix plan (medium confidence):** structural refactor in `TracingEvaluator::apply` (non-fnIsTlo path). Push an ActiveSelector for the SelectorCallbackApply/applyResult *around* the entire `inner->apply(fn, arg)` invocation, not around later probes on the wrapped result. That way callback body's observations attribute to the SelectorCallbackApply's Q while its firing is in progress.
 
 ### B5. FIXED — perQEnvWalk rolled back at trace-continuing→trace-discovering transition
 
@@ -110,9 +110,9 @@ The current code "has something quirky that it copied from state hashes, but the
 
 `TracingReplayObject::applyContext` is a `shared_ptr<ApplyContext>` handed to descendants (via `withApplyContextOnly` in `lookupResult` / `lookupStructuralChild`, `tracing-replay-object.cc:211,371`) so every descendant sharing that pointer reads and writes the same observation vector. Cache-hit `pushObservation` calls append into that shared vector. When `evolvedQueryFrom` on any of them folds the vector into `applyResultSubject`'s state hash, it folds in every observation any related descendant pushed anywhere in the walker session.
 
-Cold's writer stamped `from` at the point where it recorded that specific Q's edge — the state hash reflecting observations folded up to that moment in that Q's own recording chain. Warm's TRO folds a larger set (the whole walker-session accumulation into the shared context) and derives a different state hash. `evolvedQueryFrom`'s output disagrees with cold's stamped `from`, so warm's computed queryHash doesn't match cold's stored row and the lookup misses.
+Cold's writer stamped `from` at the point where it recorded that specific Q's edge — the state hash reflecting observations folded up to that moment in that Q's own recording chain. Warm's TRO folds a larger set (the whole walker-session accumulation into the shared context) and derives a different state hash. `evolvedQueryFrom`'s output disagrees with cold's stamped `from`, so warm's computed selectorHash doesn't match cold's stored row and the lookup misses.
 
-**Fix plan (medium confidence):** replace the shared-across-descendants ApplyContext with per-Q-chain state on the walker Object side — the walker's Object analogue of the writer's `ActiveQuery::perQEnvWalk` (task #110 B1 fix). Two shapes to consider: (a) each new Q-lookup opens a fresh, walk-local observation history that `evolvedQueryFrom` reads from and `pushObservation` writes into, discarded when the Q's lookup completes; (b) keep the shared_ptr shape but filter at read time to only the observations recorded within the current Q's chain. (a) is closer to the writer side.
+**Fix plan (medium confidence):** replace the shared-across-descendants ApplyContext with per-Q-chain state on the walker Object side — the walker's Object analogue of the writer's `ActiveSelector::perQEnvWalk` (task #110 B1 fix). Two shapes to consider: (a) each new Q-lookup opens a fresh, walk-local observation history that `evolvedQueryFrom` reads from and `pushObservation` writes into, discarded when the Q's lookup completes; (b) keep the shared_ptr shape but filter at read time to only the observations recorded within the current Q's chain. (a) is closer to the writer side.
 
 Complements [B3](#b3-tracingobject-lacks-general-subject-tracking--high-blocks-sibling-test) (writer-side Subject exposure): together B3 + B9 align writer and walker on per-Q chain semantics. Absorbed from former task #104.
 
@@ -141,7 +141,7 @@ and finds no chain past the evolved hash.
 
 **Traced contents (not just hashes):**
 
-- Cold at `logQuery` for Q=8873fed7e339 stamps
+- Cold at `logSelector` for Q=8873fed7e339 stamps
   `from=bc4d5781b2be` (= applyResult state after r.whnf's
   applyContext fold). Precondition fold folds 2 session-history
   observations; state stays the same; `Q_M = Q_initial = 8873`.
@@ -167,7 +167,7 @@ and finds no chain past the evolved hash.
 `evolvedQueryFrom()` (applyContext-based, includes the r.whnf
 observation fold that produced bc4d5781b2be), but the writer's
 `fromSubjectLastState` tracker was initialised from `envWalk`
-(session-cumulative) at logQuery. The two disagree on
+(session-cumulative) at logSelector. The two disagree on
 `bc4d5781b2be`. Walker's recomputeQ, by contrast, uses walk-local
 `perQEnvWalk` from ∅, which matches the applyContext basis only if
 applyContext's contributing observations are also in perQEnvWalk —
@@ -177,7 +177,7 @@ not in Q's own perQEnvWalk).
 The three-basis problem below (B11 pre-fix diagnosis) predicted
 exactly this: three different observation histories can disagree at
 Q boundaries. B11's precondition-fold fix aligned the two writer
-bases at logQuery time when the writer's own fold walks the
+bases at logSelector time when the writer's own fold walks the
 preconditions. But that alignment only holds if pre-push
 observations that contributed to the applyContext-basis are the
 same ones that appear in the envWalk-preconditions the writer folds.
@@ -192,7 +192,7 @@ them, and cold's own-chain state stays at whichever basis
 observation and yield applyResult's structural initial.
 
 **Fold's role:** the fold changed the shape of Q=8873's payload
-(QueryHasAttr with bool response → QueryGetAttr with WHNF response)
+(QueryHasAttr with bool response → SelectorGetAttr with WHNF response)
 and the shape of subsequent observations under it. Under the old
 observation set, walker's recomputeQ happened to produce the same
 Q hash cold recorded (either by luck or because prior perQEnvWalk
@@ -205,7 +205,7 @@ a case B11's precondition fold doesn't cover.
 
 **Fix direction:** align writer's `fromSubjectLastState` initial
 value with the applyContext-derived Q payload `from` — either by
-using `evolvedQueryFrom`-style applyContext basis at logQuery, or
+using `evolvedQueryFrom`-style applyContext basis at logSelector, or
 by ensuring all observations that contributed to the payload's
 from are also in the envAsksEdges preconditions folded at push. Not
 yet drafted.
@@ -214,7 +214,7 @@ yet drafted.
 
 Initial diagnosis was "three-basis inconsistency in fromSubject
 state hashing" (kept below for reference). The fix landed as B11:
-at `logQuery`, fold pre-push envAsksEdges into `aq.perQEnvWalk`
+at `logSelector`, fold pre-push envAsksEdges into `aq.perQEnvWalk`
 and evolve `aq.currentQ` to Q_M — per callback-model §3, Q's chain
 starts at index M > 0 carrying preconditions from prior state.
 Walker's Q at end of landing = writer's aq.currentQ = Q_M. Q's
@@ -268,7 +268,7 @@ matching-until-divergence:
    argAncestry, applyContext->observations, size)` — per-Object
    history, populated by `pushObservation` at this Object's own
    probes and its children's.
-2. **`TracingWriter::logQuery`** captures `fromSubjectLastState =
+2. **`TracingWriter::logSelector`** captures `fromSubjectLastState =
    stateHashAt(fromSubject, argAncestry, envWalk, envWalk.size())` —
    session-cumulative envWalk on the writer.
 3. **Walker's `recomputeQ`** (`tracing-replay-evaluator.cc:282-298`)
@@ -299,7 +299,7 @@ That assumption is unverified. If a walker path ever needs to hold multiple vers
 
 ### R2. Contra-arg observations still carry vestigial `from` fields keyed on invariant `Arg{depth}` state hashes
 
-Under the current callback model, contra-arg values are identified by the observations stored in the `QueryCallbackApply`'s referenced `ObservationSet`. The observation set is scoped to a specific callback firing by the outer `QueryCallbackApply` payload (`fn`, `argAncestry`, `argDepth`); observations inside are all probes on the same implicit contra-arg by construction and don't need to name a Subject.
+Under the current callback model, contra-arg values are identified by the observations stored in the `SelectorCallbackApply`'s referenced `ObservationSet`. The observation set is scoped to a specific callback firing by the outer `SelectorCallbackApply` payload (`fn`, `argAncestry`, `argDepth`); observations inside are all probes on the same implicit contra-arg by construction and don't need to name a Subject.
 
 The code still computes `from` fields for contra-arg probes by running `stateHashAfter(Arg{depth}, callArgAncestry, {})` — invariant across sibling firings by design (see `replay-callback-arg.cc:30-38`, which explicitly frames the invariance as a compatibility shim). The invariant state hash contributes no discrimination; it's a leftover from when contra-args were subject-identified.
 

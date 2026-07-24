@@ -9,7 +9,7 @@ model),
 (callback tracking). Terminology from those docs — Query/Result
 vs Request/Response, FactSet, RequestSet trie, Query and Env
 message pairings, Subject, state hash, argAncestry, the walker,
-`QueryCallbackApply` and its ObservationSet — is assumed below.
+`SelectorCallbackApply` and its ObservationSet — is assumed below.
 
 ## Goal and non-goals
 
@@ -79,7 +79,7 @@ libexpr components that the primop wires together. Reading tour:
 - `src/libexpr/include/nix/expr/outer-object.hh` — `OuterObject`
   wraps an outer-owned value behind outer-query callbacks. Each
   Object method (`maybeGetAttr`, `getString`, `getInt`, …) issues a
-  `trace::QueryVariant` via the `OuterQueryFn` and interprets the
+  `trace::SelectorVariant` via the `OuterQueryFn` and interprets the
   `trace::ResultVariant` it gets back. `queryApply` covers the
   function-application case via `OuterApplyFn`.
 - `src/libexpr/include/nix/expr/expr-from-object.hh` —
@@ -108,10 +108,10 @@ libexpr components that the primop wires together. Reading tour:
   callback case: the writer records the outer's probes on an
   inner-supplied callback arg into the cell's obsSet; at replay
   the arg is reconstructed from the obsSet carried inside the
-  recorded `QueryCallbackApply` request.
+  recorded `SelectorCallbackApply` request.
 - `src/libexpr/tracing-replay-evaluator.cc` — `dispatchQueryRequest`
   (name is legacy) routes recorded outer-value and
-  `QueryCallbackApply` Requests through the walker, resolving
+  `SelectorCallbackApply` Requests through the walker, resolving
   `from` fields via `resolveStateHash`.
 - The functional test `tests/functional/builtins-cache.sh` covers
   the full feature surface: covariant callbacks, ambient paths, the
@@ -200,17 +200,17 @@ Inside `prim_cache`:
 ## Recording semantics
 
 The inner evaluator's `TracingEvaluator` records the cached
-expression's queryHash exactly once per fresh evaluation. Which queryHash depends
+expression's selectorHash exactly once per fresh evaluation. Which selectorHash depends
 on which path forced the value:
 
 - `replayEval->evalFile(...)` / `evalExpr(...)` records
-  `QueryImport` or `QueryExpr` at the inner root.
+  `SelectorImport` or `SelectorExpr` at the inner root.
 - The first time an outer caller forces a `<cached-fn>` PrimOp with
   a new argument, the PrimOp routes to
   `innerEvaluator->apply(fnObj, outerArgObj)`, which records
-  `QueryApply{fn, arg}` at the inner level.
+  `SelectorApply{fn, arg}` at the inner level.
 
-Each recording produces its own `(queryHash, factSet, result)` row via
+Each recording produces its own `(selectorHash, factSet, result)` row via
 `decisionGraph.record(...)`. The `factSet` contains:
 
 - File reads from the inner evaluator (via
@@ -231,7 +231,7 @@ For inner correctness, the outer-value Facts are load-bearing:
 
 - A different outer value with the same fn/arg identifiers would
   otherwise pass the cache check despite producing different
-  observed Responses. Recording `(QueryGetAttr{from=parent}, …)`
+  observed Responses. Recording `(SelectorGetAttr{from=parent}, …)`
   Facts ties the recorded Result to the *observed* shape/values of
   the argument, not just to the input identifiers.
 - A different argument with the same structural answers still
@@ -245,7 +245,7 @@ No new `TracingWriter` methods are needed.
 
 When `replayEval->evalFile(...)` (or `evalExpr`, or `apply`) runs:
 
-1. `lookup(queryHash)` calls `walk(queryHash)`.
+1. `lookup(selectorHash)` calls `walk(selectorHash)`.
 2. Trace-continuing attempt (task #106): if the walker's session
    state already reaches this Query's entry point, walk the trace
    chain from there. On hit, return the Result.
@@ -267,12 +267,12 @@ When `replayEval->evalFile(...)` (or `evalExpr`, or `apply`) runs:
 5. On a hit, the result payload comes back; `lookup` wraps it in a
    `TracingReplayObject`. The outer caller forces attrs/strings/…
    via that TracingReplayObject, which defers to its own
-   `lookupResult<queryHash, R>` per-method (using the recorded
-   queryHash as the parent in child Queries' Merkle chain).
+   `lookupResult<selectorHash, R>` per-method (using the recorded
+   selectorHash as the parent in child Queries' Merkle chain).
 
 Covariant callback replay uses the callback-arg proxies —
 `ReplayCallbackArg` is the frozen image reconstructed from the
-observation set carried inside the recorded `QueryCallbackApply`
+observation set carried inside the recorded `SelectorCallbackApply`
 request (see the callback-tracking model doc). When the outer's
 callback body probes the inner-supplied arg, `ReplayCallbackArg`
 serves the recorded response from the obsSet instead of dispatching
@@ -329,7 +329,7 @@ The validation surface decomposes by the resolved subject variant:
   `fn->queryApply(arg)` live. `fn` is resolved through the chain
   above; `arg` is either chain-resolved (relay case) or served by
   a `ReplayCallbackArg` reading recorded content from the
-  `QueryCallbackApply`'s referenced observation set (local case).
+  `SelectorCallbackApply`'s referenced observation set (local case).
   If the outer fn's behaviour changed, the live response differs
   from the recorded one, the walk's response-hash compare fails,
   and the cache correctly misses.
@@ -337,7 +337,7 @@ The validation surface decomposes by the resolved subject variant:
   (file/expression/literal) and resolves the value fresh.
 
 `ReplayCallbackArg` reads payloads from the recorded
-`QueryCallbackApply`'s observation set because the inner isn't
+`SelectorCallbackApply`'s observation set because the inner isn't
 running on replay — there's no live source for the callback-arg's
 content. That payload is the *content* of the frozen image; it's
 not the dispatcher's response. The dispatcher computes the response
@@ -346,7 +346,7 @@ serialising the answer.
 
 A successful replay still feeds the recording-side writer state
 (`envFactSet`, `sessionRequestsTrie`, `envCur`) so a *later* miss
-on a different queryHash in the same session falls into a coherent
+on a different selectorHash in the same session falls into a coherent
 recording chain.
 
 ### Live validation generalises; trace scope follows
@@ -413,8 +413,8 @@ keeps everything else alive.
 ## Open questions and known risks
 
 Items that were closed by the shipped implementation
-(cross-process concurrent recording, `QueryApply` semantics,
-positional-queue replacement, apply-queryHash teardown) are no longer
+(cross-process concurrent recording, `SelectorApply` semantics,
+positional-queue replacement, apply-selectorHash teardown) are no longer
 listed. What remains:
 
 1. **Seed-counter collisions across writers, and the general
@@ -508,7 +508,7 @@ listed. What remains:
   cross-invocation seed drift (see open question 1). When two
   evaluations produce semantically identical ambient values via
   different apply-boundary sequences, the seed counters disagree
-  and cross-invocation queryHash hashes drift even though the values
+  and cross-invocation selectorHash hashes drift even though the values
   match. A unification algorithm at replay time would let the
   cache hit anyway. Caught case: unconditionally lazy functions
   (`\arg: e` where `e`'s evaluation never reaches into `arg`) —

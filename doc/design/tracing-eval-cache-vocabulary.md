@@ -9,7 +9,7 @@ can capture its relationship with another evaluator whose behavior
 it wants to cache. Two **message pairings** — Query and Env —
 realize those models in the code and storage. Callback-arg values
 that cross the cache boundary from inner to outer are handled by a
-first-class Query variant (`QueryCallbackApply`) rather than a
+first-class Selector alternative (`SelectorCallbackApply`) rather than a
 separate message pairing.
 
 Above both models sits a property of the black-box interpreter
@@ -155,7 +155,7 @@ one trace chain.
 
 The trace chain is what the writer's Design principle 5 flush
 produces at record time: an ordered sequence of Ask edges keyed
-under `(queryHash_i, cur_i)` where `queryHash_i` may evolve per
+under `(selectorHash_i, cur_i)` where `selectorHash_i` may evolve per
 edge (Q evolution) and `cur_i` folds in one Ask's requestSet at
 a time.
 
@@ -198,7 +198,7 @@ A **session** is the lifetime of one `TracingWriter` and the
 evaluator stack that shares it. The writer accumulates the trace
 during that lifetime — `envFactSet`, `envFactSetHash`,
 `sessionRequestsTrie`, `responseFor` are all session-scoped state.
-`record()` at any queryHash reads and updates these fields; the
+`record()` at any selectorHash reads and updates these fields; the
 walker consults them for session-cumulative bookkeeping.
 
 Not process-scoped: one CLI invocation contains multiple sessions.
@@ -224,13 +224,13 @@ sessions via the DB index.
 
 Under Q evolution (see
 [`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
-§3), a Query's `queryHash` is not stable across its own
+§3), a Query's `selectorHash` is not stable across its own
 evaluation: `Query`'s payload has a `from` field carrying some
 Subject's state hash, and as observations dispatched during the
 Query's evaluation fold into that Subject, `from` evolves and
-`queryHash` advances through a chain
+`selectorHash` advances through a chain
 `Q_M → Q_{M+1} → … → Q_N`.
-One evaluator activation of a Query — one `ActiveQuery` frame on
+One evaluator activation of a Query — one `ActiveSelector` frame on
 the writer's stack, one walk-local Q context on the walker —
 tracks exactly this chain from Q_M through Q_N.
 
@@ -244,13 +244,13 @@ until it pops at `logResult`. Distinct from:
   A `walk()` call carries one Query's evaluation, but "walk-local"
   emphasizes the call scope, whereas "per-Q-chain" emphasizes the
   Q_M..Q_N chain that call corresponds to. On the writer they
-  coincide within one `ActiveQuery` frame; on the walker
+  coincide within one `ActiveSelector` frame; on the walker
   "walk-local" is the more common phrasing because a walk may
   begin at trace-continuing state and fall through to
   trace-discovering.
 
 Per-Q-chain scoping is what the writer's
-`ActiveQuery::perQEnvWalk` and the walker's `recomputeQ`-reading
+`ActiveSelector::perQEnvWalk` and the walker's `recomputeQ`-reading
 `perQEnvWalk` use for Q evolution's re-derivation — each Q's own
 chain of observations, not session-cumulative and not folded
 across Queries.
@@ -265,15 +265,22 @@ concept when the context makes Q-evolution unambiguous. Prefer
 
 ### Query payload types
 
-**Query** — an operation the caller asks. `evalFile`, `getAttr`,
-`getString`, `apply`, etc. The payload carries the operation, its
-parameters, and a `from` field carrying the parent query's
-identity (Merkle chain).
+**Selector** — the eDSL of operations the caller can ask:
+`evalFile`, `getAttr`, `getString`, `apply`, etc. Concrete
+alternatives include `SelectorGetWHNF`, `SelectorGetAttr`,
+`SelectorApply`, `SelectorCallbackApply`, and so on
+(see `src/libexpr/include/nix/expr/trace-types.hh`).
+Each carries the operation's parameters and a `from` field carrying
+the parent Query's identity (Merkle chain).
+
+**Query** — the caller's ask half of the Query/Result message pair.
+Its payload is a Selector; identity is the hash of that payload.
 
 **Result** — the value the evaluator returns for a Query.
 
-**queryHash** — SHA-256 of a Query payload. Its identity in the
-Queries pool.
+**selectorHash** — SHA-256 of a Selector payload. Also the Query's
+identity — the `Selectors` pool is keyed on it, and Ask / Terminal
+rows use it as one of their keys.
 
 **resultHash** — SHA-256 of a Result payload. Its identity in the
 Results pool.
@@ -336,15 +343,15 @@ Extension against a known-disjoint element is a single in-place XOR.
 
 ### Edges
 
-**Ask** — a row in `Ask(queryHash, factSetHash) →
-requestSetHash`. "At walker state `(queryHash, cur)`, the next
+**Ask** — a row in `Ask(selectorHash, factSetHash) →
+requestSetHash`. "At walker state `(selectorHash, cur)`, the next
 step is to dispatch this RequestSet's Requests."
 
-**Terminal** — a row in `Terminal(queryHash, factSetHash) →
-resultHash`. A recording that reached `(queryHash, cur)` produced
+**Terminal** — a row in `Terminal(selectorHash, factSetHash) →
+resultHash`. A recording that reached `(selectorHash, cur)` produced
 this Result. The Terminal *points at* a `resultHash`; the Result
 payload itself lives in the Results pool independently. Multiple
-Terminals at the same `(queryHash, cur)` are allowed — same
+Terminals at the same `(selectorHash, cur)` are allowed — same
 walker state, different Result — if recorded evaluations diverge
 (nondeterminism policy is out of scope here). A Terminal ends a
 walk.
@@ -355,7 +362,7 @@ dispatches the useful subset; the rest is skipped as
 already-known.
 
 **hasAnyEdge** — a cheap existence check on
-`(queryHash, cur)`: does any Ask or Terminal row exist at that
+`(selectorHash, cur)`: does any Ask or Terminal row exist at that
 key? Used by the walker to reject branches that no recording ever
 passed through.
 
@@ -383,7 +390,7 @@ Named as a role because it's the same value as the writer's
 **dispatch** — the walker's per-Request callback. Given a
 Request, returns a Response by asking the live environment.
 
-**walk(queryHash, dispatch, ..., startCur)** — the walker's
+**walk(selectorHash, dispatch, ..., startCur)** — the walker's
 top-level entry. Returns a `WalkHit` on a Terminal reach,
 `nullopt` on miss.
 
@@ -393,7 +400,7 @@ that Terminal (usable as a child query's `startCur`).
 
 ### Recording
 
-**record(queryHash, factSet, result, ...)** — writes an
+**record(selectorHash, factSet, result, ...)** — writes an
 `(Ask, ..., Terminal)` chain into the decision graph for a
 completed recording.
 
@@ -432,13 +439,13 @@ by the writer to hand `record()` a precomputed
 
 ```
 Requests(requestHash BLOB PRIMARY KEY, payload BLOB)
-Queries (queryHash   BLOB PRIMARY KEY, payload BLOB)
+Selectors (selectorHash   BLOB PRIMARY KEY, payload BLOB)
 Results (resultHash  BLOB PRIMARY KEY, payload BLOB)
 RequestSetNodes(nodeHash BLOB PRIMARY KEY, payload BLOB) WITHOUT ROWID
-Ask     (queryHash BLOB, factSetHash BLOB, requestSetHash BLOB,
-         PRIMARY KEY (queryHash, factSetHash, requestSetHash)) WITHOUT ROWID
-Terminal(queryHash BLOB, factSetHash BLOB, resultHash BLOB,
-         PRIMARY KEY (queryHash, factSetHash, resultHash))     WITHOUT ROWID
+Ask     (selectorHash BLOB, factSetHash BLOB, requestSetHash BLOB,
+         PRIMARY KEY (selectorHash, factSetHash, requestSetHash)) WITHOUT ROWID
+Terminal(selectorHash BLOB, factSetHash BLOB, resultHash BLOB,
+         PRIMARY KEY (selectorHash, factSetHash, resultHash))     WITHOUT ROWID
 ```
 
 All are append-only via `INSERT OR IGNORE`; reads use prepared
@@ -467,7 +474,7 @@ owns a value, the other side is what probes it:
   inner-supplied callback. The outer's callback body reads them
   through the callback-arg objects (`TracingCallbackArg` /
   `ReplayCallbackArg`). Queries about the callback firing use
-  `QueryCallbackApply` (a first-class Query variant, see the
+  `SelectorCallbackApply` (a first-class Selector alternative, see the
   callback-tracking model doc); the observation set the callback
   body accumulates on its contra-arg is folded into that query's
   identity.
@@ -519,7 +526,7 @@ gone; the arg no longer exists to be probed. Rather than name
 contra-arg values via subject identity, the eval-cache stores
 the observations the outer made on them by value in an
 `ObservationSet`, referenced from the enclosing
-`QueryCallbackApply` request (see the callback-tracking model
+`SelectorCallbackApply` request (see the callback-tracking model
 doc). Subject / state-hash machinery below applies to arg-side
 identification; it does not identify contra-arg values.
 
@@ -535,7 +542,7 @@ characterization built up by those observations.
 Callback-arg (contra-arg) values are handled separately: instead
 of being named by a Subject, the observations the outer made on
 them are stored by value in an `ObservationSet` (referenced from
-a `QueryCallbackApply` request; see the callback-tracking model
+a `SelectorCallbackApply` request; see the callback-tracking model
 doc). The Subject / state-hash machinery below does not apply to
 contra-arg identification.
 
@@ -549,7 +556,7 @@ lens. Just `(fromHash, elementHash)`:
 Every Fact about an arg-side value yields one Observation per
 subject that emitted it. Facts about a contra-arg value are not
 projected through the subject-identity lens — they carry no
-`fromHash` because the enclosing `QueryCallbackApply` request
+`fromHash` because the enclosing `SelectorCallbackApply` request
 already fixes the contra-arg position; contra-arg observations
 travel by content-hashed value inside the associated
 `ObservationSet`.
@@ -613,11 +620,11 @@ the replay walker as a fallback when step-by-step navigation
 misses.
 
 **producerQueryHashAt(derivedSubject, argAncestry, history,
-step)** — the queryHash of the `QueryGetAttr` /
-`QueryGetListElem` that would produce this derived value from
+step)** — the selectorHash of the `SelectorGetAttr` /
+`SelectorGetListElem` that would produce this derived value from
 its parent chain at step `step`. Not a state hash (derived
 values don't have one); it's a payload hash serving as the
-Queries-pool key.
+Selectors-pool key.
 
 **producerQueryHashAfter(derivedSubject, argAncestry, history)** —
 `producerQueryHashAt` at `step = history.size()`.
@@ -667,7 +674,7 @@ outer's probes on it into the enclosing `CallbackCell`'s running
 observation set.
 
 **ReplayCallbackArg** — replay-side counterpart. Frozen image
-reconstructed from a recorded `QueryCallbackApply`'s referenced
+reconstructed from a recorded `SelectorCallbackApply`'s referenced
 observation set. Serves the outer's probes from recorded data;
 throws a divergence exception if the outer's probes don't match
 what was recorded.
@@ -703,15 +710,15 @@ proxy's cell, or null for non-proxy Objects.
 Extends the base schema
 ([Storage tables (Query and Env only)](#storage-tables-query-and-env-only))
 with a single content-addressed pool for callback-arg observation
-sets referenced by `QueryCallbackApply` requests:
+sets referenced by `SelectorCallbackApply` requests:
 
 ```
 ObservationSet(setHash BLOB PRIMARY KEY, payload BLOB)
 ```
 
 The payload is a canonical serialisation of the set's members
-(`(queryHash, respHash)` tuples); `setHash` is the SHA-256 of
-that payload. Referenced by hash from `QueryCallbackApply`
+(`(selectorHash, respHash)` tuples); `setHash` is the SHA-256 of
+that payload. Referenced by hash from `SelectorCallbackApply`
 request payloads. Same `INSERT OR IGNORE` discipline. Same
 per-hash in-process caches.
 
@@ -729,7 +736,7 @@ Two rules the vocabulary above obeys:
    invocations. No `Id` marker is required or used.
 
 2. **`Hash` is neutral.** It says only "the value is a `Hash`."
-   Distinctive prefixes clarify what the hash is *of* — `queryHash`
+   Distinctive prefixes clarify what the hash is *of* — `selectorHash`
    of a query payload, `resultHash` of a result, `subjectHash` of
    a Subject payload, `stateHash` of characterizing observations
    at a Subject.

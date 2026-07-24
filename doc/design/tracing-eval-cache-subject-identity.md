@@ -96,7 +96,7 @@ present design.
    applies cannot have their response served from cache. The walker
    invokes the outer live and validates the structure of the
    resulting probes against the recorded observation set carried
-   inside the `QueryCallbackApply` request. Cached state covers the
+   inside the `SelectorCallbackApply` request. Cached state covers the
    structural contract (what probes happened, in what order, with
    what response shape) but never the response values themselves —
    those come live each time.
@@ -124,7 +124,7 @@ Specific commitments of the present design.
      reached from a parent via a producer query (`getAttr`,
      `getListElem`).
    - **`ApplyResultSubject{fn, arg}`** — a value reached from a
-     fn subject and an arg subject via `QueryApply`.
+     fn subject and an arg subject via `SelectorApply`.
    - **`PostulatedIdempotentRead{hash}`** — a value from a re-
      readable source (file, expression string, literal).
 
@@ -135,7 +135,7 @@ Specific commitments of the present design.
 3. **State hashes evolve alongside the FactSet.** Walking the trie
    advances both the cumulative `factSetHash` and every referenced
    Subject's state hash in lockstep, edge by edge. At any
-   `(queryHash, factSetHash)` position, each Subject has a
+   `(selectorHash, factSetHash)` position, each Subject has a
    well-defined state hash determined by the function.
 
    For `Arg{depth=N}` at history position `k`:
@@ -152,7 +152,7 @@ Specific commitments of the present design.
 
    ```
    stateHashAtSubject(DerivedSubject{...}, argAncestry, history, k)
-     = queryHash(producer_query{
+     = selectorHash(producer_query{
                     from    = rootStateHash(subject, k),
                     name/index,
                     path    = path(parent)})
@@ -171,7 +171,7 @@ Specific commitments of the present design.
    ```
    stateHashAtSubject(ApplyResultSubject{...}, argAncestry,
                       history, k)
-     = queryHash(QueryApply{fn = stateHashAtSubject(fn, ...),
+     = selectorHash(SelectorApply{fn = stateHashAtSubject(fn, ...),
                             arg = stateHashAtSubject(arg, ...)})
    ```
 
@@ -200,7 +200,7 @@ Specific commitments of the present design.
    precondition FactSet. Pool keys (`requestHash`) and Ask edges
    are hashed over the post-substitution form.
 
-   This substitution **extends to `QueryApply` requests too**: the
+   This substitution **extends to `SelectorApply` requests too**: the
    apply's `arg` (and, if applicable, `fn`) fields are rewritten
    from placeholders to the referenced Subjects' state hashes at
    the relevant edge's precondition FactSet. The cb-apply gets a
@@ -266,7 +266,7 @@ Specific commitments of the present design.
    work in tandem:
 
    - **Structural distinction comes from the query.** Each
-     cb-apply records a `QueryApply{fn, arg}` whose payload places
+     cb-apply records a `SelectorApply{fn, arg}` whose payload places
      constituent state hashes in distinct slots. The apply-result's
      state hash is the SHA-256 of that filled-in query (#3's
      apply-result formula). `f 1 2` and `f 2 1` produce different
@@ -372,8 +372,8 @@ component membership and any new compounding it introduces.
   - `callArgAncestry = SHA-256("cache-import:..." | "cache-expr:...")`
     (atomic per cached call; XOR-folded with enclosing cached
     calls' contributions).
-  - `queryHash(QueryGetAttr{name, from=hex(parent.stateHash)})` /
-    `queryHash(QueryApply{fn=hex(fn.stateHash),
+  - `selectorHash(SelectorGetAttr{name, from=hex(parent.stateHash)})` /
+    `selectorHash(SelectorApply{fn=hex(fn.stateHash),
     arg=hex(arg.stateHash)})` — Merkle seals over XOR-derived
     parent/constituent state hashes, but the seal makes the output
     atomic from G's perspective.
@@ -387,7 +387,7 @@ component membership and any new compounding it introduces.
     < k with f.fromHash == myStateHashAt(k)}`.
   - Final: `stateHash(k) = structural(k) XOR own(k)`.
 - Boundary consumers:
-  - Hex-encoded into `query.from`, then `queryHash(query)` —
+  - Hex-encoded into `query.from`, then `selectorHash(query)` —
     **SHA-256 seal exits G**.
   - Equality check inside the own-fold membership filter
     (`f.fromHash == myStateHashAt(k)`) — **stays in G**.
@@ -408,7 +408,7 @@ component membership and any new compounding it introduces.
 - Verdict: sound today, under SHA-256 entropy. Fragility lives in
   the `PostulatedIdempotentRead` wrapping path; cap allowed
   nesting depth at 1 and prefer Merkle composition (via
-  `queryHash(QueryWrap{inner=hex(X)})`) for any deeper case.
+  `selectorHash(QueryWrap{inner=hex(X)})`) for any deeper case.
 - Per-use rule (separate from the nesting-depth audit above):
   see the variant's docstring at
   `src/libexpr/include/nix/expr/subject-id.hh`.
@@ -424,7 +424,7 @@ component membership and any new compounding it introduces.
   Subject's state hash by value and treating it as up-to-date.
 
 *Cross-component bridges.*
-- G → F: `stateHash → hex → queryHash(query) → SHA-256 seal →
+- G → F: `stateHash → hex → selectorHash(query) → SHA-256 seal →
   requestHash → elementHash(requestHash, respHash)`. Every step
   is a Merkle seal; F sees uncorrelated SHA-256 atoms regardless
   of G's internal algebra.
@@ -478,22 +478,22 @@ Three cases where the property is load-bearing:
 1. **Warm replay of the same expression against the same env.**
    Every state hash the walker computes matches the writer's,
    so every requestHash sealed over those state hashes matches
-   too, every lookup keyed on `(queryHash, cur)` lines up, and
+   too, every lookup keyed on `(selectorHash, cur)` lines up, and
    the walker traces the recording bit-for-bit. This is the
    fast-hit case the cache exists for.
 
 2. **Sibling cb-apply invocations at the same lexical position
    within one cached call.** For example, both applies in
    `{ cb }: (cb 10) + (cb 20)`. Each apply of `cb` is recorded
-   as a `QueryCallbackApply` request whose payload embeds an
+   as a `SelectorCallbackApply` request whose payload embeds an
    `ObservationSet` — the observations the callback body made
    on its contra-arg during that specific firing. `(cb 10)`'s
    body observes `10`; `(cb 20)`'s body observes `20`; the two
-   obsSets are content-distinct, so the two `QueryCallbackApply`
+   obsSets are content-distinct, so the two `SelectorCallbackApply`
    requestHashes differ, so the two firings register as distinct
    records — no ambiguity at replay. See the callback-tracking
    model doc for details on how the enclosing
-   `QueryCallbackApply` scopes contra-arg observations to a
+   `SelectorCallbackApply` scopes contra-arg observations to a
    specific firing.
 
 3. **Two applications of the same cached function whose
@@ -528,7 +528,7 @@ values, so their callback-arg characterizations diverge from the
 very first probe even though their `Arg{depth}` Subjects are
 identical. Their probes carry different `from` fields
 — and therefore different requestHashes — and the recorded
-`QueryCallbackApply`s land in disjoint parts of the DB.
+`SelectorCallbackApply`s land in disjoint parts of the DB.
 "Matching until divergence" still applies: the state hashes
 diverge at the crossing itself, because `callArgAncestry` is
 already different, and the Merkle chain carries that through
@@ -549,7 +549,7 @@ Contra-arg values — the values the outer probes during a
 callback firing — are not identified via subject-identity in the
 current design. Their observations are recorded by value inside
 an `ObservationSet` referenced from the enclosing
-`QueryCallbackApply` request; at replay the walker reconstructs
+`SelectorCallbackApply` request; at replay the walker reconstructs
 the frozen callback-arg image from that recorded obsSet and
 serves the outer's probes from it.
 
@@ -559,16 +559,16 @@ has an `Arg{depth}` Subject variant for structural composition
 into `ApplyResultSubject{fn, arg=Arg{d+1}}`, but no evolving
 state hash — sibling firings' contra-args share the same
 `Arg{depth}` Subject and rely on the enclosing
-`QueryCallbackApply`'s obsSet content to distinguish them.
+`SelectorCallbackApply`'s obsSet content to distinguish them.
 
 ### Where staleness is caught
 
 Stale-cache detection lives entirely in the Env layer's input
 tracing. A changed file or environment variable surfaces as a
 divergent Response at Env dispatch; the walker's
-`(queryHash, factSet)` lookup finds no Ask edge at the new
+`(selectorHash, factSet)` lookup finds no Ask edge at the new
 factSet and falls through. Callback-arg replay lives inside a
-`QueryCallbackApply` request whose queryHash embeds the recorded
+`SelectorCallbackApply` request whose selectorHash embeds the recorded
 obsSet content; if the obsSet or its enclosing context wouldn't
 match under the live env, the walker doesn't reach the recorded
-`QueryCallbackApply` in the first place.
+`SelectorCallbackApply` in the first place.
