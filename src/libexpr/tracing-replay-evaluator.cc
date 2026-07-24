@@ -1193,9 +1193,20 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        on the wrapper use cachedWHNF for membership without invoking a
        separate SelectorGetWHNF walk. On miss, we fall back to the
        lazy-inner-apply TRO (with no cachedWHNF), which will trigger
-       inner->apply when forced. */
+       inner->apply when forced.
+
+       Pass `fn` as currentProxy so the walker's `resolveStateHash`
+       has a cell chain to walk when the SelectorApply dispatch
+       resolves fn/arg identities — fn's own cell chain roots the
+       resolution up to the outer cache-boundary arg. Without a
+       currentProxy the cell chain is empty and resolveStateHash
+       falls through to the pool + live-proxy registration path,
+       which under DISALLOW_PARSE cascades into inner parsing.
+
+       Apply-result argAncestry cell. Parent = fn proxy's cell. */
+    auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
     trace::SelectorApply applySelector{fnStateHashStr, argStateHashStr};
-    auto applyLookup = lookup(applySelector, /*currentProxy=*/nullptr);
+    auto applyLookup = lookup(applySelector, fn.get_ptr());
     std::optional<trace::ResultWHNF> cachedWHNF;
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
@@ -1214,8 +1225,6 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     }
     auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
-    /* Apply-result argAncestry cell. Parent = fn proxy's cell. */
-    auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
     obj->withArgCell(std::move(cell));
     obj->withApplyResultSubject(std::move(resultSubject), applyArgAncestry);
     if (cachedWHNF)
