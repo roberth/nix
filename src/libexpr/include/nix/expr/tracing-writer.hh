@@ -630,26 +630,6 @@ public:
         Hash argAncestry = Hash(HashAlgorithm::SHA256));
 
     /**
-     * B2 composite sub-Q emission. Records a single fact against the
-     * innermost active Q — the parent, since this is called from
-     * logResult AFTER the sub-Q's frame has been popped — using the
-     * completed sub-Q's finalQ payload verbatim (no re-stamping) as
-     * the request and its resultHash as the response.
-     *
-     * fromHash on the pushed observation is zero: stateHashAt's
-     * `obs.fromHash == subject.stateHash` filter never matches any
-     * real Subject, so the composite folds into parent's cur / env
-     * but doesn't perturb any Subject's own-loop. Same-shape sub-Qs
-     * produce identical (request, response) pairs and dedup via
-     * seenRequests.
-     */
-    void logCompositeSubQ(
-        const nlohmann::json & subQueryPayload,
-        Hash subQueryHash,
-        const nlohmann::json & subResultPayload,
-        Hash subResultHash);
-
-    /**
      * Record one observation the outer made on a callback firing's
      * contra-arg. Routes to the matching CallbackCell by `applyId`
      * and pushes an `{selectorHash, responsePayload}` entry into that
@@ -866,22 +846,14 @@ public:
 
         decisionGraph->insertTerminal(finalQ, envFactSetHash, resultNodeHash);
 
-        /* B2: capture sub-Q's evolved payload so we can emit a
-           composite observation against the parent Q (if one
-           remains) after popping this frame. Composite is one fact
-           folded into session-cumulative envFactSetHash, per
-           Foundational 9. Retires the session-cumulative
-           envAsksEdges bridging (composite replaces its role
-           semantically, but landing-chain reachability from ∅/anchor
-           is a separate follow-up). */
-        std::optional<nlohmann::json> subQueryPayload;
-        if (!activeQueryStack.empty()) {
-            subQueryPayload = trace::toJson(activeQueryStack.back()->payloadTemplate);
+        /* D3: composite sub-Q emission retired. Under D2, getters no
+           longer create their own writer frames — sub-Q completions
+           don't need parent-chain composite observations to signal
+           reachability. Sibling discrimination is via QCA obsSet
+           content (callback-model §7b), not via composite dispatch
+           failure. Just pop the completed frame. */
+        if (!activeQueryStack.empty())
             activeQueryStack.pop_back();
-        }
-
-        if (subQueryPayload && !activeQueryStack.empty())
-            logCompositeSubQ(*subQueryPayload, finalQ, j, resultNodeHash);
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,
