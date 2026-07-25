@@ -109,36 +109,34 @@ template<typename Q, typename R>
 std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & query) const
 {
     auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
-    nlohmann::json qj = query;
-    tracingCacheLog("walker lookup: %s Q=%s queryJSON=%s",
+    /* Phase D2: getters have no factSet chain. Terminal at
+       (getterSelectorHash, parentTerminalCur). */
+    auto anchorCur = triePos.factSetHash;
+    tracingCacheLog("walker lookup: %s Q=%s anchor=%s (direct)",
                     Q::tag,
                     selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    qj.dump());
-    /* Task #110: pass Q's payload + applyResultSubject/argAncestry so
-       the walker re-derives Q's `from` as observations dispatch,
-       matching the writer's Q-evolution protocol. Non-applyResult
-       TracingReplayObjects pass nullopt subject → no evolution. */
-    std::optional<Subject> fromSubject;
-    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
-    if (applyResultSubject) {
-        fromSubject = *applyResultSubject;
-        fromSubjectArgAncestry = applyArgAncestry;
-    }
-    auto walkResult = evaluator.walk(
-        selectorHash, const_cast<TracingReplayObject *>(this)->shared_from_this(),
-        trace::SelectorVariant{query}, std::move(fromSubject), fromSubjectArgAncestry);
-    if (!walkResult) {
+                    anchorCur.to_string(HashFormat::Base16, false).substr(0, 12));
+    auto resultNodeHash = evaluator.getDecisionGraph().getTerminal(selectorHash, anchorCur);
+    if (!resultNodeHash) {
         tracingCacheLog("walker lookup: %s MISS Q=%s",
                         Q::tag,
                         selectorHash.to_string(HashFormat::Base16, false).substr(0, 12));
+        tracingCacheStats().misses++;
+        return std::nullopt;
+    }
+    auto payload = evaluator.getDecisionGraph().getResultPayload(*resultNodeHash);
+    if (!payload) {
+        tracingCacheStats().misses++;
         return std::nullopt;
     }
     try {
-        auto j = cborStringToJson(walkResult->payload);
+        auto j = cborStringToJson(*payload);
         tracingCacheLog("replay hit: %s", Q::tag);
-        return std::make_pair(j.template get<R>(), walkResult->resultNodeHash);
+        tracingCacheStats().hits++;
+        return std::make_pair(j.template get<R>(), *resultNodeHash);
     } catch (const nlohmann::json::exception & e) {
         tracingCacheLog("replay: payload parse failed: %s", e.what());
+        tracingCacheStats().misses++;
         return std::nullopt;
     }
 }
@@ -147,42 +145,38 @@ template<typename Q, typename R>
 std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralChild(const Q & query) const
 {
     auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
-    nlohmann::json qj = query;
-    tracingCacheLog("walker lookup: %s Q=%s queryJSON=%s",
+    auto anchorCur = triePos.factSetHash;
+    tracingCacheLog("walker lookup: %s Q=%s anchor=%s (direct)",
                     Q::tag,
                     selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    qj.dump());
-    /* Task #110: pass Q's payload + applyResultSubject/argAncestry so
-       the walker re-derives Q's `from` as observations dispatch,
-       matching the writer's Q-evolution protocol. Non-applyResult
-       TracingReplayObjects pass nullopt subject → no evolution. */
-    std::optional<Subject> fromSubject;
-    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
-    if (applyResultSubject) {
-        fromSubject = *applyResultSubject;
-        fromSubjectArgAncestry = applyArgAncestry;
-    }
-    auto walkResult = evaluator.walk(
-        selectorHash, const_cast<TracingReplayObject *>(this)->shared_from_this(),
-        trace::SelectorVariant{query}, std::move(fromSubject), fromSubjectArgAncestry);
-    if (!walkResult) {
+                    anchorCur.to_string(HashFormat::Base16, false).substr(0, 12));
+    auto resultNodeHash = evaluator.getDecisionGraph().getTerminal(selectorHash, anchorCur);
+    if (!resultNodeHash) {
         tracingCacheLog("walker lookup: %s MISS Q=%s",
                         Q::tag,
                         selectorHash.to_string(HashFormat::Base16, false).substr(0, 12));
+        tracingCacheStats().misses++;
+        return std::nullopt;
+    }
+    auto payload = evaluator.getDecisionGraph().getResultPayload(*resultNodeHash);
+    if (!payload) {
+        tracingCacheStats().misses++;
         return std::nullopt;
     }
     try {
-        auto j = cborStringToJson(walkResult->payload);
+        auto j = cborStringToJson(*payload);
         tracingCacheLog("replay hit: %s", Q::tag);
+        tracingCacheStats().hits++;
         return std::make_pair(
             j.template get<R>(),
             TriePosition{
-                .resultNodeHash = walkResult->resultNodeHash,
+                .resultNodeHash = *resultNodeHash,
                 .queryHashStr = selectorHash.to_string(HashFormat::Base16, false),
-                .factSetHash = walkResult->terminalCur,
+                .factSetHash = anchorCur,
             });
     } catch (const nlohmann::json::exception & e) {
         tracingCacheLog("replay: payload parse failed: %s", e.what());
+        tracingCacheStats().misses++;
         return std::nullopt;
     }
 }

@@ -100,6 +100,13 @@ public:
         TracingWriter & writer,
         TracingDecisionGraph & decisionGraph);
 
+    /** Phase D2: getters do direct Terminal lookups (no walk), so
+        TRO needs access to the decision graph. */
+    TracingDecisionGraph & getDecisionGraph() const
+    {
+        return decisionGraph;
+    }
+
     /** Access the shared TracingWriter. Used by TracingReplayObject's
         `evolvedQueryFrom` to read the writer's `envWalk`
         directly — single source of truth for the cumulative history on

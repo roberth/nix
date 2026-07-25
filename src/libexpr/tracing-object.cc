@@ -142,15 +142,14 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
         return nullptr;
     auto parentHash = evolvedQueryFrom();
     trace::SelectorGetAttr query{name, parentHash};
-    std::optional<Subject> fromSubject;
-    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
-    if (applyResultSubject) {
-        fromSubject = *applyResultSubject;
-        fromSubjectArgAncestry = applyArgAncestry;
-    }
-    auto [valueId, qh] = writer.logSelector(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
+    /* Phase D2: getter as Query — logQuery/logQueryResult, no push.
+       Observations dispatched during innerChild's evaluation
+       attribute to whatever's on activeQueryStack (the enclosing
+       apply/root cell), not a getter-specific frame. */
+    auto [valueId, qh] = writer.logQuery(query, triePos);
     auto childWHNF = computeWHNFFromObject(*innerChild);
-    auto childTriePos = writer.logResult(valueId, childWHNF, qh);
+    auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
+    auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur);
     if (qh.selectorHash && childTriePos)
         pushObservation(parentHash, *qh.selectorHash, childTriePos->resultNodeHash);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(innerChild), writer, valueId, childTriePos));
@@ -176,13 +175,8 @@ trace::ResultWHNF & TracingObject::whnf()
        to this Q's chain and evolve its fromSubject's state hash. */
     auto parentHash = evolvedQueryFrom();
     trace::SelectorGetWHNF query{parentHash};
-    std::optional<Subject> fromSubject;
-    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
-    if (applyResultSubject) {
-        fromSubject = *applyResultSubject;
-        fromSubjectArgAncestry = applyArgAncestry;
-    }
-    auto [valueId, qh] = writer.logSelector(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
+    /* Phase D2: getter — no push, direct Terminal. */
+    auto [valueId, qh] = writer.logQuery(query, triePos);
     auto whnfResult = computeWHNFFromObject(*inner);
     /* Cell-migration Phase B moved QCA emission from here to
        TracingEvaluator::apply. But TE::apply fires only for the
@@ -198,7 +192,8 @@ trace::ResultWHNF & TracingObject::whnf()
        body doesn't run). */
     if (cbApplyOrigin && applyResultSubject)
         writer.emitCallbackApplyForApplyResult(*applyResultSubject, applyArgAncestry, whnfResult);
-    auto tp = writer.logResult(valueId, whnfResult, qh);
+    auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
+    auto tp = writer.logQueryResult(valueId, whnfResult, qh, anchorCur);
     if (qh.selectorHash && tp)
         pushObservation(parentHash, *qh.selectorHash, tp->resultNodeHash);
     cachedWHNF = std::move(whnfResult);
@@ -305,16 +300,12 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
         return inner->getListElem(index);
     auto parentHash = evolvedQueryFrom();
     trace::SelectorGetListElem query{parentHash, index};
-    std::optional<Subject> fromSubject;
-    Hash fromSubjectArgAncestry(HashAlgorithm::SHA256);
-    if (applyResultSubject) {
-        fromSubject = *applyResultSubject;
-        fromSubjectArgAncestry = applyArgAncestry;
-    }
-    auto [valueId, qh] = writer.logSelector(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
+    /* Phase D2: getter — no push, direct Terminal. */
+    auto [valueId, qh] = writer.logQuery(query, triePos);
     auto result = inner->getListElem(index);
     trace::ResultWHNF childWHNF = computeWHNFFromObject(*result);
-    auto childTriePos = writer.logResult(valueId, childWHNF, qh);
+    auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
+    auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur);
     if (qh.selectorHash && childTriePos)
         pushObservation(parentHash, *qh.selectorHash, childTriePos->resultNodeHash);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
@@ -357,11 +348,8 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
        eliminates the unverified assumption. */
     auto parentHash = evolvedQueryFrom();
     trace::SelectorGetFunctionInfo query{parentHash};
-    std::optional<Subject> fromSubject;
-    Hash fromSubjectArgAncestry = getArgAncestry();
-    if (auto * s = getSubject())
-        fromSubject = *s;
-    auto [valueId, qh] = writer.logSelector(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
+    /* Phase D2: getter — no push, direct Terminal. */
+    auto [valueId, qh] = writer.logQuery(query, triePos);
     auto result = inner->getFunctionInfo();
     trace::ResultFunctionInfo traceResult;
     if (result) {
@@ -369,7 +357,8 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
     } else {
         traceResult = {.hasInfo = false};
     }
-    auto tp = writer.logResult(valueId, traceResult, qh);
+    auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
+    auto tp = writer.logQueryResult(valueId, traceResult, qh, anchorCur);
     if (qh.selectorHash && tp) pushObservation(parentHash, *qh.selectorHash, tp->resultNodeHash);
     return result;
 }

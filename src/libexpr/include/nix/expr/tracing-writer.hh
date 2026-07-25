@@ -469,6 +469,68 @@ public:
     }
 
     /**
+     * Cell-migration Phase D2: getter Query — trace-only, no push
+     * onto activeQueryStack. Contra-observations dispatched during
+     * the getter's evaluation attribute to whatever frame is on top
+     * of the stack (the enclosing apply/root cell), not to a
+     * getter-specific frame. Terminal is inserted via logQueryResult
+     * at a caller-supplied anchorCur (typically parent's
+     * terminalCur) — no factSet chain of the getter's own.
+     */
+    template<typename Q>
+    std::pair<ValueHandle, SelectorHandle> logQuery(
+        const Q & query,
+        const std::optional<TriePosition> & parent)
+    {
+        auto valueNum = sink.logSelector(query);
+        if (!decisionGraph)
+            return {valueNum, {}};
+        auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
+        nlohmann::json qj = query;
+        tracingCacheLog(
+            "writer logQuery: Q=%s queryJSON=%s",
+            selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            qj.dump());
+        SelectorHandle qh{selectorHash};
+        if (parent)
+            qh.structuralParentFactSetHash = parent->factSetHash;
+        return {valueNum, qh};
+    }
+
+    /**
+     * Cell-migration Phase D2: getter Result. Inserts a direct
+     * Terminal at (getterSelectorHash, anchorCur) — no chain walk,
+     * no logResult side effects (no closeAsksEdge, no pop from
+     * activeQueryStack).
+     */
+    template<typename R>
+    std::optional<TriePosition> logQueryResult(
+        ValueHandle valueNum,
+        const R & result,
+        const SelectorHandle & qh,
+        const Hash & anchorCur)
+    {
+        sink.logResult(valueNum, result);
+        if (!decisionGraph || !qh.selectorHash)
+            return std::nullopt;
+        nlohmann::json j = result;
+        auto resultPayload = jsonToCborString(j);
+        auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
+        decisionGraph->insertResult(resultNodeHash, resultPayload);
+        decisionGraph->insertTerminal(*qh.selectorHash, anchorCur, resultNodeHash);
+        tracingCacheLog(
+            "writer logQueryResult: Q=%s anchor=%s -> result=%s",
+            qh.selectorHash->to_string(HashFormat::Base16, false).substr(0, 12),
+            anchorCur.to_string(HashFormat::Base16, false).substr(0, 12),
+            resultNodeHash.to_string(HashFormat::Base16, false).substr(0, 12));
+        return TriePosition{
+            .resultNodeHash = resultNodeHash,
+            .queryHashStr = qh.selectorHash->to_string(HashFormat::Base16, false),
+            .factSetHash = anchorCur,
+        };
+    }
+
+    /**
      * Log a response (file read, env lookup, etc.) — a d>0
      * Request/Response pair. Per-probe: each call pushes its own
      * single-request Ask + envWalk entry, matching the
