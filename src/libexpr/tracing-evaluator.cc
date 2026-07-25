@@ -490,7 +490,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        SelectorApply's Terminal, wrapper is constructed with
        cachedWHNF ready. */
     auto whnfResult = computeWHNFFromObject(*result);
-    writer.emitCallbackApplyForApplyResult(resultSubject, applyArgAncestry, whnfResult);
+    writer.emitCallbackApplyForApplyResult(cell, resultSubject, applyArgAncestry, whnfResult);
     auto tp = writer.logResult(v, whnfResult, qh);
 
     TriePosition triePos = tp

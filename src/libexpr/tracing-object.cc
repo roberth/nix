@@ -191,7 +191,7 @@ trace::ResultWHNF & TracingObject::whnf()
        own apply results (those have cachedWHNF pre-populated so this
        body doesn't run). */
     if (cbApplyOrigin && applyResultSubject)
-        writer.emitCallbackApplyForApplyResult(*applyResultSubject, applyArgAncestry, whnfResult);
+        writer.emitCallbackApplyForApplyResult(argCell, *applyResultSubject, applyArgAncestry, whnfResult);
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
     auto tp = writer.logQueryResult(valueId, whnfResult, qh, anchorCur);
     if (qh.selectorHash && tp)

@@ -250,6 +250,7 @@ public:
         (fn, obsSet) pair produces the same QCA selectorHash across
         callers — parent's chain sees a single QCA-per-firing. */
     void emitCallbackApplyForApplyResult(
+        const std::shared_ptr<const ArgCell> & callbackCell,
         const Subject & applyResultSubject,
         Hash applyArgAncestry,
         const trace::ResultWHNF & whnf)
@@ -261,25 +262,50 @@ public:
             return;
         auto fnInitial = stateHashAtSubject(*ar->fn, applyArgAncestry, {}, 0);
         auto fnInitialHex = fnInitial.to_string(HashFormat::Base16, false);
-        for (auto it = callbackCells.rbegin(); it != callbackCells.rend(); ++it) {
-            auto & cell = *it;
-            if (cell.fnStateHashHex != fnInitialHex)
-                continue;
-            if (cell.argAncestryHex.empty())
-                continue;
-            auto obsSetHash = decisionGraph->insertObservationSet(cell.runningObsSet);
+
+        /* Cell-based reader (preferred): if a cell with populated
+           callbackState is provided, and its fn matches, read from it
+           directly — no writer.callbackCells iteration. */
+        auto tryEmitFromCell = [&](const CallbackState & cs) -> bool {
+            if (cs.argAncestryHex.empty())
+                return false;
+            if (cs.fnStateHashHex != fnInitialHex)
+                return false;
+            auto obsSetHash = decisionGraph->insertObservationSet(cs.runningObsSet);
             auto fnCurrent = stateHashAtSubject(
                 *ar->fn, applyArgAncestry, envWalk, envWalk.size());
             trace::SelectorCallbackApply qca;
             qca.fn = trace::SelectorLeaf{trace::StateHashLeaf{
                 fnCurrent.to_string(HashFormat::Base16, false),
-                cell.argAncestryHex}};
+                cs.argAncestryHex}};
             qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
             logOuterObservation(
                 trace::SelectorVariant{std::move(qca)},
                 trace::ResultVariant{whnf},
                 *ar->fn,
                 applyArgAncestry);
+            return true;
+        };
+        if (callbackCell && callbackCell->callbackState
+            && tryEmitFromCell(*callbackCell->callbackState))
+            return;
+
+        /* Fallback: iterate writer.callbackCells (pre-cell-migration
+           path). Retained until all createCallbackCell callsites
+           populate an ArgCell.callbackState reachable at the emit
+           point. See task list for the retirement plan. */
+        for (auto it = callbackCells.rbegin(); it != callbackCells.rend(); ++it) {
+            auto & cell = *it;
+            if (cell.fnStateHashHex != fnInitialHex)
+                continue;
+            if (cell.argAncestryHex.empty())
+                continue;
+            CallbackState adapter;
+            adapter.applyId = cell.applyId;
+            adapter.fnStateHashHex = cell.fnStateHashHex;
+            adapter.argAncestryHex = cell.argAncestryHex;
+            adapter.runningObsSet = cell.runningObsSet;
+            (void) tryEmitFromCell(adapter);
             return;
         }
     }

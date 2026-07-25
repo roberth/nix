@@ -107,27 +107,6 @@ struct QState
         Selector's chain vs. to earlier cells. */
     std::size_t envAsksEdgesSizeAtPush{0};
 
-    /* -------------------- Walker-side (Phase F) --------------------
-       Fields below are used by TracingReplayEvaluator::walk when the
-       cell is the active walk's state carrier. Writer-side fields
-       above stay untouched — writer and walker allocate distinct
-       QState instances (writer on cold via TracingWriter::logSelector,
-       walker on warm via walk() install). */
-
-    /** Per-edge buffer: dispatch() appends facts here; the walker's
-        edge-commit callback promotes them into perQEnvWalk. Rejected
-        edges discard the buffer. Was walk-local before Phase F. */
-    std::vector<Observation> pendingEdgeObservations;
-
-    /** Dedup for committed edges by fingerprint — prevents double-
-        folding a shared-prefix edge when trace-continuing re-traverses
-        cold's chain. Was walk-local before Phase F.
-
-        NB: this is per-walk fingerprint dedup for pending-edge
-        promotion. Cross-walk dedup for the session envWalk lives on
-        `session->committedEdgeFingerprints`. */
-    std::unordered_set<Hash> committedEdgeFingerprints;
-
     /* -------------------- Walker walk-local (Phase F) --------------
        Walker fields that were formerly session-scoped on
        TracingReplayEvaluator. Per-walk under the cell-based model:
@@ -138,6 +117,11 @@ struct QState
 
        Docs use "session" for the writer's lifetime — these fields are
        not session state (despite pre-Phase-F naming); they're per-walk. */
+
+    /** Per-edge buffer: dispatch() appends facts here; the walker's
+        edge-commit callback promotes them into perQEnvWalk. Rejected
+        edges discard the buffer. */
+    std::vector<Observation> pendingEdgeObservations;
 
     /** History of committed edges for this walk. Each Asks edge dispatched
         via commitEdge appends one entry, deduplicated by
