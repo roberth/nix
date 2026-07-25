@@ -362,6 +362,7 @@ public:
         aq->queryTag = std::string(Q::tag);
         aq->initialPayloadTemplate = qj;
         aq->envAsksEdgesSizeAtPush = envAsksEdges.size();
+        aq->prevCur = envFactSetHash;
         activeQueryStack.push_back(std::move(aq));
         return {valueNum, {selectorHash}};
     }
@@ -462,6 +463,9 @@ public:
                                 aq->currentQ.to_string(HashFormat::Base16, false).substr(0, 12));
         }
 
+        /* Multiplexer prevCur: after precondition fold, this Q's own
+           chain is at "session cur when Q became active." */
+        aq->prevCur = envFactSetHash;
         activeQueryStack.push_back(std::move(aq));
         return {valueNum, qh};
     }
@@ -590,19 +594,23 @@ public:
         sessionRequestsTrie.insert(selectorHash);
         allRequestHashes.insert(selectorHash);
         auto requestSetHash = decisionGraph->insertRequestSet({selectorHash});
-        /* Task #110 (correct model): attribute to the innermost active
-           Q only (see logOuterObservation). */
-        if (!activeQueryStack.empty()) {
-            auto & innermost = activeQueryStack.back();
-            decisionGraph->insertAsk(innermost->currentQ, prevQFactSetHash, requestSetHash);
-        }
-        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-        /* File/env reads have fromHash=0 and thus don't evolve any
-           subject's state hash — no Q evolution triggered here. */
+        /* Multiplexer broadcast (user 2026-07-25/26): a fact is ambient
+           — it's caused by the interpreter's own execution, not by any
+           specific Q. Every currently-active Q's chain must include it
+           so a walker following that Q's chain from ∅ can reach the Q's
+           Terminal cur (= session cur at logResult time). */
         ObservationSet obsSet;
         obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
+        for (auto & aq : activeQueryStack) {
+            decisionGraph->insertAsk(aq->currentQ, aq->prevCur, requestSetHash);
+            aq->perQEnvWalk.push_back(obsSet);
+            aq->prevCur = envFactSetHash;
+        }
+        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         envWalk.push_back(std::move(obsSet));
         prevQFactSetHash = envFactSetHash;
+        /* Facts have fromHash=0; no subject state hash evolves — no
+           per-Q Q evolution triggered here. */
     }
 
     /**
