@@ -71,20 +71,13 @@ TracingReplayEvaluator::walk(
         qState->payloadTemplate = *payloadTemplate;
     qState->fromSubject = fromSubject;
     qState->fromSubjectArgAncestry = fromSubjectArgAncestry;
-    /* Session inheritance: walk parent-cell chain looking for an
-       existing session; if found, share it. Otherwise allocate a fresh
-       one (this walk seeds a new tree). Root-level walks (evalFile /
-       evalExpr with cell.parent = null) always get a fresh session. */
-    if (cell) {
-        for (auto p = cell->parent; p; p = p->parent) {
-            if (p->qState && p->qState->session) {
-                qState->session = p->qState->session;
-                break;
-            }
-        }
-    }
-    if (!qState->session)
-        qState->session = std::make_shared<SessionState>();
+    /* Task #175: walk-local envWalk / envCur / responseFor /
+       committedEdgeFingerprints live directly on qState. Fresh per
+       walk — sharing across walks (previous parent-chain inheritance)
+       leaked sibling walks' terminalCur into each other's startCur,
+       producing false-positive Terminal hits without dispatching any
+       Fact (cb-two-sibling-distinct-callbacks: 84 instead of 141).
+       Docs' "session" = writer lifetime; these are per-walk. */
     if (cell)
         cell->qState = qState;
 
@@ -113,18 +106,16 @@ TracingReplayEvaluator::walk(
        preserved as long as no obs fold changes the subject's state
        via perQEnvWalk. */
     if (qState->fromSubject) {
-        qState->perQEnvWalk = qState->session->envWalk;
+        qState->perQEnvWalk = qState->envWalk;
         qState->fromSubjectLastState = stateHashAt(
             *qState->fromSubject, qState->fromSubjectArgAncestry,
             qState->perQEnvWalk, qState->perQEnvWalk.size());
     }
-    /* Aliases matching the pre-Phase-F variable names — routed through
-       the session so all uses see the same accumulator regardless of
-       which cell in the active tree owns qState. */
-    auto & envWalk = qState->session->envWalk;
-    auto & envCur = qState->session->envCur;
-    auto & responseFor = qState->session->responseFor;
-    auto & committedEdgeFingerprints = qState->session->committedEdgeFingerprints;
+    /* Aliases for readability — walk-local fields directly on qState. */
+    auto & envWalk = qState->envWalk;
+    auto & envCur = qState->envCur;
+    auto & responseFor = qState->responseFor;
+    auto & committedEdgeFingerprints = qState->committedEdgeFingerprints;
     /* Task #110 B1: per-Q chain observation history for this walk,
        matching the writer's ActiveSelector::perQEnvWalk basis. commitEdge
        appends to this in addition to session envWalk. recomputeQ
@@ -547,19 +538,14 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
        the arg (with its live OuterObject subject) is at cell[0]
        of the applyResult cell. Falling back to currentProxy.argCell
        when no walkCell is provided preserves prior behavior. */
-    /* Phase F: envWalk lives on the active walk's SessionState (per
-       cell tree). Resolve via ctx.walkCell → parent chain → qState
-       with a session. Empty extendedWalkForMatch if we can't find a
-       session (out-of-walk resolve — shouldn't happen in practice). */
+    /* Phase F: envWalk is walk-local, living on the active walk's
+       qState. Reach it via ctx.walkCell's qState directly (not by
+       walking parent chain — parent's qState belongs to a different
+       walk, and inheriting envWalk from it would produce the same
+       cross-walk contamination task #175 fixed at walk-install). */
     std::vector<ObservationSet> extendedWalkForMatch;
-    if (ctx.walkCell) {
-        for (auto p = ctx.walkCell; p; p = p->parent) {
-            if (p->qState && p->qState->session) {
-                extendedWalkForMatch = p->qState->session->envWalk;
-                break;
-            }
-        }
-    }
+    if (ctx.walkCell && ctx.walkCell->qState)
+        extendedWalkForMatch = ctx.walkCell->qState->envWalk;
     auto cell = ctx.walkCell
                   ? ctx.walkCell
                   : (ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr);

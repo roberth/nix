@@ -42,42 +42,6 @@
 
 namespace nix {
 
-/** Walker-side session accumulator — one per active cell tree.
-    Under the concurrency invariant (per user 2026-07-24), only one
-    tree is active at a time; switching trees = switching qState (and
-    thus the referenced SessionState). Cells within a tree share the
-    same SessionState via parent-chain qState inheritance so
-    cross-walk state (envWalk / envCur / responseFor) accumulates
-    consistently. */
-struct SessionState
-{
-    /** Cumulative history across all history calls in this active
-        tree's session. Each successfully committed Asks edge
-        appends one entry, deduplicated by fact-set fingerprint.
-        Mirrors the writer's `envWalk` for matching-until-divergence:
-        stateHashAt on this history matches writer's at the same
-        edge index. */
-    std::vector<ObservationSet> envWalk;
-
-    /** Trace-continuing anchor: the cur reached by the last
-        successful walk in this session. Combined with envWalk, it
-        lets the walker follow a known trace across successive Q's. */
-    TracingDecisionGraph::SetHash envCur{TracingDecisionGraph::emptySetHash()};
-
-    /** Dedup for committed edges by fingerprint (XOR-fold of
-        element hashes within the edge). Prevents double-folding a
-        shared-prefix edge when a later walk re-traverses cold's
-        chain from before its own start. */
-    std::unordered_set<Hash> committedEdgeFingerprints;
-
-    /** Memoize requestHash -> responseHash for stable requests
-        (file reads, env vars — no `from` state, response is a pure
-        function of request). Skipped for outer-value requests
-        whose `from` is pre-response and can produce different
-        responses under matching-until-divergence divergence. */
-    std::unordered_map<Hash, Hash> responseFor;
-};
-
 struct QState
 {
     /** Selector hash at the current position of Q's own chain.
@@ -164,10 +128,37 @@ struct QState
         `session->committedEdgeFingerprints`. */
     std::unordered_set<Hash> committedEdgeFingerprints;
 
-    /** Session accumulator — envWalk / envCur / responseFor shared
-        across all walks in the active cell tree. Root walk allocates;
-        child walks inherit through the parent cell's qState. */
-    std::shared_ptr<SessionState> session;
+    /* -------------------- Walker walk-local (Phase F) --------------
+       Walker fields that were formerly session-scoped on
+       TracingReplayEvaluator. Per-walk under the cell-based model:
+       cross-walk sharing produces false-positive Terminal hits when
+       one walk's terminalCur happens to match another walk's
+       Selector-key (cb-two-sibling-distinct-callbacks). Each walk's
+       state is scoped to that walk's own dispatches.
+
+       Docs use "session" for the writer's lifetime — these fields are
+       not session state (despite pre-Phase-F naming); they're per-walk. */
+
+    /** History of committed edges for this walk. Each Asks edge dispatched
+        via commitEdge appends one entry, deduplicated by
+        `committedEdgeFingerprints`. */
+    std::vector<ObservationSet> envWalk;
+
+    /** Trace-continuing anchor: the cur the walker's fold has reached.
+        Advanced by commitEdge. Starts at ∅. */
+    TracingDecisionGraph::SetHash envCur{TracingDecisionGraph::emptySetHash()};
+
+    /** Dedup committed edges within this walk (XOR-fold of
+        element hashes within the edge). Prevents double-folding a
+        shared-prefix edge when the walker's dispatch re-visits it. */
+    std::unordered_set<Hash> committedEdgeFingerprints;
+
+    /** Memoize requestHash -> responseHash for stable requests within
+        this walk (file reads, env vars — no `from` state, response is
+        a pure function of request). Skipped for outer-value requests
+        whose `from` is pre-response and can produce different
+        responses under matching-until-divergence divergence. */
+    std::unordered_map<Hash, Hash> responseFor;
 };
 
 } // namespace nix
