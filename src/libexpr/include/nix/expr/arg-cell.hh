@@ -13,13 +13,55 @@
  */
 
 #include "nix/expr/evaluator.hh"
+#include "nix/expr/tracing-decision-graph.hh"
+#include "nix/util/hash.hh"
 
 #include <memory>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace nix {
 
 struct QState; // defined in q-state.hh; forward-declared here so
                // topology-only cells don't pull the heavy dependencies.
+
+/** Per-callback-firing accumulator, living on the ArgCell created for
+    the callback arg. Under Phase D2's cell-migration, this state used
+    to live in a writer-side `std::vector<CallbackCell>` (indexed by
+    `applyId`); moved onto the cell so:
+
+    - Contra-arg observations append directly via the callback-arg
+      proxy's own cell chain — no writer-global lookup.
+    - QCA emission at applyResult WHNF force finds the cell via the
+      applyResult's argCell chain — no `applyId` iteration on a
+      writer-owned vector.
+    - Concurrency invariant continues to hold: cell trees are
+      per-active-evaluator; callback state doesn't leak across trees. */
+struct CallbackState
+{
+    /** Identity of this callback firing; equals the natural hash of
+        the apply query payload. Historically used as an index key on
+        the writer-side callbackCells vector; retained for QCA
+        payload identity + trace-log correlation. */
+    Hash applyId{HashAlgorithm::SHA256};
+
+    /** Fn's initial state hash (empty history). Cell lookup key at
+        QCA emission (matches ApplyResultSubject's fn state hash
+        under matching-until-divergence). Captured at cell allocation
+        from the applyQuery's `fn` field. */
+    std::string fnStateHashHex;
+
+    /** Cached call's callArgAncestry, encoded into the QCA payload so
+        the walker's ReplayCallbackArg reconstructs the arg's Subject
+        at the same argAncestry. Set on first contra-arg observation. */
+    std::string argAncestryHex;
+
+    /** Observations the outer made on this cell's contra-arg during
+        the callback body's evaluation. Snapshotted into the
+        ObservationSet CAS at QCA emission. */
+    std::vector<TracingDecisionGraph::Observation> runningObsSet;
+};
 
 struct ArgCell : std::enable_shared_from_this<ArgCell>
 {
@@ -54,6 +96,11 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         See q-state.hh for the field breakdown and the concurrency
         rationale. */
     mutable std::shared_ptr<QState> qState;
+
+    /** Per-callback-firing accumulator. Non-null on cells created
+        for a callback arg (OuterApply::run's localCell). Null on all
+        other cells. See CallbackState above for field semantics. */
+    mutable std::shared_ptr<CallbackState> callbackState;
 
     /** Construct a cell whose parent is `parent_`. depth is one
         deeper than parent (or 0 if parent is null). `liveObject_`

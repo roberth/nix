@@ -214,14 +214,23 @@ std::shared_ptr<Object> OuterApply::run(
     /* cb-apply: record the apply's synthetic history-advance
        edge (= ε) now that we have fnIdStr and argStateHashStr. See parallel
        call in TracingEvaluator::apply for the principle. */
+    trace::SelectorApply applyQuery{fnIdStr, argStateHashStr};
+    auto resultId = TracingDecisionGraph::computeSelectorHash(applyQuery);
     if (innerWriter) {
         nlohmann::json applyQ = trace::SelectorApply{fnIdStr, argStateHashStr};
         tracingCacheLog("createCallbackCell callsite=OuterApply::run fn=%s arg=%s",
                         fnIdStr.substr(0, 12), argStateHashStr.substr(0, 12));
         innerWriter->createCallbackCell(applyQ);
+        /* Phase D2 companion: populate the callback state on the
+           cell (localCell) so the contra-arg observations that
+           TracingCallbackArg::recordObservation will accumulate can be
+           reached via the cell chain, not just via the writer-owned
+           callbackCells vector. Applies to `localCell` directly since
+           this cell IS the callback firing's arg cell. */
+        localCell->callbackState = std::make_shared<CallbackState>();
+        localCell->callbackState->applyId = resultId;
+        localCell->callbackState->fnStateHashHex = fnIdStr;
     }
-    trace::SelectorApply applyQuery{fnIdStr, argStateHashStr};
-    auto resultId = TracingDecisionGraph::computeSelectorHash(applyQuery);
 
     /* Wrap the argObj in TracingCallbackArg so the outer's
        accesses on it during the apply land in the inner trace

@@ -219,10 +219,27 @@ std::optional<std::vector<std::string>> TracingCallbackArg::getAttrPath()
 
 void TracingCallbackArg::recordObservation(const trace::SelectorVariant & query, const trace::ResultVariant & result)
 {
-    /* Route the observation into the enclosing CallbackCell's
-       runningObsSet (via `applyId`); the writer later snapshots the
-       obsSet into an ObservationSet referenced from a
-       SelectorCallbackApply request. */
+    /* Phase D2 companion (cell-migration of callback machinery):
+       append directly to the callback firing's ArgCell.callbackState.
+       This retires the writer-side lookup by applyId — the cell is
+       reachable directly through this proxy's argCell.
+
+       Also mirror into the writer's callbackCells for now (dual-write)
+       until QCA emission migrates to a cell-based reader path in the
+       follow-up. Retiring the writer path prematurely would break
+       emitCallbackApplyForApplyResult which still iterates the
+       writer-owned vector. */
+    if (argCell && argCell->callbackState) {
+        auto qh = trace::computeSelectorHash(query);
+        nlohmann::json rJson = std::visit(
+            [](const auto & r) -> nlohmann::json { return r; },
+            result);
+        auto rPayload = jsonToCborString(rJson);
+        argCell->callbackState->runningObsSet.push_back({qh, rPayload});
+        if (argCell->callbackState->argAncestryHex.empty())
+            argCell->callbackState->argAncestryHex =
+                argAncestry.to_string(HashFormat::Base16, false);
+    }
     writer.logCallbackObservation(query, result, subject, argAncestry, applyId);
 }
 
