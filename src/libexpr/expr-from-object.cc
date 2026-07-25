@@ -449,21 +449,21 @@ static PrimOp * makeCachedFnPrimOp(
                            on the outer EvalState's `rootFSRoot` so the
                            SourceRoot outlives the Values the outer
                            evaluator builds from any returned RootedPaths. */
-                        auto contraArg =
+                        auto outerArgProxy =
                             make_ref<OuterObject>(std::move(argSubject), outerArgObj, std::move(queryFn), state.rootFSRoot, std::move(applyFn));
-                        /* Wire seedCell.liveObject to contraArg now
+                        /* Wire seedCell.liveObject to outerArgProxy now
                            that it exists. This is the deliberate
                            shared_ptr cycle documented on
                            ArgCell::liveObject. */
-                        seedCell->liveObject = contraArg.get_ptr();
-                        contraArg->withArgCell(seedCell);
-                        contraArg->withInheritedScope(callArgAncestry);
-                        contraArg->withApplyContext(applyContext);
-                        tracingCacheLog("makeCachedFnPrimOp.impl: contraArg=%p seedCell=%p callArgAncestry=%s outerArg=%p",
-                                        (void*)contraArg.get_ptr().get(), (void*)seedCell.get(),
+                        seedCell->liveObject = outerArgProxy.get_ptr();
+                        outerArgProxy->withArgCell(seedCell);
+                        outerArgProxy->withInheritedScope(callArgAncestry);
+                        outerArgProxy->withApplyContext(applyContext);
+                        tracingCacheLog("makeCachedFnPrimOp.impl: outerArgProxy=%p seedCell=%p callArgAncestry=%s outerArg=%p",
+                                        (void*)outerArgProxy.get_ptr().get(), (void*)seedCell.get(),
                                         callArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
                                         (void*)outerArgObj.get());
-                        auto result = innerEval->apply(ref<Object>(fnObj), contraArg);
+                        auto result = innerEval->apply(ref<Object>(fnObj), outerArgProxy);
                         tracingCacheLog("makeCachedFnPrimOp.impl: apply result=%p", (void*)result.get_ptr().get());
                         ExprFromObject(result.get_ptr(), innerEval, resolver).eval(state, state.baseEnv, v);
                     },
