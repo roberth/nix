@@ -184,13 +184,20 @@ trace::ResultWHNF & TracingObject::whnf()
     }
     auto [valueId, qh] = writer.logSelector(query, triePos, std::move(fromSubject), fromSubjectArgAncestry);
     auto whnfResult = computeWHNFFromObject(*inner);
-    /* Cell-migration Phase B: QCA emission for applyResults moved to
-       TracingEvaluator::apply, which computes WHNF and calls
-       emitCallbackApplyForApplyResult at apply-time. Under Phase B
-       the wrapper's cachedWHNF is pre-populated, so this whnf() body
-       only runs for non-apply-result values (roots, getAttr children
-       before they got their cachedWHNF pre-populated, etc.), where
-       there's no applyResultSubject to emit QCA for. */
+    /* Cell-migration Phase B moved QCA emission from here to
+       TracingEvaluator::apply. But TE::apply fires only for the
+       OUTER-side apply (cache-fn to `{f=...}`); the callback firing
+       itself goes through OuterApply::run which doesn't route through
+       TE::apply. Without the emission here for cbApplyOrigin
+       wrappers, cb-apply results whose fn is an outer-supplied
+       callback never emit QCA — cb-obsset-mismatch and siblings
+       silently hit wrong Terminals.
+       Re-emit here when the wrapper is a callback-origin apply
+       result. Phase B's centralisation still holds for TE::apply's
+       own apply results (those have cachedWHNF pre-populated so this
+       body doesn't run). */
+    if (cbApplyOrigin && applyResultSubject)
+        writer.emitCallbackApplyForApplyResult(*applyResultSubject, applyArgAncestry, whnfResult);
     auto tp = writer.logResult(valueId, whnfResult, qh);
     if (qh.selectorHash && tp)
         pushObservation(parentHash, *qh.selectorHash, tp->resultNodeHash);
