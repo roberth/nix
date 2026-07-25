@@ -34,12 +34,49 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
 namespace nix {
+
+/** Walker-side session accumulator — one per active cell tree.
+    Under the concurrency invariant (per user 2026-07-24), only one
+    tree is active at a time; switching trees = switching qState (and
+    thus the referenced SessionState). Cells within a tree share the
+    same SessionState via parent-chain qState inheritance so
+    cross-walk state (envWalk / envCur / responseFor) accumulates
+    consistently. */
+struct SessionState
+{
+    /** Cumulative history across all history calls in this active
+        tree's session. Each successfully committed Asks edge
+        appends one entry, deduplicated by fact-set fingerprint.
+        Mirrors the writer's `envWalk` for matching-until-divergence:
+        stateHashAt on this history matches writer's at the same
+        edge index. */
+    std::vector<ObservationSet> envWalk;
+
+    /** Trace-continuing anchor: the cur reached by the last
+        successful walk in this session. Combined with envWalk, it
+        lets the walker follow a known trace across successive Q's. */
+    TracingDecisionGraph::SetHash envCur{TracingDecisionGraph::emptySetHash()};
+
+    /** Dedup for committed edges by fingerprint (XOR-fold of
+        element hashes within the edge). Prevents double-folding a
+        shared-prefix edge when a later walk re-traverses cold's
+        chain from before its own start. */
+    std::unordered_set<Hash> committedEdgeFingerprints;
+
+    /** Memoize requestHash -> responseHash for stable requests
+        (file reads, env vars — no `from` state, response is a pure
+        function of request). Skipped for outer-value requests
+        whose `from` is pre-response and can produce different
+        responses under matching-until-divergence divergence. */
+    std::unordered_map<Hash, Hash> responseFor;
+};
 
 struct QState
 {
@@ -120,8 +157,17 @@ struct QState
 
     /** Dedup for committed edges by fingerprint — prevents double-
         folding a shared-prefix edge when trace-continuing re-traverses
-        cold's chain. Was walk-local before Phase F. */
+        cold's chain. Was walk-local before Phase F.
+
+        NB: this is per-walk fingerprint dedup for pending-edge
+        promotion. Cross-walk dedup for the session envWalk lives on
+        `session->committedEdgeFingerprints`. */
     std::unordered_set<Hash> committedEdgeFingerprints;
+
+    /** Session accumulator — envWalk / envCur / responseFor shared
+        across all walks in the active cell tree. Root walk allocates;
+        child walks inherit through the parent cell's qState. */
+    std::shared_ptr<SessionState> session;
 };
 
 } // namespace nix

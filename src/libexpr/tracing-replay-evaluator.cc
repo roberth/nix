@@ -71,6 +71,20 @@ TracingReplayEvaluator::walk(
         qState->payloadTemplate = *payloadTemplate;
     qState->fromSubject = fromSubject;
     qState->fromSubjectArgAncestry = fromSubjectArgAncestry;
+    /* Session inheritance: walk parent-cell chain looking for an
+       existing session; if found, share it. Otherwise allocate a fresh
+       one (this walk seeds a new tree). Root-level walks (evalFile /
+       evalExpr with cell.parent = null) always get a fresh session. */
+    if (cell) {
+        for (auto p = cell->parent; p; p = p->parent) {
+            if (p->qState && p->qState->session) {
+                qState->session = p->qState->session;
+                break;
+            }
+        }
+    }
+    if (!qState->session)
+        qState->session = std::make_shared<SessionState>();
     if (cell)
         cell->qState = qState;
 
@@ -99,11 +113,18 @@ TracingReplayEvaluator::walk(
        preserved as long as no obs fold changes the subject's state
        via perQEnvWalk. */
     if (qState->fromSubject) {
-        qState->perQEnvWalk = envWalk;
+        qState->perQEnvWalk = qState->session->envWalk;
         qState->fromSubjectLastState = stateHashAt(
             *qState->fromSubject, qState->fromSubjectArgAncestry,
             qState->perQEnvWalk, qState->perQEnvWalk.size());
     }
+    /* Aliases matching the pre-Phase-F variable names — routed through
+       the session so all uses see the same accumulator regardless of
+       which cell in the active tree owns qState. */
+    auto & envWalk = qState->session->envWalk;
+    auto & envCur = qState->session->envCur;
+    auto & responseFor = qState->session->responseFor;
+    auto & committedEdgeFingerprints = qState->session->committedEdgeFingerprints;
     /* Task #110 B1: per-Q chain observation history for this walk,
        matching the writer's ActiveSelector::perQEnvWalk basis. commitEdge
        appends to this in addition to session envWalk. recomputeQ
@@ -152,7 +173,7 @@ TracingReplayEvaluator::walk(
             for (const auto & f : obs)
                 fingerprint = TracingDecisionGraph::xorFactIntoHash(
                     fingerprint, f.fromHash, f.elementHash);
-            if (qState->committedEdgeFingerprints.insert(fingerprint).second) {
+            if (committedEdgeFingerprints.insert(fingerprint).second) {
                 ObservationSet edge;
                 edge.observations = std::move(obs);
                 envWalk.push_back(edge);
@@ -351,7 +372,7 @@ TracingReplayEvaluator::walk(
     {
         auto fastPathSavedEnvWalkSize = envWalk.size();
         auto fastPathSavedEnvCur = envCur;
-        auto fastPathSavedFingerprints = qState->committedEdgeFingerprints;
+        auto fastPathSavedFingerprints = committedEdgeFingerprints;
         /* B5: perQEnvWalk lives on qState (cell-owned or local, per
            Phase F); recomputeQ captures qState and reads perQEnvWalk
            through it. Trace-continuing partial commits would otherwise
@@ -385,7 +406,7 @@ TracingReplayEvaluator::walk(
            session state. */
         envWalk.resize(fastPathSavedEnvWalkSize);
         envCur = fastPathSavedEnvCur;
-        qState->committedEdgeFingerprints = std::move(fastPathSavedFingerprints);
+        committedEdgeFingerprints = std::move(fastPathSavedFingerprints);
         perQEnvWalk.resize(fastPathSavedPerQEnvWalkSize);
         pendingEdgeObservations.clear();
         rejectedObs.clear();
@@ -403,8 +424,8 @@ TracingReplayEvaluator::walk(
        the reasoning. */
     auto savedEnvWalk = std::move(envWalk);
     envWalk.clear();
-    auto savedFingerprints = std::move(qState->committedEdgeFingerprints);
-    qState->committedEdgeFingerprints.clear();
+    auto savedFingerprints = std::move(committedEdgeFingerprints);
+    committedEdgeFingerprints.clear();
     /* Mirror the envWalk clear: walker's perQEnvWalk seeded at
        walk-start from envWalk; trace-discovering now starts from ∅ on
        envWalk, so perQEnvWalk must also start from ∅ (landing chain
@@ -422,7 +443,7 @@ TracingReplayEvaluator::walk(
             envWalk = std::move(savedEnvWalk);
             committedEdgeFingerprints = std::move(savedFingerprints);
         }
-    } walkScope{envWalk, qState->committedEdgeFingerprints,
+    } walkScope{envWalk, committedEdgeFingerprints,
                 std::move(savedEnvWalk), std::move(savedFingerprints)};
 
     /* Walk with two anchor candidates in order:
@@ -526,7 +547,19 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
        the arg (with its live OuterObject subject) is at cell[0]
        of the applyResult cell. Falling back to currentProxy.argCell
        when no walkCell is provided preserves prior behavior. */
-    std::vector<ObservationSet> extendedWalkForMatch = envWalk;
+    /* Phase F: envWalk lives on the active walk's SessionState (per
+       cell tree). Resolve via ctx.walkCell → parent chain → qState
+       with a session. Empty extendedWalkForMatch if we can't find a
+       session (out-of-walk resolve — shouldn't happen in practice). */
+    std::vector<ObservationSet> extendedWalkForMatch;
+    if (ctx.walkCell) {
+        for (auto p = ctx.walkCell; p; p = p->parent) {
+            if (p->qState && p->qState->session) {
+                extendedWalkForMatch = p->qState->session->envWalk;
+                break;
+            }
+        }
+    }
     auto cell = ctx.walkCell
                   ? ctx.walkCell
                   : (ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr);
@@ -616,7 +649,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                 tracingCacheLog(
                     "resolve %s: cell[%d] subject=%s miss across %zu edges (+collected)",
                     idStr.substr(0, 12), cellDepth,
-                    describe(*subj), envWalk.size() + 1);
+                    describe(*subj), extendedWalkForMatch.size() + 1);
             } else {
                 tracingCacheLog("resolve %s: cell[%d] live has no subject", idStr.substr(0, 12), cellDepth);
             }
@@ -655,7 +688,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
            higher-order step 3 returning stale 6 when outer changed
            from `g 5` to `g 10`). */
         if (auto resolver = inner->getOuterResolver()) {
-            if (auto live = tryResolveOuterResolverProxy(*resolver, idHash, envWalk, &decisionGraph)) {
+            if (auto live = tryResolveOuterResolverProxy(*resolver, idHash, extendedWalkForMatch, &decisionGraph)) {
                 tracingCacheLog(
                     "resolve %s: not in pool — found live-proxy registration",
                     idStr.substr(0, 12));

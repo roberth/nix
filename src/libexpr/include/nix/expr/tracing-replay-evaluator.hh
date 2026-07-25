@@ -59,39 +59,13 @@ class TracingReplayEvaluator : public Evaluator
 
     };
 
-    /** Cumulative history across all history calls in this session.
-        Each successfully committed Asks edge appends one entry,
-        deduplicated by the edge's content-equal fact set so re-
-        traversing a shared prefix doesn't double-fold. Mirrors the
-        writer's `envWalk` — both grow per Asks edge ever
-        committed, so `stateHashAt(subject, argAncestry, envWalk, K)`
-        on the walker matches the writer's `stateHashAt` at the
-        same edge K. This alignment is what makes per-fact `from`
-        encodings reproducible at warm — without it, cell-chain
-        state hash computation lands at the wrong edge index (= cb-385's
-        original failure mode) and per-arg `from` lookups miss. */
-    std::vector<ObservationSet> envWalk;
-    /** Dedup committed edges by their elementHash-set fingerprint
-        (= XOR-fold of fact element hashes within the edge). When
-        a later history re-traverses an Asks edge already in
-        envWalk (= shared prefix), commitEdge is a no-op. */
-    std::unordered_set<Hash> committedEdgeFingerprints;
-
-    /* Walks across the same process invocation re-dispatch the same
-       Requests many times (each top-level lookup re-walks the shared
-       prefix). Memoize requestHash -> responseHash so the file read +
-       CBOR encode + SHA-256 happens once per request. */
-    std::unordered_map<Hash, Hash> responseFor;
-
-    /* Trace-continuing anchor: the session-cumulative cur — the
-       factSet the last successful walk landed at. Combined with the
-       session-scoped `envWalk` (which grows across walks under
-       trace-continuing), this lets the walker follow a known trace:
-       look up `getAsks(Q, envCur)` for the next Q, walk it lockstep,
-       update `envCur` on hit. On miss the walker falls through to
-       trace-discovering, which resets envWalk to per-walk (empty)
-       scoping. See tracing-eval-cache.md §Replay strategies. */
-    TracingDecisionGraph::SetHash envCur{TracingDecisionGraph::emptySetHash()};
+    /* Phase F: envWalk / envCur / responseFor / committedEdgeFingerprints
+       migrated to `SessionState` (defined in q-state.hh) held via
+       shared_ptr on `QState::session`. Cells within an active tree
+       share the same SessionState by inheritance through parent-cell
+       qState at walk-start. Switching active trees = switching qState =
+       switching SessionState; no shared TRE state to trample under the
+       concurrency invariant. See task #168. */
 
     std::optional<std::string> dispatchQueryRequest(const nlohmann::json & reqJson, ResolutionContext & ctx);
 
@@ -125,17 +99,6 @@ public:
         Environment & validationEnv,
         TracingWriter & writer,
         TracingDecisionGraph & decisionGraph);
-
-    /** Cumulative subject-id history on the walker, mirroring the writer's
-        `envWalk`. Exposed so apply-result wrappers
-        (TracingReplayObject with applyResultSubject) can compute
-        `stateHashAt(subject, argAncestry, history, history.size())` and match the
-        writer's evolved state hash at the same history index — the per-arg
-        identity alignment principle #3 requires. */
-    const std::vector<ObservationSet> & getCidasksWalk() const
-    {
-        return envWalk;
-    }
 
     /** Access the shared TracingWriter. Used by TracingReplayObject's
         `evolvedQueryFrom` to read the writer's `envWalk`
