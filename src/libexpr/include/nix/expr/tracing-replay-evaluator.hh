@@ -44,6 +44,15 @@ class TracingReplayEvaluator : public Evaluator
             argCell cells. Null for top-level entry points
             (evalFile, evalExpr) where no proxy exists yet. */
         std::shared_ptr<Object> currentProxy;
+        /** Phase F: the active walk's cell, whose chain includes the
+            arg (or root value) the walk is about — reachable ancestrally
+            through parent-cell links. Distinct from currentProxy.argCell
+            because the applyResult / root value doesn't exist as a
+            proxy yet at lookup time; the cell is what the caller has
+            constructed to represent it. Resolution walks this chain
+            FIRST, then falls back to currentProxy.argCell. Null when
+            no cell is provided to walk(). */
+        std::shared_ptr<const ArgCell> walkCell;
         /** Memoise id → resolved Object within this single history so
             recursive resolveStateHash calls don't redo work. */
         std::map<std::string, std::shared_ptr<Object>> memo;

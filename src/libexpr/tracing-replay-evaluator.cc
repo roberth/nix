@@ -56,6 +56,7 @@ TracingReplayEvaluator::walk(
 
     ResolutionContext ctx{
         std::move(currentProxy),
+        cell,
         {},
     };
     /* Cell-migration Phase F: walker's per-walk state lives on the
@@ -73,12 +74,36 @@ TracingReplayEvaluator::walk(
     if (cell)
         cell->qState = qState;
 
-    /* No pre-push seeding on walker side. Writer's B11 seeds aq's
-       perQEnvWalk from pre-push envWalk to align writer's aq->currentQ
-       with what the walker naturally reaches — walker folds through
-       the landing chain edge-by-edge (commitEdge appends to
-       perQEnvWalk on each dispatched edge, recomputeQ evolves
-       currentQ after each). Seeding here would double-fold. */
+    /* Walker-side B11 mirror: seed perQEnvWalk from current envWalk
+       so recomputeQ derives applyResult (and other fromSubject) state
+       at the same K cold's writer had at logSelector.
+
+       Trace-continuing: envWalk carries the session-cumulative
+       observations that led to this cur — cold's writer folded those
+       into aq.perQEnvWalk via the B11 precondition-fold at push, so
+       cold's Q_initial reflects K = envWalk.size() state. Walker's
+       initial perQEnvWalk must mirror that or `recomputeQ` derives Q
+       at K=0, diverging on the first Q-evolution check.
+
+       Trace-discovering: envWalk gets cleared by WalkScope; walker
+       naturally folds landing-chain edges into perQEnvWalk from ∅.
+       That case doesn't seed at walk-start (envWalk is still non-empty
+       here); the clear that happens after this seeding is followed by
+       a matching perQEnvWalk clear at the trace-discovering block.
+
+       Also mirror cold's initial fromSubjectLastState: state hash of
+       fromSubject at the current seeded perQEnvWalk. recomputeQ only
+       rewrites payload.from when state MOVES from lastState — a
+       caller-set payload.from that doesn't equal lastState (because
+       caller used a different accumulator, e.g. applyContext) is
+       preserved as long as no obs fold changes the subject's state
+       via perQEnvWalk. */
+    if (qState->fromSubject) {
+        qState->perQEnvWalk = envWalk;
+        qState->fromSubjectLastState = stateHashAt(
+            *qState->fromSubject, qState->fromSubjectArgAncestry,
+            qState->perQEnvWalk, qState->perQEnvWalk.size());
+    }
     /* Task #110 B1: per-Q chain observation history for this walk,
        matching the writer's ActiveSelector::perQEnvWalk basis. commitEdge
        appends to this in addition to session envWalk. recomputeQ
@@ -292,15 +317,25 @@ TracingReplayEvaluator::walk(
     if (payloadTemplate && fromSubject) {
         /* Capture qState by shared_ptr so recomputeQ can dereference
            perQEnvWalk (which lives on qState — either cell-owned or
-           local) across dispatch/commit callbacks. */
-        recomputeQ = [payloadTemplate, fromSubject,
-                      fromSubjectArgAncestry, qState](const Hash & preFoldQ) -> Hash {
+           local) across dispatch/commit callbacks.
+
+           Mirror cold's writer: only rewrite payload.from when the
+           fromSubject's state hash has ACTUALLY moved from the seeded
+           lastState (see tracing-writer.cc:201 and tracing-writer.hh
+           B11 block). Caller-set payload.from (e.g. from
+           evolvedQueryFrom's applyContext basis) is preserved when
+           no perQEnvWalk obs matches the subject's own state. */
+        recomputeQ = [fromSubject, fromSubjectArgAncestry, qState](const Hash & preFoldQ) -> Hash {
             auto & pqw = qState->perQEnvWalk;
             auto newState = stateHashAt(
                 *fromSubject, fromSubjectArgAncestry, pqw, pqw.size());
-            trace::SelectorVariant payload = *payloadTemplate;
-            trace::rewriteFrom(payload, newState.to_string(HashFormat::Base16, false));
-            return trace::computeSelectorHash(payload);
+            if (newState == qState->fromSubjectLastState)
+                return preFoldQ;
+            qState->fromSubjectLastState = newState;
+            trace::rewriteFrom(qState->payloadTemplate,
+                               newState.to_string(HashFormat::Base16, false));
+            qState->currentQ = trace::computeSelectorHash(qState->payloadTemplate);
+            return qState->currentQ;
         };
     }
 
@@ -370,6 +405,12 @@ TracingReplayEvaluator::walk(
     envWalk.clear();
     auto savedFingerprints = std::move(qState->committedEdgeFingerprints);
     qState->committedEdgeFingerprints.clear();
+    /* Mirror the envWalk clear: walker's perQEnvWalk seeded at
+       walk-start from envWalk; trace-discovering now starts from ∅ on
+       envWalk, so perQEnvWalk must also start from ∅ (landing chain
+       will refold naturally). Without this, the seeded prefix stays
+       and folds double against landing-chain edges. */
+    qState->perQEnvWalk.clear();
     struct WalkScope
     {
         std::vector<ObservationSet> & envWalk;
@@ -475,9 +516,20 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
 
     /* Walk the proxy's argCell chain looking for a cell whose
        liveObject's state hash matches idStr at some k under
-       walker's own envWalk. */
+       walker's own envWalk.
+
+       Phase F: prefer ctx.walkCell (the active walk's cell) as
+       starting point. Its chain includes the arg / applyResult /
+       root value the current walk is about — reachable via parent
+       links — which currentProxy.argCell doesn't necessarily
+       contain. Example: TRE::apply passes fn as currentProxy but
+       the arg (with its live OuterObject subject) is at cell[0]
+       of the applyResult cell. Falling back to currentProxy.argCell
+       when no walkCell is provided preserves prior behavior. */
     std::vector<ObservationSet> extendedWalkForMatch = envWalk;
-    auto cell = ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr;
+    auto cell = ctx.walkCell
+                  ? ctx.walkCell
+                  : (ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr);
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
         if (auto live = cell->liveObject) {
