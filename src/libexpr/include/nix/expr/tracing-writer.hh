@@ -120,23 +120,19 @@ class TracingWriter
     };
     std::vector<AsksEdgeRecord> envAsksEdges;
 
-    /** Per-active-selector state. Each `logSelector` allocates a QState
-        and pushes it here; each `logResult` pops. LIFO nesting matches
-        the evaluator's Q hierarchy (parent Q's evaluation triggers
-        child Q's logSelector inside). Observations that fire while a Q
-        is active are attributed to that Q's `currentQ`.
+    /** Currently-active cells. Each Selector push (via logSelectorOnCell
+        / logRootSelectorOnCell) appends the cell; logResult pops.
+        LIFO nesting matches the evaluator's Q hierarchy. Cells carry
+        their qState (allocated at push); readers dereference
+        `cell->qState` to reach the per-Q fields (currentQ, prevCur,
+        perQEnvWalk, etc.).
 
-        Migration note (task list #158–#171): the QStates pushed here
-        are the same shared objects that application cells store in
-        their `ArgCell::qState` (once Phase B lands the sharing).
-        Retiring `activeQueryStack` in Phase E just deletes the stack;
-        callers walk cell chain to find the innermost `QState` instead.
-
-        Field breakdown, and the concurrency rationale for putting
-        this state on cells rather than a writer-global stack, live in
-        `q-state.hh`. */
-    using ActiveSelector = std::shared_ptr<QState>;
-    std::vector<ActiveSelector> activeQueryStack;
+        Replaces the old `activeQueryStack` (vector of raw QState
+        shared_ptrs) — cells ARE the stack under the cell-migration
+        (task #179). Concurrency rationale: one active cell tree at
+        a time; switching evaluators = switching which tree is
+        active. */
+    std::vector<std::shared_ptr<const ArgCell>> activeCells;
     /* Mirrors `seenRequests` but keyed by query hash, not fact hash.
        record()'s slow path iterates this to build the trailing
        remaining-edge — an Asks edge's requestSet is a set of query
@@ -301,8 +297,8 @@ public:
                at cur=∅ and warm returns wrong-sibling responses
                (cb-obsset-mismatch-clean-miss, sibling tests). */
             std::shared_ptr<const ArgCell> attrCell;
-            if (!activeQueryStack.empty())
-                attrCell = activeQueryStack.back()->cell.lock();
+            if (!activeCells.empty())
+                attrCell = activeCells.back()->qState->cell.lock();
             logOuterObservation(
                 trace::SelectorVariant{std::move(qca)},
                 trace::ResultVariant{whnf},
@@ -365,12 +361,15 @@ public:
     };
 
     /**
-     * Log a root query (evalFile, evalExpr, apply). Root queries have
-     * no evolving from-subject, so `activeQueryStack` records the Q
-     * as fixed.
+     * Log a root query (evalFile, evalExpr, apply) on a cell. Root
+     * queries have no evolving from-subject, so qState carries the Q
+     * as fixed. Pushes `cell` onto `activeCells` — cells ARE the
+     * active-set under the #179 retire of the old activeQueryStack.
      */
     template<typename Q>
-    std::pair<ValueHandle, SelectorHandle> logRootSelector(const Q & query)
+    std::pair<ValueHandle, SelectorHandle> logRootSelectorOnCell(
+        const std::shared_ptr<const ArgCell> & cell,
+        const Q & query)
     {
         auto valueNum = sink.logSelector(query);
         if (!decisionGraph)
@@ -378,53 +377,37 @@ public:
         auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
         nlohmann::json qj = query;
         tracingCacheLog(
-            "writer logRootSelector: Q=%s queryJSON=%s",
+            "writer logRootSelectorOnCell: Q=%s queryJSON=%s",
             selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
             qj.dump());
-        ActiveSelector aq = std::make_shared<QState>();
-        aq->currentQ = selectorHash;
-        aq->payloadTemplate = trace::SelectorVariant{query};
-        aq->queryTag = std::string(Q::tag);
-        aq->initialPayloadTemplate = qj;
-        aq->envAsksEdgesSizeAtPush = envAsksEdges.size();
-        aq->prevCur = envFactSetHash;
-        activeQueryStack.push_back(std::move(aq));
+        auto qState = std::make_shared<QState>();
+        qState->currentQ = selectorHash;
+        qState->payloadTemplate = trace::SelectorVariant{query};
+        qState->queryTag = std::string(Q::tag);
+        qState->initialPayloadTemplate = qj;
+        qState->envAsksEdgesSizeAtPush = envAsksEdges.size();
+        if (cell) {
+            cell->qState = qState;
+            qState->cell = cell;
+            /* #177 pull model: this Q's chain starts at cell's
+               cumulative factSetHash. */
+            qState->prevCur = cell->factSetHash();
+            activeCells.push_back(cell);
+        } else {
+            qState->prevCur = envFactSetHash;
+        }
         return {valueNum, {selectorHash}};
     }
 
     /**
-     * Cell-migration Phase C: root selector variant that also aliases
-     * the pushed ActiveSelector shared_ptr onto the given cell's
-     * qState. Mirrors `logSelectorOnCell` for root queries.
+     * Log a query on an existing value (getAttr, getString, etc.) on
+     * a cell. If `fromSubject` is provided, the writer will re-derive
+     * Q's `from` field after each observation that evolves that
+     * subject's state hash. Pushes `cell` onto `activeCells`.
      */
     template<typename Q>
-    std::pair<ValueHandle, SelectorHandle> logRootSelectorOnCell(
+    std::pair<ValueHandle, SelectorHandle> logSelectorOnCell(
         const std::shared_ptr<const ArgCell> & cell,
-        const Q & query)
-    {
-        auto pair = logRootSelector(query);
-        if (cell && !activeQueryStack.empty()) {
-            cell->qState = activeQueryStack.back();
-            cell->qState->cell = cell;
-            /* #177 pull model: this Q's chain starts at the cell's
-               cumulative factSetHash (own XOR ancestors). Walker from
-               ∅ dispatches Q's Ask chain (including env facts via
-               broadcast Ask insertion) and reaches cell.factSetHash()
-               after Q completes. */
-            cell->qState->prevCur = cell->factSetHash();
-        }
-        return pair;
-    }
-
-    /**
-     * Log a query on an existing value (getAttr, getString, etc.). If
-     * `fromSubject` is provided, the writer will re-derive Q's `from`
-     * field after each observation that evolves that subject's state
-     * hash, and Ask/Terminal rows for this Q will be keyed on the
-     * evolved Q at each step (Q evolution protocol).
-     */
-    template<typename Q>
-    std::pair<ValueHandle, SelectorHandle> logSelector(
         const Q & query,
         const std::optional<TriePosition> & parent,
         std::optional<Subject> fromSubject = std::nullopt,
@@ -436,7 +419,7 @@ public:
         auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
         nlohmann::json qj = query;
         tracingCacheLog(
-            "writer logSelector: Q=%s queryJSON=%s",
+            "writer logSelectorOnCell: Q=%s queryJSON=%s",
             selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
             qj.dump());
         SelectorHandle qh{selectorHash};
@@ -447,93 +430,59 @@ public:
             lastState = stateHashAt(
                 *fromSubject, fromSubjectArgAncestry, envWalk, envWalk.size());
         }
-        ActiveSelector aq = std::make_shared<QState>();
-        aq->currentQ = selectorHash;
-        aq->payloadTemplate = trace::SelectorVariant{query};
-        aq->fromSubject = std::move(fromSubject);
-        aq->fromSubjectArgAncestry = fromSubjectArgAncestry;
-        aq->fromSubjectLastState = lastState;
-        aq->structuralParentFactSetHash = qh.structuralParentFactSetHash;
-        aq->queryTag = std::string(Q::tag);
-        aq->initialPayloadTemplate = qj;
-        aq->initialFromSubjectState = lastState;
-        aq->envAsksEdgesSizeAtPush = envAsksEdges.size();
+        auto qState = std::make_shared<QState>();
+        qState->currentQ = selectorHash;
+        qState->payloadTemplate = trace::SelectorVariant{query};
+        qState->fromSubject = std::move(fromSubject);
+        qState->fromSubjectArgAncestry = fromSubjectArgAncestry;
+        qState->fromSubjectLastState = lastState;
+        qState->structuralParentFactSetHash = qh.structuralParentFactSetHash;
+        qState->queryTag = std::string(Q::tag);
+        qState->initialPayloadTemplate = qj;
+        qState->initialFromSubjectState = lastState;
+        qState->envAsksEdgesSizeAtPush = envAsksEdges.size();
 
         /* B11: preconditions. Under callback-model §3, Q's chain
            starts at index M > 0 carrying preconditions from prior
-           state. Fold pre-push session observations into aq's per-Q
-           chain, evolving aq->currentQ to Q_M and inserting Ask rows
-           under each intermediate Q value so walkers starting at
-           (Q_initial, ∅) can fold their way to (Q_M, Q_entry_cur).
-
-           Under matching-until-divergence, walker's per-walk perQEnvWalk
-           after committing the same N landing-chain obs contains the
-           same ObservationSets → stateHashAt gives the same evolved
-           state → walker's Q at end of landing == aq->currentQ (Q_M).
-           Q's first own Ask (later, at logOuterObservation) is then
-           recorded under aq->currentQ = Q_M, which walker finds. */
-        if (aq->fromSubject) {
+           state. Fold pre-push session observations into qState's
+           per-Q chain, evolving qState->currentQ to Q_M and inserting
+           Ask rows under each intermediate Q value so walkers starting
+           at (Q_initial, ∅) can fold their way to (Q_M, Q_entry_cur). */
+        if (qState->fromSubject) {
             for (size_t i = 0; i < envAsksEdges.size(); ++i) {
                 const auto & edge = envAsksEdges[i];
-                decisionGraph->insertAsk(aq->currentQ, edge.fromFactSetHash, edge.requestSetHash);
+                decisionGraph->insertAsk(qState->currentQ, edge.fromFactSetHash, edge.requestSetHash);
                 if (i < envWalk.size()) {
-                    aq->perQEnvWalk.push_back(envWalk[i]);
+                    qState->perQEnvWalk.push_back(envWalk[i]);
                     auto newState = stateHashAt(
-                        *aq->fromSubject, aq->fromSubjectArgAncestry,
-                        aq->perQEnvWalk, aq->perQEnvWalk.size());
-                    if (newState != aq->fromSubjectLastState) {
-                        aq->fromSubjectLastState = newState;
+                        *qState->fromSubject, qState->fromSubjectArgAncestry,
+                        qState->perQEnvWalk, qState->perQEnvWalk.size());
+                    if (newState != qState->fromSubjectLastState) {
+                        qState->fromSubjectLastState = newState;
                         trace::rewriteFrom(
-                            aq->payloadTemplate,
+                            qState->payloadTemplate,
                             newState.to_string(HashFormat::Base16, false));
-                        aq->currentQ = trace::computeSelectorHash(aq->payloadTemplate);
+                        qState->currentQ = trace::computeSelectorHash(qState->payloadTemplate);
                     }
                 }
             }
             if (envAsksEdges.size() > 0)
-                tracingCacheLog("logSelector: precondition fold %zu obs -> Q_M=%s",
+                tracingCacheLog("logSelectorOnCell: precondition fold %zu obs -> Q_M=%s",
                                 envAsksEdges.size(),
-                                aq->currentQ.to_string(HashFormat::Base16, false).substr(0, 12));
+                                qState->currentQ.to_string(HashFormat::Base16, false).substr(0, 12));
         }
 
-        /* Multiplexer prevCur: after precondition fold, this Q's own
-           chain is at "session cur when Q became active." */
-        aq->prevCur = envFactSetHash;
-        activeQueryStack.push_back(std::move(aq));
-        return {valueNum, qh};
-    }
-
-    /**
-     * Cell-migration Phase B variant: same as `logSelector`, but also
-     * aliases the pushed `ActiveSelector` shared_ptr onto the given
-     * cell's `qState`. Mutations on either side (writer's stack via
-     * `activeQueryStack.back()->...`, or cell via `cell->qState->...`)
-     * are visible to both — they're the same `QState`.
-     *
-     * Callers that create an ArgCell for an application (SelectorApply,
-     * SelectorCallbackApply, root SelectorImport/SelectorExpr in later
-     * phases) use this to associate the Selector's chain state with
-     * the cell. Cell-only lookups (walker after Phase E) will read
-     * qState directly from the cell without going through the writer's
-     * stack.
-     */
-    template<typename Q>
-    std::pair<ValueHandle, SelectorHandle> logSelectorOnCell(
-        const std::shared_ptr<const ArgCell> & cell,
-        const Q & query,
-        const std::optional<TriePosition> & parent,
-        std::optional<Subject> fromSubject = std::nullopt,
-        Hash fromSubjectArgAncestry = Hash(HashAlgorithm::SHA256))
-    {
-        auto pair = logSelector(query, parent, std::move(fromSubject), std::move(fromSubjectArgAncestry));
-        if (cell && !activeQueryStack.empty()) {
-            cell->qState = activeQueryStack.back();
-            cell->qState->cell = cell;
+        if (cell) {
+            cell->qState = qState;
+            qState->cell = cell;
             /* #177 pull model: this Q's chain starts at cell's
                cumulative factSetHash (own XOR ancestors). */
-            cell->qState->prevCur = cell->factSetHash();
+            qState->prevCur = cell->factSetHash();
+            activeCells.push_back(cell);
+        } else {
+            qState->prevCur = envFactSetHash;
         }
-        return pair;
+        return {valueNum, qh};
     }
 
     /**
@@ -644,17 +593,16 @@ public:
            Terminal cur (= session cur at logResult time). */
         ObservationSet obsSet;
         obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
-        for (auto & aq : activeQueryStack) {
+        for (auto & cell : activeCells) {
+            auto & aq = cell->qState;
+            if (!aq) continue;
             /* #177 pull model: Ask keyed at aq's cell.factSetHash()
                (before-fold value cached in aq->prevCur). Env fact
                folded into sessionRootCell above; every descendant
                cell's factSetHash() picks it up via parent-chain walk. */
             decisionGraph->insertAsk(aq->currentQ, aq->prevCur, requestSetHash);
             aq->perQEnvWalk.push_back(obsSet);
-            if (auto cell = aq->cell.lock())
-                aq->prevCur = cell->factSetHash();
-            else
-                aq->prevCur = envFactSetHash;
+            aq->prevCur = cell->factSetHash();
         }
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         envWalk.push_back(std::move(obsSet));
@@ -796,8 +744,8 @@ public:
         /* Per-probe push (see logResponse for reasoning). Task #110
            (correct model): attribute to the innermost active Q only. */
         auto requestSetHash = decisionGraph->insertRequestSet({request});
-        if (!activeQueryStack.empty()) {
-            auto & innermost = activeQueryStack.back();
+        if (!activeCells.empty()) {
+            auto & innermost = activeCells.back()->qState;
             decisionGraph->insertAsk(innermost->currentQ, prevQFactSetHash, requestSetHash);
         }
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
@@ -875,8 +823,8 @@ public:
         sink.logResult(valueNum, result);
 
         if (!decisionGraph || !qh.selectorHash) {
-            if (!activeQueryStack.empty())
-                activeQueryStack.pop_back();
+            if (!activeCells.empty())
+                activeCells.pop_back();
             return std::nullopt;
         }
 
@@ -895,17 +843,17 @@ public:
         decisionGraph->installFactSet(envFactSetHash, envFactSet);
         sessionRequestsTrie.persist(*decisionGraph);
 
-        Hash finalQ = activeQueryStack.empty()
+        Hash finalQ = activeCells.empty()
             ? *qh.selectorHash
-            : activeQueryStack.back()->currentQ;
+            : activeCells.back()->qState->currentQ;
         /* #177 pull model: Terminal keyed at the completing Q's
            cell.factSetHash() — this cell's own facts XORed with
            ancestor factSetHashes on demand. Sibling isolation is
            structural (siblings have separate cells → separate
            ownFactSets, ancestors shared via parent chain). */
         Hash terminalCur = envFactSetHash;
-        if (!activeQueryStack.empty()) {
-            if (auto cell = activeQueryStack.back()->cell.lock())
+        if (!activeCells.empty()) {
+            if (auto cell = activeCells.back()->qState->cell.lock())
                 terminalCur = cell->factSetHash();
         }
         tracingCacheLog("logResult: Q_initial=%s Q_final=%s factSet=%s -> result",
@@ -921,8 +869,8 @@ public:
            reachability. Sibling discrimination is via QCA obsSet
            content (callback-model §7b), not via composite dispatch
            failure. Just pop the completed frame. */
-        if (!activeQueryStack.empty())
-            activeQueryStack.pop_back();
+        if (!activeCells.empty())
+            activeCells.pop_back();
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,

@@ -193,11 +193,15 @@ ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const Roote
 {
     guardCacheRecording("evalExprLazy", expr);
     ensurePreloaded();
-    auto [v, qh] = writer.logRootSelector(trace::SelectorExpr{expr, basePath.path.abs()});
+    /* #179: use OnCell variant so the push goes through activeCells;
+       no bare logRootSelector remains. */
+    auto rootCell = ArgCell::make(writer.sessionRootCell, nullptr);
+    auto [v, qh] = writer.logRootSelectorOnCell(rootCell, trace::SelectorExpr{expr, basePath.path.abs()});
     auto result = inner->evalExprLazy(expr, basePath);
     // Lazy: don't force type yet, just wrap
     auto obj = TracingObject::create(result, writer, v);
-    obj->withArgCell(ArgCell::make(writer.sessionRootCell, obj.get_ptr()));
+    const_cast<ArgCell &>(*rootCell).liveObject = obj.get_ptr();
+    obj->withArgCell(std::move(rootCell));
     return obj;
 }
 

@@ -177,8 +177,8 @@ void TracingWriter::logOuterObservation(
        composite (via its own logResult that folds sub-Q's Terminal
        into parent's envWalk). Skip Ask insertion when the stack is
        empty (no attributable Q). */
-    if (!activeQueryStack.empty()) {
-        auto & innermost = activeQueryStack.back();
+    if (!activeCells.empty()) {
+        auto & innermost = activeCells.back()->qState;
         /* #177 reader switch: Ask keyed at innermost's cell factSetHash
            (before-fold value in innermost->prevCur). Falls back to
            prevQFactSetHash when innermost has no cell backpointer. */
@@ -190,8 +190,8 @@ void TracingWriter::logOuterObservation(
     envWalk.push_back(obsSet);
     /* Task #110: append to innermost Q's perQEnvWalk. Session envWalk
        stays 1:1-aligned with envAsksEdges for other bookkeeping. */
-    if (!activeQueryStack.empty()) {
-        auto & innermost = activeQueryStack.back();
+    if (!activeCells.empty()) {
+        auto & innermost = activeCells.back()->qState;
         innermost->perQEnvWalk.push_back(std::move(obsSet));
         /* #177 pull model: advance innermost's prevCur to
            cell.factSetHash() (own XOR ancestors). */
@@ -202,7 +202,7 @@ void TracingWriter::logOuterObservation(
     }
     tracingCacheLog(
         "logOuterObservation: inserted Ask under %zu active Q(s) from=%s (env=%zu)",
-        activeQueryStack.size(),
+        activeCells.size(),
         prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
         envWalk.size());
     prevQFactSetHash = envFactSetHash;
@@ -213,8 +213,8 @@ void TracingWriter::logOuterObservation(
        collapse: two Qs with the same fromSubject-initial-state and
        the same own-chain evolve to the same finalQ regardless of
        what other Qs did in the session. */
-    if (!activeQueryStack.empty()) {
-        auto & aq = activeQueryStack.back();
+    if (!activeCells.empty()) {
+        auto & aq = activeCells.back()->qState;
         if (aq->fromSubject) {
             auto newState = stateHashAt(
                 *aq->fromSubject, aq->fromSubjectArgAncestry,
@@ -268,8 +268,8 @@ void TracingWriter::flushPending(bool processApplies)
     if (!pendingNewRequests.empty()) {
         auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
         /* Task #110 (correct model): innermost active Q only. */
-        if (!activeQueryStack.empty()) {
-            auto & innermost = activeQueryStack.back();
+        if (!activeCells.empty()) {
+            auto & innermost = activeCells.back()->qState;
             decisionGraph->insertAsk(innermost->currentQ, prevQFactSetHash, requestSetHash);
         }
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
@@ -301,8 +301,8 @@ void TracingWriter::closeAsksEdge(bool processApplies)
     if (!pendingNewRequests.empty()) {
         auto requestSetHash = decisionGraph->insertRequestSet(pendingNewRequests);
         /* Task #110 (correct model): innermost active Q only. */
-        if (!activeQueryStack.empty()) {
-            auto & innermost = activeQueryStack.back();
+        if (!activeCells.empty()) {
+            auto & innermost = activeCells.back()->qState;
             decisionGraph->insertAsk(innermost->currentQ, prevQFactSetHash, requestSetHash);
         }
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
