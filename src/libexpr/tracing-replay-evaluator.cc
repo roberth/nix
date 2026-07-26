@@ -1206,14 +1206,19 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        Apply-result argAncestry cell. Parent = fn proxy's cell. */
     auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
     trace::SelectorApply applySelector{fnStateHashStr};
+    auto applySelectorHash = TracingDecisionGraph::computeSelectorHash(applySelector);
     /* Phase F: pass the applyResult cell so walker's per-walk state
        lives on cell.qState — cell chain reachable from parent (fn's
        cell), qState reset for this walk's dispatches. */
     auto applyLookup = lookup(applySelector, fn.get_ptr(), cell);
     std::optional<trace::ResultWHNF> cachedWHNF;
+    /* #181: query-space identity — use SelectorApply's Q hash so
+       downstream applies see fn->getStateHashHex() = this Q hash
+       (matches cold's TE::apply where triePos.queryHashStr =
+       qh.selectorHash from writer.logResult). */
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
-        .queryHashStr = applyArgAncestryStateHashHex,
+        .queryHashStr = applySelectorHash.to_string(HashFormat::Base16, false),
     };
     if (applyLookup) {
         try {
