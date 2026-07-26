@@ -57,20 +57,7 @@ struct QState
         the same Q hash for the whole invocation. */
     Hash currentQ{HashAlgorithm::SHA256};
 
-/** The cur under which this Q's next Ask row keys. Under the
-        multiplexer model (Phase E, user 2026-07-25/26): each active
-        Q tracks its own chain independently — facts broadcast to all
-        active Qs, and each Q's Ask edge inserts at its own prevCur,
-        advancing after the fold. Replaces the writer-global
-        `prevQFactSetHash` for this Q's attribution.
-
-        Initialised at push time to the session's `envFactSetHash` —
-        the Q's chain starts at "session cur when Q became active."
-        Precondition-fold (logSelector's pre-push Ask backfill) is
-        what lets a walker from ∅ reach this starting cur. */
-    TracingDecisionGraph::SetHash prevCur{TracingDecisionGraph::emptySetHash()};
-
-    /* -------------------- Walker walk-local (Phase F) --------------
+/* -------------------- Walker walk-local (Phase F) --------------
        Walker fields that were formerly session-scoped on
        TracingReplayEvaluator. Per-walk under the cell-based model:
        cross-walk sharing produces false-positive Terminal hits when

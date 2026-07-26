@@ -329,12 +329,7 @@ public:
         if (cell) {
             cell->qState = qState;
             qState->cell = cell;
-            /* #177 pull model: this Q's chain starts at cell's
-               cumulative factSetHash. */
-            qState->prevCur = cell->factSetHash();
             activeCells.push_back(cell);
-        } else {
-            qState->prevCur = sessionRootCell->factSetHash();
         }
         return {valueNum, {selectorHash}};
     }
@@ -375,12 +370,7 @@ public:
         if (cell) {
             cell->qState = qState;
             qState->cell = cell;
-            /* #177 pull model: this Q's chain starts at cell's
-               cumulative factSetHash (own XOR ancestors). */
-            qState->prevCur = cell->factSetHash();
             activeCells.push_back(cell);
-        } else {
-            qState->prevCur = sessionRootCell->factSetHash();
         }
         return {valueNum, qh};
     }
