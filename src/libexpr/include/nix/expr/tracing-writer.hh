@@ -406,11 +406,12 @@ public:
         if (cell && !activeQueryStack.empty()) {
             cell->qState = activeQueryStack.back();
             cell->qState->cell = cell;
-            /* #177: this Q's chain starts at the cell's ownFactSet
-               (what's been folded into THIS cell so far). Walker from
-               ∅ dispatches Q's Ask chain and folds new facts into
-               local cur, ending at cell.ownFactSet after Q completes. */
-            cell->qState->prevCur = cell->ownFactSet;
+            /* #177 pull model: this Q's chain starts at the cell's
+               cumulative factSetHash (own XOR ancestors). Walker from
+               ∅ dispatches Q's Ask chain (including env facts via
+               broadcast Ask insertion) and reaches cell.factSetHash()
+               after Q completes. */
+            cell->qState->prevCur = cell->factSetHash();
         }
         return pair;
     }
@@ -528,8 +529,9 @@ public:
         if (cell && !activeQueryStack.empty()) {
             cell->qState = activeQueryStack.back();
             cell->qState->cell = cell;
-            /* #177: this Q's chain starts at cell's ownFactSet. */
-            cell->qState->prevCur = cell->ownFactSet;
+            /* #177 pull model: this Q's chain starts at cell's
+               cumulative factSetHash (own XOR ancestors). */
+            cell->qState->prevCur = cell->factSetHash();
         }
         return pair;
     }
@@ -626,18 +628,11 @@ public:
         envFactSet.push_back({selectorHash, responseHash});
         envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
             envFactSetHash, selectorHash, responseHash);
-        /* #177 broadcast fold: env facts are ambient — every active
-           cell folds them into its own ownFactSet. Walker from ∅
-           dispatches Q's own Ask chain and reaches cell.ownFactSet
-           naturally without landing chains. sessionRootCell folds too
-           so cross-Q session accounting still has an anchor. */
+        /* #177 B: env facts fold into session root cell's ownFactSet.
+           Descendant cells inherit via factSetHash()'s parent-chain
+           walk (pull-based, per user 2026-07-26). */
         sessionRootCell->ownFactSet = TracingDecisionGraph::xorFactIntoHash(
             sessionRootCell->ownFactSet, selectorHash, responseHash);
-        for (auto & aq : activeQueryStack) {
-            if (auto cell = aq->cell.lock())
-                cell->ownFactSet = TracingDecisionGraph::xorFactIntoHash(
-                    cell->ownFactSet, selectorHash, responseHash);
-        }
         responseFor.emplace(selectorHash, responseHash);
         sessionRequestsTrie.insert(selectorHash);
         allRequestHashes.insert(selectorHash);
@@ -650,14 +645,14 @@ public:
         ObservationSet obsSet;
         obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
         for (auto & aq : activeQueryStack) {
-            /* #177 reader switch: Ask keyed at aq's cell.ownFactSet
+            /* #177 pull model: Ask keyed at aq's cell.factSetHash()
                (before-fold value cached in aq->prevCur). Env fact
-               already broadcast-folded into every active cell above,
-               so cell->ownFactSet is up-to-date for the advance. */
+               folded into sessionRootCell above; every descendant
+               cell's factSetHash() picks it up via parent-chain walk. */
             decisionGraph->insertAsk(aq->currentQ, aq->prevCur, requestSetHash);
             aq->perQEnvWalk.push_back(obsSet);
             if (auto cell = aq->cell.lock())
-                aq->prevCur = cell->ownFactSet;
+                aq->prevCur = cell->factSetHash();
             else
                 aq->prevCur = envFactSetHash;
         }
@@ -903,14 +898,15 @@ public:
         Hash finalQ = activeQueryStack.empty()
             ? *qh.selectorHash
             : activeQueryStack.back()->currentQ;
-        /* #177 reader switch: Terminal keyed at the completing Q's
-           cell.ownFactSet (sibling-isolated by construction — each
-           cell has its own accumulator). Env facts broadcast-folded
-           into every active cell so ownFactSet includes them. */
+        /* #177 pull model: Terminal keyed at the completing Q's
+           cell.factSetHash() — this cell's own facts XORed with
+           ancestor factSetHashes on demand. Sibling isolation is
+           structural (siblings have separate cells → separate
+           ownFactSets, ancestors shared via parent chain). */
         Hash terminalCur = envFactSetHash;
         if (!activeQueryStack.empty()) {
             if (auto cell = activeQueryStack.back()->cell.lock())
-                terminalCur = cell->ownFactSet;
+                terminalCur = cell->factSetHash();
         }
         tracingCacheLog("logResult: Q_initial=%s Q_final=%s factSet=%s -> result",
                         qh.selectorHash->to_string(HashFormat::Base16, false).substr(0, 12),
