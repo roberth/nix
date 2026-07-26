@@ -42,8 +42,17 @@
 
 namespace nix {
 
+struct ArgCell;
+
 struct QState
 {
+    /** Weak back-pointer to the cell that owns this qState. Populated
+        at logSelectorOnCell / logRootSelectorOnCell time. Used to look
+        up `cell->factSetHash()` for Ask/Terminal keying under the
+        per-cell factset direction (task #177). weak_ptr avoids the
+        obvious cycle (cell holds shared_ptr<QState>). */
+    std::weak_ptr<const ArgCell> cell;
+
     /** Selector hash at the current position of Q's own chain.
         Evolves as each observation attributed to this cell folds
         into `perQEnvWalk`, driving `fromSubject`'s state hash and

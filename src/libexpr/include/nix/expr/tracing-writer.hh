@@ -391,8 +391,16 @@ public:
         const Q & query)
     {
         auto pair = logRootSelector(query);
-        if (cell && !activeQueryStack.empty())
+        if (cell && !activeQueryStack.empty()) {
             cell->qState = activeQueryStack.back();
+            /* #177: back-pointer so Ask/Terminal keys can read
+               cell->factSetHash() at each fold moment. */
+            cell->qState->cell = cell;
+            /* Under per-cell factsets, this Q's chain starts at the
+               cell's current factset — env facts inherited from
+               sessionRootCell parent. */
+            cell->qState->prevCur = cell->factSetHash();
+        }
         return pair;
     }
 
@@ -506,8 +514,12 @@ public:
         Hash fromSubjectArgAncestry = Hash(HashAlgorithm::SHA256))
     {
         auto pair = logSelector(query, parent, std::move(fromSubject), std::move(fromSubjectArgAncestry));
-        if (cell && !activeQueryStack.empty())
+        if (cell && !activeQueryStack.empty()) {
             cell->qState = activeQueryStack.back();
+            /* #177: back-pointer for cell.factSetHash() reads. */
+            cell->qState->cell = cell;
+            cell->qState->prevCur = cell->factSetHash();
+        }
         return pair;
     }
 
@@ -620,9 +632,17 @@ public:
         ObservationSet obsSet;
         obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
         for (auto & aq : activeQueryStack) {
+            /* #177 reader switch: Ask keyed at aq's cell's factSetHash
+               (before-fold value cached in aq->prevCur). Advance to
+               post-fold cell factSetHash for next iteration. Fall
+               back to envFactSetHash when aq has no cell backpointer
+               (transitional). */
             decisionGraph->insertAsk(aq->currentQ, aq->prevCur, requestSetHash);
             aq->perQEnvWalk.push_back(obsSet);
-            aq->prevCur = envFactSetHash;
+            if (auto cell = aq->cell.lock())
+                aq->prevCur = cell->factSetHash();
+            else
+                aq->prevCur = envFactSetHash;
         }
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         envWalk.push_back(std::move(obsSet));
@@ -866,12 +886,21 @@ public:
         Hash finalQ = activeQueryStack.empty()
             ? *qh.selectorHash
             : activeQueryStack.back()->currentQ;
+        /* #177 reader switch: Terminal keyed at the completing Q's
+           cell factSetHash (sibling-isolated), not session-cumulative
+           envFactSetHash. Falls back to envFactSetHash when the
+           completing aq has no cell backpointer (transitional). */
+        Hash terminalCur = envFactSetHash;
+        if (!activeQueryStack.empty()) {
+            if (auto cell = activeQueryStack.back()->cell.lock())
+                terminalCur = cell->factSetHash();
+        }
         tracingCacheLog("logResult: Q_initial=%s Q_final=%s factSet=%s -> result",
                         qh.selectorHash->to_string(HashFormat::Base16, false).substr(0, 12),
                         finalQ.to_string(HashFormat::Base16, false).substr(0, 12),
-                        envFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12));
+                        terminalCur.to_string(HashFormat::Base16, false).substr(0, 12));
 
-        decisionGraph->insertTerminal(finalQ, envFactSetHash, resultNodeHash);
+        decisionGraph->insertTerminal(finalQ, terminalCur, resultNodeHash);
 
         /* D3: composite sub-Q emission retired. Under D2, getters no
            longer create their own writer frames — sub-Q completions
@@ -885,7 +914,7 @@ public:
         return TriePosition{
             .resultNodeHash = resultNodeHash,
             .queryHashStr = finalQ.to_string(HashFormat::Base16, false),
-            .factSetHash = envFactSetHash,
+            .factSetHash = terminalCur,
         };
     }
 

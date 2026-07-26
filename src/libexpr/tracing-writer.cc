@@ -179,7 +179,10 @@ void TracingWriter::logOuterObservation(
        empty (no attributable Q). */
     if (!activeQueryStack.empty()) {
         auto & innermost = activeQueryStack.back();
-        decisionGraph->insertAsk(innermost->currentQ, prevQFactSetHash, requestSetHash);
+        /* #177 reader switch: Ask keyed at innermost's cell factSetHash
+           (before-fold value in innermost->prevCur). Falls back to
+           prevQFactSetHash when innermost has no cell backpointer. */
+        decisionGraph->insertAsk(innermost->currentQ, innermost->prevCur, requestSetHash);
     }
     envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
     ObservationSet obsSet;
@@ -188,7 +191,13 @@ void TracingWriter::logOuterObservation(
     /* Task #110: append to innermost Q's perQEnvWalk. Session envWalk
        stays 1:1-aligned with envAsksEdges for other bookkeeping. */
     if (!activeQueryStack.empty()) {
-        activeQueryStack.back()->perQEnvWalk.push_back(std::move(obsSet));
+        auto & innermost = activeQueryStack.back();
+        innermost->perQEnvWalk.push_back(std::move(obsSet));
+        /* #177: advance innermost's prevCur to post-fold cell factSetHash. */
+        if (auto cell = innermost->cell.lock())
+            innermost->prevCur = cell->factSetHash();
+        else
+            innermost->prevCur = envFactSetHash;
     }
     tracingCacheLog(
         "logOuterObservation: inserted Ask under %zu active Q(s) from=%s (env=%zu)",
