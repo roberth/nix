@@ -316,6 +316,12 @@ std::shared_ptr<Object> OuterApply::run(
         /* Mark as cb-apply root: navigation descendants will inherit
            applyResultSubject so their whnf emits QCA (§7). */
         wrapped->withCbApplyOrigin();
+        /* #183: thread the callback cell through so emitCallbackApply
+           can read its callbackState directly (no LIFO fallback over
+           writer.callbackCells). localCell was created just above and
+           its callbackState was populated with (applyId, fnStateHashHex)
+           for this specific firing. */
+        wrapped->withArgCell(localCell);
         return wrapped.get_ptr();
     }
 

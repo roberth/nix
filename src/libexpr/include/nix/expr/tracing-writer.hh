@@ -279,12 +279,11 @@ public:
         auto tryEmitFromCell = [&](const CallbackState & cs) -> bool {
             if (cs.argAncestryHex.empty())
                 return false;
-            /* #183: cs.fnStateHashHex is Q-space (populated by
-               OuterApply::run's fnIdStr, which is now the fn Object's
-               getStateHashHex()). Match against the same by iterating
-               callbackCells LIFO and taking innermost non-empty. Skip
-               the subject-space fnInitialHex comparison — it's the
-               old subject-derived id which no longer aligns. */
+            /* #183: cs.fnStateHashHex is Q-space; fnInitialHex is
+               subject-space. They don't align. When cell was threaded
+               through (callbackCell provided), we trust the caller: the
+               cell IS the callback firing being completed. Skip the
+               subject-space match. */
             (void) fnInitialHex;
             auto obsSetHash = decisionGraph->insertObservationSet(cs.runningObsSet);
             auto fnCurrent = subjectId(*ar->fn, applyArgAncestry);
@@ -325,9 +324,8 @@ public:
            point. See task list for the retirement plan. */
         for (auto it = callbackCells.rbegin(); it != callbackCells.rend(); ++it) {
             auto & cell = *it;
-            /* #183: fnStateHashHex is Q-space now; skip the mismatched
-               subject-space comparison. LIFO innermost callback is the
-               one being completed here. */
+            if (cell.fnStateHashHex != fnInitialHex)
+                continue;
             if (cell.argAncestryHex.empty())
                 continue;
             CallbackState adapter;
