@@ -219,28 +219,25 @@ std::optional<std::vector<std::string>> TracingCallbackArg::getAttrPath()
 
 void TracingCallbackArg::recordObservation(const trace::SelectorVariant & query, const trace::ResultVariant & result)
 {
-    /* Phase D2 companion (cell-migration of callback machinery):
-       append directly to the callback firing's ArgCell.callbackState.
-       This retires the writer-side lookup by applyId — the cell is
-       reachable directly through this proxy's argCell.
-
-       Also mirror into the writer's callbackCells for now (dual-write)
-       until QCA emission migrates to a cell-based reader path in the
-       follow-up. Retiring the writer path prematurely would break
-       emitCallbackApplyForApplyResult which still iterates the
-       writer-owned vector. */
-    if (argCell && argCell->callbackState) {
-        auto qh = trace::computeSelectorHash(query);
-        nlohmann::json rJson = std::visit(
-            [](const auto & r) -> nlohmann::json { return r; },
-            result);
-        auto rPayload = jsonToCborString(rJson);
-        argCell->callbackState->runningObsSet.push_back({qh, rPayload});
-        if (argCell->callbackState->argAncestryHex.empty())
-            argCell->callbackState->argAncestryHex =
-                argAncestry.to_string(HashFormat::Base16, false);
+    /* #184: append directly to this proxy's argCell.callbackState.
+       Writer-side logCallbackObservation retired — its applyId lookup
+       reached the same runningObsSet indirectly. */
+    if (!argCell || !argCell->callbackState) {
+        tracingCacheLog(
+            "TracingCallbackArg::recordObservation: no argCell/callbackState "
+            "for applyId=%s — observation dropped",
+            applyId.to_string(HashFormat::Base16, false).substr(0, 12));
+        return;
     }
-    writer.logCallbackObservation(query, result, subject, argAncestry, applyId);
+    auto qh = trace::computeSelectorHash(query);
+    nlohmann::json rJson = std::visit(
+        [](const auto & r) -> nlohmann::json { return r; },
+        result);
+    auto rPayload = jsonToCborString(rJson);
+    argCell->callbackState->runningObsSet.push_back({qh, rPayload});
+    if (argCell->callbackState->argAncestryHex.empty())
+        argCell->callbackState->argAncestryHex =
+            argAncestry.to_string(HashFormat::Base16, false);
 }
 
 std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> argObj)
