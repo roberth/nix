@@ -26,31 +26,15 @@ static Hash stampPerArgFields(
     const std::vector<ObservationSet> & walkFacts,
     size_t step)
 {
-    /* Contra-arg roots (`Arg{depth}`) don't have an evolving state
-       hash. Their `from` field is their structural id
-       (`SHA("positional-<depth>") XOR argAncestry`) — computed at
-       empty history, invariant across probes. Cold and warm stamp
-       identically at any moment; matches cold's obsSet queryHashes.
-       `walkFacts` / `step` retained in the signature for call-site
-       compatibility, not used here. */
+    /* #178: state-hash stamping retires. Payload used as-is (defaults
+       on `from` / `perArgFrame`) so stable Q hash matches cold's obsSet
+       queryHashes. */
+    (void) query;
+    (void) subject;
+    (void) argAncestry;
     (void) walkFacts;
     (void) step;
-    auto par = pathAndRootsFromSubject(subject);
-    std::vector<trace::SelectorLeaf> fromStateHashes;
-    fromStateHashes.reserve(par.roots.size());
-    Hash fromStateHash(HashAlgorithm::SHA256);
-    for (size_t i = 0; i < par.roots.size(); ++i) {
-        auto cid = stateHashAfter(par.roots[i], argAncestry, {});
-        if (i == 0)
-            fromStateHash = cid;
-        fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
-    }
-    query.from = fromStateHashes.empty()
-        ? trace::SelectorLeaf{std::string{}}
-        : fromStateHashes[0];
-    query.perArgFrame.path = std::move(par.path);
-    query.perArgFrame.fromStateHashes = std::move(fromStateHashes);
-    return fromStateHash;
+    return Hash(HashAlgorithm::SHA256);
 }
 
 /* Look up the recorded payload for `query` in the obsSet map the

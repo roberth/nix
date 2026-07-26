@@ -14,16 +14,13 @@ namespace nix {
 template <typename Q>
 static void stampPerArgFields(Q & q, const Subject & subject, const Hash & argAncestry)
 {
-    auto par = pathAndRootsFromSubject(subject);
-    std::vector<trace::SelectorLeaf> fromStateHashes;
-    fromStateHashes.reserve(par.roots.size());
-    for (size_t i = 0; i < par.roots.size(); ++i) {
-        auto cid = stateHashAfter(par.roots[i], argAncestry, {});
-        fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
-    }
-    q.from = fromStateHashes.empty() ? trace::SelectorLeaf{std::string{}} : fromStateHashes[0];
-    q.perArgFrame.path = std::move(par.path);
-    q.perArgFrame.fromStateHashes = std::move(fromStateHashes);
+    /* #178: state-hash `from` field stamping retires. Q hashes stable
+       per operation; cur at (Q, cur) discriminates. Left as a no-op
+       to preserve caller shape until Selector payload types drop
+       from/perArgFrame in a follow-up. */
+    (void) q;
+    (void) subject;
+    (void) argAncestry;
 }
 
 OuterObject::OuterObject(

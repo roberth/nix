@@ -611,28 +611,9 @@ public:
                 it->argAncestryHex = argAncestry.to_string(HashFormat::Base16, false);
             if (it->fnStateHashHex.empty())
                 return;
+            /* #178: state-hash `from` field stamping retires. Payload
+               used as-is; stable Q hash. */
             trace::SelectorVariant stampedQuery = query;
-            auto par = pathAndRootsFromSubject(subject);
-            std::vector<trace::SelectorLeaf> fromStateHashes;
-            fromStateHashes.reserve(par.roots.size());
-            for (auto & root : par.roots) {
-                auto cid = stateHashAfter(root, argAncestry, {});
-                fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
-            }
-            std::visit([&](auto & q) {
-                if constexpr (requires { q.from; }) {
-                    q.from = fromStateHashes.empty()
-                        ? trace::SelectorLeaf{std::string{}}
-                        : fromStateHashes[0];
-                }
-                if constexpr (requires { q.perArgFrame; }) {
-                    q.perArgFrame.path = par.path;
-                    q.perArgFrame.fromStateHashes = fromStateHashes;
-                }
-                if constexpr (requires { q.fromStateHashes = fromStateHashes; }) {  // SelectorApply
-                    q.fromStateHashes = fromStateHashes;
-                }
-            }, stampedQuery);
             auto qh = std::visit(
                 [](const auto & q) {
                     return TracingDecisionGraph::computeSelectorHash(q);

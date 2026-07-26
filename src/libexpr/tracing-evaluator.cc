@@ -386,16 +386,10 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         writer.createCallbackCell(applyQ);
     }
 
-    /* Per-arg-completion option 2: apply-result state hash evolves with
-       the writer's envWalk at the moment of apply. With the
-       1:1 alignment restructure, writer.d1.size grows in lockstep
-       with envAsksEdges; walker.envWalk grows per dispatched
-       Asks edge. At sibling B's apply, walker.envWalk should
-       have caught up to writer.d1.size at cold sib B apply (= all
-       of sib A's envAsksEdges traversed via prior v13Walks). */
-    auto & d1Walk = writer.getD1CidasksWalk();
+    /* #178: state-hash evolution retired. Compute initial subject id
+       (no fold) with empty history. */
     auto applyArgAncestryStateHash = stateHashAt(
-        resultSubject, applyArgAncestry, d1Walk, d1Walk.size());
+        resultSubject, applyArgAncestry, {}, 0);
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);
