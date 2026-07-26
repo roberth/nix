@@ -34,10 +34,10 @@ interaction models are designed around it.
 *In development, untested but promising* — qualifiers useful when
 reasoning about state creep on the write side:
 
-- **Locally minimal** — a fact set / state hash is *locally
-  minimal* at a Query if no new facts or observations were recorded
-  between the Query's structural parent and the Query itself. State
-  creep contributed nothing between them.
+- **Locally minimal** — a fact set is *locally minimal* at a Query
+  if no new facts were recorded between the Query's structural
+  parent and the Query itself. State creep contributed nothing
+  between them.
 - **Ancestrally minimal** — locally minimal along parents
   transitively. Weaker than session-minimal (see next); probably
   not what you actually want.
@@ -220,44 +220,21 @@ sessions via the DB index.
 
 ---
 
-## Per-Q-chain
+## Per-Q-chain (transitional — retires with Q evolution, task #178)
 
-Under Q evolution (see
-[`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
-§3), a Query's `selectorHash` is not stable across its own
-evaluation: `Query`'s payload has a `from` field carrying some
-Subject's state hash, and as observations dispatched during the
-Query's evaluation fold into that Subject, `from` evolves and
-`selectorHash` advances through a chain
-`Q_M → Q_{M+1} → … → Q_N`.
-One evaluator activation of a Query — one `ActiveSelector` frame on
-the writer's stack, one walk-local Q context on the walker —
-tracks exactly this chain from Q_M through Q_N.
+Under Q evolution — the current mechanism where a Query's
+`selectorHash` evolves through a chain `Q_M → Q_{M+1} → … → Q_N`
+as observations fold — **per-Q-chain** state is the value of a
+field scoped to one such chain's frame. Distinct from:
 
-**Per-Q-chain** state is the value of a field scoped to one such
-frame's whole Q_M..Q_N chain, from when the frame is pushed
-until it pops at `logResult`. Distinct from:
-
-- **Session-scoped** (above) — spans all Queries in one
-  `TracingWriter`'s lifetime.
+- **Session-scoped** — spans all Queries in one `TracingWriter`'s
+  lifetime.
 - **Walk-local** — spans one call to the walker's `walk()`.
-  A `walk()` call carries one Query's evaluation, but "walk-local"
-  emphasizes the call scope, whereas "per-Q-chain" emphasizes the
-  Q_M..Q_N chain that call corresponds to. On the writer they
-  coincide within one `ActiveSelector` frame; on the walker
-  "walk-local" is the more common phrasing because a walk may
-  begin at trace-continuing state and fall through to
-  trace-discovering.
 
-Per-Q-chain scoping is what the writer's
-`ActiveSelector::perQEnvWalk` and the walker's `recomputeQ`-reading
-`perQEnvWalk` use for Q evolution's re-derivation — each Q's own
-chain of observations, not session-cumulative and not folded
-across Queries.
-
-**Per-Q** appears in prose as a looser shorthand for the same
-concept when the context makes Q-evolution unambiguous. Prefer
-**per-Q-chain** where precision matters.
+Under the multiplexer + per-cell factset direction (task #176), Q
+evolution retires; a Query's `selectorHash` becomes stable across
+its evaluation, and per-Q-chain scoping collapses into per-cell
+factset scoping.
 
 ---
 
@@ -740,15 +717,13 @@ Two rules the vocabulary above obeys:
 1. **Stable vs situational is carried by the type name, not by a
    suffix.** `Subject` and `subjectHash` are stable by
    construction — an immutable algebraic value and its hash.
-   `stateHash*`, `argAncestry`, `callArgAncestry`, `factSetHash`
-   are situational — their values track observations, ancestry,
-   invocations. No `Id` marker is required or used.
+   `factSetHash` is situational — its value tracks folded
+   observations. No `Id` marker is required or used.
 
 2. **`Hash` is neutral.** It says only "the value is a `Hash`."
    Distinctive prefixes clarify what the hash is *of* — `selectorHash`
    of a query payload, `resultHash` of a result, `subjectHash` of
-   a Subject payload, `stateHash` of characterizing observations
-   at a Subject.
+   a Subject payload, `factSetHash` of a set of Facts.
 
 ## Appendix B: what this dictionary does not cover
 

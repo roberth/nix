@@ -283,11 +283,12 @@ which routes by tag to each branch.
 
 ## 5. `f` is arg-side, obs is contra-arg-side
 
-**Model** (user, 2026-07-21).
+**Model** (user, 2026-07-21; extended 2026-07-26).
 
 A callback function is only given to us through an arg. All
-observations on an arg are subject to state hash tracking. `f`'s
-state hash evolves as any other arg-side value's does.
+observations on an arg are attributed to that arg's cell. `f`'s
+identity flows from its arg-cell's factset like any other arg-side
+value's does.
 
 The **contra-arg** (the arg passed *to* the callback) is a
 separate world:
@@ -296,11 +297,11 @@ separate world:
 > but ends up as part of a state hash outside of its area of
 > responsibility.
 
-Contra-arg observations accumulate PRIVATELY in a cell during the
-callback firing. No visibility into arg-side tracking during that
-time. The two worlds meet only at the sampling moment where
+Contra-arg observations accumulate PRIVATELY during the callback
+firing. No visibility into arg-side tracking during that time. The
+two worlds meet only at the sampling moment where
 `SelectorCallbackApply(f, obs)` is emitted as an observation on the
-arg.
+arg — the obs set folded into `f`'s arg-cell's factset as one Fact.
 
 The handoff is meta-level (user, 2026-07-21: "there's some
 abstraction involved in that handoff, but I don't know off the top

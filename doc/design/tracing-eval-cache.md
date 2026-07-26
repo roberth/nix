@@ -244,14 +244,10 @@ This shape buys two things:
 
    The arithmetic depends on participants being independent —
    extension against a known-disjoint element is a single in-place
-   XOR. State hashing, where applied, probably worsens or inhibits
-   it: observations that fold into an evolving state hash carry
-   dependencies XOR treats as independent inputs. Full effect is
-   retained in domains where state hashing isn't applied — purely
-   non-function `builtins.cache` results, and ambient values bound
-   at `builtins.cache` call time (term reservation; see
-   [`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
-   §13a).
+   XOR. Under the multiplexer + per-cell factset direction (task
+   #176), each cell's factset is a clean XOR-fold over the facts
+   folded into that cell (env broadcasts + arg's own observations),
+   so the full effect is retained everywhere.
 
 ### FactSet hashing
 
@@ -540,18 +536,17 @@ dispatch during trace-discovering — a discovering walk that
 requires outer callbacks the walker hasn't been invited to make
 is not just structurally missing, it's actively wrong to attempt.
 
-### Q evolution during Ask traversal
+### Q evolution during Ask traversal (transitional, retires per task #178)
 
-Whichever option is in use, the queries replay dispatches must
-evolve with the walk's own state: each Ask's precondition
+Under the current implementation, queries dispatched by replay
+must evolve with the walk's own state: each Ask's precondition
 determines the Subject state hashes referenced in that Ask's
-request payloads (per Design principle 5's flush substitution on
-the writer side). Replay mirrors the substitution so its
-dispatched queries hash to the recorded request payloads it needs
-to find. Simply looking up requests at their "initial state hash"
-(empty history) helps only at the very first step — as soon as
-an observation folds in, the substitution has to track the walk's
-evolved state.
+request payloads. Replay mirrors the writer's flush-time
+substitution so its dispatched queries hash to the recorded
+request payloads. Under the multiplexer + per-cell factset
+direction (task #176), Q selectorHashes become stable across a
+Query's evaluation — cur at (Q, cur) does the discrimination that
+`from`-field state hash does today — and this section retires.
 
 ### Development directions
 
@@ -573,9 +568,9 @@ situations and coexist; neither replaces the other. Work items:
   §10 for the analysis; the refactor is medium-scope and not
   correctness-blocking.
 
-- **Let trace-discovering reach smaller state hashes.** State
-  evolution during a walk produces intermediate `cur` values;
-  recordings may exist at smaller state hashes (subsets of what the
+- **Let trace-discovering reach smaller factsets.** Fact
+  accumulation during a walk produces intermediate `cur` values;
+  recordings may exist at smaller factsets (subsets of what the
   walker has folded) that would be valid answers. Reaching them, in
   order of increasing sophistication:
 
@@ -590,20 +585,11 @@ situations and coexist; neither replaces the other. Work items:
     identifies the writer's observed preconditions; Foundational 9
     stays intact.
 
-    Replay is free to query the DB at older / smaller state
-    hashes — legitimate because the walker is only reading recorded
-    rows whose preconditions are honest. Backtracking (below) covers
-    the *older* case; the more general *smaller* case is reached via
-    the observation-test bullet further down.
-
-    Note trace-discovering bridges *factSet* evolution only, not
-    state hash evolution. The trace chain from the anchor state to
-    child Q's Terminal folds new facts into `cur` but does not
-    attempt to reproduce any specific state-hash trajectory. State
-    hashes on request payloads may embed observations from earlier
-    query siblings in the writer's session that the replayer never
-    made — when the replayer can't compute one, that's the
-    observation-creep boundary and the miss is correct.
+    Replay is free to query the DB at older / smaller factsets —
+    legitimate because the walker is only reading recorded rows
+    whose preconditions are honest. Backtracking (below) covers
+    the *older* case; the more general *smaller* case is reached
+    via the observation-test bullet further down.
 
     *Open question.* This mismatch prevents the walker from
     dispatching recorded requests whose queryHashes embed
@@ -617,22 +603,22 @@ situations and coexist; neither replaces the other. Work items:
     whose queryHashes depend on unreachable observations, and
     orthogonal for requests whose queryHashes don't.
 
-  - *Later*: an Ask-like structure keyed on state hashes,
-    supporting observation *tests* instead of requests. Traversing
-    a test edge requires the walker to have already observed the
-    required facts; the test itself never dispatches.
-    Outer-request discipline still applies at this layer — the
-    trace a test-edge leads into may require outer-callback
-    dispatches the walker hasn't been invited to make, so test-edge
-    traversal isn't unconditionally safe just because the test
-    itself is. Even under that constraint, there's a real win:
-    discovering trace chains whose preconditions are a strict
-    subset of what the walker has folded, without over-querying.
-    Two goals: give trace-discovering a **non-backtracking** replay
-    behaviour (indexed navigation instead of a barely-bounded retry
-    loop), and reach *smaller* state hashes generally (not just the
-    older ones the walker held earlier in this walk). Unchallenged
-    idea for now.
+  - *Later*: an Ask-like structure keyed on factsets, supporting
+    observation *tests* instead of requests. Traversing a test
+    edge requires the walker to have already observed the required
+    facts; the test itself never dispatches. Outer-request
+    discipline still applies at this layer — the trace a test-edge
+    leads into may require outer-callback dispatches the walker
+    hasn't been invited to make, so test-edge traversal isn't
+    unconditionally safe just because the test itself is. Even
+    under that constraint, there's a real win: discovering trace
+    chains whose preconditions are a strict subset of what the
+    walker has folded, without over-querying. Two goals: give
+    trace-discovering a **non-backtracking** replay behaviour
+    (indexed navigation instead of a barely-bounded retry loop),
+    and reach *smaller* factsets generally (not just the older
+    ones the walker held earlier in this walk). Unchallenged idea
+    for now.
 
 ### Outer-request discipline (open problem)
 
@@ -658,16 +644,14 @@ The callback's body probes outer values via `OuterObject`, and
 those probes flow through `TracingEnvironment::outerQuery` to
 `logOuterObservation` on the writer. Walker's direct dispatches
 also feed the writer via `noteEnvObservation`. Both grow the
-writer's `envWalk` during warm replay. A subsequent
-`logOuterObservation` on that same writer then stamps a new
-request payload with `from = stateHashAt(subject, argAncestry,
-envWalk, envWalk.size())` — a state hash computed against the
-writer's grown cumulative history. Replay's own per-walk
-`envWalk` is a strict subset of the writer's at that moment, so
-`resolveStateHash` on that fresh `from` value misses across
-replay's cell chain. This within-session drift is the reachability
-limit called out for trace-discovering above, viewed from the
-writer side.
+writer's `envWalk` during warm replay. Under the current
+implementation, a subsequent `logOuterObservation` then stamps a
+new request payload with a `from` field computed against the
+writer's grown cumulative history; the walker's per-walk history
+is a strict subset, so `resolveStateHash` on that fresh `from`
+value misses across the cell chain. This within-session drift is
+the reachability limit called out for trace-discovering above,
+viewed from the writer side. Retires with Q evolution (task #178).
 
 Note (writer side): the writer **must not** record under a smaller
 set than what it observed. The failure mode is two-step: (1) at
@@ -678,46 +662,22 @@ against a live environment where the omitted facts or observations
 would have been different. Combined: a false hit — a Result served
 that the writer's true observations don't justify.
 
-The principle applies to fact sets and observation sets alike.
-Hashes just represent those sets in storage: a `factSetHash` on an
-Ask or Terminal key represents the fact set; a `from` field on a
-request payload carries a Subject state hash, which represents the
-observation set folded into that Subject's own-loop up to that
-point. Per Foundational principle 9's cumulative dependency, both
-must faithfully identify what the writer actually observed.
+An Ask row's `factSetHash` key is the pre-Response `cur` — the
+factSet before this Ask's Responses fold into `cur`. Replay uses
+`cur` alone to find which outgoing Ask goes next, without needing
+to know the Ask's Responses in advance. Per Foundational principle
+9's cumulative dependency, `factSetHash` must faithfully identify
+what the writer actually observed.
 
-The lookup-key hashes are all **pre-Response**: they identify a
-state before the Responses they anticipate fold in. Two instances of
-the same principle:
-
-- An Ask row's `factSetHash` key is the pre-Response `cur` — the
-  factSet before this Ask's Responses fold into `cur`. Replay uses
-  `cur` alone to find which outgoing Ask goes next, without needing
-  to know the Ask's Responses in advance.
-- A request payload's `from` field carries the referenced Subject's
-  pre-Response state hash — the state hash before this request's own
-  Response folds into that Subject's own-loop. Per Design principle
-  5's post-substitution flush, this is `stateHashAt(subject,
-  argAncestry, history, k)` at the Ask edge's precondition. Replay
-  uses `from` to route the dispatch through the right Subject
-  without needing the Response in advance.
-
-Whether a specific fold moves each hash depends on the observation
-type. A file read moves `cur` but not any Subject state hash. An
-Env-layer outer-value probe moves both `cur` and the referenced
-Subject state hash. A `SelectorCallbackApply` observation moves `cur`
-and the `fn`-side Subject state hash it references, sampling the
-enclosing `CallbackCell`'s running observation set by content-hash
-into its `argObsSet` payload. Contra-arg observations recorded
-inside that `ObservationSet` do not appear in the outer `cur` or
-in any arg-side Subject state hash — they travel by value inside
-the `SelectorCallbackApply` request and are dispatched from there at
-replay. What's constant across observation types is that
-pre-Response hashes are the lookup anchors and post-Response
-hashes are computed by folding — regardless of whether the fold
-changed the value. Neither pre-Response hash is a shrink from
-the writer's actual observations; both are faithful identifiers
-that let replay progress from `cur` alone.
+Whether a specific fold moves `cur` depends on the observation
+type. A file read moves `cur`. An Env-layer outer-value probe
+moves `cur`. A `SelectorCallbackApply` observation moves `cur`,
+sampling the enclosing callback firing's running observation set
+by content-hash into its `argObsSet` payload. Contra-arg
+observations recorded inside that `ObservationSet` do not appear
+in the outer `cur` — they travel by value inside the
+`SelectorCallbackApply` request and are dispatched from there at
+replay.
 
 ### Navigation invariant: hashes flow *into* lookups as keys, never *out*
 
@@ -761,20 +721,10 @@ question would treat hashes as outputs of lookups.
 > into the new hash, which then becomes the old hash for the *next*
 > Query.
 >
-> This applies to every table that produces a next observation from
-> a lookup: `Ask` (edge from cur), and every requestHash
-> construction whose `from` field is the walker's pre-observation
-> state (Env request payloads and callback `from` fields alike).
-> `Terminal` doesn't fit this pattern
-> — a Terminal is the *end* of the chain and produces a Result, not a
-> next observation, so it's queried at the cur the walker *lands*
-> at after all observations for that selectorHash.
->
-> Practical check for every call-site: if you're writing
-> `stateHashAt(subject, argAncestry, history, history.size())` at
-> Query-key time, you're using the new hash — reverse it to
-> `history[0..step)` where `step` is the state **before** this
-> Query's own observation folds in.
+> This applies to `Ask` (edge from cur). `Terminal` doesn't fit
+> this pattern — a Terminal is the *end* of the chain and produces
+> a Result, not a next observation, so it's queried at the cur the
+> walker *lands* at after all observations for that selectorHash.
 
 ### Walk from ∅: `decisionGraph.walk(selectorHash, dispatch)`
 
@@ -997,9 +947,10 @@ Performance harness under `tests/perf/tracing-cache/`:
   risk leading walks into traces that don't reach the target.
   RequestSet sharing plus larger per-node request increments help
   typical workloads but do little for callback-heavy ones, where
-  state-hash evolution forces query rewriting between observations.
-  A speculative direction: allow query rewriting within a single
-  requestSet (form TBD). Complementary mitigation: budget the
+  today's Q-evolution rewrites queries between observations. Under
+  the per-cell factset direction (task #176) Q selectorHashes
+  become stable, which sidesteps this specific pressure; the
+  broader index-size question survives regardless. Complementary mitigation: budget the
   number of structural Ask inserts per Query — when a Query's
   structural chain exceeds the budget, stop inserting further
   structural Asks. Costs the affected Query its trace-discovering
@@ -1032,7 +983,7 @@ Performance harness under `tests/perf/tracing-cache/`:
   `OuterResolver`, `makeCachedFnPrimOp`
 - `src/libexpr/outer-object.cc` — `OuterObject` (outer-owned value
   the inner probes via Env)
-- `src/libexpr/subject-id.cc` — Subject variants, state hash /
-  argAncestry / evolution machinery
+- `src/libexpr/subject-id.cc` — Subject variants and argAncestry
+  algebra (state-hash machinery retires per task #178)
 - `tests/perf/tracing-cache/` — perf scripts and validation sweeps
 - `tests/functional/builtins-cache.sh` — `builtins.cache` functional tests
