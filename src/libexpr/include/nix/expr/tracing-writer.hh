@@ -80,8 +80,6 @@ class TracingWriter
        This makes the per-logResult cost O(1) instead of O(|factSet|)
        for the hash computation: insertFactSet (which would re-sort
        and re-fold all members) is bypassed via installFactSet. */
-    std::vector<TracingDecisionGraph::Fact> envFactSet;
-    TracingDecisionGraph::SetHash envFactSetHash;
     std::unordered_set<Hash> seenRequests;
     /* request → response lookup, maintained as facts arrive.
        Handed to record() by reference so it doesn't rebuild
@@ -90,24 +88,6 @@ class TracingWriter
     /* Incremental trie of allRequests; gives record() the canonical
        RequestSet hash for the whole-remaining edge in O(1). */
     TracingDecisionGraph::TrieBuilder sessionRequestsTrie;
-
-    /* Persistent history chain for env-layer observations.
-       envWalk is kept 1:1-aligned with `envAsksEdges`: every Asks
-       edge inserted into `envAsksEdges` is paired with an
-       ObservationSet at the SAME index. This invariant lets the
-       walker's `envWalk` — which grows once per dispatched Asks
-       edge via `commitEdge` — match the writer's history
-       edge-for-edge, so `subjectId(subject, argAncestry)`
-       computes the same value on both sides. */
-    std::vector<ObservationSet> envWalk;
-
-    TracingDecisionGraph::SetHash prevQFactSetHash{TracingDecisionGraph::emptySetHash()};
-    struct AsksEdgeRecord
-    {
-        TracingDecisionGraph::SetHash fromFactSetHash;
-        TracingDecisionGraph::SetHash requestSetHash;
-    };
-    std::vector<AsksEdgeRecord> envAsksEdges;
 
     /** Currently-active cells. Each Selector push (via logSelectorOnCell
         / logRootSelectorOnCell) appends the cell; logResult pops.
@@ -212,7 +192,6 @@ public:
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
         : sink(sink)
         , decisionGraph(decisionGraph)
-        , envFactSetHash(TracingDecisionGraph::emptySetHash())
         , sessionRootCell(ArgCell::make(nullptr, nullptr))
     {
     }
@@ -227,18 +206,6 @@ public:
         commits). Kept as a stable shared_ptr so cells can safely take
         it as their parent. */
     std::shared_ptr<ArgCell> sessionRootCell;
-
-    /** Cumulative subject-id history over Env-layer observations.
-        One edge per logResult-triggered flush. Exposed so writer-side
-        apply-result wrappers (TracingObject with applyResultSubject)
-        can compute `subjectId(subject, argAncestry)`
-        — the per-arg evolved state hash Design principle #3 requires
-        for child queries on those wrappers. Walker's parallel handle
-        is TracingReplayEvaluator::getCidasksWalk. */
-    const std::vector<ObservationSet> & getD1CidasksWalk() const
-    {
-        return envWalk;
-    }
 
     /** Task #110 (C3): emit a SelectorCallbackApply observation for an
         applyResult, carrying the applyResult's WHNF as the Result.
@@ -329,21 +296,6 @@ public:
         }
     }
 
-    /** Cumulative factSet hash maintained per-fact via XOR-fold.
-        At cold time, advances at `noteEnvObservation` (= walker
-        dispatches) and `logResponse` (= env/file recordings).
-        At warm time, advances only at `noteEnvObservation` —
-        which captures every dispatched fact, mirroring cold's
-        cumulative. The walker reads this as the ground-truth
-        cur for the cascading Terminal lookup (= when fast-path's
-        per-edge math doesn't reach the recorded position because
-        the Q has multiple terminals at curs that depend on prior
-        sibling-style divergence). */
-    const TracingDecisionGraph::SetHash & getV13FactSetHash() const
-    {
-        return envFactSetHash;
-    }
-
     /**
      * Opaque handle linking a query to its result.
      */
@@ -382,7 +334,7 @@ public:
             qState->prevCur = cell->factSetHash();
             activeCells.push_back(cell);
         } else {
-            qState->prevCur = envFactSetHash;
+            qState->prevCur = sessionRootCell->factSetHash();
         }
         return {valueNum, {selectorHash}};
     }
@@ -428,7 +380,7 @@ public:
             qState->prevCur = cell->factSetHash();
             activeCells.push_back(cell);
         } else {
-            qState->prevCur = envFactSetHash;
+            qState->prevCur = sessionRootCell->factSetHash();
         }
         return {valueNum, qh};
     }
@@ -546,30 +498,13 @@ public:
             Hash(HashAlgorithm::SHA256), selectorHash, responseHash);
         if (!seenRequests.insert(factHash).second)
             return;
-        envFactSet.push_back({selectorHash, responseHash});
-        envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-            envFactSetHash, selectorHash, responseHash);
         /* #183: env facts append to session-root cell's fact set.
-           Descendants inherit via factSetHash()'s parent-chain walk. */
+           Descendants inherit via factSetHash()'s parent-chain walk.
+           Ask rows are inserted per-Selector-completion. */
         sessionRootCell->addFact(selectorHash, responseHash);
         responseFor.emplace(selectorHash, responseHash);
         sessionRequestsTrie.insert(selectorHash);
         allRequestHashes.insert(selectorHash);
-        auto requestSetHash = decisionGraph->insertRequestSet({selectorHash});
-        /* Multiplexer broadcast (user 2026-07-25/26): a fact is ambient
-           — it's caused by the interpreter's own execution, not by any
-           specific Q. Every currently-active Q's chain must include it
-           so a walker following that Q's chain from ∅ can reach the Q's
-           Terminal cur (= session cur at logResult time). */
-        /* #183: per-observation Ask insertion retired. Ask rows now
-           written per-Selector-completion (in logResult/logQueryResult)
-           containing all facts from the completing cell + ancestors. */
-        (void) requestSetHash;
-        ObservationSet obsSet;
-        obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
-        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-        envWalk.push_back(std::move(obsSet));
-        prevQFactSetHash = envFactSetHash;
     }
 
     /**
@@ -678,23 +613,11 @@ public:
         if (!seenRequests.insert(factHash).second)
             return;
         responseFor.emplace(request, response);
-        envFactSet.push_back({request, response});
-        envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-            envFactSetHash, request, response);
+        /* #183: fact appends to sessionRootCell. Ask insertion happens
+           at Selector completion. */
+        sessionRootCell->addFact(request, response);
         sessionRequestsTrie.insert(request);
         allRequestHashes.insert(request);
-        /* Per-probe push (see logResponse for reasoning). Task #110
-           (correct model): attribute to the innermost active Q only. */
-        auto requestSetHash = decisionGraph->insertRequestSet({request});
-        if (!activeCells.empty()) {
-            auto & innermost = activeCells.back()->qState;
-            decisionGraph->insertAsk(innermost->currentQ, prevQFactSetHash, requestSetHash);
-        }
-        envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-        ObservationSet obsSet;
-        obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
-        envWalk.push_back(std::move(obsSet));
-        prevQFactSetHash = envFactSetHash;
     }
 
     /**
@@ -764,7 +687,6 @@ public:
         auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
         decisionGraph->insertResult(resultNodeHash, resultPayload);
 
-        decisionGraph->installFactSet(envFactSetHash, envFactSet);
         sessionRequestsTrie.persist(*decisionGraph);
 
         Hash finalQ = activeCells.empty()
@@ -775,7 +697,7 @@ public:
            ancestor factSetHashes on demand. Sibling isolation is
            structural (siblings have separate cells → separate
            ownFactSets, ancestors shared via parent chain). */
-        Hash terminalCur = envFactSetHash;
+        Hash terminalCur = sessionRootCell->factSetHash();
         std::shared_ptr<const ArgCell> completingCell;
         if (!activeCells.empty()) {
             completingCell = activeCells.back();

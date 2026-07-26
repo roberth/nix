@@ -80,35 +80,20 @@ void TracingWriter::logOuterObservation(
         Hash(HashAlgorithm::SHA256), selectorHash, responseHash);
     auto factHash = elementHash;
 
-    /* Dedup by (request, response). If already recorded this session,
-       skip both envFactSet fold AND envWalk push — pushing a duplicate
-       ObservationSet would XOR-cancel its earlier contribution to any
-       Subject's own-loop fold (see the design's XOR audit). */
+    /* Dedup by (request, response). Duplicate would XOR-cancel. */
     if (!seenRequests.insert(factHash).second)
         return;
 
-    envFactSet.push_back({selectorHash, responseHash});
-    envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
-        envFactSetHash, selectorHash, responseHash);
-    /* #177 C: fold observation into caller-supplied arg cell's
-       ownFactSet. */
+    /* #183: fact appends to attributionCell's fact set. Ask rows
+       inserted per-Selector-completion. */
     if (attributionCell) {
         attributionCell->addFact(selectorHash, responseHash);
     }
     responseFor.emplace(selectorHash, responseHash);
     sessionRequestsTrie.insert(selectorHash);
     allRequestHashes.insert(selectorHash);
-
-    /* #183: per-observation Ask insertion retired. Ask rows are
-       written per-Selector-completion in logResult/logQueryResult
-       from the completing cell + ancestor facts. The fact was already
-       appended to attributionCell->facts above. */
-    auto requestSetHash = decisionGraph->insertRequestSet({selectorHash});
-    envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
-    ObservationSet obsSet;
-    obsSet.observations.push_back({fromStateHash, elementHash});
-    envWalk.push_back(std::move(obsSet));
-    prevQFactSetHash = envFactSetHash;
+    (void) fromStateHash;
+    (void) elementHash;
 }
 
 void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
@@ -131,9 +116,7 @@ void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
 
     if (provenanceEnabled())
         recordProvenance(applyReqHash, "applyRequestHash",
-                         {{"applyQueryPayload", applyQueryPayload},
-                          {"prevQFactSetHash", prevQFactSetHash.to_string(HashFormat::Base16, false)},
-                          {"envFactSetHash", envFactSetHash.to_string(HashFormat::Base16, false)}});
+                         {{"applyQueryPayload", applyQueryPayload}});
     decisionGraph->insertRequest(applyReqHash, applyPayloadCbor);
 
     /* Extract fn's state hash from the applyQueryPayload (params.fn)
