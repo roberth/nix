@@ -100,47 +100,16 @@ void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
 {
     if (!decisionGraph)
         return;
-
-    /* Suppressed during walker re-dispatch of an already-recorded
-       apply. Re-dispatch is validation, not a new cb-apply event —
-       skip cell creation so `envWalk` alignment doesn't drift. The
-       apply Request payload is still inserted so walker lookups
-       find it. */
+    /* #184: reduced to inserting the apply-request payload into the
+       Requests pool. The writer-side CallbackCell vector + SuppressApplyBoundary
+       guard retired — cell.callbackState (populated by the caller) is
+       the single source of truth for pending-payload storage. */
     auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQueryPayload.dump());
     auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
-    if (suppressCbApply > 0) {
-        tracingCacheLog("createCallbackCell: SUPPRESSED");
-        decisionGraph->insertRequest(applyReqHash, applyPayloadCbor);
-        return;
-    }
-
     if (provenanceEnabled())
         recordProvenance(applyReqHash, "applyRequestHash",
                          {{"applyQueryPayload", applyQueryPayload}});
     decisionGraph->insertRequest(applyReqHash, applyPayloadCbor);
-
-    /* Extract fn's state hash from the applyQueryPayload (params.fn)
-       so we can look up the cell at CallbackApplyRef stamping time
-       without re-parsing. Empty string on legacy payloads where the
-       field isn't present (in which case CallbackApply emission is
-       skipped). */
-    std::string fnStateHashHex;
-    try {
-        /* Flat envelope: fn lives at top level of applyQueryPayload. */
-        if (applyQueryPayload.contains("fn")
-            && applyQueryPayload["fn"].is_object()
-            && applyQueryPayload["fn"].contains("stateHash"))
-            fnStateHashHex = applyQueryPayload["fn"]["stateHash"].get<std::string>();
-        else if (applyQueryPayload.contains("fn") && applyQueryPayload["fn"].is_string())
-            fnStateHashHex = applyQueryPayload["fn"].get<std::string>();
-    } catch (...) {}
-    CallbackCell cell;
-    cell.applyId = applyReqHash;
-    cell.fnStateHashHex = std::move(fnStateHashHex);
-    callbackCells.push_back(std::move(cell));
-    tracingCacheLog("createCallbackCell: applyReqHash=%s cells=%zu",
-                    applyReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    callbackCells.size());
 }
 
 } // namespace nix

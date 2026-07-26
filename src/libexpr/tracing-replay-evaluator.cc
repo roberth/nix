@@ -41,16 +41,6 @@ TracingReplayEvaluator::walk(
     std::shared_ptr<Object> currentProxy,
     std::shared_ptr<const ArgCell> cell)
 {
-    /* Task #110 B6: the SuppressApplyBoundary guard used to wrap the
-       entire walk() body. That was fragile: fallback triggered
-       inside dispatch (via TracingReplayObject::ensureInner) would
-       run legitimate cb-applies with the guard active, silently
-       losing their cell creation. Narrowed to per-call guards
-       around each `fnObj->queryApply(...)` invocation in the walker
-       paths — that's the only path that actually contaminates the
-       writer's callbackCells with phantom entries, and its scope
-       excludes any fallback-triggered evaluation. */
-
     ResolutionContext ctx{
         std::move(currentProxy),
         cell,
@@ -481,8 +471,6 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     ctx.memo[argIdStr] = argObj;
     std::shared_ptr<Object> resultObj;
     try {
-        /* B6: narrow guard — pure-eval invocation, no phantom cell. */
-        TracingWriter::SuppressApplyBoundary suppress(writer);
         resultObj = fnObj->queryApply(argObj);
     } catch (const std::exception & e) {
         tracingCacheLog("replay: apply %s: queryApply threw: %s", idStr, e.what());
@@ -584,9 +572,6 @@ static std::shared_ptr<Object> navigatePath(
             if (!fnObj || !argObj)
                 return nullptr;
             try {
-                /* B6: narrow guard around walker-triggered live invocation. */
-                std::optional<TracingWriter::SuppressApplyBoundary> suppress;
-                if (writer) suppress.emplace(*writer);
                 obj = fnObj->queryApply(std::move(argObj));
             } catch (const std::exception & e) {
                 tracingCacheLog("navigatePath: queryApply failed: %s", e.what());
@@ -684,7 +669,6 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     return std::nullopt;
                 }
                 try {
-                    TracingWriter::SuppressApplyBoundary suppress(writer);
                     auto resultObj = fnObj->queryApply(argObj);
                     if (!resultObj)
                         return std::nullopt;
@@ -748,12 +732,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     &inner->getEvalState());
                 replayArg->withObsSetResponses(obsSetMap);
                 try {
-                    /* B6: narrow guard around walker-triggered live invocation. */
-                    std::shared_ptr<Object> resultObj;
-                    {
-                        TracingWriter::SuppressApplyBoundary suppress(writer);
-                        resultObj = fnObj->queryApply(replayArg);
-                    }
+                    auto resultObj = fnObj->queryApply(replayArg);
                     if (!resultObj)
                         return std::nullopt;
                     auto whnf = computeWHNFFromObject(*resultObj);
@@ -957,8 +936,6 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         (void) fnAmb;
         tracingCacheLog(
             "walker apply: outer-direction (fn is OuterObject) — live dispatch, no registry");
-        /* B6: narrow guard around walker-triggered live invocation. */
-        TracingWriter::SuppressApplyBoundary suppress(writer);
         auto result = fn->queryApply(arg.get_ptr());
         if (!result)
             throw Error("TracingReplayEvaluator::apply: outer-direction queryApply returned null");

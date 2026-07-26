@@ -90,67 +90,11 @@ class TracingWriter
        (which is fact-hashed, not request-hashed). */
     std::unordered_set<Hash> allRequestHashes;
 
-    /* Active cb-apply cells. `createCallbackCell` pushes a new cell
-       at cache-boundary apply; `logCallbackObservation` appends each
-       observation the outer makes on the arg to the cell's
-       `runningObsSet`; at sampling moments the writer snapshots that
-       set into the ObservationSet CAS and emits a SelectorCallbackApply
-       request referencing it. Cell lookup at sampling time is by
-       `fnStateHashHex` — the fn's initial state hash captured at
-       apply time. */
-    struct CallbackCell
-    {
-        /* Identity of this callback firing; used by
-           `logCallbackObservation` to route observations to the right
-           cell. Equals the natural hash of the apply query payload. */
-        Hash applyId{HashAlgorithm::SHA256};
-        /* Fn's initial state hash (empty history). Cell lookup key
-           in `logOuterObservation` — matches the ApplyResultSubject's
-           fn state hash under matching-until-divergence. Captured
-           at `createCallbackCell` from the applyQueryPayload's `fn`
-           field. */
-        std::string fnStateHashHex;
-        /* Cached call's callArgAncestry, encoded into the
-           CallbackApplyRef so the walker's ReplayCallbackArg
-           reconstructs the arg's Subject at the same argAncestry —
-           required for probe queryHashes to match cold's obsSet. */
-        std::string argAncestryHex;
-        /* Observations made on this cell's contra-arg so far.
-           Snapshotted into the ObservationSet CAS at
-           CallbackApplyRef stamping time. */
-        std::vector<TracingDecisionGraph::Observation> runningObsSet;
-    };
-    std::vector<CallbackCell> callbackCells;
-
     /** Emit the SelectorCallbackApply Fact for a callback firing whose
         result is now known. Snapshots the cell's `runningObsSet` into
         the ObservationSet CAS and routes the fact through
         `logOuterObservation`. Idempotent-ish: no-op if runningObsSet
         is empty or if the cell match fails. */
-
-    /* RAII suppress counter for `createCallbackCell` while > 0. Used to
-       elide redundant boundary firings during walker re-dispatch of a
-       recorded apply: walker's `fnObj->queryApply(replayLocal)` re-
-       routes through `OuterObject::queryApply` → `applyFn` →
-       `OuterApply::run`, which would normally fire
-       `createCallbackCell` — but that path is validation of an
-       already-recorded apply, not a new event. Letting it fire would
-       stack a phantom callback cell per re-validation. */
-    size_t suppressCbApply = 0;
-
-public:
-    /* RAII helper: scoped suppress of createCallbackCell. */
-    class SuppressApplyBoundary
-    {
-        TracingWriter & writer;
-    public:
-        explicit SuppressApplyBoundary(TracingWriter & w) : writer(w) { ++writer.suppressCbApply; }
-        ~SuppressApplyBoundary() { --writer.suppressCbApply; }
-        SuppressApplyBoundary(const SuppressApplyBoundary &) = delete;
-        SuppressApplyBoundary & operator=(const SuppressApplyBoundary &) = delete;
-    };
-
-private:
 
 public:
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
