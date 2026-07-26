@@ -329,34 +329,10 @@ TracingReplayEvaluator::walk(
         pendingEdgeObservations.clear();
     };
 
-    /* Task #110 Q-evolution: recomputeQ reads from walk-local
-       perQEnvWalk (defined above; populated by commitEdge) — B1
-       alignment with writer's ActiveSelector::perQEnvWalk basis. */
+    /* #178: walker Q evolution retires. Q hashes stable per operation;
+       recomputeQ becomes identity. Left null so decisionGraph.walk
+       skips the call. */
     std::function<Hash(const Hash &)> recomputeQ;
-    if (payloadTemplate && fromSubject) {
-        /* Capture qState by shared_ptr so recomputeQ can dereference
-           perQEnvWalk (which lives on qState — either cell-owned or
-           local) across dispatch/commit callbacks.
-
-           Mirror cold's writer: only rewrite payload.from when the
-           fromSubject's state hash has ACTUALLY moved from the seeded
-           lastState (see tracing-writer.cc:201 and tracing-writer.hh
-           B11 block). Caller-set payload.from (e.g. from
-           evolvedQueryFrom's applyContext basis) is preserved when
-           no perQEnvWalk obs matches the subject's own state. */
-        recomputeQ = [fromSubject, fromSubjectArgAncestry, qState](const Hash & preFoldQ) -> Hash {
-            auto & pqw = qState->perQEnvWalk;
-            auto newState = stateHashAt(
-                *fromSubject, fromSubjectArgAncestry, pqw, pqw.size());
-            if (newState == qState->fromSubjectLastState)
-                return preFoldQ;
-            qState->fromSubjectLastState = newState;
-            trace::rewriteFrom(qState->payloadTemplate,
-                               newState.to_string(HashFormat::Base16, false));
-            qState->currentQ = trace::computeSelectorHash(qState->payloadTemplate);
-            return qState->currentQ;
-        };
-    }
 
     /* === Trace-continuing attempt ===
        Session-cumulative: look up `getAsks(Q, envCur)` and walk that

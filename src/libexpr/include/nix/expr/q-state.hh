@@ -90,32 +90,6 @@ struct QState
         own chains. */
     std::vector<ObservationSet> perQEnvWalk;
 
-    /** Parent Selector's terminalCur — the walker's structural
-        anchor for landing chains that hop this cell's entry cur. */
-    std::optional<TracingDecisionGraph::SetHash> structuralParentFactSetHash;
-
-    /** B10 landing-chain simulation: payload as it was at push time,
-        immutable through Q's evolution. Used at completion to
-        simulate walker Q evolution through pre-push session Ask
-        trail and insert Ask rows under each simulated (Q, cur) so a
-        walker from ∅ can fold its way to this cell's session-
-        cumulative entry cur. */
-    nlohmann::json initialPayloadTemplate;
-
-    /** From-subject state hash at push time — pairs with
-        `initialPayloadTemplate` for the landing-chain simulation. */
-    Hash initialFromSubjectState{HashAlgorithm::SHA256};
-
-    /** Selector variant's static tag string. Captured at push for
-        use at completion when synthesising composite request
-        payloads for the parent (B2). */
-    std::string queryTag;
-
-    /** Size of the writer's `envAsksEdges` at push time. Used at
-        completion to slice the trailing edges that belong to this
-        Selector's chain vs. to earlier cells. */
-    std::size_t envAsksEdgesSizeAtPush{0};
-
     /** The cur under which this Q's next Ask row keys. Under the
         multiplexer model (Phase E, user 2026-07-25/26): each active
         Q tracks its own chain independently — facts broadcast to all

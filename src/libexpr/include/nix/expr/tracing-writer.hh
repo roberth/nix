@@ -339,12 +339,6 @@ public:
     struct SelectorHandle
     {
         std::optional<Hash> selectorHash;
-        /* Parent Query's terminalCur, captured at logSelector time. Used
-           at logResult as the explicit start point of this Q's Ask
-           chain — the "structural parent factSet" the walker's
-           parentAnchor path lands on. std::nullopt for root queries
-           (no parent → chain starts at ∅). */
-        std::optional<Hash> structuralParentFactSetHash;
     };
 
     /**
@@ -370,9 +364,6 @@ public:
         auto qState = std::make_shared<QState>();
         qState->currentQ = selectorHash;
         qState->payloadTemplate = trace::SelectorVariant{query};
-        qState->queryTag = std::string(Q::tag);
-        qState->initialPayloadTemplate = qj;
-        qState->envAsksEdgesSizeAtPush = envAsksEdges.size();
         if (cell) {
             cell->qState = qState;
             qState->cell = cell;
@@ -410,54 +401,15 @@ public:
             selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
             qj.dump());
         SelectorHandle qh{selectorHash};
-        if (parent)
-            qh.structuralParentFactSetHash = parent->factSetHash;
-        Hash lastState(HashAlgorithm::SHA256);
-        if (fromSubject) {
-            lastState = stateHashAt(
-                *fromSubject, fromSubjectArgAncestry, envWalk, envWalk.size());
-        }
+        (void) parent;  // structuralParentFactSetHash retired
+        (void) fromSubject;
+        (void) fromSubjectArgAncestry;
         auto qState = std::make_shared<QState>();
         qState->currentQ = selectorHash;
         qState->payloadTemplate = trace::SelectorVariant{query};
-        qState->fromSubject = std::move(fromSubject);
-        qState->fromSubjectArgAncestry = fromSubjectArgAncestry;
-        qState->fromSubjectLastState = lastState;
-        qState->structuralParentFactSetHash = qh.structuralParentFactSetHash;
-        qState->queryTag = std::string(Q::tag);
-        qState->initialPayloadTemplate = qj;
-        qState->initialFromSubjectState = lastState;
-        qState->envAsksEdgesSizeAtPush = envAsksEdges.size();
-
-        /* B11: preconditions. Under callback-model §3, Q's chain
-           starts at index M > 0 carrying preconditions from prior
-           state. Fold pre-push session observations into qState's
-           per-Q chain, evolving qState->currentQ to Q_M and inserting
-           Ask rows under each intermediate Q value so walkers starting
-           at (Q_initial, ∅) can fold their way to (Q_M, Q_entry_cur). */
-        if (qState->fromSubject) {
-            for (size_t i = 0; i < envAsksEdges.size(); ++i) {
-                const auto & edge = envAsksEdges[i];
-                decisionGraph->insertAsk(qState->currentQ, edge.fromFactSetHash, edge.requestSetHash);
-                if (i < envWalk.size()) {
-                    qState->perQEnvWalk.push_back(envWalk[i]);
-                    auto newState = stateHashAt(
-                        *qState->fromSubject, qState->fromSubjectArgAncestry,
-                        qState->perQEnvWalk, qState->perQEnvWalk.size());
-                    if (newState != qState->fromSubjectLastState) {
-                        qState->fromSubjectLastState = newState;
-                        trace::rewriteFrom(
-                            qState->payloadTemplate,
-                            newState.to_string(HashFormat::Base16, false));
-                        qState->currentQ = trace::computeSelectorHash(qState->payloadTemplate);
-                    }
-                }
-            }
-            if (envAsksEdges.size() > 0)
-                tracingCacheLog("logSelectorOnCell: precondition fold %zu obs -> Q_M=%s",
-                                envAsksEdges.size(),
-                                qState->currentQ.to_string(HashFormat::Base16, false).substr(0, 12));
-        }
+        /* #178: Q evolution retires. fromSubject / precondition-fold /
+           payloadTemplate.from rewriting all gone. Q hashes stable
+           per operation; cur at (Q, cur) discriminates. */
 
         if (cell) {
             cell->qState = qState;
@@ -496,8 +448,7 @@ public:
             selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
             qj.dump());
         SelectorHandle qh{selectorHash};
-        if (parent)
-            qh.structuralParentFactSetHash = parent->factSetHash;
+        (void) parent;  // structuralParentFactSetHash retired
         return {valueNum, qh};
     }
 
