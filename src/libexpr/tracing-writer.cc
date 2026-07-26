@@ -93,79 +93,22 @@ void TracingWriter::logOuterObservation(
     /* #177 C: fold observation into caller-supplied arg cell's
        ownFactSet. */
     if (attributionCell) {
-        attributionCell->ownFactSet = TracingDecisionGraph::xorFactIntoHash(
-            attributionCell->ownFactSet, selectorHash, responseHash);
-    }
-    /* #183: also fold into any active Selector cell whose liveObject
-       is the same as the observation's arg (attributionCell.liveObject).
-       That picks the apply(s) that were invoked with THIS specific arg
-       — the observation is in-scope for their evaluation.
-       Broadcast to ALL active cells caused unrelated Selectors to
-       collapse; a strict identity filter keeps discrimination local. */
-    if (attributionCell && attributionCell->liveObject) {
-        auto argLive = attributionCell->liveObject;
-        for (auto & cell : activeCells) {
-            if (cell.get() == attributionCell.get()) continue;
-            if (cell->liveObject == argLive) {
-                cell->ownFactSet = TracingDecisionGraph::xorFactIntoHash(
-                    cell->ownFactSet, selectorHash, responseHash);
-            }
-        }
+        attributionCell->addFact(selectorHash, responseHash);
     }
     responseFor.emplace(selectorHash, responseHash);
     sessionRequestsTrie.insert(selectorHash);
     allRequestHashes.insert(selectorHash);
 
-    /* Per-probe Ask push. Task #110 Q-evolution: an observation
-       happening during Q's walk is part of Q's Ask chain — for EVERY
-       Q currently active on the stack. Parent Q's evaluation includes
-       child Q's observations too; each Q's chain must be complete for
-       the walker to follow it. Insert Ask immediately under every
-       active Q's currentQ.
-
-       Order per active Q: (1) record Ask at (Q_before-fold, cur_before),
-       (2) fold observation into cur/envWalk, (3) re-derive Q_after-fold
-       (see below). */
+    /* #183: per-observation Ask insertion retired. Ask rows are
+       written per-Selector-completion in logResult/logQueryResult
+       from the completing cell + ancestor facts. The fact was already
+       appended to attributionCell->facts above. */
     auto requestSetHash = decisionGraph->insertRequestSet({selectorHash});
-    /* Task #110 (correct model): each observation belongs to exactly
-       one Q — the innermost active one. Sub-Qs' observations are
-       NOT part of parent Q's chain; parent observes the sub-Q as a
-       composite (via its own logResult that folds sub-Q's Terminal
-       into parent's envWalk). Skip Ask insertion when the stack is
-       empty (no attributable Q). */
-    if (!activeCells.empty()) {
-        auto & innermost = activeCells.back()->qState;
-        /* #177 reader switch: Ask keyed at innermost's cell factSetHash
-           (before-fold value in innermost->prevCur). Falls back to
-           prevQFactSetHash when innermost has no cell backpointer. */
-        decisionGraph->insertAsk(innermost->currentQ, innermost->prevCur, requestSetHash);
-    }
     envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
     ObservationSet obsSet;
     obsSet.observations.push_back({fromStateHash, elementHash});
-    envWalk.push_back(obsSet);
-    /* Task #110: append to innermost Q's perQEnvWalk. Session envWalk
-       stays 1:1-aligned with envAsksEdges for other bookkeeping. */
-    if (!activeCells.empty()) {
-        auto & innermost = activeCells.back()->qState;
-        innermost->perQEnvWalk.push_back(std::move(obsSet));
-        /* #177 pull model: advance innermost's prevCur to
-           cell.factSetHash() (own XOR ancestors). */
-        if (auto cell = innermost->cell.lock())
-            innermost->prevCur = cell->factSetHash();
-        else
-            innermost->prevCur = envFactSetHash;
-    }
-    tracingCacheLog(
-        "logOuterObservation: inserted Ask under %zu active Q(s) from=%s (env=%zu)",
-        activeCells.size(),
-        prevQFactSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
-        envWalk.size());
+    envWalk.push_back(std::move(obsSet));
     prevQFactSetHash = envFactSetHash;
-
-    /* #178: Q evolution retires. Q hashes stable per operation; cur
-       at (Q, cur) does the discrimination that state-hash Q evolution
-       used to do. */
 }
 
 void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)

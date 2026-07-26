@@ -102,35 +102,35 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         other cells. See CallbackState above for field semantics. */
     mutable std::shared_ptr<CallbackState> callbackState;
 
-    /** This cell's own directly-folded facts, as an XOR-fold hash.
-        Under the multiplexer + per-cell factset direction (task #177):
-        env facts fold into the session-root cell's ownFactSet; arg
-        observations fold into the arg's own cell's ownFactSet.
-        Sibling cells are isolated by construction — each has its own
-        ownFactSet, no cross-contamination.
+    /** This cell's own facts — a set of (requestHash → responseHash)
+        pairs. Env facts append to session-root cell's facts; arg
+        observations append to the arg's own cell. Order-independent
+        (XOR-commutative fold). Cumulative — never cleared (state
+        creep, dedup at CAS).
 
         `mutable` because ArgCells are held via
-        `shared_ptr<const ArgCell>`; the fold happens through the
+        `shared_ptr<const ArgCell>`; appends happen through the
         const pointer. */
-    mutable TracingDecisionGraph::SetHash ownFactSet{
-        TracingDecisionGraph::emptySetHash()};
+    mutable std::map<Hash, Hash> facts;
 
-    /** Cumulative factset visible from this cell: own XOR parent's.
-        Pull-based (recursive) — no eager broadcast to children.
-        Under user's design (2026-07-26): children see ancestors'
-        contributions naturally on lookup; observations added to
-        ancestors after child creation appear on next call.
+    /** Insert a (request, response) fact into this cell's set.
+        Idempotent for duplicate (request, response) pairs. */
+    void addFact(const Hash & reqHash, const Hash & respHash) const
+    {
+        facts.emplace(reqHash, respHash);
+    }
 
-        Used as the cur for Terminal / Ask keys at this cell's scope
-        (once #178 lands and Q selectorHashes stabilise). */
+    /** Cumulative factset visible from this cell: own facts XOR-folded
+        with parent's factSetHash. Pull-based (recursive) — computed
+        on demand from `facts`, not stored. */
     TracingDecisionGraph::SetHash factSetHash() const
     {
-        auto own = ownFactSet;
-        if (parent) {
-            auto parentFold = parent->factSetHash();
-            return TracingDecisionGraph::xorHashes(own, parentFold);
-        }
-        return own;
+        auto acc = TracingDecisionGraph::emptySetHash();
+        for (auto & [req, resp] : facts)
+            acc = TracingDecisionGraph::xorFactIntoHash(acc, req, resp);
+        if (parent)
+            acc = TracingDecisionGraph::xorHashes(acc, parent->factSetHash());
+        return acc;
     }
 
     /** Construct a cell whose parent is `parent_`. depth is one

@@ -113,6 +113,10 @@ struct Observation
 {
     Hash fromHash;
     Hash elementHash;
+    /* #183: separately-carried (reqHash, respHash) so walker-side
+       commits can append to cell.facts as (req, resp) pairs. */
+    Hash reqHash{HashAlgorithm::SHA256};
+    Hash respHash{HashAlgorithm::SHA256};
 };
 
 /** An Asks edge's worth of observations. Observations in one edge are

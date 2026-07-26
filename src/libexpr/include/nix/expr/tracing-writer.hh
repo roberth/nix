@@ -123,19 +123,10 @@ class TracingWriter
         active. */
     std::vector<std::shared_ptr<const ArgCell>> activeCells;
 
-    /* #182: getter Ask discovery — under D2 getters don't push to
-       activeCells (state is pull-based via cell.factSetHash()), but
-       facts firing during a getter's evaluation still need Ask rows
-       on the getter's Q so warm's walker can discover and dispatch
-       them. Each in-progress getter records its Q + the cell it
-       operates on + its prevCur (advanced as facts fold in). */
-    struct InProgressGetter
-    {
-        Hash currentQ{HashAlgorithm::SHA256};
-        Hash prevCur{TracingDecisionGraph::emptySetHash()};
-        std::shared_ptr<const ArgCell> cell;
-    };
-    std::vector<InProgressGetter> inProgressGetters;
+    /* #183: inProgressGetters retired. Observations attribute directly
+       to their arg's cell (via addFact); Selector completion drains
+       cell + ancestor facts into a single Ask row per Selector.
+       No push/pop tracker; the cell IS the state carrier. */
 
     /* Mirrors `seenRequests` but keyed by query hash, not fact hash.
        record()'s slow path iterates this to build the trailing
@@ -467,12 +458,8 @@ public:
             selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
             qj.dump());
         SelectorHandle qh{selectorHash};
-        (void) parent;  // structuralParentFactSetHash retired
-        /* #182: register as in-progress so facts folding during eval
-           get Ask rows on this getter's Q. */
-        if (cell) {
-            inProgressGetters.push_back({selectorHash, cell->factSetHash(), cell});
-        }
+        (void) parent;
+        (void) cell;  // #183: cell no longer needed at push — facts accumulate on it directly
         return {valueNum, qh};
     }
 
@@ -500,17 +487,25 @@ public:
            write Terminal at the LIVE post-fold cell.factSetHash() —
            not the pre-fold anchor snapshot. Then pop the matching
            in-progress entry. */
-        Hash terminalCur = anchorCur;
+        Hash terminalCur = cell ? cell->factSetHash() : anchorCur;
+        decisionGraph->insertResult(resultNodeHash, resultPayload);
+        /* #183: one Ask per Selector containing all facts from cell +
+           ancestors. Walker dispatches all → folds all → reaches
+           terminalCur = cell.factSetHash(). Order-independent (XOR). */
         if (cell) {
-            terminalCur = cell->factSetHash();
-            for (auto it = inProgressGetters.rbegin(); it != inProgressGetters.rend(); ++it) {
-                if (it->cell.get() == cell.get() && it->currentQ == *qh.selectorHash) {
-                    inProgressGetters.erase(std::next(it).base());
-                    break;
+            std::vector<Hash> reqHashes;
+            for (auto c = cell.get(); c; c = c->parent.get()) {
+                for (auto & [req, resp] : c->facts) {
+                    (void) resp;
+                    reqHashes.push_back(req);
                 }
             }
+            if (!reqHashes.empty()) {
+                auto requestSetHash = decisionGraph->insertRequestSet(reqHashes);
+                decisionGraph->insertAsk(*qh.selectorHash,
+                    TracingDecisionGraph::emptySetHash(), requestSetHash);
+            }
         }
-        decisionGraph->insertResult(resultNodeHash, resultPayload);
         decisionGraph->insertTerminal(*qh.selectorHash, terminalCur, resultNodeHash);
         tracingCacheLog(
             "writer logQueryResult: Q=%s anchor=%s -> result=%s",
@@ -554,11 +549,9 @@ public:
         envFactSet.push_back({selectorHash, responseHash});
         envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
             envFactSetHash, selectorHash, responseHash);
-        /* #177 B: env facts fold into session root cell's ownFactSet.
-           Descendant cells inherit via factSetHash()'s parent-chain
-           walk (pull-based, per user 2026-07-26). */
-        sessionRootCell->ownFactSet = TracingDecisionGraph::xorFactIntoHash(
-            sessionRootCell->ownFactSet, selectorHash, responseHash);
+        /* #183: env facts append to session-root cell's fact set.
+           Descendants inherit via factSetHash()'s parent-chain walk. */
+        sessionRootCell->addFact(selectorHash, responseHash);
         responseFor.emplace(selectorHash, responseHash);
         sessionRequestsTrie.insert(selectorHash);
         allRequestHashes.insert(selectorHash);
@@ -568,31 +561,15 @@ public:
            specific Q. Every currently-active Q's chain must include it
            so a walker following that Q's chain from ∅ can reach the Q's
            Terminal cur (= session cur at logResult time). */
+        /* #183: per-observation Ask insertion retired. Ask rows now
+           written per-Selector-completion (in logResult/logQueryResult)
+           containing all facts from the completing cell + ancestors. */
+        (void) requestSetHash;
         ObservationSet obsSet;
         obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
-        for (auto & cell : activeCells) {
-            auto & aq = cell->qState;
-            if (!aq) continue;
-            /* #177 pull model: Ask keyed at aq's cell.factSetHash()
-               (before-fold value cached in aq->prevCur). Env fact
-               folded into sessionRootCell above; every descendant
-               cell's factSetHash() picks it up via parent-chain walk. */
-            decisionGraph->insertAsk(aq->currentQ, aq->prevCur, requestSetHash);
-            aq->perQEnvWalk.push_back(obsSet);
-            aq->prevCur = cell->factSetHash();
-        }
-        /* #182: getter Ask discovery — in-progress getters also get an
-           Ask row on their Q at their current prevCur; advance prevCur
-           to cell.factSetHash() (post-fold). */
-        for (auto & ig : inProgressGetters) {
-            decisionGraph->insertAsk(ig.currentQ, ig.prevCur, requestSetHash);
-            ig.prevCur = ig.cell->factSetHash();
-        }
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         envWalk.push_back(std::move(obsSet));
         prevQFactSetHash = envFactSetHash;
-        /* Facts have fromHash=0; no subject state hash evolves — no
-           per-Q Q evolution triggered here. */
     }
 
     /**
@@ -799,15 +776,31 @@ public:
            structural (siblings have separate cells → separate
            ownFactSets, ancestors shared via parent chain). */
         Hash terminalCur = envFactSetHash;
+        std::shared_ptr<const ArgCell> completingCell;
         if (!activeCells.empty()) {
-            if (auto cell = activeCells.back()->qState->cell.lock())
-                terminalCur = cell->factSetHash();
+            completingCell = activeCells.back();
+            terminalCur = completingCell->factSetHash();
         }
         tracingCacheLog("logResult: Q_initial=%s Q_final=%s factSet=%s -> result",
                         qh.selectorHash->to_string(HashFormat::Base16, false).substr(0, 12),
                         finalQ.to_string(HashFormat::Base16, false).substr(0, 12),
                         terminalCur.to_string(HashFormat::Base16, false).substr(0, 12));
 
+        /* #183: one Ask per Selector with all facts from cell + ancestors. */
+        if (completingCell) {
+            std::vector<Hash> reqHashes;
+            for (auto c = completingCell.get(); c; c = c->parent.get()) {
+                for (auto & [req, resp] : c->facts) {
+                    (void) resp;
+                    reqHashes.push_back(req);
+                }
+            }
+            if (!reqHashes.empty()) {
+                auto requestSetHash = decisionGraph->insertRequestSet(reqHashes);
+                decisionGraph->insertAsk(finalQ,
+                    TracingDecisionGraph::emptySetHash(), requestSetHash);
+            }
+        }
         decisionGraph->insertTerminal(finalQ, terminalCur, resultNodeHash);
 
         /* D3: composite sub-Q emission retired. Under D2, getters no

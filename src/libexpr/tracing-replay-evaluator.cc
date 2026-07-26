@@ -126,17 +126,14 @@ TracingReplayEvaluator::walk(
             if (committedEdgeFingerprints.insert(fingerprint).second) {
                 ObservationSet edge;
                 edge.observations = std::move(obs);
-                /* #177: fold committed facts into sessionRootCell.ownFactSet
-                   so subsequent walks' `cell.factSetHash()` sees them via
-                   pull inheritance. First-pass attribution: everything to
-                   base scope (matches writer's current logResponse for env
-                   facts). Refine per-cell attribution once base-scope
-                   facts route reliably. */
+                /* #183: walker-side reproduce of cold's cell.facts append.
+                   Walker's dispatch adds (req, resp) to session-root cell
+                   so subsequent walks see them via pull inheritance in
+                   cell.factSetHash(). Observation's `respHash` field
+                   populated by dispatch(). */
                 if (writer.sessionRootCell)
                     for (const auto & o : edge.observations)
-                        writer.sessionRootCell->ownFactSet =
-                            TracingDecisionGraph::xorHashes(
-                                writer.sessionRootCell->ownFactSet, o.elementHash);
+                        writer.sessionRootCell->addFact(o.reqHash, o.respHash);
                 envWalk.push_back(edge);
                 /* B1: also append to per-Q chain for Q evolution basis. */
                 perQEnvWalk.push_back(std::move(edge));
@@ -258,6 +255,8 @@ TracingReplayEvaluator::walk(
                 *outerFromHash,
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), requestHash, h),
+                requestHash,
+                h,
             });
             tracingCacheLog(
                 "dispatch outer: req=%s payload=%s from=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
@@ -283,6 +282,8 @@ TracingReplayEvaluator::walk(
                 Hash(HashAlgorithm::SHA256),
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), requestHash, h),
+                requestHash,
+                h,
             });
             tracingCacheLog(
                 "dispatch env: req=%s payload=%s resp=%s",
