@@ -122,6 +122,21 @@ class TracingWriter
         a time; switching evaluators = switching which tree is
         active. */
     std::vector<std::shared_ptr<const ArgCell>> activeCells;
+
+    /* #182: getter Ask discovery — under D2 getters don't push to
+       activeCells (state is pull-based via cell.factSetHash()), but
+       facts firing during a getter's evaluation still need Ask rows
+       on the getter's Q so warm's walker can discover and dispatch
+       them. Each in-progress getter records its Q + the cell it
+       operates on + its prevCur (advanced as facts fold in). */
+    struct InProgressGetter
+    {
+        Hash currentQ{HashAlgorithm::SHA256};
+        Hash prevCur{TracingDecisionGraph::emptySetHash()};
+        std::shared_ptr<const ArgCell> cell;
+    };
+    std::vector<InProgressGetter> inProgressGetters;
+
     /* Mirrors `seenRequests` but keyed by query hash, not fact hash.
        record()'s slow path iterates this to build the trailing
        remaining-edge — an Asks edge's requestSet is a set of query
@@ -435,7 +450,8 @@ public:
     template<typename Q>
     std::pair<ValueHandle, SelectorHandle> logQuery(
         const Q & query,
-        const std::optional<TriePosition> & parent)
+        const std::optional<TriePosition> & parent,
+        const std::shared_ptr<const ArgCell> & cell = {})
     {
         auto valueNum = sink.logSelector(query);
         if (!decisionGraph)
@@ -448,6 +464,11 @@ public:
             qj.dump());
         SelectorHandle qh{selectorHash};
         (void) parent;  // structuralParentFactSetHash retired
+        /* #182: register as in-progress so facts folding during eval
+           get Ask rows on this getter's Q. */
+        if (cell) {
+            inProgressGetters.push_back({selectorHash, cell->factSetHash(), cell});
+        }
         return {valueNum, qh};
     }
 
@@ -462,7 +483,8 @@ public:
         ValueHandle valueNum,
         const R & result,
         const SelectorHandle & qh,
-        const Hash & anchorCur)
+        const Hash & anchorCur,
+        const std::shared_ptr<const ArgCell> & cell = {})
     {
         sink.logResult(valueNum, result);
         if (!decisionGraph || !qh.selectorHash)
@@ -470,17 +492,31 @@ public:
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);
         auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
+        /* #182: if a cell is provided (getter was pushed via logQuery),
+           write Terminal at the LIVE post-fold cell.factSetHash() —
+           not the pre-fold anchor snapshot. Then pop the matching
+           in-progress entry. */
+        Hash terminalCur = anchorCur;
+        if (cell) {
+            terminalCur = cell->factSetHash();
+            for (auto it = inProgressGetters.rbegin(); it != inProgressGetters.rend(); ++it) {
+                if (it->cell.get() == cell.get() && it->currentQ == *qh.selectorHash) {
+                    inProgressGetters.erase(std::next(it).base());
+                    break;
+                }
+            }
+        }
         decisionGraph->insertResult(resultNodeHash, resultPayload);
-        decisionGraph->insertTerminal(*qh.selectorHash, anchorCur, resultNodeHash);
+        decisionGraph->insertTerminal(*qh.selectorHash, terminalCur, resultNodeHash);
         tracingCacheLog(
             "writer logQueryResult: Q=%s anchor=%s -> result=%s",
             qh.selectorHash->to_string(HashFormat::Base16, false).substr(0, 12),
-            anchorCur.to_string(HashFormat::Base16, false).substr(0, 12),
+            terminalCur.to_string(HashFormat::Base16, false).substr(0, 12),
             resultNodeHash.to_string(HashFormat::Base16, false).substr(0, 12));
         return TriePosition{
             .resultNodeHash = resultNodeHash,
             .queryHashStr = qh.selectorHash->to_string(HashFormat::Base16, false),
-            .factSetHash = anchorCur,
+            .factSetHash = terminalCur,
         };
     }
 
@@ -540,6 +576,13 @@ public:
             decisionGraph->insertAsk(aq->currentQ, aq->prevCur, requestSetHash);
             aq->perQEnvWalk.push_back(obsSet);
             aq->prevCur = cell->factSetHash();
+        }
+        /* #182: getter Ask discovery — in-progress getters also get an
+           Ask row on their Q at their current prevCur; advance prevCur
+           to cell.factSetHash() (post-fold). */
+        for (auto & ig : inProgressGetters) {
+            decisionGraph->insertAsk(ig.currentQ, ig.prevCur, requestSetHash);
+            ig.prevCur = ig.cell->factSetHash();
         }
         envAsksEdges.push_back({prevQFactSetHash, requestSetHash});
         envWalk.push_back(std::move(obsSet));

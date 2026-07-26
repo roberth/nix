@@ -133,10 +133,10 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
        Observations dispatched during innerChild's evaluation
        attribute to whatever's on activeQueryStack (the enclosing
        apply/root cell), not a getter-specific frame. */
-    auto [valueId, qh] = writer.logQuery(query, triePos);
+    auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
     auto childWHNF = computeWHNFFromObject(*innerChild);
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
-    auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur);
+    auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur, argCell);
     if (qh.selectorHash && childTriePos)
         pushObservation(parentHash, *qh.selectorHash, childTriePos->resultNodeHash);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(innerChild), writer, valueId, childTriePos));
@@ -163,7 +163,7 @@ trace::ResultWHNF & TracingObject::whnf()
     auto parentHash = evolvedQueryFrom();
     trace::SelectorGetWHNF query{parentHash};
     /* Phase D2: getter — no push, direct Terminal. */
-    auto [valueId, qh] = writer.logQuery(query, triePos);
+    auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
     auto whnfResult = computeWHNFFromObject(*inner);
     /* Cell-migration Phase B moved QCA emission from here to
        TracingEvaluator::apply. But TE::apply fires only for the
@@ -180,7 +180,7 @@ trace::ResultWHNF & TracingObject::whnf()
     if (cbApplyOrigin && applyResultSubject)
         writer.emitCallbackApplyForApplyResult(argCell, *applyResultSubject, applyArgAncestry, whnfResult);
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
-    auto tp = writer.logQueryResult(valueId, whnfResult, qh, anchorCur);
+    auto tp = writer.logQueryResult(valueId, whnfResult, qh, anchorCur, argCell);
     if (qh.selectorHash && tp)
         pushObservation(parentHash, *qh.selectorHash, tp->resultNodeHash);
     cachedWHNF = std::move(whnfResult);
@@ -288,11 +288,11 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     auto parentHash = evolvedQueryFrom();
     trace::SelectorGetListElem query{parentHash, index};
     /* Phase D2: getter — no push, direct Terminal. */
-    auto [valueId, qh] = writer.logQuery(query, triePos);
+    auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
     auto result = inner->getListElem(index);
     trace::ResultWHNF childWHNF = computeWHNFFromObject(*result);
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
-    auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur);
+    auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur, argCell);
     if (qh.selectorHash && childTriePos)
         pushObservation(parentHash, *qh.selectorHash, childTriePos->resultNodeHash);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
@@ -336,7 +336,7 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
     auto parentHash = evolvedQueryFrom();
     trace::SelectorGetFunctionInfo query{parentHash};
     /* Phase D2: getter — no push, direct Terminal. */
-    auto [valueId, qh] = writer.logQuery(query, triePos);
+    auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
     auto result = inner->getFunctionInfo();
     trace::ResultFunctionInfo traceResult;
     if (result) {
@@ -345,7 +345,7 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
         traceResult = {.hasInfo = false};
     }
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
-    auto tp = writer.logQueryResult(valueId, traceResult, qh, anchorCur);
+    auto tp = writer.logQueryResult(valueId, traceResult, qh, anchorCur, argCell);
     if (qh.selectorHash && tp) pushObservation(parentHash, *qh.selectorHash, tp->resultNodeHash);
     return result;
 }
