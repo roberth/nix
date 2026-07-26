@@ -84,24 +84,11 @@ ref<TracingObject> TracingObject::create(
 
 std::string TracingObject::evolvedQueryFrom() const
 {
-    tracingCacheLog(
-        "TO::evolvedQueryFrom: applyContext=%p applyResultSubject=%s obs=%zu",
-        (void*)applyContext.get(),
-        applyResultSubject ? "yes" : "no",
-        applyContext ? applyContext->observations.size() : 0);
-    if (applyResultSubject && applyContext) {
-        std::vector<ObservationSet> history;
-        history.reserve(applyContext->observations.size());
-        for (auto & obs : applyContext->observations) {
-            ObservationSet edge;
-            edge.observations.push_back(obs);
-            history.push_back(std::move(edge));
-        }
-        auto evolved = stateHashAt(
-            *applyResultSubject, applyArgAncestry, history, history.size());
-        auto hex = evolved.to_string(HashFormat::Base16, false);
-        return hex;
-    }
+    /* #178: state-hash evolution retires. Parent identity carried
+       via triePos->queryHashStr (parent Q's stable hash). Callback-
+       arg path used to fold applyContext observations into a state
+       hash; that state hash is now unnecessary since cur at (Q, cur)
+       discriminates. */
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());
 }
 
