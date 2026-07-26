@@ -27,44 +27,23 @@ void TracingWriter::logOuterObservation(
        will have emitted QCA-with-WHNF by the time non-WHNF probes
        on that applyResult happen. */
 
-    /* Per-probe stamping. `from` is computed against the WRITER's
-       current `envWalk` (which reflects every prior probe's fold),
-       so successive probes on the same Subject stamp against evolved
-       state — the design's per-observation state evolution. */
-    auto [path, roots] = pathAndRootsFromSubject(subject);
-    std::vector<trace::SelectorLeaf> fromStateHashes;
-    fromStateHashes.reserve(roots.size());
-    for (auto & root : roots) {
-        auto cid = stateHashAt(
-            root, argAncestry, envWalk, envWalk.size());
-        fromStateHashes.emplace_back(cid.to_string(HashFormat::Base16, false));
-    }
-    std::string fromHex = fromStateHashes.empty() ? std::string{} : fromStateHashes[0].stateHash();
-    auto fromStateHash = fromStateHashes.empty()
-        ? Hash(HashAlgorithm::SHA256)
-        : Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
+    /* #178: state-hash `from` field stamping retires. Under the
+       per-cell factset model, cur at (Q, cur) does the discrimination
+       the `from` state hash used to do. Q hashes become stable per
+       operation. The caller-supplied `query` is used as-is; its
+       `from`/`perArgFrame`/`fromStateHashes` fields (still present
+       on the wire until the Selector types get pruned) stay at their
+       caller-set values (typically defaults). */
+    (void) argAncestry;  // no longer used for stamping
+    Hash fromStateHash(HashAlgorithm::SHA256);
 
     std::string queryTag = std::visit(
         [](const auto & q) -> std::string { return std::string(q.tag); }, query);
     tracingCacheLog(
-        "logOuterObservation: subject=%s query=%s from=%s path=%zu fromStateHashes=%zu",
-        describe(subject), queryTag, fromHex.substr(0, 12),
-        path.steps.size(), fromStateHashes.size());
+        "logOuterObservation: subject=%s query=%s",
+        describe(subject), queryTag);
 
     trace::SelectorVariant stampedQuery = query;
-    std::visit(
-        [&](auto & q) {
-            using Q = std::decay_t<decltype(q)>;
-            if constexpr (requires { q.from; })
-                q.from = trace::SelectorLeaf{trace::StateHashLeaf{fromHex, {}}};
-            if constexpr (requires { q.perArgFrame; }) {
-                q.perArgFrame.path = path;
-                q.perArgFrame.fromStateHashes = fromStateHashes;
-            }
-            if constexpr (requires { q.fromStateHashes = fromStateHashes; })  // SelectorApply
-                q.fromStateHashes = fromStateHashes;
-        },
-        stampedQuery);
     nlohmann::json queryJson = trace::toJson(stampedQuery);
     nlohmann::json resultJson;
     std::visit([&](const auto & r) { resultJson = r; }, result);
@@ -93,44 +72,9 @@ void TracingWriter::logOuterObservation(
 
     decisionGraph->insertRequest(selectorHash, jsonToCborString(queryJson));
 
-    /* Secondary index for producer queries — see comment on the
-       original loop for the reasoning. Preserved verbatim. */
-    if ((queryTag == "getAttr" || queryTag == "getListElem") && !roots.empty()) {
-        std::vector<trace::SelectorLeaf> initialFromStateHashes;
-        initialFromStateHashes.reserve(roots.size());
-        for (auto & root : roots) {
-            auto initStateHash = stateHashAt(
-                root, argAncestry, {}, 0);
-            initialFromStateHashes.emplace_back(
-                initStateHash.to_string(HashFormat::Base16, false));
-        }
-        std::string initialFromHex = initialFromStateHashes[0].stateHash();
-        trace::SelectorVariant initialStamped = query;
-        std::visit(
-            [&](auto & q) {
-                using Q = std::decay_t<decltype(q)>;
-                if constexpr (requires { q.from; })
-                    q.from = trace::SelectorLeaf{trace::StateHashLeaf{initialFromHex, {}}};
-                if constexpr (requires { q.perArgFrame; }) {
-                    q.perArgFrame.path = path;
-                    q.perArgFrame.fromStateHashes = initialFromStateHashes;
-                }
-                if constexpr (requires { q.fromStateHashes = initialFromStateHashes; })  // SelectorApply
-                    q.fromStateHashes = initialFromStateHashes;
-            },
-            initialStamped);
-        nlohmann::json initialQueryJson = trace::toJson(initialStamped);
-        auto initialReqHash = hashString(
-            HashAlgorithm::SHA256, initialQueryJson.dump());
-        if (initialReqHash != selectorHash) {
-            tracingCacheLog(
-                "  secondary insert at initial-history reqHash=%s from=%s",
-                initialReqHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                initialFromHex.substr(0, 12));
-            decisionGraph->insertRequest(
-                initialReqHash, jsonToCborString(initialQueryJson));
-        }
-    }
+    /* #178: secondary getter-index at initial-history state hash
+       retires with the primary stamping. Selector hashes are now
+       stable per operation; the fallback lookup index is redundant. */
 
     auto elementHash = TracingDecisionGraph::xorFactIntoHash(
         Hash(HashAlgorithm::SHA256), selectorHash, responseHash);
@@ -207,33 +151,9 @@ void TracingWriter::logOuterObservation(
         envWalk.size());
     prevQFactSetHash = envFactSetHash;
 
-    /* Q evolution: after folding this observation into the innermost
-       Q's perQEnvWalk, if its fromSubject has evolved, re-derive Q's
-       from-field and re-hash. Per-Q chain preserves same-shape
-       collapse: two Qs with the same fromSubject-initial-state and
-       the same own-chain evolve to the same finalQ regardless of
-       what other Qs did in the session. */
-    if (!activeCells.empty()) {
-        auto & aq = activeCells.back()->qState;
-        if (aq->fromSubject) {
-            auto newState = stateHashAt(
-                *aq->fromSubject, aq->fromSubjectArgAncestry,
-                aq->perQEnvWalk, aq->perQEnvWalk.size());
-            if (newState != aq->fromSubjectLastState) {
-                aq->fromSubjectLastState = newState;
-                trace::rewriteFrom(
-                    aq->payloadTemplate,
-                    newState.to_string(HashFormat::Base16, false));
-                auto newQ = trace::computeSelectorHash(aq->payloadTemplate);
-                tracingCacheLog(
-                    "Q-evolution: Q %s -> %s (fromSubject state %s)",
-                    aq->currentQ.to_string(HashFormat::Base16, false).substr(0, 12),
-                    newQ.to_string(HashFormat::Base16, false).substr(0, 12),
-                    newState.to_string(HashFormat::Base16, false).substr(0, 12));
-                aq->currentQ = newQ;
-            }
-        }
-    }
+    /* #178: Q evolution retires. Q hashes stable per operation; cur
+       at (Q, cur) does the discrimination that state-hash Q evolution
+       used to do. */
 }
 
 void TracingWriter::flushPending(bool processApplies)
