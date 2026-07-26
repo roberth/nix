@@ -372,6 +372,15 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
 
+    /* #183: one cell per call, tracking the arg. Reuse the arg's
+       existing cell (created at the first opportunity, e.g., seedCell
+       in makeCachedFnPrimOp.impl) if available; otherwise create.
+       Resolved early so createCallbackCell can populate its
+       callbackState in the same step. */
+    auto cell = effectiveArgCell(*arg);
+    if (!cell)
+        cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
+
     Hash enclosingApplyId(HashAlgorithm::SHA256);
     if (fnIsTlo) {
         if (auto enclosingId = writer.getCurrentCbApplyId())
@@ -385,6 +394,13 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         tracingCacheLog("createCallbackCell callsite=TracingEvaluator::apply fn=%s arg=%s",
                         fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
         writer.createCallbackCell(applyQ);
+        /* #184: populate cell->callbackState so
+           emitCallbackApplyForApplyResult's primary (cell-based) path
+           finds it — mirrors what OuterApply::run does for its localCell. */
+        auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQ.dump());
+        cell->callbackState = std::make_shared<CallbackState>();
+        cell->callbackState->applyId = applyReqHash;
+        cell->callbackState->fnStateHashHex = fnStateHashStr;
     }
 
     /* #178: state-hash evolution retired. Compute initial subject id
@@ -401,26 +417,12 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
             applyArgAncestryStateHashHex.substr(0, 16));
     }
 
-    /* Cell-migration Phase B: apply now records SelectorApply as a
-       proper Selector with its own Terminal, keyed on the ArgCell
-       created below. The pushed ActiveSelector shared_ptr is aliased
-       onto cell->qState via `logSelectorOnCell`. Observations during
-       inner->apply attribute to this Q's chain (activeQueryStack.back()
-       IS cell->qState). After inner returns with body-in-WHNF, we
-       compute the WHNF and logResult to insert SelectorApply's
-       Terminal. The applyResult wrapper is constructed with
-       cachedWHNF pre-populated so subsequent whnf() on it
-       short-circuits without invoking SelectorGetWHNF. */
-    /* #183: one cell per call, tracking the arg. Reuse the arg's
-       existing cell (created at the first opportunity, e.g., seedCell
-       in makeCachedFnPrimOp.impl) if available; otherwise create.
-       Observations on the arg attribute to this cell via queryFn's
-       attributionCell = outerObj->getProxyArgCell(); the cell.factSetHash()
-       then reflects them for the SelectorApply Terminal cur — distinct
-       calls have distinct cells → distinct Terminals. */
-    auto cell = effectiveArgCell(*arg);
-    if (!cell)
-        cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
+    /* Cell-migration Phase B: apply records SelectorApply as a proper
+       Selector with its own Terminal, keyed on `cell` (resolved above).
+       Observations during inner->apply attribute to this cell via
+       queryFn's attributionCell; cell.factSetHash() reflects them for
+       the SelectorApply Terminal cur — distinct calls have distinct
+       cells → distinct Terminals. */
     trace::SelectorApply applySelector{fnStateHashStr};
     auto [v, qh] = writer.logSelectorOnCell(
         cell, applySelector, /*parent=*/std::nullopt,
