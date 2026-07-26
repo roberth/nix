@@ -126,11 +126,6 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
        outer EvalState's rootFSRoot. Held as shared_ptr (rather than
        ref) so OuterResolver stays default-constructible. */
     std::shared_ptr<SourceRoot> outerRootFSRoot;
-    /* Inherited argAncestry (state hash of this cached call's Q) — used by the
-       cb-apply to make sibling cached calls' state hashes
-       distinct via subject-id inheritance. Zero hash means no
-       inheritance (= no argAncestry discrimination). */
-    Hash callArgAncestry = Hash(HashAlgorithm::SHA256);
 
     /* Outer-direction proxies registered live by the ReplayCallbackArg's
        `<replay-local-lambda>` primop (= `registerOuterResolverProxy`).
@@ -193,12 +188,12 @@ std::shared_ptr<Object> OuterApply::run(
        same way through their args reach the same trie position
        regardless of where the arg's source came from. */
     Subject argSubject{Arg{localCell->depth}};
-    /* Sample resolver->callArgAncestry at fire time. TracingEvaluator::apply
+    /* Sample Hash(HashAlgorithm::SHA256) at fire time. TracingEvaluator::apply
        leaves callArgAncestry at the current sibling's siblingScope (no
        restore), so this sample reflects the CURRENT sibling context
        walker is operating under. Do not freeze at closure-creation
        time — the argAncestry evolves, and freezing would emit stale hashes. */
-    Hash argAncestry = resolverHandle->callArgAncestry;
+    Hash argAncestry = Hash(HashAlgorithm::SHA256);
     auto argStateHash = subjectId(argSubject, argAncestry);
     tracingCacheLog("OuterApply::run: argAncestry=%s argStateHash=%s",
                     argAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -214,10 +209,11 @@ std::shared_ptr<Object> OuterApply::run(
     /* cb-apply: record the apply's synthetic history-advance
        edge (= ε) now that we have fnIdStr and argStateHashStr. See parallel
        call in TracingEvaluator::apply for the principle. */
-    trace::SelectorApply applyQuery{fnIdStr, argStateHashStr};
+    /* #181: SelectorApply carries fn's Q hash only */
+    trace::SelectorApply applyQuery{fnIdStr};
     auto resultId = TracingDecisionGraph::computeSelectorHash(applyQuery);
     if (innerWriter) {
-        nlohmann::json applyQ = trace::SelectorApply{fnIdStr, argStateHashStr};
+        nlohmann::json applyQ = trace::SelectorApply{fnIdStr};
         tracingCacheLog("createCallbackCell callsite=OuterApply::run fn=%s arg=%s",
                         fnIdStr.substr(0, 12), argStateHashStr.substr(0, 12));
         innerWriter->createCallbackCell(applyQ);
@@ -256,7 +252,7 @@ std::shared_ptr<Object> OuterApply::run(
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
               argObj, argSubject, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell,
-              resolverHandle->callArgAncestry, resultId))
+              Hash(HashAlgorithm::SHA256), resultId))
         : argObj;
 
     /* Bridge local arg via ExprFromObject. The cache memoises by
@@ -377,7 +373,7 @@ static PrimOp * makeCachedFnPrimOp(
                            of this cached call). Sibling cached calls
                            with different Qs get distinct state hashes
                            at every derived Subject throughout this cb-apply. */
-                        Hash callArgAncestry = resolver->callArgAncestry;
+                        Hash callArgAncestry = Hash(HashAlgorithm::SHA256);
                         /* Per-apply observation context. Captures the
                            outer's probes on the cb arg as they fire
                            through queryFn; the apply-result wrapper
@@ -624,16 +620,6 @@ std::shared_ptr<OuterResolver> makeOuterResolver(
     if (outerState)
         resolver->outerRootFSRoot = outerState->rootFSRoot.get_ptr();
     return resolver;
-}
-
-void setOuterResolverCallArgAncestry(OuterResolver & resolver, Hash callArgAncestry)
-{
-    resolver.callArgAncestry = std::move(callArgAncestry);
-}
-
-Hash getOuterResolverCallScope(const OuterResolver & resolver)
-{
-    return resolver.callArgAncestry;
 }
 
 void registerOuterResolverProxy(

@@ -165,7 +165,7 @@ trace::SelectorApply makeApplyResultQuery(
         throw Error("makeApplyResultQuery: subject is not an ApplyResultSubject");
     trace::SelectorApply q;
     q.fn = hashHex(subjectId(*ar->fn, argAncestry));
-    q.arg = hashHex(subjectId(*ar->arg, argAncestry));
+    /* #181: arg dropped from SelectorApply payload; observed by value */
     return q;
 }
 
@@ -186,8 +186,11 @@ Hash subjectId(const Subject & subject, const Hash & argAncestry)
             } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
                 auto fnId = subjectId(*alt.fn, argAncestry);
                 auto argId = subjectId(*alt.arg, argAncestry);
-                nlohmann::json qj = trace::SelectorApply{hashHex(fnId), hashHex(argId)};
-                return hashString(HashAlgorithm::SHA256, qj.dump());
+                /* #181: arg dropped; include argId in the composed hash to
+                   preserve ApplyResultSubject discrimination in subject ids. */
+                (void) argId;
+                nlohmann::json qj = trace::SelectorApply{hashHex(fnId)};
+                return hashString(HashAlgorithm::SHA256, qj.dump() + hashHex(argId));
             } else if constexpr (std::is_same_v<T, DerivedSubject>) {
                 auto parentId = subjectId(*alt.parent, argAncestry);
                 std::string s = alt.kind == DerivedSubject::Kind::GetAttr

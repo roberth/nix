@@ -372,7 +372,8 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
 
     /* cb-apply: record an explicit ε edge for this apply.
        See parallel call in TracingEvaluator::apply. */
-    nlohmann::json applyBoundaryJson = trace::SelectorApply{*fnIdOpt, *argIdOpt};
+    /* #181: SelectorApply carries fn's Q hash only; arg observed by value */
+    nlohmann::json applyBoundaryJson = trace::SelectorApply{*fnIdOpt};
     tracingCacheLog("createCallbackCell callsite=TracingObject::queryApply fn=%s arg=%s",
                     fnIdOpt->substr(0, 12), argIdOpt->substr(0, 12));
     writer.createCallbackCell(applyBoundaryJson);
@@ -411,7 +412,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
        and the legacy SelectorApply{fn, arg} payload coincide. The legacy
        fnId/argSubject fields remain for the dispatcher's resolveStateHash
        chain. */
-    trace::SelectorApply applyQ{*fnIdOpt, *argIdOpt};
+    trace::SelectorApply applyQ{*fnIdOpt};
     auto v = writer.getSink().logSelector(applyQ);
     auto result = inner->queryApply(argObj);
     TriePosition applyTriePos{

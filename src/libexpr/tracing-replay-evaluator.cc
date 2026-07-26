@@ -126,6 +126,17 @@ TracingReplayEvaluator::walk(
             if (committedEdgeFingerprints.insert(fingerprint).second) {
                 ObservationSet edge;
                 edge.observations = std::move(obs);
+                /* #177: fold committed facts into sessionRootCell.ownFactSet
+                   so subsequent walks' `cell.factSetHash()` sees them via
+                   pull inheritance. First-pass attribution: everything to
+                   base scope (matches writer's current logResponse for env
+                   facts). Refine per-cell attribution once base-scope
+                   facts route reliably. */
+                if (writer.sessionRootCell)
+                    for (const auto & o : edge.observations)
+                        writer.sessionRootCell->ownFactSet =
+                            TracingDecisionGraph::xorHashes(
+                                writer.sessionRootCell->ownFactSet, o.elementHash);
                 envWalk.push_back(edge);
                 /* B1: also append to per-Q chain for Q evolution basis. */
                 perQEnvWalk.push_back(std::move(edge));
@@ -265,6 +276,14 @@ TracingReplayEvaluator::walk(
                 reqJsonStr,
                 respJsonStr);
         } else {
+            /* #177: env facts push too so commitEdge folds them into
+               sessionRootCell.ownFactSet (fromHash=0 marks base-scope
+               attribution). */
+            pendingEdgeObservations.push_back({
+                Hash(HashAlgorithm::SHA256),
+                TracingDecisionGraph::xorFactIntoHash(
+                    Hash(HashAlgorithm::SHA256), requestHash, h),
+            });
             tracingCacheLog(
                 "dispatch env: req=%s payload=%s resp=%s",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
@@ -286,58 +305,7 @@ TracingReplayEvaluator::walk(
        skips the call. */
     std::function<Hash(const Hash &)> recomputeQ;
 
-    /* === Trace-continuing attempt ===
-       Session-cumulative: look up `getAsks(Q, envCur)` and walk that
-       specific known trace lockstep, using session-scoped envWalk. On
-       hit, envWalk has been extended with this Q's Ask edges and
-       envCur advanced to the terminalCur. On miss, roll back any
-       partial commits and fall through to trace-discovering with
-       per-walk
-       scoping. */
     std::optional<TracingDecisionGraph::WalkHit> walkHit;
-    {
-        auto fastPathSavedEnvWalkSize = envWalk.size();
-        auto fastPathSavedEnvCur = envCur;
-        auto fastPathSavedFingerprints = committedEdgeFingerprints;
-        /* B5: perQEnvWalk lives on qState (cell-owned or local, per
-           Phase F); recomputeQ captures qState and reads perQEnvWalk
-           through it. Trace-continuing partial commits would otherwise
-           leave residue that trace-discovering's Q evolution folds
-           in, deriving Q hashes at a trajectory no recording anchors. */
-        auto fastPathSavedPerQEnvWalkSize = perQEnvWalk.size();
-        walkHit = decisionGraph.walk(selectorHash, dispatch,
-            [&](bool committed, const std::vector<Hash> & useful) {
-                if (committed) commitEdge();
-                else commitRejected(useful);
-            },
-            envCur,
-            recomputeQ);
-        if (walkHit) {
-            auto payload = decisionGraph.getResultPayload(walkHit->resultHash);
-            if (payload) {
-                envCur = walkHit->terminalCur;
-                tracingCacheStats().hits++;
-                tracingCacheLog(
-                    "trace-continuing HIT selectorHash=%s startCur=%s terminalCur=%s "
-                    "(envWalk grew %zu -> %zu)",
-                    selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    fastPathSavedEnvCur.to_string(HashFormat::Base16, false).substr(0, 12),
-                    envCur.to_string(HashFormat::Base16, false).substr(0, 12),
-                    fastPathSavedEnvWalkSize, envWalk.size());
-                return WalkResult{std::move(*payload), walkHit->resultHash, walkHit->terminalCur};
-            }
-        }
-        /* Trace-continuing missed or Result payload absent. Roll back
-           partial commits so trace-discovering starts with clean
-           session state. */
-        envWalk.resize(fastPathSavedEnvWalkSize);
-        envCur = fastPathSavedEnvCur;
-        committedEdgeFingerprints = std::move(fastPathSavedFingerprints);
-        perQEnvWalk.resize(fastPathSavedPerQEnvWalkSize);
-        pendingEdgeObservations.clear();
-        rejectedObs.clear();
-        walkHit.reset();
-    }
 
     /* === Trace-discovering attempt ===
        Per-walk scoping: save session envWalk, reset to empty, do
@@ -380,26 +348,17 @@ TracingReplayEvaluator::walk(
        2. From ∅ — needed when no parent anchor exists (top-level Q
           like evalFile/evalExpr, no TracingReplayObject) and as a backstop
           when the parent-anchored attempt finds no matching Asks chain. */
-    Hash parentAnchor = TracingDecisionGraph::emptySetHash();
-    if (auto * parentTR = dynamic_cast<TracingReplayObject *>(ctx.currentProxy.get())) {
-        parentAnchor = parentTR->getTriePos().factSetHash;
-    }
+    /* #177: anchor at cell.factSetHash() — under the pull model, cold's
+       writer keys Terminals at cell.factSetHash(); walker's startCur
+       must match. */
+    Hash cellAnchor = cell ? cell->factSetHash() : TracingDecisionGraph::emptySetHash();
     walkHit = decisionGraph.walk(selectorHash, dispatch,
         [&](bool committed, const std::vector<Hash> & useful) {
             if (committed) commitEdge();
             else commitRejected(useful);
         },
-        parentAnchor,
+        cellAnchor,
         recomputeQ);
-    if (!walkHit && parentAnchor != TracingDecisionGraph::emptySetHash()) {
-        walkHit = decisionGraph.walk(selectorHash, dispatch,
-            [&](bool committed, const std::vector<Hash> & useful) {
-                if (committed) commitEdge();
-                else commitRejected(useful);
-            },
-            TracingDecisionGraph::emptySetHash(),
-            recomputeQ);
-    }
     if (!walkHit) {
         tracingCacheStats().misses++;
         return std::nullopt;
@@ -1246,7 +1205,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
        Apply-result argAncestry cell. Parent = fn proxy's cell. */
     auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
-    trace::SelectorApply applySelector{fnStateHashStr, argStateHashStr};
+    trace::SelectorApply applySelector{fnStateHashStr};
     /* Phase F: pass the applyResult cell so walker's per-walk state
        lives on cell.qState — cell chain reachable from parent (fn's
        cell), qState reset for this walk's dispatches. */

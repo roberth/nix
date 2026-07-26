@@ -416,13 +416,12 @@ void from_json(const nlohmann::json & j, SelectorGetWHNF & q)
 
 void to_json(nlohmann::json & j, const SelectorApply & q)
 {
-    j = nlohmann::json{{"tag", SelectorApply::tag}, {"fn", q.fn}, {"arg", q.arg}};
+    j = nlohmann::json{{"tag", SelectorApply::tag}, {"fn", q.fn}};
 }
 
 void from_json(const nlohmann::json & j, SelectorApply & q)
 {
     j.at("fn").get_to(q.fn);
-    j.at("arg").get_to(q.arg);
 }
 
 void to_json(nlohmann::json & j, const SelectorCallbackApply & q)

@@ -314,7 +314,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        advance their cumulative subject-id history by one for ε, so the
        apply-result's state hash is computed at a history step the walker
        can reach via the recorded chain. */
-    nlohmann::json applyQ = trace::SelectorApply{fnStateHashStr, argStateHashStr};
+    /* #181: SelectorApply carries fn's Q hash only; arg observed by value */
+    nlohmann::json applyQ = trace::SelectorApply{fnStateHashStr};
 
     /* If fn is a TracingCallbackArg (= inner-supplied lambda the
        outer is now applying — the cb-higher-order case), capture the
@@ -411,50 +412,13 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        cachedWHNF pre-populated so subsequent whnf() on it
        short-circuits without invoking SelectorGetWHNF. */
     auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
-    trace::SelectorApply applySelector{fnStateHashStr, argStateHashStr};
+    trace::SelectorApply applySelector{fnStateHashStr};
     auto [v, qh] = writer.logSelectorOnCell(
         cell, applySelector, /*parent=*/std::nullopt,
         resultSubject, applyArgAncestry);
 
-    /* Per-invocation callArgAncestry for GENUINE cb-apply (not curried
-       follow-up): sibling cb-apply invocations of the SAME cached
-       primop (cb-sibling's `cached { fA }` vs `cached { fB }`) share
-       the same resolver->callArgAncestry, so their inner facts stamp
-       identical `from` fields → reqhash collision.
-
-       Distinguish genuine cb-apply from curried follow-up by fn's
-       Subject: genuine cb-apply's fn is a fresh cached primop (its
-       Subject is Opaque/PostulatedIdempotentRead of the primop's
-       identity hash). Curried follow-up's fn is an ApplyResultSubject
-       (result of a previous apply). Only XOR at the former. */
-    bool fnIsApplyResult = fn->getSubject()
-        && std::holds_alternative<ApplyResultSubject>(fn->getSubject()->data);
-    struct CallScopeGuard {
-        std::shared_ptr<OuterResolver> resolver;
-        Hash oldScope{HashAlgorithm::SHA256};
-        ~CallScopeGuard() {
-            if (resolver) setOuterResolverCallArgAncestry(*resolver, oldScope);
-        }
-    } guard;
-    if (!fnIsTlo && !fnIsApplyResult) {
-        if (auto resolver = inner->getOuterResolver()) {
-            guard.resolver = resolver;
-            guard.oldScope = getOuterResolverCallScope(*resolver);
-            /* Sibling discrimination (cb-sibling-b): applyArgAncestryStateHash
-               alone collides across siblings whose constituents are
-               structurally identical at apply time. XOR in
-               writer.envFactSetHash so cold's sibling A (applying at
-               v13FactSet_A) and sibling B (applying at v13FactSet_B >
-               v13FactSet_A) get distinct siblingScopes → distinct
-               callback-arg inheritedScopes → distinct reqhashes for
-               observations they emit. */
-            auto siblingScope = TracingDecisionGraph::xorHashes(
-                TracingDecisionGraph::xorHashes(guard.oldScope, applyArgAncestryStateHash),
-                writer.getV13FactSetHash());
-            setOuterResolverCallArgAncestry(*resolver, siblingScope);
-        }
-    }
-
+    /* #178: siblingScope XOR retires. Sibling cached calls
+       discriminate structurally via per-cell factset isolation. */
     auto result = inner->apply(fn, arg);
 
     /* For the TracingCallbackArg-fn case (cb-higher-order's recursive
@@ -497,7 +461,12 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         ? *tp
         : TriePosition{
               .resultNodeHash = Hash{HashAlgorithm::SHA256},
-              .queryHashStr = applyArgAncestryStateHashHex,
+              /* #181: use the SelectorApply Q hash (matches TRE::apply's
+                 walker path); getStateHashHex() reads this back as fn's
+                 identity for downstream applies. */
+              .queryHashStr = qh.selectorHash
+                  ? qh.selectorHash->to_string(HashFormat::Base16, false)
+                  : applyArgAncestryStateHashHex,
           };
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withArgCell(std::move(cell));

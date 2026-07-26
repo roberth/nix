@@ -117,15 +117,6 @@ std::shared_ptr<OuterResolver> makeOuterResolver(
     std::shared_ptr<Evaluator> innerEvaluator,
     TracingWriter * innerWriter = nullptr);
 
-/** Set the resolver's cached-call argAncestry — used by subject-id to make
-    sibling cached calls' state hashes distinct via inheritance.
-    Should be unique per cached call (e.g. hash of import path). */
-void setOuterResolverCallArgAncestry(OuterResolver & resolver, Hash callArgAncestry);
-
-/** Get the resolver's current callArgAncestry for RAII save/restore around
-    per-cb-invocation argAncestry overrides. */
-Hash getOuterResolverCallScope(const OuterResolver & resolver);
-
 /** Register a live outer-direction proxy under a subject-id `subject` +
     `argAncestry` in the resolver's outer-values map. Used by the
     `<replay-local-lambda>` primop at warm replay to publish the

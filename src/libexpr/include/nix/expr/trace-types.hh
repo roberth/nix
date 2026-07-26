@@ -411,13 +411,15 @@ struct ResultFunctionInfo
 
 DECLARE_SELECTOR_RESULT(SelectorGetFunctionInfo, ResultFunctionInfo)
 
-/** Apply a function to an argument. `fn`/`arg` carry the
-    constituents' subject ids (stable under #178). */
+/** Apply a function to an argument. `fn` is the hex of fn's own Q hash
+    — a stepping stone toward the full compositional shape (nested
+    SelectorVariant). Arg is outer-supplied, observed by value; its
+    discrimination flows through cur (observations on arg fold into
+    cell.factSetHash via the pull model). */
 struct SelectorApply
 {
     static constexpr std::string_view tag = "apply";
-    SelectorLeaf fn;
-    SelectorLeaf arg;
+    std::string fn;
     auto operator<=>(const SelectorApply &) const = default;
 };
 DECLARE_SELECTOR_RESULT(SelectorApply, ResultWHNF)
