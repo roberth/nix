@@ -272,7 +272,10 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
        the arg came from. */
     int localDepth = callerScope ? callerScope->depth + 1 : 0;
     Subject argSubject{Arg{localDepth}};
-    auto fnStateHash = subjectId(subject, argAncestry);
+    /* #183: fnStateHash = this proxy's Q-space identity (matches what
+       resolveIdentity looks up on the walker side). */
+    auto fnStateHashHex = getStateHashHex().value_or(std::string{});
+    auto fnStateHash = Hash::parseNonSRIUnprefixed(fnStateHashHex, HashAlgorithm::SHA256);
     auto outerResult = applyFn(outerObj, fnStateHash, subject, argAncestry, std::move(argObj), callerScope);
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(subject),
