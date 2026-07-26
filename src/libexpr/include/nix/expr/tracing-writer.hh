@@ -602,6 +602,11 @@ public:
         envFactSet.push_back({selectorHash, responseHash});
         envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
             envFactSetHash, selectorHash, responseHash);
+        /* #177 B: env facts fold into session root cell's ownFactSet.
+           Descendant cells inherit via factSetHash()'s parent-chain
+           walk. Dual-write for now; envFactSetHash retires per #178. */
+        sessionRootCell->ownFactSet = TracingDecisionGraph::xorFactIntoHash(
+            sessionRootCell->ownFactSet, selectorHash, responseHash);
         responseFor.emplace(selectorHash, responseHash);
         sessionRequestsTrie.insert(selectorHash);
         allRequestHashes.insert(selectorHash);
