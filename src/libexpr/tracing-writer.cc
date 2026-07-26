@@ -193,9 +193,11 @@ void TracingWriter::logOuterObservation(
     if (!activeQueryStack.empty()) {
         auto & innermost = activeQueryStack.back();
         innermost->perQEnvWalk.push_back(std::move(obsSet));
-        /* #177: advance innermost's prevCur to post-fold cell factSetHash. */
+        /* #177: advance innermost's prevCur to cell.ownFactSet
+           (already includes the fact just folded via attributionCell,
+           when the innermost's cell equals attributionCell). */
         if (auto cell = innermost->cell.lock())
-            innermost->prevCur = cell->factSetHash();
+            innermost->prevCur = cell->ownFactSet;
         else
             innermost->prevCur = envFactSetHash;
     }

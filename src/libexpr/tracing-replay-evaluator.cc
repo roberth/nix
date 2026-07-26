@@ -80,12 +80,12 @@ TracingReplayEvaluator::walk(
        Docs' "session" = writer lifetime; these are per-walk. */
     if (cell) {
         cell->qState = qState;
-        /* #177 walker side: back-pointer to the cell so commitEdge
-           can fold dispatched facts into cell->ownFactSet, mirroring
-           cold's writer. Walker's envCur starts at cell.factSetHash()
-           (ancestor-inherited env facts). */
+        /* #177: back-pointer to the cell so writer-side cell.factSetHash()
+           reads and follow-up state-hash lookups can locate the cell.
+           Walker's envCur intentionally stays at ∅ — walkers don't
+           write to cell state; walker's local cur in decisionGraph.walk
+           accumulates from 0 by XOR-ing dispatched facts. */
         qState->cell = cell;
-        qState->envCur = cell->factSetHash();
     }
 
     /* Walker-side B11 mirror: seed perQEnvWalk from current envWalk
@@ -176,16 +176,7 @@ TracingReplayEvaluator::walk(
                 edge.observations = std::move(obs);
                 envWalk.push_back(edge);
                 /* B1: also append to per-Q chain for Q evolution basis. */
-                perQEnvWalk.push_back(edge);
-                /* #177 walker side: mirror cold's writer per-cell fold.
-                   XOR each dispatched fact's elementHash into the walk
-                   cell's ownFactSet so cell->factSetHash() tracks
-                   cold's Terminal cur under matching-until-divergence. */
-                if (auto walkCell = qState->cell.lock()) {
-                    for (const auto & f : edge.observations)
-                        walkCell->ownFactSet = TracingDecisionGraph::xorHashes(
-                            walkCell->ownFactSet, f.elementHash);
-                }
+                perQEnvWalk.push_back(std::move(edge));
                 tracingCacheLog("dispatch: committed edge, envWalk=%zu (obs=%zu)",
                                 envWalk.size(), envWalk.back().observations.size());
             } else {

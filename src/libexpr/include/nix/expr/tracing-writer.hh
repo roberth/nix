@@ -393,13 +393,12 @@ public:
         auto pair = logRootSelector(query);
         if (cell && !activeQueryStack.empty()) {
             cell->qState = activeQueryStack.back();
-            /* #177: back-pointer so Ask/Terminal keys can read
-               cell->factSetHash() at each fold moment. */
             cell->qState->cell = cell;
-            /* Under per-cell factsets, this Q's chain starts at the
-               cell's current factset — env facts inherited from
-               sessionRootCell parent. */
-            cell->qState->prevCur = cell->factSetHash();
+            /* #177: this Q's chain starts at the cell's ownFactSet
+               (what's been folded into THIS cell so far). Walker from
+               ∅ dispatches Q's Ask chain and folds new facts into
+               local cur, ending at cell.ownFactSet after Q completes. */
+            cell->qState->prevCur = cell->ownFactSet;
         }
         return pair;
     }
@@ -516,9 +515,9 @@ public:
         auto pair = logSelector(query, parent, std::move(fromSubject), std::move(fromSubjectArgAncestry));
         if (cell && !activeQueryStack.empty()) {
             cell->qState = activeQueryStack.back();
-            /* #177: back-pointer for cell.factSetHash() reads. */
             cell->qState->cell = cell;
-            cell->qState->prevCur = cell->factSetHash();
+            /* #177: this Q's chain starts at cell's ownFactSet. */
+            cell->qState->prevCur = cell->ownFactSet;
         }
         return pair;
     }
@@ -615,11 +614,18 @@ public:
         envFactSet.push_back({selectorHash, responseHash});
         envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
             envFactSetHash, selectorHash, responseHash);
-        /* #177 B: env facts fold into session root cell's ownFactSet.
-           Descendant cells inherit via factSetHash()'s parent-chain
-           walk. Dual-write for now; envFactSetHash retires per #178. */
+        /* #177 broadcast fold: env facts are ambient — every active
+           cell folds them into its own ownFactSet. Walker from ∅
+           dispatches Q's own Ask chain and reaches cell.ownFactSet
+           naturally without landing chains. sessionRootCell folds too
+           so cross-Q session accounting still has an anchor. */
         sessionRootCell->ownFactSet = TracingDecisionGraph::xorFactIntoHash(
             sessionRootCell->ownFactSet, selectorHash, responseHash);
+        for (auto & aq : activeQueryStack) {
+            if (auto cell = aq->cell.lock())
+                cell->ownFactSet = TracingDecisionGraph::xorFactIntoHash(
+                    cell->ownFactSet, selectorHash, responseHash);
+        }
         responseFor.emplace(selectorHash, responseHash);
         sessionRequestsTrie.insert(selectorHash);
         allRequestHashes.insert(selectorHash);
@@ -632,15 +638,14 @@ public:
         ObservationSet obsSet;
         obsSet.observations.push_back({Hash(HashAlgorithm::SHA256), factHash});
         for (auto & aq : activeQueryStack) {
-            /* #177 reader switch: Ask keyed at aq's cell's factSetHash
-               (before-fold value cached in aq->prevCur). Advance to
-               post-fold cell factSetHash for next iteration. Fall
-               back to envFactSetHash when aq has no cell backpointer
-               (transitional). */
+            /* #177 reader switch: Ask keyed at aq's cell.ownFactSet
+               (before-fold value cached in aq->prevCur). Env fact
+               already broadcast-folded into every active cell above,
+               so cell->ownFactSet is up-to-date for the advance. */
             decisionGraph->insertAsk(aq->currentQ, aq->prevCur, requestSetHash);
             aq->perQEnvWalk.push_back(obsSet);
             if (auto cell = aq->cell.lock())
-                aq->prevCur = cell->factSetHash();
+                aq->prevCur = cell->ownFactSet;
             else
                 aq->prevCur = envFactSetHash;
         }
@@ -887,13 +892,13 @@ public:
             ? *qh.selectorHash
             : activeQueryStack.back()->currentQ;
         /* #177 reader switch: Terminal keyed at the completing Q's
-           cell factSetHash (sibling-isolated), not session-cumulative
-           envFactSetHash. Falls back to envFactSetHash when the
-           completing aq has no cell backpointer (transitional). */
+           cell.ownFactSet (sibling-isolated by construction — each
+           cell has its own accumulator). Env facts broadcast-folded
+           into every active cell so ownFactSet includes them. */
         Hash terminalCur = envFactSetHash;
         if (!activeQueryStack.empty()) {
             if (auto cell = activeQueryStack.back()->cell.lock())
-                terminalCur = cell->factSetHash();
+                terminalCur = cell->ownFactSet;
         }
         tracingCacheLog("logResult: Q_initial=%s Q_final=%s factSet=%s -> result",
                         qh.selectorHash->to_string(HashFormat::Base16, false).substr(0, 12),
