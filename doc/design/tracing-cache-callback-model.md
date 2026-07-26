@@ -36,7 +36,10 @@ evaluator, never to "the caller of a callback inside the inner."
 
 **Model.** Common vocabulary. Definitions from
 `tracing-eval-cache-vocabulary.md` still hold except where task #110
-revises them.
+revises them. State-hash-flavoured entries (**Observation**,
+**State hash**) are transitional; the state-hash mechanism retires
+per #178, but their names appear here for orientation with current
+code.
 
 - **Selector** — one alternative of the `SelectorVariant` eDSL
   plus its serialised payload; content-hash is `selectorHash`.
@@ -94,7 +97,7 @@ revises them.
   per-Q; the per-Q scoping under Q evolution is what the row keys
   actually use.
 
-## 3. Q evolution
+## 3. Q evolution (transitional — retires per #178)
 
 **Model** (user, 2026-07-21):
 
@@ -137,6 +140,11 @@ And the ordering constraint:
 > by the walker.
 
 **Code — writer** (`tracing-writer.cc:145-214`).
+
+Note: the mechanics below (Q re-derivation via `stateHashAt`, `from`
+rewriting, Ask keying on evolved Q) describe current implementation
+and retire per #178 (transitional). Snippets below reference
+`stateHashAt` / state hashes for that reason.
 
 For each observation via `logOuterObservation`:
 
@@ -208,7 +216,7 @@ carry no `fromHash`, so they can't fold into any subject's state.
 Skipping the recompute is right, not a gap. Called out to head off
 "is this a Q-evolution miss?" confusion.
 
-## 4. SelectorCallbackApply as a first-class Selector alternative
+## 4. SelectorCallbackApply as a first-class Selector alternative (state-hash mechanism transitional — retires per #178)
 
 **Model** (task #110 verbatim, user 2026-07-21):
 
@@ -316,7 +324,7 @@ Handoff seam: `TracingWriter::emitCallbackApplyForApplyResult`
 the attribution subject. The seam is reasonable but genuinely
 open — the model didn't pin down where the code seam should live.
 
-## 6. CallbackCell — writer-side firing accumulator
+## 6. CallbackCell — writer-side firing accumulator (state-hash fields transitional — retire per #178)
 
 **Model.** For each in-flight callback firing (an application of
 an inner-side function whose body is being evaluated), the writer
@@ -499,7 +507,7 @@ pre-#110 workarounds for the fixed-Q collision problem. Under Q
 evolution + obsSet-in-QCA they're redundant. Only obsSet in QCA
 is load-bearing today.
 
-## 8. Matching-until-divergence
+## 8. Matching-until-divergence (mechanism transitional — under #178 cur replaces state hash as the identifier)
 
 **Model** (`subj §Matching until divergence`, still valid; user
 implicitly assumes throughout).
@@ -537,7 +545,7 @@ aligned the walker to also use walk-local `perQEnvWalk` for
 `recomputeQ`. The session-cumulative `envWalk` on both sides is
 used for other bookkeeping but not for Q evolution.
 
-## 9. argAncestry composition
+## 9. argAncestry composition (transitional — argAncestry retires per #178; per-cell factsets differentiate calls structurally)
 
 **Model — current design shape.**
 
@@ -773,7 +781,7 @@ messages / stale doc sections:
 - **The word "boundary"** — legacy. If a comment or symbol name
   uses it, be suspicious.
 
-## 15. Retained machinery (that looks removable but isn't)
+## 15. Retained machinery (that looks removable but isn't; state-hash references transitional per #178)
 
 - **`CallbackCell` and `SuppressApplyBoundary`** — both stayed.
   Cell is now the per-application accumulator for `runningObsSet`
@@ -828,13 +836,15 @@ resolved callable live. Symmetric to how flat QCA dispatches
 today, extended to nested case. Requires walker to recognise
 QCA-in-fn-slot vs a leaf state hash.
 
-User note: "I wish the representations were a bit more inductive
-style generally. I don't know what consequences that would have on
-the arg state hashing, but have good feelings about doing it for
-the callbacks. *Maybe* the strategy generalizes, but state hashes
-feel messier in a way that might not be solved by inductive style."
-Do recursive-Q for callbacks specifically; leave arg-side state
-hashing at its current XOR-fold-plus-Merkle-seal shape.
+User note (transitional, pre-#178 pivot): "I wish the representations
+were a bit more inductive style generally. I don't know what
+consequences that would have on the arg state hashing, but have good
+feelings about doing it for the callbacks. *Maybe* the strategy
+generalizes, but state hashes feel messier in a way that might not
+be solved by inductive style." Do recursive-Q for callbacks
+specifically; leave arg-side state hashing at its current
+XOR-fold-plus-Merkle-seal shape. (Superseded direction: state
+hashing retires per #178.)
 
 **Two composition idioms coexist by design** (user, 2026-07-22 —
 "that needs more research"). QCA nesting is inductive; state hash

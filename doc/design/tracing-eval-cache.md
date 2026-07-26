@@ -984,6 +984,6 @@ Performance harness under `tests/perf/tracing-cache/`:
 - `src/libexpr/outer-object.cc` — `OuterObject` (outer-owned value
   the inner probes via Env)
 - `src/libexpr/subject-id.cc` — Subject variants and argAncestry
-  algebra (state-hash machinery retires per task #178)
+  algebra (state-hash machinery transitional, retires per #178)
 - `tests/perf/tracing-cache/` — perf scripts and validation sweeps
 - `tests/functional/builtins-cache.sh` — `builtins.cache` functional tests

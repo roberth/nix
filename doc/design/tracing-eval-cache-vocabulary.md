@@ -557,7 +557,9 @@ ObservationSet { std::vector<Observation> observations; }` in
 `subject-id.hh`. A **history** is a sequence of
 ObservationSets.
 
-**Subject** — a structural name for a value. Four variants:
+**Subject** — a structural name for a value. Four variants
+(transitional forms — state-hash-flavoured language retires per
+#178; Subject algebra survives):
 
 - **Arg{depth}** — a positional name for the arg slot of a
   callback apply at reverse De Bruijn depth `depth`. Purely
@@ -583,7 +585,7 @@ history, argAncestry, or invocation.
 construction. Used as a Merkle key when a Subject is referenced
 by hash.
 
-### State hash — situational characterization
+### State hash — situational characterization (transitional — retires per #178)
 
 **state hash** — the situational characterization at a Subject
 at a history position: SHA-256 of a serialization combining the
@@ -628,7 +630,7 @@ Subject of unknown variant.
 and returns it as a `Hash`. Every observation a subject emits
 carries `stateHashAt(...)` at the emission time in this field.
 
-### argAncestry
+### argAncestry (transitional — retires per #178; per-cell factsets differentiate calls structurally)
 
 **argAncestry** — a `Hash`: the XOR-fold of enclosing callback
 args' state hashes at the moment the innermost callback was
