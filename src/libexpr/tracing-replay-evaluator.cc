@@ -1137,7 +1137,7 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
     /* Phase F: create the root cell BEFORE the lookup so walker's
        per-walk state lives on cell.qState. liveObject is back-filled
        after the TracingReplayObject wrapper is constructed. */
-    auto rootCell = ArgCell::make(nullptr, nullptr);
+    auto rootCell = ArgCell::make(writer.sessionRootCell, nullptr);
     if (auto result = lookup(trace::SelectorImport{displayPath}, nullptr, rootCell)) {
         tracingCacheLog("replay hit: evalFile %s", displayPath);
         auto obj = make_ref<TracingReplayObject>(
@@ -1162,7 +1162,7 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Roo
 {
     /* Phase F: create root cell before lookup; back-fill liveObject
        after wrapping. */
-    auto rootCell = ArgCell::make(nullptr, nullptr);
+    auto rootCell = ArgCell::make(writer.sessionRootCell, nullptr);
     if (auto result = lookup(trace::SelectorExpr{expr, basePath.path.abs()}, nullptr, rootCell)) {
         tracingCacheLog("replay hit: evalExpr");
         auto obj = make_ref<TracingReplayObject>(

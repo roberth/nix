@@ -156,8 +156,10 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     guardCacheRecording("evalFile", displayPath);
     ensurePreloaded();
     tracingCacheLog("tracing: evalFile %s", displayPath);
-    /* Cell-migration Phase C: root cell owns SelectorImport's qState. */
-    auto rootCell = ArgCell::make(nullptr, nullptr);
+    /* Cell-migration Phase C: root cell owns SelectorImport's qState.
+       #177: parent = sessionRootCell so env facts (folded there) are
+       visible via factSetHash() on this cell and its descendants. */
+    auto rootCell = ArgCell::make(writer.sessionRootCell, nullptr);
     auto [v, qh] = writer.logRootSelectorOnCell(rootCell, trace::SelectorImport{displayPath});
     auto result = inner->evalFile(path, displayPath);
     auto whnf = computeWHNFFromObject(*result);
@@ -174,7 +176,8 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     guardCacheRecording("evalExpr", expr);
     ensurePreloaded();
     tracingCacheLog("tracing: evalExpr %s", expr);
-    auto rootCell = ArgCell::make(nullptr, nullptr);
+    /* #177: parent = sessionRootCell so env facts inherit. */
+    auto rootCell = ArgCell::make(writer.sessionRootCell, nullptr);
     auto [v, qh] = writer.logRootSelectorOnCell(rootCell, trace::SelectorExpr{expr, basePath.path.abs()});
     auto result = inner->evalExpr(expr, basePath);
     auto whnf = computeWHNFFromObject(*result);
@@ -194,7 +197,7 @@ ref<Object> TracingEvaluator::evalExprLazy(const std::string & expr, const Roote
     auto result = inner->evalExprLazy(expr, basePath);
     // Lazy: don't force type yet, just wrap
     auto obj = TracingObject::create(result, writer, v);
-    obj->withArgCell(ArgCell::make(nullptr, obj.get_ptr()));
+    obj->withArgCell(ArgCell::make(writer.sessionRootCell, obj.get_ptr()));
     return obj;
 }
 
