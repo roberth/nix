@@ -381,15 +381,12 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     if (!cell)
         cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
 
-    Hash enclosingApplyId(HashAlgorithm::SHA256);
     if (fnIsTlo) {
-        if (auto enclosingId = writer.getCurrentCbApplyId())
-            enclosingApplyId = *enclosingId;
         /* Nested cb-apply (fn is a TracingCallbackArg): the recursive
            apply itself is an observation on the enclosing cell's
-           contra-arg. Under the obsSet CAS mechanism it's carried
-           through the enclosing cell's runningObsSet — no dedicated
-           fact record is needed at the writer level here. */
+           contra-arg. Carried through the enclosing cell's
+           runningObsSet — no dedicated fact record at the writer
+           level here. */
     } else {
         tracingCacheLog("createCallbackCell callsite=TracingEvaluator::apply fn=%s arg=%s",
                         fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
@@ -453,8 +450,13 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         placeholderWhnf.payload = trace::WHNFFunction{};
         writer.logResult(v, placeholderWhnf, qh);
         auto laro = std::make_shared<TracingCallbackApplyResult>(
-            result, writer, std::move(resultSubject), applyArgAncestry, enclosingApplyId);
-        laro->withArgCell(std::move(cell));
+            result, writer, std::move(resultSubject), applyArgAncestry);
+        laro->withArgCell(cell);
+        /* #184: the enclosing callback firing's cell is fn's cell — fn
+           is a TracingCallbackArg whose argCell IS the OuterApply::run
+           localCell (with callbackState populated). Route recordD2
+           observations there directly instead of via applyId lookup. */
+        laro->withCallbackCell(effectiveArgCell(*fn));
         return ref<Object>(laro);
     }
 

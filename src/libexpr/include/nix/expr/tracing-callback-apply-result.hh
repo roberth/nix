@@ -51,13 +51,6 @@ class TracingCallbackApplyResult : public Object
        argAncestry = the resolver's callArgAncestry. */
     Hash applyArgAncestry;
 
-    /* The enclosing cb-apply's `applyId` (= what `runOn`
-       computed as `selectorHash(SelectorApply{fn, arg})` when it pushed
-       this call). Captured BEFORE `IT::apply`'s
-       `createCallbackCell` would push a new entry, so the
-       observations route to the correct CallbackCell. */
-    Hash applyId;
-
     /* subjectId(applyResultSubject, applyArgAncestry) hex — the
        content-only apply-result state hash exposed via getStateHashHex. Computed
        once at construction to match `TracingEvaluator::apply`'s
@@ -66,6 +59,13 @@ class TracingCallbackApplyResult : public Object
 
     /* Argument-argAncestry cell — same shape as TracingObject. */
     std::shared_ptr<const ArgCell> argCell;
+
+    /* #184: the enclosing callback firing's cell. Observations in
+       recordD2 append to callbackCell->callbackState->runningObsSet
+       directly — replaces the previous applyId-based lookup through
+       writer.callbackCells. Populated by withCallbackCell at
+       construction site. */
+    std::shared_ptr<const ArgCell> callbackCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE SelectorGetWHNF
@@ -80,12 +80,17 @@ public:
         ref<Object> inner,
         TracingWriter & writer,
         Subject applyResultSubject,
-        Hash applyArgAncestry,
-        Hash applyId);
+        Hash applyArgAncestry);
 
     TracingCallbackApplyResult & withArgCell(std::shared_ptr<const ArgCell> cell)
     {
         argCell = std::move(cell);
+        return *this;
+    }
+
+    TracingCallbackApplyResult & withCallbackCell(std::shared_ptr<const ArgCell> cell)
+    {
+        callbackCell = std::move(cell);
         return *this;
     }
 

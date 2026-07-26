@@ -480,64 +480,6 @@ public:
         const std::shared_ptr<const ArgCell> & attributionCell = {});
 
     /**
-     * Record one observation the outer made on a callback firing's
-     * contra-arg. Routes to the matching CallbackCell by `applyId`
-     * and pushes an `{selectorHash, responsePayload}` entry into that
-     * cell's `runningObsSet`. `logOuterObservation` later snapshots
-     * that set into the ObservationSet CAS when it stamps a
-     * CallbackApplyRef into an outer probe reaching this apply's
-     * result.
-     *
-     * The contra-arg's `Subject` has no state-hash evolution — its
-     * structural id `SHA("positional-<depth>") XOR argAncestry` is
-     * constant — so `from` is stamped against an empty history.
-     * Sibling calls with different callback bodies discriminate
-     * downstream via the obsSet content-hash on their enclosing
-     * CallbackApply, not via arg-side state hash evolution.
-     */
-    void logCallbackObservation(
-        const trace::SelectorVariant & query,
-        const trace::ResultVariant & result,
-        Subject subject,
-        Hash argAncestry,
-        Hash applyId)
-    {
-        if (!decisionGraph)
-            return;
-        /* Most recent matching cell = the cb-apply invocation
-           currently building its probe sequence. */
-        for (auto it = callbackCells.rbegin();
-             it != callbackCells.rend(); ++it) {
-            if (it->applyId != applyId)
-                continue;
-            /* Capture argAncestry on first observation. The walker
-               rebuilds the ReplayCallbackArg's Subject depth from
-               fn's argCell chain at dispatch time (under the shared-
-               computation invariant), so no depth capture here. */
-            if (it->argAncestryHex.empty())
-                it->argAncestryHex = argAncestry.to_string(HashFormat::Base16, false);
-            if (it->fnStateHashHex.empty())
-                return;
-            /* #178: state-hash `from` field stamping retires. Payload
-               used as-is; stable Q hash. */
-            trace::SelectorVariant stampedQuery = query;
-            auto qh = std::visit(
-                [](const auto & q) {
-                    return TracingDecisionGraph::computeSelectorHash(q);
-                }, stampedQuery);
-            nlohmann::json rJson = std::visit(
-                [](const auto & r) -> nlohmann::json { return r; },
-                result);
-            auto rPayload = jsonToCborString(rJson);
-            it->runningObsSet.push_back({qh, rPayload});
-            return;
-        }
-        tracingCacheLog(
-            "logCallbackObservation: no matching cell for applyId=%s",
-            applyId.to_string(HashFormat::Base16, false).substr(0, 12));
-    }
-
-    /**
      * Note an environment observation made by the walker during a
      * cache hit's dispatch. The walker calls dispatch live to verify
      * that recorded paths still hold against the current environment;
@@ -592,23 +534,6 @@ public:
      * referenced from a SelectorCallbackApply request.
      */
     void createCallbackCell(const nlohmann::json & applyQueryPayload);
-
-    /**
-     * Return the `applyId` of the cb-apply currently on top of
-     * `callbackCells`, or nullopt if there is none. Used by
-     * `IT::apply` when fn is a TracingCallbackArg (the recursive
-     * cb-apply path) to capture the enclosing cell's id before the
-     * recursive call would push a new one; the captured id flows
-     * to the `TracingCallbackApplyResult` wrapping the apply
-     * result, so its observations route to the enclosing cell's
-     * runningObsSet.
-     */
-    std::optional<Hash> getCurrentCbApplyId() const
-    {
-        if (callbackCells.empty())
-            return std::nullopt;
-        return callbackCells.back().applyId;
-    }
 
     /**
      * Log a d=0 Result. Records (Q_final, current factSet) -> Result

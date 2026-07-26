@@ -11,13 +11,11 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
     ref<Object> inner_,
     TracingWriter & writer_,
     Subject applyResultSubject_,
-    Hash applyScope_,
-    Hash applyId_)
+    Hash applyScope_)
     : inner(std::move(inner_))
     , writer(writer_)
     , applyResultSubject(std::move(applyResultSubject_))
     , applyArgAncestry(std::move(applyScope_))
-    , applyId(std::move(applyId_))
 {
     auto stateHash = subjectId(applyResultSubject, applyArgAncestry);
     applyArgAncestryStateHashHex = stateHash.to_string(HashFormat::Base16, false);
@@ -25,13 +23,26 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
 
 void TracingCallbackApplyResult::recordD2(const trace::SelectorVariant & query, const trace::ResultVariant & result)
 {
-    /* Route every observation on this apply-result into the enclosing
-       CallbackCell's runningObsSet via logCallbackObservation. The
-       observations are later snapshotted (by value) into an
-       ObservationSet referenced from a SelectorCallbackApply request.
-       See tracing-cache-callback-model.md for the recording
-       protocol. */
-    writer.logCallbackObservation(query, result, applyResultSubject, applyArgAncestry, applyId);
+    /* #184: append directly to the enclosing callback cell's
+       runningObsSet. callbackCell is set at construction by TE::apply's
+       fnIsTlo branch via withCallbackCell(effectiveArgCell(*fn)). */
+    if (!callbackCell || !callbackCell->callbackState) {
+        tracingCacheLog(
+            "TracingCallbackApplyResult::recordD2: no callbackCell/callbackState "
+            "— observation dropped");
+        return;
+    }
+    auto qh = std::visit(
+        [](const auto & q) { return TracingDecisionGraph::computeSelectorHash(q); },
+        query);
+    nlohmann::json rJson = std::visit(
+        [](const auto & r) -> nlohmann::json { return r; },
+        result);
+    auto rPayload = jsonToCborString(rJson);
+    callbackCell->callbackState->runningObsSet.push_back({qh, rPayload});
+    if (callbackCell->callbackState->argAncestryHex.empty())
+        callbackCell->callbackState->argAncestryHex =
+            applyArgAncestry.to_string(HashFormat::Base16, false);
 }
 
 std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::string & name)
