@@ -411,7 +411,16 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        Terminal. The applyResult wrapper is constructed with
        cachedWHNF pre-populated so subsequent whnf() on it
        short-circuits without invoking SelectorGetWHNF. */
-    auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
+    /* #183: one cell per call, tracking the arg. Reuse the arg's
+       existing cell (created at the first opportunity, e.g., seedCell
+       in makeCachedFnPrimOp.impl) if available; otherwise create.
+       Observations on the arg attribute to this cell via queryFn's
+       attributionCell = outerObj->getProxyArgCell(); the cell.factSetHash()
+       then reflects them for the SelectorApply Terminal cur — distinct
+       calls have distinct cells → distinct Terminals. */
+    auto cell = effectiveArgCell(*arg);
+    if (!cell)
+        cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
     trace::SelectorApply applySelector{fnStateHashStr};
     auto [v, qh] = writer.logSelectorOnCell(
         cell, applySelector, /*parent=*/std::nullopt,

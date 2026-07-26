@@ -91,14 +91,26 @@ void TracingWriter::logOuterObservation(
     envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
         envFactSetHash, selectorHash, responseHash);
     /* #177 C: fold observation into caller-supplied arg cell's
-       ownFactSet. Dual-write for now; existing envFactSet/envWalk
-       path continues. attributionCell is null when caller doesn't
-       have one (transitional — QCA emission from
-       emitCallbackApplyForApplyResult passes callbackCell; queryFn
-       passes the arg proxy's cell). */
+       ownFactSet. */
     if (attributionCell) {
         attributionCell->ownFactSet = TracingDecisionGraph::xorFactIntoHash(
             attributionCell->ownFactSet, selectorHash, responseHash);
+    }
+    /* #183: also fold into any active Selector cell whose liveObject
+       is the same as the observation's arg (attributionCell.liveObject).
+       That picks the apply(s) that were invoked with THIS specific arg
+       — the observation is in-scope for their evaluation.
+       Broadcast to ALL active cells caused unrelated Selectors to
+       collapse; a strict identity filter keeps discrimination local. */
+    if (attributionCell && attributionCell->liveObject) {
+        auto argLive = attributionCell->liveObject;
+        for (auto & cell : activeCells) {
+            if (cell.get() == attributionCell.get()) continue;
+            if (cell->liveObject == argLive) {
+                cell->ownFactSet = TracingDecisionGraph::xorFactIntoHash(
+                    cell->ownFactSet, selectorHash, responseHash);
+            }
+        }
     }
     responseFor.emplace(selectorHash, responseHash);
     sessionRequestsTrie.insert(selectorHash);

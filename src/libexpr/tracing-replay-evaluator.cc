@@ -1116,7 +1116,11 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        which under DISALLOW_PARSE cascades into inner parsing.
 
        Apply-result argAncestry cell. Parent = fn proxy's cell. */
-    auto cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
+    /* #183: mirror TE::apply — reuse arg's existing cell (one cell
+       per call). */
+    auto cell = effectiveArgCell(*arg);
+    if (!cell)
+        cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
     trace::SelectorApply applySelector{fnStateHashStr};
     auto applySelectorHash = TracingDecisionGraph::computeSelectorHash(applySelector);
     /* Phase F: pass the applyResult cell so walker's per-walk state
