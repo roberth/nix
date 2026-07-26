@@ -117,6 +117,9 @@ struct Observation
        commits can append to cell.facts as (req, resp) pairs. */
     Hash reqHash{HashAlgorithm::SHA256};
     Hash respHash{HashAlgorithm::SHA256};
+    /* #183 attribution: which cell this fact belongs to. null →
+       sessionRootCell (env-fact default). */
+    std::weak_ptr<const struct ArgCell> attributionCell;
 };
 
 /** An Asks edge's worth of observations. Observations in one edge are

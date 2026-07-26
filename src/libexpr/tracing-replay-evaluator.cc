@@ -126,14 +126,15 @@ TracingReplayEvaluator::walk(
             if (committedEdgeFingerprints.insert(fingerprint).second) {
                 ObservationSet edge;
                 edge.observations = std::move(obs);
-                /* #183: walker-side reproduce of cold's cell.facts append.
-                   Walker's dispatch adds (req, resp) to session-root cell
-                   so subsequent walks see them via pull inheritance in
-                   cell.factSetHash(). Observation's `respHash` field
-                   populated by dispatch(). */
-                if (writer.sessionRootCell)
-                    for (const auto & o : edge.observations)
-                        writer.sessionRootCell->addFact(o.reqHash, o.respHash);
+                /* #183: walker-side attribution — route each fact to
+                   its attributionCell (outer probe → arg's cell), or
+                   sessionRootCell (env-fact default when null). */
+                for (const auto & o : edge.observations) {
+                    auto target = o.attributionCell.lock();
+                    if (!target) target = writer.sessionRootCell;
+                    if (target)
+                        target->addFact(o.reqHash, o.respHash);
+                }
                 envWalk.push_back(edge);
                 /* B1: also append to per-Q chain for Q evolution basis. */
                 perQEnvWalk.push_back(std::move(edge));
@@ -251,12 +252,19 @@ TracingReplayEvaluator::walk(
             respJsonStr = "(unparseable)";
         }
         if (isQueryRequest && outerFromHash) {
+            /* #183 attribution: outer observation belongs to the arg
+               proxy's cell. currentProxy is the outer Object being
+               probed; its argCell is where the observation lands. */
+            std::weak_ptr<const ArgCell> attrCell;
+            if (ctx.currentProxy)
+                attrCell = ctx.currentProxy->getProxyArgCell();
             pendingEdgeObservations.push_back({
                 *outerFromHash,
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), requestHash, h),
                 requestHash,
                 h,
+                std::move(attrCell),
             });
             tracingCacheLog(
                 "dispatch outer: req=%s payload=%s from=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
@@ -275,15 +283,15 @@ TracingReplayEvaluator::walk(
                 reqJsonStr,
                 respJsonStr);
         } else {
-            /* #177: env facts push too so commitEdge folds them into
-               sessionRootCell.ownFactSet (fromHash=0 marks base-scope
-               attribution). */
+            /* #183: env facts default to sessionRootCell (attrCell
+               left null — commitEdge routes null to sessionRootCell). */
             pendingEdgeObservations.push_back({
                 Hash(HashAlgorithm::SHA256),
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), requestHash, h),
                 requestHash,
                 h,
+                std::weak_ptr<const ArgCell>{},
             });
             tracingCacheLog(
                 "dispatch env: req=%s payload=%s resp=%s",
