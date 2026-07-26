@@ -204,27 +204,6 @@ void from_json(const nlohmann::json & j, ResultWHNF & r)
 }
 
 // ---------------------------------------------------------------------------
-// SelectorLeaf serialization
-// ---------------------------------------------------------------------------
-
-/* #178: only OuterLeaf remains. Encoded as `{"outer": N}`. */
-void to_json(nlohmann::json & j, const SelectorLeaf & leaf)
-{
-    j = nlohmann::json{{"outer", leaf.outerIndex()}};
-}
-
-void from_json(const nlohmann::json & j, SelectorLeaf & leaf)
-{
-    if (j.is_object() && j.contains("outer"))
-        leaf = SelectorLeaf{OuterLeaf{j.at("outer").get<int>()}};
-    else
-        throw nlohmann::json::type_error::create(
-            302,
-            "SelectorLeaf JSON must be an object {\"outer\": N}",
-            &j);
-}
-
-// ---------------------------------------------------------------------------
 // PathExpr serialization
 // ---------------------------------------------------------------------------
 
@@ -301,26 +280,6 @@ void to_json(nlohmann::json & j, const PathExpr & p)
 void from_json(const nlohmann::json & j, PathExpr & p)
 {
     j.get_to(p.steps);
-}
-
-// ---------------------------------------------------------------------------
-// PerArgFrame serialization
-// ---------------------------------------------------------------------------
-
-void to_json(nlohmann::json & j, const PerArgFrame & f)
-{
-    j = nlohmann::json{
-        {"fromStateHashes", f.fromStateHashes},
-        {"path", f.path}};
-}
-
-void from_json(const nlohmann::json & j, PerArgFrame & f)
-{
-    f = {};
-    if (j.contains("fromStateHashes"))
-        j.at("fromStateHashes").get_to(f.fromStateHashes);
-    if (j.contains("path"))
-        j.at("path").get_to(f.path);
 }
 
 // ---------------------------------------------------------------------------

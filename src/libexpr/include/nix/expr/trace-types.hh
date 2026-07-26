@@ -209,45 +209,6 @@ struct ResultWHNF
 };
 
 // ---------------------------------------------------------------------------
-// SelectorLeaf: typed `from` / `fn` / `arg` field of Query types
-// ---------------------------------------------------------------------------
-
-/**
- * Numbered identifier carrier. Sanctioned only at the CLI per
- * Principle #1 of the content-identity design — everything below the
- * CLI uses content-defined identifiers.
- */
-struct OuterLeaf
-{
-    int index;
-    auto operator<=>(const OuterLeaf &) const = default;
-};
-
-/**
- * SelectorLeaf: the typed `from` (and `fn`/`arg`) field of Query
- * types. Under #178 the state-hash payload retires; SelectorLeaf
- * keeps its variant wrapper (single item) so the wire format has a
- * stable envelope for future leaf kinds.
- */
-struct SelectorLeaf
-{
-    std::variant<OuterLeaf> data;
-
-    SelectorLeaf() : data(OuterLeaf{0}) {}
-    SelectorLeaf(OuterLeaf a) : data(a) {}
-
-    int outerIndex() const
-    {
-        return std::get<OuterLeaf>(data).index;
-    }
-
-    auto operator<=>(const SelectorLeaf &) const = default;
-};
-
-void to_json(nlohmann::json & j, const SelectorLeaf & leaf);
-void from_json(const nlohmann::json & j, SelectorLeaf & leaf);
-
-// ---------------------------------------------------------------------------
 // PathExpr: a structured access path from a cb_arg root
 // ---------------------------------------------------------------------------
 
@@ -299,27 +260,6 @@ struct PathExpr
 
 void to_json(nlohmann::json & j, const PathExpr & p);
 void from_json(const nlohmann::json & j, PathExpr & p);
-
-/**
- * `PerArgFrame`: the shared "reference to parent via cb_arg roots" pair
- * that four Query types (GetAttr, GetListElem, GetWHNF,
- * GetFunctionInfo) all carry. `fromStateHashes[i]` is the state hash
- * of cb_arg root `i`; `path` describes the navigation from those roots
- * to this observation.
- *
- * Extracted into its own struct so each of those Selectors' to_json/
- * from_json embeds one field (`perArgFrame`) instead of duplicating
- * the same conditional emit/parse block.
- */
-struct PerArgFrame
-{
-    std::vector<SelectorLeaf> fromStateHashes;
-    PathExpr path;
-    auto operator<=>(const PerArgFrame &) const = default;
-};
-
-void to_json(nlohmann::json & j, const PerArgFrame & f);
-void from_json(const nlohmann::json & j, PerArgFrame & f);
 
 // ---------------------------------------------------------------------------
 // Query payload types and their result mappings
