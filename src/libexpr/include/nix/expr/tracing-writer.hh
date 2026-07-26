@@ -295,7 +295,8 @@ public:
                 trace::SelectorVariant{std::move(qca)},
                 trace::ResultVariant{whnf},
                 *ar->fn,
-                applyArgAncestry);
+                applyArgAncestry,
+                callbackCell);
             return true;
         };
         if (callbackCell && callbackCell->callbackState
@@ -652,7 +653,8 @@ public:
         const trace::SelectorVariant & query,
         const trace::ResultVariant & result,
         Subject subject,
-        Hash argAncestry = Hash(HashAlgorithm::SHA256));
+        Hash argAncestry = Hash(HashAlgorithm::SHA256),
+        const std::shared_ptr<const ArgCell> & attributionCell = {});
 
     /**
      * Record one observation the outer made on a callback firing's

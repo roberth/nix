@@ -4,6 +4,7 @@
  * Abstract Environment interface for evaluation I/O operations.
  */
 
+#include <memory>
 #include <optional>
 #include <string>
 #include "nix/expr/subject-id.hh"
@@ -16,6 +17,7 @@ namespace nix {
 struct SourceAccessor;
 class Store;
 struct EvalSettings;
+struct ArgCell;  // forward decl — outerQuery accepts an opaque attribution cell
 
 /**
  * Environment interface for evaluation I/O operations.
@@ -68,10 +70,12 @@ public:
         const trace::SelectorVariant & query,
         std::function<trace::ResultVariant(const trace::SelectorVariant &)> resolve,
         Subject subject,
-        Hash argAncestry = Hash(HashAlgorithm::SHA256))
+        Hash argAncestry = Hash(HashAlgorithm::SHA256),
+        const std::shared_ptr<const ArgCell> & attributionCell = {})
     {
         (void) subject;
         (void) argAncestry;
+        (void) attributionCell;
         return resolve(query);
     }
 

@@ -414,9 +414,13 @@ static PrimOp * makeCachedFnPrimOp(
                                alone is what the callback-model design
                                requires. */
                             bool cbApplyOrigin = false;
+                            std::shared_ptr<const ArgCell> attributionCell;
                             if (outerObj) {
                                 if (auto * to = dynamic_cast<TracingObject *>(outerObj.get()))
                                     cbApplyOrigin = to->isCbApplyOrigin();
+                                /* #177 C: this proxy's cell — where its
+                                   observations should attribute. */
+                                attributionCell = outerObj->getProxyArgCell();
                             }
                             OuterQueryResult qr = dispatchOuterQuery(std::move(outerObj), q);
                             if (!cbApplyOrigin) {
@@ -424,7 +428,8 @@ static PrimOp * makeCachedFnPrimOp(
                                     q,
                                     [&](const trace::SelectorVariant &) { return qr.result; },
                                     subject,
-                                    argAncestry);
+                                    argAncestry,
+                                    attributionCell);
                             }
                             return qr;
                         };

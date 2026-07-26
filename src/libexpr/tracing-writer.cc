@@ -14,7 +14,8 @@ void TracingWriter::logOuterObservation(
     const trace::SelectorVariant & query,
     const trace::ResultVariant & result,
     Subject subject,
-    Hash argAncestry)
+    Hash argAncestry,
+    const std::shared_ptr<const ArgCell> & attributionCell)
 {
     if (!decisionGraph)
         return;
@@ -145,6 +146,16 @@ void TracingWriter::logOuterObservation(
     envFactSet.push_back({selectorHash, responseHash});
     envFactSetHash = TracingDecisionGraph::xorFactIntoHash(
         envFactSetHash, selectorHash, responseHash);
+    /* #177 C: fold observation into caller-supplied arg cell's
+       ownFactSet. Dual-write for now; existing envFactSet/envWalk
+       path continues. attributionCell is null when caller doesn't
+       have one (transitional — QCA emission from
+       emitCallbackApplyForApplyResult passes callbackCell; queryFn
+       passes the arg proxy's cell). */
+    if (attributionCell) {
+        attributionCell->ownFactSet = TracingDecisionGraph::xorFactIntoHash(
+            attributionCell->ownFactSet, selectorHash, responseHash);
+    }
     responseFor.emplace(selectorHash, responseHash);
     sessionRequestsTrie.insert(selectorHash);
     allRequestHashes.insert(selectorHash);
