@@ -291,12 +291,24 @@ public:
                 fnCurrent.to_string(HashFormat::Base16, false),
                 cs.argAncestryHex}};
             qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
+            /* #177 attribution: QCA observation folds into the
+               enclosing SelectorApply's cell (the innermost active
+               Q's cell), not callbackCell. callbackCell is a lookup
+               handle for the runningObsSet content, not the fold
+               target — the QCA is an outer probe on the SelectorApply
+               being evaluated, so it belongs to that cell's chain.
+               Without this, sibling SelectorApply Terminals collapse
+               at cur=∅ and warm returns wrong-sibling responses
+               (cb-obsset-mismatch-clean-miss, sibling tests). */
+            std::shared_ptr<const ArgCell> attrCell;
+            if (!activeQueryStack.empty())
+                attrCell = activeQueryStack.back()->cell.lock();
             logOuterObservation(
                 trace::SelectorVariant{std::move(qca)},
                 trace::ResultVariant{whnf},
                 *ar->fn,
                 applyArgAncestry,
-                callbackCell);
+                attrCell);
             return true;
         };
         if (callbackCell && callbackCell->callbackState
