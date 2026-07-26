@@ -2,12 +2,14 @@
 /**
  * @file
  * Content-defined identity computed as a pure function of subject
- * and factset. See `doc/design/tracing-eval-cache-subject-identity.md`.
+ * and factset. See `doc/design/tracing-eval-cache-vocabulary.md`
+ * §Subject-identity mechanism (transitional).
  *
  * state hashes are not stored anywhere; they're computed on demand
  * from a value's static structural identifier (the "subject") and
  * the current factset. The recorder and the walker call the same
  * function with the same arguments and obtain identical hashes.
+ * Retires under task #178 in favour of per-cell factset curs.
  *
  * This module is currently standalone — not yet wired into the
  * recorder/walker. It exists to validate the math in isolation

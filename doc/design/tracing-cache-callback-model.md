@@ -7,10 +7,12 @@ implementation actually does, cited by file:line), and **Gap**
 `tracing-eval-cache-*.md` docs but is stale, the gap section notes
 it.
 
-The existing `tracing-eval-cache-subject-identity.md` provides the
-foundation; this doc is transitional and expects its content to
-fold into surgical edits to subj (and to vocab / main where they
-overlap) rather than persist as a permanent parallel doc.
+This doc reflects the current implementation of callback tracking
+with Q evolution and state-hash `from` fields. Under the
+multiplexer + per-cell factset direction (see task #176), Q
+evolution retires and state hashes collapse into per-cell factset
+curs; this doc will need substantial rework to describe the new
+callback machinery.
 
 ## 1. What the eval cache does
 

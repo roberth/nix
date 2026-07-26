@@ -4,12 +4,12 @@
  * ArgCell — scope-graph node for cache-boundary proxies.
  * Carries only structural topology (depth, parent, liveObject).
  *
- * Under the design in
- * doc/design/tracing-eval-cache-subject-identity.md,
- * state hashes are pure functions of (subject, factset) and are not
- * stored on the cell. The cell exists for navigation through the
- * proxy graph; the `depth` field provides the static positional
- * handle that subjects use as their base for state hashes.
+ * The cell exists for navigation through the proxy graph; the
+ * `depth` field provides the static positional handle used by
+ * `Arg{depth}` subjects. State hashes are pure functions of
+ * (subject, argAncestry, history, step) computed on demand — never
+ * stored on the cell. Under the multiplexer + per-cell factset
+ * direction (task #176), cells also become factset carriers.
  */
 
 #include "nix/expr/evaluator.hh"

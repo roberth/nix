@@ -479,13 +479,22 @@ owns a value, the other side is what probes it:
   body accumulates on its contra-arg is folded into that query's
   identity.
 
-The subject-identity machinery that ties observations to structural
-identities — Subject, state hash, argAncestry, callback-arg
-objects, cell navigation — is defined in the next section.
+The mechanism that ties observations to structural identities —
+Subject, argAncestry, callback-arg objects, cell navigation — is
+defined in the next section.
+
+> **State of this section (2026-07-26).** The subject-identity
+> mechanism described below is the *current* implementation. The
+> `state hash` machinery, `from` field, and Q-evolution described
+> here retire under the multiplexer + per-cell factset direction
+> (see task #176). Under that direction, per-cell factset separation
+> provides sibling discrimination structurally, and cur at (Q, cur)
+> keys does the work the `from` state hash does today. Content below
+> reflects live code; rewrite pending.
 
 ---
 
-## Subject-identity machinery
+## Subject-identity mechanism (transitional)
 
 Cached functions run many times. Two cases; both put multiple
 values through the same syntactic slot, so position alone can't

@@ -35,6 +35,100 @@ and the answer is correct either way.
 Recording and replay perform the same computations to determine the
 trace representation.
 
+## Foundational principles
+
+Hold for any identification scheme this cache adopts; apply to the
+present design.
+
+1. **Numbered identifiers only at the CLI**, where seed-introducing
+   constructs follow predictable patterns. Reverse De Bruijn for
+   generalized curry depth. Everything below the CLI is grounded in
+   the real structure of expressions.
+
+2. **Combine structural identification with intrinsic hashes** to
+   identify relevant states. Structure tells you what; intrinsic
+   tells you when.
+
+3. **Replay gets all the information to reproduce Facts and
+   intrinsic hashes**, so more-specific Facts can be acquired from
+   less-specific states.
+
+4. **Maintain breadcrumbs** between more-specific and less-specific
+   hashes, so less-specific Facts can be retrieved at a later time.
+
+5. **Queries must be specific enough.** Ambiguities (more than one
+   matching row) get resolved by query specificity first, then by a
+   custom index (Ask, evolution edges, ...). Iteration is only a
+   temporary fallback.
+
+6. **No deep hashing of values.** Identity is built from
+   observations made *through* a value, never from inspecting the
+   value itself. A corollary of #7; also non-negotiable on its own
+   as an identity rule.
+
+7. **Laziness end-to-end.** Forcing is initiated by the value's
+   consumer, never by the cache itself. Recording observes only
+   the Queries the inner already issued — never probe a value to
+   manufacture Facts. Replay serves a response only when the
+   consumer probes for it — never traverse recorded structure
+   ahead of the consumer.
+
+8. **Cache behavior is independent of the argument's forcedness
+   state.** Whether an argument arrives at a boundary already
+   forced (e.g. the interpreter happened to evaluate it eagerly
+   for an adjacent primop) or as an unforced thunk must NOT change
+   what the cache records or how it looks up. Identity is derived
+   only from observations the *function body* (expression-defined
+   behavior) makes through the value — never from observations
+   the interpreter made incidentally. This makes cache performance
+   predictable: a refactor that changes evaluation order cannot
+   perturb cache layout. A corollary of #7; also non-negotiable
+   on its own.
+
+9. **Cumulative dependency.** The inner evaluator is a black box.
+   Every Request observed prior to a Result is part of that
+   Result's dependency set — the box's state has evolved through
+   each observation, and the cache cannot prove which observations
+   were load-bearing. Pruning the FactSet to exclude prior Facts is
+   therefore disallowed: a Result's factSet hash is cumulative
+   over the writer's session up to its `logResult`.
+
+   This is stated from the recording side, where a single trace
+   produces the Result. On replay the walker may consider multiple
+   recorded traces at once — zero, one, or many candidates for a
+   given lookup — and the principle applies to each candidate
+   individually. A candidate's factSet hash is cumulative over that
+   candidate's own observations; the walker never blends
+   preconditions across candidates or manufactures a hybrid
+   precondition set no recording actually observed.
+
+   The point of the cache is to work accurately for any outer
+   caller. The outer evaluator is outside the cache boundary, and
+   the cache makes no assumptions about which outer is calling it
+   or how — correctness must hold across all of them.
+
+   *Consequence for arguments.* Outer-supplied values entering the
+   cache enter as Subjects (structural names); observations the
+   inner makes through them accumulate in the arg's own cell's
+   factset. The cache never pins an argument by the outer's notion
+   of its identity — only by what the inner observed via Requests,
+   folded into that arg's cell.
+
+   *Consequence for callbacks.* Outer-supplied functions the inner
+   applies cannot have their response served from cache. The walker
+   invokes the outer live and validates the structure of the
+   resulting probes against the recorded observation set carried
+   inside the `SelectorCallbackApply` request. Cached state covers
+   the structural contract (what probes happened, in what order,
+   with what response shape) but never the response values
+   themselves — those come live each time.
+
+   Outer's referential transparency *could* be exploited to cache
+   responses (same inputs reliably give same outputs within a
+   given outer evaluation). Scoped out for now: only worth doing
+   if measurement shows the live re-invocation cost outweighs the
+   added bookkeeping.
+
 ## Vocabulary recap
 
 Full definitions in

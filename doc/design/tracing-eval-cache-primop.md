@@ -8,7 +8,7 @@ model),
 [`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
 (callback tracking). Terminology from those docs — Query/Result
 vs Request/Response, FactSet, RequestSet trie, Query and Env
-message pairings, Subject, state hash, argAncestry, the walker,
+message pairings, Subject, argAncestry, the walker,
 `SelectorCallbackApply` and its ObservationSet — is assumed below.
 
 ## Goal and non-goals
@@ -175,9 +175,10 @@ Inside `prim_cache`:
    (hash of `"cache-import:"|"cache-expr:"` plus the source
    identifier) XOR-folded with `state.inheritedCallArgAncestry`. Propagate
    the result via `setOuterResolverCallArgAncestry` and
-   `innerState->inheritedCallArgAncestry`. Sibling cached calls get
-   distinct state hashes at their cb-apply boundaries because their
-   contributions differ; nested calls accumulate.
+   `innerState->inheritedCallArgAncestry`. Sibling cached calls
+   are structurally isolated (separate cells → separate factsets →
+   separate Terminal keys); `callArgAncestry` distinguishes them
+   at the cb-apply boundary. Nested calls accumulate.
 
 6. **Rewrite paths to the inner accessor.** `RootedPath{innerState->
    rootFSRoot, p.path}` for both `importPath` and `baseDir`.
@@ -258,10 +259,11 @@ When `replayEval->evalFile(...)` (or `evalExpr`, or `apply`) runs:
    response hash. For Requests whose payload contains a `Query`,
    dispatch routes to `dispatchQueryRequest`,
    which:
-   - resolves the `from` field via `resolveStateHash` (against the
-     subject-identity machinery: `Arg{depth}` positional seeds,
-     `DerivedSubject` via the `Requests` pool, `ApplyResultSubject`
-     via live apply, `PostulatedIdempotentRead` via source re-read);
+   - resolves the `from` field via `resolveStateHash` against the
+     Subject algebra (`Arg{depth}` positional seeds, `DerivedSubject`
+     via the `Requests` pool, `ApplyResultSubject` via live apply,
+     `PostulatedIdempotentRead` via source re-read) — mechanism
+     retires under task #178 in favour of cell-chain routing;
    - issues the query against the resolved outer Object;
    - serialises the result.
 5. On a hit, the result payload comes back; `lookup` wraps it in a
@@ -543,7 +545,7 @@ listed. What remains:
 - `src/libexpr/tracing-callback-arg.cc` /
   `replay-callback-arg.cc` — `TracingCallbackArg` /
   `ReplayCallbackArg` (writer/replay sides of covariant callbacks).
-- `src/libexpr/subject-id.cc` — Subject variants, state hash /
-  argAncestry / evolution machinery.
+- `src/libexpr/subject-id.cc` — Subject variants and argAncestry
+  algebra.
 - `tests/functional/builtins-cache.sh` — feature-coverage test
   suite; wired into `tests/functional/meson.build`.
