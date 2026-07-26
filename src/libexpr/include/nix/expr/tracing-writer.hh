@@ -101,17 +101,6 @@ class TracingWriter
        computes the same value on both sides. */
     std::vector<ObservationSet> envWalk;
 
-    /* Per-Q boundary tracking. `pendingNewRequests` accumulates every
-       new query hash added to envFactSet since the last logResult,
-       whether from `logResponse` (= env/file), `noteEnvObservation`,
-       or `flushPending`. OuterQueries are env layer just like
-       file reads; bundling them with env/file into one Asks edge per
-       logResult keeps the trie's edge structure 1:1 with envWalk.
-       `envAsksEdges` retains each finalized boundary so every Q's
-       logResult can pre-insert all of them in its namespace via
-       INSERT OR IGNORE (= idempotent). */
-    std::vector<Hash> pendingNewRequests;
-
     TracingDecisionGraph::SetHash prevQFactSetHash{TracingDecisionGraph::emptySetHash()};
     struct AsksEdgeRecord
     {
@@ -138,8 +127,6 @@ class TracingWriter
        remaining-edge — an Asks edge's requestSet is a set of query
        hashes, not fact hashes. */
     std::unordered_set<Hash> allRequestHashes;
-
-    std::vector<nlohmann::json> pendingRequests;
 
     /* Active cb-apply cells. `createCallbackCell` pushes a new cell
        at cache-boundary apply; `logCallbackObservation` appends each
@@ -756,30 +743,19 @@ public:
     }
 
     /**
-     * Defer a Requests-pool insert until logResult. Insert key is the
-     * hash of the payload (the apply Q's own selectorHash).
+     * Insert a Query payload into the Requests pool at its natural
+     * (payload-hash) key. Historically deferred and batched via
+     * closeAsksEdge; direct-insert now that the batching machinery
+     * (pendingRequests / pendingNewRequests / flushPending /
+     * closeAsksEdge) has retired.
      */
     void deferRequest(nlohmann::json payload)
     {
         if (!decisionGraph)
             return;
-        pendingRequests.push_back(std::move(payload));
+        auto key = hashString(HashAlgorithm::SHA256, payload.dump());
+        decisionGraph->insertRequest(key, jsonToCborString(payload));
     }
-
-    /**
-     * Insert deferred Requests into the CAS pool at their natural
-     * (payload-hash) keys. Called from `closeAsksEdge`. With
-     * `processApplies=true` the trailing file/env-read chunk is
-     * also closed; otherwise pending state stays buffered.
-     */
-    void flushPending(bool processApplies = false);
-
-    /**
-     * Close the current Asks edge. Calls flushPending, then closes
-     * any trailing file/env-read batch. Called at every cb-apply
-     * crossing and at logResult.
-     */
-    void closeAsksEdge(bool processApplies = false);
 
     /**
      * Push a new `CallbackCell` onto the writer's stack for a
@@ -827,13 +803,6 @@ public:
                 activeCells.pop_back();
             return std::nullopt;
         }
-
-        /* Process any pending Requests, finalise buffered cb-apply
-           cells, and close the trailing Asks edge boundary. Any
-           observations that fire during closeAsksEdge still fold
-           into envWalk and evolve the innermost
-           activeQuery's Q (via logOuterObservation). */
-        closeAsksEdge(/*processApplies=*/ true);
 
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);
