@@ -224,8 +224,20 @@ public:
         : sink(sink)
         , decisionGraph(decisionGraph)
         , envFactSetHash(TracingDecisionGraph::emptySetHash())
+        , sessionRootCell(ArgCell::make(nullptr, nullptr))
     {
     }
+
+    /** Session-root cell: exists for the writer's lifetime, parents
+        every arg cell created during the session. Under the multiplexer
+        + per-cell factset direction (task #177): env facts fold into
+        `sessionRootCell->ownFactSet`; all subsequent cells inherit via
+        `factSetHash()`'s parent-chain walk.
+
+        Currently unused (dual-write / read wiring lands in follow-up
+        commits). Kept as a stable shared_ptr so cells can safely take
+        it as their parent. */
+    std::shared_ptr<ArgCell> sessionRootCell;
 
     /** Cumulative subject-id history over Env-layer observations.
         One edge per logResult-triggered flush. Exposed so writer-side

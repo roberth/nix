@@ -102,6 +102,37 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         other cells. See CallbackState above for field semantics. */
     mutable std::shared_ptr<CallbackState> callbackState;
 
+    /** This cell's own directly-folded facts, as an XOR-fold hash.
+        Under the multiplexer + per-cell factset direction (task #177):
+        env facts fold into the session-root cell's ownFactSet; arg
+        observations fold into the arg's own cell's ownFactSet.
+        Sibling cells are isolated by construction — each has its own
+        ownFactSet, no cross-contamination.
+
+        `mutable` because ArgCells are held via
+        `shared_ptr<const ArgCell>`; the fold happens through the
+        const pointer. */
+    mutable TracingDecisionGraph::SetHash ownFactSet{
+        TracingDecisionGraph::emptySetHash()};
+
+    /** Cumulative factset visible from this cell: own XOR parent's.
+        Pull-based (recursive) — no eager broadcast to children.
+        Under user's design (2026-07-26): children see ancestors'
+        contributions naturally on lookup; observations added to
+        ancestors after child creation appear on next call.
+
+        Used as the cur for Terminal / Ask keys at this cell's scope
+        (once #178 lands and Q selectorHashes stabilise). */
+    TracingDecisionGraph::SetHash factSetHash() const
+    {
+        auto own = ownFactSet;
+        if (parent) {
+            auto parentFold = parent->factSetHash();
+            return TracingDecisionGraph::xorHashes(own, parentFold);
+        }
+        return own;
+    }
+
     /** Construct a cell whose parent is `parent_`. depth is one
         deeper than parent (or 0 if parent is null). `liveObject_`
         may be null at construction if the live proxy isn't yet
