@@ -183,130 +183,49 @@ trace::SelectorApply makeApplyResultQuery(
 Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step,
     std::source_location caller)
 {
-    /* Compute subject's state hash at the precondition of the
-       `step`-th edge by replaying the first `step` edges'
-       effects on the subject's running state hash.
+    /* #178: state-hash EVOLUTION retires — the fold loop over history
+       is dead (all callers now pass empty history and step=0). What
+       remains is the subject's initial "id" — position + argAncestry
+       for leaves, structural composition for apply results. Kept
+       under the old name for source-compat until callers rename to
+       `subjectId`.
 
-       Inheritance: `argAncestry` is the XOR of outer-argAncestry state hashes (chiefly
-       the cached call's state hash(Q) at the cb-apply). Passing
-       zero gives the pure structural id. Leaf subjects
-       (Arg, PostulatedIdempotentRead) XOR `argAncestry` into their
-       base hash. Composite subjects (DerivedSubject,
-       ApplyResultSubject) propagate `argAncestry` recursively through
-       their constituents' state hashes; the structural derivation
-       at this level uses those scoped constituents' values in its
-       query payload, so inheritance ripples through naturally
-       without a second XOR at this level.
-
-       For positional seeds, only direct observations matter:
-       facts in earlier edges whose `from` equals the arg's
-       precondition state hash at that edge contribute to its
-       evolution. */
+       Inheritance: `argAncestry` is the XOR of outer-argAncestry
+       state hashes. Leaf subjects (Arg, PostulatedIdempotentRead)
+       XOR `argAncestry` into their base hash. ApplyResult composes
+       constituents' ids recursively; DerivedSubject traps here (use
+       `stateHashAtSubject` for that variant). */
+    (void) history;
+    (void) step;
+    (void) caller;
     return std::visit(
         [&](const auto & alt) -> Hash {
             using T = std::decay_t<decltype(alt)>;
-
-            /* The subject's id at edge step `k`, BEFORE this subject's
-               selfFactFold gets XOR'd in. Naming note: not pure
-               De-Bruijn-style "structural" for all variants. For
-               Arg / PostulatedIdempotentRead it IS k-invariant
-               pure position. For ApplyResultSubject it depends on `k`
-               because it composes the constituents' *fully evolved*
-               state hashes (= constituents' stateHashAt at the
-               same k) into a SHA-sealed shape — so the apply's id
-               varies with k via constituent evolution even before
-               this subject's selfFactFold contributes. */
-            auto subjectIdAt = [&](size_t k) -> Hash {
-                if constexpr (std::is_same_v<T, Arg>) {
-                    auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
-                    return TracingDecisionGraph::xorHashes(base, argAncestry);
-                } else if constexpr (std::is_same_v<T, DerivedSubject>) {
-                    /* Derived subjects have no state hash — only an address
-                       (= producer query hash). Callers that need an
-                       address for any subject use `stateHashAtSubject`;
-                       reaching this branch via `stateHashAt` means a
-                       caller passed a derived subject where the design
-                       requires an argument-level subject. */
-                    nix::unreachable();
-                } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
-                    /* Apply-result composes its constituents' state hashes.
-                       Constituents may be Derived → route through
-                       stateHashAtSubject (which dispatches Derived to
-                       the producer-query-hash path). */
-                    auto fnAtK = stateHashAtSubject(*alt.fn, argAncestry, history, k);
-                    auto argAtK = stateHashAtSubject(*alt.arg, argAncestry, history, k);
-                    nlohmann::json qj = trace::SelectorApply{hashHex(fnAtK), hashHex(argAtK)};
-                    return hashString(HashAlgorithm::SHA256, qj.dump());
-                } else if constexpr (std::is_same_v<T, PostulatedIdempotentRead>) {
-                    /* X is treated as argAncestry-saturated. Callers pass
-                       hashes that already encode the relevant argAncestry
-                       — `OuterObject::getStateHash()` returns
-                       stateHashAfterSubject with argAncestry
-                       baked in; ReplayCallbackArg's localId is
-                       stateHashAfter(Arg{D}, callArgAncestry, {})
-                       which is also argAncestry-saturated. Re-XORing argAncestry
-                       here would either double-XOR (= argAncestry-saturated
-                       inputs) or under-XOR (= un-scoped inputs); treating
-                       PostulatedIdempotentRead as a pre-computed state hash
-                       atom (return alt.hash unchanged) avoids both. */
-                    return alt.hash;
-                } else {
-                    throw Error("stateHashAt: unknown subject variant");
-                }
-            };
-
-            /* Walk the chain and accumulate the XOR-fold of env-layer fact
-               element hashes from observations that point at THIS
-               subject. An observation in `history[k]` points at this
-               subject iff `obs.fromHash` (= the recorder-stamped
-               subject pointer carried in the `from` field of the
-               query that produced the fact) equals this subject's
-               running state hash at step k. The result is the
-               contribution to state hash that comes from env-layer facts
-               about self. */
-            Hash selfFactFold = Hash(HashAlgorithm::SHA256);
-            std::string foldTrace;
-            for (size_t k = 0; k < step && k < history.size(); ++k) {
-                Hash myScopeStateIdAtK = TracingDecisionGraph::xorHashes(subjectIdAt(k), selfFactFold);
-                for (auto & obs : history[k].observations) {
-                    bool matches = (obs.fromHash == myScopeStateIdAtK);
-                    foldTrace += "\n    k=" + std::to_string(k)
-                        + " myId=" + hashHex(myScopeStateIdAtK).substr(0, 12)
-                        + " obs.from=" + hashHex(obs.fromHash).substr(0, 12)
-                        + " obs.elem=" + hashHex(obs.elementHash).substr(0, 12)
-                        + (matches ? " MATCH→fold" : " skip");
-                    if (matches)
-                        selfFactFold = TracingDecisionGraph::xorHashes(selfFactFold, obs.elementHash);
-                }
+            if constexpr (std::is_same_v<T, Arg>) {
+                auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
+                return TracingDecisionGraph::xorHashes(base, argAncestry);
+            } else if constexpr (std::is_same_v<T, DerivedSubject>) {
+                /* Derived subjects have no state hash — only an address
+                   (= producer query hash). Callers use `stateHashAtSubject`
+                   for Derived; reaching this branch is a bug. */
+                nix::unreachable();
+            } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
+                auto fnId = stateHashAtSubject(*alt.fn, argAncestry, {}, 0);
+                auto argId = stateHashAtSubject(*alt.arg, argAncestry, {}, 0);
+                nlohmann::json qj = trace::SelectorApply{hashHex(fnId), hashHex(argId)};
+                return hashString(HashAlgorithm::SHA256, qj.dump());
+            } else if constexpr (std::is_same_v<T, PostulatedIdempotentRead>) {
+                return alt.hash;
+            } else {
+                throw Error("stateHashAt: unknown subject variant");
             }
-
-            auto result = TracingDecisionGraph::xorHashes(subjectIdAt(step), selfFactFold);
-            /* Caller filename:line identifies which stateHashAt call
-               built the passed history — useful for diagnosing which
-               code path is passing a history that doesn't match a
-               target state hash. */
-            const char * callerFile = caller.file_name();
-            const char * shortFile = std::strrchr(callerFile, '/');
-            shortFile = shortFile ? shortFile + 1 : callerFile;
-            tracingCacheLog(
-                "stateHashAt[%s:%u]: subject=%s argAncestry=%s history.size=%zu step=%zu\n"
-                "  subjectIdAt(step)=%s selfFactFold=%s result=%s%s",
-                shortFile, caller.line(),
-                describe(subject),
-                hashHex(argAncestry).substr(0, 12),
-                history.size(), step,
-                hashHex(subjectIdAt(step)).substr(0, 12),
-                hashHex(selfFactFold).substr(0, 12),
-                hashHex(result).substr(0, 12),
-                foldTrace);
-            return result;
         },
         subject.data);
 }
 
 Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history)
 {
-    return stateHashAt(subject, argAncestry, history, history.size());
+    return stateHashAt(subject, argAncestry, history, 0);
 }
 
 Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history)
