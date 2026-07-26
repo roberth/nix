@@ -235,16 +235,7 @@ struct SelectorLeaf
 
     SelectorLeaf() : data(OuterLeaf{0}) {}
     SelectorLeaf(OuterLeaf a) : data(a) {}
-    /* Legacy string-hex constructors (state-hash-flavoured, #178) —
-       hex content ignored; produces the default OuterLeaf{0}. Kept
-       so existing call sites continue to compile; sweep pending. */
-    SelectorLeaf(const std::string &) : data(OuterLeaf{0}) {}
-    SelectorLeaf(const char *) : data(OuterLeaf{0}) {}
 
-    bool isOuter() const
-    {
-        return std::holds_alternative<OuterLeaf>(data);
-    }
     int outerIndex() const
     {
         return std::get<OuterLeaf>(data).index;

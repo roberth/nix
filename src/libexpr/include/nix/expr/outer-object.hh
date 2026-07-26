@@ -207,15 +207,10 @@ public:
         return *this;
     }
 
-    OuterId getStateHash() const
-    {
-        return subjectId(subject, argAncestry);
-    }
-
     std::optional<std::string> getStateHashHex() const override
     {
         if (producingQHex) return *producingQHex;
-        return getStateHash().to_string(HashFormat::Base16, false);
+        return subjectId(subject, argAncestry).to_string(HashFormat::Base16, false);
     }
 };
 

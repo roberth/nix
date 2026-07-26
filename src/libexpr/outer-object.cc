@@ -8,21 +8,6 @@
 
 namespace nix {
 
-/* Populate `q`'s per-arg fields (from, path, fromStateHashes) so its
-   reqHash matches what the writer flushed for the corresponding
-   observation. */
-template <typename Q>
-static void stampPerArgFields(Q & q, const Subject & subject, const Hash & argAncestry)
-{
-    /* #178: state-hash `from` field stamping retires. Q hashes stable
-       per operation; cur at (Q, cur) discriminates. Left as a no-op
-       to preserve caller shape until Selector payload types drop
-       from/perArgFrame in a follow-up. */
-    (void) q;
-    (void) subject;
-    (void) argAncestry;
-}
-
 OuterObject::OuterObject(
     Subject subject_, std::shared_ptr<Object> outerObj_, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn)
     : subject(std::move(subject_))
