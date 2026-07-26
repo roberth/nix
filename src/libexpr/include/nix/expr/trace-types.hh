@@ -450,10 +450,12 @@ DECLARE_SELECTOR_RESULT(SelectorApply, ResultWHNF)
 struct SelectorCallbackApply
 {
     static constexpr std::string_view tag = "callbackApply";
-    /** Function identity — carries fn's subject id and its
-        `callArgAncestry` as leaf metadata (used by the walker to
-        reconstruct the ReplayCallbackArg's Subject). */
-    SelectorLeaf fn;
+    /** Hex of the callback fn's Q hash — the query-space identity of
+        the fn being applied. Under the unified selector shape (SelectorX
+        = fn-that-produced-us + distinguishing path), argObsSet plays
+        the same role as `name` in SelectorGetAttr: the discriminator
+        that says which observation set this firing recorded. */
+    std::string fn;
     std::string argObsSet;     ///< Content hash of the observation set
     auto operator<=>(const SelectorCallbackApply &) const = default;
 };

@@ -269,7 +269,11 @@ public:
             auto obsSetHash = decisionGraph->insertObservationSet(cs.runningObsSet);
             auto fnCurrent = subjectId(*ar->fn, applyArgAncestry);
             trace::SelectorCallbackApply qca;
-            qca.fn = trace::SelectorLeaf{trace::OuterLeaf{0}};
+            /* #181: fn = the callback fn's query-space identity,
+               captured at firing time by CallbackState. Discriminates
+               callbackApply Q across distinct callbacks with same
+               obsSet (mirrors SelectorApply.fn treatment). */
+            qca.fn = cs.fnStateHashHex;
             qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
             /* #177 attribution: QCA observation folds into the
                enclosing SelectorApply's cell (the innermost active

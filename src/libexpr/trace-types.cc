@@ -683,13 +683,9 @@ std::string describe(const SelectorVariant & query)
             } else if constexpr (std::is_same_v<Q, SelectorGetListElem>) {
                 out += " index=" + std::to_string(q.index);
             } else if constexpr (std::is_same_v<Q, SelectorApply>) {
-                if (true)
-                    out += " fn=" + shortHex(std::string{});
-                if (true)
-                    out += " arg=" + shortHex(std::string{});
+                out += " fn=" + shortHex(q.fn);
             } else if constexpr (std::is_same_v<Q, SelectorCallbackApply>) {
-                if (true)
-                    out += " fn=" + shortHex(std::string{});
+                out += " fn=" + shortHex(q.fn) + " obsSet=" + shortHex(q.argObsSet);
             } else if constexpr (std::is_same_v<Q, SelectorExpr>) {
                 out += " expr=\"" + q.expr + "\"";
             } else if constexpr (std::is_same_v<Q, SelectorImport>) {

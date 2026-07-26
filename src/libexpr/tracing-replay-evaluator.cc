@@ -869,7 +869,9 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                    the referenced ObservationSet, resolve fn live via
                    subject-navigation, invoke fn->queryApply(replayArg),
                    return the applyResult's WHNF. */
-                std::string fnHex;
+                /* #181: SelectorCallbackApply.fn is now a plain string
+                   (query-space hex of fn's identity). */
+                std::string fnHex = q.fn;
                 std::string argAncestryHex;
                 Hash obsSetHash{HashAlgorithm::SHA256};
                 Hash argAncestry{HashAlgorithm::SHA256};
