@@ -137,20 +137,13 @@ void registerOuterResolverProxy(
     std::shared_ptr<Object> obj);
 
 /** Try to resolve a registered live-proxy from the resolver by
-    matching its registered `(subject, argAncestry)` against the given
-    `idHash` at any edge boundary of `envWalk`. Returns nullptr
-    if no registration matches at any edge. Used by
+    matching its registered `(subject, argAncestry)` against `idHash`.
+    Returns nullptr if no registration matches. Used by
     `TracingReplayEvaluator::resolveIdentity` as a fallback after
-    cell-chain and Requests-pool resolution fail, before the
-    "outer-arg by elimination" miss path. Iterating every edge
-    boundary is necessary because the env fact's `from` is the
-    arg's state hash at the writer's flush-time `envWalk` index
-    (= post-observations evolution), which differs from the
-    initial state hash we registered under. */
+    cell-chain and Requests-pool resolution fail. */
 std::shared_ptr<Object> tryResolveOuterResolverProxy(
     OuterResolver & resolver,
     const Hash & idHash,
-    const std::vector<ObservationSet> & envWalk,
     TracingDecisionGraph * dg = nullptr);
 
 } // namespace nix

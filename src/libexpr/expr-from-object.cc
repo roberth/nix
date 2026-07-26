@@ -663,20 +663,13 @@ void registerOuterResolverProxy(
 std::shared_ptr<Object> tryResolveOuterResolverProxy(
     OuterResolver & resolver,
     const Hash & idHash,
-    const std::vector<ObservationSet> & envWalk,
     TracingDecisionGraph * dg)
 {
-    /* Linear scan over each registered (subject, argAncestry) x K in
-       envWalk. The hasSubjectStampSite gate turned out to be a
-       tautology (cold stamped every state hash walker ever resolves), so
-       running the scan unconditionally is equivalent. */
     (void) dg;
     for (auto & entry : resolver.liveProxies) {
-        for (size_t k = 0; k <= envWalk.size(); ++k) {
-            auto stateHash = subjectId(entry.subject, entry.argAncestry);
-            if (stateHash == idHash)
-                return entry.obj;
-        }
+        auto stateHash = subjectId(entry.subject, entry.argAncestry);
+        if (stateHash == idHash)
+            return entry.obj;
     }
     return nullptr;
 }

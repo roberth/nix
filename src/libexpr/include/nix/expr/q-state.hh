@@ -57,34 +57,19 @@ struct QState
         the same Q hash for the whole invocation. */
     Hash currentQ{HashAlgorithm::SHA256};
 
-/* -------------------- Walker walk-local (Phase F) --------------
-       Walker fields that were formerly session-scoped on
-       TracingReplayEvaluator. Per-walk under the cell-based model:
-       cross-walk sharing produces false-positive Terminal hits when
-       one walk's terminalCur happens to match another walk's
-       Selector-key (cb-two-sibling-distinct-callbacks). Each walk's
-       state is scoped to that walk's own dispatches.
-
-       Docs use "session" for the writer's lifetime — these fields are
-       not session state (despite pre-Phase-F naming); they're per-walk. */
+/* -------------------- Walker walk-local -------------------------
+       Walker per-walk buffers. Cell.facts is the source of truth for
+       observed state (populated by dispatch via commitEdge). These
+       fields are transient buffers scoped to one walk. */
 
     /** Per-edge buffer: dispatch() appends facts here; the walker's
-        edge-commit callback promotes them into perQEnvWalk. Rejected
-        edges discard the buffer. */
+        edge-commit callback drains them into cell.facts on commit,
+        discards on reject. */
     std::vector<Observation> pendingEdgeObservations;
 
-    /** History of committed edges for this walk. Each Asks edge dispatched
-        via commitEdge appends one entry, deduplicated by
-        `committedEdgeFingerprints`. */
-    std::vector<ObservationSet> envWalk;
-
-    /** Trace-continuing anchor: the cur the walker's fold has reached.
-        Advanced by commitEdge. Starts at ∅. */
-    TracingDecisionGraph::SetHash envCur{TracingDecisionGraph::emptySetHash()};
-
     /** Dedup committed edges within this walk (XOR-fold of
-        element hashes within the edge). Prevents double-folding a
-        shared-prefix edge when the walker's dispatch re-visits it. */
+        element hashes within the edge). addFact is idempotent, so
+        this is a perf shortcut to skip the drain loop on repeats. */
     std::unordered_set<Hash> committedEdgeFingerprints;
 
     /** Memoize requestHash -> responseHash for stable requests within

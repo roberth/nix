@@ -64,13 +64,6 @@ TracingReplayEvaluator::walk(
        from currentProxy). Switching walks = switching active cell. */
     std::shared_ptr<QState> qState = std::make_shared<QState>();
     qState->currentQ = selectorHash;
-    /* Task #175: walk-local envWalk / envCur / responseFor /
-       committedEdgeFingerprints live directly on qState. Fresh per
-       walk — sharing across walks (previous parent-chain inheritance)
-       leaked sibling walks' terminalCur into each other's startCur,
-       producing false-positive Terminal hits without dispatching any
-       Fact (cb-two-sibling-distinct-callbacks: 84 instead of 141).
-       Docs' "session" = writer lifetime; these are per-walk. */
     if (cell) {
         cell->qState = qState;
         /* #177: back-pointer to the cell so writer-side cell.factSetHash()
@@ -78,73 +71,33 @@ TracingReplayEvaluator::walk(
         qState->cell = cell;
     }
 
-    /* Aliases for readability — walk-local fields directly on qState. */
-    auto & envWalk = qState->envWalk;
-    auto & envCur = qState->envCur;
     auto & responseFor = qState->responseFor;
     auto & committedEdgeFingerprints = qState->committedEdgeFingerprints;
-    /* Per-edge buffer: dispatch() appends facts here; the
-       history-loop promotes the buffer to a cumulative envWalk
-       edge on commit (via commitEdge) or discards it on reject.
-       Without the buffer, rejected-edge facts would pollute
-       envWalk and throw off the cell-chain state hash computations. */
     auto & pendingEdgeObservations = qState->pendingEdgeObservations;
 
     auto commitEdge = [&]() {
-        /* 1:1 alignment with writer's envWalk: writer inserts each
-           cb-apply's ε obs as a SEPARATE env edge at its
-           `insertionIndex`, not bundled with the real-obs edge that
-           triggered it. Walker's dispatch() pushes ε obs (fromHash=0)
-           into `pendingEdgeObservations` alongside real obs of the
-           same Asks edge — we need to split them at commit time so
-           each ε lives in its own edge, matching writer's layout.
-
-           Split: partition pending obs into ε (fromHash=0) and real
-           (non-zero fromHash). Commit real obs as the primary edge;
-           each ε obs becomes its own subsequent edge. */
-        std::vector<Observation> realObs;
-        std::vector<Observation> epsilonObs;
-        realObs.reserve(pendingEdgeObservations.size());
-        for (auto & obs : pendingEdgeObservations) {
-            if (obs.fromHash == Hash(HashAlgorithm::SHA256))
-                epsilonObs.push_back(std::move(obs));
-            else
-                realObs.push_back(std::move(obs));
+        if (pendingEdgeObservations.empty())
+            return;
+        Hash fingerprint(HashAlgorithm::SHA256);
+        for (const auto & f : pendingEdgeObservations)
+            fingerprint = TracingDecisionGraph::xorFactIntoHash(
+                fingerprint, f.fromHash, f.elementHash);
+        if (committedEdgeFingerprints.insert(fingerprint).second) {
+            /* #183: walker-side attribution — route each fact to
+               its attributionCell (outer probe → arg's cell), or
+               sessionRootCell (env-fact default when null). */
+            for (const auto & o : pendingEdgeObservations) {
+                auto target = o.attributionCell.lock();
+                if (!target) target = writer.sessionRootCell;
+                if (target)
+                    target->addFact(o.reqHash, o.respHash);
+            }
+            tracingCacheLog("dispatch: committed edge (obs=%zu)",
+                            pendingEdgeObservations.size());
+        } else {
+            tracingCacheLog("dispatch: edge already committed (shared prefix), skip");
         }
         pendingEdgeObservations.clear();
-
-        auto tryPush = [&](std::vector<Observation> obs) {
-            if (obs.empty()) {
-                tracingCacheLog("dispatch: edge empty, skip commit");
-                return;
-            }
-            Hash fingerprint(HashAlgorithm::SHA256);
-            for (const auto & f : obs)
-                fingerprint = TracingDecisionGraph::xorFactIntoHash(
-                    fingerprint, f.fromHash, f.elementHash);
-            if (committedEdgeFingerprints.insert(fingerprint).second) {
-                ObservationSet edge;
-                edge.observations = std::move(obs);
-                /* #183: walker-side attribution — route each fact to
-                   its attributionCell (outer probe → arg's cell), or
-                   sessionRootCell (env-fact default when null). */
-                for (const auto & o : edge.observations) {
-                    auto target = o.attributionCell.lock();
-                    if (!target) target = writer.sessionRootCell;
-                    if (target)
-                        target->addFact(o.reqHash, o.respHash);
-                }
-                envWalk.push_back(std::move(edge));
-                tracingCacheLog("dispatch: committed edge, envWalk=%zu (obs=%zu)",
-                                envWalk.size(), envWalk.back().observations.size());
-            } else {
-                tracingCacheLog("dispatch: edge already in envWalk (shared prefix), skip");
-            }
-        };
-
-        tryPush(std::move(realObs));
-        for (auto & obs : epsilonObs)
-            tryPush({std::move(obs)});
     };
 
     /* Dispatcher: Request hash → Response hash. Memoised in
@@ -313,32 +266,19 @@ TracingReplayEvaluator::walk(
 
     std::optional<TracingDecisionGraph::WalkHit> walkHit;
 
-    /* === Trace-discovering attempt ===
-       Per-walk scoping: save session envWalk, reset to empty, do
-       parent-anchored + walk-from-∅ attempts, restore session state
-       on exit. Trace-discovering's per-Q walk builds its own local
-       envWalk; it does not update the session envCur (per-Q state
-       is not the session-cumulative point).
-
-       See `doc/design/tracing-eval-cache.md` §Replay strategies for
-       the reasoning. */
-    auto savedEnvWalk = std::move(envWalk);
-    envWalk.clear();
+    /* Per-walk scope: reset committedEdgeFingerprints to empty for the
+       walk, restore on exit so nested walks don't share dedup state. */
     auto savedFingerprints = std::move(committedEdgeFingerprints);
     committedEdgeFingerprints.clear();
     struct WalkScope
     {
-        std::vector<ObservationSet> & envWalk;
         std::unordered_set<Hash> & committedEdgeFingerprints;
-        std::vector<ObservationSet> savedEnvWalk;
         std::unordered_set<Hash> savedFingerprints;
         ~WalkScope()
         {
-            envWalk = std::move(savedEnvWalk);
             committedEdgeFingerprints = std::move(savedFingerprints);
         }
-    } walkScope{envWalk, committedEdgeFingerprints,
-                std::move(savedEnvWalk), std::move(savedFingerprints)};
+    } walkScope{committedEdgeFingerprints, std::move(savedFingerprints)};
 
     /* Walk with two anchor candidates in order:
        1. Parent TracingReplayObject's terminalCur — the structural-anchor
@@ -476,8 +416,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
            higher-order step 3 returning stale 6 when outer changed
            from `g 5` to `g 10`). */
         if (auto resolver = inner->getOuterResolver()) {
-            std::vector<ObservationSet> empty;
-            if (auto live = tryResolveOuterResolverProxy(*resolver, idHash, empty, &decisionGraph)) {
+            if (auto live = tryResolveOuterResolverProxy(*resolver, idHash, &decisionGraph)) {
                 tracingCacheLog(
                     "resolve %s: not in pool — found live-proxy registration",
                     idStr.substr(0, 12));
