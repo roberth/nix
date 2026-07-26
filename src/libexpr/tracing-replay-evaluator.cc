@@ -1215,10 +1215,15 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     /* #181: query-space identity — use SelectorApply's Q hash so
        downstream applies see fn->getStateHashHex() = this Q hash
        (matches cold's TE::apply where triePos.queryHashStr =
-       qh.selectorHash from writer.logResult). */
+       qh.selectorHash from writer.logResult).
+       factSetHash = cell.factSetHash() so downstream getter
+       direct-lookups anchor at the caller's cell (matches cold's
+       logQueryResult anchor = triePos.factSetHash of the parent
+       TracingObject wrapping the apply result). */
     TriePosition triePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
         .queryHashStr = applySelectorHash.to_string(HashFormat::Base16, false),
+        .factSetHash = cell->factSetHash(),
     };
     if (applyLookup) {
         try {
