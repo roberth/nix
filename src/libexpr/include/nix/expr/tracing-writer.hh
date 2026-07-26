@@ -363,7 +363,6 @@ public:
             qj.dump());
         auto qState = std::make_shared<QState>();
         qState->currentQ = selectorHash;
-        qState->payloadTemplate = trace::SelectorVariant{query};
         if (cell) {
             cell->qState = qState;
             qState->cell = cell;
@@ -406,7 +405,6 @@ public:
         (void) fromSubjectArgAncestry;
         auto qState = std::make_shared<QState>();
         qState->currentQ = selectorHash;
-        qState->payloadTemplate = trace::SelectorVariant{query};
         /* #178: Q evolution retires. fromSubject / precondition-fold /
            payloadTemplate.from rewriting all gone. Q hashes stable
            per operation; cur at (Q, cur) discriminates. */

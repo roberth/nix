@@ -53,41 +53,14 @@ struct QState
         obvious cycle (cell holds shared_ptr<QState>). */
     std::weak_ptr<const ArgCell> cell;
 
-    /** Selector hash at the current position of Q's own chain.
-        Evolves as each observation attributed to this cell folds
-        into `perQEnvWalk`, driving `fromSubject`'s state hash and
-        thus the `from` field of the payload. */
+    /** Selector hash for this Q. Stable under #178 — no evolution;
+        the same Q hash for the whole invocation. */
     Hash currentQ{HashAlgorithm::SHA256};
 
-    /** Selector payload template. `from` gets rewritten as
-        `fromSubject`'s state advances; re-hashing gives `currentQ`. */
-    trace::SelectorVariant payloadTemplate;
-
-    /** Subject whose state hash drives Q evolution. Not set for
-        root selectors or selectors whose `from` is a fixed hash
-        (state does not evolve). */
-    std::optional<Subject> fromSubject;
-
-    /** `argAncestry` argument to `stateHashAt(fromSubject, ...,
-        perQEnvWalk, ...)`. */
-    Hash fromSubjectArgAncestry{HashAlgorithm::SHA256};
-
-    /** Cached fromSubject state hash at last recomputation. Compared
-        to a fresh compute after each observation to detect Q
-        evolution without re-hashing every time. */
-    Hash fromSubjectLastState{HashAlgorithm::SHA256};
-
     /** This Selector's own observation chain. Every observation
-        attributed to this cell appends here.
-
-        Q's `from` is derived from
-        `stateHashAt(fromSubject, argAncestry, perQEnvWalk,
-        perQEnvWalk.size())` — using THIS cell's chain, not
-        session-wide observations from other cells. Preserves the
-        same-shape-collapse property: two invocations of the same
-        Selector against the same fromSubject-initial-state evolve
-        to the same finalQ because they see the same fold from their
-        own chains. */
+        attributed to this cell appends here. Retained for the
+        walker's per-Q dispatch bookkeeping; state-hash evolution
+        that used to read this vector retired per #178. */
     std::vector<ObservationSet> perQEnvWalk;
 
     /** The cur under which this Q's next Ask row keys. Under the

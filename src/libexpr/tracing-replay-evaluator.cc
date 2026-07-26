@@ -67,10 +67,12 @@ TracingReplayEvaluator::walk(
        from currentProxy). Switching walks = switching active cell. */
     std::shared_ptr<QState> qState = std::make_shared<QState>();
     qState->currentQ = selectorHash;
-    if (payloadTemplate)
-        qState->payloadTemplate = *payloadTemplate;
-    qState->fromSubject = fromSubject;
-    qState->fromSubjectArgAncestry = fromSubjectArgAncestry;
+    /* #178: payloadTemplate / fromSubject / fromSubjectArgAncestry
+       ignored (Q evolution retired). Params kept for source-compat
+       until callers are updated. */
+    (void) payloadTemplate;
+    (void) fromSubject;
+    (void) fromSubjectArgAncestry;
     /* Task #175: walk-local envWalk / envCur / responseFor /
        committedEdgeFingerprints live directly on qState. Fresh per
        walk — sharing across walks (previous parent-chain inheritance)
@@ -81,56 +83,15 @@ TracingReplayEvaluator::walk(
     if (cell) {
         cell->qState = qState;
         /* #177: back-pointer to the cell so writer-side cell.factSetHash()
-           reads and follow-up state-hash lookups can locate the cell.
-           Walker's envCur intentionally stays at ∅ — walkers don't
-           write to cell state; walker's local cur in decisionGraph.walk
-           accumulates from 0 by XOR-ing dispatched facts. */
+           reads and follow-up state-hash lookups can locate the cell. */
         qState->cell = cell;
     }
 
-    /* Walker-side B11 mirror: seed perQEnvWalk from current envWalk
-       so recomputeQ derives applyResult (and other fromSubject) state
-       at the same K cold's writer had at logSelector.
-
-       Trace-continuing: envWalk carries the session-cumulative
-       observations that led to this cur — cold's writer folded those
-       into aq.perQEnvWalk via the B11 precondition-fold at push, so
-       cold's Q_initial reflects K = envWalk.size() state. Walker's
-       initial perQEnvWalk must mirror that or `recomputeQ` derives Q
-       at K=0, diverging on the first Q-evolution check.
-
-       Trace-discovering: envWalk gets cleared by WalkScope; walker
-       naturally folds landing-chain edges into perQEnvWalk from ∅.
-       That case doesn't seed at walk-start (envWalk is still non-empty
-       here); the clear that happens after this seeding is followed by
-       a matching perQEnvWalk clear at the trace-discovering block.
-
-       Also mirror cold's initial fromSubjectLastState: state hash of
-       fromSubject at the current seeded perQEnvWalk. recomputeQ only
-       rewrites payload.from when state MOVES from lastState — a
-       caller-set payload.from that doesn't equal lastState (because
-       caller used a different accumulator, e.g. applyContext) is
-       preserved as long as no obs fold changes the subject's state
-       via perQEnvWalk. */
-    if (qState->fromSubject) {
-        qState->perQEnvWalk = qState->envWalk;
-        qState->fromSubjectLastState = stateHashAt(
-            *qState->fromSubject, qState->fromSubjectArgAncestry,
-            qState->perQEnvWalk, qState->perQEnvWalk.size());
-    }
     /* Aliases for readability — walk-local fields directly on qState. */
     auto & envWalk = qState->envWalk;
     auto & envCur = qState->envCur;
     auto & responseFor = qState->responseFor;
     auto & committedEdgeFingerprints = qState->committedEdgeFingerprints;
-    /* Task #110 B1: per-Q chain observation history for this walk,
-       matching the writer's ActiveSelector::perQEnvWalk basis. commitEdge
-       appends to this in addition to session envWalk. recomputeQ
-       reads from this so walker Q evolution matches writer's.
-
-       Phase F: the vector lives on qState (cell's or local). We hold
-       a shared_ptr to qState so recomputeQ's closure captures shared
-       ownership and can dereference perQEnvWalk safely. */
     auto & perQEnvWalk = qState->perQEnvWalk;
     /* Per-edge buffer: dispatch() appends facts here; the
        history-loop promotes the buffer to a cumulative envWalk
