@@ -383,41 +383,38 @@ void to_json(nlohmann::json & j, const SelectorGetAttr & q)
 {
     j = nlohmann::json{
         {"tag", SelectorGetAttr::tag},
-        {"name", q.name}, {"from", q.from}, {"perArgFrame", q.perArgFrame}};
+        {"name", q.name}, {"from", q.from}};
 }
 
 void from_json(const nlohmann::json & j, SelectorGetAttr & q)
 {
     j.at("name").get_to(q.name);
     j.at("from").get_to(q.from);
-    j.at("perArgFrame").get_to(q.perArgFrame);
 }
 
 void to_json(nlohmann::json & j, const SelectorGetListElem & q)
 {
     j = nlohmann::json{
         {"tag", SelectorGetListElem::tag},
-        {"from", q.from}, {"index", q.index}, {"perArgFrame", q.perArgFrame}};
+        {"from", q.from}, {"index", q.index}};
 }
 
 void from_json(const nlohmann::json & j, SelectorGetListElem & q)
 {
     j.at("from").get_to(q.from);
     j.at("index").get_to(q.index);
-    j.at("perArgFrame").get_to(q.perArgFrame);
 }
 
 void to_json(nlohmann::json & j, const SelectorGetFunctionInfo & q)
 {
     j = nlohmann::json{
         {"tag", SelectorGetFunctionInfo::tag},
-        {"from", q.from}, {"perArgFrame", q.perArgFrame}};
+        {"from", q.from}};
 }
 
 void from_json(const nlohmann::json & j, SelectorGetFunctionInfo & q)
 {
     j.at("from").get_to(q.from);
-    j.at("perArgFrame").get_to(q.perArgFrame);
 }
 
 void to_json(nlohmann::json & j, const ResultFunctionInfo & r)
@@ -436,47 +433,23 @@ void to_json(nlohmann::json & j, const SelectorGetWHNF & q)
 {
     j = nlohmann::json{
         {"tag", SelectorGetWHNF::tag},
-        {"from", q.from}, {"perArgFrame", q.perArgFrame}};
+        {"from", q.from}};
 }
 
 void from_json(const nlohmann::json & j, SelectorGetWHNF & q)
 {
     j.at("from").get_to(q.from);
-    j.at("perArgFrame").get_to(q.perArgFrame);
 }
 
 void to_json(nlohmann::json & j, const SelectorApply & q)
 {
     j = nlohmann::json{{"tag", SelectorApply::tag}, {"fn", q.fn}, {"arg", q.arg}};
-    /* Per-arg mode (= ApplyResultSubject state hash computation under
-       per-arg centralization) emits fromStateHashes + fn/argPath + root
-       indices. Legacy direct mode leaves them empty. */
-    if (!q.fromStateHashes.empty())
-        j["fromStateHashes"] = q.fromStateHashes;
-    if (!q.fnPath.steps.empty())
-        j["fnPath"] = q.fnPath;
-    if (!q.argPath.steps.empty())
-        j["argPath"] = q.argPath;
-    if (q.fnRootIndex != 0)
-        j["fnRootIndex"] = q.fnRootIndex;
-    if (q.argRootIndex != 0)
-        j["argRootIndex"] = q.argRootIndex;
 }
 
 void from_json(const nlohmann::json & j, SelectorApply & q)
 {
     j.at("fn").get_to(q.fn);
     j.at("arg").get_to(q.arg);
-    if (j.contains("fromStateHashes"))
-        j.at("fromStateHashes").get_to(q.fromStateHashes);
-    if (j.contains("fnPath"))
-        j.at("fnPath").get_to(q.fnPath);
-    if (j.contains("argPath"))
-        j.at("argPath").get_to(q.argPath);
-    if (j.contains("fnRootIndex"))
-        j.at("fnRootIndex").get_to(q.fnRootIndex);
-    if (j.contains("argRootIndex"))
-        j.at("argRootIndex").get_to(q.argRootIndex);
 }
 
 void to_json(nlohmann::json & j, const SelectorCallbackApply & q)
@@ -485,7 +458,6 @@ void to_json(nlohmann::json & j, const SelectorCallbackApply & q)
         {"tag", SelectorCallbackApply::tag},
         {"fn", q.fn},
         {"argObsSet", q.argObsSet},
-        {"perArgFrame", q.perArgFrame},
     };
 }
 
@@ -493,7 +465,6 @@ void from_json(const nlohmann::json & j, SelectorCallbackApply & q)
 {
     j.at("fn").get_to(q.fn);
     j.at("argObsSet").get_to(q.argObsSet);
-    j.at("perArgFrame").get_to(q.perArgFrame);
 }
 
 // ---------------------------------------------------------------------------

@@ -396,8 +396,7 @@ struct SelectorGetAttr
 {
     static constexpr std::string_view tag = "getAttr";
     std::string name;
-    SelectorLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by perArgFrame.fromStateHashes)
-    PerArgFrame perArgFrame;
+    SelectorLeaf from;   ///< Parent Q identity (stable under #178).
     auto operator<=>(const SelectorGetAttr &) const = default;
 };
 DECLARE_SELECTOR_RESULT(SelectorGetAttr, ResultWHNF)
@@ -409,9 +408,8 @@ DECLARE_SELECTOR_RESULT(SelectorGetAttr, ResultWHNF)
 struct SelectorGetListElem
 {
     static constexpr std::string_view tag = "getListElem";
-    SelectorLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by perArgFrame.fromStateHashes)
+    SelectorLeaf from;   ///< Parent Q identity (stable under #178).
     size_t index;
-    PerArgFrame perArgFrame;
     auto operator<=>(const SelectorGetListElem &) const = default;
 };
 DECLARE_SELECTOR_RESULT(SelectorGetListElem, ResultWHNF)
@@ -426,7 +424,6 @@ struct SelectorGetWHNF
 {
     static constexpr std::string_view tag = "getWHNF";
     SelectorLeaf from;
-    PerArgFrame perArgFrame;
     auto operator<=>(const SelectorGetWHNF &) const = default;
 };
 DECLARE_SELECTOR_RESULT(SelectorGetWHNF, ResultWHNF)
@@ -435,8 +432,7 @@ DECLARE_SELECTOR_RESULT(SelectorGetWHNF, ResultWHNF)
 struct SelectorGetFunctionInfo
 {
     static constexpr std::string_view tag = "getFunctionInfo";
-    SelectorLeaf from;   ///< Parent object identity (legacy single-`from`; superseded by perArgFrame.fromStateHashes)
-    PerArgFrame perArgFrame;
+    SelectorLeaf from;   ///< Parent Q identity (stable under #178).
     auto operator<=>(const SelectorGetFunctionInfo &) const = default;
 };
 
@@ -450,35 +446,13 @@ struct ResultFunctionInfo
 
 DECLARE_SELECTOR_RESULT(SelectorGetFunctionInfo, ResultFunctionInfo)
 
-/** Apply a function to an argument.
-
-    Two construction modes, with the same content-addressed semantics:
-
-    - **Legacy direct mode** populates `fn`/`arg` with the constituents'
-      scope state ids. Used by the cb-apply recording on the writer
-      side, where the apply's `fn` and `arg` are already content-addressed
-      leaf-form Objects (TracingObject, OuterObject).
-
-    - **Per-arg path-encoded mode** populates `fromStateHashes` with the root
-      cb_args' state hashes and uses `fnPath`/`argPath`+`fnRootIndex`/`argRootIndex`
-      to encode how fn and arg are reached from those roots. Used by
-      subject-id to compute an ApplyResultSubject's state hash without needing
-      standalone derived-subject state hashes — see
-      `content-identity-via-asks.md` §Principle 3 (per-arg
-      centralization). `fn`/`arg` stay empty in this mode.
-
-    Both modes share the same JSON envelope; consumers distinguish by
-    whether `fromStateHashes` is populated. */
+/** Apply a function to an argument. `fn`/`arg` carry the
+    constituents' subject ids (stable under #178). */
 struct SelectorApply
 {
     static constexpr std::string_view tag = "apply";
-    SelectorLeaf fn;  ///< Function identity (legacy direct mode)
-    SelectorLeaf arg; ///< Argument identity (legacy direct mode)
-    std::vector<SelectorLeaf> fromStateHashes;  ///< Root cb_arg state hashes (per-arg mode)
-    PathExpr fnPath;                  ///< Path from `fromStateHashes[fnRootIndex]` to fn
-    PathExpr argPath;                 ///< Path from `fromStateHashes[argRootIndex]` to arg
-    size_t fnRootIndex{0};
-    size_t argRootIndex{0};
+    SelectorLeaf fn;
+    SelectorLeaf arg;
     auto operator<=>(const SelectorApply &) const = default;
 };
 DECLARE_SELECTOR_RESULT(SelectorApply, ResultWHNF)
@@ -509,18 +483,11 @@ DECLARE_SELECTOR_RESULT(SelectorApply, ResultWHNF)
 struct SelectorCallbackApply
 {
     static constexpr std::string_view tag = "callbackApply";
-    /** Function identity (state hash of the callback), with the
-        contra-arg's `callArgAncestry` attached as leaf metadata —
-        that's the ancestry the walker uses when constructing the
-        ReplayCallbackArg's Subject. Kept on the leaf, not as a
-        separate top-level field, because it is per-value context of
-        `fn` for this apply and doesn't belong at envelope level. */
+    /** Function identity — carries fn's subject id and its
+        `callArgAncestry` as leaf metadata (used by the walker to
+        reconstruct the ReplayCallbackArg's Subject). */
     SelectorLeaf fn;
     std::string argObsSet;     ///< Content hash of the observation set
-    /** fn's per-arg description — the cb_arg roots and the path from
-        them to fn's Subject. Walker uses these to resolve fn live via
-        subject-navigation when the state-hash-only lookup misses. */
-    PerArgFrame perArgFrame;
     auto operator<=>(const SelectorCallbackApply &) const = default;
 };
 DECLARE_SELECTOR_RESULT(SelectorCallbackApply, ResultWHNF)

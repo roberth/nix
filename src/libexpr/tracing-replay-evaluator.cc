@@ -933,13 +933,8 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                 auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
                 for (const auto & obs : *obsSet)
                     obsSetMap->emplace(obs.selectorHash, obs.responsePayload);
-                /* Prefer subject-navigation: q.perArgFrame carries the
-                   arg-side root state hashes and the path to fn's
-                   Subject. Fall back to `resolveStateHash(fnHex)` when
-                   perArgFrame is empty (older payloads). */
-                std::shared_ptr<Object> fnObj = resolveParent(q.perArgFrame, q.fn);
-                if (!fnObj)
-                    fnObj = resolveStateHash(fnHex, ctx);
+                /* #178: perArgFrame retired; resolve fn by state hash. */
+                std::shared_ptr<Object> fnObj = resolveStateHash(fnHex, ctx);
                 if (!fnObj) {
                     tracingCacheLog(
                         "callbackApply: fn resolution miss (fn=%s)",

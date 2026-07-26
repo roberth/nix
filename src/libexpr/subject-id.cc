@@ -158,29 +158,14 @@ trace::SelectorApply makeApplyResultQuery(
     const Subject & applyResultSubject, const Hash & argAncestry,
     const std::vector<ObservationSet> & history, size_t step)
 {
-    if (!std::holds_alternative<ApplyResultSubject>(applyResultSubject.data))
-        throw Error("makeApplyResultQuery: subject is not an ApplyResultSubject");
-
-    auto par = pathAndRootsFromSubject(applyResultSubject);
-    if (par.path.steps.size() != 1
-        || par.path.steps[0].kind != trace::PathStep::Kind::Apply
-        || !par.path.steps[0].fnPath
-        || !par.path.steps[0].argPath)
-        throw Error("makeApplyResultQuery: unexpected path shape");
-    const auto & applyStep = par.path.steps[0];
-
-    trace::SelectorApply q;
     (void) history;
     (void) step;
-    q.fromStateHashes.reserve(par.roots.size());
-    for (auto & root : par.roots) {
-        auto cid = subjectId(root, argAncestry);
-        q.fromStateHashes.emplace_back(hashHex(cid));
-    }
-    q.fnPath = *applyStep.fnPath;
-    q.argPath = *applyStep.argPath;
-    q.fnRootIndex = applyStep.fnRootIndex;
-    q.argRootIndex = applyStep.argRootIndex;
+    auto * ar = std::get_if<ApplyResultSubject>(&applyResultSubject.data);
+    if (!ar || !ar->fn || !ar->arg)
+        throw Error("makeApplyResultQuery: subject is not an ApplyResultSubject");
+    trace::SelectorApply q;
+    q.fn = hashHex(subjectId(*ar->fn, argAncestry));
+    q.arg = hashHex(subjectId(*ar->arg, argAncestry));
     return q;
 }
 
