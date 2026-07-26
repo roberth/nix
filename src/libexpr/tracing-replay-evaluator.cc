@@ -83,7 +83,6 @@ TracingReplayEvaluator::walk(
     auto & envCur = qState->envCur;
     auto & responseFor = qState->responseFor;
     auto & committedEdgeFingerprints = qState->committedEdgeFingerprints;
-    auto & perQEnvWalk = qState->perQEnvWalk;
     /* Per-edge buffer: dispatch() appends facts here; the
        history-loop promotes the buffer to a cumulative envWalk
        edge on commit (via commitEdge) or discards it on reject.
@@ -135,9 +134,7 @@ TracingReplayEvaluator::walk(
                     if (target)
                         target->addFact(o.reqHash, o.respHash);
                 }
-                envWalk.push_back(edge);
-                /* B1: also append to per-Q chain for Q evolution basis. */
-                perQEnvWalk.push_back(std::move(edge));
+                envWalk.push_back(std::move(edge));
                 tracingCacheLog("dispatch: committed edge, envWalk=%zu (obs=%zu)",
                                 envWalk.size(), envWalk.back().observations.size());
             } else {
@@ -329,12 +326,6 @@ TracingReplayEvaluator::walk(
     envWalk.clear();
     auto savedFingerprints = std::move(committedEdgeFingerprints);
     committedEdgeFingerprints.clear();
-    /* Mirror the envWalk clear: walker's perQEnvWalk seeded at
-       walk-start from envWalk; trace-discovering now starts from ∅ on
-       envWalk, so perQEnvWalk must also start from ∅ (landing chain
-       will refold naturally). Without this, the seeded prefix stays
-       and folds double against landing-chain edges. */
-    qState->perQEnvWalk.clear();
     struct WalkScope
     {
         std::vector<ObservationSet> & envWalk;

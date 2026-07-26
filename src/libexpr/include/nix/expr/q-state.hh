@@ -57,13 +57,7 @@ struct QState
         the same Q hash for the whole invocation. */
     Hash currentQ{HashAlgorithm::SHA256};
 
-    /** This Selector's own observation chain. Every observation
-        attributed to this cell appends here. Retained for the
-        walker's per-Q dispatch bookkeeping; state-hash evolution
-        that used to read this vector retired per #178. */
-    std::vector<ObservationSet> perQEnvWalk;
-
-    /** The cur under which this Q's next Ask row keys. Under the
+/** The cur under which this Q's next Ask row keys. Under the
         multiplexer model (Phase E, user 2026-07-25/26): each active
         Q tracks its own chain independently — facts broadcast to all
         active Qs, and each Q's Ask edge inserts at its own prevCur,
