@@ -139,16 +139,11 @@ public:
         TriePosition.factSetHash and use it as their structural-anchor
         candidate startCur. */
     struct WalkResult { std::string payload; Hash resultNodeHash; Hash terminalCur; };
-    /* Task #110: if `payloadTemplate` and `fromSubject` are provided,
-       the walker will re-derive Q's `from` field (via `stateHashAt`)
-       after each Ask-edge commit, and lookup subsequent Ask/Terminal
-       rows at the evolved Q. Matches the writer's Q-evolution protocol. */
+    /* #178: Q evolution retired. Q hashes are stable per operation;
+       walker doesn't re-derive `from` fields during traversal. */
     std::optional<WalkResult> walk(
         const Hash & selectorHash,
         std::shared_ptr<Object> currentProxy = nullptr,
-        std::optional<trace::SelectorVariant> payloadTemplate = std::nullopt,
-        std::optional<Subject> fromSubject = std::nullopt,
-        Hash fromSubjectArgAncestry = Hash(HashAlgorithm::SHA256),
         std::shared_ptr<const ArgCell> cell = nullptr);
 
     bool isReadOnly() const override;

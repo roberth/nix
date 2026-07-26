@@ -39,9 +39,6 @@ std::optional<TracingReplayEvaluator::WalkResult>
 TracingReplayEvaluator::walk(
     const Hash & selectorHash,
     std::shared_ptr<Object> currentProxy,
-    std::optional<trace::SelectorVariant> payloadTemplate,
-    std::optional<Subject> fromSubject,
-    Hash fromSubjectArgAncestry,
     std::shared_ptr<const ArgCell> cell)
 {
     /* Task #110 B6: the SuppressApplyBoundary guard used to wrap the
@@ -67,12 +64,6 @@ TracingReplayEvaluator::walk(
        from currentProxy). Switching walks = switching active cell. */
     std::shared_ptr<QState> qState = std::make_shared<QState>();
     qState->currentQ = selectorHash;
-    /* #178: payloadTemplate / fromSubject / fromSubjectArgAncestry
-       ignored (Q evolution retired). Params kept for source-compat
-       until callers are updated. */
-    (void) payloadTemplate;
-    (void) fromSubject;
-    (void) fromSubjectArgAncestry;
     /* Task #175: walk-local envWalk / envCur / responseFor /
        committedEdgeFingerprints live directly on qState. Fresh per
        walk — sharing across walks (previous parent-chain inheritance)
@@ -1042,8 +1033,7 @@ TracingReplayEvaluator::lookup(const Q & query, std::shared_ptr<Object> currentP
        Phase F: forward the cell so walker's per-walk state lives on
        cell.qState. Callers with a cell (evalFile/evalExpr root cell,
        apply's applyResult cell) pass it; others pass nullptr. */
-    auto walkResult = walk(selectorHash, std::move(currentProxy), trace::SelectorVariant{query},
-                           std::nullopt, Hash(HashAlgorithm::SHA256), std::move(cell));
+    auto walkResult = walk(selectorHash, std::move(currentProxy), std::move(cell));
     if (!walkResult)
         return std::nullopt;
     tracingCacheLog("replay hit: %s", Q::tag);
