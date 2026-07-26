@@ -78,8 +78,9 @@ trace::ResultWHNF & OuterObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    trace::SelectorGetWHNF q{std::string{}};
-    stampPerArgFields(q, subject, argAncestry);
+    /* #183: q.from = parent's Q-space identity so distinct WHNF
+       probes on distinct proxies produce distinct Q hashes. */
+    trace::SelectorGetWHNF q{getStateHashHex().value_or(std::string{})};
     auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
@@ -183,8 +184,10 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
         /* Not a list, or index out of bounds — delegate so the
            outer's inner throws the source-positioned error. */
         return outerObj->getListElem(index);
-    trace::SelectorGetListElem q{std::string{}, index};
-    stampPerArgFields(q, subject, argAncestry);
+    /* #183: q.from = parent's Q-space identity. */
+    auto parentQHex = getStateHashHex().value_or(std::string{});
+    trace::SelectorGetListElem q{parentQHex, index};
+    auto childQHex = TracingDecisionGraph::computeSelectorHash(q).to_string(HashFormat::Base16, false);
     auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
@@ -200,6 +203,7 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     child->withInheritedScope(argAncestry);
+    child->withProducingQHex(std::move(childQHex));
     child->cachedWHNF = *r;
     return child;
 }
@@ -233,8 +237,8 @@ RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<OuterRe
 
 std::optional<FunctionInfo> OuterObject::getFunctionInfo()
 {
-    trace::SelectorGetFunctionInfo q{std::string{}};
-    stampPerArgFields(q, subject, argAncestry);
+    /* #183: q.from = parent's Q-space identity. */
+    trace::SelectorGetFunctionInfo q{getStateHashHex().value_or(std::string{})};
     auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
