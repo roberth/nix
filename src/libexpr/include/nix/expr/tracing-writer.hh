@@ -69,49 +69,25 @@ class TracingWriter
     /* decision-graph index. nullptr disables decision-graph
        recording (sink-only mode). */
     TracingDecisionGraph * decisionGraph;
-    /* global factSet, accumulating monotonically across the
-       session per the design doc. Sampled at each logResult and
-       fed into decisionGraph->record(). Only d>0 (Request, Response)
-       Facts are added; d=0 Q→R pairs are not (the history dispatch
-       can't fetch them).
 
-       The factSet hash is maintained incrementally via XOR-fold on
-       each new Fact, and a seenRequests set dedupes per request.
-       This makes the per-logResult cost O(1) instead of O(|factSet|)
-       for the hash computation: insertFactSet (which would re-sort
-       and re-fold all members) is bypassed via installFactSet. */
+    /* Dedup guard for fact insertion — skips XOR-cancelling duplicates. */
     std::unordered_set<Hash> seenRequests;
-    /* request → response lookup, maintained as facts arrive.
-       Handed to record() by reference so it doesn't rebuild
-       O(N) per call. */
+
+    /* request → response lookup, maintained as facts arrive. */
     std::unordered_map<Hash, Hash> responseFor;
+
     /* Incremental trie of allRequests; gives record() the canonical
        RequestSet hash for the whole-remaining edge in O(1). */
     TracingDecisionGraph::TrieBuilder sessionRequestsTrie;
 
     /** Currently-active cells. Each Selector push (via logSelectorOnCell
         / logRootSelectorOnCell) appends the cell; logResult pops.
-        LIFO nesting matches the evaluator's Q hierarchy. Cells carry
-        their qState (allocated at push); readers dereference
-        `cell->qState` to reach the per-Q fields (currentQ, prevCur,
-        perQEnvWalk, etc.).
-
-        Replaces the old `activeQueryStack` (vector of raw QState
-        shared_ptrs) — cells ARE the stack under the cell-migration
-        (task #179). Concurrency rationale: one active cell tree at
-        a time; switching evaluators = switching which tree is
-        active. */
+        Used at logResult to identify the completing cell whose facts
+        become the Selector's single Ask requestSet (task #183). */
     std::vector<std::shared_ptr<const ArgCell>> activeCells;
 
-    /* #183: inProgressGetters retired. Observations attribute directly
-       to their arg's cell (via addFact); Selector completion drains
-       cell + ancestor facts into a single Ask row per Selector.
-       No push/pop tracker; the cell IS the state carrier. */
-
-    /* Mirrors `seenRequests` but keyed by query hash, not fact hash.
-       record()'s slow path iterates this to build the trailing
-       remaining-edge — an Asks edge's requestSet is a set of query
-       hashes, not fact hashes. */
+    /* All request hashes ever inserted. Not deduped against seenRequests
+       (which is fact-hashed, not request-hashed). */
     std::unordered_set<Hash> allRequestHashes;
 
     /* Active cb-apply cells. `createCallbackCell` pushes a new cell
