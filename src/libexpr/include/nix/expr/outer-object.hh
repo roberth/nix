@@ -198,7 +198,7 @@ public:
         /* state hash at the empty factset, with this proxy's inherited
            argAncestry applied. For multi-edge use, callers must pass the
            relevant history via stateHashAt instead. */
-        return stateHashAfterSubject(subject, argAncestry, {});
+        return subjectId(subject, argAncestry);
     }
 
     std::optional<std::string> getStateHashHex() const override

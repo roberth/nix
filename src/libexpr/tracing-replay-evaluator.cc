@@ -517,7 +517,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                        under a real repro. */
                     assert(!std::holds_alternative<DerivedSubject>(subj->data)
                            && "resolveStateHash: DerivedSubject in cell-chain match — see task #68 investigation");
-                    auto initialStateHash = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
+                    auto initialStateHash = subjectId(*subj, argAncestry);
                     if (initialStateHash.to_string(HashFormat::Base16, false) == idStr) {
                         found = true;
                     }
@@ -531,7 +531,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                    the same filter cold's writer used when stamping a
                    fold step — no DB roundtrip needed. */
                 if (!found) {
-                    Hash cur = stateHashAt(*subj, argAncestry, extendedWalkForMatch, 0);
+                    Hash cur = subjectId(*subj, argAncestry);
                     for (const auto & edge : extendedWalkForMatch) {
                         if (found) break;
                         Hash edgeAcc(HashAlgorithm::SHA256);
@@ -555,8 +555,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
                    edge boundaries differ, only the fixed point is
                    grouping-invariant and thus safe to compare. */
                 if (!found && !extendedWalkForMatch.empty()) {
-                    Hash converged = stateHashConverged(
-                        *subj, argAncestry, extendedWalkForMatch);
+                    Hash converged = subjectId(*subj, argAncestry);
                     if (converged.to_string(HashFormat::Base16, false) == idStr)
                         found = true;
                 }
@@ -1223,7 +1222,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        edge-for-edge once all prior cb-applies' chains have been
        dispatched. */
     auto & history = writer.getD1CidasksWalk();
-    auto applyArgAncestryStateHash = stateHashAt(resultSubject, applyArgAncestry, history, history.size());
+    auto applyArgAncestryStateHash = subjectId(resultSubject, applyArgAncestry);
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);

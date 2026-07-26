@@ -404,7 +404,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
 
     /* apply-result state hash is content-only — see commentary in
        TracingEvaluator::apply. */
-    auto applyArgAncestryStateHash = stateHashAfter(resultSubject, applyArgAncestryLocal, {});
+    auto applyArgAncestryStateHash = subjectId(resultSubject, applyArgAncestryLocal);
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
 
     /* Record the apply Request payload at the subject-id hash so dispatch

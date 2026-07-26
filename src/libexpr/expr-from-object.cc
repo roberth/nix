@@ -199,7 +199,7 @@ std::shared_ptr<Object> OuterApply::run(
        walker is operating under. Do not freeze at closure-creation
        time — the argAncestry evolves, and freezing would emit stale hashes. */
     Hash argAncestry = resolverHandle->callArgAncestry;
-    auto argStateHash = stateHashAfter(argSubject, argAncestry, {});
+    auto argStateHash = subjectId(argSubject, argAncestry);
     tracingCacheLog("OuterApply::run: argAncestry=%s argStateHash=%s",
                     argAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
                     argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));
@@ -294,7 +294,7 @@ std::shared_ptr<Object> OuterApply::run(
        which the PIR docstring flags as invalid ("taking an arbitrary
        subject id by value and using it as if it's an up-to-date id
        … conflates all possible future states of the argument").
-       stateHashAtSubject(fnSubject, fnArgAncestry, {}, 0) reproduces
+       subjectId(fnSubject, fnArgAncestry) reproduces
        fnStateHash (matches cell.fnStateHashHex) at step 0, and
        evolves as observations on the fn's constituents accumulate
        during the wrapper's Q chain — so sibling callbacks whose
@@ -681,7 +681,7 @@ std::shared_ptr<Object> tryResolveOuterResolverProxy(
     (void) dg;
     for (auto & entry : resolver.liveProxies) {
         for (size_t k = 0; k <= envWalk.size(); ++k) {
-            auto stateHash = stateHashAt(entry.subject, entry.argAncestry, envWalk, k);
+            auto stateHash = subjectId(entry.subject, entry.argAncestry);
             if (stateHash == idHash)
                 return entry.obj;
         }

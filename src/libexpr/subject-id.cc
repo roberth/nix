@@ -16,14 +16,16 @@ static std::string hashHex(const Hash & h)
 
 Hash fromStateHashOf(const trace::SelectorVariant & query)
 {
+    /* #178: `from` field is a transitional artifact. Return zero when
+       absent or empty; parse when present. */
     return std::visit(
         [](const auto & q) -> Hash {
             if constexpr (requires { q.from; }) {
-                if (!q.from.isStateHash())
-                    throw Error("fromStateHashOf: query.from is not a StateHashLeaf");
+                if (!q.from.isStateHash() || q.from.stateHash().empty())
+                    return Hash(HashAlgorithm::SHA256);
                 return Hash::parseNonSRIUnprefixed(q.from.stateHash(), HashAlgorithm::SHA256);
             } else {
-                throw Error("fromStateHashOf: query type has no `from` field");
+                return Hash(HashAlgorithm::SHA256);
             }
         },
         query);
@@ -168,9 +170,11 @@ trace::SelectorApply makeApplyResultQuery(
     const auto & applyStep = par.path.steps[0];
 
     trace::SelectorApply q;
+    (void) history;
+    (void) step;
     q.fromStateHashes.reserve(par.roots.size());
     for (auto & root : par.roots) {
-        auto cid = stateHashAt(root, argAncestry, history, step);
+        auto cid = subjectId(root, argAncestry);
         q.fromStateHashes.emplace_back(hashHex(cid));
     }
     q.fnPath = *applyStep.fnPath;
@@ -180,143 +184,37 @@ trace::SelectorApply makeApplyResultQuery(
     return q;
 }
 
-Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step,
-    std::source_location caller)
+Hash subjectId(const Subject & subject, const Hash & argAncestry)
 {
-    /* #178: state-hash EVOLUTION retires — the fold loop over history
-       is dead (all callers now pass empty history and step=0). What
-       remains is the subject's initial "id" — position + argAncestry
-       for leaves, structural composition for apply results. Kept
-       under the old name for source-compat until callers rename to
-       `subjectId`.
-
-       Inheritance: `argAncestry` is the XOR of outer-argAncestry
-       state hashes. Leaf subjects (Arg, PostulatedIdempotentRead)
-       XOR `argAncestry` into their base hash. ApplyResult composes
-       constituents' ids recursively; DerivedSubject traps here (use
-       `stateHashAtSubject` for that variant). */
-    (void) history;
-    (void) step;
-    (void) caller;
+    /* #178: state-hash evolution retired. Every Subject variant
+       reduces to a structural id at the initial precondition:
+       leaves XOR argAncestry into their base; composites hash a
+       canonical shape over their constituents' ids. */
     return std::visit(
         [&](const auto & alt) -> Hash {
             using T = std::decay_t<decltype(alt)>;
             if constexpr (std::is_same_v<T, Arg>) {
                 auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
                 return TracingDecisionGraph::xorHashes(base, argAncestry);
-            } else if constexpr (std::is_same_v<T, DerivedSubject>) {
-                /* Derived subjects have no state hash — only an address
-                   (= producer query hash). Callers use `stateHashAtSubject`
-                   for Derived; reaching this branch is a bug. */
-                nix::unreachable();
-            } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
-                auto fnId = stateHashAtSubject(*alt.fn, argAncestry, {}, 0);
-                auto argId = stateHashAtSubject(*alt.arg, argAncestry, {}, 0);
-                nlohmann::json qj = trace::SelectorApply{hashHex(fnId), hashHex(argId)};
-                return hashString(HashAlgorithm::SHA256, qj.dump());
             } else if constexpr (std::is_same_v<T, PostulatedIdempotentRead>) {
                 return alt.hash;
+            } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
+                auto fnId = subjectId(*alt.fn, argAncestry);
+                auto argId = subjectId(*alt.arg, argAncestry);
+                nlohmann::json qj = trace::SelectorApply{hashHex(fnId), hashHex(argId)};
+                return hashString(HashAlgorithm::SHA256, qj.dump());
+            } else if constexpr (std::is_same_v<T, DerivedSubject>) {
+                auto parentId = subjectId(*alt.parent, argAncestry);
+                std::string s = alt.kind == DerivedSubject::Kind::GetAttr
+                    ? "getAttr:" + alt.name
+                    : "getListElem:" + std::to_string(alt.index);
+                s += "@" + hashHex(parentId);
+                return hashString(HashAlgorithm::SHA256, s);
             } else {
-                throw Error("stateHashAt: unknown subject variant");
+                throw Error("subjectId: unknown subject variant");
             }
         },
         subject.data);
-}
-
-Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history)
-{
-    return stateHashAt(subject, argAncestry, history, 0);
-}
-
-Hash stateHashConverged(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history)
-{
-    /* Flatten history into deduped observation pool keyed by
-       (fromHash, elementHash). Order within `history` is discarded —
-       the greedy partition below only reads `fromHash` for state-
-       match and XOR-folds `elementHash`, both order-insensitive. */
-    std::vector<Observation> flat;
-    std::set<std::pair<Hash, Hash>> seen;
-    for (auto & edge : history)
-        for (auto & obs : edge.observations) {
-            auto key = std::make_pair(obs.fromHash, obs.elementHash);
-            if (seen.insert(key).second) flat.push_back(obs);
-        }
-    /* Greedy state-match partition: at each round, pull every obs
-       whose fromHash == subject's current state into a synthetic
-       edge; append; recompute the subject's state; repeat until no
-       obs matches. `stateHashAt(subj, argAncestry, hypWalk, hypWalk.size())`
-       XOR-folds each edge's matching obs into the running state,
-       so state advances one round per iteration.
-
-       Termination: each non-break round consumes at least one obs
-       from `flat` (partition is non-empty when we don't break), so
-       `flat.size()` strictly decreases. Bounded by initial pool
-       size without an explicit numeric cap. */
-    std::vector<ObservationSet> hypWalk;
-    while (!flat.empty()) {
-        auto currentId = stateHashAt(subject, argAncestry, hypWalk, hypWalk.size());
-        ObservationSet partition;
-        std::vector<Observation> stillRemaining;
-        for (auto & obs : flat) {
-            if (obs.fromHash == currentId) partition.observations.push_back(obs);
-            else stillRemaining.push_back(obs);
-        }
-        if (partition.observations.empty()) break;
-        hypWalk.push_back(std::move(partition));
-        flat = std::move(stillRemaining);
-    }
-    return stateHashAt(subject, argAncestry, hypWalk, hypWalk.size());
-}
-
-Hash producerQueryHashAt(
-    const DerivedSubject & derived,
-    const Hash & argAncestry,
-    const std::vector<ObservationSet> & history,
-    size_t step)
-{
-    auto [pathToParent, parentRoots] = pathAndRootsFromSubject(*derived.parent);
-    std::vector<trace::SelectorLeaf> fromStateHashes;
-    fromStateHashes.reserve(parentRoots.size());
-    for (auto & root : parentRoots) {
-        auto rootStateHash = stateHashAt(root, argAncestry, history, step);
-        fromStateHashes.emplace_back(hashHex(rootStateHash));
-    }
-    auto fromLeaf = fromStateHashes.empty() ? trace::SelectorLeaf("") : fromStateHashes[0];
-    nlohmann::json qj;
-    if (derived.kind == DerivedSubject::Kind::GetAttr) {
-        trace::SelectorGetAttr q{derived.name, fromLeaf};
-        q.perArgFrame.path = pathToParent;
-        q.perArgFrame.fromStateHashes = fromStateHashes;
-        qj = q;
-    } else {
-        trace::SelectorGetListElem q{fromLeaf, derived.index};
-        q.perArgFrame.path = pathToParent;
-        q.perArgFrame.fromStateHashes = fromStateHashes;
-        qj = q;
-    }
-    return hashString(HashAlgorithm::SHA256, qj.dump());
-}
-
-Hash producerQueryHashAfter(
-    const DerivedSubject & derived, const Hash & argAncestry, const std::vector<ObservationSet> & history)
-{
-    return producerQueryHashAt(derived, argAncestry, history, history.size());
-}
-
-Hash stateHashAtSubject(
-    const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step)
-{
-    /* Polymorphic dispatch: DerivedSubjects have no own state hash,
-       so we key them by their producer query's hash instead. Every
-       other variant delegates to the strict `stateHashAt`. */
-    if (auto * derived = std::get_if<DerivedSubject>(&subject.data))
-        return producerQueryHashAt(*derived, argAncestry, history, step);
-    return stateHashAt(subject, argAncestry, history, step);
-}
-
-Hash stateHashAfterSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history)
-{
-    return stateHashAtSubject(subject, argAncestry, history, history.size());
 }
 
 std::string describe(const Subject & subject)

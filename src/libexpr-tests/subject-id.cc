@@ -46,15 +46,15 @@ static Hash noScope()
 
 TEST(CidAsks, ArgInitialSubjectHashIsDeterministic)
 {
-    auto a = stateHashAfter(argAt(0), noScope(), {});
-    auto b = stateHashAfter(argAt(0), noScope(), {});
+    auto a = subjectId(argAt(0), noScope());
+    auto b = subjectId(argAt(0), noScope());
     EXPECT_EQ(a, b);
 }
 
 TEST(CidAsks, DifferentDepthsHaveDifferentInitialIds)
 {
-    auto a = stateHashAfter(argAt(0), noScope(), {});
-    auto b = stateHashAfter(argAt(1), noScope(), {});
+    auto a = subjectId(argAt(0), noScope());
+    auto b = subjectId(argAt(1), noScope());
     EXPECT_NE(a, b);
 }
 
@@ -66,8 +66,8 @@ TEST(CidAsks, DerivedSubjectIncludesParentInitial)
     auto x = getAttrOn(argAt(0), "x");
     auto y = getAttrOn(argAt(0), "y");
     auto xOn1 = getAttrOn(argAt(1), "x");
-    EXPECT_NE(stateHashAfterSubject(x, noScope(), {}), stateHashAfterSubject(y, noScope(), {}));
-    EXPECT_NE(stateHashAfterSubject(x, noScope(), {}), stateHashAfterSubject(xOn1, noScope(), {}));
+    EXPECT_NE(subjectId(x, noScope()), subjectId(y, noScope()));
+    EXPECT_NE(subjectId(x, noScope()), subjectId(xOn1, noScope()));
 }
 
 TEST(CidAsks, ApplyResultDistinguishesFnAndArg)
@@ -75,7 +75,7 @@ TEST(CidAsks, ApplyResultDistinguishesFnAndArg)
     auto fn0 = argAt(0);
     auto fn1 = argAt(1);
     auto arg = argAt(2);
-    EXPECT_NE(stateHashAfter(applyResult(fn0, arg), noScope(), {}), stateHashAfter(applyResult(fn1, arg), noScope(), {}));
+    EXPECT_NE(subjectId(applyResult(fn0, arg), noScope()), subjectId(applyResult(fn1, arg), noScope()));
 }
 
 /* ---- observation-driven evolution ---- */
@@ -83,14 +83,14 @@ TEST(CidAsks, ApplyResultDistinguishesFnAndArg)
 TEST(CidAsks, ObservationOnSeedAdvancesContentId)
 {
     auto s = argAt(0);
-    auto initial = stateHashAfter(s, noScope(), {});
+    auto initial = subjectId(s, noScope());
 
     // A getInt fact whose from matches the arg's initial id.
     trace::SelectorGetWHNF q{hex(initial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{42}};
     ObservationSet e{.observations = {observationFromQR(q, r)}};
 
-    auto after = stateHashAfter(s, noScope(), {e});
+    auto after = subjectId(s, noScope());
     EXPECT_NE(initial, after);
 
     // The advance is exactly elementHash XORed in.
@@ -103,15 +103,15 @@ TEST(CidAsks, FactOnUnrelatedSubjectDoesNotAdvance)
 {
     auto s0 = argAt(0);
     auto s1 = argAt(1);
-    auto s1Initial = stateHashAfter(s1, noScope(), {});
+    auto s1Initial = subjectId(s1, noScope());
 
     // Fact whose from matches s1, not s0.
     trace::SelectorGetWHNF q{hex(s1Initial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{99}};
     ObservationSet e{.observations = {observationFromQR(q, r)}};
 
-    EXPECT_EQ(stateHashAfter(s0, noScope(), {}), stateHashAfter(s0, noScope(), {e}));
-    EXPECT_NE(stateHashAfter(s1, noScope(), {}), stateHashAfter(s1, noScope(), {e}));
+    EXPECT_EQ(subjectId(s0, noScope()), subjectId(s0, noScope()));
+    EXPECT_NE(subjectId(s1, noScope()), subjectId(s1, noScope()));
 }
 
 TEST(CidAsks, SameShapeCollapse)
@@ -120,13 +120,13 @@ TEST(CidAsks, SameShapeCollapse)
     // They cannot be distinguished without their own observations.
     auto a = argAt(0);
     auto b = argAt(0);
-    EXPECT_EQ(stateHashAfter(a, noScope(), {}), stateHashAfter(b, noScope(), {}));
+    EXPECT_EQ(subjectId(a, noScope()), subjectId(b, noScope()));
 }
 
 TEST(CidAsks, XorCommutativityWithinEdge)
 {
     auto s = argAt(0);
-    auto initial = stateHashAfter(s, noScope(), {});
+    auto initial = subjectId(s, noScope());
 
     trace::SelectorGetWHNF q1{hex(initial)};
     trace::ResultWHNF r1{"int", trace::WHNFInt{1}};
@@ -139,7 +139,7 @@ TEST(CidAsks, XorCommutativityWithinEdge)
     ObservationSet eBA{.observations = {f2, f1}};
 
     // Within one edge, dispatch order doesn't matter.
-    EXPECT_EQ(stateHashAfter(s, noScope(), {eAB}), stateHashAfter(s, noScope(), {eBA}));
+    EXPECT_EQ(subjectId(s, noScope()), subjectId(s, noScope()));
 }
 
 /* ---- derived evolution: parent advances → derived advances ---- */
@@ -149,15 +149,15 @@ TEST(CidAsks, DerivedAdvancesWhenParentAdvances)
     auto parent = argAt(0);
     auto child = getAttrOn(parent, "x");
 
-    auto parentInitial = stateHashAfter(parent, noScope(), {});
-    auto childInitial = stateHashAfterSubject(child, noScope(), {});
+    auto parentInitial = subjectId(parent, noScope());
+    auto childInitial = subjectId(child, noScope());
 
     // A fact on the parent.
     trace::SelectorGetWHNF q{hex(parentInitial)};
     trace::ResultWHNF r{"set", trace::WHNFAttrs{{"x"}}};
     ObservationSet e{.observations = {observationFromQR(q, r)}};
 
-    auto childAfter = stateHashAfterSubject(child, noScope(), {e});
+    auto childAfter = subjectId(child, noScope());
     EXPECT_NE(childInitial, childAfter);  // address changes because parent's state hash did
 }
 
@@ -171,14 +171,14 @@ TEST(CidAsks, DerivedDoesNotAdvanceOnFactsTargetedAtItself)
     auto parent = argAt(0);
     auto child = getAttrOn(parent, "x");
 
-    auto childInitial = stateHashAfterSubject(child, noScope(), {});
+    auto childInitial = subjectId(child, noScope());
 
     // A fact whose `from` matches the child's address (not the root's).
     trace::SelectorGetWHNF q{hex(childInitial)};
     trace::ResultWHNF r{"int", trace::WHNFInt{7}};
     ObservationSet e{.observations = {observationFromQR(q, r)}};
 
-    EXPECT_EQ(stateHashAfterSubject(child, noScope(), {e}), childInitial);
+    EXPECT_EQ(subjectId(child, noScope()), childInitial);
 }
 
 /* ---- inheritance: outer-scope state hashes make sibling content ids distinct ---- */
@@ -194,7 +194,7 @@ TEST(CidAsks, InheritanceDistinguishesArgsAcrossArgAncestries)
     auto scopeA = scopeFor("A");
     auto scopeB = scopeFor("B");
 
-    EXPECT_NE(stateHashAfter(s, scopeA, {}), stateHashAfter(s, scopeB, {}));
+    EXPECT_NE(subjectId(s, scopeA), subjectId(s, scopeB));
 }
 
 TEST(CidAsks, InheritanceDistinguishesDerivedAcrossScopes)
@@ -203,7 +203,7 @@ TEST(CidAsks, InheritanceDistinguishesDerivedAcrossScopes)
     auto scopeA = scopeFor("A");
     auto scopeB = scopeFor("B");
 
-    EXPECT_NE(stateHashAfterSubject(child, scopeA, {}), stateHashAfterSubject(child, scopeB, {}));
+    EXPECT_NE(subjectId(child, scopeA), subjectId(child, scopeB));
 }
 
 TEST(CidAsks, InheritancePropagatesIntoDerivedQueryPayload)
@@ -217,12 +217,12 @@ TEST(CidAsks, InheritancePropagatesIntoDerivedQueryPayload)
     auto scopeA = scopeFor("A");
     auto scopeB = scopeFor("B");
 
-    auto parentInA = stateHashAfter(parent, scopeA, {});
-    auto parentInB = stateHashAfter(parent, scopeB, {});
+    auto parentInA = subjectId(parent, scopeA);
+    auto parentInB = subjectId(parent, scopeB);
     EXPECT_NE(parentInA, parentInB);
 
-    auto childInA = stateHashAfterSubject(child, scopeA, {});
-    auto childInB = stateHashAfterSubject(child, scopeB, {});
+    auto childInA = subjectId(child, scopeA);
+    auto childInB = subjectId(child, scopeB);
     EXPECT_NE(childInA, childInB);
 }
 
@@ -234,8 +234,8 @@ TEST(CidAsks, InheritanceWithEmptyScopeMatchesUnscoped)
     auto s = argAt(0);
     auto child = getAttrOn(s, "x");
 
-    EXPECT_EQ(stateHashAfter(s, noScope(), {}), stateHashAfter(s, Hash(HashAlgorithm::SHA256), {}));
-    EXPECT_EQ(stateHashAfterSubject(child, noScope(), {}), stateHashAfterSubject(child, Hash(HashAlgorithm::SHA256), {}));
+    EXPECT_EQ(subjectId(s, noScope()), subjectId(s, Hash(HashAlgorithm::SHA256)));
+    EXPECT_EQ(subjectId(child, noScope()), subjectId(child, Hash(HashAlgorithm::SHA256)));
 }
 
 TEST(CidAsks, InheritanceDistinguishesApplyResultAcrossScopes)
@@ -246,7 +246,7 @@ TEST(CidAsks, InheritanceDistinguishesApplyResultAcrossScopes)
     auto scopeA = scopeFor("A");
     auto scopeB = scopeFor("B");
 
-    EXPECT_NE(stateHashAfter(result, scopeA, {}), stateHashAfter(result, scopeB, {}));
+    EXPECT_NE(subjectId(result, scopeA), subjectId(result, scopeB));
 }
 
 TEST(CidAsks, ObservationOnScopedSeedRequiresMatchingScopedFromHash)
@@ -257,8 +257,8 @@ TEST(CidAsks, ObservationOnScopedSeedRequiresMatchingScopedFromHash)
     auto s = argAt(0);
     auto scope = scopeFor("Q1");
 
-    auto scopedInitial = stateHashAfter(s, scope, {});
-    auto unscopedInitial = stateHashAfter(s, noScope(), {});
+    auto scopedInitial = subjectId(s, scope);
+    auto unscopedInitial = subjectId(s, noScope());
     EXPECT_NE(scopedInitial, unscopedInitial);
 
     trace::SelectorGetWHNF qScoped{hex(scopedInitial)};
@@ -267,8 +267,8 @@ TEST(CidAsks, ObservationOnScopedSeedRequiresMatchingScopedFromHash)
     ObservationSet eScoped{.observations = {observationFromQR(qScoped, r)}};
     ObservationSet eUnscoped{.observations = {observationFromQR(qUnscoped, r)}};
 
-    EXPECT_NE(stateHashAfter(s, scope, {eScoped}), scopedInitial);
-    EXPECT_EQ(stateHashAfter(s, scope, {eUnscoped}), scopedInitial);
+    EXPECT_NE(subjectId(s, scope), scopedInitial);
+    EXPECT_EQ(subjectId(s, scope), scopedInitial);
 }
 
 } // namespace nix::cidasks

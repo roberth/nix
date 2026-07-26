@@ -58,7 +58,7 @@ class TracingCallbackApplyResult : public Object
        observations route to the correct CallbackCell. */
     Hash applyId;
 
-    /* stateHashAfter(applyResultSubject, applyArgAncestry, {}) hex — the
+    /* subjectId(applyResultSubject, applyArgAncestry) hex — the
        content-only apply-result state hash exposed via getStateHashHex. Computed
        once at construction to match `TracingEvaluator::apply`'s
        `applyArgAncestryStateHashHex` (= what the walker computes too). */

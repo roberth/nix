@@ -97,7 +97,7 @@ class TracingWriter
        ObservationSet at the SAME index. This invariant lets the
        walker's `envWalk` — which grows once per dispatched Asks
        edge via `commitEdge` — match the writer's history
-       edge-for-edge, so `stateHashAt(subject, argAncestry, history, K)`
+       edge-for-edge, so `subjectId(subject, argAncestry)`
        computes the same value on both sides. */
     std::vector<ObservationSet> envWalk;
 
@@ -225,7 +225,7 @@ public:
     /** Cumulative subject-id history over Env-layer observations.
         One edge per logResult-triggered flush. Exposed so writer-side
         apply-result wrappers (TracingObject with applyResultSubject)
-        can compute `stateHashAt(subject, argAncestry, history, history.size())`
+        can compute `subjectId(subject, argAncestry)`
         — the per-arg evolved state hash Design principle #3 requires
         for child queries on those wrappers. Walker's parallel handle
         is TracingReplayEvaluator::getCidasksWalk. */
@@ -255,7 +255,7 @@ public:
         auto * ar = std::get_if<ApplyResultSubject>(&applyResultSubject.data);
         if (!ar || !ar->fn)
             return;
-        auto fnInitial = stateHashAtSubject(*ar->fn, applyArgAncestry, {}, 0);
+        auto fnInitial = subjectId(*ar->fn, applyArgAncestry);
         auto fnInitialHex = fnInitial.to_string(HashFormat::Base16, false);
 
         /* Cell-based reader (preferred): if a cell with populated
@@ -267,8 +267,7 @@ public:
             if (cs.fnStateHashHex != fnInitialHex)
                 return false;
             auto obsSetHash = decisionGraph->insertObservationSet(cs.runningObsSet);
-            auto fnCurrent = stateHashAtSubject(
-                *ar->fn, applyArgAncestry, envWalk, envWalk.size());
+            auto fnCurrent = subjectId(*ar->fn, applyArgAncestry);
             trace::SelectorCallbackApply qca;
             qca.fn = trace::SelectorLeaf{trace::StateHashLeaf{
                 fnCurrent.to_string(HashFormat::Base16, false),

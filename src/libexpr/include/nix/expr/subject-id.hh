@@ -127,86 +127,20 @@ struct ObservationSet
     the writer at flush time where it already holds the variants. */
 Observation observationFromQR(const trace::SelectorVariant & query, const trace::ResultVariant & result);
 
-/** Compute the state hash of `subject` after walking through all
-    `edges`, inheriting `argAncestry` (the XOR of outer-argAncestry state hashes — e.g.
-    state hash(Q) at the cb-apply). Passing the zero hash for
-    `argAncestry` gives the pure structural state hash, equivalent to
-    no inheritance.
+/** #178: the initial structural id of `subject`, scoped by
+    `argAncestry`. Under stable Q hashes there is no evolution to
+    fold; every Subject variant reduces to a positional / structural
+    computation:
 
-    Inheritance applies at the leaf: `Arg` and
-    `PostulatedIdempotentRead` XOR `argAncestry` into their base hash.
-    `DerivedSubject` and `ApplyResultSubject` propagate `argAncestry`
-    via their constituents' (recursively state-hash-aware) state hashes,
-    so the structural derivation incorporates inheritance naturally
-    via the constituents' `from`-field values. */
-Hash stateHashAfter(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history);
-
-/** Compute the state hash of `subject` at the precondition of the
-    edge at index `step` in `history`, inheriting `argAncestry`.
-    `step == 0` means the initial precondition (= empty
-    factset); `step == history.size()` means the postcondition of
-    the whole history (equivalent to `stateHashAfter`).
-
-    **Argument-level only.** Per the design (Principle 3, per-arg
-    centralization), only argument-level subjects bear state hashes:
-    `Arg` (cb_arg arg, evolves via own-loop),
-    `ApplyResultSubject` (composes constituent argument state hashes), and
-    `PostulatedIdempotentRead` (escape hatch). `DerivedSubject` does not
-    have a state hash — observations on derived values fold into the cb_arg
-    root's own-loop and the derived value is referenced via
-    `(root_cdi, path)`. Passing a `DerivedSubject` traps; callers
-    that want a content-addressed identifier for any Subject
-    (including derived) should use `stateHashAtSubject` instead. */
-Hash stateHashAt(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step,
-    std::source_location caller = std::source_location::current());
-
-/** Grouping-independent converged fold. Flattens `history` into a
-    deduplicated observation pool (by (fromHash, elementHash)) and
-    repeatedly partitions it by state-match: at each round, all
-    observations whose `fromHash` equals `subject`'s current state
-    are pulled out as a synthetic edge and appended to a growing
-    hypothetical history; the round terminates when no observation
-    matches. Returns `subject`'s state at the tail of that
-    hypothetical history — a fixed point of the greedy convergence.
-
-    The result depends only on the SET of observations in `history`,
-    not on how they are grouped into edges. This is the alignment
-    property the search→asks project needs: recorder and replayer
-    reach the same value from any two walks carrying the same
-    observations, regardless of edge boundaries. Semantically
-    equivalent to iterating the observation-permutation loop in
-    `TracingReplayEvaluator::resolveStateHash` to its fixed point. */
-Hash stateHashConverged(
-    const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history);
-
-/** The producer query hash for a `DerivedSubject` — the selectorHash of
-    the `SelectorGetAttr` / `SelectorGetListElem` that would produce this
-    derived value from its parent chain. This is not a state hash
-    (derived values don't have one); it's a payload hash serving as
-    the Selectors-pool key. Callers that already know their subject is
-    derived use this directly; polymorphic callers dispatch via
-    `stateHashAtSubject`. */
-Hash producerQueryHashAt(
-    const DerivedSubject & derived,
-    const Hash & argAncestry,
-    const std::vector<ObservationSet> & history,
-    size_t step);
-
-Hash producerQueryHashAfter(
-    const DerivedSubject & derived,
-    const Hash & argAncestry,
-    const std::vector<ObservationSet> & history);
-
-/** Polymorphic dispatcher. For `DerivedSubject`, delegates to
-    `producerQueryHashAt`; for every other variant, delegates to
-    `stateHashAt`. Used by callers (`OuterObject`,
-    `TracingCallbackArg`, etc.) that hold a Subject of unknown
-    variant and need a single Hash handle regardless of shape. */
-Hash stateHashAtSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history, size_t step);
-
-/** Convenience: `stateHashAtSubject` at the history's tail
-    (= step = history.size()). */
-Hash stateHashAfterSubject(const Subject & subject, const Hash & argAncestry, const std::vector<ObservationSet> & history);
+    - `Arg{depth}`: `SHA256("positional-D") XOR argAncestry`.
+    - `PostulatedIdempotentRead{hash}`: `hash` (already scoped).
+    - `ApplyResultSubject{fn, arg}`: SHA256 of a canonical
+      Apply payload composed of `subjectId(fn, argAncestry)` and
+      `subjectId(arg, argAncestry)`.
+    - `DerivedSubject{parent, kind, name/index}`: SHA256 of a
+      canonical getter payload composed of the kind, name/index,
+      and `subjectId(parent, argAncestry)`. */
+Hash subjectId(const Subject & subject, const Hash & argAncestry);
 
 /** Build the per-arg-encoded `SelectorApply` payload for an apply-result
     subject at a given history edge index. The returned query's JSON
@@ -225,8 +159,10 @@ trace::SelectorApply makeApplyResultQuery(
     const std::vector<ObservationSet> & history,
     size_t step);
 
-/** Convenience: extract a query's `from` field as a Hash, if it has
-    one. Apply queries don't have a `from`; throws. */
+/** Extract a query's `from` field as a Hash, if it carries one.
+    Under #178 the `from` field is retired; this helper is a
+    transitional accessor kept until the Selector types drop the
+    field. Returns zero on empty. */
 Hash fromStateHashOf(const trace::SelectorVariant & query);
 
 /** Convenience wrapper around `pathAndRootsFromSubject`: returns just

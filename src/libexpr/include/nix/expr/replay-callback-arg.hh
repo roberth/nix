@@ -49,7 +49,7 @@ class ReplayCallbackArg : public Object
        For root (cb-apply) locals the subject is `Arg{depth}`
        with the recorded callArgAncestry (per the localArg sidecar), so the
        walker reproduces the recorder's
-       `stateHashAfter(Arg{D}, callArgAncestry, {})` directly.
+       `subjectId(Arg{D}, callArgAncestry)` directly.
 
        For children minted by maybeGetAttr/getListElem the subject is
        `DerivedSubject{parent.subject, ...}` — `stateHashAt`
@@ -58,7 +58,7 @@ class ReplayCallbackArg : public Object
        state at creation. */
     Subject subject;
     Hash argAncestry;
-    /* Initial state hash (= stateHashAt(subject, argAncestry, {}, 0)) — kept for
+    /* Initial state hash (= subjectId(subject, argAncestry)) — kept for
        legacy id-string consumers (e.g. defeatCache's recursive
        apply construction). */
     OuterId localId;
@@ -135,7 +135,7 @@ public:
         EvalState * state = nullptr)
         : subject(std::move(subject_))
         , argAncestry(std::move(scope_))
-        , localId(stateHashAtSubject(subject, argAncestry, *walkFacts_, 0))
+        , localId(subjectId(subject, argAncestry))
         , walkFacts(std::move(walkFacts_))
         , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
 

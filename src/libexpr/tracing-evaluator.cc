@@ -388,8 +388,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     /* #178: state-hash evolution retired. Compute initial subject id
        (no fold) with empty history. */
-    auto applyArgAncestryStateHash = stateHashAt(
-        resultSubject, applyArgAncestry, {}, 0);
+    auto applyArgAncestryStateHash = subjectId(resultSubject, applyArgAncestry);
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);
