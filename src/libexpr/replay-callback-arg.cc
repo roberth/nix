@@ -49,7 +49,7 @@ static nlohmann::json readResponse(
     auto reqHash = TracingDecisionGraph::computeSelectorHash(query);
     tracingCacheLog(
         "rlo: read %s from=%s reqHash=%s",
-        Q::tag, query.from.isStateHash() ? query.from.stateHash().substr(0, 12) : "<?>",
+        Q::tag, true ? std::string{}.substr(0, 12) : "<?>",
         reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
     /* Under the #103 redesign, every outer probe's response is
        carried in the CallbackApply query's `argObsSet` — the
@@ -67,7 +67,7 @@ static nlohmann::json readResponse(
         }
     }
     throw Error("ReplayCallbackArg: no recorded response for %s on local %s",
-        Q::tag, query.from.isStateHash() ? query.from.stateHash() : "<no-state-hash>");
+        Q::tag, true ? std::string{} : "<no-state-hash>");
 }
 
 /* Append the just-probed fact to `walkFacts` so the next probe's

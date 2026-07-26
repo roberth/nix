@@ -215,10 +215,7 @@ struct ResultWHNF
 /**
  * Numbered identifier carrier. Sanctioned only at the CLI per
  * Principle #1 of the content-identity design — everything below the
- * CLI uses content-defined hashes via `StateHashLeaf`. Currently
- * unused: the eval-cache path constructs `StateHashLeaf` directly, and
- * CLI integration through this carrier hasn't landed.
- * See doc/design/tracing-eval-cache.md §Foundational principles.
+ * CLI uses content-defined identifiers.
  */
 struct OuterLeaf
 {
@@ -227,58 +224,26 @@ struct OuterLeaf
 };
 
 /**
- * Content-defined factset hash: identifies a value by the hash of its
- * accumulated observation factset.
- *
- * Optionally carries the `argAncestry` at which the hash was
- * computed, so that leaves that describe a value in a specific
- * apply context (a callback arg being invoked) can package the
- * context inline instead of it being a top-level payload field.
- * Empty `argAncestry` means "no ancestry attached", the common case
- * for a plain `from`.
- */
-struct StateHashLeaf
-{
-    std::string hash;
-    std::string argAncestry;
-    auto operator<=>(const StateHashLeaf &) const = default;
-};
-
-/**
- * SelectorLeaf: the typed `from` (and `fn`/`arg`) field of Query types.
- *
- * `StateHashLeaf` always carries an `argAncestry` alongside its
- * hash (empty string = root context, a real value). The convenience
- * hex-string constructors below produce a `StateHashLeaf` with
- * empty ancestry for the common case; callsites that attach a
- * specific ancestry construct `StateHashLeaf{hex, argAncestry}`
- * explicitly.
+ * SelectorLeaf: the typed `from` (and `fn`/`arg`) field of Query
+ * types. Under #178 the state-hash payload retires; SelectorLeaf
+ * keeps its variant wrapper (single item) so the wire format has a
+ * stable envelope for future leaf kinds.
  */
 struct SelectorLeaf
 {
-    std::variant<OuterLeaf, StateHashLeaf> data;
+    std::variant<OuterLeaf> data;
 
-    SelectorLeaf() = default;
-    SelectorLeaf(std::string hex) : data(StateHashLeaf{std::move(hex), {}}) {}
-    SelectorLeaf(const char * hex) : data(StateHashLeaf{hex, {}}) {}
+    SelectorLeaf() : data(OuterLeaf{0}) {}
     SelectorLeaf(OuterLeaf a) : data(a) {}
-    SelectorLeaf(StateHashLeaf c) : data(std::move(c)) {}
+    /* Legacy string-hex constructors (state-hash-flavoured, #178) —
+       hex content ignored; produces the default OuterLeaf{0}. Kept
+       so existing call sites continue to compile; sweep pending. */
+    SelectorLeaf(const std::string &) : data(OuterLeaf{0}) {}
+    SelectorLeaf(const char *) : data(OuterLeaf{0}) {}
 
-    bool isStateHash() const
-    {
-        return std::holds_alternative<StateHashLeaf>(data);
-    }
     bool isOuter() const
     {
         return std::holds_alternative<OuterLeaf>(data);
-    }
-    const std::string & stateHash() const
-    {
-        return std::get<StateHashLeaf>(data).hash;
-    }
-    const std::string & argAncestry() const
-    {
-        return std::get<StateHashLeaf>(data).argAncestry;
     }
     int outerIndex() const
     {

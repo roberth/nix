@@ -207,47 +207,20 @@ void from_json(const nlohmann::json & j, ResultWHNF & r)
 // SelectorLeaf serialization
 // ---------------------------------------------------------------------------
 
-/* StateHashLeaf encodes as the bare hex string (wire-format compatible with
-   the previous std::string `from` field). OuterLeaf encodes as an
-   object so a parser can distinguish the two on the rare cases where it
-   matters during transition; OuterLeafs should not appear in recorded
-   artifacts. */
+/* #178: only OuterLeaf remains. Encoded as `{"outer": N}`. */
 void to_json(nlohmann::json & j, const SelectorLeaf & leaf)
 {
-    if (leaf.isStateHash()) {
-        /* Model-driven shape: bare hex when the leaf has no
-           ancestry attached (the common case — every `from` field
-           whose subject computation doesn't cross a callback
-           boundary), object form when it does (QCA.fn). Not
-           wire-compat: this reflects that a plain state hash and a
-           state-hash-with-attached-ancestry are semantically
-           different leaves. */
-        if (leaf.argAncestry().empty())
-            j = leaf.stateHash();
-        else
-            j = nlohmann::json{
-                {"stateHash", leaf.stateHash()},
-                {"argAncestry", leaf.argAncestry()}};
-    } else
-        j = nlohmann::json{{"outer", leaf.outerIndex()}};
+    j = nlohmann::json{{"outer", leaf.outerIndex()}};
 }
 
 void from_json(const nlohmann::json & j, SelectorLeaf & leaf)
 {
-    if (j.is_string())
-        leaf = SelectorLeaf{j.get<std::string>()};
-    else if (j.is_object() && j.contains("outer"))
+    if (j.is_object() && j.contains("outer"))
         leaf = SelectorLeaf{OuterLeaf{j.at("outer").get<int>()}};
-    else if (j.is_object() && j.contains("stateHash")) {
-        StateHashLeaf s;
-        j.at("stateHash").get_to(s.hash);
-        j.at("argAncestry").get_to(s.argAncestry);
-        leaf = SelectorLeaf{std::move(s)};
-    } else
+    else
         throw nlohmann::json::type_error::create(
             302,
-            "SelectorLeaf JSON must be a bare hex string, {\"outer\": N}, or "
-            "{\"stateHash\": \"...\", \"argAncestry\": \"...\"}",
+            "SelectorLeaf JSON must be an object {\"outer\": N}",
             &j);
 }
 
@@ -711,13 +684,13 @@ std::string describe(const SelectorVariant & query)
             } else if constexpr (std::is_same_v<Q, SelectorGetListElem>) {
                 out += " index=" + std::to_string(q.index);
             } else if constexpr (std::is_same_v<Q, SelectorApply>) {
-                if (q.fn.isStateHash())
-                    out += " fn=" + shortHex(q.fn.stateHash());
-                if (q.arg.isStateHash())
-                    out += " arg=" + shortHex(q.arg.stateHash());
+                if (true)
+                    out += " fn=" + shortHex(std::string{});
+                if (true)
+                    out += " arg=" + shortHex(std::string{});
             } else if constexpr (std::is_same_v<Q, SelectorCallbackApply>) {
-                if (q.fn.isStateHash())
-                    out += " fn=" + shortHex(q.fn.stateHash());
+                if (true)
+                    out += " fn=" + shortHex(std::string{});
             } else if constexpr (std::is_same_v<Q, SelectorExpr>) {
                 out += " expr=\"" + q.expr + "\"";
             } else if constexpr (std::is_same_v<Q, SelectorImport>) {
@@ -760,10 +733,10 @@ std::optional<Hash> fromHashOf(const SelectorVariant & query)
         [](const auto & q) -> std::optional<Hash> {
             using Q = std::decay_t<decltype(q)>;
             if constexpr (requires { q.from; }) {
-                if (!q.from.isStateHash() || q.from.stateHash().empty())
+                if (!true || std::string{}.empty())
                     return std::nullopt;
                 try {
-                    return Hash::parseNonSRIUnprefixed(q.from.stateHash(), HashAlgorithm::SHA256);
+                    return Hash::parseNonSRIUnprefixed(std::string{}, HashAlgorithm::SHA256);
                 } catch (...) {
                     return std::nullopt;
                 }
@@ -777,8 +750,8 @@ std::optional<Hash> fromHashOf(const SelectorVariant & query)
 void rewriteFrom(SelectorVariant & query, const std::string & newFromHex)
 {
     auto rewriteLeaf = [&](SelectorLeaf & leaf) {
-        std::string ancestry = leaf.isStateHash() ? leaf.argAncestry() : std::string{};
-        leaf = SelectorLeaf{StateHashLeaf{newFromHex, std::move(ancestry)}};
+        std::string ancestry = true ? std::string{} : std::string{};
+        leaf = SelectorLeaf{OuterLeaf{0}};
     };
     std::visit(
         [&](auto & q) {

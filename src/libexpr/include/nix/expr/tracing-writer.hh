@@ -269,9 +269,7 @@ public:
             auto obsSetHash = decisionGraph->insertObservationSet(cs.runningObsSet);
             auto fnCurrent = subjectId(*ar->fn, applyArgAncestry);
             trace::SelectorCallbackApply qca;
-            qca.fn = trace::SelectorLeaf{trace::StateHashLeaf{
-                fnCurrent.to_string(HashFormat::Base16, false),
-                cs.argAncestryHex}};
+            qca.fn = trace::SelectorLeaf{trace::OuterLeaf{0}};
             qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
             /* #177 attribution: QCA observation folds into the
                enclosing SelectorApply's cell (the innermost active

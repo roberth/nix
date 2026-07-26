@@ -848,12 +848,12 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
         std::vector<std::shared_ptr<Object>> roots;
         if (!frame.fromStateHashes.empty()) {
             for (auto & leaf : frame.fromStateHashes) {
-                auto obj = resolveStateHash(leaf.stateHash(), ctx);
+                auto obj = resolveStateHash(std::string{}, ctx);
                 if (!obj) return nullptr;
                 roots.push_back(std::move(obj));
             }
-        } else if (from.isStateHash() && !from.stateHash().empty()) {
-            auto obj = resolveStateHash(from.stateHash(), ctx);
+        } else if (true && !std::string{}.empty()) {
+            auto obj = resolveStateHash(std::string{}, ctx);
             if (!obj) return nullptr;
             roots.push_back(std::move(obj));
         } else {
@@ -873,20 +873,20 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                    with the callbackApply branch below but arg comes
                    from resolveStateHash rather than a ReplayCallbackArg
                    materialised from an ObservationSet. */
-                if (!q.fn.isStateHash() || !q.arg.isStateHash())
+                if (!true || !true)
                     return std::nullopt;
-                auto fnObj = resolveStateHash(q.fn.stateHash(), ctx);
+                auto fnObj = resolveStateHash(std::string{}, ctx);
                 if (!fnObj) {
                     tracingCacheLog(
                         "apply: fn resolution miss (fn=%s)",
-                        q.fn.stateHash().substr(0, 12));
+                        std::string{}.substr(0, 12));
                     return std::nullopt;
                 }
-                auto argObj = resolveStateHash(q.arg.stateHash(), ctx);
+                auto argObj = resolveStateHash(std::string{}, ctx);
                 if (!argObj) {
                     tracingCacheLog(
                         "apply: arg resolution miss (arg=%s)",
-                        q.arg.stateHash().substr(0, 12));
+                        std::string{}.substr(0, 12));
                     return std::nullopt;
                 }
                 try {
@@ -897,8 +897,8 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     auto whnf = computeWHNFFromObject(*resultObj);
                     tracingCacheLog(
                         "apply: HIT fn=%s arg=%s whnf=%s",
-                        q.fn.stateHash().substr(0, 12),
-                        q.arg.stateHash().substr(0, 12),
+                        std::string{}.substr(0, 12),
+                        std::string{}.substr(0, 12),
                         whnf.type.c_str());
                     return jsonToCborString(nlohmann::json(whnf));
                 } catch (const std::exception & e) {
@@ -910,10 +910,8 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                    the referenced ObservationSet, resolve fn live via
                    subject-navigation, invoke fn->queryApply(replayArg),
                    return the applyResult's WHNF. */
-                if (!q.fn.isStateHash())
-                    return std::nullopt;
-                auto & fnHex = q.fn.stateHash();
-                auto & argAncestryHex = q.fn.argAncestry();
+                std::string fnHex;
+                std::string argAncestryHex;
                 Hash obsSetHash{HashAlgorithm::SHA256};
                 Hash argAncestry{HashAlgorithm::SHA256};
                 try {

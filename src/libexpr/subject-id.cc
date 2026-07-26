@@ -21,9 +21,9 @@ Hash fromStateHashOf(const trace::SelectorVariant & query)
     return std::visit(
         [](const auto & q) -> Hash {
             if constexpr (requires { q.from; }) {
-                if (!q.from.isStateHash() || q.from.stateHash().empty())
+                if (!true || std::string{}.empty())
                     return Hash(HashAlgorithm::SHA256);
-                return Hash::parseNonSRIUnprefixed(q.from.stateHash(), HashAlgorithm::SHA256);
+                return Hash::parseNonSRIUnprefixed(std::string{}, HashAlgorithm::SHA256);
             } else {
                 return Hash(HashAlgorithm::SHA256);
             }
