@@ -122,24 +122,20 @@ class TracingWriter
     };
     std::vector<CallbackCell> callbackCells;
 
-    /** Emit the single CallbackApply Fact for a pendingCbApply whose
-        firing has just completed. Inserts the request into the pool,
-        folds `(cbApplyQueryHash, cbApplyRespHash)` into envFactSet,
-        pushes an Ask edge, and records an envWalk observation with
-        fromHash = fn's subject state hash. Sets `it.emitted = true`.
-        Idempotent: no-op if already emitted or if runningObsSet is
-        empty. */
+    /** Emit the SelectorCallbackApply Fact for a callback firing whose
+        result is now known. Snapshots the cell's `runningObsSet` into
+        the ObservationSet CAS and routes the fact through
+        `logOuterObservation`. Idempotent-ish: no-op if runningObsSet
+        is empty or if the cell match fails. */
 
     /* RAII suppress counter for `createCallbackCell` while > 0. Used to
        elide redundant boundary firings during walker re-dispatch of a
-       recorded apply (= `dispatchApplyLive`): walker's
-       `fnObj->queryApply(replayLocal)` re-routes through
-       `OuterObject::queryApply` → `applyFn` → `OuterApply::run`,
-       which would normally fire `createCallbackCell` — but that path
-       represents validation of an already-recorded apply event, not a
-       NEW event. Letting it fire inflates `envWalk` with ε edges
-       per re-validation, breaking the walker's 1:1 alignment with
-       cold's writer at warm. */
+       recorded apply: walker's `fnObj->queryApply(replayLocal)` re-
+       routes through `OuterObject::queryApply` → `applyFn` →
+       `OuterApply::run`, which would normally fire
+       `createCallbackCell` — but that path is validation of an
+       already-recorded apply, not a new event. Letting it fire would
+       stack a phantom callback cell per re-validation. */
     size_t suppressCbApply = 0;
 
 public:
@@ -155,14 +151,6 @@ public:
     };
 
 private:
-
-    /* Q hashes that have been logResult'd in this writer's lifetime.
-       Re-inserted under at late-d2-obs re-process time so the
-       updated `envAsksEdges` (with corrected downstream
-       `fromFactSetHash`) lands as additional Asks rows under each
-       prior Q — letting the walker's chain history for those Q's use
-       the post-re-open propagation. */
-    std::unordered_set<Hash> recordedQHashes;
 
 public:
     TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
