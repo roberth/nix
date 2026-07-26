@@ -129,7 +129,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
 
     /* Outer-direction proxies registered live by the ReplayCallbackArg's
        `<replay-local-lambda>` primop (= `registerOuterResolverProxy`).
-       Keyed by `(subject, argAncestry)` so the walker's `resolveStateHash`
+       Keyed by `(subject, argAncestry)` so the walker's `resolveIdentity`
        can match the registered arg's subject-id-evolved state hash at any
        history-edge index, not just the initial one. List rather than
        map because subject equality isn't trivially hashable;

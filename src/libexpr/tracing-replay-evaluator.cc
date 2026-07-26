@@ -411,7 +411,7 @@ std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std:
    producer's query on the parent. SelectorApply payloads invoke the
    live apply against a (frozen) ReplayCallbackArg arg. localArg
    sidecars chase to the apply. */
-std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::string & idStr, ResolutionContext & ctx)
+std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::string & idStr, ResolutionContext & ctx)
 {
     /* Per-history memo. */
     if (auto it = ctx.memo.find(idStr); it != ctx.memo.end()) {
@@ -419,122 +419,31 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
         return it->second;
     }
 
-
-    /* Walk the proxy's argCell chain looking for a cell whose
-       liveObject's state hash matches idStr at some k under
-       walker's own envWalk.
-
-       Phase F: prefer ctx.walkCell (the active walk's cell) as
-       starting point. Its chain includes the arg / applyResult /
-       root value the current walk is about — reachable via parent
-       links — which currentProxy.argCell doesn't necessarily
-       contain. Example: TRE::apply passes fn as currentProxy but
-       the arg (with its live OuterObject subject) is at cell[0]
-       of the applyResult cell. Falling back to currentProxy.argCell
-       when no walkCell is provided preserves prior behavior. */
-    /* Phase F: envWalk is walk-local, living on the active walk's
-       qState. Reach it via ctx.walkCell's qState directly (not by
-       walking parent chain — parent's qState belongs to a different
-       walk, and inheriting envWalk from it would produce the same
-       cross-walk contamination task #175 fixed at walk-install). */
-    std::vector<ObservationSet> extendedWalkForMatch;
-    if (ctx.walkCell && ctx.walkCell->qState)
-        extendedWalkForMatch = ctx.walkCell->qState->envWalk;
+    /* #181: under query-space identity, each Object has a stable
+       `getStateHashHex()` = the Q hash of the Selector that produced
+       it. Cell-chain match is a direct equality check — no K>0 fold,
+       no convergence, no subjectId derivation from the subject.
+       Q hashes don't evolve. */
     auto cell = ctx.walkCell
                   ? ctx.walkCell
                   : (ctx.currentProxy ? ctx.currentProxy->getProxyArgCell() : nullptr);
     int cellDepth = 0;
     for (; cell; cell = cell->parent, ++cellDepth) {
-        if (auto live = cell->liveObject) {
-            if (auto * subj = live->getSubject()) {
-                /* Use the live proxy's own inherited argAncestry so the
-                   walker's state hash matches what the recorder
-                   computed at this proxy at flush. */
-                auto argAncestry = live->getArgAncestry();
-                bool found = false;
-                /* K=0 fast path — Asks-style initial state hash lookup:
-                   subject's initial state hash
-                   (before any observation folds in) is a pure
-                   function of (subject, argAncestry). Walker computes it
-                   as a key and checks equality against the target
-                   — no iteration over K, no scanning for "which
-                   walker-state produces target". Empirical: a
-                   majority of cell-chain matches in the cb-* +
-                   builtins-cache suite land at K=0.
-                   Structurally an Asks-style navigation: walker's
-                   own hashed state (initial state hash) IS the lookup
-                   key. */
-                {
-                    /* No functional test in the current suite reaches
-                       this loop with a DerivedSubject subj (verified by
-                       instrumentation this session). The strict
-                       stateHashAt would trap on Derived, so if the
-                       assumption ever breaks — e.g. a future proxy
-                       type registers a Derived-subject liveObject at
-                       an ArgCell — we need to know. Assert to catch
-                       that inversion; swap to stateHashAtSubject
-                       under a real repro. */
-                    assert(!std::holds_alternative<DerivedSubject>(subj->data)
-                           && "resolveStateHash: DerivedSubject in cell-chain match — see task #68 investigation");
-                    auto initialStateHash = subjectId(*subj, argAncestry);
-                    if (initialStateHash.to_string(HashFormat::Base16, false) == idStr) {
-                        found = true;
-                    }
-                }
-                /* Per-edge K > 0 navigation: fold in only observations
-                   whose `fromHash` equals subject's current state (=
-                   observation was made against subject at cur).
-                   ObservationSet-scoped semantics (all obs in one edge
-                   check against edge-entry cur) preserved via
-                   `edgeAcc`. Under matching-until-divergence this is
-                   the same filter cold's writer used when stamping a
-                   fold step — no DB roundtrip needed. */
-                if (!found) {
-                    Hash cur = subjectId(*subj, argAncestry);
-                    for (const auto & edge : extendedWalkForMatch) {
-                        if (found) break;
-                        Hash edgeAcc(HashAlgorithm::SHA256);
-                        for (const auto & obs : edge.observations) {
-                            if (obs.fromHash == cur)
-                                edgeAcc = TracingDecisionGraph::xorHashes(edgeAcc, obs.elementHash);
-                        }
-                        cur = TracingDecisionGraph::xorHashes(cur, edgeAcc);
-                        if (cur.to_string(HashFormat::Base16, false) == idStr) found = true;
-                    }
-                }
-                /* Observation-permutation navigation, folded to its
-                   fixed point. `stateHashConverged` is order- and
-                   grouping-independent by construction: walker's
-                   convergence value depends only on the SET of
-                   observations, not on edge boundaries.
-
-                   Handles the permuted-order case (cb-385's 5-round
-                   evolution): where walker's envWalk carries the
-                   same observations as cold's envWalk but the
-                   edge boundaries differ, only the fixed point is
-                   grouping-invariant and thus safe to compare. */
-                if (!found && !extendedWalkForMatch.empty()) {
-                    Hash converged = subjectId(*subj, argAncestry);
-                    if (converged.to_string(HashFormat::Base16, false) == idStr)
-                        found = true;
-                }
-                if (found) {
-                    tracingCacheLog(
-                        "resolve %s: cell[%d] subject=%s MATCH",
-                        idStr.substr(0, 12), cellDepth, describe(*subj));
-                    ctx.memo[idStr] = live;
-                    return live;
-                }
-                tracingCacheLog(
-                    "resolve %s: cell[%d] subject=%s miss across %zu edges (+collected)",
-                    idStr.substr(0, 12), cellDepth,
-                    describe(*subj), extendedWalkForMatch.size() + 1);
-            } else {
-                tracingCacheLog("resolve %s: cell[%d] live has no subject", idStr.substr(0, 12), cellDepth);
-            }
-        } else {
+        auto live = cell->liveObject;
+        if (!live) {
             tracingCacheLog("resolve %s: cell[%d] no liveObject", idStr.substr(0, 12), cellDepth);
+            continue;
         }
+        auto liveHex = live->getStateHashHex();
+        if (liveHex && *liveHex == idStr) {
+            tracingCacheLog("resolve %s: cell[%d] MATCH", idStr.substr(0, 12), cellDepth);
+            ctx.memo[idStr] = live;
+            return live;
+        }
+        tracingCacheLog(
+            "resolve %s: cell[%d] hex=%s miss",
+            idStr.substr(0, 12), cellDepth,
+            liveHex ? liveHex->substr(0, 12).c_str() : "(none)");
     }
     tracingCacheLog("resolve %s: cell-chain exhausted, falling through to pool", idStr.substr(0, 12));
 
@@ -567,7 +476,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
            higher-order step 3 returning stale 6 when outer changed
            from `g 5` to `g 10`). */
         if (auto resolver = inner->getOuterResolver()) {
-            if (auto live = tryResolveOuterResolverProxy(*resolver, idHash, extendedWalkForMatch, &decisionGraph)) {
+            std::vector<ObservationSet> empty;
+            if (auto live = tryResolveOuterResolverProxy(*resolver, idHash, empty, &decisionGraph)) {
                 tracingCacheLog(
                     "resolve %s: not in pool — found live-proxy registration",
                     idStr.substr(0, 12));
@@ -614,19 +524,19 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveStateHash(const std::stri
 
 /* Resolve an "apply" producer's result by resolving fn + arg and
    invoking fn.queryApply(arg) live. Arg resolution is uniform (via
-   resolveStateHash) — the historical localArg-sidecar special case
+   resolveIdentity) — the historical localArg-sidecar special case
    is gone: callback-arg observations ride in the CallbackApply
    query's obsSet, not through producer-chain apply resolution. */
 std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx)
 {
-    auto fnObj = resolveStateHash(params["fn"].get<std::string>(), ctx);
+    auto fnObj = resolveIdentity(params["fn"].get<std::string>(), ctx);
     if (!fnObj) {
         tracingCacheLog("replay: apply %s: cannot resolve fn %s", idStr, params["fn"]);
         return nullptr;
     }
     auto argIdStr = params["arg"].get<std::string>();
-    auto argObj = resolveStateHash(argIdStr, ctx);
+    auto argObj = resolveIdentity(argIdStr, ctx);
     if (!argObj)
         return nullptr;
     ctx.memo[argIdStr] = argObj;
@@ -761,7 +671,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
        cb_arg ReplayCallbackArg, then navigate. The producer query records the
        path-to-parent in `path`; navigation uses both. */
     auto roots = resolveRoots(params,
-        [&](const std::string & cid) { return resolveStateHash(cid, ctx); });
+        [&](const std::string & cid) { return resolveIdentity(cid, ctx); });
     if (roots.empty())
         return nullptr;
     auto parent = navigatePath(roots, parsePathFromParams(params), &writer);
@@ -807,12 +717,12 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
         std::vector<std::shared_ptr<Object>> roots;
         if (!frame.fromStateHashes.empty()) {
             for (auto & leaf : frame.fromStateHashes) {
-                auto obj = resolveStateHash(std::string{}, ctx);
+                auto obj = resolveIdentity(std::string{}, ctx);
                 if (!obj) return nullptr;
                 roots.push_back(std::move(obj));
             }
         } else if (true && !std::string{}.empty()) {
-            auto obj = resolveStateHash(std::string{}, ctx);
+            auto obj = resolveIdentity(std::string{}, ctx);
             if (!obj) return nullptr;
             roots.push_back(std::move(obj));
         } else {
@@ -830,18 +740,18 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                    chain provides the live proxies) and invoke live
                    apply. Return WHNF of the applyResult. Symmetric
                    with the callbackApply branch below but arg comes
-                   from resolveStateHash rather than a ReplayCallbackArg
+                   from resolveIdentity rather than a ReplayCallbackArg
                    materialised from an ObservationSet. */
                 if (!true || !true)
                     return std::nullopt;
-                auto fnObj = resolveStateHash(std::string{}, ctx);
+                auto fnObj = resolveIdentity(std::string{}, ctx);
                 if (!fnObj) {
                     tracingCacheLog(
                         "apply: fn resolution miss (fn=%s)",
                         std::string{}.substr(0, 12));
                     return std::nullopt;
                 }
-                auto argObj = resolveStateHash(std::string{}, ctx);
+                auto argObj = resolveIdentity(std::string{}, ctx);
                 if (!argObj) {
                     tracingCacheLog(
                         "apply: arg resolution miss (arg=%s)",
@@ -893,7 +803,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                 for (const auto & obs : *obsSet)
                     obsSetMap->emplace(obs.selectorHash, obs.responsePayload);
                 /* #178: perArgFrame retired; resolve fn by state hash. */
-                std::shared_ptr<Object> fnObj = resolveStateHash(fnHex, ctx);
+                std::shared_ptr<Object> fnObj = resolveIdentity(fnHex, ctx);
                 if (!fnObj) {
                     tracingCacheLog(
                         "callbackApply: fn resolution miss (fn=%s)",
@@ -1197,11 +1107,11 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        lazy-inner-apply TRO (with no cachedWHNF), which will trigger
        inner->apply when forced.
 
-       Pass `fn` as currentProxy so the walker's `resolveStateHash`
+       Pass `fn` as currentProxy so the walker's `resolveIdentity`
        has a cell chain to walk when the SelectorApply dispatch
        resolves fn/arg identities — fn's own cell chain roots the
        resolution up to the outer cache-boundary arg. Without a
-       currentProxy the cell chain is empty and resolveStateHash
+       currentProxy the cell chain is empty and resolveIdentity
        falls through to the pool + live-proxy registration path,
        which under DISALLOW_PARSE cascades into inner parsing.
 

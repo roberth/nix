@@ -106,7 +106,7 @@ DROP INDEX IF EXISTS TerminalsByQF;
 
 -- Clean up SubjectEvolutionEdge from earlier schema versions (walker-
 -- side per-subject observation trie replaced by a local `obs.fromHash
--- == cur` check in resolveStateHash's K > 0 loop).
+-- == cur` check in resolveIdentity's K > 0 loop).
 DROP TABLE IF EXISTS SubjectEvolutionEdge;
 )sql";
 

@@ -30,8 +30,8 @@ class TracingReplayEvaluator : public Evaluator
      * Per-history resolution context.
      *
      * Threaded through history → dispatch → getCurrentResponse →
-     * dispatchQueryRequest → resolveStateHash. Holds the proxy
-     * whose method triggered this history (so resolveStateHash can
+     * dispatchQueryRequest → resolveIdentity. Holds the proxy
+     * whose method triggered this history (so resolveIdentity can
      * history the parent / argCell chain on the proxy graph) plus a
      * per-history memo of ids already resolved. Lives only for the
      * duration of one history call — no cross-call leakage from a
@@ -54,7 +54,7 @@ class TracingReplayEvaluator : public Evaluator
             no cell is provided to walk(). */
         std::shared_ptr<const ArgCell> walkCell;
         /** Memoise id → resolved Object within this single history so
-            recursive resolveStateHash calls don't redo work. */
+            recursive resolveIdentity calls don't redo work. */
         std::map<std::string, std::shared_ptr<Object>> memo;
 
     };
@@ -76,7 +76,7 @@ class TracingReplayEvaluator : public Evaluator
         resolved recursively. Per-history memoisation in ctx.memo
         prevents redundant work within the same history. Returns
         nullptr if the id can't be resolved. */
-    std::shared_ptr<Object> resolveStateHash(const std::string & idStr, ResolutionContext & ctx);
+    std::shared_ptr<Object> resolveIdentity(const std::string & idStr, ResolutionContext & ctx);
 
     std::shared_ptr<Object> resolveApplyId(const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx);
 

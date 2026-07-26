@@ -410,7 +410,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
 
     /* Record the apply Request payload at the subject-id hash so dispatch
        and the legacy SelectorApply{fn, arg} payload coincide. The legacy
-       fnId/argSubject fields remain for the dispatcher's resolveStateHash
+       fnId/argSubject fields remain for the dispatcher's resolveIdentity
        chain. */
     trace::SelectorApply applyQ{*fnIdOpt};
     auto v = writer.getSink().logSelector(applyQ);
