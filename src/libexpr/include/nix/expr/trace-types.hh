@@ -361,7 +361,7 @@ struct SelectorGetAttr
 {
     static constexpr std::string_view tag = "getAttr";
     std::string name;
-    SelectorLeaf from;   ///< Parent Q identity (stable under #178).
+    std::string from;   ///< Parent Q identity (stable under #178).
     auto operator<=>(const SelectorGetAttr &) const = default;
 };
 DECLARE_SELECTOR_RESULT(SelectorGetAttr, ResultWHNF)
@@ -373,7 +373,7 @@ DECLARE_SELECTOR_RESULT(SelectorGetAttr, ResultWHNF)
 struct SelectorGetListElem
 {
     static constexpr std::string_view tag = "getListElem";
-    SelectorLeaf from;   ///< Parent Q identity (stable under #178).
+    std::string from;   ///< Parent Q identity (stable under #178).
     size_t index;
     auto operator<=>(const SelectorGetListElem &) const = default;
 };
@@ -388,7 +388,7 @@ DECLARE_SELECTOR_RESULT(SelectorGetListElem, ResultWHNF)
 struct SelectorGetWHNF
 {
     static constexpr std::string_view tag = "getWHNF";
-    SelectorLeaf from;
+    std::string from;
     auto operator<=>(const SelectorGetWHNF &) const = default;
 };
 DECLARE_SELECTOR_RESULT(SelectorGetWHNF, ResultWHNF)
@@ -397,7 +397,7 @@ DECLARE_SELECTOR_RESULT(SelectorGetWHNF, ResultWHNF)
 struct SelectorGetFunctionInfo
 {
     static constexpr std::string_view tag = "getFunctionInfo";
-    SelectorLeaf from;   ///< Parent Q identity (stable under #178).
+    std::string from;   ///< Parent Q identity (stable under #178).
     auto operator<=>(const SelectorGetFunctionInfo &) const = default;
 };
 

@@ -744,23 +744,13 @@ std::optional<Hash> fromHashOf(const SelectorVariant & query)
 
 void rewriteFrom(SelectorVariant & query, const std::string & newFromHex)
 {
-    auto rewriteLeaf = [&](SelectorLeaf & leaf) {
-        std::string ancestry = true ? std::string{} : std::string{};
-        leaf = SelectorLeaf{OuterLeaf{0}};
-    };
+    /* #183: `from` fields now carry query-space Q hash as std::string.
+       Directly assign newFromHex. */
     std::visit(
         [&](auto & q) {
             using Q = std::decay_t<decltype(q)>;
             if constexpr (requires { q.from; })
-                rewriteLeaf(q.from);
-            if constexpr (requires { q.perArgFrame; }) {
-                if (!q.perArgFrame.fromStateHashes.empty())
-                    rewriteLeaf(q.perArgFrame.fromStateHashes[0]);
-            }
-            if constexpr (requires { q.fromStateHashes; }) {  // SelectorApply
-                if (!q.fromStateHashes.empty())
-                    rewriteLeaf(q.fromStateHashes[0]);
-            }
+                q.from = newFromHex;
         },
         query);
 }

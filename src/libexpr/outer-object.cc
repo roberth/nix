@@ -46,8 +46,12 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
         return outerObj->maybeGetAttr(name);
     if (std::find(ap->names.begin(), ap->names.end(), name) == ap->names.end())
         return nullptr;
-    trace::SelectorGetAttr q{name, std::string{}};
-    stampPerArgFields(q, subject, argAncestry);
+    /* #183: q.from = parent's Q hash hex (query-space identity of the
+       producer chain). Child's identity becomes this Selector's own
+       Q hash. */
+    auto parentQHex = getStateHashHex().value_or(std::string{});
+    trace::SelectorGetAttr q{name, parentQHex};
+    auto childQHex = TracingDecisionGraph::computeSelectorHash(q).to_string(HashFormat::Base16, false);
     auto qr = queryFn(outerObj, q, subject, argAncestry);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
@@ -65,6 +69,7 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     /* Inherit argAncestry so the child's `from` fields include
        the same state hash(Q) the parent uses. */
     child->withInheritedScope(argAncestry);
+    child->withProducingQHex(std::move(childQHex));
     child->cachedWHNF = *r;
     return child;
 }

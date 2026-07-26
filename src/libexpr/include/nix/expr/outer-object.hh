@@ -193,16 +193,28 @@ public:
      */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 
+    /* #183: query-space identity — the Q hash of the Selector chain
+       that produced this OuterObject. Set for navigation children
+       (via `withProducingQHex` at maybeGetAttr etc.); nullopt for
+       root OuterObjects (which fall back to subjectId of their
+       Subject — a stable structural id for outer args at the
+       cache boundary). */
+    std::optional<std::string> producingQHex;
+
+    OuterObject & withProducingQHex(std::string hex)
+    {
+        producingQHex = std::move(hex);
+        return *this;
+    }
+
     OuterId getStateHash() const
     {
-        /* state hash at the empty factset, with this proxy's inherited
-           argAncestry applied. For multi-edge use, callers must pass the
-           relevant history via stateHashAt instead. */
         return subjectId(subject, argAncestry);
     }
 
     std::optional<std::string> getStateHashHex() const override
     {
+        if (producingQHex) return *producingQHex;
         return getStateHash().to_string(HashFormat::Base16, false);
     }
 };
