@@ -244,7 +244,6 @@ public:
                subject-space match. */
             (void) fnInitialHex;
             auto obsSetHash = decisionGraph->insertObservationSet(cs.runningObsSet);
-            auto fnCurrent = subjectId(*ar->fn, applyArgAncestry);
             trace::SelectorCallbackApply qca;
             /* #181: fn = the callback fn's query-space identity,
                captured at firing time by CallbackState. Discriminates

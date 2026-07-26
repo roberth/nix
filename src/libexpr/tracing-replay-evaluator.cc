@@ -647,27 +647,13 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
     if (!qv)
         return std::nullopt;
 
-    /* Resolve `q`'s per-arg roots + path into a live parent Object.
+    /* Resolve a producer query's parent by its `from` Q-hash.
        Producer queries (getWHNF/getAttr/getListElem/getFunctionInfo)
-       and QCA share this pattern via `perArgFrame`; SelectorApply
-       resolves separately via `resolveApplyId`. */
-    auto resolveParent = [&](const trace::PerArgFrame & frame,
-                             const trace::SelectorLeaf & from) -> std::shared_ptr<Object> {
-        std::vector<std::shared_ptr<Object>> roots;
-        if (!frame.fromStateHashes.empty()) {
-            for (auto & leaf : frame.fromStateHashes) {
-                auto obj = resolveIdentity(std::string{}, ctx);
-                if (!obj) return nullptr;
-                roots.push_back(std::move(obj));
-            }
-        } else if (true && !std::string{}.empty()) {
-            auto obj = resolveIdentity(std::string{}, ctx);
-            if (!obj) return nullptr;
-            roots.push_back(std::move(obj));
-        } else {
+       under #183 carry parent identity as a query-space hex string. */
+    auto resolveParentByFrom = [&](const std::string & fromHex) -> std::shared_ptr<Object> {
+        if (fromHex.empty())
             return nullptr;
-        }
-        return navigatePath(roots, frame.path, &writer);
+        return resolveIdentity(fromHex, ctx);
     };
 
     return std::visit(
@@ -779,10 +765,10 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     tracingCacheLog("callbackApply: fn->queryApply failed: %s", e.what());
                     return std::nullopt;
                 }
-            } else if constexpr (requires { q.perArgFrame; }) {
-                /* Producer queries: resolve the parent Object via the
-                   per-arg roots + path, then invoke the leaf op. */
-                auto obj = resolveParent(q.perArgFrame, q.from);
+            } else if constexpr (requires { q.from; }) {
+                /* Producer queries: resolve the parent Object via its
+                   query-space `from` hex, then invoke the leaf op. */
+                auto obj = resolveParentByFrom(q.from);
                 if (!obj) return std::nullopt;
 
                 nlohmann::json resultJson;
