@@ -239,24 +239,18 @@ public:
             && tryEmitFromCell(*callbackCell->callbackState))
             return;
 
-        /* Fallback: iterate writer.callbackCells (pre-cell-migration
-           path). Retained until all createCallbackCell callsites
-           populate an ArgCell.callbackState reachable at the emit
-           point. See task list for the retirement plan. */
-        for (auto it = callbackCells.rbegin(); it != callbackCells.rend(); ++it) {
-            auto & cell = *it;
-            if (cell.fnStateHashHex != fnInitialHex)
-                continue;
-            if (cell.argAncestryHex.empty())
-                continue;
-            CallbackState adapter;
-            adapter.applyId = cell.applyId;
-            adapter.fnStateHashHex = cell.fnStateHashHex;
-            adapter.argAncestryHex = cell.argAncestryHex;
-            adapter.runningObsSet = cell.runningObsSet;
-            (void) tryEmitFromCell(adapter);
-            return;
-        }
+        /* #184 step 2: fallback loop over writer.callbackCells retired.
+           Every caller of emitCallbackApplyForApplyResult now threads a
+           cell whose callbackState is populated (TE::apply since #184
+           step 1; OuterApply::run + cbApplyOrigin wrappers since
+           earlier). If we reach here, the primary path failed to
+           match — probe the reason. */
+        tracingCacheLog(
+            "emitCallbackApplyForApplyResult: primary path returned false; "
+            "callbackCell=%p callbackState=%p fnInitialHex=%s",
+            (void*) callbackCell.get(),
+            callbackCell ? (void*) callbackCell->callbackState.get() : nullptr,
+            fnInitialHex.substr(0, 12).c_str());
     }
 
     /**
