@@ -157,32 +157,36 @@ trace::ResultWHNF & TracingObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    /* Task #110: push ActiveSelector BEFORE forcing so that sub-
-       observations happening during computeWHNFFromObject attribute
-       to this Q's chain and evolve its fromSubject's state hash. */
-    auto parentHash = evolvedQueryFrom();
-    trace::SelectorGetWHNF query{parentHash};
-    /* Phase D2: getter — no push, direct Terminal. */
-    auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
     auto whnfResult = computeWHNFFromObject(*inner);
     /* Cell-migration Phase B moved QCA emission from here to
        TracingEvaluator::apply. But TE::apply fires only for the
-       OUTER-side apply (cache-fn to `{f=...}`); the callback firing
-       itself goes through OuterApply::run which doesn't route through
-       TE::apply. Without the emission here for cbApplyOrigin
-       wrappers, cb-apply results whose fn is an outer-supplied
-       callback never emit QCA — cb-obsset-mismatch and siblings
-       silently hit wrong Terminals.
-       Re-emit here when the wrapper is a callback-origin apply
-       result. Phase B's centralisation still holds for TE::apply's
-       own apply results (those have cachedWHNF pre-populated so this
-       body doesn't run). */
+       OUTER-side apply; the callback firing itself goes through
+       OuterApply::run. Re-emit here when the wrapper is a
+       callback-origin apply result. */
     if (cbApplyOrigin && applyResultSubject)
         writer.emitCallbackApplyForApplyResult(argCell, *applyResultSubject, applyArgAncestry, whnfResult);
-    auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
-    auto tp = writer.logQueryResult(valueId, whnfResult, qh, anchorCur, argCell);
-    if (qh.selectorHash && tp)
-        pushObservation(parentHash, *qh.selectorHash, tp->resultNodeHash);
+    /* #185: SelectorGetWHNF is algebraically a noop over
+       ResultWHNF-typed Selectors. For wrappers whose triePos points
+       to a real parent Selector's Terminal (nav descendants, root
+       wrappers), the WHNF is already in that Terminal's Result —
+       no GetWHNF recording needed. Warm reads it directly.
+
+       For cbApplyOrigin wrappers with a synthetic triePos
+       (resultNodeHash empty; the wrapper's "parent Selector" is the
+       fn Q, not a Selector that produced this applyResult), fall
+       back to recording GetWHNF so warm can look it up. Retiring
+       that case needs OuterApply::run to point triePos at the real
+       producer Selector's Terminal — a follow-up. */
+    bool hasValidTerminal = triePos && triePos->resultNodeHash != Hash(HashAlgorithm::SHA256);
+    if (!hasValidTerminal) {
+        auto parentHash = evolvedQueryFrom();
+        trace::SelectorGetWHNF query{parentHash};
+        auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
+        auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
+        auto tp = writer.logQueryResult(valueId, whnfResult, qh, anchorCur, argCell);
+        if (qh.selectorHash && tp)
+            pushObservation(parentHash, *qh.selectorHash, tp->resultNodeHash);
+    }
     cachedWHNF = std::move(whnfResult);
     return *cachedWHNF;
 }
