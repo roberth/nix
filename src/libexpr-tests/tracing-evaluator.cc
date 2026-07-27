@@ -89,7 +89,7 @@ TEST_F(TracingEvaluatorTest, GetAttrTracesAccess)
 
     /* Under cell-migration Phase C, evalExpr pre-populates the
        wrapper's cachedWHNF, so `whnf()` short-circuits without
-       emitting a SelectorGetWHNF. Only the retrieval SelectorGetAttr
+       emitting an observation. Only the retrieval SelectorGetAttr
        fires. */
     ASSERT_GE(sink->entries.size(), 2u);
     auto & getAttrQuery = sink->entries[0];

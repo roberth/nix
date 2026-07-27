@@ -132,8 +132,7 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
         return *cachedWHNF;
     /* #186: mirror cold's TracingCallbackArg::whnf — the obsSet entry
        is keyed on the value's own Selector (SelectorArg for a
-       positional arg, SelectorGetAttr for a nav descendant, etc.),
-       not a SelectorGetWHNF wrapper. */
+       positional arg, SelectorGetAttr for a nav descendant, etc.). */
     auto sel = producer;
     auto rJson = std::visit(
         [&](const auto & q) -> nlohmann::json {

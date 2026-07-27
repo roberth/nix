@@ -633,8 +633,8 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
         return std::nullopt;
 
     /* Resolve a producer query's parent by its `from` Q-hash.
-       Producer queries (getWHNF/getAttr/getListElem/getFunctionInfo)
-       under #183 carry parent identity as a query-space hex string. */
+       Producer queries (getAttr/getListElem/getFunctionInfo) under
+       #183 carry parent identity as a query-space hex string. */
     auto resolveParentByFrom = [&](const std::string & fromHex) -> std::shared_ptr<Object> {
         if (fromHex.empty())
             return nullptr;
@@ -774,9 +774,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
 
                 nlohmann::json resultJson;
                 try {
-                    if constexpr (std::is_same_v<Q, trace::SelectorGetWHNF>) {
-                        resultJson = computeWHNFFromObject(*obj);
-                    } else if constexpr (std::is_same_v<Q, trace::SelectorGetAttr>) {
+                    if constexpr (std::is_same_v<Q, trace::SelectorGetAttr>) {
                         /* Pure retrieval — caller (walker) has projected
                            membership from parent's WHNFAttrs. */
                         auto child = obj->maybeGetAttr(q.name);
@@ -992,8 +990,8 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        applyResult wrapper can be constructed with its cached WHNF
        already populated from cold's Terminal — mirrors the writer
        side's eager WHNF computation. On hit, downstream `.foo` probes
-       on the wrapper use cachedWHNF for membership without invoking a
-       separate SelectorGetWHNF walk. On miss, we fall back to the
+       on the wrapper use cachedWHNF for membership without a
+       separate walk. On miss, we fall back to the
        lazy-inner-apply TRO (with no cachedWHNF), which will trigger
        inner->apply when forced.
 

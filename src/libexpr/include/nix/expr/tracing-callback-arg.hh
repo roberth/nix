@@ -53,8 +53,9 @@ class TracingCallbackArg : public Object
     std::shared_ptr<const ArgCell> argCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
-       getString / etc. fires `whnf()`, which records ONE SelectorGetWHNF
-       observation. Subsequent calls decode the cached result. */
+       getString / etc. fires `whnf()`, which records ONE observation
+       keyed on this value's producer Selector. Subsequent calls decode
+       the cached result. */
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 

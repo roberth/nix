@@ -13,7 +13,7 @@ namespace nix {
 void TracingWriter::logOuterObservation(
     const trace::SelectorVariant & query,
     const trace::ResultVariant & result,
-    trace::SelectorVariant producer,
+    std::string producerDesc,
     const std::shared_ptr<const ArgCell> & attributionCell)
 {
     if (!decisionGraph)
@@ -30,7 +30,6 @@ void TracingWriter::logOuterObservation(
        per-cell factset model, cur at (Q, cur) does the discrimination
        the `from` state hash used to do. Q hashes become stable per
        operation. */
-    auto producerDesc = trace::describe(producer);
     std::string queryTag = std::visit(
         [](const auto & q) -> std::string { return std::string(q.tag); }, query);
     tracingCacheLog(

@@ -207,7 +207,6 @@ TEST(TraceTypes, QueryTagConstants)
     EXPECT_EQ(SelectorImport::tag, "import");
     EXPECT_EQ(SelectorGetAttr::tag, "getAttr");
     EXPECT_EQ(SelectorGetListElem::tag, "getListElem");
-    EXPECT_EQ(SelectorGetWHNF::tag, "getWHNF");
     EXPECT_EQ(SelectorGetFunctionInfo::tag, "getFunctionInfo");
     EXPECT_EQ(SelectorApply::tag, "apply");
     EXPECT_EQ(FileReadRequest::tag, "fileRead");

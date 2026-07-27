@@ -310,20 +310,6 @@ struct SelectorGetListElem
 };
 DECLARE_SELECTOR_RESULT(SelectorGetListElem, ResultWHNF)
 
-/** Force a value to WHNF and read its type + type-determined payload
-    in one shot. Used by the cache-layer Objects to combine what would
-    otherwise be separate getType + getInt/getString/etc. observations
-    — a single WHNF probe per value force, recorded once. The
-    individual getType/getInt/etc. paths remain for callers that don't
-    need WHNF semantics. */
-struct SelectorGetWHNF
-{
-    static constexpr std::string_view tag = "getWHNF";
-    std::string from;
-    auto operator<=>(const SelectorGetWHNF &) const = default;
-};
-DECLARE_SELECTOR_RESULT(SelectorGetWHNF, ResultWHNF)
-
 /** Get function argument info (formals). */
 struct SelectorGetFunctionInfo
 {
@@ -449,7 +435,6 @@ using Selectors = ApplyWrapper<
     SelectorGetAttr,
     SelectorGetListElem,
     SelectorGetFunctionInfo,
-    SelectorGetWHNF,
     SelectorApply,
     SelectorCallbackApply,
     SelectorArg>;
@@ -473,7 +458,6 @@ using SelectorVariant = std::variant<
     SelectorGetAttr,
     SelectorGetListElem,
     SelectorGetFunctionInfo,
-    SelectorGetWHNF,
     SelectorApply,
     SelectorCallbackApply,
     SelectorArg>;

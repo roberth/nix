@@ -175,15 +175,13 @@ public:
             std::shared_ptr<const ArgCell> attrCell;
             if (!activeCells.empty())
                 attrCell = activeCells.back()->qState->cell.lock();
-            /* Re-derive fn's producer Selector from the SelectorApply
-               payload's `fn` hex — for logOuterObservation's describe
-               log line only; the identity that matters is qca's own
-               content hash. */
-            trace::SelectorGetWHNF fnCarrier{ap->fn};
+            /* producer describe: we only have `fn` as a hex string here
+               (SelectorApply payload's fn field); the identity that
+               matters is qca's own content hash. */
             logOuterObservation(
                 trace::SelectorVariant{std::move(qca)},
                 trace::ResultVariant{whnf},
-                trace::SelectorVariant{std::move(fnCarrier)},
+                "fn=" + ap->fn.substr(0, 12),
                 attrCell);
             return true;
         };
@@ -421,7 +419,7 @@ public:
     void logOuterObservation(
         const trace::SelectorVariant & query,
         const trace::ResultVariant & result,
-        trace::SelectorVariant producer,
+        std::string producerDesc,
         const std::shared_ptr<const ArgCell> & attributionCell = {});
 
     /**

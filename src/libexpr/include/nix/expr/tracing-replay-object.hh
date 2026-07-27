@@ -61,7 +61,8 @@ class TracingReplayObject : public Object
 
     /* Memoized WHNF lookup. First call to any of the WHNF-subsumed
        getters (getType / getInt / getString / etc.) fires `whnf()`
-       which looks up the recorded SelectorGetWHNF response. */
+       which decodes the WHNF from the wrapper's triePos.resultNodeHash
+       (parent Selector's Terminal). */
     mutable std::optional<trace::ResultWHNF> cachedWHNF;
     std::optional<const trace::ResultWHNF *> whnf();
 
@@ -99,7 +100,7 @@ public:
         hit, populates the walker-side applyResult wrapper's cached
         WHNF from the Terminal's Result payload. Downstream `.foo`
         probes on this wrapper use the cached WHNF for membership
-        without invoking a separate SelectorGetWHNF walk. */
+        without a separate walk. */
     TracingReplayObject & withCachedWHNF(trace::ResultWHNF whnf_)
     {
         cachedWHNF = std::move(whnf_);

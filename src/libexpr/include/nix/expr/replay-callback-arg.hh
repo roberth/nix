@@ -72,9 +72,10 @@ class ReplayCallbackArg : public Object
        CBOR response payload). */
     std::shared_ptr<std::map<Hash, std::string>> obsSetResponses;
 
-    /* Memoized WHNF response. The recorder logs ONE SelectorGetWHNF
-       observation per value force; the walker must reuse the cached
-       response on any subsequent call. Without this, when
+    /* Memoized WHNF response. The recorder logs ONE observation per
+       value force (keyed on the value's producer Selector); the walker
+       must reuse the cached response on any subsequent call. Without
+       this, when
        `dispatchQueryRequest::navigatePath` invokes `queryApply`
        multiple times against the same ReplayCallbackArg (= once per fact
        dispatched on the apply result), each Apply Value's force

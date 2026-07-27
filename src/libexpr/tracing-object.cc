@@ -12,9 +12,9 @@
 namespace nix {
 
 /* Compute a value's WHNF in one pass by calling the Object's
-   per-type getters. Used by TracingObject::whnf to record a single
-   SelectorGetWHNF observation, and by the walker's dispatch to compute
-   the live response for a recorded SelectorGetWHNF. */
+   per-type getters. Used by wrappers' whnf() when they need to
+   materialise a ResultWHNF payload, and by the walker's live
+   dispatch to compare against recorded responses. */
 trace::ResultWHNF computeWHNFFromObject(Object & obj)
 {
     auto type = obj.getType();
@@ -144,14 +144,9 @@ trace::ResultWHNF & TracingObject::whnf()
        callback-origin apply result. */
     if (cbApplyOrigin && producer)
         writer.emitCallbackApplyForApplyResult(argCell, *producer, whnfResult);
-    /* #185: SelectorGetWHNF emission fully retired. Warm never looks
-       these Terminals up:
-         - TRO nav descendants + root wrappers have valid
-           triePos.resultNodeHash → decode from parent Selector's
-           Terminal directly.
-         - Warm SelectorCallbackApply dispatch is a live
-           fn->queryApply invocation, not a Terminal lookup.
-       Recording GetWHNF Terminals wrote unread rows to the DB. */
+    /* #185: no separate whnf Fact — nav descendants + root wrappers
+       decode WHNF from triePos.resultNodeHash (parent Selector's
+       Terminal). Callback-origin wrappers emit QCA above. */
     cachedWHNF = std::move(whnfResult);
     return *cachedWHNF;
 }

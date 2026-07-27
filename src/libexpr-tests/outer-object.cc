@@ -14,9 +14,11 @@ static ref<SourceRoot> stubOuterRoot()
 }
 
 /* Producer Selector for a test OuterObject. #183: identity is the
-   content hash of the producer Selector. Using SelectorGetWHNF with
-   a per-test `from` hex distinguishes proxies without hitting real
-   trace payloads. */
+   content hash of the producer Selector. Using SelectorArg with a
+   per-test depth distinguishes proxies without hitting real trace
+   payloads (SelectorArg's content hash is a pure function of depth).
+   `testId(n)` is retained as a distinct-hash source unrelated to
+   producers, for tests that need an opaque hash. */
 static Hash testId(int n)
 {
     return hashString(HashAlgorithm::SHA256, "test:" + std::to_string(n));
@@ -24,7 +26,7 @@ static Hash testId(int n)
 
 static trace::SelectorVariant testProducer(int n)
 {
-    return trace::SelectorGetWHNF{testId(n).to_string(HashFormat::Base16, false)};
+    return trace::SelectorArg{n};
 }
 
 static std::string producerHex(int n)
@@ -97,7 +99,7 @@ TEST(OuterObjectTest, GetType)
     auto obj = std::make_shared<OuterObject>(
         testProducer(0),
         stubOuter(),
-        mockResolver({{"getWHNF:" + arg, trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
+        mockResolver({{"arg:" + arg, trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
         stubOuterRoot());
     EXPECT_EQ(obj->getType(), nInt);
 }
@@ -108,7 +110,7 @@ TEST(OuterObjectTest, GetInt)
     auto obj = std::make_shared<OuterObject>(
         testProducer(0),
         stubOuter(),
-        mockResolver({{"getWHNF:" + arg, trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
+        mockResolver({{"arg:" + arg, trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
         stubOuterRoot());
     EXPECT_EQ(obj->getInt().value, 42);
 }
@@ -119,7 +121,7 @@ TEST(OuterObjectTest, GetString)
     auto obj = std::make_shared<OuterObject>(
         testProducer(0),
         stubOuter(),
-        mockResolver({{"getWHNF:" + arg, trace::ResultWHNF{"string", trace::WHNFString{"hello", {}}}}}),
+        mockResolver({{"arg:" + arg, trace::ResultWHNF{"string", trace::WHNFString{"hello", {}}}}}),
         stubOuterRoot());
     EXPECT_EQ(obj->getStringIgnoreContext(), "hello");
 }
@@ -130,7 +132,7 @@ TEST(OuterObjectTest, GetBool)
     auto obj = std::make_shared<OuterObject>(
         testProducer(0),
         stubOuter(),
-        mockResolver({{"getWHNF:" + arg, trace::ResultWHNF{"bool", trace::WHNFBool{true}}}}),
+        mockResolver({{"arg:" + arg, trace::ResultWHNF{"bool", trace::WHNFBool{true}}}}),
         stubOuterRoot());
     EXPECT_TRUE(obj->getBool());
 }
@@ -144,7 +146,7 @@ TEST(OuterObjectTest, GetAttrReturnsChild)
         testProducer(0),
         stubOuter(),
         mockResolver({
-            {"getWHNF:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{"x"}}}},
+            {"arg:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{"x"}}}},
             {"getAttr:" + arg, trace::ResultWHNF{"int", trace::WHNFInt{99}}},
         }),
         stubOuterRoot());
@@ -161,7 +163,7 @@ TEST(OuterObjectTest, GetAttrMissing)
     auto obj = std::make_shared<OuterObject>(
         testProducer(0), stubOuter(),
         mockResolver({
-            {"getWHNF:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{}}}},
+            {"arg:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{}}}},
         }),
         stubOuterRoot());
     EXPECT_EQ(obj->maybeGetAttr("missing"), nullptr);
@@ -176,7 +178,7 @@ TEST(OuterObjectTest, GetListElem)
         testProducer(0),
         stubOuter(),
         mockResolver({
-            {"getWHNF:" + arg, trace::ResultWHNF{"list", trace::WHNFList{5}}},
+            {"arg:" + arg, trace::ResultWHNF{"list", trace::WHNFList{5}}},
             {"getListElem:" + arg, trace::ResultWHNF{"string", trace::WHNFString{"world", {}}}},
         }),
         stubOuterRoot());
@@ -192,7 +194,7 @@ TEST(OuterObjectTest, GetAttrNames)
         testProducer(0),
         stubOuter(),
         mockResolver({
-            {"getWHNF:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{"a", "b", "c"}}}},
+            {"arg:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{"a", "b", "c"}}}},
         }),
         stubOuterRoot());
     auto names = obj->getAttrNames();

@@ -33,13 +33,10 @@ static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const tr
                 return {computeWHNFFromObject(*obj), nullptr};
             } else if constexpr (std::is_same_v<Q, trace::SelectorArg>) {
                 /* #186: SelectorArg used as identity of the outer arg
-                   itself — return its WHNF (no navigation). Same shape
-                   as SelectorGetWHNF's response. */
+                   itself — return its WHNF (no navigation). */
                 return {computeWHNFFromObject(*obj), nullptr};
             } else if constexpr (!requires { query.from; }) {
                 throw Error("outer query: query type has no 'from' field");
-            } else if constexpr (std::is_same_v<Q, trace::SelectorGetWHNF>) {
-                return {computeWHNFFromObject(*obj), nullptr};
             } else if constexpr (std::is_same_v<Q, trace::SelectorGetAttr>) {
                 /* Pure retrieval — assumes existence (caller must
                    have projected membership from parent WHNFAttrs). */
@@ -350,14 +347,13 @@ static PrimOp * makeCachedFnPrimOp(
                                `outerObj` already emits its own recording via
                                a QCA-emitting wrapper. Cold otherwise records
                                two overlapping observations for the same
-                               event — a generic getWHNF whose `from` refers
-                               to `Arg{depth}` (a subject warm can't resolve
-                               because it has no live contra-arg) and the
-                               QCA observation from the wrapper's own whnf.
-                               Warm hits the generic one and misses. R2 in
-                               status.md flags this redundancy; the QCA
-                               alone is what the callback-model design
-                               requires. */
+                               event — a generic whnf-of-arg observation
+                               (which warm can't resolve because it has no
+                               live contra-arg) and the QCA observation from
+                               the wrapper's own whnf. Warm hits the generic
+                               one and misses. R2 in status.md flags this
+                               redundancy; the QCA alone is what the
+                               callback-model design requires. */
                             bool cbApplyOrigin = false;
                             std::shared_ptr<const ArgCell> attributionCell;
                             if (outerObj) {

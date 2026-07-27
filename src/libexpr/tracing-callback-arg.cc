@@ -59,9 +59,8 @@ trace::ResultWHNF & TracingCallbackArg::whnf()
     auto whnfResult = computeWHNFFromObject(*inner);
     /* #186: obsSet entry uses the value's own Selector — SelectorArg
        for a positional callback arg, SelectorGetAttr for a nav
-       descendant, etc. Retires the SelectorGetWHNF wrapper for this
-       role: the observation IS "this value observed to have WHNF X",
-       whose natural Selector is the value's own producer. */
+       descendant, etc. The observation IS "this value observed to
+       have WHNF X", whose natural Selector is the value's producer. */
     recordObservation(producer, whnfResult);
     cachedWHNF = std::move(whnfResult);
     return *cachedWHNF;

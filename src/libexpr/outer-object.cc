@@ -51,8 +51,8 @@ trace::ResultWHNF & OuterObject::whnf()
     if (cachedWHNF)
         return *cachedWHNF;
     /* #185 Role 3: the Fact records "value at this identity has WHNF X".
-       The value's identity IS its producer Selector; the SelectorGetWHNF
-       wrapper is algebraically redundant. Pass producer as the Fact key. */
+       The value's identity IS its producer Selector. Pass producer as
+       the Fact key. */
     auto qr = queryFn(outerObj, producer, producer);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)

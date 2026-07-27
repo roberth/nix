@@ -175,10 +175,9 @@ std::shared_ptr<Object> TracingCallbackApplyResult::getListElem(size_t index)
 ObjectType TracingCallbackApplyResult::getTypeLazy()
 {
     /* Delegate to `inner` for the type without recording — `getType`
-       goes through `whnf()` which records the same SelectorGetWHNF
-       payload; recording here too would produce a duplicate. Callers
-       that need both `getTypeLazy` and `getType` get exactly one
-       observation through the `getType` call. */
+       goes through `whnf()` which records the observation; recording
+       here too would duplicate. Callers that need both `getTypeLazy`
+       and `getType` get exactly one observation through `getType`. */
     return inner->getTypeLazy();
 }
 

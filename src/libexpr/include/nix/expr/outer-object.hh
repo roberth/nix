@@ -100,9 +100,9 @@ class OuterObject : public Object
     std::shared_ptr<const ArgCell> argCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
-       getString / etc. fires `whnf()`, which issues ONE SelectorGetWHNF
-       through `queryFn`. Subsequent calls decode the cached result
-       without re-querying. */
+       getString / etc. fires `whnf()`, which issues ONE observation
+       through `queryFn` keyed on this proxy's `producer`. Subsequent
+       calls decode the cached result without re-querying. */
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 

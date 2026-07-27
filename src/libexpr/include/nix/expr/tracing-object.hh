@@ -13,9 +13,9 @@
 namespace nix {
 
 /** Compute a value's WHNF in one pass by calling the Object's
-    per-type getters. Used by TracingObject::whnf to record a single
-    SelectorGetWHNF observation, and by the walker's dispatch to compute
-    the live response for a recorded SelectorGetWHNF. */
+    per-type getters. Used by wrappers' whnf() to materialise a
+    ResultWHNF payload, and by the walker's live dispatch to compare
+    against recorded responses. */
 trace::ResultWHNF computeWHNFFromObject(Object & obj);
 
 /**
@@ -47,11 +47,10 @@ class TracingObject : public Object
        for rationale. */
     bool cbApplyOrigin = false;
 
-    /* Memoized WHNF observation. First call to any of getType / getInt /
-       getString / etc. fires `whnf()`, which records ONE SelectorGetWHNF
-       observation against this Object's identity carrying the type
-       discriminator plus the type-determined payload. Subsequent calls
-       on this Object decode the cached result without re-recording. */
+    /* Memoized WHNF payload. First call to any of getType / getInt /
+       getString / etc. fires `whnf()`, which computes the type
+       discriminator plus type-determined payload once. Subsequent
+       calls decode the cached result. */
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 
@@ -84,7 +83,7 @@ public:
         cell-migration Phase B: `TracingEvaluator::apply` computes the
         applyResult's WHNF as part of the atomic apply operation and
         pre-populates the wrapper, so subsequent `.whnf()` short-
-        circuits without invoking `SelectorGetWHNF`. */
+        circuits without recomputing. */
     TracingObject & withCachedWHNF(trace::ResultWHNF whnf_)
     {
         cachedWHNF = std::move(whnf_);

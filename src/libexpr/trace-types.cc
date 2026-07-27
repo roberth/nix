@@ -361,18 +361,6 @@ void from_json(const nlohmann::json & j, ResultFunctionInfo & r)
     j.at("ellipsis").get_to(r.ellipsis);
 }
 
-void to_json(nlohmann::json & j, const SelectorGetWHNF & q)
-{
-    j = nlohmann::json{
-        {"tag", SelectorGetWHNF::tag},
-        {"from", q.from}};
-}
-
-void from_json(const nlohmann::json & j, SelectorGetWHNF & q)
-{
-    j.at("from").get_to(q.from);
-}
-
 void to_json(nlohmann::json & j, const SelectorApply & q)
 {
     j = nlohmann::json{{"tag", SelectorApply::tag}, {"fn", q.fn}};
@@ -470,8 +458,6 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
         if (auto r = tryParseQuery<SelectorGetAttr>(type, j))
             return r;
         if (auto r = tryParseQuery<SelectorGetListElem>(type, j))
-            return r;
-        if (auto r = tryParseQuery<SelectorGetWHNF>(type, j))
             return r;
         if (auto r = tryParseQuery<SelectorGetFunctionInfo>(type, j))
             return r;
@@ -688,7 +674,6 @@ bool willMoveStateHash(const SelectorVariant & query)
             [](const SelectorGetAttr &) { return true; },
             [](const SelectorGetListElem &) { return true; },
             [](const SelectorGetFunctionInfo &) { return true; },
-            [](const SelectorGetWHNF &) { return true; },
             [](const SelectorApply &) { return true; },
             [](const SelectorCallbackApply &) { return true; },
             [](const SelectorArg &) { return false; },
