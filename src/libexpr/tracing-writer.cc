@@ -72,10 +72,15 @@ void TracingWriter::logOuterObservation(
         return;
 
     /* #183: fact appends to attributionCell's fact set. Ask rows
-       inserted per-Selector-completion. */
+       inserted per-Selector-completion.
+       #187 principle 9: outer probes ARE value probes — stamp with
+       current barrier, then bump so the next value probe gets a
+       distinct barrier group. */
+    auto barrier = peekBarrier();
     if (attributionCell) {
-        attributionCell->addFact(selectorHash, responseHash);
+        attributionCell->addFact(selectorHash, responseHash, barrier);
     }
+    bumpBarrier();
     responseFor.emplace(selectorHash, responseHash);
     sessionRequestsTrie.insert(selectorHash);
     allRequestHashes.insert(selectorHash);

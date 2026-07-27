@@ -73,7 +73,8 @@ static OuterQueryFn mockResolver(std::map<std::string, trace::ResultVariant> res
     return [responses = std::move(responses)](
                std::shared_ptr<Object> /*outerObj*/,
                const trace::SelectorVariant & q,
-               trace::SelectorVariant producer) -> OuterQueryResult {
+               trace::SelectorVariant producer,
+               std::shared_ptr<const ArgCell> /*callerCell*/) -> OuterQueryResult {
         auto stateHash = TracingDecisionGraph::computeSelectorHash(producer);
         std::string objHex = stateHash.to_string(HashFormat::Base16, false);
         std::string key = std::visit(

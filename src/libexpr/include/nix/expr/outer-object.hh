@@ -35,15 +35,19 @@ struct OuterQueryResult
 
 /**
  * Callback type for issuing outer queries. Takes the outer Object
- * to query, the query itself, and the caller's producer Selector
- * (identifies the caller for logging + attribution). Passing the
+ * to query, the query itself, the caller's producer Selector
+ * (identifies the caller for logging), and the caller's argCell
+ * (fact-attribution target: observations attribute to this cell,
+ * NOT the wrapped `outerObj`'s cell — that one is typically null
+ * because outerObj is a non-proxy inner Object). Passing the
  * outer Object directly (rather than an id) reflects that OuterObject
  * wraps a specific Object from a different Interpreter.
  */
 using OuterQueryFn = std::function<OuterQueryResult(
     std::shared_ptr<Object> outerObj,
     const trace::SelectorVariant &,
-    trace::SelectorVariant producer)>;
+    trace::SelectorVariant producer,
+    std::shared_ptr<const ArgCell> callerCell)>;
 
 /**
  * Callback type for outer function application. Takes the outer fn

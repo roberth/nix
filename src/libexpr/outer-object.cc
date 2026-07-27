@@ -33,7 +33,7 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     /* Child producer = SelectorGetAttr{name, from=parent's Q hash hex}. */
     auto parentQHex = getSelectorHashHex().value_or(std::string{});
     trace::SelectorGetAttr q{name, parentQHex};
-    auto qr = queryFn(outerObj, q, producer);
+    auto qr = queryFn(outerObj, q, producer, argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("outer maybeGetAttr: queryFn returned unexpected result type");
@@ -53,7 +53,7 @@ trace::ResultWHNF & OuterObject::whnf()
     /* #185 Role 3: the Fact records "value at this identity has WHNF X".
        The value's identity IS its producer Selector. Pass producer as
        the Fact key. */
-    auto qr = queryFn(outerObj, producer, producer);
+    auto qr = queryFn(outerObj, producer, producer, argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("outer getWHNF: unexpected result type");
@@ -159,7 +159,7 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
     /* Child producer = SelectorGetListElem{from=parent's Q hash hex, index}. */
     auto parentQHex = getSelectorHashHex().value_or(std::string{});
     trace::SelectorGetListElem q{parentQHex, index};
-    auto qr = queryFn(outerObj, q, producer);
+    auto qr = queryFn(outerObj, q, producer, argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("outer getListElem: queryFn returned unexpected result type");
@@ -203,7 +203,7 @@ std::optional<FunctionInfo> OuterObject::getFunctionInfo()
 {
     /* #183: q.from = parent's Q-space identity. */
     trace::SelectorGetFunctionInfo q{getSelectorHashHex().value_or(std::string{})};
-    auto qr = queryFn(outerObj, q, producer);
+    auto qr = queryFn(outerObj, q, producer, argCell);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
         return std::nullopt;

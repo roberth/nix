@@ -75,12 +75,19 @@ TracingReplayEvaluator::walk(
         if (committedEdgeFingerprints.insert(fingerprint).second) {
             /* #183: walker-side attribution — route each fact to
                its attributionCell (outer probe → arg's cell), or
-               sessionRootCell (env-fact default when null). */
+               sessionRootCell (env-fact default when null).
+               #187: barrier stamp peeks the writer's current value
+               (walker's commitEdge doesn't bump — outer probe adds
+               go through writer.logOuterObservation which does the
+               bump; env facts don't bump anyway). try_emplace on the
+               cell map means the first stamp wins, so any race with
+               the writer path is idempotent. */
+            auto barrier = writer.peekBarrier();
             for (const auto & o : pendingEdgeObservations) {
                 auto target = o.attributionCell.lock();
                 if (!target) target = writer.sessionRootCell;
                 if (target)
-                    target->addFact(o.reqHash, o.respHash);
+                    target->addFact(o.reqHash, o.respHash, barrier);
             }
             tracingCacheLog("dispatch: committed edge (obs=%zu)",
                             pendingEdgeObservations.size());
@@ -289,6 +296,25 @@ TracingReplayEvaluator::walk(
         },
         cellAnchor,
         recomputeQ);
+    /* #187 fallback: if cell-anchored walk misses AND cellAnchor ≠ ∅,
+       retry from ∅. Under barrier-based Ask insertion the writer's
+       chain starts at ∅; walker at parent.terminalCur may not find
+       any Ask edge there. Wrong-hit potential from batched dispatch
+       is closed by the barrier design — each per-probe barrier
+       validates its response live, so a divergent scenario misses
+       at the divergent probe's edge. */
+    if (!walkHit && cellAnchor != TracingDecisionGraph::emptySetHash()) {
+        tracingCacheLog("walk fallback: retrying from ∅");
+        pendingEdgeObservations.clear();
+        rejectedObs.clear();
+        walkHit = decisionGraph.walk(selectorHash, dispatch,
+            [&](bool committed, const std::vector<Hash> & useful) {
+                if (committed) commitEdge();
+                else commitRejected(useful);
+            },
+            TracingDecisionGraph::emptySetHash(),
+            recomputeQ);
+    }
     if (!walkHit) {
         tracingCacheStats().misses++;
         return std::nullopt;

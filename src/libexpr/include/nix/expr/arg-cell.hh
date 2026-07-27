@@ -86,22 +86,36 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         other cells. See CallbackState above for field semantics. */
     mutable std::shared_ptr<CallbackState> callbackState;
 
-    /** This cell's own facts — a set of (requestHash → responseHash)
+    /** Per-fact entry. `response` is the fact's response hash (identity
+        contribution to factSetHash). `barrier` is a writer-side monotonic
+        sequence number used at logResult time to group facts into
+        causally-ordered Ask edges (Foundational principle 9). Barriers
+        are NOT persisted — only the writer's Ask-insertion logic reads
+        them; the walker's fact additions use the writer's current
+        barrier value at peek time. */
+    struct FactEntry
+    {
+        Hash response;
+        uint64_t barrier = 0;
+    };
+
+    /** This cell's own facts — a set of (requestHash → FactEntry)
         pairs. Env facts append to session-root cell's facts; arg
-        observations append to the arg's own cell. Order-independent
-        (XOR-commutative fold). Cumulative — never cleared (state
-        creep, dedup at CAS).
+        observations append to the arg's own cell. XOR-fold over
+        response hashes is order-independent (identity is a set, not
+        a sequence). Cumulative — never cleared (state creep,
+        dedup at CAS).
 
         `mutable` because ArgCells are held via
         `shared_ptr<const ArgCell>`; appends happen through the
         const pointer. */
-    mutable std::map<Hash, Hash> facts;
+    mutable std::map<Hash, FactEntry> facts;
 
-    /** Insert a (request, response) fact into this cell's set.
-        Idempotent for duplicate (request, response) pairs. */
-    void addFact(const Hash & reqHash, const Hash & respHash) const
+    /** Insert a (request, response) fact with an optional barrier
+        stamp. Idempotent per request key (first stamp wins). */
+    void addFact(const Hash & reqHash, const Hash & respHash, uint64_t barrier = 0) const
     {
-        facts.emplace(reqHash, respHash);
+        facts.try_emplace(reqHash, FactEntry{respHash, barrier});
     }
 
     /** Cumulative factset visible from this cell: own facts XOR-folded
@@ -110,8 +124,8 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
     TracingDecisionGraph::SetHash factSetHash() const
     {
         auto acc = TracingDecisionGraph::emptySetHash();
-        for (auto & [req, resp] : facts)
-            acc = TracingDecisionGraph::xorFactIntoHash(acc, req, resp);
+        for (auto & [req, entry] : facts)
+            acc = TracingDecisionGraph::xorFactIntoHash(acc, req, entry.response);
         if (parent)
             acc = TracingDecisionGraph::xorHashes(acc, parent->factSetHash());
         return acc;

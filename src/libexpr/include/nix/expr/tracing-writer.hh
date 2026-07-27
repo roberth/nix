@@ -93,6 +93,70 @@ class TracingWriter
        (which is fact-hashed, not request-hashed). */
     std::unordered_set<Hash> allRequestHashes;
 
+    /* Writer-global barrier counter (Foundational principle 9). Each
+       fact recorded gets stamped with the CURRENT value; bumped AFTER
+       a value probe. Non-value facts (env-file, env-var) do not bump.
+       At logResult time, facts are grouped by barrier to insert a
+       causally-ordered Ask chain. Not persisted. */
+    uint64_t nextBarrier = 0;
+
+public:
+    /** Current barrier value — call before adding a fact to stamp it
+        at the current writer step. */
+    uint64_t peekBarrier() const { return nextBarrier; }
+
+    /** Bump the barrier — call AFTER recording a value probe's fact. */
+    void bumpBarrier() { ++nextBarrier; }
+
+private:
+
+    /** #187: insert an Ask chain for Q, grouping the cell chain's facts
+        by barrier so each Ask edge adds at most one value probe.
+        Foundational principle 9 — no speculative value probing.
+
+        Returns the final cur reached by folding all groups in order
+        (which equals cell.factSetHash() for the last group). */
+    Hash insertBarrieredAskChain(
+        const Hash & selectorHash,
+        const std::shared_ptr<const ArgCell> & cell)
+    {
+        /* Collect (req, barrier, resp) from cell + ancestors, keyed
+           by request (dedupe if a fact appears in multiple cells —
+           try_emplace's "first wins" barrier is preserved). */
+        std::map<Hash, std::pair<uint64_t, Hash>> collected;
+        for (auto c = cell.get(); c; c = c->parent.get()) {
+            for (auto & [req, entry] : c->facts) {
+                collected.try_emplace(req, entry.barrier, entry.response);
+            }
+        }
+        if (collected.empty())
+            return TracingDecisionGraph::emptySetHash();
+
+        /* Group by barrier — a std::map iterates in sorted key order,
+           so we can build groups by scanning once and starting a new
+           group each time the barrier changes. But collected is keyed
+           by request, not barrier. Build a barrier-keyed grouping. */
+        std::map<uint64_t, std::vector<std::pair<Hash, Hash>>> byBarrier;
+        for (auto & [req, br_resp] : collected) {
+            byBarrier[br_resp.first].emplace_back(req, br_resp.second);
+        }
+
+        /* Insert Ask chain: (Q, cur_prev) → group → cur_next. */
+        auto cur = TracingDecisionGraph::emptySetHash();
+        for (auto & [barrier, entries] : byBarrier) {
+            (void) barrier;
+            std::vector<Hash> reqHashes;
+            reqHashes.reserve(entries.size());
+            for (auto & [req, resp] : entries)
+                reqHashes.push_back(req);
+            auto requestSetHash = decisionGraph->insertRequestSet(reqHashes);
+            decisionGraph->insertAsk(selectorHash, cur, requestSetHash);
+            for (auto & [req, resp] : entries)
+                cur = TracingDecisionGraph::xorFactIntoHash(cur, req, resp);
+        }
+        return cur;
+    }
+
     /** Emit the SelectorCallbackApply Fact for a callback firing whose
         result is now known. Snapshots the cell's `runningObsSet` into
         the ObservationSet CAS and routes the fact through
@@ -332,23 +396,12 @@ public:
            in-progress entry. */
         Hash terminalCur = cell ? cell->factSetHash() : anchorCur;
         decisionGraph->insertResult(resultNodeHash, resultPayload);
-        /* #183: one Ask per Selector containing all facts from cell +
-           ancestors. Walker dispatches all → folds all → reaches
-           terminalCur = cell.factSetHash(). Order-independent (XOR). */
-        if (cell) {
-            std::vector<Hash> reqHashes;
-            for (auto c = cell.get(); c; c = c->parent.get()) {
-                for (auto & [req, resp] : c->facts) {
-                    (void) resp;
-                    reqHashes.push_back(req);
-                }
-            }
-            if (!reqHashes.empty()) {
-                auto requestSetHash = decisionGraph->insertRequestSet(reqHashes);
-                decisionGraph->insertAsk(*qh.selectorHash,
-                    TracingDecisionGraph::emptySetHash(), requestSetHash);
-            }
-        }
+        /* #187 principle 9: barrier-based Ask chain, one Ask per barrier
+           group (one value probe per group). Walker dispatches each
+           edge's requestSet live, folds, reaches next cur; a divergent
+           live response at any barrier misses cleanly there. */
+        if (cell)
+            insertBarrieredAskChain(*qh.selectorHash, cell);
         decisionGraph->insertTerminal(*qh.selectorHash, terminalCur, resultNodeHash);
         tracingCacheLog(
             "writer logQueryResult: Q=%s anchor=%s -> result=%s",
@@ -391,8 +444,11 @@ public:
             return;
         /* #183: env facts append to session-root cell's fact set.
            Descendants inherit via factSetHash()'s parent-chain walk.
-           Ask rows are inserted per-Selector-completion. */
-        sessionRootCell->addFact(selectorHash, responseHash);
+           Ask rows are inserted per-Selector-completion.
+
+           #187 principle 9: env-file / env-var are NOT value probes —
+           stamp with current barrier, do not bump. */
+        sessionRootCell->addFact(selectorHash, responseHash, peekBarrier());
         responseFor.emplace(selectorHash, responseHash);
         sessionRequestsTrie.insert(selectorHash);
         allRequestHashes.insert(selectorHash);
@@ -446,8 +502,8 @@ public:
             return;
         responseFor.emplace(request, response);
         /* #183: fact appends to sessionRootCell. Ask insertion happens
-           at Selector completion. */
-        sessionRootCell->addFact(request, response);
+           at Selector completion. #187: env fact — peek barrier, no bump. */
+        sessionRootCell->addFact(request, response, peekBarrier());
         sessionRequestsTrie.insert(request);
         allRequestHashes.insert(request);
     }
@@ -513,21 +569,11 @@ public:
                         finalQ.to_string(HashFormat::Base16, false).substr(0, 12),
                         terminalCur.to_string(HashFormat::Base16, false).substr(0, 12));
 
-        /* #183: one Ask per Selector with all facts from cell + ancestors. */
-        if (cell) {
-            std::vector<Hash> reqHashes;
-            for (auto c = cell.get(); c; c = c->parent.get()) {
-                for (auto & [req, resp] : c->facts) {
-                    (void) resp;
-                    reqHashes.push_back(req);
-                }
-            }
-            if (!reqHashes.empty()) {
-                auto requestSetHash = decisionGraph->insertRequestSet(reqHashes);
-                decisionGraph->insertAsk(finalQ,
-                    TracingDecisionGraph::emptySetHash(), requestSetHash);
-            }
-        }
+        /* #187 principle 9: barrier-based Ask chain (see comment on
+           insertBarrieredAskChain). One Ask edge per barrier group,
+           each carrying at most one value probe. */
+        if (cell)
+            insertBarrieredAskChain(finalQ, cell);
         decisionGraph->insertTerminal(finalQ, terminalCur, resultNodeHash);
 
         if (!activeCells.empty())

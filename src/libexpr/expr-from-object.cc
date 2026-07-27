@@ -342,7 +342,8 @@ static PrimOp * makeCachedFnPrimOp(
                         OuterQueryFn queryFn = [&innerEnv](
                             std::shared_ptr<Object> outerObj,
                             const trace::SelectorVariant & q,
-                            trace::SelectorVariant producer) {
+                            trace::SelectorVariant producer,
+                            std::shared_ptr<const ArgCell> callerCell) {
                             /* Skip the redundant `innerEnv.outerQuery` when
                                `outerObj` already emits its own recording via
                                a QCA-emitting wrapper. Cold otherwise records
@@ -355,13 +356,18 @@ static PrimOp * makeCachedFnPrimOp(
                                redundancy; the QCA alone is what the
                                callback-model design requires. */
                             bool cbApplyOrigin = false;
-                            std::shared_ptr<const ArgCell> attributionCell;
+                            /* #187: attributionCell = the OUTER proxy's
+                               argCell (passed as callerCell). Historically
+                               this used outerObj->getProxyArgCell(), but
+                               outerObj is the wrapped inner Object (often
+                               non-proxy) whose argCell is null — outer
+                               probes then had nowhere to attribute and
+                               logResult's cell-chain iteration missed
+                               them entirely. */
+                            std::shared_ptr<const ArgCell> attributionCell = callerCell;
                             if (outerObj) {
                                 if (auto * to = dynamic_cast<TracingObject *>(outerObj.get()))
                                     cbApplyOrigin = to->isCbApplyOrigin();
-                                /* #177 C: this proxy's cell — where its
-                                   observations should attribute. */
-                                attributionCell = outerObj->getProxyArgCell();
                             }
                             OuterQueryResult qr = dispatchOuterQuery(std::move(outerObj), q);
                             if (!cbApplyOrigin) {
