@@ -392,6 +392,19 @@ struct SelectorCallbackApply
 };
 DECLARE_SELECTOR_RESULT(SelectorCallbackApply, ResultWHNF)
 
+/** Reference a positional callback arg by its reverse-De-Bruijn depth.
+    A Selector like any other: its Q hash falls out of its shape, and
+    other Selectors reference it through their `from`/`fn` fields the
+    same way they reference any Q. Used when the outer supplies an arg
+    whose only identity is its position in the callback-apply stack. */
+struct SelectorArg
+{
+    static constexpr std::string_view tag = "arg";
+    int depth;
+    auto operator<=>(const SelectorArg &) const = default;
+};
+DECLARE_SELECTOR_RESULT(SelectorArg, ResultWHNF)
+
 // ---------------------------------------------------------------------------
 // CompletedQuery: a query correlated with its result
 // ---------------------------------------------------------------------------
@@ -438,7 +451,8 @@ using Selectors = ApplyWrapper<
     SelectorGetFunctionInfo,
     SelectorGetWHNF,
     SelectorApply,
-    SelectorCallbackApply>;
+    SelectorCallbackApply,
+    SelectorArg>;
 
 /**
  * All result payload types.
@@ -461,7 +475,8 @@ using SelectorVariant = std::variant<
     SelectorGetFunctionInfo,
     SelectorGetWHNF,
     SelectorApply,
-    SelectorCallbackApply>;
+    SelectorCallbackApply,
+    SelectorArg>;
 
 using ResultVariant = std::variant<
     ResultFunctionInfo,

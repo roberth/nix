@@ -398,6 +398,16 @@ void from_json(const nlohmann::json & j, SelectorCallbackApply & q)
     j.at("argObsSet").get_to(q.argObsSet);
 }
 
+void to_json(nlohmann::json & j, const SelectorArg & q)
+{
+    j = nlohmann::json{{"tag", SelectorArg::tag}, {"depth", q.depth}};
+}
+
+void from_json(const nlohmann::json & j, SelectorArg & q)
+{
+    j.at("depth").get_to(q.depth);
+}
+
 // ---------------------------------------------------------------------------
 // parseTraceEntry
 // ---------------------------------------------------------------------------
@@ -468,6 +478,8 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
         if (auto r = tryParseQuery<SelectorCallbackApply>(type, j))
             return r;
         if (auto r = tryParseQuery<SelectorApply>(type, j))
+            return r;
+        if (auto r = tryParseQuery<SelectorArg>(type, j))
             return r;
         return std::nullopt;
     }
@@ -649,6 +661,8 @@ std::string describe(const SelectorVariant & query)
                 out += " expr=\"" + q.expr + "\"";
             } else if constexpr (std::is_same_v<Q, SelectorImport>) {
                 out += " path=" + q.path;
+            } else if constexpr (std::is_same_v<Q, SelectorArg>) {
+                out += " depth=" + std::to_string(q.depth);
             }
             return out;
         },
@@ -677,6 +691,7 @@ bool willMoveStateHash(const SelectorVariant & query)
             [](const SelectorGetWHNF &) { return true; },
             [](const SelectorApply &) { return true; },
             [](const SelectorCallbackApply &) { return true; },
+            [](const SelectorArg &) { return false; },
         },
         query);
 }
