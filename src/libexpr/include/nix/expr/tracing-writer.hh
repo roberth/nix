@@ -80,10 +80,13 @@ class TracingWriter
        RequestSet hash for the whole-remaining edge in O(1). */
     TracingDecisionGraph::TrieBuilder sessionRequestsTrie;
 
-    /** Currently-active cells. Each Selector push (via logSelectorOnCell
-        / logRootSelectorOnCell) appends the cell; logResult pops.
-        Used at logResult to identify the completing cell whose facts
-        become the Selector's single Ask requestSet (task #183). */
+    /** Currently-active cells. Push at Selector entry (logSelectorOnCell/
+        logRootSelectorOnCell), pop at Selector exit (logResult). Only
+        used at emitCallbackApplyForApplyResult time to identify the
+        innermost active SelectorApply's cell for QCA attribution.
+        A future step could pass that cell explicitly through the emit
+        callers, but at present it's caller-context-sensitive in a way
+        that isn't captured by callbackCell alone. */
     std::vector<std::shared_ptr<const ArgCell>> activeCells;
 
     /* All request hashes ever inserted. Not deduped against seenRequests
@@ -488,7 +491,11 @@ public:
      * `logSelector` time.
      */
     template<typename R>
-    std::optional<TriePosition> logResult(ValueHandle valueNum, const R & result, const SelectorHandle & qh)
+    std::optional<TriePosition> logResult(
+        ValueHandle valueNum,
+        const R & result,
+        const SelectorHandle & qh,
+        const std::shared_ptr<const ArgCell> & cell = {})
     {
         sink.logResult(valueNum, result);
 
@@ -505,29 +512,19 @@ public:
 
         sessionRequestsTrie.persist(*decisionGraph);
 
-        Hash finalQ = activeCells.empty()
-            ? *qh.selectorHash
-            : activeCells.back()->qState->currentQ;
+        Hash finalQ = *qh.selectorHash;
         /* #177 pull model: Terminal keyed at the completing Q's
            cell.factSetHash() — this cell's own facts XORed with
-           ancestor factSetHashes on demand. Sibling isolation is
-           structural (siblings have separate cells → separate
-           ownFactSets, ancestors shared via parent chain). */
-        Hash terminalCur = sessionRootCell->factSetHash();
-        std::shared_ptr<const ArgCell> completingCell;
-        if (!activeCells.empty()) {
-            completingCell = activeCells.back();
-            terminalCur = completingCell->factSetHash();
-        }
-        tracingCacheLog("logResult: Q_initial=%s Q_final=%s factSet=%s -> result",
-                        qh.selectorHash->to_string(HashFormat::Base16, false).substr(0, 12),
+           ancestor factSetHashes on demand. */
+        Hash terminalCur = cell ? cell->factSetHash() : sessionRootCell->factSetHash();
+        tracingCacheLog("logResult: Q=%s factSet=%s -> result",
                         finalQ.to_string(HashFormat::Base16, false).substr(0, 12),
                         terminalCur.to_string(HashFormat::Base16, false).substr(0, 12));
 
         /* #183: one Ask per Selector with all facts from cell + ancestors. */
-        if (completingCell) {
+        if (cell) {
             std::vector<Hash> reqHashes;
-            for (auto c = completingCell.get(); c; c = c->parent.get()) {
+            for (auto c = cell.get(); c; c = c->parent.get()) {
                 for (auto & [req, resp] : c->facts) {
                     (void) resp;
                     reqHashes.push_back(req);
@@ -541,12 +538,6 @@ public:
         }
         decisionGraph->insertTerminal(finalQ, terminalCur, resultNodeHash);
 
-        /* D3: composite sub-Q emission retired. Under D2, getters no
-           longer create their own writer frames — sub-Q completions
-           don't need parent-chain composite observations to signal
-           reachability. Sibling discrimination is via QCA obsSet
-           content (callback-model §7b), not via composite dispatch
-           failure. Just pop the completed frame. */
         if (!activeCells.empty())
             activeCells.pop_back();
 

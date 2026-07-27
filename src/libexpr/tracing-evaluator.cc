@@ -163,7 +163,7 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     auto [v, qh] = writer.logRootSelectorOnCell(rootCell, trace::SelectorImport{displayPath});
     auto result = inner->evalFile(path, displayPath);
     auto whnf = computeWHNFFromObject(*result);
-    auto triePos = writer.logResult(v, whnf, qh);
+    auto triePos = writer.logResult(v, whnf, qh, rootCell);
     auto obj = TracingObject::create(result, writer, v, triePos);
     const_cast<ArgCell &>(*rootCell).liveObject = obj.get_ptr();
     obj->withArgCell(std::move(rootCell));
@@ -181,7 +181,7 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     auto [v, qh] = writer.logRootSelectorOnCell(rootCell, trace::SelectorExpr{expr, basePath.path.abs()});
     auto result = inner->evalExpr(expr, basePath);
     auto whnf = computeWHNFFromObject(*result);
-    auto triePos = writer.logResult(v, whnf, qh);
+    auto triePos = writer.logResult(v, whnf, qh, rootCell);
     auto obj = TracingObject::create(result, writer, v, triePos);
     const_cast<ArgCell &>(*rootCell).liveObject = obj.get_ptr();
     obj->withArgCell(std::move(rootCell));
@@ -448,7 +448,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         trace::ResultWHNF placeholderWhnf;
         placeholderWhnf.type = "lambda";
         placeholderWhnf.payload = trace::WHNFFunction{};
-        writer.logResult(v, placeholderWhnf, qh);
+        writer.logResult(v, placeholderWhnf, qh, cell);
         auto laro = std::make_shared<TracingCallbackApplyResult>(
             result, writer, std::move(resultSubject), applyArgAncestry);
         laro->withArgCell(cell);
@@ -468,7 +468,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        cachedWHNF ready. */
     auto whnfResult = computeWHNFFromObject(*result);
     writer.emitCallbackApplyForApplyResult(cell, resultSubject, applyArgAncestry, whnfResult);
-    auto tp = writer.logResult(v, whnfResult, qh);
+    auto tp = writer.logResult(v, whnfResult, qh, cell);
 
     TriePosition triePos = tp
         ? *tp
