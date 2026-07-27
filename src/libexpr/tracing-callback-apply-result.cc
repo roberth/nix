@@ -74,7 +74,9 @@ trace::ResultWHNF & TracingCallbackApplyResult::whnf()
     if (cachedWHNF)
         return *cachedWHNF;
     auto whnfResult = computeWHNFFromObject(*inner);
-    recordD2(trace::SelectorGetWHNF{std::string{}}, whnfResult);
+    /* #185/#186: mirror TracingCallbackArg::whnf — use the value's own
+       Selector as the observation, not a GetWHNF wrapper. */
+    recordD2(subjectAsSelector(applyResultSubject, applyArgAncestry), whnfResult);
     cachedWHNF = std::move(whnfResult);
     return *cachedWHNF;
 }

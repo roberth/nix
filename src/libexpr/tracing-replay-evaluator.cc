@@ -744,6 +744,32 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     tracingCacheLog("callbackApply: fn->queryApply failed: %s", e.what());
                     return std::nullopt;
                 }
+            } else if constexpr (std::is_same_v<Q, trace::SelectorArg>) {
+                /* #186: resolve the outer arg at reverse-De-Bruijn
+                   `depth` by walking up the currentProxy's cell chain
+                   to find the cell with matching depth. Its
+                   liveObject IS that outer arg; return its WHNF. */
+                if (!ctx.currentProxy)
+                    return std::nullopt;
+                auto cell = ctx.currentProxy->getProxyArgCell();
+                while (cell && cell->depth != q.depth)
+                    cell = cell->parent;
+                if (!cell || !cell->liveObject) {
+                    tracingCacheLog(
+                        "arg: no cell for depth=%d in chain from currentProxy",
+                        q.depth);
+                    return std::nullopt;
+                }
+                try {
+                    auto whnf = computeWHNFFromObject(*cell->liveObject);
+                    tracingCacheLog(
+                        "arg: HIT depth=%d whnf=%s",
+                        q.depth, whnf.type.c_str());
+                    return jsonToCborString(nlohmann::json(whnf));
+                } catch (const std::exception & e) {
+                    tracingCacheLog("arg: computeWHNFFromObject threw: %s", e.what());
+                    return std::nullopt;
+                }
             } else if constexpr (requires { q.from; }) {
                 /* Producer queries: resolve the parent Object via its
                    query-space `from` hex, then invoke the leaf op. */
