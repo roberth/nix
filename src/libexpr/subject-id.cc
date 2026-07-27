@@ -179,8 +179,13 @@ Hash subjectId(const Subject & subject, const Hash & argAncestry)
         [&](const auto & alt) -> Hash {
             using T = std::decay_t<decltype(alt)>;
             if constexpr (std::is_same_v<T, Arg>) {
-                auto base = hashString(HashAlgorithm::SHA256, "positional-" + std::to_string(alt.depth));
-                return TracingDecisionGraph::xorHashes(base, argAncestry);
+                /* #186: Arg's identity is now computeSelectorHash of the
+                   corresponding SelectorArg — the algebraic Selector-content
+                   hash, not the ad-hoc "positional-D" string. argAncestry
+                   would have been XOR'd in the old scheme; under stable Q
+                   hashes it retires (per #178). */
+                (void) argAncestry;
+                return TracingDecisionGraph::computeSelectorHash(trace::SelectorArg{alt.depth});
             } else if constexpr (std::is_same_v<T, PostulatedIdempotentRead>) {
                 return alt.hash;
             } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
