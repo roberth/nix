@@ -23,7 +23,7 @@ echo '{ x = 1; y = 2; }' > "$TEST_ROOT/simple.nix"
 # Cold record: no recorded trace yet → first lookup misses, primop
 # falls through to inner evaluator. No TracingReplayObject means no
 # ensureInner fallback path.
-echo "=== cold record (expect 0 hits, 1 miss, 0 fallbacks) ==="
+echo "=== cold record (no hits, but a miss, no fallbacks) ==="
 assertCacheStats 0 1 0 -- \
     nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/simple.nix; }).x'
 
@@ -32,7 +32,7 @@ assertCacheStats 0 1 0 -- \
 # The exact count depends on how many Q's the trie has for this path
 # (file hash dispatch + outer's reads on the attrset + reads on the
 # int child). Calibrated against current behaviour.
-echo "=== warm replay (expect 2 hits, 0 misses, 0 fallbacks) ==="
+echo "=== warm replay (hits, no misses, no fallbacks) ==="
 # One fewer hit than before the cell-migration: evalFile now
 # pre-populates the root wrapper's cachedWHNF from SelectorImport's
 # Terminal (Phase C), so the previously-separate SelectorGetWHNF walk

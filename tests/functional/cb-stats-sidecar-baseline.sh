@@ -27,12 +27,12 @@ clearCache
 
 echo '{ f, x }: f x' > "$TEST_ROOT/call.nix"
 
-echo "=== cold (expect 0 hits, 3 misses, 1 fallback, 0 collisions) ==="
+echo "=== cold (no hits, but misses, fallbacks) ==="
 assertCacheStats 0 2 1 -- \
     nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) { f = x: x + 100; x = 7; }'
 
-echo "=== warm replay (expect 3 hits, 0 misses, 0 fallbacks) ==="
+echo "=== warm replay (hits, no misses, no fallbacks) ==="
 assertCacheStats 2 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
         '(builtins.cache { import = '"$TEST_ROOT"'/call.nix; }) { f = x: x + 100; x = 7; }'

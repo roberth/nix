@@ -24,7 +24,7 @@ clearCache
 echo '{ f }: f (x: x + 1)' > "$TEST_ROOT/ho.nix"
 
 # Cold record.
-echo "=== cold (expect 0 hits, 5 misses, 2 fallbacks) ==="
+echo "=== cold (no hits, but misses, fallbacks) ==="
 assertCacheStats 0 3 2 -- \
     nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }'
 
@@ -41,7 +41,7 @@ assertCacheStats 0 3 2 -- \
 #   counted as v13Walk hits. The remaining 4 hits are the outer
 #   evalFile/import Qs plus the outer expression's d=0 getType /
 #   getInt at the top level).
-echo "=== warm (expect 3 hits, 0 misses, 0 fallbacks) ==="
+echo "=== warm (hits, no misses, no fallbacks) ==="
 assertCacheStats 3 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }'
 
