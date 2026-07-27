@@ -975,21 +975,17 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        per-call observation state — exactly the anti-pattern the
        via-Asks doc's boundary-trace-only discipline calls out. */
 
-    /* Build the apply-result producer — mirror of
-       TracingEvaluator::apply. fn's producer surfaces via
-       `getProducer()`; nullopt falls back to a raw-hash carrier
-       (SelectorGetWHNF{from=stateHashHex}). arg is dropped per #181. */
-    auto fnProducer = fn->getProducer().value_or(
-        trace::SelectorVariant{trace::SelectorGetWHNF{fnStateHashStr}});
-    auto fnQHex = TracingDecisionGraph::computeSelectorHash(fnProducer)
-        .to_string(HashFormat::Base16, false);
+    /* Build the apply-result producer — mirror of TE::apply.
+       fn's identity hex comes directly from getStateHashHex();
+       nullopt falls back to fnStateHashStr. arg dropped per #181. */
+    auto fnQHex = fn->getStateHashHex().value_or(fnStateHashStr);
     trace::SelectorApply resultProducer{fnQHex};
 
     auto applyArgAncestryStateHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
     tracingCacheLog(
         "walker apply: fn=%s -> applyArgAncestryStateHash=%s",
-        trace::describe(fnProducer),
+        fnQHex.substr(0, 12),
         applyArgAncestryStateHashHex.substr(0, 16));
 
     /* Cell-migration Phase B: pre-invoke SelectorApply's lookup so the

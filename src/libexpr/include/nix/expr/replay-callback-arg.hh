@@ -187,12 +187,6 @@ public:
         ReplayCallbackArg used as `arg` in `<replay-local-lambda>`'s recursive
         apply) composes ApplyResultSubject with this ReplayCallbackArg's
         evolving Subject. */
-    /** #183: producer Selector for the Selector-only identity path. */
-    std::optional<trace::SelectorVariant> getProducer() const override
-    {
-        return producer;
-    }
-
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
     std::string getStringIgnoreContext() override;

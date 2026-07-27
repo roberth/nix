@@ -142,12 +142,6 @@ public:
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
-    /** #183: producer Selector for the Selector-only identity path. */
-    std::optional<trace::SelectorVariant> getProducer() const override
-    {
-        return producer;
-    }
-
     const TriePosition & getTriePos() const
     {
         return triePos;

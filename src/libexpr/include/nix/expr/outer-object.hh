@@ -116,13 +116,6 @@ class OuterObject : public Object
 public:
     OuterObject(trace::SelectorVariant producer, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn = {});
 
-    /** #183: producer Selector — the SelectorVariant whose content hash
-        is this OuterObject's identity. */
-    std::optional<trace::SelectorVariant> getProducer() const override
-    {
-        return producer;
-    }
-
     /** Set the proxy's argCell. Call right after construction at
         boundary sites. Returns *this for chaining. */
     OuterObject & withArgCell(std::shared_ptr<const ArgCell> argScope_)

@@ -333,24 +333,20 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     /* Build the apply-result producer Selector.
 
-       fn's producer surfaces via `getProducer()` — for TracingObject
-       apply-results this is their SelectorApply; for OuterObject / plain
-       proxies the stored SelectorArg / SelectorGetAttr / etc. When
-       nullopt (= fresh from evalFile, literal `mk*`) fall back to
-       `SelectorGetWHNF{from=stateHashHex}` as the raw-hash carrier
-       (Role 4 of #185).
+       fn's identity hex comes directly from `getStateHashHex()`:
+        - OuterObject / TracingObject apply-result / TracingCallbackArg /
+          TCallbackApplyResult all return the content hash of their stored
+          producer Selector.
+        - TracingObject non-apply-result (fresh from evalFile, nav child)
+          returns triePos.queryHashStr — the parent Selector's Q hash.
+
+       Nullopt (raw Object without state) falls back to the incoming
+       fnStateHashStr the caller already computed for logging.
 
        arg identity is dropped from the payload per #181; discrimination
-       flows through the arg's own cell/facts. Kept the argStateHashStr
-       for logs only. */
-    auto fnIdHash = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
-
-    auto fnProducer = fn->getProducer().value_or(
-        trace::SelectorVariant{trace::SelectorGetWHNF{fnStateHashStr}});
-    auto fnQHex = TracingDecisionGraph::computeSelectorHash(fnProducer)
-        .to_string(HashFormat::Base16, false);
+       flows through the arg's own cell/facts. */
+    auto fnQHex = fn->getStateHashHex().value_or(fnStateHashStr);
     trace::SelectorApply resultProducer{fnQHex};
-    (void) fnIdHash;
 
     /* #183: one cell per call, tracking the arg. Reuse the arg's
        existing cell (created at the first opportunity, e.g., seedCell
@@ -385,7 +381,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
     tracingCacheLog(
         "writer apply: fn=%s -> applyArgAncestryStateHash=%s",
-        trace::describe(fnProducer),
+        fnQHex.substr(0, 12),
         applyArgAncestryStateHashHex.substr(0, 16));
 
     /* Cell-migration Phase B: apply records SelectorApply as a proper

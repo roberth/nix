@@ -279,17 +279,6 @@ public:
     }
 
     /**
-     * #183: the Selector that produced this Object — its content hash
-     * IS this Object's identity. Returns nullopt for Objects without a
-     * Selector-shaped producer (raw literals, non-tracing Objects);
-     * callers may fall back to getStateHashHex().
-     */
-    virtual std::optional<trace::SelectorVariant> getProducer() const
-    {
-        return std::nullopt;
-    }
-
-    /**
      * Invoke a covariant-callback apply on this Object with the given
      * arg. Only meaningful for OuterObject (which dispatches to its
      * applyFn closure); default throws for any other Object type.

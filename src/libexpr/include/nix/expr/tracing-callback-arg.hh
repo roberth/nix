@@ -73,12 +73,6 @@ public:
         std::shared_ptr<const ArgCell> argCell,
         Hash applyId = Hash(HashAlgorithm::SHA256));
 
-    /** #183: producer Selector for the Selector-only identity path. */
-    std::optional<trace::SelectorVariant> getProducer() const override
-    {
-        return producer;
-    }
-
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;

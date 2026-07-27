@@ -3,10 +3,9 @@
  * @file
  * Post-#183 minimal companion header: hosts the Observation /
  * ObservationSet / ApplyContext value types that survived the Subject
- * retirement. Identity itself is now expressed as
- * `trace::SelectorVariant` (see trace-types.hh); every Object exposes
- * its identity via `Object::getProducer()`, and its content-hash IS
- * computed with `TracingDecisionGraph::computeSelectorHash`.
+ * retirement. Identity itself is now expressed as a hex string via
+ * `Object::getStateHashHex()` — content hash of the Selector chain
+ * that produced the Object.
  *
  * TODO: rename this file to something like observation-set.hh — the
  * "subject" concept is gone.

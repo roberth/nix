@@ -368,22 +368,12 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
                     fnIdOpt->substr(0, 12), argIdOpt->substr(0, 12));
     writer.createCallbackCell(applyBoundaryJson);
 
-    auto fnIdHash = Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256);
-    auto argSubjectHash = Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256);
-
-    /* Build the apply-result producer Selector.
-       fn = `this`: when this TracingObject is itself an apply result,
-       `getProducer()` surfaces its producer — the next apply's
-       SelectorApply.fn is this Object's real Q hash. Plain
-       TracingObjects (= from evalFile, navigation children) return
-       nullopt and fall back to the raw state-hash-hex from the trie
-       position (Role 4 of #185: SelectorGetWHNF as raw-hash carrier). */
-    auto fnProducer = getProducer().value_or(
-        trace::SelectorVariant{trace::SelectorGetWHNF{
-            fnIdHash.to_string(HashFormat::Base16, false)}});
-    (void) argSubjectHash;
-    auto fnQHex = TracingDecisionGraph::computeSelectorHash(fnProducer)
-        .to_string(HashFormat::Base16, false);
+    /* SelectorApply.fn = fn's identity hex. `getStateHashHex()` on this
+       TracingObject returns the content hash of its stored producer
+       when apply-result, or triePos.queryHashStr when non-apply-result.
+       Falls back to the raw fnIdOpt for Objects without an internal
+       state-hash (shouldn't happen for TracingObject, defensive). */
+    auto fnQHex = getStateHashHex().value_or(*fnIdOpt);
     trace::SelectorApply resultProducer{fnQHex};
 
     /* apply-result state hash is content-only — see commentary in

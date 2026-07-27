@@ -94,12 +94,6 @@ public:
         ApplyResultSubject so a subsequent apply on this wrapper
         composes evolving ApplyResultSubject constituents instead of
         the frozen PostulatedIdempotentRead{applyArgAncestryStateHashHex} fallback. */
-    /** #183: producer Selector for the Selector-only identity path. */
-    std::optional<trace::SelectorVariant> getProducer() const override
-    {
-        return producer;
-    }
-
     std::optional<std::string> getStateHashHex() const override { return applyArgAncestryStateHashHex; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;

@@ -129,15 +129,6 @@ public:
 
     std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
-    /** #183: producer Selector for the Selector-only identity path.
-        Non-apply-result wrappers (= fresh from evalFile, navigation
-        children) return nullopt; callers fall back to
-        `SelectorGetWHNF{from=stateHashHex}` as the raw-hash carrier. */
-    std::optional<trace::SelectorVariant> getProducer() const override
-    {
-        return producer;
-    }
-
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
     /** Get the query hash string for trie identity, if available. */
