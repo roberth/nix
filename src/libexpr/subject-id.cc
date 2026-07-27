@@ -189,20 +189,24 @@ Hash subjectId(const Subject & subject, const Hash & argAncestry)
             } else if constexpr (std::is_same_v<T, PostulatedIdempotentRead>) {
                 return alt.hash;
             } else if constexpr (std::is_same_v<T, ApplyResultSubject>) {
+                /* #186: identity aligned with SelectorApply's own
+                   content hash. Arg is observed by value (per #181's
+                   SelectorApply shape) — discrimination flows through
+                   cur, not through subject id. */
                 auto fnId = subjectId(*alt.fn, argAncestry);
-                auto argId = subjectId(*alt.arg, argAncestry);
-                /* #181: arg dropped; include argId in the composed hash to
-                   preserve ApplyResultSubject discrimination in subject ids. */
-                (void) argId;
-                nlohmann::json qj = trace::SelectorApply{hashHex(fnId)};
-                return hashString(HashAlgorithm::SHA256, qj.dump() + hashHex(argId));
+                return TracingDecisionGraph::computeSelectorHash(
+                    trace::SelectorApply{hashHex(fnId)});
             } else if constexpr (std::is_same_v<T, DerivedSubject>) {
+                /* #186: identity aligned with SelectorGetAttr /
+                   SelectorGetListElem's own content hash. */
                 auto parentId = subjectId(*alt.parent, argAncestry);
-                std::string s = alt.kind == DerivedSubject::Kind::GetAttr
-                    ? "getAttr:" + alt.name
-                    : "getListElem:" + std::to_string(alt.index);
-                s += "@" + hashHex(parentId);
-                return hashString(HashAlgorithm::SHA256, s);
+                if (alt.kind == DerivedSubject::Kind::GetAttr) {
+                    return TracingDecisionGraph::computeSelectorHash(
+                        trace::SelectorGetAttr{alt.name, hashHex(parentId)});
+                } else {
+                    return TracingDecisionGraph::computeSelectorHash(
+                        trace::SelectorGetListElem{hashHex(parentId), alt.index});
+                }
             } else {
                 throw Error("subjectId: unknown subject variant");
             }
