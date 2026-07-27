@@ -50,10 +50,10 @@ trace::ResultWHNF & OuterObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    /* #183: q.from = parent's Q-space identity so distinct WHNF
-       probes on distinct proxies produce distinct Q hashes. */
-    trace::SelectorGetWHNF q{getSelectorHashHex().value_or(std::string{})};
-    auto qr = queryFn(outerObj, q, producer);
+    /* #185 Role 3: the Fact records "value at this identity has WHNF X".
+       The value's identity IS its producer Selector; the SelectorGetWHNF
+       wrapper is algebraically redundant. Pass producer as the Fact key. */
+    auto qr = queryFn(outerObj, producer, producer);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("outer getWHNF: unexpected result type");

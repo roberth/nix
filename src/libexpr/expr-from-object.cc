@@ -27,7 +27,10 @@ static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const tr
         [&](const auto & query) -> OuterQueryResult {
             using Q = std::decay_t<decltype(query)>;
             if constexpr (std::is_same_v<Q, trace::SelectorApply>) {
-                throw Error("outer query: SelectorApply should go through applyFn, not queryFn");
+                /* #185: Identity case — used by OuterObject::whnf when
+                   producer is SelectorApply (queryApply-result OuterObject's
+                   whnf). obj IS the applyResult; no re-application. */
+                return {computeWHNFFromObject(*obj), nullptr};
             } else if constexpr (std::is_same_v<Q, trace::SelectorArg>) {
                 /* #186: SelectorArg used as identity of the outer arg
                    itself — return its WHNF (no navigation). Same shape
