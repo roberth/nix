@@ -108,11 +108,23 @@ present design.
    or how — correctness must hold across all of them.
 
    *Consequence for arguments.* Outer-supplied values entering the
-   cache enter as Subjects (structural names); observations the
-   inner makes through them accumulate in the arg's own cell's
-   factset. The cache never pins an argument by the outer's notion
-   of its identity — only by what the inner observed via Requests,
-   folded into that arg's cell.
+   cache are identified by their producer Selector — a
+   `SelectorArg{depth}` for a positional cb arg, a `SelectorGetAttr`
+   / `SelectorGetListElem` for a navigation descendant. Observations
+   the inner makes through them accumulate in the arg's own cell's
+   factset. The cache never lets the outer characterize the
+   argument — only the positional handle and what the inner observed
+   via Requests folded into that arg's cell.
+
+   Equivalently: arguments enter **by value**, not by outer heap
+   identity. Two distinct outer Values that behave identically under
+   the inner's observations produce the same cell factset and hit
+   the same Terminal; two references to the same outer Value that
+   behave differently under different observation traces produce
+   different factsets and miss each other. The loss of value sharing
+   (two heap-identical args go through the machinery independently)
+   is the accepted price for keeping the cache tractable — deciding
+   otherwise would constitute a significant research project.
 
    *Consequence for callbacks.* Outer-supplied functions the inner
    applies cannot have their response served from cache. The walker
@@ -277,20 +289,16 @@ next use, no security impact.
 
 **Status of this section.** The `record()` algorithm below
 describes a batched shape — buffer all Facts, then insert Asks
-under a fixed `selectorHash` in one pass at `logResult`. That shape
-predates Q evolution and does not match what the writer currently
-does. Under Q evolution
-([`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
-§3.1) the writer inserts Ask edges incrementally per observation
-under the innermost active Q's current hash, which evolves per
-edge; the batched `record()` overload with a precomputed
-`sessionRequestsRsHash` is defined in the DB layer but currently
-uninvoked. Reconciling the two — reintroducing a batched or
-partially-batched insertion path with the precomputed
-`requestSetHash` optimisation while preserving Q evolution — is
-pending work, scheduled after the test suite is green. The
-algorithm below is retained as the shape that reimplementation
-targets, minus the fixed-Q assumption.
+under a fixed `selectorHash` in one pass at `logResult`. Under the
+per-cell factset model, Q hashes are stable per operation and the
+batched path is a valid target shape; the writer currently inserts
+per-fact incrementally instead, and the batched `record()`
+overload with a precomputed `sessionRequestsRsHash` is defined in
+the DB layer but not on the live hot path. Reconciling the two —
+reintroducing batched or partially-batched insertion with the
+precomputed `requestSetHash` optimisation — is pending work,
+scheduled after the test suite is green. The algorithm below is
+retained as the shape that reimplementation targets.
 
 `TracingEnvironment` wraps the inner environment (currently
 `SystemEnvironment`). Every `getFileHash`, `getEnv`, and Env
@@ -314,32 +322,24 @@ TracingEnvironment::getFileHash(path):
 
 ```cpp
 // per-process state in TracingWriter:
-vector<Fact>              envFactSet;          // insertion order
-SetHash                   envFactSetHash;      // XOR-fold, incremental
-unordered_set<Hash>       seenRequests;        // dedup
-unordered_map<Hash, Hash> responseFor;         // request → response
-TrieBuilder               sessionRequestsTrie; // canonical requestSetHash, incremental
+unordered_set<Hash>       seenRequests;         // fact dedup
+unordered_map<Hash, Hash> responseFor;          // request → response memo
+TrieBuilder               sessionRequestsTrie;  // canonical requestSetHash
+unordered_set<Hash>       allRequestHashes;     // request-set membership
 ```
 
-Each new Fact (one not already in `seenRequests`) is XOR'd into
-`envFactSetHash`, mapped in `responseFor`, and inserted into
-`sessionRequestsTrie` — one path-copy from leaf to root, split on
-leaf-overflow.
+Under the per-cell factset model, per-cell fact accumulation lives
+on `ArgCell::facts` (a map of `req → resp`), and the cell's
+factset hash comes from `cell.factSetHash()` — an on-demand
+XOR-fold of the cell's own facts with a walk up the parent chain.
+Env facts attribute to the session-root cell.
 
 When the evaluator finishes a Query and produces a Result,
-`TracingEvaluator` (the recording counterpart to
-`TracingReplayEvaluator`) calls `writer.logResult(value, result,
-queryHandle)`. That handler:
-
-1. Inserts `(resultHash, resultPayload)` into `Results`.
-2. Pushes any unpersisted nodes from `sessionRequestsTrie` into
-   `RequestSetNodes`.
-3. Installs the current `envFactSet` under `envFactSetHash` via
-   `installFactSet`.
-4. Calls `decisionGraph.record(selectorHash, envFactSetHash,
-   resultHash, responseFor, seenRequests,
-   sessionRequestsTrie.rootHash())` — the fastest overload, using
-   the precomputed requestSetHash to skip the per-call trie rebuild.
+`TracingWriter::logResult` (or `logQueryResult` for D2 getter
+Terminals) inserts `(resultHash, resultPayload)` into `Results`,
+inserts the Terminal at `(selectorHash, cell.factSetHash())`, and
+records the Ask edge chain that connects the parent's terminal
+factSet to this Terminal.
 
 ### `record()` algorithm
 
@@ -536,18 +536,6 @@ dispatch during trace-discovering — a discovering walk that
 requires outer callbacks the walker hasn't been invited to make
 is not just structurally missing, it's actively wrong to attempt.
 
-### Q evolution during Ask traversal (transitional, retires per task #178)
-
-Under the current implementation, queries dispatched by replay
-must evolve with the walk's own state: each Ask's precondition
-determines the Subject state hashes referenced in that Ask's
-request payloads. Replay mirrors the writer's flush-time
-substitution so its dispatched queries hash to the recorded
-request payloads. Under the multiplexer + per-cell factset
-direction (task #176), Q selectorHashes become stable across a
-Query's evaluation — cur at (Q, cur) does the discrimination that
-`from`-field state hash does today — and this section retires.
-
 ### Development directions
 
 Trace-continuing and trace-discovering address different
@@ -643,15 +631,17 @@ dispatches a callback-apply request (via the walker's
 The callback's body probes outer values via `OuterObject`, and
 those probes flow through `TracingEnvironment::outerQuery` to
 `logOuterObservation` on the writer. Walker's direct dispatches
-also feed the writer via `noteEnvObservation`. Both grow the
-writer's `envWalk` during warm replay. Under the current
-implementation, a subsequent `logOuterObservation` then stamps a
-new request payload with a `from` field computed against the
-writer's grown cumulative history; the walker's per-walk history
-is a strict subset, so `resolveStateHash` on that fresh `from`
-value misses across the cell chain. This within-session drift is
-the reachability limit called out for trace-discovering above,
-viewed from the writer side. Retires with Q evolution (task #178).
+also feed the writer via `noteEnvObservation`. Both fold facts
+into the writer's session-root cell during warm replay —
+deliberately, so a subsequent `logResult` under a fallback path
+records at a factSet that matches what a re-run cold would have
+seen. The Q-evolution-era drift (walker's per-walk history a
+strict subset of the writer's grown cumulative history →
+`from`-field mismatch → dispatch miss) does not apply under stable
+Q hashes: Q payloads are hashed from their own content and don't
+carry a dynamic `from` state, so cold's Terminal key and warm's
+lookup key match by construction regardless of how many facts
+sit in the writer's session-root cell at either time.
 
 Note (writer side): the writer **must not** record under a smaller
 set than what it observed. The failure mode is two-step: (1) at
@@ -802,17 +792,18 @@ EvalCommand::getEvalState                  // src/libcmd/command.cc
     └── shares the single TracingWriter across all of the above
 ```
 
-The recording path and the replay path use the *same* writer, but
-only the recording path (Interpreter → TracingEnvironment → writer)
-feeds its cumulative envFactSet. The replay path's walker validates
-against a separate `validationEnv` (constructed as the bare
-`SystemEnvironment` at the top of the stack) so walker-side
-dispatches don't pollute the writer's cumulative state. The
-recording *session* — what `envFactSet`, `sessionRequestsTrie`, and
-`envFactSetHash` accumulate — is the Interpreter's session,
-matching Foundational 9's cumulative-dependency premise (the
-inner-evaluator black box, whose state actually evolves through
-its own observations).
+The recording layer and the replay layer share the *same* writer,
+but only the recording layer writes to it. The walker is
+read-only — it validates against a separate `validationEnv`
+(constructed as the bare `SystemEnvironment` at the top of the
+stack) so walker-side dispatches don't touch the writer at all.
+When the walker misses and falls through to the wrapped
+Interpreter, that fallback run goes through the recording layer's
+`TracingEnvironment` and feeds the writer's session-root cell
+like any cold run would. The recording *session* is the wrapped
+Interpreter's session, matching Foundational 9's
+cumulative-dependency premise (the black-box evaluator whose
+state actually evolves through its own observations).
 
 `builtins.cache` lives in `src/libexpr/primops/cache.cc`. It creates
 a nested evaluator stack (`TracingReplayEvaluator → TracingEvaluator
@@ -869,8 +860,10 @@ correct answer regardless. The cost is just the missed cache benefit.
   at their key; the miss is the answer.
 - **Session-cumulative work proportional to observed change**, not
   to the total recorded state. The writer's incremental
-  `sessionRequestsTrie` and `envFactSetHash` avoid re-hashing the
-  growing FactSet per recording.
+  `sessionRequestsTrie` and the per-cell factset composition
+  (each cell's `factSetHash()` walks its own facts plus its
+  parent chain) avoid re-hashing the growing FactSet per
+  recording.
 - **Structural storage sharing.** RequestSets that overlap share
   their common trie subtrees automatically via node-hash equality.
   Storage grows with the count of unique Requests, not with the
@@ -906,8 +899,8 @@ Unit tests at `src/libexpr-tests/tracing-decision-graph.cc` cover:
 Test-only APIs:
 
 - `insertFactSet(members)` — caller-side construction of a FactSet
-  by value. Production uses `installFactSet` plus the incrementally
-  maintained `envFactSetHash` in `TracingWriter`.
+  by value. Production uses `installFactSet` plus the per-cell
+  `factSetHash()` computation on `ArgCell` in `TracingWriter`.
 - `removeAsks(...)` — used by Patricia split internally, and by
   unit tests directly.
 
@@ -946,14 +939,10 @@ Performance harness under `tests/perf/tracing-cache/`:
   Not solved by "follow this sibling until" node types — those
   risk leading walks into traces that don't reach the target.
   RequestSet sharing plus larger per-node request increments help
-  typical workloads but do little for callback-heavy ones, where
-  today's Q-evolution rewrites queries between observations. Under
-  the per-cell factset direction (task #176) Q selectorHashes
-  become stable, which sidesteps this specific pressure; the
-  broader index-size question survives regardless. Complementary mitigation: budget the
-  number of structural Ask inserts per Query — when a Query's
-  structural chain exceeds the budget, stop inserting further
-  structural Asks. Costs the affected Query its trace-discovering
+  typical workloads; the broader index-size question survives. A
+  complementary mitigation: budget the number of structural Ask
+  inserts per Query — when a Query's structural chain exceeds the
+  budget, stop inserting further structural Asks. Costs the affected Query its trace-discovering
   reachability but caps the write cost; also implicitly discourages
   runaway state creep, which isn't desirable anyway. Optimisation
   only — the recording scheme is correct as-is; this is index size
@@ -983,7 +972,11 @@ Performance harness under `tests/perf/tracing-cache/`:
   `OuterResolver`, `makeCachedFnPrimOp`
 - `src/libexpr/outer-object.cc` — `OuterObject` (outer-owned value
   the inner probes via Env)
-- `src/libexpr/subject-id.cc` — Subject variants and argAncestry
-  algebra (state-hash machinery transitional, retires per #178)
+- `src/libexpr/include/nix/expr/observation-set.hh` —
+  Observation and ObservationSet value types (per-Ask-edge fact
+  records; consumed by the writer's obsSet CAS and by the walker
+  for cell factset composition + SelectorCallbackApply payload
+  assembly). Object identity itself lives in `trace-types.hh` as
+  `SelectorVariant`, hashed via `TracingDecisionGraph::computeSelectorHash`.
 - `tests/perf/tracing-cache/` — perf scripts and validation sweeps
 - `tests/functional/builtins-cache.sh` — `builtins.cache` functional tests

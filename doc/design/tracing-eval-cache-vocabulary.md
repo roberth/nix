@@ -153,11 +153,10 @@ sequence from the terminal factSet of the prior Query in the
 trace to this Query's Terminal. Each Query in a trace produces
 one trace chain.
 
-The trace chain is what the writer's Design principle 5 flush
-produces at record time: an ordered sequence of Ask edges keyed
-under `(selectorHash_i, cur_i)` where `selectorHash_i` may evolve per
-edge (Q evolution) and `cur_i` folds in one Ask's requestSet at
-a time.
+The trace chain is what the writer produces at record time: an
+ordered sequence of Ask edges keyed under `(selectorHash, cur_i)`
+where `selectorHash` is stable per Query and `cur_i` folds in one
+Ask's requestSet at a time.
 
 ### Landing chain
 
@@ -196,10 +195,10 @@ consequences.
 
 A **session** is the lifetime of one `TracingWriter` and the
 evaluator stack that shares it. The writer accumulates the trace
-during that lifetime — `envFactSet`, `envFactSetHash`,
-`sessionRequestsTrie`, `responseFor` are all session-scoped state.
-`record()` at any selectorHash reads and updates these fields; the
-walker consults them for session-cumulative bookkeeping.
+during that lifetime — the session-root `ArgCell`'s facts
+(env-level observations), `sessionRequestsTrie`, `responseFor`,
+and `seenRequests` are all session-scoped state. `record()` at
+any selectorHash reads and updates these fields.
 
 Not process-scoped: one CLI invocation contains multiple sessions.
 The outer `EvalCommand` opens one; each `builtins.cache { ... }`
@@ -217,24 +216,6 @@ walker's per-walk view and writer's cumulative view) that surfaces
 inside one session's boundary. **Cross-session amortisation** is
 sharing content-addressed atoms across recordings from disjoint
 sessions via the DB index.
-
----
-
-## Per-Q-chain (transitional — retires with Q evolution, task #178)
-
-Under Q evolution — the current mechanism where a Query's
-`selectorHash` evolves through a chain `Q_M → Q_{M+1} → … → Q_N`
-as observations fold — **per-Q-chain** state is the value of a
-field scoped to one such chain's frame. Distinct from:
-
-- **Session-scoped** — spans all Queries in one `TracingWriter`'s
-  lifetime.
-- **Walk-local** — spans one call to the walker's `walk()`.
-
-Under the multiplexer + per-cell factset direction (task #176), Q
-evolution retires; a Query's `selectorHash` becomes stable across
-its evaluation, and per-Q-chain scoping collapses into per-cell
-factset scoping.
 
 ---
 
@@ -357,12 +338,9 @@ queries can start at their parent's `terminalCur`.
 **terminalCur** — the `cur` the walker lands at when committing a
 Terminal.
 
-**sessionCur** — the writer's `envFactSetHash` viewed as a role of
-`cur`: the session-cumulative fold across all Facts the writer has
-folded in this session. Corresponds on the walker side to the
-running state after every dispatch the walker's session has done.
-Named as a role because it's the same value as the writer's
-`envFactSetHash`; distinct name marks the walker-side role.
+**sessionCur** — the session-root cell's factset viewed as a
+role of `cur`: the fold across all env-scope Facts folded in
+this session.
 
 **dispatch** — the walker's per-Request callback. Given a
 Request, returns a Response by asking the live environment.
@@ -457,21 +435,12 @@ owns a value, the other side is what probes it:
   identity.
 
 The mechanism that ties observations to structural identities —
-Subject, argAncestry, callback-arg objects, cell navigation — is
+Selector chains, callback-arg objects, cell navigation — is
 defined in the next section.
-
-> **State of this section (2026-07-26).** The subject-identity
-> mechanism described below is the *current* implementation. The
-> `state hash` machinery, `from` field, and Q-evolution described
-> here retire under the multiplexer + per-cell factset direction
-> (see task #176). Under that direction, per-cell factset separation
-> provides sibling discrimination structurally, and cur at (Q, cur)
-> keys does the work the `from` state hash does today. Content below
-> reflects live code; rewrite pending.
 
 ---
 
-## Subject-identity mechanism (transitional)
+## Arg-side identification: Selector chains
 
 Cached functions run many times. Two cases; both put multiple
 values through the same syntactic slot, so position alone can't
@@ -495,161 +464,38 @@ different args produce different Facts. Different Fact chains
 dispatches recorded probes back to the outer live and matches
 responses against the recording to confirm the hit.
 
-The subject-identity machinery below characterises which
-observation belongs to which value on the *arg side* — outer-
-owned values the inner probes, apply-result values including a
-callback firing's `fn` subject, and structural navigation
-(getAttr/getListElem) between them. It fixes a **Subject** as
-the value's structural name and evolves a **state hash** as
-observations accumulate; `from` fields on request payloads
-reference these state hashes so distinct arg-side values produce
-distinct request hashes.
+**Arg-side value** — an outer-owned value the inner probes, an
+apply-result of one, or a structural derivation of either.
+Identified by the Selector chain that produced it. Chains
+compose (each Selector embeds its parent's Q hash) so the
+chain's Q hash is stable per operation and IS the value's
+identity.
 
-The other case — inner-owned callback-arg values, seen by the
-outer when it runs an inner-supplied callback — is handled
-differently. At replay the inner isn't running; its closures are
-gone; the arg no longer exists to be probed. Rather than name
-contra-arg values via subject identity, the eval-cache stores
-the observations the outer made on them by value in an
-`ObservationSet`, referenced from the enclosing
-`SelectorCallbackApply` request (see the callback-tracking model
-doc). Subject / state-hash machinery below applies to arg-side
-identification; it does not identify contra-arg values.
+**Contra-arg value** — an inner-owned callback-arg value, seen
+by the outer while running an inner-supplied callback.
+Identified not by a Selector chain but by the observations the
+outer made on it, carried by value inside the enclosing
+`SelectorCallbackApply` request's `argObsSet`. See the
+callback-tracking model doc.
 
-### Subject
+**Bounded Q evolution.** Q hashes are stable per operation
+throughout the design, with one exception:
+`SelectorCallbackApply.argObsSet` embeds the running observation
+set at firing time, so distinct firings of the same fn with
+distinct contra-arg observation patterns produce distinct
+CallbackApply Q hashes. This is content-addressed identity for
+the firing, not session-cumulative evolution.
 
-A **Subject** is the structural name for a value in a trace — an
-outer-owned value the inner probes, an apply-result value
-(including a callback firing's arg-side `fn` subject), or a
-derivation of either. It stays fixed while the value's content
-varies across observations; a state hash tracks the
-characterization built up by those observations.
+### Observation and ObservationSet
 
-Callback-arg (contra-arg) values are handled separately: instead
-of being named by a Subject, the observations the outer made on
-them are stored by value in an `ObservationSet` (referenced from
-a `SelectorCallbackApply` request; see the callback-tracking model
-doc). The Subject / state-hash machinery below does not apply to
-contra-arg identification.
+**Observation** — a Fact viewed through the arg-side lens: the
+element hash plus the identity of the value the request was
+dispatched against.
 
-**Observation** — a Fact viewed through the subject-identity
-lens. Just `(fromHash, elementHash)`:
-- `fromHash` — the state hash at the Subject when this Fact was
-  emitted.
-- `elementHash` — `SHA-256(requestHash || responseHash)`, same
-  as the Fact's contribution to the XOR-fold.
+**ObservationSet** — a batch of Observations sharing a
+precondition state; the walker's fold consumes one per step.
 
-Every Fact about an arg-side value yields one Observation per
-subject that emitted it. Facts about a contra-arg value are not
-projected through the subject-identity lens — they carry no
-`fromHash` because the enclosing `SelectorCallbackApply` request
-already fixes the contra-arg position; contra-arg observations
-travel by content-hashed value inside the associated
-`ObservationSet`.
-
-**ObservationSet** — a batch of Observations that share a
-precondition state; the walker's fold at each step consumes one
-ObservationSet at a time. XOR-folding the member `elementHash`es
-yields the delta by which the FactSet's hash changes when this
-set is consumed — mathematically the same operation as
-`XOR-fold` in [Sets](#sets), but scoped to one step. `struct
-ObservationSet { std::vector<Observation> observations; }` in
-`subject-id.hh`. A **history** is a sequence of
-ObservationSets.
-
-**Subject** — a structural name for a value. Four variants
-(transitional forms — state-hash-flavoured language retires per
-#178; Subject algebra survives):
-
-- **Arg{depth}** — a positional name for the arg slot of a
-  callback apply at reverse De Bruijn depth `depth`. Purely
-  positional: no state hash evolves against it, and it is never
-  the origin of a `fromHash` on a Fact — its role is composing
-  `ApplyResultSubject{fn, arg=Arg{d+1}}` for a callback firing's
-  return value.
-- **DerivedSubject{parent, kind, name/index}** — a value reached
-  by `getAttr`/`getListElem` on a parent Subject.
-- **ApplyResultSubject{fn, arg}** — the result of applying one
-  Subject to another.
-- **PostulatedIdempotentRead{hash}** — a subject whose source
-  (file, expression string, literal) is re-read on demand at
-  replay; the `hash` is of the source bytes. "Postulated"
-  because we assume re-reading the source yields the same value
-  — we never verify by inspecting the value.
-
-Same structural shape → same Subject. Subject values are
-immutable — a Subject is stable by construction, independent of
-history, argAncestry, or invocation.
-
-**subjectHash** — SHA-256 of a Subject payload. Also stable by
-construction. Used as a Merkle key when a Subject is referenced
-by hash.
-
-### State hash — situational characterization (transitional — retires per #178)
-
-**state hash** — the situational characterization at a Subject
-at a history position: SHA-256 of a serialization combining the
-Subject, the enclosing argAncestry, and the observations folded
-in so far. Evolves as observations accumulate; situational, not
-stable.
-
-**stateHashAt(subject, argAncestry, history, step)** — the state
-hash of an arg-level subject before step `step` folds in. Traps
-on `DerivedSubject` — derived values have no own observations to
-fold; their key is a producer query hash, not a state hash.
-
-**stateHashAfter(subject, argAncestry, history)** — `stateHashAt`
-at `step = history.size()`.
-
-**stateHashConverged(subject, argAncestry, observations)** — state
-hash computed over an unordered observation set: same result
-regardless of how observations were grouped into edges. Used by
-the replay walker as a fallback when step-by-step navigation
-misses.
-
-**producerQueryHashAt(derivedSubject, argAncestry, history,
-step)** — the selectorHash of the `SelectorGetAttr` /
-`SelectorGetListElem` that would produce this derived value from
-its parent chain at step `step`. Not a state hash (derived
-values don't have one); it's a payload hash serving as the
-Selectors-pool key.
-
-**producerQueryHashAfter(derivedSubject, argAncestry, history)** —
-`producerQueryHashAt` at `step = history.size()`.
-
-**stateHashAtSubject(subject, argAncestry, history, step)** —
-polymorphic dispatcher. For `DerivedSubject`, delegates to
-`producerQueryHashAt`; every other variant delegates to
-`stateHashAt`. Kept as a convenience for callers holding a
-Subject of unknown variant.
-
-**stateHashAfterSubject(subject, argAncestry, history)** —
-`stateHashAtSubject` at `step = history.size()`.
-
-**fromStateHashOf(query)** — reads the `from` field of a query
-and returns it as a `Hash`. Every observation a subject emits
-carries `stateHashAt(...)` at the emission time in this field.
-
-### argAncestry (transitional — retires per #178; per-cell factsets differentiate calls structurally)
-
-**argAncestry** — a `Hash`: the XOR-fold of enclosing callback
-args' state hashes at the moment the innermost callback was
-entered. Not a lexical scope — `let` bindings and other lexical
-constructs don't cross the cache boundary; only callback
-arguments do. Itself a state hash (situational): its value
-depends on what observations have flowed into the outer arg
-states before entry.
-
-**callArgAncestry** — an `argAncestry` stored on the
-`OuterResolver`, sampled at cb-apply fire time. Distinct from
-the `argAncestry` field on callback-arg proxies, which is the
-enclosing scope's argAncestry inherited by children.
-
-**combineArgAncestries(fnArgAncestry, argArgAncestry)** —
-produces the argAncestry inside an apply-result callback body.
-Non-commutative because `f a` ≠ `a f` (cf. `flip apply`);
-computed as `SHA-256("apply-argAncestry:" || fnHex || ":" ||
-argHex)` rather than XOR.
+**history** — a sequence of ObservationSets.
 
 ### Callback arg objects
 
@@ -674,24 +520,15 @@ wrap the same underlying arg from different sides.
 
 ### Cell navigation
 
-Values inside a callback body form a proxy chain — an
-apply-result is derived from an arg, an attribute is derived from
-a value, and so on. The chain is tracked structurally, orthogonal
-to state hashes.
+**Cell** — a topology node for a callback arg, carrying a
+positional depth (reverse-De-Bruijn), a parent link, and the
+observations folded through this position.
 
-**ArgCell** — a scope-graph node carrying `(depth, parent,
-liveObject)`. Depth is the reverse-De-Bruijn index of the
-callback arg the cell was created for; parent is the next-outer
-cell; liveObject is the wrapped Object. Cells are pure topology —
-no hashes are stored on them.
+**Session-root cell** — the writer's outermost cell; env-scope
+facts land on it, and every other cell descends from it.
 
-**argCell** — a field on writer- and replay-side Object wrappers
-holding a `shared_ptr<const ArgCell>`.
-
-**withArgCell(...)** — setter to attach a cell to a proxy.
-
-**effectiveArgCell(obj)** / **getProxyArgCell()** — return the
-proxy's cell, or null for non-proxy Objects.
+**Cell factset** — the XOR-fold of a cell's own observations
+with its ancestor cells' factsets. Composed on demand.
 
 ### Storage tables (callback-arg observation set)
 
@@ -714,18 +551,30 @@ per-hash in-process caches.
 
 ## Appendix A: naming rules
 
-Two rules the vocabulary above obeys:
+Rules the vocabulary above obeys:
 
 1. **Stable vs situational is carried by the type name, not by a
-   suffix.** `Subject` and `subjectHash` are stable by
+   suffix.** `Selector` and `selectorHash` are stable by
    construction — an immutable algebraic value and its hash.
    `factSetHash` is situational — its value tracks folded
    observations. No `Id` marker is required or used.
 
 2. **`Hash` is neutral.** It says only "the value is a `Hash`."
    Distinctive prefixes clarify what the hash is *of* — `selectorHash`
-   of a query payload, `resultHash` of a result, `subjectHash` of
-   a Subject payload, `factSetHash` of a set of Facts.
+   of a query payload, `resultHash` of a result, `factSetHash` of
+   a set of Facts.
+
+3. **"outer" / "inner" (unqualified) refers to the primop cache
+   boundary**, not to the evaluator-wrapper stack. The primop
+   relation lives in the value heap: outer is the caller that
+   invoked `builtins.cache { ... }`, inner is the boundary being
+   cached, and values cross between them by heap reference. The
+   evaluator-wrapper stack (TracingReplayEvaluator wraps
+   TracingEvaluator wraps Interpreter) is a *different* relation —
+   layers of interception around one Evaluator instance. When
+   discussing the wrapper stack, qualify: "the wrapped Interpreter",
+   "the fallback evaluator", "the recording layer" — never bare
+   "inner" or "outer".
 
 ## Appendix B: what this dictionary does not cover
 
