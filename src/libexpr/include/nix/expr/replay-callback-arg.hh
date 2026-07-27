@@ -38,36 +38,22 @@ class TracingDecisionGraph;
 
 class ReplayCallbackArg : public Object
 {
-    /* Full structural identity. Combined with `argAncestry` and the shared
-       `walkFacts`, `stateHashAt` computes this proxy's state hash
-       at any history position. The recorder's subject-id substitution at
-       flush uses the same evaluation, so walker and recorder agree
-       on per-probe `from` fields without snapshot/lazy hacks — even
-       when a child's structural component depends on a parent's
-       evolving state hash.
+    /* Producer Selector identifying this proxy. Content hash IS the
+       proxy's Q identity — the walker matches it against recorded Qs.
 
-       For root (cb-apply) locals the subject is `Arg{depth}`
-       with the recorded callArgAncestry (per the localArg sidecar), so the
-       walker reproduces the recorder's
-       `subjectId(Arg{D}, callArgAncestry)` directly.
+       For root (cb-apply) locals: `SelectorArg{depth}`.
 
-       For children minted by maybeGetAttr/getListElem the subject is
-       `DerivedSubject{parent.subject, ...}` — `stateHashAt`
-       recursively re-evaluates the parent's state hash at the child's
-       current edge index, so children don't need to snapshot parent
-       state at creation. */
+       For children minted by maybeGetAttr/getListElem:
+       `SelectorGetAttr{name, from=hex(parent producer Q)}` or the
+       list-elem equivalent — same shape as OuterObject's navigation
+       children on the cold side. */
     trace::SelectorVariant producer;
-    /* Initial state hash (= computeSelectorHash(producer)) — kept for
-       legacy id-string consumers (e.g. defeatCache's recursive apply
-       construction). */
+    /* Content hash of producer — kept for legacy id-string consumers
+       (e.g. defeatCache's recursive apply construction). */
     OuterId localId;
     /* Shared history across all proxies in one cb apply. Each validated
-       probe appends a Fact (one fact per edge). `stateHashAt` reads
-       this to compute each proxy's evolved state hash.
-
-       Backed as a shared single-fact-edge sequence: each entry is
-       wrapped in a single-fact ObservationSet so the history's edge indices match
-       the recorder's flush history. */
+       probe appends a single-fact ObservationSet so the history's
+       edge indices match the recorder's flush history. */
     std::shared_ptr<std::vector<ObservationSet>> walkFacts;
     TracingDecisionGraph & decisionGraph;
     ref<SourceRoot> rootFSRoot;

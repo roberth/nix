@@ -470,23 +470,19 @@ public:
     }
 
     /**
-     * Push a new `CallbackCell` onto the writer's stack for a
-     * cb-apply. The cell's `applyId` is the natural hash of the
-     * apply query payload, used to route observations from the
-     * TracingCallbackArg and TracingCallbackApplyResult back into
-     * this cell's `runningObsSet` via `logCallbackObservation`.
-     * The obsSet is later snapshotted into an ObservationSet
-     * referenced from a SelectorCallbackApply request.
+     * Insert the apply query payload into the Requests pool so the
+     * walker can look it up by request hash. Post-#184 the writer no
+     * longer maintains a callbackCells vector — the actual
+     * callback-firing state lives on `ArgCell::callbackState`,
+     * populated by the caller alongside this insertion.
      */
     void createCallbackCell(const nlohmann::json & applyQueryPayload);
 
     /**
-     * Log a d=0 Result. Records (Q_final, current factSet) -> Result
-     * in the decision graph and returns a TriePosition for use by
-     * child queries. Under the Q-evolution protocol, Q_final is the
-     * activeQuery's `currentQ` after all this Q's observations have
-     * folded — which may differ from the Q hash returned at
-     * `logSelector` time.
+     * Log a d=0 Result. Records (Q, current factSet) -> Result in the
+     * decision graph and returns a TriePosition for use by child
+     * queries. Under Q-space identity, Q is stable per operation —
+     * the walker computes the same Q hash the writer emits here.
      */
     template<typename R>
     std::optional<TriePosition> logResult(

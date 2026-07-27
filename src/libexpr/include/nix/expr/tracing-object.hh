@@ -43,8 +43,8 @@ class TracingObject : public Object
 
     /* True on wrappers rooted at a cb-apply (OuterApply::run) and on
        navigation descendants of such wrappers. Gates whether children
-       inherit `applyResultSubject` for QCA emission. See
-       `withCbApplyOrigin` for rationale. */
+       inherit `producer` for QCA emission. See `withCbApplyOrigin`
+       for rationale. */
     bool cbApplyOrigin = false;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /

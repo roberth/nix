@@ -8,17 +8,16 @@
  * Sibling of TracingObject; the difference is *where* method-level
  * observations land:
  *
- *  - TracingObject's getType/getInt/etc. record sub-Q `Terminals`
- *    rows in the main trie via `writer.logSelector + logResult`.
+ *  - TracingObject's getType/getInt/etc. record sub-Q Terminals in
+ *    the main trie via `writer.logQuery + logQueryResult`.
  *    Appropriate for cached-fn results and other apply-results whose
- *    evolved state hash participates in the env history.
+ *    Q hash participates in the env history.
  *
- *  - TracingCallbackApplyResult's methods record observations via
- *    `writer.logCallbackObservation`, which routes them into the
- *    enclosing CallbackCell's `runningObsSet`. Those observations
- *    are later snapshotted (by value) into an ObservationSet and
- *    referenced from a SelectorCallbackApply request via the
- *    `argObsSet` payload field.
+ *  - TracingCallbackApplyResult's methods route observations into the
+ *    enclosing callback cell's `runningObsSet` via `recordD2`. Those
+ *    observations are later snapshotted (by value) into an
+ *    ObservationSet and referenced from a SelectorCallbackApply
+ *    request via the `argObsSet` payload field.
  *
  * See tracing-cache-callback-model.md for the recording protocol
  * and the sampling moments where the obsSet is snapshotted.
@@ -46,25 +45,24 @@ class TracingCallbackApplyResult : public Object
        attribute observations recorded on the apply-result. */
     trace::SelectorVariant producer;
 
-    /* computeSelectorHash(producer) hex — the content-only apply-result
-       state hash exposed via getSelectorHashHex. Computed once at
-       construction to match `TracingEvaluator::apply`'s
-       `qHex` (= what the walker computes too). */
+    /* computeSelectorHash(producer) hex — the apply-result's Q hash
+       exposed via getSelectorHashHex. Computed once at construction
+       to match what TE::apply and the walker compute for the same
+       apply-result. */
     std::string qHex;
 
-    /* Argument-argAncestry cell — same shape as TracingObject. */
+    /* Argument cell — same shape as TracingObject. */
     std::shared_ptr<const ArgCell> argCell;
 
-    /* #184: the enclosing callback firing's cell. Observations in
-       recordD2 append to callbackCell->callbackState->runningObsSet
-       directly — replaces the previous applyId-based lookup through
-       writer.callbackCells. Populated by withCallbackCell at
-       construction site. */
+    /* The enclosing callback firing's cell. Observations in recordD2
+       append to callbackCell->callbackState->runningObsSet directly.
+       Populated by withCallbackCell at construction site. */
     std::shared_ptr<const ArgCell> callbackCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
-       getString / etc. fires `whnf()`, which records ONE SelectorGetWHNF
-       observation. Subsequent calls decode the cached result. */
+       getString / etc. fires `whnf()`, which records ONE observation
+       keyed on the producer Selector. Subsequent calls decode the
+       cached result. */
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 
@@ -90,10 +88,8 @@ public:
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
-    /** Symmetric to TracingObject/TracingReplayObject: surface the
-        ApplyResultSubject so a subsequent apply on this wrapper
-        composes evolving ApplyResultSubject constituents instead of
-        the frozen PostulatedIdempotentRead{qHex} fallback. */
+    /** The apply-result's Q hash hex — content hash of the stored
+        SelectorApply producer. */
     std::optional<std::string> getSelectorHashHex() const override { return qHex; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;

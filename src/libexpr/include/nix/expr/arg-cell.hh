@@ -2,14 +2,16 @@
 /**
  * @file
  * ArgCell — scope-graph node for cache-boundary proxies.
- * Carries only structural topology (depth, parent, liveObject).
+ * Carries structural topology (depth, parent, liveObject), the cell's
+ * own facts (req/resp pairs, XOR-composed with parent's for
+ * `factSetHash()`), plus per-Selector-invocation `qState` and
+ * per-callback-firing `callbackState` when applicable.
  *
- * The cell exists for navigation through the proxy graph; the
- * `depth` field provides the static positional handle used by
- * `Arg{depth}` subjects. State hashes are pure functions of
- * (subject, argAncestry, history, step) computed on demand — never
- * stored on the cell. Under the multiplexer + per-cell factset
- * direction (task #176), cells also become factset carriers.
+ * `depth` provides the static positional handle used by
+ * `SelectorArg{depth}` producers. Object identity is the content
+ * hash of the producer Selector; per-cell factset composition is
+ * what discriminates apply-result Terminals across sibling
+ * callback firings.
  */
 
 #include "nix/expr/evaluator.hh"
@@ -27,23 +29,16 @@ struct QState; // defined in q-state.hh; forward-declared here so
                // topology-only cells don't pull the heavy dependencies.
 
 /** Per-callback-firing accumulator, living on the ArgCell created for
-    the callback arg. Under Phase D2's cell-migration, this state used
-    to live in a writer-side `std::vector<CallbackCell>` (indexed by
-    `applyId`); moved onto the cell so:
-
-    - Contra-arg observations append directly via the callback-arg
-      proxy's own cell chain — no writer-global lookup.
-    - QCA emission at applyResult WHNF force finds the cell via the
-      applyResult's argCell chain — no `applyId` iteration on a
-      writer-owned vector.
-    - Concurrency invariant continues to hold: cell trees are
-      per-active-evaluator; callback state doesn't leak across trees. */
+    the callback arg. Contra-arg observations append directly via the
+    callback-arg proxy's own cell chain; QCA emission at applyResult
+    WHNF force finds the cell via the applyResult's argCell chain.
+    Concurrency invariant: cell trees are per-active-evaluator, so
+    callback state doesn't leak across trees. */
 struct CallbackState
 {
-    /** Fn's initial state hash (empty history). Cell lookup key at
-        QCA emission (matches ApplyResultSubject's fn state hash
-        under matching-until-divergence). Captured at cell allocation
-        from the applyQuery's `fn` field. */
+    /** Fn's Q hash hex, captured at cell allocation from the
+        applyQuery's `fn` field. Emitted as the SelectorCallbackApply
+        payload's `fn` field at QCA time. */
     std::string fnStateHashHex;
 
     /** Observations the outer made on this cell's contra-arg during
@@ -57,7 +52,7 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
     /** Reverse-De-Bruijn depth: 0 at the cache call's argument,
         N+1 in a cell whose parent is at depth N. Set at
         construction, immutable. Used as the positional handle
-        when computing state hashes via stateHashAfter. */
+        for `SelectorArg{depth}` producers. */
     int depth = 0;
 
     /** Next-outer cell. Null at the root (the cache call's

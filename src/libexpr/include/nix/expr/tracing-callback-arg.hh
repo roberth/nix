@@ -44,12 +44,12 @@ class TracingCallbackArg : public Object
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
-    /** This local's state hash, computed on demand from `producer`. */
+    /** This local's Q hash, computed on demand from `producer`. */
     OuterId localId() const { return TracingDecisionGraph::computeSelectorHash(producer); }
 
     /* The argCell cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;
-       state hashes are derived from `subject`, not the cell. */
+       identity is derived from `producer`, not the cell. */
     std::shared_ptr<const ArgCell> argCell;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
@@ -90,9 +90,9 @@ public:
     /** Object-method apply entry. Records the apply as an observation
         (= outer is applying this local to argObj), then delegates to
         `inner->queryApply(argObj)` and wraps the result as another
-        TracingCallbackArg with an `ApplyResultSubject` so further
+        TracingCallbackArg with a SelectorApply producer so further
         accesses on the result continue to route observations to the
-        enclosing CallbackCell. */
+        enclosing callback cell. */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 
     OuterId getStateHash() const { return localId(); }
