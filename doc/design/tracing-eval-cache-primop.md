@@ -8,7 +8,7 @@ model),
 [`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
 (callback tracking). Terminology from those docs — Query/Result
 vs Request/Response, FactSet, RequestSet trie, Query and Env
-message pairings, Subject, argAncestry, the walker,
+message pairings, Selector chains, cells, the walker,
 `SelectorCallbackApply` and its ObservationSet — is assumed below.
 
 ## Goal and non-goals
@@ -92,17 +92,17 @@ libexpr components that the primop wires together. Reading tour:
   carries `std::shared_ptr<OuterResolver> outerResolver`, the slot
   the primop sets before delegating evaluation.
 - `src/libexpr/include/nix/expr/tracing-environment.hh` —
-  `TracingEnvironment::outerQuery(query, resolve, subject,
-  argAncestry)` calls `resolve` to compute a result and then calls
-  `writer.logOuterObservation(...)`. Outer-value queries record as
-  Env-layer Facts on the inner writer.
+  `TracingEnvironment::outerQuery` calls `resolve` to compute a
+  result and then calls `writer.logOuterObservation(...)`.
+  Outer-value queries record as Env-layer Facts on the inner writer.
 - `src/libexpr/include/nix/expr/tracing-writer.hh` — `TracingWriter`
   records Facts uniformly at the Env layer: file reads, env-var
-  lookups, and outer-value probes all XOR-fold into `envFactSetHash`
-  and land in `sessionRequestsTrie`. Observations the outer makes
-  on inner-supplied callback args during a callback firing route
-  through `logCallbackObservation` into the enclosing
-  `CallbackCell`'s running observation set.
+  lookups, and outer-value probes all land in the attribution
+  cell's facts (the session-root cell for env facts, or the
+  probed arg's own cell for outer-value probes) and get inserted
+  into `sessionRequestsTrie`. Observations the outer makes on
+  inner-supplied callback args during a callback firing accumulate
+  in the enclosing callback cell's running observation set.
 - `src/libexpr/tracing-callback-arg.cc` / `replay-callback-arg.cc` —
   `TracingCallbackArg` and `ReplayCallbackArg` handle the covariant
   callback case: the writer records the outer's probes on an
@@ -112,7 +112,9 @@ libexpr components that the primop wires together. Reading tour:
 - `src/libexpr/tracing-replay-evaluator.cc` — `dispatchQueryRequest`
   (name is legacy) routes recorded outer-value and
   `SelectorCallbackApply` Requests through the walker, resolving
-  `from` fields via `resolveStateHash`.
+  each Request's target via the current cell chain
+  (`resolveIdentity` — matches recorded Q hashes against live
+  proxies' `getSelectorHashHex`).
 - The functional test `tests/functional/builtins-cache.sh` covers
   the full feature surface: covariant callbacks, ambient paths, the
   `callPackageWith` self-referential pattern, function-result
@@ -171,29 +173,20 @@ Inside `prim_cache`:
    threads through every `<cached-fn>` PrimOp created by
    `ExprFromObject` inside this call.
 
-5. **Seed `callArgAncestry`.** Compute a per-cache-call contribution
-   (hash of `"cache-import:"|"cache-expr:"` plus the source
-   identifier) XOR-folded with `state.inheritedCallArgAncestry`. Propagate
-   the result via `setOuterResolverCallArgAncestry` and
-   `innerState->inheritedCallArgAncestry`. Sibling cached calls
-   are structurally isolated (separate cells → separate factsets →
-   separate Terminal keys); `callArgAncestry` distinguishes them
-   at the cb-apply boundary. Nested calls accumulate.
-
-6. **Rewrite paths to the inner accessor.** `RootedPath{innerState->
+5. **Rewrite paths to the inner accessor.** `RootedPath{innerState->
    rootFSRoot, p.path}` for both `importPath` and `baseDir`.
 
-7. **Evaluate.** `importPath ? replayEval->evalFile(...) :
+6. **Evaluate.** `importPath ? replayEval->evalFile(...) :
    replayEval->evalExpr(...)`. Replay tries the cache first;
    falls back to recording.
 
-8. **Bridge back.** `ExprFromObject(result.get_ptr(), replayEval,
+7. **Bridge back.** `ExprFromObject(result.get_ptr(), replayEval,
    resolver).eval(state, state.baseEnv, v)`. Children become lazy
    `ExprFromObjectAttr` thunks. For `nFunction` values,
    `ExprFromObject` creates a `<cached-fn>` PrimOp that routes
    future applications back through the `OuterResolver`.
 
-9. **Retain state.** Push a `CacheState::CallState` onto
+8. **Retain state.** Push a `CacheState::CallState` onto
    `state.cacheState.calls` holding the sink, writer, evaluators,
    and innerState. Keeps them alive past the primop frame so the
    lazy `ExprFromObjectAttr` thunks can fire later.
@@ -256,14 +249,12 @@ When `replayEval->evalFile(...)` (or `evalExpr`, or `apply`) runs:
    strategies section.
 4. The `dispatch` callback in `TracingReplayEvaluator` reads each
    Request payload, calls `getCurrentResponse`, and returns the
-   response hash. For Requests whose payload contains a `Query`,
-   dispatch routes to `dispatchQueryRequest`,
-   which:
-   - resolves the `from` field via `resolveStateHash` against the
-     Subject algebra (`Arg{depth}` positional seeds, `DerivedSubject`
-     via the `Requests` pool, `ApplyResultSubject` via live apply,
-     `PostulatedIdempotentRead` via source re-read) — mechanism
-     retires under task #178 in favour of cell-chain routing;
+   response hash. For Requests whose payload contains a Selector,
+   dispatch routes to `dispatchQueryRequest`, which:
+   - resolves the Selector's target Object via `resolveIdentity`
+     against the current cell chain — each wrapper along the
+     chain exposes its identity as a Q hash (`getSelectorHashHex`),
+     matched against the recorded Q hash;
    - issues the query against the resolved outer Object;
    - serialises the result.
 5. On a hit, the result payload comes back; `lookup` wraps it in a
@@ -317,26 +308,29 @@ time regardless of whether the outer's behaviour still produces
 that response. That's how caching a stale `f x = 11` when the outer
 `f` has been edited to `x: x + 100` would silently pass.
 
-The validation surface decomposes by the resolved subject variant:
+The validation surface decomposes by the Selector kind carried
+in the Request payload:
 
-- **`Arg{depth}` seed.** Pre-bound by the primop's apply setup to
-  the live `OuterObject`. Live dispatch calls the method on the
-  `OuterObject`, which forwards through the resolver to the live
-  outer.
-- **`DerivedSubject{parent, kind, name}`.** `resolveStateHash`
-  recursively resolves the parent, re-dispatches the producer
-  query against it, and gets the same derived `OuterObject`. The
-  dispatched method then goes live.
-- **`ApplyResultSubject{fn, arg}`.** `resolveStateHash` invokes
-  `fn->queryApply(arg)` live. `fn` is resolved through the chain
-  above; `arg` is either chain-resolved (relay case) or served by
-  a `ReplayCallbackArg` reading recorded content from the
-  `SelectorCallbackApply`'s referenced observation set (local case).
-  If the outer fn's behaviour changed, the live response differs
-  from the recorded one, the walk's response-hash compare fails,
-  and the cache correctly misses.
-- **`PostulatedIdempotentRead{hash}`.** Re-reads the source
-  (file/expression/literal) and resolves the value fresh.
+- **`SelectorArg{depth}`.** The primop's apply setup binds the
+  live `OuterObject` at the corresponding cell. Live dispatch
+  calls the method on that OuterObject, which forwards through
+  the resolver to the live outer.
+- **`SelectorGetAttr` / `SelectorGetListElem`.** The walker
+  resolves the parent through the cell chain (matching the
+  Selector's `from` Q hash against `getSelectorHashHex` on live
+  wrappers), re-dispatches the producer query against it, and
+  gets the same derived `OuterObject`. The dispatched method
+  then goes live.
+- **`SelectorApply`.** The walker resolves fn through the chain
+  above and invokes `fn->queryApply(arg)` live. The arg is
+  either chain-resolved (relay case) or served by a
+  `ReplayCallbackArg` reading recorded content from the
+  `SelectorCallbackApply`'s referenced observation set (local
+  case). If the outer fn's behaviour changed, the live response
+  differs from the recorded one, the walk's response-hash
+  compare fails, and the cache correctly misses.
+- **`SelectorImport` / `SelectorExpr`.** Re-reads the source
+  (file/expression) and resolves the value fresh.
 
 `ReplayCallbackArg` reads payloads from the recorded
 `SelectorCallbackApply`'s observation set because the inner isn't
@@ -346,10 +340,11 @@ not the dispatcher's response. The dispatcher computes the response
 by calling `ReplayCallbackArg`'s method (`.getInt()`, etc.) and
 serialising the answer.
 
-A successful replay still feeds the recording-side writer state
-(`envFactSet`, `sessionRequestsTrie`, `envCur`) so a *later* miss
-on a different selectorHash in the same session falls into a coherent
-recording chain.
+A successful replay lets the recording-side writer state stay
+coherent — the writer's session-root cell facts,
+`sessionRequestsTrie`, and dispatch memo grow along with any
+fallback runs, so a *later* miss on a different selectorHash in
+the same session lands in a coherent recording chain.
 
 ### Live validation generalises; trace scope follows
 
@@ -419,52 +414,50 @@ Items that were closed by the shipped implementation
 positional-queue replacement, apply-selectorHash teardown) are no longer
 listed. What remains:
 
-1. **Seed-counter collisions across writers, and the general
-    fallback.** With one shared `decisionGraph` and one shared
-    `Requests` pool, `hashString("arg(N)")` under the current seed
-    scheme mints the same string in both the outer's own resolver
-    (if any) and each inner's resolver. Request payloads referring
-    to the same `from` string hash identically across writers,
-    which risks pairing them to different live Objects at replay
-    depending on which resolver dispatches.
+1. **Positional-depth collisions across writers, and the general
+    fallback.** `SelectorArg{depth}`'s content hash is a pure
+    function of `depth` — the same positional value hashes
+    identically across every resolver that shares the
+    `decisionGraph`. Request payloads referring to the same
+    `SelectorArg{depth}` (or a `SelectorGetAttr` / `SelectorApply`
+    that bottoms out at such an Arg) hash identically across
+    writers, which risks pairing them to different live Objects
+    at replay depending on which resolver dispatches.
 
-    Correctness in the worst case falls out of "wrong response hash
-    → walk falls through," but this is a source of spurious replay
-    misses and, if responses happen to match, silent wrong hits.
+    Correctness in the worst case falls out of "wrong response
+    hash → walk falls through," but this is a source of spurious
+    replay misses and, if responses happen to match, silent
+    wrong hits.
 
     **Observed in practice (nixpkgs).** A flake that caches the
     nixpkgs *function* — `cachedNixpkgs = builtins.cache { import
     = nixpkgs; }` — and applies it to a config attrset containing
-    a `rewriteURL` callback: cold record produces the right answer,
-    warm replay too, but a probe on the apply-result falls through
-    to inner re-evaluation because `getStringWithContext{from=X}`
-    received different live responses on the replay and record
-    sides. `X` is a `DerivedSubject` whose producer chain bottoms
-    out at a counter-minted seed, and nixpkgs's lazy-forcing order
-    shifts enough between record and replay that `arg(N)` ends up
-    labelling a different attrset element in each.
+    a `rewriteURL` callback: cold record produces the right
+    answer, warm replay too, but a probe on the apply-result
+    falls through to inner re-evaluation because a
+    `getStringWithContext` Selector received different live
+    responses on the replay and record sides. Its `from` chain
+    bottoms out at a positional depth, and nixpkgs's lazy-forcing
+    order shifts enough between record and replay that the same
+    depth ends up labelling a different attrset element in each.
 
     Mitigations, in roughly increasing scope: tighten dispatch
     validity checks so any wrong-Object resolution reliably fails
-    (no false hits); namespace the counters so trace-side and
-    interpreter-side counters can't collide; or, the general
-    answer, **observation-driven unification** — treat ids minted
-    by different sources as implicitly namespaced, then build an
-    equality table from recorded Facts. Each Fact referencing a
-    seed id is an *observation* that constrains the table; the
-    replayer accepts a hit when every recorded observation matches
-    a live one. (Roughly the inverse of Hindley-Milner: ids start
-    equal-to-anything and observations narrow them.)
+    (no false hits); namespace positional depth so trace-side and
+    interpreter-side handles can't collide; or, the general
+    answer, **observation-driven unification** — treat identities
+    minted by different sources as implicitly namespaced, then
+    build an equality table from recorded Facts. Each Fact
+    referencing a positional identity is an *observation* that
+    constrains the table; the replayer accepts a hit when every
+    recorded observation matches a live one. (Roughly the inverse
+    of Hindley-Milner: identities start equal-to-anything and
+    observations narrow them.)
 
-2. **Do `OuterObject`'s closures obviate the resolver's
-    `outerValues` map?** The `queryFn` / `applyFn` captured in each
-    `OuterObject` already close over the resolver and the outer
-    Object, so an `OuterObject` could in principle answer its own
-    queries directly without round-tripping through the resolver's
-    id map. If that holds throughout, the map is dead state. There
-    may be reasons it isn't (replay-side dispatch resolving an id
-    it didn't construct the `OuterObject` for; sharing between
-    sibling callbacks); worth checking.
+2. **Retired.** The `outerValues` map is gone — `OuterObject`'s
+    closures answer their own queries directly via `queryFn` /
+    `applyFn`, which close over the resolver and the outer
+    Object. No id map round-trip remains.
 
 3. **`Interpreter::apply`'s arg handling is a try/catch.**
    `arg->defeatCache()` for concrete Objects; on throw (the
@@ -485,11 +478,10 @@ listed. What remains:
 5. **Storage-layer leverage.** The base cache's design goals — no
    linear search, no unbounded backtracking, session-cumulative
    work proportional to observed change — apply to the primop's
-   new touchpoints too. `resolveStateHash` memoises within a walk;
+   new touchpoints too. `resolveIdentity` memoises within a walk;
    the apply-Request dispatcher invokes the outer apply once and
-   reuses the result across all child-query dispatches; the
-   producer-by-child index is built once per walk. Audit each new
-   touchpoint against these goals before landing.
+   reuses the result across all child-query dispatches. Audit each
+   new touchpoint against these goals before landing.
 
 ## Future work
 
@@ -501,43 +493,45 @@ listed. What remains:
 - **Deduplicating Environment layer** for overlapping file reads
   across cache calls.
 - **Restore the `nix eval-cache` introspection subcommand** to help
-  debug the `DerivedSubject` producer-query path.
+  debug getter Selector chains (`SelectorGetAttr` /
+  `SelectorGetListElem` produce-child paths).
 - **Interaction-traced outer→inner nesting** as an alternative to
   the current input-traced nesting (so the outer cache treats the
   inner as an oracle and benefits from per-method early cutoff).
   Change in cost model, not correctness; wait for numbers.
 - **Observation-driven unification** — the general fallback for
-  cross-invocation seed drift (see open question 1). When two
-  evaluations produce semantically identical ambient values via
-  different apply-boundary sequences, the seed counters disagree
-  and cross-invocation selectorHash hashes drift even though the values
-  match. A unification algorithm at replay time would let the
-  cache hit anyway. Caught case: unconditionally lazy functions
-  (`\arg: e` where `e`'s evaluation never reaches into `arg`) —
-  such a function is constant in `arg` under referential
-  transparency, and a subsequent call with any argument gets the
-  recorded result. Cost may be substantial; wait for a workload
-  that justifies it.
-- **CLI-specific complement: named hints.** The CLI could stabilise
-  seed identity by supplying a semantic hint string at seed
-  registration (modelled on the unpinned-fetch URL hint used for
-  lazy-paths source-root identity) — letting seed identifiers
-  survive apply-boundary reorderings without paying for
-  replay-time unification. General hints aren't feasible (no
-  method-argument metadata to conjure hints for arbitrary
-  Values); CLI-only. Mentioned for completeness — the current
-  apply-boundary sequence is stable enough that this doesn't need
-  building.
+  cross-invocation positional-depth drift (see open question 1).
+  When two evaluations produce semantically identical ambient
+  values via different apply-boundary sequences, the same
+  positional depth labels different values and cross-invocation
+  selectorHashes drift even though the values match. A unification
+  algorithm at replay time would let the cache hit anyway. Caught
+  case: unconditionally lazy functions (`\arg: e` where `e`'s
+  evaluation never reaches into `arg`) — such a function is
+  constant in `arg` under referential transparency, and a
+  subsequent call with any argument gets the recorded result.
+  Cost may be substantial; wait for a workload that justifies it.
+- **CLI-specific complement: named hints.** The CLI could
+  stabilise positional-depth identity by supplying a semantic
+  hint string at cache-call registration (modelled on the
+  unpinned-fetch URL hint used for lazy-paths source-root
+  identity) — letting identities survive apply-boundary
+  reorderings without paying for replay-time unification.
+  General hints aren't feasible (no method-argument metadata to
+  conjure hints for arbitrary Values); CLI-only. Mentioned for
+  completeness — the current apply-boundary sequence is stable
+  enough that this doesn't need building.
 
 ## Source map
 
 - `src/libexpr/primops/cache.cc` — `prim_cache` body.
 - `src/libexpr/include/nix/expr/eval.hh` —
-  `EvalState::rootDecisionGraph`, `cacheState`, `inheritedCallArgAncestry`.
+  `EvalState::rootDecisionGraph`, `cacheState`.
 - `src/libcmd/command.cc` — sets `evalState->rootDecisionGraph`
   during `getEvalState()`.
 - `src/libexpr/tracing-replay-evaluator.cc` —
-  `dispatchQueryRequest`, `apply()`, `resolveStateHash`.
+  `dispatchQueryRequest`, `apply()`, `resolveIdentity`
+  (cell-chain identity resolution).
 - `src/libexpr/outer-object.cc` — `OuterObject` (outer-owned value
   the inner probes via Env).
 - `src/libexpr/expr-from-object.cc` — `ExprFromObject`,
@@ -545,7 +539,7 @@ listed. What remains:
 - `src/libexpr/tracing-callback-arg.cc` /
   `replay-callback-arg.cc` — `TracingCallbackArg` /
   `ReplayCallbackArg` (writer/replay sides of covariant callbacks).
-- `src/libexpr/subject-id.cc` — Subject variants and argAncestry
-  algebra.
+- `src/libexpr/include/nix/expr/observation-set.hh` —
+  Observation / ObservationSet value types.
 - `tests/functional/builtins-cache.sh` — feature-coverage test
   suite; wired into `tests/functional/meson.build`.

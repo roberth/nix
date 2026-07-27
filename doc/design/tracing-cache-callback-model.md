@@ -1,18 +1,23 @@
-# Callback tracking model — SelectorCallbackApply and Q evolution
+# Callback tracking model
 
-Each section separates **Model** (design intent, cited to user
-prompts or older docs that are still valid), **Code** (what the
-implementation actually does, cited by file:line), and **Gap**
-(where they differ). When a claim appears in the pre-existing
-`tracing-eval-cache-*.md` docs but is stale, the gap section notes
-it.
+Design of covariant callback tracking: the `SelectorCallbackApply`
+Selector alternative, per-firing observation accumulation, sibling
+discrimination, sampling per WHNF-producing probe. Companion to
+[`tracing-eval-cache.md`](./tracing-eval-cache.md) (base cache
+model),
+[`tracing-eval-cache-vocabulary.md`](./tracing-eval-cache-vocabulary.md)
+(term glossary), and
+[`tracing-eval-cache-primop.md`](./tracing-eval-cache-primop.md)
+(builtins.cache primop).
 
-This doc reflects the current implementation of callback tracking
-with Q evolution and state-hash `from` fields. Under the
-multiplexer + per-cell factset direction (see task #176), Q
-evolution retires and state hashes collapse into per-cell factset
-curs; this doc will need substantial rework to describe the new
-callback machinery.
+Historical note: the doc was written in the Q-evolution era
+(task #110) with a Model / Code / Gap scaffold that flagged
+transitional machinery. Q evolution and the subject-identity
+machinery retired under #183; the doc has since been trimmed to
+the callback-tracking model itself. Sections that documented
+retired mechanisms (Q evolution, argAncestry composition,
+SuppressApplyBoundary) are gone; §11 preserves the "removed
+machinery" list for old-comment archaeology.
 
 ## 1. What the eval cache does
 
@@ -34,216 +39,56 @@ evaluator, never to "the caller of a callback inside the inner."
 
 ## 2. Primitives
 
-**Model.** Common vocabulary. Definitions from
-`tracing-eval-cache-vocabulary.md` still hold except where task #110
-revises them. State-hash-flavoured entries (**Observation**,
-**State hash**) are transitional; the state-hash mechanism retires
-per #178, but their names appear here for orientation with current
-code.
+Vocabulary specific to callback tracking (base definitions in
+[`tracing-eval-cache-vocabulary.md`](./tracing-eval-cache-vocabulary.md)):
 
 - **Selector** — one alternative of the `SelectorVariant` eDSL
-  plus its serialised payload; content-hash is `selectorHash`.
-  Alternatives include `SelectorGetWHNF`, `SelectorGetAttr`,
-  `SelectorGetListElem`, `SelectorImport`, `SelectorCallbackApply`.
-  A "Query" in prose is the caller's ask half of a Query/Result
-  message pair whose payload is a Selector; the two words are
-  used interchangeably where the message-pairing framing is
-  irrelevant. "Q" as a shorthand still points at the Selector's
-  hash (`selectorHash`) — same identity, kept for brevity in
-  chain diagrams like `Q_M → Q_{M+1}`.
-- **Result** — the value the evaluator returns for a Query.
-  Content-hash `resultHash`.
-- **Fact** — one `(Request, Response)` pair. Element-hash is
-  `SHA-256(requestHash || responseHash)` — the fold contribution.
-- **Observation** — a Fact viewed through subject-identity: a
-  `(fromHash, elementHash)` pair where `fromHash` is the referenced
-  Subject's state hash at the moment of the Fact. Same physical
-  event as a Fact, different projection.
-- **cur (factSet hash)** — a running XOR fold of observations. The
-  scope of "running" is where the model has been revised (see §3).
-- **Subject** — a value's structural name (`Arg{depth}`,
-  `DerivedSubject{parent, kind, name/index}`,
-  `ApplyResultSubject{fn, arg}`, `PostulatedIdempotentRead{hash}`).
-  Immutable — same shape → same Subject.
-- **State hash** — SHA-256 of a serialization combining Subject,
-  argAncestry, and the observations folded so far. Situational, not
-  stable.
-- **Ask edge** — `(selectorHash, cur) → requestSetHash`. Written by
-  the writer at cold, consumed by the walker at warm.
-- **Terminal edge** — `(selectorHash, cur) → resultHash`. End of a
-  chain.
-- **argAncestry** — an XOR-fold over enclosing callback args'
-  state hashes at the moment the innermost callback was entered
-  (vocab §argAncestry). Non-lexical: only callback arguments
-  contribute, not `let` bindings. Composition details in §9.
+  plus its serialised payload; content-hash is `selectorHash`
+  (a.k.a. Q hash). Callback-related alternatives:
+  `SelectorApply`, `SelectorCallbackApply`.
+- **Fact** — one `(Request, Response)` pair.
+- **Observation** — a Fact carrying attribution: the element hash
+  plus the Q hash of the value the request was dispatched against.
+- **cur** — a running XOR fold of Facts scoped to a cell's factset.
+- **Ask edge** — `(selectorHash, cur) → requestSetHash`.
+- **Terminal edge** — `(selectorHash, cur) → resultHash`. End of
+  a chain.
+- **Cell** — a topology node for a callback arg carrying
+  positional depth, parent link, and folded observations.
+- **contra-arg** — an inner-owned callback-arg value, seen by the
+  outer while running an inner-supplied callback.
 
-**Code.**
+## 3. Q hash stability, and the one bounded exception
 
-- Selector alternatives in `trace-types.hh`. `SelectorCallbackApply` declared
-  there with `DECLARE_SELECTOR_RESULT(SelectorCallbackApply, ResultWHNF)`.
-- Fact = `(Request, Response)` in `tracing-decision-graph.hh`.
-- Observation = `struct Observation { Hash fromHash; Hash
-  elementHash; }` in `tracing-decision-graph.hh` line 132.
-- Subject variants in `subject-id.hh`.
-- Ask + Terminal tables in `tracing-decision-graph.cc` (SQL schema).
+Selector Q hashes are stable per operation: a Selector's content
+hash is a pure function of its payload, and the payload is fixed
+at construction. No per-observation re-derivation, no `from`-field
+rewriting after emission. (Historical: an earlier design evolved
+Q hashes per observation; that mechanism retired under #183.
+Task #178 completes the retirement by removing the stringly-typed
+`from` field from Selector payloads once cell-based discrimination
+is fully proven.)
 
-**Gap.**
+The one bounded exception is **SelectorCallbackApply**. Its
+`argObsSet` field is a CAS reference to the running observation
+set at the moment of QCA emission. Distinct firings of the same
+`fn` with distinct contra-arg observation patterns produce
+distinct QCA Q hashes — content-addressed identity for the
+firing, not session-cumulative evolution. See §7 for the
+per-WHNF-probe sampling that defines "the moment of emission".
 
-- Vocab defines Ask/Terminal with `selectorHash` as a stable key
-  throughout a walk. Under Q evolution, `selectorHash` evolves
-  per-edge; row keys concretely represent "selectorHash at the edge's
-  moment" — see §3.
-- Vocab's `cur` definition is scope-ambiguous between session and
-  per-Q; the per-Q scoping under Q evolution is what the row keys
-  actually use.
+## 4. SelectorCallbackApply as a first-class Selector alternative
 
-## 3. Q evolution (transitional — retires per #178)
+A function application doesn't "end" in the sense of observing
+its complete irrelevance — references to it may still exist in
+unevaluated parts of its result or in function closures it
+returned. But it does return a WHNF result from its body first.
 
-**Model** (user, 2026-07-21):
+So the queries observed on a callback firing are:
 
-> The next Ask is at (Q_after, curAfter). Also a Terminal would be
-> at (Q_after, curAfter).
-
-Q's payload carries a `from` field: a state hash of some referenced
-subject. As observations dispatched during Q's walk fold into that
-subject's state, the subject's state hash evolves → Q's `from`
-evolves → Q's selectorHash advances. A chain is
-`Ask(Q_M, cur_M) → Ask(Q_{M+1}, cur_{M+1}) → … → Terminal(Q_N, cur_N)`
-where both Q and cur evolve in lockstep. The starting index `M`
-carries the preconditions the Query begins with (any prior state
-this Query's evaluation inherited); indexing from an arbitrary `M`
-rather than `0` avoids the false connotation that the chain must
-start from an "empty" precondition set.
-
-Not every Q evolves. A Q whose `from`-subject doesn't participate
-in observations dispatched during its walk keeps a constant `from`;
-its selectorHash stays fixed. That's a special case, not a separate
-code path.
-
-Recording is single-trace and in-place (user, 2026-07-21):
-
-> For writing, I think tracking state evolution in-place could work.
-> Reason: writing with smaller hashes tends to be a misrepresentation
-> of the preconditions of the result Terminal. Larger or different
-> doesn't really make sense either.
-
-Replay is 0-many traces, per-candidate:
-
-> The ability to *accept* smaller preconditions lives on the
-> *walker* side, because it deals with not one but 0-many traces,
-> each having their own sets of preconditions.
-
-And the ordering constraint:
-
-> Before accepting the new Q, flush into an Ask so that the Request
-> that gives rise to the state hash change can also be dispatched
-> by the walker.
-
-**Code — writer** (`tracing-writer.cc:145-214`).
-
-Note: the mechanics below (Q re-derivation via `stateHashAt`, `from`
-rewriting, Ask keying on evolved Q) describe current implementation
-and retire per #178 (transitional). Snippets below reference
-`stateHashAt` / state hashes for that reason.
-
-For each observation via `logOuterObservation`:
-
-1. **Insert Ask at (Q_before, cur_before)** at `line 162-165`:
-   ```
-   if (!activeQueryStack.empty()) {
-       auto & innermost = activeQueryStack.back();
-       decisionGraph->insertAsk(innermost.currentQ,
-                                prevQFactSetHash, requestSetHash);
-   }
-   ```
-   The Ask edge uses `currentQ` — which is Q_before-fold — as key.
-2. **Fold** at `line 166-174`: append to session `envWalk`; append
-   to innermost active Q's `perQEnvWalk`.
-3. **Re-derive** at `line 188-213`:
-   ```
-   auto newState = stateHashAt(
-       *aq.fromSubject, aq.fromSubjectArgAncestry,
-       aq.perQEnvWalk, aq.perQEnvWalk.size());
-   if (newState != aq.fromSubjectLastState) {
-       // rewrite payload's `from` field, re-hash → new currentQ
-   }
-   ```
-   The re-derivation uses per-Q `perQEnvWalk`, not session envWalk.
-
-At `logResult` (`tracing-writer.hh:713-777`): insert
-`Terminal(finalQ, finalCur, resultHash)` and pop the ActiveSelector
-frame.
-
-**Code — walker** (`tracing-decision-graph.cc` +
-`tracing-replay-evaluator.cc`).
-
-`TracingDecisionGraph::walk` accepts an optional `recomputeQ`
-callback. `TracingReplayEvaluator::walk` builds one at
-`tracing-replay-evaluator.cc:281-298`:
-
-```
-recomputeQ = [payloadTemplate, fromSubject,
-              fromSubjectArgAncestry, perQEnvWalk](const Hash & preFoldQ) {
-    auto newState = stateHashAt(
-        *fromSubject, fromSubjectArgAncestry,
-        *perQEnvWalk, perQEnvWalk->size());
-    // rewrite payload's `from`, re-hash → new Q
-};
-```
-
-`perQEnvWalk` is a walk-local `shared_ptr<vector<ObservationSet>>`
-(line 64), populated by `commitEdge` alongside session `envWalk`
-(line 107-109).
-
-**Gap 1** (task #110 vs old vocab). Vocab treats `selectorHash` as a
-fixed row key; the code re-derives it per-edge. The row schema
-still uses `selectorHash` as a column name, but the value at
-insertion time is Q's currentQ at that moment. Doc update needed;
-schema unchanged.
-
-**Gap 2** (fast-path residue in perQEnvWalk). Fast-path miss
-rolls back session `envWalk`/`envCur`/`committedEdgeFingerprints`
-(lines 335-342). But `perQEnvWalk` is declared once at function
-scope and shared between fast and slow paths — failed fast-path
-commits leave residue in `perQEnvWalk`, and slow path's Q evolution
-folds them in. This is bug **B5** in the status file.
-
-**Gap 3** (file/env reads and Q evolution). `closeAsksEdge`'s
-finalize (`tracing-writer.cc:246-266`) inserts an Ask under
-innermost Q but pushes an EMPTY `ObservationSet` to `envWalk` and
-does NOT push to `perQEnvWalk`. Doc-side: correct — file/env reads
-carry no `fromHash`, so they can't fold into any subject's state.
-Skipping the recompute is right, not a gap. Called out to head off
-"is this a Q-evolution miss?" confusion.
-
-## 4. SelectorCallbackApply as a first-class Selector alternative (state-hash mechanism transitional — retires per #178)
-
-**Model** (task #110 verbatim, user 2026-07-21):
-
-> I have had to remind previous sessions that "a function
-> application does not end" in the sense of observing its complete
-> irrelevance, because references to it may still exist in
-> unevaluated parts of its result or in function closures it
-> returned. But that doesn't mean it doesn't return a WHNF result
-> from its body first.
->
-> So the queries we observe are basically:
-> 1. The initial call, SelectorCallbackApply(f, obs) -> WHNF
-> 2. Subsequent observations, <q>(SelectorCallbackApply(f, obs')) -> <r>,
->    where obs' = obs or some larger set
-
-And (2026-07-21):
-
-> All I said just now is about *callbacks* and their *contra-arg*.
-> A *call* and its *arg* is still subject to the more complex state
-> hash tracking ("from"/"fromStateHashes").
-> - A callback function is only given to us through an *arg*.
-> - All observations on an *arg* are subject to state hash tracking.
-> - A SelectorCallbackApply observation is a regular observation, just
->   like getting the WHNF of an attribute, etc.
-> - Conclusion: callback tracking does *not inherently need* state
->   hash tracking, but *ends up* as part of a state hash *outside*
->   of its area of responsibility.
+1. The initial call: `SelectorCallbackApply(f, obs) → WHNF`.
+2. Subsequent probes: `<q>(SelectorCallbackApply(f, obs')) → <r>`,
+   where `obs' = obs` or some larger set (§7 explains "growing").
 
 Sibling discrimination is trivial by construction: sibling A's
 callback observes `getAttr("a")`, sibling B's observes
@@ -251,111 +96,72 @@ callback observes `getAttr("a")`, sibling B's observes
 `SelectorCallbackApply(f, obs_a) ≠ SelectorCallbackApply(f, obs_b)`,
 so distinct DB rows.
 
-**Model — payload shape** (user, Q2 answer 2026-07-21: "choose (a)").
+**Payload shape.**
 
 ```
 SelectorCallbackApply {
-  fn:          <state hash of f, at f's evolved state when sampled>
+  fn:          <Q hash of f>
   argObsSet:   <CAS content-hash of the sampled obs set>
-  argAncestry: <arg's argAncestry hash>
-  argDepth:    <arg's depth in nested cache calls>
 }
 ```
 
 `obs` is a CAS reference into the `ObservationSet` table, not
-inlined — "to keep large callback results efficient" (user).
+inlined — to keep large callback results efficient.
 
-Result: `ResultWHNF` (user, 2026-07-22: "prefer a WHNF result,
-because that reduces entropy in the trace. Otherwise the
-(SelectorCallbackApply ...) would have to be immediately followed by
-SelectorGetWHNF(SelectorCallbackApply ...) in practice").
+Result: `ResultWHNF`. Preferring a WHNF result reduces entropy in
+the trace — otherwise a `SelectorCallbackApply(...)` would in
+practice always be immediately followed by a getter probe on its
+result.
 
-**Code.**
-
-`trace-types.hh`: `SelectorCallbackApply` variant with
-`DECLARE_SELECTOR_RESULT(SelectorCallbackApply, ResultWHNF)`.
-
-Writer emission: `TracingWriter::emitCallbackApplyForApplyResult`
-(`tracing-writer.hh:277-311`). Called from `TracingObject::whnf()`
-(`tracing-object.cc:167`) after `computeWHNFFromObject` returns.
-
-Walker dispatch: `TracingReplayEvaluator::dispatchQueryRequest`
-has a `tag == "callbackApply"` branch that extracts
-fn/argObsSet/argAncestry/argDepth, materialises a
-`ReplayCallbackArg` backed by the referenced ObservationSet,
-invokes `fnObj->queryApply(replayArg)` live, returns `ResultWHNF`.
-
-The walker dispatches recorded outer-value and
-`SelectorCallbackApply` Requests through `dispatchQueryRequest`,
-which routes by tag to each branch.
+Walker dispatch materialises a `ReplayCallbackArg` backed by the
+referenced ObservationSet, invokes `fn->queryApply(replayArg)`
+live, and returns the resulting WHNF.
 
 ## 5. `f` is arg-side, obs is contra-arg-side
 
-**Model** (user, 2026-07-21; extended 2026-07-26).
-
 A callback function is only given to us through an arg. All
 observations on an arg are attributed to that arg's cell. `f`'s
-identity flows from its arg-cell's factset like any other arg-side
-value's does.
+identity flows from its arg-cell's factset like any other
+arg-side value's does.
 
 The **contra-arg** (the arg passed *to* the callback) is a
-separate world:
+separate world: callback tracking doesn't inherently need
+arg-side identity tracking. Contra-arg observations accumulate
+PRIVATELY during the callback firing. No visibility into
+arg-side tracking during that time. The two worlds meet only at
+the sampling moment where `SelectorCallbackApply(f, obs)` is
+emitted as an observation on the arg — the obs set folded into
+`f`'s arg-cell's factset as one Fact.
 
-> Callback tracking does not inherently need state hash tracking,
-> but ends up as part of a state hash outside of its area of
-> responsibility.
+The handoff seam is the writer's QCA-emission path
+(`emitCallbackApplyForApplyResult`): it reaches into the enclosing
+callback cell's `runningObsSet`, snapshots it into the CAS, and
+emits QCA via `logOuterObservation` attributing to `f`. The seam
+is load-bearing but the design didn't pin down where it should
+best live in code.
 
-Contra-arg observations accumulate PRIVATELY during the callback
-firing. No visibility into arg-side tracking during that time. The
-two worlds meet only at the sampling moment where
-`SelectorCallbackApply(f, obs)` is emitted as an observation on the
-arg — the obs set folded into `f`'s arg-cell's factset as one Fact.
+## 6. Callback cell — per-firing accumulator
 
-The handoff is meta-level (user, 2026-07-21: "there's some
-abstraction involved in that handoff, but I don't know off the top
-of my head where that indirection lands in terms of code").
+For each in-flight callback firing (an application of an
+inner-side function whose body is being evaluated), the writer
+keeps state that lets it (a) route contra-arg observations to
+the right accumulator, (b) snapshot the accumulator into a QCA
+payload at sampling moments. Cells are **never closed** —
+references to the applyResult can persist in unevaluated parts
+of downstream results, so more observations may arrive at any
+time.
 
-**Code.**
+The state lives on `ArgCell::callbackState` on the callback
+firing's own cell. Two fields:
 
-Handoff seam: `TracingWriter::emitCallbackApplyForApplyResult`
-(`tracing-writer.hh:277-311`) reaches into the cell's
-`runningObsSet`, snapshots into the CAS, emits QCA via
-`logOuterObservation` with `*ar->fn` (arg-side subject for `f`) as
-the attribution subject. The seam is reasonable but genuinely
-open — the model didn't pin down where the code seam should live.
+- **`fnStateHashHex`** — f's Q hash. Emitted as
+  `SelectorCallbackApply.fn` at QCA time.
+- **`runningObsSet`** — observations made on the contra-arg so
+  far. Snapshotted into the CAS at each QCA emission.
 
-## 6. CallbackCell — writer-side firing accumulator (state-hash fields transitional — retire per #178)
-
-**Model.** For each in-flight callback firing (an application of
-an inner-side function whose body is being evaluated), the writer
-keeps state that lets it (a) route contra-arg observations to the
-right accumulator, (b) snapshot the accumulator into a QCA payload
-at sampling moments. Cells are **never closed** — references to
-the applyResult can persist in unevaluated parts of downstream
-results, so more observations may arrive at any time.
-
-**Code** (`tracing-writer.hh` around `CallbackCell` struct):
-
-```
-CallbackCell {
-  applyId          // unique id for this firing
-  fnStateHashHex   // f's initial state hash (cell lookup key)
-  argAncestryHex   // contra-arg's argAncestry
-  argDepth         // contra-arg's depth
-  runningObsSet    // observations made on the contra-arg so far
-}
-```
-
-Populated by `logCallbackObservation` (writer method,
-`tracing-writer.hh:498`) as `TracingCallbackArg` methods are
-invoked. `emitCallbackApplyForApplyResult` looks up cells by
-`cell.fnStateHashHex == fnInitialHex` (loop at
-`tracing-writer.hh:289-292`), takes the most recent match (reverse
-iteration), snapshots `runningObsSet` into the CAS, emits QCA.
-
-**Gap.** Old doc references to `contextCur`, `facts`, `finalized`
-and related lifecycle-era cell fields are stale — the cell has
-been slimmed and no longer carries them.
+Contra-arg observations are appended to `runningObsSet` directly
+via the callback-arg proxy's own cell chain (the wrapper's cell
+IS the firing's cell). No writer-global lookup table.
 
 ## 6a. Probe
 
@@ -415,108 +221,42 @@ function` is a normal QCA row like any other; later, when
 `c2 = c1 "b"` is probed, `QCA-B(fn=QCA-A, obs=obs_b) → <result>`
 references QCA-A by selectorHash. No special-casing for closures.
 
-**Code.**
+Emission fires from the wrapper's `whnf()` when the wrapper is a
+callback-origin apply-result: after computing the applyResult's
+WHNF, `emitCallbackApplyForApplyResult` snapshots the enclosing
+callback cell's `runningObsSet`, composes the QCA payload, and
+emits it as one observation on the applyResult.
 
-Emission triggers in `TracingObject::whnf()`
-(`tracing-object.cc:144-174`), gated on `applyResultSubject` being
-set:
+**Getter-fold discipline.** Structural probes on an applyResult
+(getAttr, getListElem) force `whnf()` first — the fold work
+happens through the WHNF-producing path (see #136/#137/#138 in
+the task list). Rationale: `builtins.cache` is inherently
+one-probe-at-a-time (see §6a), so it can never trigger a "sudden
+deep" probe; CLI callers rely on the deeper probe being expressible
+as a whnf followed by a getAttr — which requires the whnf leg to
+have been emitted.
 
-```
-auto whnfResult = computeWHNFFromObject(*inner);
-if (applyResultSubject)
-    writer.emitCallbackApplyForApplyResult(*applyResultSubject,
-                                            applyArgAncestry,
-                                            whnfResult);
-```
+## 7a. Sibling cb-apply discrimination
 
-**Gap 1** (structural probes bypass emission).
-
-`TracingObject::maybeGetAttr` (`tracing-object.cc:113-142`) calls
-`inner->maybeGetAttr(name)` directly WITHOUT forcing WHNF first
-and does NOT call `emitCallbackApplyForApplyResult`. Same for
-`getListElem`. Consequence: if a caller does `getAttr("whatever")`
-on an applyResult before ever calling `whnf()` on it, no QCA is
-emitted; the getAttr's Q hash doesn't compose through
-`SelectorCallbackApply`.
-
-**Model** (user, 2026-07-22): structural probes on an applyResult
-should implicitly force `whnf()` first — that path already emits
-the QCA. Rationale: `builtins.cache` is inherently one-probe-at-a-
-time (see §6a), so it can never trigger a "sudden deep" probe.
-CLI callers (which historically CAN reach deep, via `AttrCursor` /
-`Object`) rely on the deeper probe being expressible as a whnf
-followed by a getAttr — which requires the whnf leg to have been
-emitted.
-
-Fix direction: `maybeGetAttr` and `getListElem` on TracingObject
-call `whnf()` first when `applyResultSubject` is set. Related to
-B4, B7 in the status file.
-
-**Gap 2** (B7 — contra-arg observations not reaching cells).
-
-Diagnostic finding (2026-07-22): for
-`cb-sibling-discrimination-via-observation`, cold has 4
-`createCallbackCell` calls but 0 `logCallbackObservation` calls.
-Cells stay empty → `emitCallbackApplyForApplyResult` early-returns
-because `cell.argAncestryHex.empty()` → no QCA in DB. Root cause
-requires tracing where the callback body's parameter access
-actually resolves; likely the `ExprFromObject` bridge unwraps back
-to raw `argObj` rather than `TracingCallbackArg`.
-
-## 7a. Foundational Principle 9 under writer/replay asymmetry
-
-**Model** (user, 2026-07-22).
-
-Foundational Principle 9 (subj doc) — "a Result's factSet hash is
-cumulative over the writer's session up to its `logResult`" —
-**stands**. The apparent tension with task #110's per-Q basis
-resolves through the writer/replay asymmetry:
-
-- **On recording** (single trace, in-place): Principle 9 holds as
-  written. The writer's cumulative session state is the
-  precondition of every Terminal it records.
-- **On replay** (0-many traces): the walker queries multiple
-  traces from the DB. Principle 9's cumulative property applies
-  to each individual trace among the many. The walker doesn't
-  reproduce cold's exact session cumulative — it reproduces one
-  trace's chain from its own start (∅ or a parent-anchored
-  factSetHash).
-
-"0-many" is the key framing. Recording is 1-trace; replay is
-0-many, with each candidate having its own cumulative property
-scoped to itself.
-
-Per-Q envWalk isn't a revision of Principle 9 — it's the
-walker-side scoping that lets 0-many candidate traces each
-maintain their own cumulative property.
-
-## 7b. Sibling cb-apply discrimination
-
-**Model** (user, 2026-07-22).
-
-The canonical mechanism is **obsSet in QCA selectorHash**. Sibling
-A's callback observes different contra-arg attributes than sibling
-B's, so obs sets differ, so QCA queryHashes differ, so distinct
-DB rows. Discrimination is at the query-identity level. No cur
-trajectory divergence required.
+The canonical mechanism is **obsSet in QCA selectorHash**.
+Sibling A's callback observes different contra-arg attributes
+than sibling B's, so obs sets differ, so QCA queryHashes differ,
+so distinct DB rows. Discrimination is at the query-identity
+level. No cur-trajectory divergence required.
 
 Other mechanisms mentioned in older sources — cur-trajectory
-divergence (subj §Matching until divergence, case 2), SelectorApply
-slot differences (subj §Design principle 8 corollary) — were
-pre-#110 workarounds for the fixed-Q collision problem. Under Q
-evolution + obsSet-in-QCA they're redundant. Only obsSet in QCA
-is load-bearing today.
+divergence, SelectorApply slot differences — were pre-#110
+workarounds for the fixed-Q collision problem. Under
+obsSet-in-QCA they're redundant. Only obsSet in QCA is
+load-bearing today.
 
-## 8. Matching-until-divergence (mechanism transitional — under #178 cur replaces state hash as the identifier)
+## 8. Matching-until-divergence
 
-**Model** (`subj §Matching until divergence`, still valid; user
-implicitly assumes throughout).
-
-> Two evaluation events whose observations match up to some point
-> are characterized identically at that point — same state hashes
-> at every referenced Subject, and therefore same requestHashes on
-> any observation emitted there. They are characterized distinctly
-> only once their observations diverge.
+Two evaluation events whose observations match up to some point
+are characterized identically at that point — same Q hashes at
+every referenced value, same requestHashes on any observation
+emitted there. They are characterized distinctly only once their
+observations diverge.
 
 Consequences:
 
@@ -525,236 +265,54 @@ Consequences:
 - At any Ask edge, if warm's live dispatch produces the same
   response as cold's recorded response, walker's cur advances the
   same way.
-- Under Q evolution, Q also advances identically on both sides
-  through the shared prefix.
-- The first divergent response ends warm's applicability. No silent
-  wrong hit — divergent elementHash lands warm at a cur cold has
-  no row for; walker misses cleanly.
+- The first divergent response ends warm's applicability. No
+  silent wrong hit — the divergent elementHash lands warm at a
+  cur cold has no row for; walker misses cleanly.
 
-**Code.** Guaranteed by construction, not by explicit checks. The
-correctness argument is: cold's recording is deterministic given
-its observation sequence; warm's per-walk observation sequence
-matches cold's up to divergence; therefore hashes match up to
-divergence.
+Guaranteed by construction, not by explicit checks. Cold's
+recording is deterministic given its observation sequence;
+warm's per-walk observation sequence matches cold's up to
+divergence; therefore hashes match up to divergence.
 
-**Gap** (writer/walker basis alignment).
+## 9. Sub-Q composition
 
-Both sides must compute state hashes on the same basis. Task #110
-introduced per-Q `perQEnvWalk` on the writer; task #110 fix B1
-aligned the walker to also use walk-local `perQEnvWalk` for
-`recomputeQ`. The session-cumulative `envWalk` on both sides is
-used for other bookkeeping but not for Q evolution.
+A sub-Q is a Q whose evaluation is required to answer another Q
+— a semantic relationship (nesting of Nix expressions), not an
+operational stack construct. Under the current model, sub-Q
+composition rides on the cell chain: a child Q's evaluation runs
+against a child cell whose parent link resolves to the parent
+Q's cell, so the parent's factset composition (`factSetHash()`
+walks the parent chain) folds in the sub-Q's completion
+implicitly.
 
-## 9. argAncestry composition (transitional — argAncestry retires per #178; per-cell factsets differentiate calls structurally)
+The design intent of a **composite observation** at parent's
+chain — one Fact per sub-Q completion, request = sub-Q's
+selectorHash, response = sub-Q's resultHash — remains a
+recording-shape option worth revisiting. Status: partial; see
+`doc/status.md` (B2) for the current state.
 
-**Model — current design shape.**
+## 10. "Ambient" — retired, term available for repurposing
 
-- `argAncestry` (vocab §argAncestry) — XOR-fold of enclosing
-  callback args' state hashes at the moment the innermost callback
-  was entered.
-- `callArgAncestry` — an `argAncestry` stored on the
-  `OuterResolver`, sampled at cb-apply fire time. Contributed
-  per-cached-call from source identifier hashes and XOR-folded with
-  enclosing calls' contributions (primop §Architecture step 5).
-- `combineArgAncestries(fnArgAncestry, argArgAncestry)` — produces
-  the argAncestry INSIDE an apply-result callback body.
-  **Non-commutative**: `SHA-256("apply-argAncestry:" || fnHex || ":"
-  || argHex)`.
+The Ambient message pairing dissolves entirely: there are two
+message pairings, Query and Env. QCA is a Selector alternative;
+contra-arg observations are Facts on Env; the cell mechanism
+(§5-6) is implementation detail, not a distinct message-pairing
+layer.
 
-Two different operations for two different composition moments —
-XOR for enclosing scopes, non-commutative combine for the specific
-`f a` apply-result site.
-
-**Model — open** (user, 2026-07-22).
-
-The XOR compositions in this area are worth re-examining. Rule of
-thumb: "use XOR at one easily controlled layer, then seal it by
-hashing before letting it be XORed at another layer." Under that
-rule, XOR at the enclosing-scope layer is fine only if
-`callArgAncestry` contributions never get XOR-folded again
-downstream without a hash seal in between.
-
-An earlier iteration (pre-redesign, ~hundreds of commits ago)
-intentionally exploited XOR cancellation. That's likely not the
-case today, but the design hasn't been re-audited under the
-current shape. Open to re-evaluation if there's a specific benefit;
-otherwise conservative default is Merkle composition (hash-seal
-between XOR layers) to prevent accidental cancellation.
-
-**Code.**
-
-- `combineArgAncestries` in `subject-id.cc`.
-- `callArgAncestry` seeded in `primops/cache.cc` (primop step 5):
-  `hashString("cache-import:" | "cache-expr:" || <source id>)`
-  XOR-folded with `state.inheritedCallArgAncestry`.
-- Propagated via `setOuterResolverCallArgAncestry` and
-  `innerState->inheritedCallArgAncestry`.
-- Used in QCA payload: `qca.argAncestry = cell.argAncestryHex`
-  (`tracing-writer.hh:302`).
-
-The `subj §Foundational principles` doc's XOR-cancellation audit
-(§Technical requirements → Component G, "sound today, under
-SHA-256 entropy. Fragility lives in the PostulatedIdempotentRead
-wrapping path") notes single-layer nesting is fine but flags
-deeper nesting as needing Merkle composition. That audit stands.
-
-**Gap.**
-
-Vocab describes XOR at the enclosing-scope layer as unambiguous,
-but the user has flagged this as worth re-examining. Not a bug in
-current use, but the doc should encode the "hash-seal between
-layers" discipline explicitly rather than treating XOR as a
-default composition operator.
-
-## 10. Trace-continuing / trace-discovering under Q evolution
-
-The main doc's §Replay strategies carries the trace-continuing /
-trace-discovering vocabulary and the axis decomposition (Axis A =
-starting state, Axis B = tracking scope). This section covers
-only the Q-evolution-specific interactions.
-
-Both trace-continuing and trace-discovering rely on the same
-per-Ask Q re-derivation. `TracingDecisionGraph::walk` accepts a
-`recomputeQ` callback that re-derives Q from the walker's
-walk-local per-Q chain observations (see §3.2). Q evolution's
-within-Q basis is independent of the between-Q tracking scope —
-the axes are orthogonal here. A trace-continuing walker and a
-trace-discovering walker both walk one Q's trace chain through
-the same Q-evolution loop; they differ in how they arrived at
-that Q's entry and in how their state carries across to the next
-Q.
-
-## 11. Sub-Q composition
-
-**Model.**
-
-A sub-Q is a Q whose evaluation is required to answer another Q. A
-semantic relationship — nesting of Nix expressions — not an
-operational LIFO stack construct (user 2026-07-21: "the LIFO
-nesting framing sounds laborious"), though the writer uses a LIFO
-`activeQueryStack` to encode the current chain.
-
-Under the corrected model:
-
-- Each observation attributes to exactly one Q: the innermost
-  active on the writer's stack.
-- When a sub-Q completes, its `logResult` inserts a Terminal.
-- The parent Q should observe the sub-Q's completion as ONE
-  composite observation — one entry in parent's `perQEnvWalk`
-  whose request is the sub-Q's selectorHash and whose response is the
-  sub-Q's resultHash.
-
-This last part is **planned, not yet implemented** — status-file
-bug **B2**.
-
-User note (2026-07-21):
-
-> Usually the parent is already in cur, because the proxies that
-> cause evaluation are constructed one layer at a time to refer
-> back to e.g. the parent query for an attribute proxy. Nonetheless,
-> what you're planning here is good defensive coding, reducing
-> entropy in cases where that didn't happen (CLI-specific caller?
-> idk). Just make sure you're not inserting duplicates.
-
-**Code — current workaround.**
-
-The writer sidesteps B2 with a session-cumulative Ask insertion at
-`logResult`. `tracing-writer.hh:753` iterates `envAsksEdges`
-(session cumulative) and inserts each under `finalQ`:
-
-```
-Hash finalQ = activeQueryStack.empty() ? ... : activeQueryStack.back().currentQ;
-// iterate envAsksEdges, insertAsk each under finalQ
-```
-
-Bridges parent Q's walker reachability at the cost of duplicating
-sub-Q observations under parent's Q. Preserves pre-#110 fixed-Q
-sweep-everything behaviour.
-
-**Gap.**
-
-- Composite observation not yet emitted (B2 not implemented).
-- Bridging is a pattern hack. Doubles chain entropy under Q
-  evolution.
-- Walker-side change needed for the correct fix: recognize when a
-  requestHash is a compound-Q (present in Selectors pool) and
-  recursively invoke `walk(subQ)` to fold sub's resultHash into
-  parent's cur. Not sketched in code yet.
-
-## 12. `SuppressApplyBoundary` — necessary guard
-
-**Model.** During `TracingReplayEvaluator::walk`, walker's dispatch
-of `fnObj->queryApply(...)` re-enters the writer's callback-cell
-creation path (`OuterApply::run` → `createCallbackCell`). Walker
-validation shouldn't create phantom cells — no real callback firing
-is happening. A guard suppresses cell creation during walker's
-re-invocations.
-
-The guard is a workaround for `OuterApply::run` doing double duty
-(recording orchestration + pure-eval). The clean fix would split
-those into two variants. Not urgent — the guard is small.
-
-**Code.** The guard wraps four `queryApply` sites individually
-(`resolveApplyId`, `navigatePath`'s Apply step,
-`dispatchQueryRequest`'s callbackApply branch,
-`TracingReplayEvaluator::apply`'s outer-direction branch), not the
-entire `walk()` body. Wrapping the entire walk was a latent bug
-because fallback triggered inside `ensureInner()` during dispatch
-could run legitimate cb-applies with the guard still active,
-silently losing cell creation. Under the current narrowed scope,
-fallback in leaf ops runs unguarded and cb-applies during
-`ensureInner` record cells normally.
-
-**Gap.** Splitting `OuterApply::run` into recording-orchestration
-and pure-eval variants would retire the guard entirely. Long-term
-cleanup, no correctness concern under the current scope.
-
-## 13. Known gaps (living status: `doc/status.md`)
-
-- **B2** — sub-Q composite observation not implemented; workaround
-  in place (§11).
-- **B3** — only `applyResult`-carrying `TracingObject` instances
-  expose a Subject via `getSubject()`. Non-applyResult
-  TracingObjects return `nullopt` and don't participate in Q
-  evolution.
-- **B4** — the applyResult's `ActiveSelector` is pushed AFTER the
-  callback body returns, not around the invocation. Callback
-  observations during the body attribute to the wrong Q — usually
-  inner's `evalFile fn.nix` (a root query with no fromSubject).
-- **B5** — fast/slow path perQEnvWalk residue (§3 Gap 2, §10 Gap).
-- **B7** — contra-arg observations not reaching cells (§7 Gap 2).
-- **§7 Gap 1** — structural probes on unforced applyResults don't
-  emit QCA. Overlaps with B4.
-
-B2, B3, B4 are structural design changes. B7 is a diagnostic
-finding; fix requires tracing where callback parameters resolve.
-
-## 13a. "Ambient" — retired, term available for repurposing
-
-**Model** (user, 2026-07-22).
-
-The Ambient message pairing dissolves entirely under task #110.
-There are two message pairings now: **Query** and **Env**. QCA is
-a Selector alternative; contra-arg observations are Facts on Env; the
-cell mechanism (§5) is implementation detail, not a distinct
-message-pairing layer. Vocab §Message pairings drops from three
-to two; subj's Ambient sections retire; `dispatchQueryRequest`
-gets renamed.
-
-**Term reservation** (user, 2026-07-22 — "Park as note only").
-"Ambient" is a good word for an inner-global value — an outer
-argument that's bound immediately at the `builtins.cache` call
-(as opposed to at a callback application) and is 1:1 with the
-inner evaluator. Such values don't need state hash tracking
-because they can't vary during the inner's lifetime.
+**Term reservation.** "Ambient" is a good word for an
+inner-global value — an outer argument bound immediately at the
+`builtins.cache` call (as opposed to at a callback application)
+and 1:1 with the inner evaluator. Such values don't need any
+per-firing tracking because they can't vary during the inner's
+lifetime.
 
 Reserving the term only. Not defining the concept formally,
 since there's no implementation or design driver for it yet.
-Naming without a use case risks the term drifting; the note here
-is to prevent the freed word from being reused for something
-unrelated in the meantime.
+Naming without a use case risks the term drifting; the note
+here is to prevent the freed word from being reused for
+something unrelated in the meantime.
 
-## 14. Removed machinery (for reading old comments)
+## 11. Removed machinery (for reading old comments)
 
 The design got here by explicitly deleting several prior
 mechanisms. Terms to be suspicious of in old comments / commit
@@ -766,7 +324,8 @@ messages / stale doc sections:
 - **`InnerValueResponse` table + `contextHash`** — replaced by
   obsSet CAS.
 - **`localArg sidecar`** — replaced by QCA's explicit
-  `argAncestry`/`argDepth` payload fields.
+  `argAncestry`/`argDepth` payload fields (both dropped from
+  QCA payload under #183).
 - **`SubjectEvolutionEdge` table** — replaced by local
   `obs.fromHash == cur` filter.
 - **`params.callbackApply` slot on outer probes** (task #103's
@@ -778,21 +337,28 @@ messages / stale doc sections:
   `ReplayCallbackArg`** — obsolete under obsSet CAS.
 - **`chainCursor` + `<replay-local-lambda>` primop's XOR-advance**
   — dead once `dispatchApplyLive` was ripped.
+- **Subject, subjectId, state hash, argAncestry, and Q evolution**
+  — the arg-side subject-identity machinery + per-observation Q
+  hash re-derivation retired under #183. Identity is now the
+  content hash of the Selector chain that produced the value,
+  stable per operation.
+- **`SuppressApplyBoundary`** — the guard that prevented
+  walker-triggered phantom callback cells retired under #184.
+- **`ApplyContext`** — a shared observation-accumulator struct
+  once threaded through TracingObject/TracingReplayObject via
+  `applyContext` fields, retired as pure write-only bookkeeping.
 - **The word "boundary"** — legacy. If a comment or symbol name
   uses it, be suspicious.
 
-## 15. Retained machinery (that looks removable but isn't; state-hash references transitional per #178)
+## 12. Retained naming quirks
 
-- **`CallbackCell` and `SuppressApplyBoundary`** — both stayed.
-  Cell is now the per-application accumulator for `runningObsSet`
-  (§6); `SuppressApplyBoundary` prevents walker-triggered phantom
-  cells (§12).
 - **`dispatchQueryRequest`** (walker method name) — despite the
-  name, all its branches dispatch first-class Selector alternatives.
-  Rename pending.
+  name, all its branches dispatch first-class Selector
+  alternatives. Rename pending.
 
-**`TracingCallbackApplyResult` — WRONG in the curried/nested case**
-(user, 2026-07-22).
+## 13. Nested callback composition (curried/higher-order case)
+
+`TracingCallbackApplyResult` — WRONG in the curried/nested case.
 
 Scope of this bug: **when a callback-originated value is itself
 applied later** (curried application, or a returned closure being
@@ -834,22 +400,13 @@ obs_b)`, the walker recursively invokes `lookup` on the inner
 the outer obsSet as a `ReplayCallbackArg`, then invokes the
 resolved callable live. Symmetric to how flat QCA dispatches
 today, extended to nested case. Requires walker to recognise
-QCA-in-fn-slot vs a leaf state hash.
+QCA-in-fn-slot vs a leaf Q hash.
 
-User note (transitional, pre-#178 pivot): "I wish the representations
-were a bit more inductive style generally. I don't know what
-consequences that would have on the arg state hashing, but have good
-feelings about doing it for the callbacks. *Maybe* the strategy
-generalizes, but state hashes feel messier in a way that might not
-be solved by inductive style." Do recursive-Q for callbacks
-specifically; leave arg-side state hashing at its current
-XOR-fold-plus-Merkle-seal shape. (Superseded direction: state
-hashing retires per #178.)
-
-**Two composition idioms coexist by design** (user, 2026-07-22 —
-"that needs more research"). QCA nesting is inductive; state hash
-evolution is fold-based. They may reflect a genuine difference in
-nature: calls and callbacks have swapped inner/outer roles, so the
-same composition style might not fit both. Both idioms are
-unproven — the split isn't settled dogma, it's the current best
-shape pending more experience.
+Historical note: earlier framings of this design placed the
+"nested QCAs" style alongside a separate "state hash evolution"
+style for arg-side identity, suggesting two composition idioms
+coexisting. Under #183 the arg-side state-hash mechanism
+retired in favour of Selector-chain identity, which is
+inductive-style already (each Selector composes by embedding
+its parent's Q hash). Both callback and arg-side composition
+are now inductive.
