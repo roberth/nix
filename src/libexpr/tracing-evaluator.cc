@@ -277,7 +277,7 @@ ref<Object> TracingEvaluator::mkAttrs(const std::map<std::string, ref<Object>> &
     std::string content = "mkAttrs:";
     for (auto & [name, obj] : attrs) {
         content += name + "=";
-        if (auto hex = obj->getStateHashHex())
+        if (auto hex = obj->getSelectorHashHex())
             content += *hex;
         content += ",";
     }
@@ -294,7 +294,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        content-defined. No counter fallback — see the parallel
        comment in TracingReplayEvaluator::apply. */
     auto getId = [](Object & obj) -> std::string {
-        if (auto hex = obj.getStateHashHex())
+        if (auto hex = obj.getSelectorHashHex())
             return *hex;
         throw Error(
             "TracingEvaluator::apply: fn/arg lacks a content-defined "
@@ -333,7 +333,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     /* Build the apply-result producer Selector.
 
-       fn's identity hex comes directly from `getStateHashHex()`:
+       fn's identity hex comes directly from `getSelectorHashHex()`:
         - OuterObject / TracingObject apply-result / TracingCallbackArg /
           TCallbackApplyResult all return the content hash of their stored
           producer Selector.
@@ -345,7 +345,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
        arg identity is dropped from the payload per #181; discrimination
        flows through the arg's own cell/facts. */
-    auto fnQHex = fn->getStateHashHex().value_or(fnStateHashStr);
+    auto fnQHex = fn->getSelectorHashHex().value_or(fnStateHashStr);
     trace::SelectorApply resultProducer{fnQHex};
 
     /* #183: one cell per call, tracking the arg. Reuse the arg's
@@ -444,7 +444,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         : TriePosition{
               .resultNodeHash = Hash{HashAlgorithm::SHA256},
               /* #181: use the SelectorApply Q hash (matches TRE::apply's
-                 walker path); getStateHashHex() reads this back as fn's
+                 walker path); getSelectorHashHex() reads this back as fn's
                  identity for downstream applies. */
               .queryHashStr = qh.selectorHash
                   ? qh.selectorHash->to_string(HashFormat::Base16, false)

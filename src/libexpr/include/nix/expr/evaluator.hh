@@ -264,16 +264,23 @@ public:
     /**
      * If this Object is a cache-boundary proxy with a content-defined
      * identity — OuterObject, TracingCallbackArg, TracingObject,
-     * TracingReplayObject — return its state hash hex. Returns nullopt for
-     * regular Objects (InterpreterObject and friends). Used to build
-     * apply Q hashes (`TracingReplayEvaluator::apply`) and to match
-     * `cell->liveObject` against a recorded state hash
-     * (`TracingReplayEvaluator::resolveIdentity`'s cell-chain branch).
+     * TracingReplayObject — return the hex of its producer Selector's
+     * content hash (the Object's Q hash). Used to build apply
+     * SelectorApply payloads (`TE::apply` / `TRE::apply`) and to
+     * match `cell->liveObject` against a recorded identity
+     * (`TRE::resolveIdentity`'s cell-chain branch).
+     *
+     * Two sources of nullopt:
+     *  1. Non-proxy Objects (this base default) — InterpreterObject
+     *     and friends have no Selector-shaped identity.
+     *  2. TracingObject constructed without a TriePosition (the
+     *     `evalExprLazy` path). Rare; the wrapper exists but its
+     *     Q hash isn't materialised in its own storage.
      *
      * Virtual rather than dynamic_cast so callers don't have to
      * enumerate the proxy types.
      */
-    virtual std::optional<std::string> getStateHashHex() const
+    virtual std::optional<std::string> getSelectorHashHex() const
     {
         return std::nullopt;
     }

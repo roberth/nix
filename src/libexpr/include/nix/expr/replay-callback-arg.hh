@@ -177,7 +177,7 @@ public:
     /** Content-defined identity is the localId (= the cb-apply local
         arg's state hash hash recorded at write time). Lets evaluator.apply
         compute the apply Request hash when this ReplayCallbackArg is the arg. */
-    std::optional<std::string> getStateHashHex() const override
+    std::optional<std::string> getSelectorHashHex() const override
     {
         return localId.to_string(HashFormat::Base16, false);
     }

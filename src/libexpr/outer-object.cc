@@ -31,7 +31,7 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     if (std::find(ap->names.begin(), ap->names.end(), name) == ap->names.end())
         return nullptr;
     /* Child producer = SelectorGetAttr{name, from=parent's Q hash hex}. */
-    auto parentQHex = getStateHashHex().value_or(std::string{});
+    auto parentQHex = getSelectorHashHex().value_or(std::string{});
     trace::SelectorGetAttr q{name, parentQHex};
     auto qr = queryFn(outerObj, q, producer);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
@@ -52,7 +52,7 @@ trace::ResultWHNF & OuterObject::whnf()
         return *cachedWHNF;
     /* #183: q.from = parent's Q-space identity so distinct WHNF
        probes on distinct proxies produce distinct Q hashes. */
-    trace::SelectorGetWHNF q{getStateHashHex().value_or(std::string{})};
+    trace::SelectorGetWHNF q{getSelectorHashHex().value_or(std::string{})};
     auto qr = queryFn(outerObj, q, producer);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
@@ -157,7 +157,7 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
            outer's inner throws the source-positioned error. */
         return outerObj->getListElem(index);
     /* Child producer = SelectorGetListElem{from=parent's Q hash hex, index}. */
-    auto parentQHex = getStateHashHex().value_or(std::string{});
+    auto parentQHex = getSelectorHashHex().value_or(std::string{});
     trace::SelectorGetListElem q{parentQHex, index};
     auto qr = queryFn(outerObj, q, producer);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
@@ -202,7 +202,7 @@ RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<OuterRe
 std::optional<FunctionInfo> OuterObject::getFunctionInfo()
 {
     /* #183: q.from = parent's Q-space identity. */
-    trace::SelectorGetFunctionInfo q{getStateHashHex().value_or(std::string{})};
+    trace::SelectorGetFunctionInfo q{getSelectorHashHex().value_or(std::string{})};
     auto qr = queryFn(outerObj, q, producer);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
@@ -229,7 +229,7 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
     /* Result producer = SelectorApply{fn=hex(fnProducer Q hash)}.
        fn identifies the applied Selector; arg dropped from payload per
        #181 (arg discrimination flows through the arg's own cell/facts). */
-    auto fnQHex = getStateHashHex().value_or(std::string{});
+    auto fnQHex = getSelectorHashHex().value_or(std::string{});
     trace::SelectorApply resultQ{fnQHex};
     auto outerResult = applyFn(outerObj, producer, std::move(argObj), callerScope);
     auto result = std::make_shared<OuterObject>(trace::SelectorVariant{resultQ}, std::move(outerResult), queryFn, outerRootFSRoot, applyFn);

@@ -350,7 +350,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
     }
 
     /* #181: under query-space identity, each Object has a stable
-       `getStateHashHex()` = the Q hash of the Selector that produced
+       `getSelectorHashHex()` = the Q hash of the Selector that produced
        it. Cell-chain match is a direct equality check — no K>0 fold,
        no convergence, no subjectId derivation from the subject.
        Q hashes don't evolve. */
@@ -364,7 +364,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
             tracingCacheLog("resolve %s: cell[%d] no liveObject", idStr.substr(0, 12), cellDepth);
             continue;
         }
-        auto liveHex = live->getStateHashHex();
+        auto liveHex = live->getSelectorHashHex();
         if (liveHex && *liveHex == idStr) {
             tracingCacheLog("resolve %s: cell[%d] MATCH", idStr.substr(0, 12), cellDepth);
             ctx.memo[idStr] = live;
@@ -933,7 +933,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        reaches here it's a wiring bug that has to be addressed at
        its construction site. */
     auto getId = [](Object & obj) -> std::string {
-        if (auto hex = obj.getStateHashHex())
+        if (auto hex = obj.getSelectorHashHex())
             return *hex;
         throw Error(
             "TracingReplayEvaluator::apply: fn/arg lacks a content-defined "
@@ -976,9 +976,9 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        via-Asks doc's boundary-trace-only discipline calls out. */
 
     /* Build the apply-result producer — mirror of TE::apply.
-       fn's identity hex comes directly from getStateHashHex();
+       fn's identity hex comes directly from getSelectorHashHex();
        nullopt falls back to fnStateHashStr. arg dropped per #181. */
-    auto fnQHex = fn->getStateHashHex().value_or(fnStateHashStr);
+    auto fnQHex = fn->getSelectorHashHex().value_or(fnStateHashStr);
     trace::SelectorApply resultProducer{fnQHex};
 
     auto applyArgAncestryStateHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
@@ -1019,7 +1019,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto applyLookup = lookup(applySelector, fn.get_ptr(), cell);
     std::optional<trace::ResultWHNF> cachedWHNF;
     /* #181: query-space identity — use SelectorApply's Q hash so
-       downstream applies see fn->getStateHashHex() = this Q hash
+       downstream applies see fn->getSelectorHashHex() = this Q hash
        (matches cold's TE::apply where triePos.queryHashStr =
        qh.selectorHash from writer.logResult).
        factSetHash = cell.factSetHash() so downstream getter

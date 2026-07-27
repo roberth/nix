@@ -147,7 +147,7 @@ public:
         return triePos;
     }
 
-    std::optional<std::string> getStateHashHex() const override { return triePos.queryHashStr; }
+    std::optional<std::string> getSelectorHashHex() const override { return triePos.queryHashStr; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

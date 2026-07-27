@@ -47,7 +47,7 @@ class TracingCallbackApplyResult : public Object
     trace::SelectorVariant producer;
 
     /* computeSelectorHash(producer) hex — the content-only apply-result
-       state hash exposed via getStateHashHex. Computed once at
+       state hash exposed via getSelectorHashHex. Computed once at
        construction to match `TracingEvaluator::apply`'s
        `applyArgAncestryStateHashHex` (= what the walker computes too). */
     std::string applyArgAncestryStateHashHex;
@@ -94,7 +94,7 @@ public:
         ApplyResultSubject so a subsequent apply on this wrapper
         composes evolving ApplyResultSubject constituents instead of
         the frozen PostulatedIdempotentRead{applyArgAncestryStateHashHex} fallback. */
-    std::optional<std::string> getStateHashHex() const override { return applyArgAncestryStateHashHex; }
+    std::optional<std::string> getSelectorHashHex() const override { return applyArgAncestryStateHashHex; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

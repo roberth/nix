@@ -168,7 +168,7 @@ public:
         Under Q-space identity every OuterObject has a stable identity
         derived from its producer — no separate `producingQHex`
         override needed. */
-    std::optional<std::string> getStateHashHex() const override
+    std::optional<std::string> getSelectorHashHex() const override
     {
         return TracingDecisionGraph::computeSelectorHash(producer)
             .to_string(HashFormat::Base16, false);

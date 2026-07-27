@@ -102,7 +102,7 @@ public:
 
     OuterId getStateHash() const { return localId(); }
 
-    std::optional<std::string> getStateHashHex() const override
+    std::optional<std::string> getSelectorHashHex() const override
     {
         return localId().to_string(HashFormat::Base16, false);
     }

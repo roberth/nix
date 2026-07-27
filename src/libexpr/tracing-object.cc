@@ -355,8 +355,8 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     /* Object-method counterpart of TracingEvaluator::apply. See
        parallel commentary there for the subject-id routing of the
        apply's triePos and the applyResultSubject attachment. */
-    auto fnIdOpt = getStateHashHex();
-    auto argIdOpt = argObj->getStateHashHex();
+    auto fnIdOpt = getSelectorHashHex();
+    auto argIdOpt = argObj->getSelectorHashHex();
     if (!fnIdOpt || !argIdOpt)
         throw Error("TracingObject::queryApply: fn/arg lacks a state hash");
 
@@ -368,12 +368,12 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
                     fnIdOpt->substr(0, 12), argIdOpt->substr(0, 12));
     writer.createCallbackCell(applyBoundaryJson);
 
-    /* SelectorApply.fn = fn's identity hex. `getStateHashHex()` on this
+    /* SelectorApply.fn = fn's identity hex. `getSelectorHashHex()` on this
        TracingObject returns the content hash of its stored producer
        when apply-result, or triePos.queryHashStr when non-apply-result.
        Falls back to the raw fnIdOpt for Objects without an internal
        state-hash (shouldn't happen for TracingObject, defensive). */
-    auto fnQHex = getStateHashHex().value_or(*fnIdOpt);
+    auto fnQHex = getSelectorHashHex().value_or(*fnIdOpt);
     trace::SelectorApply resultProducer{fnQHex};
 
     /* apply-result state hash is content-only — see commentary in
