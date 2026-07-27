@@ -74,36 +74,20 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
 template<typename Q, typename R>
 std::optional<std::pair<R, TriePosition>> TracingReplayObject::lookupStructuralChild(const Q & query) const
 {
-    auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
-    auto anchorCur = triePos.factSetHash;
-    tracingCacheLog("walker lookup: %s Q=%s anchor=%s (direct)",
-                    Q::tag,
-                    selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    anchorCur.to_string(HashFormat::Base16, false).substr(0, 12));
-    auto resultNodeHash = evaluator.getDecisionGraph().getTerminal(selectorHash, anchorCur);
-    if (!resultNodeHash) {
-        tracingCacheLog("walker lookup: %s MISS Q=%s",
-                        Q::tag,
-                        selectorHash.to_string(HashFormat::Base16, false).substr(0, 12));
-        tracingCacheStats().misses++;
+    /* #187: route through the full walker (evaluator.lookup) so the
+       walker can traverse Q's barrier-chain Ask edges. Direct-Terminal
+       lookup at parent.terminalCur was correct only when Q's Terminal
+       cur equalled parent's — which held under the pre-barrier
+       attribution-cell-null regime but no longer, because Q's own
+       barriers push cell.factSetHash beyond parent.terminalCur. */
+    auto self = std::const_pointer_cast<TracingReplayObject>(
+        std::static_pointer_cast<const TracingReplayObject>(shared_from_this()));
+    auto walked = evaluator.lookup(query, self, argCell);
+    if (!walked)
         return std::nullopt;
-    }
-    auto payload = evaluator.getDecisionGraph().getResultPayload(*resultNodeHash);
-    if (!payload) {
-        tracingCacheStats().misses++;
-        return std::nullopt;
-    }
     try {
-        auto j = cborStringToJson(*payload);
-        tracingCacheLog("replay hit: %s", Q::tag);
-        tracingCacheStats().hits++;
-        return std::make_pair(
-            j.template get<R>(),
-            TriePosition{
-                .resultNodeHash = *resultNodeHash,
-                .queryHashStr = selectorHash.to_string(HashFormat::Base16, false),
-                .factSetHash = anchorCur,
-            });
+        auto j = cborStringToJson(walked->first);
+        return std::make_pair(j.template get<R>(), walked->second);
     } catch (const nlohmann::json::exception & e) {
         tracingCacheLog("replay: payload parse failed: %s", e.what());
         tracingCacheStats().misses++;

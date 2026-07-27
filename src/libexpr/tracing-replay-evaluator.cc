@@ -1086,4 +1086,18 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     return obj;
 }
 
+/* Explicit instantiations for public consumers of lookup() (e.g.
+   TracingReplayObject::lookupStructuralChild). Add new Selector
+   variants here as callers appear. */
+template std::optional<std::pair<std::string, TriePosition>>
+TracingReplayEvaluator::lookup<trace::SelectorGetAttr>(
+    const trace::SelectorGetAttr &,
+    std::shared_ptr<Object>,
+    std::shared_ptr<const ArgCell>);
+template std::optional<std::pair<std::string, TriePosition>>
+TracingReplayEvaluator::lookup<trace::SelectorGetListElem>(
+    const trace::SelectorGetListElem &,
+    std::shared_ptr<Object>,
+    std::shared_ptr<const ArgCell>);
+
 } // namespace nix

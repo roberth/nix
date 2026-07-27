@@ -87,13 +87,18 @@ class TracingReplayEvaluator : public Evaluator
 
     std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const trace::SelectorVariant & qv, const nlohmann::json & params, ResolutionContext & ctx);
 
+public:
+    /** Look up a Query in the decision graph, returning (payload,
+        triePos) on hit or nullopt on miss. Runs the walker (with
+        barrier chain traversal + ∅-fallback). Used by evalFile,
+        evalExpr, apply, and TracingReplayObject::lookupStructuralChild. */
     template<typename Q>
     std::optional<std::pair<std::string, TriePosition>> lookup(
         const Q & query,
         std::shared_ptr<Object> currentProxy = nullptr,
         std::shared_ptr<const ArgCell> cell = nullptr);
 
-public:
+
     TracingReplayEvaluator(
         ref<Evaluator> inner,
         Environment & validationEnv,
