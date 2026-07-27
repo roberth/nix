@@ -151,17 +151,19 @@ public:
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
-    /** Symmetric to `TracingObject::getSubject()`: surface the apply-
-        result Subject when this wrapper is an apply result so the
-        next apply / further queries build `ApplyResultSubject{...}`
-        constituents whose state hashes evolve via subject-id own-loop, instead
-        of falling back to `PostulatedIdempotentRead{this.state hash}`. */
     const Subject * getSubject() const override
     {
         return applyResultSubject ? &*applyResultSubject : nullptr;
     }
-
     Hash getArgAncestry() const override { return applyArgAncestry; }
+
+    /** #183: producer Selector for the Selector-only identity path. */
+    std::optional<trace::SelectorVariant> getProducer() const override
+    {
+        if (applyResultSubject)
+            return subjectAsSelector(*applyResultSubject, applyArgAncestry);
+        return std::nullopt;
+    }
 
     const TriePosition & getTriePos() const
     {

@@ -78,12 +78,14 @@ public:
         Hash argAncestry = Hash(HashAlgorithm::SHA256),
         Hash applyId = Hash(HashAlgorithm::SHA256));
 
-    /** This proxy's structural identity, per the
-        subject-id design. */
     const Subject * getSubject() const override { return &subject; }
-
-    /** This proxy's inherited argAncestry. */
     Hash getArgAncestry() const override { return argAncestry; }
+
+    /** #183: producer Selector for the Selector-only identity path. */
+    std::optional<trace::SelectorVariant> getProducer() const override
+    {
+        return subjectAsSelector(subject, argAncestry);
+    }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 

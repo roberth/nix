@@ -137,6 +137,13 @@ public:
         state hashes distinct. */
     Hash getArgAncestry() const override { return argAncestry; }
 
+    /** #183: producer Selector for the Selector-only identity path.
+        Coexists with getSubject during migration. */
+    std::optional<trace::SelectorVariant> getProducer() const override
+    {
+        return subjectAsSelector(subject, argAncestry);
+    }
+
     /** Set the proxy's argCell. Call right after construction at
         boundary sites. Returns *this for chaining. */
     OuterObject & withArgCell(std::shared_ptr<const ArgCell> argScope_)

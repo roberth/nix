@@ -152,10 +152,15 @@ public:
         return applyResultSubject ? &*applyResultSubject : nullptr;
     }
 
-    /** Inherited argAncestry for `stateHashAt(getSubject(), getArgAncestry(), …)`.
-        For apply-result wrappers it's the cb-apply's argAncestry
-        baked at construction. */
     Hash getArgAncestry() const override { return applyArgAncestry; }
+
+    /** #183: producer Selector for the Selector-only identity path. */
+    std::optional<trace::SelectorVariant> getProducer() const override
+    {
+        if (applyResultSubject)
+            return subjectAsSelector(*applyResultSubject, applyArgAncestry);
+        return std::nullopt;
+    }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 

@@ -196,8 +196,13 @@ public:
         apply) composes ApplyResultSubject with this ReplayCallbackArg's
         evolving Subject. */
     const Subject * getSubject() const override { return &subject; }
-
     Hash getArgAncestry() const override { return argAncestry; }
+
+    /** #183: producer Selector for the Selector-only identity path. */
+    std::optional<trace::SelectorVariant> getProducer() const override
+    {
+        return subjectAsSelector(subject, argAncestry);
+    }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

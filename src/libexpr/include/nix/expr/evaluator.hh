@@ -13,6 +13,7 @@
 #include "nix/expr/value/context.hh"
 #include "nix/expr/value.hh"
 #include "nix/expr/object-type.hh"
+#include "nix/expr/trace-types.hh"
 #include "nix/util/hash.hh"
 #include "nix/util/pos-idx.hh"
 #include "nix/util/ref.hh"
@@ -297,6 +298,18 @@ public:
     virtual Hash getArgAncestry() const
     {
         return Hash(HashAlgorithm::SHA256);
+    }
+
+    /**
+     * #183 (in progress): the Selector that produced this Object —
+     * its content hash IS this Object's identity. Returns nullopt for
+     * Objects without a Selector-shaped producer (raw literals,
+     * non-tracing Objects); callers may fall back to getStateHashHex().
+     * Coexists with getSubject() during the Subject retirement.
+     */
+    virtual std::optional<trace::SelectorVariant> getProducer() const
+    {
+        return std::nullopt;
     }
 
     /**

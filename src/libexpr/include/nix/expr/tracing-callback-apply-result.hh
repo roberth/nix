@@ -101,8 +101,13 @@ public:
         composes evolving ApplyResultSubject constituents instead of
         the frozen PostulatedIdempotentRead{applyArgAncestryStateHashHex} fallback. */
     const Subject * getSubject() const override { return &applyResultSubject; }
-
     Hash getArgAncestry() const override { return applyArgAncestry; }
+
+    /** #183: producer Selector for the Selector-only identity path. */
+    std::optional<trace::SelectorVariant> getProducer() const override
+    {
+        return subjectAsSelector(applyResultSubject, applyArgAncestry);
+    }
 
     std::optional<std::string> getStateHashHex() const override { return applyArgAncestryStateHashHex; }
 
