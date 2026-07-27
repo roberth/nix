@@ -196,33 +196,21 @@ std::optional<const trace::ResultWHNF *> TracingReplayObject::whnf()
 {
     if (cachedWHNF)
         return &*cachedWHNF;
-    /* #185: if triePos points to a real parent Selector's Terminal,
-       the WHNF is already in that Terminal's Result (mirror of the
-       TracingObject::whnf noop retirement). Decode directly. */
-    if (triePos.resultNodeHash != Hash(HashAlgorithm::SHA256)) {
-        auto payload = evaluator.getDecisionGraph().getResultPayload(triePos.resultNodeHash);
-        if (payload) {
-            try {
-                auto j = cborStringToJson(*payload);
-                cachedWHNF = j.get<trace::ResultWHNF>();
-                tracingCacheStats().hits++;
-                return &*cachedWHNF;
-            } catch (const nlohmann::json::exception & e) {
-                tracingCacheLog("replay: triePos payload parse failed: %s", e.what());
-            }
-        }
-    }
-    /* Fallback for synthetic-triePos wrappers (e.g. cbApplyOrigin):
-       cold recorded GetWHNF; look it up. */
-    auto parentHash = evolvedQueryFrom();
-    trace::SelectorGetWHNF query{parentHash};
-    auto r = lookupResult<trace::SelectorGetWHNF, trace::ResultWHNF>(query);
-    if (!r)
+    /* #185: decode WHNF from triePos.resultNodeHash — the parent
+       Selector's Terminal Result IS a ResultWHNF (per
+       DECLARE_SELECTOR_RESULT). No separate GetWHNF lookup. */
+    auto payload = evaluator.getDecisionGraph().getResultPayload(triePos.resultNodeHash);
+    if (!payload)
         return std::nullopt;
-    auto shallowQueryHash = TracingDecisionGraph::computeSelectorHash(query);
-    pushObservation(parentHash, shallowQueryHash, r->second);
-    cachedWHNF = std::move(r->first);
-    return &*cachedWHNF;
+    try {
+        auto j = cborStringToJson(*payload);
+        cachedWHNF = j.get<trace::ResultWHNF>();
+        tracingCacheStats().hits++;
+        return &*cachedWHNF;
+    } catch (const nlohmann::json::exception & e) {
+        tracingCacheLog("replay: triePos payload parse failed: %s", e.what());
+        return std::nullopt;
+    }
 }
 
 std::vector<std::string> TracingReplayObject::getAttrNames()

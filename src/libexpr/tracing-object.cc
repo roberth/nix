@@ -165,28 +165,14 @@ trace::ResultWHNF & TracingObject::whnf()
        callback-origin apply result. */
     if (cbApplyOrigin && applyResultSubject)
         writer.emitCallbackApplyForApplyResult(argCell, *applyResultSubject, applyArgAncestry, whnfResult);
-    /* #185: SelectorGetWHNF is algebraically a noop over
-       ResultWHNF-typed Selectors. For wrappers whose triePos points
-       to a real parent Selector's Terminal (nav descendants, root
-       wrappers), the WHNF is already in that Terminal's Result —
-       no GetWHNF recording needed. Warm reads it directly.
-
-       For cbApplyOrigin wrappers with a synthetic triePos
-       (resultNodeHash empty; the wrapper's "parent Selector" is the
-       fn Q, not a Selector that produced this applyResult), fall
-       back to recording GetWHNF so warm can look it up. Retiring
-       that case needs OuterApply::run to point triePos at the real
-       producer Selector's Terminal — a follow-up. */
-    bool hasValidTerminal = triePos && triePos->resultNodeHash != Hash(HashAlgorithm::SHA256);
-    if (!hasValidTerminal) {
-        auto parentHash = evolvedQueryFrom();
-        trace::SelectorGetWHNF query{parentHash};
-        auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
-        auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
-        auto tp = writer.logQueryResult(valueId, whnfResult, qh, anchorCur, argCell);
-        if (qh.selectorHash && tp)
-            pushObservation(parentHash, *qh.selectorHash, tp->resultNodeHash);
-    }
+    /* #185: SelectorGetWHNF emission fully retired. Warm never looks
+       these Terminals up:
+         - TRO nav descendants + root wrappers have valid
+           triePos.resultNodeHash → decode from parent Selector's
+           Terminal directly.
+         - Warm SelectorCallbackApply dispatch is a live
+           fn->queryApply invocation, not a Terminal lookup.
+       Recording GetWHNF Terminals wrote unread rows to the DB. */
     cachedWHNF = std::move(whnfResult);
     return *cachedWHNF;
 }
