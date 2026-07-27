@@ -149,6 +149,14 @@ Observation observationFromQR(const trace::SelectorVariant & query, const trace:
       and `subjectId(parent, argAncestry)`. */
 Hash subjectId(const Subject & subject, const Hash & argAncestry);
 
+/** Build the Selector variant whose content hash IS this Subject's
+    identity. Under #186 every Subject variant maps to a Selector
+    alternative (Arg → SelectorArg, DerivedSubject → SelectorGetAttr /
+    SelectorGetListElem, ApplyResultSubject → SelectorApply). This
+    helper returns that Selector so callers can use it directly as
+    payload (e.g. obsSet entries) rather than as an opaque hash. */
+trace::SelectorVariant subjectAsSelector(const Subject & subject, const Hash & argAncestry);
+
 /** Build the per-arg-encoded `SelectorApply` payload for an apply-result
     subject at a given history edge index. The returned query's JSON
     hash equals `stateHashAt(applyResult, argAncestry, history, step)`,

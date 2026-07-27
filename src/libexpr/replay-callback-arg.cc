@@ -136,10 +136,19 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    trace::SelectorGetWHNF query{std::string{}};
-    auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
-    auto rJson = readResponse(decisionGraph, query, obsSetResponses);
-    appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
+    /* #186: mirror cold's TracingCallbackArg::whnf — the obsSet entry
+       is keyed on the value's own Selector (SelectorArg for a
+       positional arg, SelectorGetAttr for a nav descendant, etc.),
+       not a SelectorGetWHNF wrapper. */
+    auto sel = subjectAsSelector(subject, argAncestry);
+    auto rJson = std::visit(
+        [&](const auto & q) -> nlohmann::json {
+            auto fromStateHash = stampPerArgFields(q, subject, argAncestry, *walkFacts, walkFacts->size());
+            auto r = readResponse(decisionGraph, q, obsSetResponses);
+            appendFactToWalk(q, fromStateHash, r, *walkFacts);
+            return r;
+        },
+        sel);
     cachedWHNF = rJson.get<trace::ResultWHNF>();
     return *cachedWHNF;
 }
