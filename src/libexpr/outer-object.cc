@@ -225,16 +225,20 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
     if (!applyFn)
         throw Error("outer apply: no apply callback");
     auto callerScope = effectiveArgCell(*this);
-    auto argForScope = argObj;
+    /* #188: one cell per apply. Create the apply's cell here and thread
+       it into applyFn so OuterApply::run reuses it as its localCell —
+       previously both sides made their own ArgCell(callerScope, argObj),
+       and observations that landed on OuterApply::run's cell were
+       invisible from the result wrapper's cell. */
+    auto applyCell = ArgCell::make(callerScope, argObj);
     /* Result producer = SelectorApply{fn=hex(fnProducer Q hash)}.
        fn identifies the applied Selector; arg dropped from payload per
        #181 (arg discrimination flows through the arg's own cell/facts). */
     auto fnQHex = getSelectorHashHex().value_or(std::string{});
     trace::SelectorApply resultQ{fnQHex};
-    auto outerResult = applyFn(outerObj, producer, std::move(argObj), callerScope);
+    auto outerResult = applyFn(outerObj, producer, std::move(argObj), applyCell);
     auto result = std::make_shared<OuterObject>(trace::SelectorVariant{resultQ}, std::move(outerResult), queryFn, outerRootFSRoot, applyFn);
-    auto cell = ArgCell::make(callerScope, std::move(argForScope));
-    result->withArgCell(std::move(cell));
+    result->withArgCell(std::move(applyCell));
     return result;
 }
 

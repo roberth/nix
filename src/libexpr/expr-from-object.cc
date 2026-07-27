@@ -109,7 +109,7 @@ struct OuterApply
     std::shared_ptr<Object> run(
         std::shared_ptr<Object> fnObj, trace::SelectorVariant fnProducer,
         std::shared_ptr<Object> argObj,
-        std::shared_ptr<const ArgCell> callerScope);
+        std::shared_ptr<const ArgCell> applyCell);
 };
 
 struct OuterResolver : std::enable_shared_from_this<OuterResolver>
@@ -157,7 +157,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
 
 std::shared_ptr<Object> OuterApply::run(
     std::shared_ptr<Object> fnObj, trace::SelectorVariant fnProducer,
-    std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
+    std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> applyCell)
 {
     /* fnId — the content hash of fn's producer Selector, used for the
        SelectorApply payload's `fn` field. */
@@ -165,11 +165,14 @@ std::shared_ptr<Object> OuterApply::run(
     if (!outerState)
         throw Error("outer apply requires outerState");
 
-    /* Scope-graph cell for the cb arg, rooted at the caller's
-       effective argAncestry (which OuterObject::queryApply passes in
-       because a resolved fn may be an InterpreterObject without a
-       proxy parent chain). The cell carries only topology. */
-    auto localCell = ArgCell::make(callerScope, argObj);
+    /* #188: applyCell is the one cell for this apply — created by the
+       caller (OuterObject::queryApply) and reused as the apply-result
+       wrapper's argCell. No local ArgCell::make: previously we allocated
+       a second cell here with the same parent+arg, fragmenting the
+       apply's cell state (observations landed on one, attribution read
+       another). Callback state populated on this cell below is now
+       reachable from the result wrapper's own cell chain. */
+    auto localCell = applyCell;
     /* Each new value that crosses INTO a cb-apply is
        treated uniformly as a value — no inherited Subject is
        propagated. Identity at this boundary starts fresh as
@@ -390,9 +393,9 @@ static PrimOp * makeCachedFnPrimOp(
                             std::shared_ptr<Object> fnObj,
                             trace::SelectorVariant fnProducer,
                             std::shared_ptr<Object> argObj,
-                            std::shared_ptr<const ArgCell> callerScope) {
+                            std::shared_ptr<const ArgCell> applyCell) {
                             return resolver->apply(std::move(fnObj), std::move(fnProducer),
-                                                    std::move(argObj), std::move(callerScope));
+                                                    std::move(argObj), std::move(applyCell));
                         };
                         /* lazy-paths: pin OuterObject's path SourceRoot
                            on the outer EvalState's `rootFSRoot` so the

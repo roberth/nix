@@ -117,6 +117,14 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
        attribute to the argCell (the enclosing apply/root cell). */
     auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
     auto childWHNF = computeWHNFFromObject(*innerChild);
+    /* #187 §7: per WHNF-producing probe on a callback-originated value,
+       emit its own QCA. computeWHNFFromObject above may have fired
+       contra-arg observations into runningObsSet (e.g. `.whatever` on
+       an applyResult forces `x * 100`, which probes x). Emit HERE
+       before we pre-populate cachedWHNF on the child — child.whnf()
+       will short-circuit and never fire emit itself. */
+    if (cbApplyOrigin && producer)
+        writer.emitCallbackApplyForApplyResult(argCell, *producer, childWHNF);
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
     auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur, argCell);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(innerChild), writer, valueId, childTriePos));

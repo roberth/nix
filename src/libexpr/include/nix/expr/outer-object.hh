@@ -54,21 +54,16 @@ using OuterQueryFn = std::function<OuterQueryResult(
  * Object, the calling OuterObject's producer Selector (identifies
  * the fn for the SelectorApply payload — the outer Object itself
  * typically has no producer, so the wrapping OuterObject provides
- * it), the argument Object, and the calling OuterObject's effective
- * argCell (the chain root from which the new local cell's depth
- * descends). Returns the outer's apply-result Object.
- *
- * Why pass `callerScope`: the cb is reached via a navigation chain
- * (e.g. arg.items[0]), and `fnObj` may not carry a proxy parent chain
- * — so the callee can't infer depth from `fnObj` alone. The caller
- * (OuterObject::queryApply) knows its own proxy graph position and
- * threads the effective cell through.
+ * it), the argument Object, and the ArgCell for this apply (created
+ * once by the caller and reused as the apply-result wrapper's argCell
+ * — one cell per apply, no fragmentation). Returns the outer's
+ * apply-result Object.
  */
 using OuterApplyFn = std::function<std::shared_ptr<Object>(
     std::shared_ptr<Object> fnObj,
     trace::SelectorVariant fnProducer,
     std::shared_ptr<Object> argObj,
-    std::shared_ptr<const ArgCell> callerScope)>;
+    std::shared_ptr<const ArgCell> applyCell)>;
 
 /**
  * Object implementation backed by outer queries to the outer evaluator.

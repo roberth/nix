@@ -80,14 +80,10 @@ class TracingWriter
        RequestSet hash for the whole-remaining edge in O(1). */
     TracingDecisionGraph::TrieBuilder sessionRequestsTrie;
 
-    /** Currently-active cells. Push at Selector entry (logSelectorOnCell/
-        logRootSelectorOnCell), pop at Selector exit (logResult). Only
-        used at emitCallbackApplyForApplyResult time to identify the
-        innermost active SelectorApply's cell for QCA attribution.
-        A future step could pass that cell explicitly through the emit
-        callers, but at present it's caller-context-sensitive in a way
-        that isn't captured by callbackCell alone. */
-    std::vector<std::shared_ptr<const ArgCell>> activeCells;
+    /* #188: activeCells retired. QCA attribution reaches the enclosing
+       SelectorApply's cell via callbackCell->parent (forwarded by
+       OuterObject::queryApply's applyCell construction, not looked up
+       via global stack). logResult reads the cell parameter directly. */
 
     /* All request hashes ever inserted. Not deduped against seenRequests
        (which is fact-hashed, not request-hashed). */
@@ -242,18 +238,17 @@ public:
                obsSet (mirrors SelectorApply.fn treatment). */
             qca.fn = cs.fnStateHashHex;
             qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
-            /* #177 attribution: QCA observation folds into the
-               enclosing SelectorApply's cell (the innermost active
-               Q's cell), not callbackCell. callbackCell is a lookup
-               handle for the runningObsSet content, not the fold
-               target — the QCA is an outer probe on the SelectorApply
-               being evaluated, so it belongs to that cell's chain.
-               Without this, sibling SelectorApply Terminals collapse
-               at cur=∅ and warm returns wrong-sibling responses
-               (cb-obsset-mismatch-clean-miss, sibling tests). */
-            std::shared_ptr<const ArgCell> attrCell;
-            if (!activeCells.empty())
-                attrCell = activeCells.back()->qState->cell.lock();
+            /* #188 attribution: QCA folds into the callback's
+               enclosing scope — the cell the callback provider
+               constructed applyCell against (callerScope). That's
+               reachable via callbackCell->parent under one-cell-per-
+               apply construction: OuterObject::queryApply makes
+               applyCell = ArgCell::make(callerScope, argObj), so
+               callbackCell.parent IS callerScope, i.e. the enclosing
+               SelectorApply's cell whose factSetHash the enclosing
+               getter's Terminal reads. Forwarded via the constructed
+               cell chain, not looked up via global stack. */
+            std::shared_ptr<const ArgCell> attrCell = callbackCell ? callbackCell->parent : nullptr;
             /* producer describe: we only have `fn` as a hex string here
                (SelectorApply payload's fn field); the identity that
                matters is qca's own content hash. */
@@ -293,8 +288,7 @@ public:
     /**
      * Log a root query (evalFile, evalExpr, apply) on a cell. Root
      * queries have no evolving from-subject, so qState carries the Q
-     * as fixed. Pushes `cell` onto `activeCells` — cells ARE the
-     * active-set under the #179 retire of the old activeQueryStack.
+     * as fixed.
      */
     template<typename Q>
     std::pair<ValueHandle, SelectorHandle> logRootSelectorOnCell(
@@ -315,14 +309,13 @@ public:
         if (cell) {
             cell->qState = qState;
             qState->cell = cell;
-            activeCells.push_back(cell);
         }
         return {valueNum, {selectorHash}};
     }
 
     /**
      * Log a query on an existing value (getAttr, getString, etc.) on
-     * a cell. Pushes `cell` onto `activeCells`.
+     * a cell.
      */
     template<typename Q>
     std::pair<ValueHandle, SelectorHandle> logSelectorOnCell(
@@ -350,7 +343,6 @@ public:
         if (cell) {
             cell->qState = qState;
             qState->cell = cell;
-            activeCells.push_back(cell);
         }
         return {valueNum, qh};
     }
@@ -562,11 +554,8 @@ public:
     {
         sink.logResult(valueNum, result);
 
-        if (!decisionGraph || !qh.selectorHash) {
-            if (!activeCells.empty())
-                activeCells.pop_back();
+        if (!decisionGraph || !qh.selectorHash)
             return std::nullopt;
-        }
 
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);
@@ -590,9 +579,6 @@ public:
         if (cell)
             insertBarrieredAskChain(finalQ, cell);
         decisionGraph->insertTerminal(finalQ, terminalCur, resultNodeHash);
-
-        if (!activeCells.empty())
-            activeCells.pop_back();
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,
