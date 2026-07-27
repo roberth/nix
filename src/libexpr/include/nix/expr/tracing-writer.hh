@@ -110,39 +110,21 @@ public:
 
 private:
 
-    /** #187: insert an Ask chain for Q, grouping the cell chain's facts
-        by barrier so each Ask edge adds at most one value probe.
-        Foundational principle 9 — no speculative value probing.
-
-        Returns the final cur reached by folding all groups in order
-        (which equals cell.factSetHash() for the last group). */
-    Hash insertBarrieredAskChain(
+    /** #187: insert a barrier-grouped Ask chain from `startCur` over
+        `facts`. Each Ask edge adds one barrier group (at most one
+        value probe per group). Foundational principle 9. */
+    void insertBarrieredChain(
         const Hash & selectorHash,
-        const std::shared_ptr<const ArgCell> & cell)
+        const Hash & startCur,
+        const std::map<Hash, std::pair<uint64_t, Hash>> & facts)
     {
-        /* Collect (req, barrier, resp) from cell + ancestors, keyed
-           by request (dedupe if a fact appears in multiple cells —
-           try_emplace's "first wins" barrier is preserved). */
-        std::map<Hash, std::pair<uint64_t, Hash>> collected;
-        for (auto c = cell.get(); c; c = c->parent.get()) {
-            for (auto & [req, entry] : c->facts) {
-                collected.try_emplace(req, entry.barrier, entry.response);
-            }
-        }
-        if (collected.empty())
-            return TracingDecisionGraph::emptySetHash();
-
-        /* Group by barrier — a std::map iterates in sorted key order,
-           so we can build groups by scanning once and starting a new
-           group each time the barrier changes. But collected is keyed
-           by request, not barrier. Build a barrier-keyed grouping. */
+        if (facts.empty())
+            return;
+        /* Group by barrier: request-keyed map into barrier-keyed groups. */
         std::map<uint64_t, std::vector<std::pair<Hash, Hash>>> byBarrier;
-        for (auto & [req, br_resp] : collected) {
+        for (auto & [req, br_resp] : facts)
             byBarrier[br_resp.first].emplace_back(req, br_resp.second);
-        }
-
-        /* Insert Ask chain: (Q, cur_prev) → group → cur_next. */
-        auto cur = TracingDecisionGraph::emptySetHash();
+        auto cur = startCur;
         for (auto & [barrier, entries] : byBarrier) {
             (void) barrier;
             std::vector<Hash> reqHashes;
@@ -154,7 +136,40 @@ private:
             for (auto & [req, resp] : entries)
                 cur = TracingDecisionGraph::xorFactIntoHash(cur, req, resp);
         }
-        return cur;
+    }
+
+    /** #187: insert Ask chains for Q at both anchors, per Foundational
+        principle 9 + user's fix "A":
+
+        - Full chain from ∅, over cell + ancestor facts. Walker starting
+          from ∅ (or ∅-fallback) traverses this chain.
+        - Delta chain from parent.terminalCur (= cell.parent.factSetHash),
+          over THIS cell's own facts only. Walker at parent-anchor finds
+          this shorter chain directly without needing the ∅-fallback.
+
+        Both chains reach the same final cur = cell.factSetHash(). */
+    void insertBarrieredAskChain(
+        const Hash & selectorHash,
+        const std::shared_ptr<const ArgCell> & cell)
+    {
+        /* Full chain: cell + ancestors, from ∅. */
+        std::map<Hash, std::pair<uint64_t, Hash>> allFacts;
+        for (auto c = cell.get(); c; c = c->parent.get())
+            for (auto & [req, entry] : c->facts)
+                allFacts.try_emplace(req, entry.barrier, entry.response);
+        insertBarrieredChain(selectorHash,
+            TracingDecisionGraph::emptySetHash(), allFacts);
+
+        /* Delta chain: cell's own facts, from parent.terminalCur.
+           Only useful when cell has a parent AND own facts to add;
+           otherwise the delta chain would be either unanchored or empty. */
+        if (cell->parent && !cell->facts.empty()) {
+            std::map<Hash, std::pair<uint64_t, Hash>> ownFacts;
+            for (auto & [req, entry] : cell->facts)
+                ownFacts.try_emplace(req, entry.barrier, entry.response);
+            auto parentCur = cell->parent->factSetHash();
+            insertBarrieredChain(selectorHash, parentCur, ownFacts);
+        }
     }
 
     /** Emit the SelectorCallbackApply Fact for a callback firing whose

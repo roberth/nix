@@ -768,17 +768,28 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                 }
             } else if constexpr (std::is_same_v<Q, trace::SelectorArg>) {
                 /* #186: resolve the outer arg at reverse-De-Bruijn
-                   `depth` by walking up the currentProxy's cell chain
-                   to find the cell with matching depth. Its
-                   liveObject IS that outer arg; return its WHNF. */
-                if (!ctx.currentProxy)
-                    return std::nullopt;
-                auto cell = ctx.currentProxy->getProxyArgCell();
+                   `depth` by walking up the walk's cell chain to find
+                   the cell with matching depth. Its liveObject IS that
+                   outer arg; return its WHNF.
+
+                   #187: prefer ctx.walkCell (the active walk's cell,
+                   which contains the arg's liveObject directly) over
+                   ctx.currentProxy->getProxyArgCell(). Under Phase F
+                   the walk's cell is what the SelectorApply lookup
+                   passed as `cell`, and the arg's liveObject is
+                   reachable through it. Falling back to currentProxy
+                   for root-Q lookups (evalFile / evalExpr) where
+                   currentProxy is null anyway. */
+                auto cell = ctx.walkCell
+                    ? ctx.walkCell
+                    : (ctx.currentProxy
+                        ? ctx.currentProxy->getProxyArgCell()
+                        : std::shared_ptr<const ArgCell>{});
                 while (cell && cell->depth != q.depth)
                     cell = cell->parent;
                 if (!cell || !cell->liveObject) {
                     tracingCacheLog(
-                        "arg: no cell for depth=%d in chain from currentProxy",
+                        "arg: no cell for depth=%d",
                         q.depth);
                     return std::nullopt;
                 }
