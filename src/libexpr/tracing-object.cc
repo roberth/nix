@@ -82,28 +82,12 @@ ref<TracingObject> TracingObject::create(
     return ref<TracingObject>(std::shared_ptr<TracingObject>(new TracingObject(inner, writer, valueNum, triePos)));
 }
 
-std::string TracingObject::evolvedQueryFrom() const
+/* Parent identity for building child Selectors: `triePos->queryHashStr`
+   (parent Q's stable hash) when available; falls back to the trace-only
+   decimal ValueHandle for evalExprLazy wrappers without a triePos. */
+static std::string parentQOrValueHandle(const std::optional<TriePosition> & triePos, ValueHandle valueNum)
 {
-    /* #178: state-hash evolution retires. Parent identity carried
-       via triePos->queryHashStr (parent Q's stable hash). Callback-
-       arg path used to fold applyContext observations into a state
-       hash; that state hash is now unnecessary since cur at (Q, cur)
-       discriminates. */
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());
-}
-
-void TracingObject::pushObservation(const std::string & fromHex, const Hash & selectorHash, const Hash & responseHash)
-{
-    if (!applyContext) return;
-    Hash fromHash{HashAlgorithm::SHA256};
-    try {
-        fromHash = Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
-    } catch (...) {
-        return;
-    }
-    auto elementHash = TracingDecisionGraph::xorFactIntoHash(
-        Hash(HashAlgorithm::SHA256), selectorHash, responseHash);
-    applyContext->observations.push_back({fromHash, elementHash});
 }
 
 std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
@@ -127,22 +111,17 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
         /* WHNF said the attr is present but inner disagrees — shouldn't
            happen under matching-until-divergence. */
         return nullptr;
-    auto parentHash = evolvedQueryFrom();
-    trace::SelectorGetAttr query{name, parentHash};
+    trace::SelectorGetAttr query{name, parentQOrValueHandle(triePos, valueNum)};
     /* Phase D2: getter as Query — logQuery/logQueryResult, no push.
        Observations dispatched during innerChild's evaluation
-       attribute to whatever's on activeQueryStack (the enclosing
-       apply/root cell), not a getter-specific frame. */
+       attribute to the argCell (the enclosing apply/root cell). */
     auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
     auto childWHNF = computeWHNFFromObject(*innerChild);
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
     auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur, argCell);
-    if (qh.selectorHash && childTriePos)
-        pushObservation(parentHash, *qh.selectorHash, childTriePos->resultNodeHash);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(innerChild), writer, valueId, childTriePos));
     child->cachedWHNF = std::move(childWHNF);
     child->withArgCell(argCell);
-    if (applyContext) child->withApplyContext(applyContext);
     /* Cb-apply-origin descendants propagate the marks so their whnf
        emits QCA per §7 of the callback model. */
     if (cbApplyOrigin) {
@@ -275,20 +254,16 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
         /* Not a list, or index out of bounds — delegate so the
            interpreter throws the source-positioned error. */
         return inner->getListElem(index);
-    auto parentHash = evolvedQueryFrom();
-    trace::SelectorGetListElem query{parentHash, index};
+    trace::SelectorGetListElem query{parentQOrValueHandle(triePos, valueNum), index};
     /* Phase D2: getter — no push, direct Terminal. */
     auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
     auto result = inner->getListElem(index);
     trace::ResultWHNF childWHNF = computeWHNFFromObject(*result);
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
     auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur, argCell);
-    if (qh.selectorHash && childTriePos)
-        pushObservation(parentHash, *qh.selectorHash, childTriePos->resultNodeHash);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
     child->cachedWHNF = std::move(childWHNF);
     child->withArgCell(argCell);
-    if (applyContext) child->withApplyContext(applyContext);
     /* B3 / B7 remaining: same cb-apply-origin gating as maybeGetAttr. */
     if (cbApplyOrigin) {
         child->withCbApplyOrigin();
@@ -323,8 +298,7 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
        Whether or not inner->getFunctionInfo() actually fires sub-
        observations, the swap costs at most an extra push/pop and
        eliminates the unverified assumption. */
-    auto parentHash = evolvedQueryFrom();
-    trace::SelectorGetFunctionInfo query{parentHash};
+    trace::SelectorGetFunctionInfo query{parentQOrValueHandle(triePos, valueNum)};
     /* Phase D2: getter — no push, direct Terminal. */
     auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
     auto result = inner->getFunctionInfo();
@@ -335,8 +309,7 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
         traceResult = {.hasInfo = false};
     }
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
-    auto tp = writer.logQueryResult(valueId, traceResult, qh, anchorCur, argCell);
-    if (qh.selectorHash && tp) pushObservation(parentHash, *qh.selectorHash, tp->resultNodeHash);
+    writer.logQueryResult(valueId, traceResult, qh, anchorCur, argCell);
     return result;
 }
 
@@ -397,12 +370,6 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto cell = ArgCell::make(argCell, argObj);
     child->withArgCell(std::move(cell));
     child->withProducer(trace::SelectorVariant{std::move(resultProducer)});
-    if (auto * argAmb = dynamic_cast<OuterObject *>(argObj.get())) {
-        if (auto ctx = argAmb->getApplyContext())
-            child->withApplyContext(std::move(ctx));
-    } else if (applyContext) {
-        child->withApplyContext(applyContext);
-    }
     return child;
 }
 

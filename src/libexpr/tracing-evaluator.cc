@@ -454,10 +454,6 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     obj->withArgCell(std::move(cell));
     obj->withProducer(trace::SelectorVariant{std::move(resultProducer)});
     obj->withCachedWHNF(std::move(whnfResult));
-    if (auto * argAmb = dynamic_cast<OuterObject *>(arg.get_ptr().get())) {
-        if (auto ctx = argAmb->getApplyContext())
-            obj->withApplyContext(std::move(ctx));
-    }
     return obj;
 }
 

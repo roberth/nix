@@ -47,17 +47,6 @@ class TracingObject : public Object
        `withCbApplyOrigin` for rationale. */
     bool cbApplyOrigin = false;
 
-    /* Per-invocation observation context shared with the cb-arg
-       OuterObject's queryFn and propagated to derived children
-       via shared_ptr. */
-    std::shared_ptr<ApplyContext> applyContext;
-
-    /* Compute the wrapper's evolved state hash live from
-       applyContext->observations. */
-    std::string evolvedQueryFrom() const;
-
-    void pushObservation(const std::string & fromHex, const Hash & selectorHash, const Hash & responseHash);
-
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which records ONE SelectorGetWHNF
        observation against this Object's identity carrying the type
@@ -109,10 +98,7 @@ public:
         emitCallbackApplyForApplyResult against the enclosing
         CallbackCell (callback-model §7). Non-cb apply results (e.g.
         inner's own function application in TracingEvaluator::apply)
-        leave this false so their children stay order-independent —
-        the propagation of `producer` to children would otherwise
-        route their evolvedQueryFrom through applyContext and break
-        tests like cb-deep-indep-orders. */
+        leave this false so their children stay order-independent. */
     TracingObject & withCbApplyOrigin()
     {
         cbApplyOrigin = true;
@@ -120,14 +106,6 @@ public:
     }
 
     bool isCbApplyOrigin() const { return cbApplyOrigin; }
-
-    TracingObject & withApplyContext(std::shared_ptr<ApplyContext> ctx)
-    {
-        applyContext = std::move(ctx);
-        return *this;
-    }
-
-    std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 

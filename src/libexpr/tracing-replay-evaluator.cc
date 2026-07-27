@@ -1048,15 +1048,6 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     obj->withProducer(trace::SelectorVariant{std::move(resultProducer)});
     if (cachedWHNF)
         obj->withCachedWHNF(std::move(*cachedWHNF));
-    /* Keep the applyContext attachment for the ensureInner-finalisation
-       side-channel that other paths still inspect (e.g. tests that
-       check applyContext->finalized). Pre-population of observations
-       from the Requests pool is no longer needed — evolvedQueryFrom
-       reads the evaluator's envWalk instead. */
-    if (auto * argAmb = dynamic_cast<OuterObject *>(arg.get_ptr().get())) {
-        if (auto ctx = argAmb->getApplyContext())
-            obj->withApplyContextOnly(std::move(ctx));
-    }
     return obj;
 }
 

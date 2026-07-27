@@ -342,20 +342,13 @@ static PrimOp * makeCachedFnPrimOp(
                            Subject and discriminate via their observation
                            factsets, not via state-creep. */
                         trace::SelectorArg argProducer{seedCell->depth};
-                        /* Per-apply observation context. Captures the
-                           outer's probes on the cb arg as they fire
-                           through queryFn; distinguishes sibling apply
-                           calls within the same cached call (`inner.f 5`
-                           vs `inner.f 2`), per the callback tracking design. */
-                        auto applyContext = std::make_shared<ApplyContext>(
-                            ApplyContext{{}});
                         auto & innerEnv = *innerEval->getEvalState().environment;
                         /* queryFn: dispatch the query directly on the
                            outer Object the OuterObject was
                            constructed to wrap. No id round-trip, no
                            lookup table — each OuterObject already
                            holds its outerObj, and passes it in. */
-                        OuterQueryFn queryFn = [&innerEnv, applyContext](
+                        OuterQueryFn queryFn = [&innerEnv](
                             std::shared_ptr<Object> outerObj,
                             const trace::SelectorVariant & q,
                             trace::SelectorVariant producer) {
@@ -417,7 +410,6 @@ static PrimOp * makeCachedFnPrimOp(
                            ArgCell::liveObject. */
                         seedCell->liveObject = outerArgProxy.get_ptr();
                         outerArgProxy->withArgCell(seedCell);
-                        outerArgProxy->withApplyContext(applyContext);
                         tracingCacheLog("makeCachedFnPrimOp.impl: outerArgProxy=%p seedCell=%p outerArg=%p",
                                         (void*)outerArgProxy.get_ptr().get(), (void*)seedCell.get(),
                                         (void*)outerArgObj.get());

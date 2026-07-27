@@ -82,13 +82,6 @@ class OuterObject : public Object
        dispatches the equivalent method on `outerObj` (executing in the
        outer's Interpreter), and hands the result back to the inner. */
     std::shared_ptr<Object> outerObj;
-    /* Per-apply observation context. Set on cb-arg arg OuterObjects
-       by makeCachedFnPrimOp.impl at the cb-apply; the queryFn
-       closure routes observations through this context so the
-       apply-result wrapping can compute its evolved state hash via
-       stateHashAfter against the accumulated history. Null on
-       non-cb-arg OuterObjects. */
-    std::shared_ptr<ApplyContext> applyContext;
     OuterQueryFn queryFn;   ///< Callback to issue outer queries
     OuterApplyFn applyFn;   ///< Callback for function application (may be null)
     /* lazy-paths: stable SourceRoot for paths returned by `getPath`.
@@ -123,19 +116,6 @@ public:
         argCell = std::move(argScope_);
         return *this;
     }
-
-    /** Attach a per-apply observation context. Used on cb-arg arg
-        OuterObjects at the cb-apply; the queryFn closure
-        routes observations into this context. */
-    OuterObject & withApplyContext(std::shared_ptr<ApplyContext> ctx)
-    {
-        applyContext = std::move(ctx);
-        return *this;
-    }
-
-    /** Read this proxy's apply context (= null unless this is a
-        cb-arg arg). */
-    std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 

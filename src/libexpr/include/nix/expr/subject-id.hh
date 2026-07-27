@@ -48,19 +48,4 @@ struct ObservationSet
     std::vector<Observation> observations;
 };
 
-/** Per-cb-apply observation context.
-
-    A fresh instance is created at each cb-apply and shared by every
-    Object participating in that single invocation. Observations
-    accumulate here as the outer probes the cb arg (TracingObject /
-    TracingReplayObject push them via `pushObservation`).
-
-    Under the per-cell factset model, `observations` is the only live
-    field — Subject-based fields (argSubject/argAncestry) retired
-    with #178/#183. */
-struct ApplyContext
-{
-    std::vector<Observation> observations;
-};
-
 } // namespace nix

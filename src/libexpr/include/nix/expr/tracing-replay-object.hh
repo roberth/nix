@@ -34,15 +34,6 @@ class TracingReplayObject : public Object
        ancestor chain. */
     std::shared_ptr<const ArgCell> argCell;
 
-    /* Per-cb-apply observation context for the apply that produced
-       this object. Set on apply-result wrappers by
-       TracingReplayEvaluator::apply when the arg was a cb-arg
-       OuterObject carrying one. Retained for the
-       finalised-on-ensureInner side-channel that other code paths
-       still inspect; not used for evolvedQueryFrom under the
-       option-2 encoding (which routes through the evaluator's
-       cumulative envWalk). */
-    std::shared_ptr<ApplyContext> applyContext;
     /* When apply-result, the producer Selector identifying it
        structurally. */
     std::optional<trace::SelectorVariant> producer;
@@ -52,9 +43,6 @@ class TracingReplayObject : public Object
     bool cbApplyOrigin = false;
 
     ref<Object> ensureInner() const;
-
-    std::string evolvedQueryFrom() const;
-    void pushObservation(const std::string & fromHex, const Hash & selectorHash, const Hash & responseHash);
 
     /**
      * Cascading lookup for leaf results. Returns the parsed R plus
@@ -88,18 +76,8 @@ public:
         return *this;
     }
 
-    /** Attach the per-apply observation context — for apply-result
-        wrappers, so subsequent queries can hang off the producer. */
-    TracingReplayObject & withApplyContext(
-        std::shared_ptr<ApplyContext> ctx, trace::SelectorVariant resultProducer)
-    {
-        applyContext = std::move(ctx);
-        producer = std::move(resultProducer);
-        return *this;
-    }
-
-    /** Attach the apply-result producer Selector without going through
-        ApplyContext. Mirrors the writer-side `TracingObject::withProducer`. */
+    /** Attach the apply-result producer Selector. Mirrors the
+        writer-side `TracingObject::withProducer`. */
     TracingReplayObject & withProducer(trace::SelectorVariant p)
     {
         producer = std::move(p);
@@ -127,18 +105,6 @@ public:
         cachedWHNF = std::move(whnf_);
         return *this;
     }
-
-    /** Attach just the ApplyContext (for the finalised side-channel),
-        leaving applyResultSubject/applyArgAncestry alone. Used by
-        TracingReplayEvaluator::apply after it has already set the
-        Subject via withApplyResultSubject. */
-    TracingReplayObject & withApplyContextOnly(std::shared_ptr<ApplyContext> ctx)
-    {
-        applyContext = std::move(ctx);
-        return *this;
-    }
-
-    std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 

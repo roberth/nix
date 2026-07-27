@@ -35,40 +35,6 @@ ref<Object> TracingReplayObject::ensureInner() const
     return *inner;
 }
 
-std::string TracingReplayObject::evolvedQueryFrom() const
-{
-    /* #178: state-hash evolution retires. Parent identity via
-       triePos.queryHashStr (parent Q's stable hash). */
-    return triePos.queryHashStr;
-}
-
-void TracingReplayObject::pushObservation(const std::string & fromHex, const Hash & selectorHash, const Hash & responseHash)
-{
-    Hash fromHash{HashAlgorithm::SHA256};
-    try {
-        fromHash = Hash::parseNonSRIUnprefixed(fromHex, HashAlgorithm::SHA256);
-    } catch (...) {
-        return;
-    }
-    auto elementHash = TracingDecisionGraph::xorFactIntoHash(
-        Hash(HashAlgorithm::SHA256), selectorHash, responseHash);
-    /* Mirror evolvedQueryFrom's inner-first preference: if inner is
-       an activated TracingObject with an applyContext, push into IT
-       so both TRO and cold's TracingObject share the same evolution
-       trajectory. Falls back to TRO's own applyContext when inner
-       isn't a TracingObject or hasn't been activated. */
-    if (inner) {
-        if (auto * innerT = dynamic_cast<TracingObject *>(inner->get_ptr().get())) {
-            if (auto innerCtx = innerT->getApplyContext()) {
-                innerCtx->observations.push_back({fromHash, elementHash});
-                return;
-            }
-        }
-    }
-    if (applyContext)
-        applyContext->observations.push_back({fromHash, elementHash});
-}
-
 template<typename Q, typename R>
 std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & query) const
 {
@@ -165,22 +131,18 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
         tracingCacheLog("replay hit: getAttr '%s' -> missing (via whnf.names)", name);
         return nullptr;
     }
-    auto parentHash = evolvedQueryFrom();
-    trace::SelectorGetAttr query{name, parentHash};
+    trace::SelectorGetAttr query{name, triePos.queryHashStr};
     auto result = lookupStructuralChild<trace::SelectorGetAttr, trace::ResultWHNF>(query);
     if (!result) {
         tracingCacheLog("replay fallback: maybeGetAttr '%s' (no getAttr recording)", name);
         return ensureInner()->maybeGetAttr(name);
     }
-    auto shallowQueryHash = TracingDecisionGraph::computeSelectorHash(query);
-    pushObservation(parentHash, shallowQueryHash, result->second.resultNodeHash);
     tracingCacheLog("replay hit: getAttr '%s' -> found", name);
     auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
     auto child = std::make_shared<TracingReplayObject>(
         evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
     child->cachedWHNF = std::move(result->first);
     child->withArgCell(argCell);
-    if (applyContext) child->withApplyContextOnly(applyContext);
     /* Symmetric to TracingObject::maybeGetAttr's B3/B7-remaining
        propagation: cb-apply-origin walker children inherit both marks
        so their queryHashes match cold's. */
@@ -362,17 +324,14 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
         tracingCacheLog("replay fallback: getListElem %d out of bounds (size %zu)", idx, lp->size);
         return ensureInner()->getListElem(idx);
     }
-    auto parentHash = evolvedQueryFrom();
-    trace::SelectorGetListElem query{parentHash, idx};
+    trace::SelectorGetListElem query{triePos.queryHashStr, idx};
     if (auto result = lookupStructuralChild<trace::SelectorGetListElem, trace::ResultWHNF>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeSelectorHash(query), result->second.resultNodeHash);
         tracingCacheLog("replay hit: getListElem %d", idx);
         auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
         auto child = std::make_shared<TracingReplayObject>(
             evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); });
         child->cachedWHNF = std::move(result->first);
         child->withArgCell(argCell);
-        if (applyContext) child->withApplyContextOnly(applyContext);
         /* B3/B7-remaining: cb-apply-origin propagation, symmetric to maybeGetAttr. */
         if (cbApplyOrigin) {
             child->withCbApplyOrigin();
@@ -408,10 +367,8 @@ RootValue TracingReplayObject::defeatCache()
 
 std::optional<FunctionInfo> TracingReplayObject::getFunctionInfo()
 {
-    auto parentHash = evolvedQueryFrom();
-    trace::SelectorGetFunctionInfo query{parentHash};
+    trace::SelectorGetFunctionInfo query{triePos.queryHashStr};
     if (auto r = lookupResult<trace::SelectorGetFunctionInfo, trace::ResultFunctionInfo>(query)) {
-        pushObservation(parentHash, TracingDecisionGraph::computeSelectorHash(query), r->second);
         if (!r->first.hasInfo)
             return std::nullopt;
         return FunctionInfo{.formals = r->first.formals, .ellipsis = r->first.ellipsis};
