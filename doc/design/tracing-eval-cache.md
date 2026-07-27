@@ -85,7 +85,56 @@ present design.
    perturb cache layout. A corollary of #7; also non-negotiable
    on its own.
 
-9. **Cumulative dependency.** The inner evaluator is a black box.
+9. **No speculative value probing.** The outer is a black box with
+   causal structure: dispatching a value probe against it invokes
+   arbitrary outer code — a callback body, a lazy attrset thunk,
+   whatever the outer wired up. Recorded traces routinely capture
+   probes whose invocation was itself conditional on an earlier
+   probe's response: `if arg.b then arg.x else arg.y` never probes
+   both branches, only the one selected by `arg.b`.
+
+   The walker must respect this causal structure. Dispatching a
+   later probe before the earlier probe's live response validates
+   would mean invoking the outer for a probe the current scenario
+   never asked for — surfacing as unprompted outer callback
+   invocations the user cannot correlate with what they wrote (the
+   long-standing "outer-request discipline" concern), and, since
+   outer callbacks may have observable behaviour, potentially
+   triggering side effects the author of the current scenario
+   didn't authorise. This principle is technically a corollary of
+   outer-request discipline (see the [Outer-request discipline
+   (open problem)](#outer-request-discipline-open-problem) section
+   below): a batched Ask edge dispatches multiple outer probes as
+   a unit, which necessarily means dispatching at least one probe
+   speculatively — i.e. an outer request the current scenario's
+   causal path may not actually ask for.
+
+   Concretely: each Ask edge adds **at most one value request** to
+   the requestSet. ("Value request" = anything that reaches the
+   outer's callback machinery: `OuterValueRequest`s and
+   contra-arg observations. Not env-file reads, env-var lookups, or
+   other deterministic env-Requests that carry no user-observable
+   outer side effect — those are safely batchable.)
+
+   A walker traversing a chain dispatches the edge's value probe,
+   folds its live response, follows the outgoing Ask determined by
+   the resulting `cur`, dispatches the next value probe, and so on.
+   Bundling multiple value probes into one Ask is unsafe both for
+   the invocation-discipline reason above and for a divergence-
+   detection reason: if `arg.x`'s live response differs from cold's
+   recorded `arg.x`, the fact should surface as a chain break at
+   that probe's Ask edge, not remain hidden inside a batched fold.
+
+   *Consequence for callback firings.* The outer's probes on an
+   inner-supplied contra-arg (`.getInt()`, `.getAttr("foo")`, …)
+   are individual value probes with causal structure of their own.
+   They must each be their own Ask edge on the enclosing cell's
+   chain — not aggregated into one `SelectorCallbackApply` fact
+   whose `argObsSet` is opaque to the walker. Aggregation defeats
+   both live divergence detection and outer-request discipline for
+   the exact reasons above.
+
+10. **Cumulative dependency.** The inner evaluator is a black box.
    Every Request observed prior to a Result is part of that
    Result's dependency set — the box's state has evolved through
    each observation, and the cache cannot prove which observations
@@ -512,7 +561,7 @@ the replay session didn't make — is unreachable from
 trace-discovering alone. The trace chain's Ask rows are keyed
 under a `cur` the walker cannot fold to without observations it
 hasn't made. Serving such a trace via observation-manufacture
-would violate Foundational 9 (a Result's factSet must faithfully
+would violate Foundational 10 (a Result's factSet must faithfully
 identify the observations that led to it).
 
 Trace-discovering with landing-chain coverage bridges the gap for
@@ -570,7 +619,7 @@ situations and coexist; neither replaces the other. Work items:
     (the writer had already made subsequent observations by that
     point) or requires the observation-test machinery below, which
     is not in the MVP. Every row's `fromFactSetHash` faithfully
-    identifies the writer's observed preconditions; Foundational 9
+    identifies the writer's observed preconditions; Foundational 10
     stays intact.
 
     Replay is free to query the DB at older / smaller factsets —
@@ -801,7 +850,7 @@ When the walker misses and falls through to the wrapped
 Interpreter, that fallback run goes through the recording layer's
 `TracingEnvironment` and feeds the writer's session-root cell
 like any cold run would. The recording *session* is the wrapped
-Interpreter's session, matching Foundational 9's
+Interpreter's session, matching Foundational 10's
 cumulative-dependency premise (the black-box evaluator whose
 state actually evolves through its own observations).
 
