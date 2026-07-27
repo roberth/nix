@@ -184,19 +184,11 @@ std::shared_ptr<Object> OuterApply::run(
     tracingCacheLog("OuterApply::run: argStateHash=%s",
                     argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));
 
-    /* Compute the resultId early so we can pass it to the
-       TracingCallbackArg as applyId — routes all observations made
-       on this local (and its descendants) to the matching
-       CallbackCell's runningObsSet. */
     auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
     auto argStateHashStr = argStateHash.to_string(HashFormat::Base16, false);
 
-    /* cb-apply: record the apply's synthetic history-advance
-       edge (= ε) now that we have fnIdStr and argStateHashStr. See parallel
-       call in TracingEvaluator::apply for the principle. */
     /* #181: SelectorApply carries fn's Q hash only */
     trace::SelectorApply applyQuery{fnIdStr};
-    auto resultId = TracingDecisionGraph::computeSelectorHash(applyQuery);
     if (innerWriter) {
         nlohmann::json applyQ = trace::SelectorApply{fnIdStr};
         tracingCacheLog("createCallbackCell callsite=OuterApply::run fn=%s arg=%s",
@@ -209,7 +201,6 @@ std::shared_ptr<Object> OuterApply::run(
            callbackCells vector. Applies to `localCell` directly since
            this cell IS the callback firing's arg cell. */
         localCell->callbackState = std::make_shared<CallbackState>();
-        localCell->callbackState->applyId = resultId;
         localCell->callbackState->fnStateHashHex = fnIdStr;
     }
 
@@ -236,7 +227,7 @@ std::shared_ptr<Object> OuterApply::run(
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
               argObj, trace::SelectorVariant{argProducer}, *innerWriter,
-              ref<SourceRoot>(outerRootFSRoot), localCell, resultId))
+              ref<SourceRoot>(outerRootFSRoot), localCell))
         : argObj;
 
     /* Bridge local arg via ExprFromObject. The cache memoises by

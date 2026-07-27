@@ -370,9 +370,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         /* #184: populate cell->callbackState so
            emitCallbackApplyForApplyResult's primary (cell-based) path
            finds it — mirrors what OuterApply::run does for its localCell. */
-        auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQ.dump());
         cell->callbackState = std::make_shared<CallbackState>();
-        cell->callbackState->applyId = applyReqHash;
         cell->callbackState->fnStateHashHex = fnStateHashStr;
     }
 

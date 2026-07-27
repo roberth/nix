@@ -41,10 +41,6 @@ class TracingCallbackArg : public Object
 {
     std::shared_ptr<Object> inner;
     trace::SelectorVariant producer;  ///< Static structural identifier as a Selector
-    /* The cb apply this local belongs to (= apply's resultId). Used
-       to route observations to the correct CallbackCell's
-       runningObsSet. Navigation children inherit. */
-    Hash applyId;
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
@@ -70,8 +66,7 @@ public:
         trace::SelectorVariant producer,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
-        std::shared_ptr<const ArgCell> argCell,
-        Hash applyId = Hash(HashAlgorithm::SHA256));
+        std::shared_ptr<const ArgCell> argCell);
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 

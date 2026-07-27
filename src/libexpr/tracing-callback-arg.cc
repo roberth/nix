@@ -21,11 +21,9 @@ TracingCallbackArg::TracingCallbackArg(
     trace::SelectorVariant producer_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
-    std::shared_ptr<const ArgCell> argCell,
-    Hash applyId_)
+    std::shared_ptr<const ArgCell> argCell)
     : inner(std::move(inner))
     , producer(std::move(producer_))
-    , applyId(std::move(applyId_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
     , argCell(std::move(argCell))
@@ -51,7 +49,7 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
     recordObservation(query, computeWHNFFromObject(*child));
     trace::SelectorVariant childProducer{query};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childProducer), writer, rootFSRoot, argCell, applyId);
+        std::move(child), std::move(childProducer), writer, rootFSRoot, argCell);
 }
 
 trace::ResultWHNF & TracingCallbackArg::whnf()
@@ -166,7 +164,7 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
     recordObservation(query, computeWHNFFromObject(*child));
     trace::SelectorVariant childProducer{query};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childProducer), writer, rootFSRoot, argCell, applyId);
+        std::move(child), std::move(childProducer), writer, rootFSRoot, argCell);
 }
 
 ObjectType TracingCallbackArg::getTypeLazy()
@@ -212,14 +210,10 @@ std::optional<std::vector<std::string>> TracingCallbackArg::getAttrPath()
 
 void TracingCallbackArg::recordObservation(const trace::SelectorVariant & query, const trace::ResultVariant & result)
 {
-    /* #184: append directly to this proxy's argCell.callbackState.
-       Writer-side logCallbackObservation retired — its applyId lookup
-       reached the same runningObsSet indirectly. */
+    /* #184: append directly to this proxy's argCell.callbackState. */
     if (!argCell || !argCell->callbackState) {
         tracingCacheLog(
-            "TracingCallbackArg::recordObservation: no argCell/callbackState "
-            "for applyId=%s — observation dropped",
-            applyId.to_string(HashFormat::Base16, false).substr(0, 12));
+            "TracingCallbackArg::recordObservation: no argCell/callbackState — observation dropped");
         return;
     }
     auto qh = trace::computeSelectorHash(query);
@@ -228,9 +222,6 @@ void TracingCallbackArg::recordObservation(const trace::SelectorVariant & query,
         result);
     auto rPayload = jsonToCborString(rJson);
     argCell->callbackState->runningObsSet.push_back({qh, rPayload});
-    if (argCell->callbackState->argAncestryHex.empty())
-        argCell->callbackState->argAncestryHex =
-            Hash(HashAlgorithm::SHA256).to_string(HashFormat::Base16, false);
 }
 
 std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> argObj)
@@ -250,7 +241,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
     trace::SelectorApply resultQ{tracingLocalFromOf(localId())};
     trace::SelectorVariant resultProducer{resultQ};
     return std::make_shared<TracingCallbackArg>(
-        std::move(result), std::move(resultProducer), writer, rootFSRoot, argCell, applyId);
+        std::move(result), std::move(resultProducer), writer, rootFSRoot, argCell);
 }
 
 } // namespace nix

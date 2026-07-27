@@ -144,7 +144,10 @@ public:
            callbackState is provided, and its fn matches, read from it
            directly — no writer.callbackCells iteration. */
         auto tryEmitFromCell = [&](const CallbackState & cs) -> bool {
-            if (cs.argAncestryHex.empty())
+            /* Skip until at least one contra-arg observation has fired —
+               otherwise the obsSet is empty and QCA emission is
+               premature. */
+            if (cs.runningObsSet.empty())
                 return false;
             /* #183: cs.fnStateHashHex is Q-space; fnInitialHex is
                subject-space. They don't align. When cell was threaded

@@ -38,9 +38,6 @@ void TracingCallbackApplyResult::recordD2(const trace::SelectorVariant & query, 
         result);
     auto rPayload = jsonToCborString(rJson);
     callbackCell->callbackState->runningObsSet.push_back({qh, rPayload});
-    if (callbackCell->callbackState->argAncestryHex.empty())
-        callbackCell->callbackState->argAncestryHex =
-            Hash(HashAlgorithm::SHA256).to_string(HashFormat::Base16, false);
 }
 
 std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::string & name)

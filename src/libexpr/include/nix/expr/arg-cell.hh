@@ -40,22 +40,11 @@ struct QState; // defined in q-state.hh; forward-declared here so
       per-active-evaluator; callback state doesn't leak across trees. */
 struct CallbackState
 {
-    /** Identity of this callback firing; equals the natural hash of
-        the apply query payload. Historically used as an index key on
-        the writer-side callbackCells vector; retained for QCA
-        payload identity + trace-log correlation. */
-    Hash applyId{HashAlgorithm::SHA256};
-
     /** Fn's initial state hash (empty history). Cell lookup key at
         QCA emission (matches ApplyResultSubject's fn state hash
         under matching-until-divergence). Captured at cell allocation
         from the applyQuery's `fn` field. */
     std::string fnStateHashHex;
-
-    /** Cached call's callArgAncestry, encoded into the QCA payload so
-        the walker's ReplayCallbackArg reconstructs the arg's Subject
-        at the same argAncestry. Set on first contra-arg observation. */
-    std::string argAncestryHex;
 
     /** Observations the outer made on this cell's contra-arg during
         the callback body's evaluation. Snapshotted into the
