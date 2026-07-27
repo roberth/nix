@@ -130,10 +130,6 @@ struct ObservationSet
     std::vector<Observation> observations;
 };
 
-/** Build an Observation from a SelectorVariant/ResultVariant pair. Used by
-    the writer at flush time where it already holds the variants. */
-Observation observationFromQR(const trace::SelectorVariant & query, const trace::ResultVariant & result);
-
 /** #178: the initial structural id of `subject`, scoped by
     `argAncestry`. Under stable Q hashes there is no evolution to
     fold; every Subject variant reduces to a positional / structural
@@ -156,61 +152,6 @@ Hash subjectId(const Subject & subject, const Hash & argAncestry);
     helper returns that Selector so callers can use it directly as
     payload (e.g. obsSet entries) rather than as an opaque hash. */
 trace::SelectorVariant subjectAsSelector(const Subject & subject, const Hash & argAncestry);
-
-/** Build the per-arg-encoded `SelectorApply` payload for an apply-result
-    subject at a given history edge index. The returned query's JSON
-    hash equals `stateHashAt(applyResult, argAncestry, history, step)`,
-    so callers can use the same value as both the Requests-pool key
-    (= reqHash) and the apply-result's state hash (= what's recorded as
-    `from` on downstream facts). Threads cb_arg root state hashes at
-    `step` into `fromStateHashes[]`, copies the Apply step's
-    `fnPath`/`argPath`/root indices into the top-level query, and
-    leaves `fn`/`arg` populated only if the caller passes them for
-    the legacy direct payload's readability — the per-arg fields
-    alone determine the hash. */
-trace::SelectorApply makeApplyResultQuery(
-    const Subject & applyResultSubject,
-    const Hash & argAncestry,
-    const std::vector<ObservationSet> & history,
-    size_t step);
-
-/** Extract a query's `from` field as a Hash, if it carries one.
-    Under #178 the `from` field is retired; this helper is a
-    transitional accessor kept until the Selector types drop the
-    field. Returns zero on empty. */
-Hash fromStateHashOf(const trace::SelectorVariant & query);
-
-/** Convenience wrapper around `pathAndRootsFromSubject`: returns just
-    the path. Use the full helper when roots are also needed (= writer
-    flush, walker probes). */
-trace::PathExpr pathFromSubject(const Subject & subject);
-
-/** Multi-root path expression for a Subject. The path navigates from
-    the natural root (= `roots[0]`); Apply steps inside the path
-    reference other roots by absolute index via `fnRootIndex` /
-    `argRootIndex`. Roots are leaves of the subject tree: Args
-    or PostulatedIdempotentReads. Same-leaf occurrences (= e.g. fn and arg
-    both deriving from the same cb_arg) collapse to one entry by Subject
-    equality. Function characterization needs this so that observations
-    on apply-result descendants reference both fn-root and arg-root in
-    the wire payload. */
-struct PathAndRoots
-{
-    trace::PathExpr path;
-    std::vector<Subject> roots;
-};
-
-/** Decompose a Subject into (path from roots to subject, list of
-    roots). **Roots are guaranteed to be leaf variants** — `Arg` or
-    `PostulatedIdempotentRead` — by construction: the builder recurses
-    through `DerivedSubject` and `ApplyResultSubject` without adding
-    them to `roots`, so callers can safely pass each root to the strict
-    `stateHashAt` without the DerivedSubject trap. This is a
-    load-bearing invariant for five call sites (outer-object.cc,
-    tracing-writer.cc x2, replay-callback-arg.cc, tracing-writer.cc's
-    apply-flush) — do not change the builder to emit non-leaves as
-    roots without adjusting them. */
-PathAndRoots pathAndRootsFromSubject(const Subject & subject);
 
 /** Combine fn's and arg's inherited scopes into an cb-apply's
     argAncestry. Apply treats both sides equally (= unlike QueryAttr or

@@ -422,8 +422,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        cells → distinct Terminals. */
     trace::SelectorApply applySelector{fnStateHashStr};
     auto [v, qh] = writer.logSelectorOnCell(
-        cell, applySelector, /*parent=*/std::nullopt,
-        resultSubject, applyArgAncestry);
+        cell, applySelector, /*parent=*/std::nullopt);
 
     /* #178: siblingScope XOR retires. Sibling cached calls
        discriminate structurally via per-cell factset isolation. */

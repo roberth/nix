@@ -50,7 +50,6 @@ sources = files(
   'accessors-equivalent.cc',
   'outer-object.cc',
   'attr-pos-path.cc',
-  'subject-id.cc',
   'coarse-eval-cache.cc',
   'coerce-to-rooted-path.cc',
   'compare-for-tostring-equivalence.cc',

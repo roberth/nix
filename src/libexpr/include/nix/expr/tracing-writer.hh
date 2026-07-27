@@ -240,17 +240,13 @@ public:
 
     /**
      * Log a query on an existing value (getAttr, getString, etc.) on
-     * a cell. If `fromSubject` is provided, the writer will re-derive
-     * Q's `from` field after each observation that evolves that
-     * subject's state hash. Pushes `cell` onto `activeCells`.
+     * a cell. Pushes `cell` onto `activeCells`.
      */
     template<typename Q>
     std::pair<ValueHandle, SelectorHandle> logSelectorOnCell(
         const std::shared_ptr<const ArgCell> & cell,
         const Q & query,
-        const std::optional<TriePosition> & parent,
-        std::optional<Subject> fromSubject = std::nullopt,
-        Hash fromSubjectArgAncestry = Hash(HashAlgorithm::SHA256))
+        const std::optional<TriePosition> & parent)
     {
         auto valueNum = sink.logSelector(query);
         if (!decisionGraph)
@@ -263,8 +259,6 @@ public:
             qj.dump());
         SelectorHandle qh{selectorHash};
         (void) parent;  // structuralParentFactSetHash retired
-        (void) fromSubject;
-        (void) fromSubjectArgAncestry;
         auto qState = std::make_shared<QState>();
         qState->currentQ = selectorHash;
         /* #178: Q evolution retires. fromSubject / precondition-fold /
