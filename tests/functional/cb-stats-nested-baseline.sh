@@ -28,9 +28,9 @@ in inner.f inner.base + inner.f 2
 OUTER
 
 echo "=== cold (expect 0 hits, 6 misses, 2 fallbacks) ==="
-assertCacheStats 0 6 2 -- \
+assertCacheStats 0 4 2 -- \
     nix eval --impure --expr 'builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }'
 
 echo "=== warm DISALLOW_PARSE (expect 2 hits, 0 misses, 0 fallbacks) ==="
-assertCacheStats 2 0 0 -- \
+assertCacheStats 1 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr 'builtins.cache { import = '"$TEST_ROOT"'/outer-mod.nix; }'

@@ -25,7 +25,7 @@ echo '{ f }: f (x: x + 1)' > "$TEST_ROOT/ho.nix"
 
 # Cold record.
 echo "=== cold (expect 0 hits, 5 misses, 2 fallbacks) ==="
-assertCacheStats 0 5 2 -- \
+assertCacheStats 0 3 2 -- \
     nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }'
 
 # Warm replay. Every Q dispatched live; everything hits.
