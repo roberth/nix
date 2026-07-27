@@ -56,9 +56,9 @@ class ReplayCallbackArg : public Object
        recursively re-evaluates the parent's state hash at the child's
        current edge index, so children don't need to snapshot parent
        state at creation. */
-    Subject subject;
-    /* Initial state hash (= subjectId(subject)) — kept for legacy
-       id-string consumers (e.g. defeatCache's recursive apply
+    trace::SelectorVariant producer;
+    /* Initial state hash (= computeSelectorHash(producer)) — kept for
+       legacy id-string consumers (e.g. defeatCache's recursive apply
        construction). */
     OuterId localId;
     /* Shared history across all proxies in one cb apply. Each validated
@@ -123,13 +123,13 @@ public:
        ...}`. Inherits parent's shared walkFacts so the child's
        state hash evaluation rides on the same per-cb-apply history. */
     ReplayCallbackArg(
-        Subject subject_,
+        trace::SelectorVariant producer_,
         std::shared_ptr<std::vector<ObservationSet>> walkFacts_,
         TracingDecisionGraph & dg,
         ref<SourceRoot> rootFSRoot,
         EvalState * state = nullptr)
-        : subject(std::move(subject_))
-        , localId(subjectId(subject))
+        : producer(std::move(producer_))
+        , localId(TracingDecisionGraph::computeSelectorHash(producer))
         , walkFacts(std::move(walkFacts_))
         , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
 
@@ -187,12 +187,10 @@ public:
         ReplayCallbackArg used as `arg` in `<replay-local-lambda>`'s recursive
         apply) composes ApplyResultSubject with this ReplayCallbackArg's
         evolving Subject. */
-    const Subject * getSubject() const override { return &subject; }
-
     /** #183: producer Selector for the Selector-only identity path. */
     std::optional<trace::SelectorVariant> getProducer() const override
     {
-        return subjectAsSelector(subject);
+        return producer;
     }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;

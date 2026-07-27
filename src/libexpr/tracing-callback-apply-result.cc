@@ -10,12 +10,12 @@ namespace nix {
 TracingCallbackApplyResult::TracingCallbackApplyResult(
     ref<Object> inner_,
     TracingWriter & writer_,
-    Subject applyResultSubject_)
+    trace::SelectorVariant producer_)
     : inner(std::move(inner_))
     , writer(writer_)
-    , applyResultSubject(std::move(applyResultSubject_))
+    , producer(std::move(producer_))
 {
-    auto stateHash = subjectId(applyResultSubject);
+    auto stateHash = TracingDecisionGraph::computeSelectorHash(producer);
     applyArgAncestryStateHashHex = stateHash.to_string(HashFormat::Base16, false);
 }
 
@@ -74,7 +74,7 @@ trace::ResultWHNF & TracingCallbackApplyResult::whnf()
     auto whnfResult = computeWHNFFromObject(*inner);
     /* #185/#186: mirror TracingCallbackArg::whnf — use the value's own
        Selector as the observation, not a GetWHNF wrapper. */
-    recordD2(subjectAsSelector(applyResultSubject), whnfResult);
+    recordD2(producer, whnfResult);
     cachedWHNF = std::move(whnfResult);
     return *cachedWHNF;
 }

@@ -130,16 +130,15 @@ public:
         callers — parent's chain sees a single QCA-per-firing. */
     void emitCallbackApplyForApplyResult(
         const std::shared_ptr<const ArgCell> & callbackCell,
-        const Subject & applyResultSubject,
+        const trace::SelectorVariant & applyResultProducer,
         const trace::ResultWHNF & whnf)
     {
         if (!decisionGraph)
             return;
-        auto * ar = std::get_if<ApplyResultSubject>(&applyResultSubject.data);
-        if (!ar || !ar->fn)
+        auto * ap = std::get_if<trace::SelectorApply>(&applyResultProducer);
+        if (!ap)
             return;
-        auto fnInitial = subjectId(*ar->fn);
-        auto fnInitialHex = fnInitial.to_string(HashFormat::Base16, false);
+        auto fnInitialHex = ap->fn;
 
         /* Cell-based reader (preferred): if a cell with populated
            callbackState is provided, and its fn matches, read from it
@@ -173,10 +172,15 @@ public:
             std::shared_ptr<const ArgCell> attrCell;
             if (!activeCells.empty())
                 attrCell = activeCells.back()->qState->cell.lock();
+            /* Re-derive fn's producer Selector from the SelectorApply
+               payload's `fn` hex — for logOuterObservation's describe
+               log line only; the identity that matters is qca's own
+               content hash. */
+            trace::SelectorGetWHNF fnCarrier{ap->fn};
             logOuterObservation(
                 trace::SelectorVariant{std::move(qca)},
                 trace::ResultVariant{whnf},
-                *ar->fn,
+                trace::SelectorVariant{std::move(fnCarrier)},
                 attrCell);
             return true;
         };
@@ -414,7 +418,7 @@ public:
     void logOuterObservation(
         const trace::SelectorVariant & query,
         const trace::ResultVariant & result,
-        Subject subject,
+        trace::SelectorVariant producer,
         const std::shared_ptr<const ArgCell> & attributionCell = {});
 
     /**

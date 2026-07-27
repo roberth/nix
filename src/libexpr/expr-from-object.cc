@@ -102,14 +102,12 @@ struct OuterApply
 
     /** Invoke `fnObj` on `argObj`. `fnObj` is the outer Object to
         apply (passed by the caller who already holds it — no id
-        round-trip). `fnStateHash` is the Subject-derived state hash
-        used to build the SelectorApply payload (the outer Object typically
-        has no Subject; the wrapping OuterObject computes it).
-        `fnSubject` is the caller's OuterObject's real Subject —
-        used by the wrapper to construct an ApplyResultSubject.
-        Returns the outer's apply-result Object. */
+        round-trip). `fnProducer` is the calling OuterObject's real
+        producer Selector; the SelectorApply payload's `fn` field is
+        `hex(computeSelectorHash(fnProducer))`. Returns the outer's
+        apply-result Object. */
     std::shared_ptr<Object> run(
-        std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject,
+        std::shared_ptr<Object> fnObj, trace::SelectorVariant fnProducer,
         std::shared_ptr<Object> argObj,
         std::shared_ptr<const ArgCell> callerScope);
 };
@@ -133,45 +131,37 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
 
     /* Outer-direction proxies registered live by the ReplayCallbackArg's
        `<replay-local-lambda>` primop (= `registerOuterResolverProxy`).
-       Keyed by `(subject, argAncestry)` so the walker's `resolveIdentity`
-       can match the registered arg's subject-id-evolved state hash at any
-       history-edge index, not just the initial one. List rather than
-       map because subject equality isn't trivially hashable;
-       n_registrations is small (= one per cb-apply the
-       primop fires at). */
+       Keyed by producer content hash so the walker's `resolveIdentity`
+       can match the registered arg by its state-hash-hex. */
     struct LiveProxyEntry
     {
-        Subject subject;
+        trace::SelectorVariant producer;
         std::shared_ptr<Object> obj;
     };
     std::vector<LiveProxyEntry> liveProxies;
 
-    /** Invoke the outer fn Object `fnObj` on `argObj`. `fnStateHash`
-        is the Subject-derived state hash of the wrapping
-        OuterObject, used to build the SelectorApply payload.
-        `fnSubject` is the wrapping OuterObject's real Subject.
-        Returns the outer's apply-result Object. */
+    /** Invoke the outer fn Object `fnObj` on `argObj`. `fnProducer`
+        is the wrapping OuterObject's real producer Selector. Returns
+        the outer's apply-result Object. */
     std::shared_ptr<Object> apply(
-        std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject,
+        std::shared_ptr<Object> fnObj, trace::SelectorVariant fnProducer,
         std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
     {
         return OuterApply{
             bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
             shared_from_this(),
-        }.run(std::move(fnObj), fnStateHash, std::move(fnSubject),
+        }.run(std::move(fnObj), std::move(fnProducer),
               std::move(argObj), std::move(callerScope));
     }
 };
 
 std::shared_ptr<Object> OuterApply::run(
-    std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject,
+    std::shared_ptr<Object> fnObj, trace::SelectorVariant fnProducer,
     std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
 {
-    /* fnId — the Subject-derived state hash of the wrapping OuterObject,
-       used for the SelectorApply payload's `fn` field. The caller
-       computed this from its own Subject + argAncestry; the raw
-       outer Object typically has no Subject. */
-    auto fnId = fnStateHash;
+    /* fnId — the content hash of fn's producer Selector, used for the
+       SelectorApply payload's `fn` field. */
+    auto fnId = TracingDecisionGraph::computeSelectorHash(fnProducer);
     if (!outerState)
         throw Error("outer apply requires outerState");
 
@@ -189,8 +179,8 @@ std::shared_ptr<Object> OuterApply::run(
        boundary maximally predictable — two cb calls observing the
        same way through their args reach the same trie position
        regardless of where the arg's source came from. */
-    Subject argSubject{Arg{localCell->depth}};
-    auto argStateHash = subjectId(argSubject);
+    trace::SelectorArg argProducer{localCell->depth};
+    auto argStateHash = TracingDecisionGraph::computeSelectorHash(argProducer);
     tracingCacheLog("OuterApply::run: argStateHash=%s",
                     argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));
 
@@ -245,8 +235,8 @@ std::shared_ptr<Object> OuterApply::run(
     auto wrappedArg = (innerWriter && outerRootFSRoot
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
-              argObj, argSubject, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell,
-              resultId))
+              argObj, trace::SelectorVariant{argProducer}, *innerWriter,
+              ref<SourceRoot>(outerRootFSRoot), localCell, resultId))
         : argObj;
 
     /* Bridge local arg via ExprFromObject. The cache memoises by
@@ -273,31 +263,15 @@ std::shared_ptr<Object> OuterApply::run(
     }
 
     /* B7: Wrap the cb-apply result so its whnf fires
-       emitCallbackApplyForApplyResult with an applyResultSubject
-       whose fn maps to the CallbackCell we just populated. Without
-       this the QCA emitted from the enclosing apply's TracingObject
-       uses the enclosing apply's fn subject and misses this cell —
-       no QCA lands in the DB and warm can't discriminate siblings.
-
-       Use the caller's real `fnSubject` with its real
-       `fnArgAncestry` — NOT `PostulatedIdempotentRead{fnStateHash}`,
-       which the PIR docstring flags as invalid ("taking an arbitrary
-       subject id by value and using it as if it's an up-to-date id
-       … conflates all possible future states of the argument").
-       subjectId(fnSubject, fnArgAncestry) reproduces
-       fnStateHash (matches cell.fnStateHashHex) at step 0, and
-       evolves as observations on the fn's constituents accumulate
-       during the wrapper's Q chain — so sibling callbacks whose
-       arg-side observations diverge end up at distinct Q_final
-       values instead of colliding at a shared Terminal.
-
-       See doc/status.md B7. */
+       emitCallbackApplyForApplyResult with a producer Selector
+       whose `fn` field maps to the CallbackCell we just populated.
+       Producer = SelectorApply{fn=hex(computeSelectorHash(fnProducer))}.
+       This is the same shape TracingCallbackArg::queryApply and
+       TracingEvaluator::apply build for their apply-result wrappers. */
     if (innerWriter) {
-        Subject argResultSubject{Arg{localCell->depth}};
-        Subject applyResultSubject{ApplyResultSubject{
-            .fn = std::make_shared<const Subject>(fnSubject),
-            .arg = std::make_shared<const Subject>(std::move(argResultSubject)),
-        }};
+        trace::SelectorApply applyProducer{
+            TracingDecisionGraph::computeSelectorHash(fnProducer)
+                .to_string(HashFormat::Base16, false)};
         auto v = innerWriter->getSink().logSelector(applyQuery);
         TriePosition triePos{
             .resultNodeHash = Hash{HashAlgorithm::SHA256},
@@ -305,9 +279,9 @@ std::shared_ptr<Object> OuterApply::run(
         };
         auto wrapped = TracingObject::create(
             ref<Object>(resultObj), *innerWriter, v, triePos);
-        wrapped->withApplyResultSubject(std::move(applyResultSubject));
+        wrapped->withProducer(trace::SelectorVariant{applyProducer});
         /* Mark as cb-apply root: navigation descendants will inherit
-           applyResultSubject so their whnf emits QCA (§7). */
+           the producer so their whnf emits QCA (§7). */
         wrapped->withCbApplyOrigin();
         /* #183: thread the callback cell through so emitCallbackApply
            can read its callbackState directly (no LIFO fallback over
@@ -367,7 +341,7 @@ static PrimOp * makeCachedFnPrimOp(
                            Sibling cb apply invocations share the same
                            Subject and discriminate via their observation
                            factsets, not via state-creep. */
-                        Subject argSubject{Arg{seedCell->depth}};
+                        trace::SelectorArg argProducer{seedCell->depth};
                         /* Per-apply observation context. Captures the
                            outer's probes on the cb arg as they fire
                            through queryFn; distinguishes sibling apply
@@ -384,7 +358,7 @@ static PrimOp * makeCachedFnPrimOp(
                         OuterQueryFn queryFn = [&innerEnv, applyContext](
                             std::shared_ptr<Object> outerObj,
                             const trace::SelectorVariant & q,
-                            Subject subject) {
+                            trace::SelectorVariant producer) {
                             /* Skip the redundant `innerEnv.outerQuery` when
                                `outerObj` already emits its own recording via
                                a QCA-emitting wrapper. Cold otherwise records
@@ -411,7 +385,7 @@ static PrimOp * makeCachedFnPrimOp(
                                 innerEnv.outerQuery(
                                     q,
                                     [&](const trace::SelectorVariant &) { return qr.result; },
-                                    subject,
+                                    producer,
                                     attributionCell);
                             }
                             return qr;
@@ -425,11 +399,10 @@ static PrimOp * makeCachedFnPrimOp(
                            used for the SelectorApply payload. */
                         OuterApplyFn applyFn = [resolver](
                             std::shared_ptr<Object> fnObj,
-                            Hash fnStateHash,
-                            Subject fnSubject,
+                            trace::SelectorVariant fnProducer,
                             std::shared_ptr<Object> argObj,
                             std::shared_ptr<const ArgCell> callerScope) {
-                            return resolver->apply(std::move(fnObj), fnStateHash, std::move(fnSubject),
+                            return resolver->apply(std::move(fnObj), std::move(fnProducer),
                                                     std::move(argObj), std::move(callerScope));
                         };
                         /* lazy-paths: pin OuterObject's path SourceRoot
@@ -437,7 +410,7 @@ static PrimOp * makeCachedFnPrimOp(
                            SourceRoot outlives the Values the outer
                            evaluator builds from any returned RootedPaths. */
                         auto outerArgProxy =
-                            make_ref<OuterObject>(std::move(argSubject), outerArgObj, std::move(queryFn), state.rootFSRoot, std::move(applyFn));
+                            make_ref<OuterObject>(trace::SelectorVariant{argProducer}, outerArgObj, std::move(queryFn), state.rootFSRoot, std::move(applyFn));
                         /* Wire seedCell.liveObject to outerArgProxy now
                            that it exists. This is the deliberate
                            shared_ptr cycle documented on
@@ -608,24 +581,24 @@ std::shared_ptr<OuterResolver> makeOuterResolver(
 
 void registerOuterResolverProxy(
     OuterResolver & resolver,
-    Subject subject,
+    trace::SelectorVariant producer,
     std::shared_ptr<Object> obj)
 {
-    /* Overwrite-on-conflict for the same subject key. The primop
-       only ever registers `Arg{depth}` here, so structural equality
-       reduces to comparing the depth field. Asserting on the variant
-       tag keeps this collapse honest if a future caller passes a
-       different variant. */
-    auto * newSeed = std::get_if<Arg>(&subject.data);
-    assert(newSeed && "registerOuterResolverProxy: subject must be a Arg");
+    /* Overwrite-on-conflict for the same producer key. The primop
+       only ever registers `SelectorArg{depth}` here, so structural
+       equality reduces to comparing the depth field. Asserting on the
+       variant tag keeps this collapse honest if a future caller passes
+       a different variant. */
+    auto * newSeed = std::get_if<trace::SelectorArg>(&producer);
+    assert(newSeed && "registerOuterResolverProxy: producer must be a SelectorArg");
     for (auto & entry : resolver.liveProxies) {
-        auto * existingSeed = std::get_if<Arg>(&entry.subject.data);
+        auto * existingSeed = std::get_if<trace::SelectorArg>(&entry.producer);
         if (existingSeed && existingSeed->depth == newSeed->depth) {
             entry.obj = std::move(obj);
             return;
         }
     }
-    resolver.liveProxies.push_back({std::move(subject), std::move(obj)});
+    resolver.liveProxies.push_back({std::move(producer), std::move(obj)});
 }
 
 std::shared_ptr<Object> tryResolveOuterResolverProxy(
@@ -635,7 +608,7 @@ std::shared_ptr<Object> tryResolveOuterResolverProxy(
 {
     (void) dg;
     for (auto & entry : resolver.liveProxies) {
-        auto stateHash = subjectId(entry.subject);
+        auto stateHash = TracingDecisionGraph::computeSelectorHash(entry.producer);
         if (stateHash == idHash)
             return entry.obj;
     }

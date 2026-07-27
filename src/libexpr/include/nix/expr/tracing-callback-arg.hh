@@ -40,7 +40,7 @@ class TracingWriter;
 class TracingCallbackArg : public Object
 {
     std::shared_ptr<Object> inner;
-    Subject subject;  ///< Static structural identifier
+    trace::SelectorVariant producer;  ///< Static structural identifier as a Selector
     /* The cb apply this local belongs to (= apply's resultId). Used
        to route observations to the correct CallbackCell's
        runningObsSet. Navigation children inherit. */
@@ -48,8 +48,8 @@ class TracingCallbackArg : public Object
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
-    /** This local's state hash, computed on demand from `subject`. */
-    OuterId localId() const { return subjectId(subject); }
+    /** This local's state hash, computed on demand from `producer`. */
+    OuterId localId() const { return TracingDecisionGraph::computeSelectorHash(producer); }
 
     /* The argCell cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;
@@ -67,18 +67,16 @@ class TracingCallbackArg : public Object
 public:
     TracingCallbackArg(
         std::shared_ptr<Object> inner,
-        Subject subject,
+        trace::SelectorVariant producer,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
         std::shared_ptr<const ArgCell> argCell,
         Hash applyId = Hash(HashAlgorithm::SHA256));
 
-    const Subject * getSubject() const override { return &subject; }
-
     /** #183: producer Selector for the Selector-only identity path. */
     std::optional<trace::SelectorVariant> getProducer() const override
     {
-        return subjectAsSelector(subject);
+        return producer;
     }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }

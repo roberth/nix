@@ -36,10 +36,10 @@ class TracingObject : public Object
        ancestor chain. */
     std::shared_ptr<const ArgCell> argCell;
 
-    /* For apply-result wrappers: the subject-id Subject that identifies
-       this apply structurally (ApplyResultSubject{fn, arg}). Null on
+    /* For apply-result wrappers: the producer Selector that identifies
+       this apply structurally (SelectorApply{fn=...}). Null on
        non-apply-result wrappers (= navigation children). */
-    std::optional<Subject> applyResultSubject;
+    std::optional<trace::SelectorVariant> producer;
 
     /* True on wrappers rooted at a cb-apply (OuterApply::run) and on
        navigation descendants of such wrappers. Gates whether children
@@ -82,12 +82,12 @@ public:
         return *this;
     }
 
-    /** Attach the apply-result structural identity — for apply-result
-        wrappers, so subsequent child queries emit at the evolved state hash.
+    /** Attach the apply-result producer Selector — for apply-result
+        wrappers, so subsequent child queries hang off this producer.
         Mirrors TracingReplayObject's machinery. */
-    TracingObject & withApplyResultSubject(Subject subject)
+    TracingObject & withProducer(trace::SelectorVariant p)
     {
-        applyResultSubject = std::move(subject);
+        producer = std::move(p);
         return *this;
     }
 
@@ -104,15 +104,15 @@ public:
 
     /** Mark this wrapper as originating from a callback-application
         boundary (OuterApply::run). Descendants of a cb-apply-marked
-        wrapper inherit the mark and inherit `applyResultSubject`
-        through navigation, so their own whnf fires
+        wrapper inherit the mark and inherit `producer` through
+        navigation, so their own whnf fires
         emitCallbackApplyForApplyResult against the enclosing
         CallbackCell (callback-model §7). Non-cb apply results (e.g.
         inner's own function application in TracingEvaluator::apply)
         leave this false so their children stay order-independent —
-        the propagation of applyResultSubject to children would
-        otherwise route their evolvedQueryFrom through applyContext
-        and break tests like cb-deep-indep-orders. */
+        the propagation of `producer` to children would otherwise
+        route their evolvedQueryFrom through applyContext and break
+        tests like cb-deep-indep-orders. */
     TracingObject & withCbApplyOrigin()
     {
         cbApplyOrigin = true;
@@ -129,28 +129,13 @@ public:
 
     std::shared_ptr<ApplyContext> getApplyContext() const { return applyContext; }
 
-    /** Expose the apply-result structural Subject when this wrapper
-        is itself an apply result (= curried fn for the next apply, or
-        target of further queries). Surfacing the Subject lets the
-        next apply build `ApplyResultSubject{fn=this.subject, ...}`
-        with constituents whose state hashes *evolve* via subject-id own-loop,
-        instead of falling back to `PostulatedIdempotentRead{this.state hash}` which
-        freezes the state hash at construction time. Non-apply-result
-        wrappers (= fresh from evalFile, navigation children)
-        legitimately have no Subject — for those, the PostulatedIdempotentRead
-        fallback in callers describes an atom whose state hash is fully
-        determined and not subject to observation-driven evolution. */
-    const Subject * getSubject() const override
-    {
-        return applyResultSubject ? &*applyResultSubject : nullptr;
-    }
-
-    /** #183: producer Selector for the Selector-only identity path. */
+    /** #183: producer Selector for the Selector-only identity path.
+        Non-apply-result wrappers (= fresh from evalFile, navigation
+        children) return nullopt; callers fall back to
+        `SelectorGetWHNF{from=stateHashHex}` as the raw-hash carrier. */
     std::optional<trace::SelectorVariant> getProducer() const override
     {
-        if (applyResultSubject)
-            return subjectAsSelector(*applyResultSubject);
-        return std::nullopt;
+        return producer;
     }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }

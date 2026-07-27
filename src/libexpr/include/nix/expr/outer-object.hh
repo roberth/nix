@@ -35,28 +35,24 @@ struct OuterQueryResult
 
 /**
  * Callback type for issuing outer queries. Takes the outer Object
- * to query, the query itself, and the caller's Subject (for log
- * attribution at the writer). Passing the outer Object directly
- * (rather than an id) reflects that OuterObject wraps a specific
- * Object from a different Interpreter.
+ * to query, the query itself, and the caller's producer Selector
+ * (identifies the caller for logging + attribution). Passing the
+ * outer Object directly (rather than an id) reflects that OuterObject
+ * wraps a specific Object from a different Interpreter.
  */
 using OuterQueryFn = std::function<OuterQueryResult(
     std::shared_ptr<Object> outerObj,
     const trace::SelectorVariant &,
-    Subject)>;
+    trace::SelectorVariant producer)>;
 
 /**
  * Callback type for outer function application. Takes the outer fn
- * Object, its Subject-derived state hash (used to build the
- * SelectorApply payload — the outer Object itself typically has no
- * Subject, so the wrapping OuterObject computes and passes this),
- * `fnSubject` (the calling OuterObject's own Subject — used to
- * construct the apply-result's ApplyResultSubject with a real
- * evolving fn root, rather than a `PostulatedIdempotentRead{fnStateHash}`
- * shortcut that the PIR docstring flags as invalid), the argument
- * Object, and the calling OuterObject's effective argCell (the chain
- * root from which the new local cell's depth descends). Returns the
- * outer's apply-result Object.
+ * Object, the calling OuterObject's producer Selector (identifies
+ * the fn for the SelectorApply payload — the outer Object itself
+ * typically has no producer, so the wrapping OuterObject provides
+ * it), the argument Object, and the calling OuterObject's effective
+ * argCell (the chain root from which the new local cell's depth
+ * descends). Returns the outer's apply-result Object.
  *
  * Why pass `callerScope`: the cb is reached via a navigation chain
  * (e.g. arg.items[0]), and `fnObj` may not carry a proxy parent chain
@@ -66,8 +62,7 @@ using OuterQueryFn = std::function<OuterQueryResult(
  */
 using OuterApplyFn = std::function<std::shared_ptr<Object>(
     std::shared_ptr<Object> fnObj,
-    Hash fnStateHash,
-    Subject fnSubject,
+    trace::SelectorVariant fnProducer,
     std::shared_ptr<Object> argObj,
     std::shared_ptr<const ArgCell> callerScope)>;
 
@@ -78,7 +73,9 @@ using OuterApplyFn = std::function<std::shared_ptr<Object>(
  */
 class OuterObject : public Object
 {
-    Subject subject; ///< Static structural identifier (positional/derived/apply)
+    /** #183: producer Selector — the SelectorVariant whose content hash
+        IS this OuterObject's identity. */
+    trace::SelectorVariant producer;
     /* The Object from the outer Interpreter this proxy wraps.
        Methods on OuterObject dispatch through this reference: the
        inner side asks OuterObject (via Object interface), OuterObject
@@ -117,17 +114,13 @@ class OuterObject : public Object
     trace::ResultWHNF & whnf();
 
 public:
-    OuterObject(Subject subject, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn = {});
+    OuterObject(trace::SelectorVariant producer, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn = {});
 
-    /** This proxy's structural identity (positional / derived /
-        apply-result), per the subject-id design. */
-    const Subject * getSubject() const override { return &subject; }
-
-    /** #183: producer Selector for the Selector-only identity path.
-        Coexists with getSubject during migration. */
+    /** #183: producer Selector — the SelectorVariant whose content hash
+        is this OuterObject's identity. */
     std::optional<trace::SelectorVariant> getProducer() const override
     {
-        return subjectAsSelector(subject);
+        return producer;
     }
 
     /** Set the proxy's argCell. Call right after construction at
@@ -178,24 +171,14 @@ public:
      */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 
-    /* #183: query-space identity — the Q hash of the Selector chain
-       that produced this OuterObject. Set for navigation children
-       (via `withProducingQHex` at maybeGetAttr etc.); nullopt for
-       root OuterObjects (which fall back to subjectId of their
-       Subject — a stable structural id for outer args at the
-       cache boundary). */
-    std::optional<std::string> producingQHex;
-
-    OuterObject & withProducingQHex(std::string hex)
-    {
-        producingQHex = std::move(hex);
-        return *this;
-    }
-
+    /** State-hash hex = content hash of the stored producer Selector.
+        Under Q-space identity every OuterObject has a stable identity
+        derived from its producer — no separate `producingQHex`
+        override needed. */
     std::optional<std::string> getStateHashHex() const override
     {
-        if (producingQHex) return *producingQHex;
-        return subjectId(subject).to_string(HashFormat::Base16, false);
+        return TracingDecisionGraph::computeSelectorHash(producer)
+            .to_string(HashFormat::Base16, false);
     }
 };
 

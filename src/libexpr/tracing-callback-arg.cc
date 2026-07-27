@@ -18,13 +18,13 @@ static std::string tracingLocalFromOf(OuterId id)
 
 TracingCallbackArg::TracingCallbackArg(
     std::shared_ptr<Object> inner,
-    Subject subject_,
+    trace::SelectorVariant producer_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
     std::shared_ptr<const ArgCell> argCell,
     Hash applyId_)
     : inner(std::move(inner))
-    , subject(std::move(subject_))
+    , producer(std::move(producer_))
     , applyId(std::move(applyId_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
@@ -49,13 +49,9 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
         return nullptr;
     trace::SelectorGetAttr query{name, tracingLocalFromOf(localId())};
     recordObservation(query, computeWHNFFromObject(*child));
-    Subject childSubject{DerivedSubject{
-        .parent = std::make_shared<const Subject>(subject),
-        .kind = DerivedSubject::Kind::GetAttr,
-        .name = name,
-    }};
+    trace::SelectorVariant childProducer{query};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, applyId);
+        std::move(child), std::move(childProducer), writer, rootFSRoot, argCell, applyId);
 }
 
 trace::ResultWHNF & TracingCallbackArg::whnf()
@@ -68,7 +64,7 @@ trace::ResultWHNF & TracingCallbackArg::whnf()
        descendant, etc. Retires the SelectorGetWHNF wrapper for this
        role: the observation IS "this value observed to have WHNF X",
        whose natural Selector is the value's own producer. */
-    recordObservation(subjectAsSelector(subject), whnfResult);
+    recordObservation(producer, whnfResult);
     cachedWHNF = std::move(whnfResult);
     return *cachedWHNF;
 }
@@ -168,13 +164,9 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
     auto child = inner->getListElem(index);
     trace::SelectorGetListElem query{tracingLocalFromOf(localId()), index};
     recordObservation(query, computeWHNFFromObject(*child));
-    Subject childSubject{DerivedSubject{
-        .parent = std::make_shared<const Subject>(subject),
-        .kind = DerivedSubject::Kind::GetListElem,
-        .index = index,
-    }};
+    trace::SelectorVariant childProducer{query};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, applyId);
+        std::move(child), std::move(childProducer), writer, rootFSRoot, argCell, applyId);
 }
 
 ObjectType TracingCallbackArg::getTypeLazy()
@@ -250,24 +242,15 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        throws "can't validate" — a divergence exception the walker
        turns into a cache miss.
 
-       The result wrapper carries an ApplyResultSubject so accesses
-       on the apply result continue to be routed through
-       logCallbackObservation with an evolved state hash (per the
-       subject-id design). */
-    auto argSubjectHashHex = argObj->getStateHashHex();
-    Subject argSubject = argObj->getSubject()
-        ? *argObj->getSubject()
-        : Subject{PostulatedIdempotentRead{
-              argSubjectHashHex
-                  ? Hash::parseNonSRIUnprefixed(*argSubjectHashHex, HashAlgorithm::SHA256)
-                  : Hash{HashAlgorithm::SHA256}}};
+       The result wrapper carries a SelectorApply producer so accesses
+       on the apply result continue to be routed through the enclosing
+       callback cell. Arg identity flows through the cell/facts, not
+       through the payload (#181). */
     auto result = inner->queryApply(argObj);
-    Subject resultSubject{ApplyResultSubject{
-        .fn = std::make_shared<const Subject>(subject),
-        .arg = std::make_shared<const Subject>(std::move(argSubject)),
-    }};
+    trace::SelectorApply resultQ{tracingLocalFromOf(localId())};
+    trace::SelectorVariant resultProducer{resultQ};
     return std::make_shared<TracingCallbackArg>(
-        std::move(result), std::move(resultSubject), writer, rootFSRoot, argCell, applyId);
+        std::move(result), std::move(resultProducer), writer, rootFSRoot, argCell, applyId);
 }
 
 } // namespace nix

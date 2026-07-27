@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "nix/expr/outer-object.hh"
+#include "nix/expr/tracing-decision-graph.hh"
 #include "nix/util/source-accessor.hh"
 
 namespace nix {
@@ -12,17 +13,24 @@ static ref<SourceRoot> stubAmbientRoot()
     return SourceRoot::make(getFSSourceAccessor(), SourceRootKind::Internal);
 }
 
-/* Tests use PostulatedIdempotentRead to pin the proxy's content id to a
-   stable per-test value. The Subject variant exists for cases like
-   apply-result args that don't have a positional/derived form. */
+/* Producer Selector for a test OuterObject. #183: identity is the
+   content hash of the producer Selector. Using SelectorGetWHNF with
+   a per-test `from` hex distinguishes proxies without hitting real
+   trace payloads. */
 static Hash testId(int n)
 {
     return hashString(HashAlgorithm::SHA256, "test:" + std::to_string(n));
 }
 
-static Subject testSubject(int n)
+static trace::SelectorVariant testProducer(int n)
 {
-    return Subject{PostulatedIdempotentRead{testId(n)}};
+    return trace::SelectorGetWHNF{testId(n).to_string(HashFormat::Base16, false)};
+}
+
+static std::string producerHex(int n)
+{
+    return TracingDecisionGraph::computeSelectorHash(testProducer(n))
+        .to_string(HashFormat::Base16, false);
 }
 
 /* Stub outer Object — OuterObject requires holding a shared_ptr to
@@ -53,25 +61,19 @@ static std::shared_ptr<Object> stubOuter()
     return std::make_shared<StubOuterObject>();
 }
 
-static std::string ambientHex(Hash id)
-{
-    return id.to_string(HashFormat::Base16, false);
-}
-
 /**
- * Mock resolver: maps `"tag:ambientHex(subject-state-hash)"` strings to
- * predetermined results. Keying on the caller's Subject's state hash
- * distinguishes the parent OuterObject's queries from derived
- * children's queries.
+ * Mock resolver: maps `"tag:producerHex"` strings to predetermined
+ * results. Keying on the caller's producer content hash distinguishes
+ * the parent OuterObject's queries from derived children's queries.
  */
 static OuterQueryFn mockResolver(std::map<std::string, trace::ResultVariant> responses)
 {
     return [responses = std::move(responses)](
                std::shared_ptr<Object> /*outerObj*/,
                const trace::SelectorVariant & q,
-               Subject subject) -> OuterQueryResult {
-        auto stateHash = subjectId(subject);
-        std::string objHex = ambientHex(stateHash);
+               trace::SelectorVariant producer) -> OuterQueryResult {
+        auto stateHash = TracingDecisionGraph::computeSelectorHash(producer);
+        std::string objHex = stateHash.to_string(HashFormat::Base16, false);
         std::string key = std::visit(
             [&](const auto & query) -> std::string {
                 return std::string(query.tag) + ":" + objHex;
@@ -91,68 +93,59 @@ static OuterQueryFn mockResolver(std::map<std::string, trace::ResultVariant> res
 
 TEST(AmbientObjectTest, GetType)
 {
-    auto arg = subjectId(testSubject(0));
+    auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
-        testSubject(0),
+        testProducer(0),
         stubOuter(),
-        mockResolver({{"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
+        mockResolver({{"getWHNF:" + arg, trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
         stubAmbientRoot());
     EXPECT_EQ(obj->getType(), nInt);
 }
 
 TEST(AmbientObjectTest, GetInt)
 {
-    auto arg = subjectId(testSubject(0));
+    auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
-        testSubject(0),
+        testProducer(0),
         stubOuter(),
-        mockResolver({{"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
+        mockResolver({{"getWHNF:" + arg, trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
         stubAmbientRoot());
     EXPECT_EQ(obj->getInt().value, 42);
 }
 
 TEST(AmbientObjectTest, GetString)
 {
-    auto arg = subjectId(testSubject(0));
+    auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
-        testSubject(0),
+        testProducer(0),
         stubOuter(),
-        mockResolver({{"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"string", trace::WHNFString{"hello", {}}}}}),
+        mockResolver({{"getWHNF:" + arg, trace::ResultWHNF{"string", trace::WHNFString{"hello", {}}}}}),
         stubAmbientRoot());
     EXPECT_EQ(obj->getStringIgnoreContext(), "hello");
 }
 
 TEST(AmbientObjectTest, GetBool)
 {
-    auto arg = subjectId(testSubject(0));
+    auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
-        testSubject(0),
+        testProducer(0),
         stubOuter(),
-        mockResolver({{"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"bool", trace::WHNFBool{true}}}}),
+        mockResolver({{"getWHNF:" + arg, trace::ResultWHNF{"bool", trace::WHNFBool{true}}}}),
         stubAmbientRoot());
     EXPECT_TRUE(obj->getBool());
 }
 
 TEST(AmbientObjectTest, GetAttrReturnsChild)
 {
-    auto arg = subjectId(testSubject(0));
-    /* Child scopeStateId is the producer query's selectorHash. With Subject-based
-       construction the OuterObject derives this from DerivedSubject
-       at construction time. */
-    auto childStateHash = subjectId(Subject{DerivedSubject{
-            .parent = std::make_shared<const Subject>(testSubject(0)),
-            .kind = DerivedSubject::Kind::GetAttr,
-            .name = "x",
-        }});
-    (void)childStateHash;
+    auto arg = producerHex(0);
     /* Under the fold, existence is projected from parent WHNFAttrs.names;
        retrieval is a SelectorGetAttr returning child WHNF. */
     auto obj = std::make_shared<OuterObject>(
-        testSubject(0),
+        testProducer(0),
         stubOuter(),
         mockResolver({
-            {"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"set", trace::WHNFAttrs{{"x"}}}},
-            {"getAttr:" + ambientHex(arg), trace::ResultWHNF{"int", trace::WHNFInt{99}}},
+            {"getWHNF:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{"x"}}}},
+            {"getAttr:" + arg, trace::ResultWHNF{"int", trace::WHNFInt{99}}},
         }),
         stubAmbientRoot());
     auto child = obj->maybeGetAttr("x");
@@ -162,13 +155,13 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
 
 TEST(AmbientObjectTest, GetAttrMissing)
 {
-    auto arg = subjectId(testSubject(0));
+    auto arg = producerHex(0);
     /* Parent has an empty name list — projection yields "missing". No
        getAttr query is issued. */
     auto obj = std::make_shared<OuterObject>(
-        testSubject(0), stubOuter(),
+        testProducer(0), stubOuter(),
         mockResolver({
-            {"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"set", trace::WHNFAttrs{{}}}},
+            {"getWHNF:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{}}}},
         }),
         stubAmbientRoot());
     EXPECT_EQ(obj->maybeGetAttr("missing"), nullptr);
@@ -176,21 +169,15 @@ TEST(AmbientObjectTest, GetAttrMissing)
 
 TEST(AmbientObjectTest, GetListElem)
 {
-    auto arg = subjectId(testSubject(0));
-    auto childStateHash = subjectId(Subject{DerivedSubject{
-            .parent = std::make_shared<const Subject>(testSubject(0)),
-            .kind = DerivedSubject::Kind::GetListElem,
-            .index = 1,
-        }});
-    (void)childStateHash;
+    auto arg = producerHex(0);
     /* Under the fold, bounds are projected from parent WHNFList.size;
        retrieval is SelectorGetListElem returning child WHNF. */
     auto obj = std::make_shared<OuterObject>(
-        testSubject(0),
+        testProducer(0),
         stubOuter(),
         mockResolver({
-            {"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"list", trace::WHNFList{5}}},
-            {"getListElem:" + ambientHex(arg), trace::ResultWHNF{"string", trace::WHNFString{"world", {}}}},
+            {"getWHNF:" + arg, trace::ResultWHNF{"list", trace::WHNFList{5}}},
+            {"getListElem:" + arg, trace::ResultWHNF{"string", trace::WHNFString{"world", {}}}},
         }),
         stubAmbientRoot());
     auto child = obj->getListElem(1);
@@ -200,12 +187,12 @@ TEST(AmbientObjectTest, GetListElem)
 
 TEST(AmbientObjectTest, GetAttrNames)
 {
-    auto arg = subjectId(testSubject(0));
+    auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
-        testSubject(0),
+        testProducer(0),
         stubOuter(),
         mockResolver({
-            {"getWHNF:" + ambientHex(arg), trace::ResultWHNF{"set", trace::WHNFAttrs{{"a", "b", "c"}}}},
+            {"getWHNF:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{"a", "b", "c"}}}},
         }),
         stubAmbientRoot());
     auto names = obj->getAttrNames();

@@ -42,12 +42,11 @@ class TracingCallbackApplyResult : public Object
     ref<Object> inner;
     TracingWriter & writer;
 
-    /* ApplyResultSubject{PostulatedIdempotentRead{TracingCallbackArg.state hash}, contraArg.subject}.
-       Subject used to attribute observations recorded on the
-       apply-result. */
-    Subject applyResultSubject;
+    /* SelectorApply producer identifying this apply-result. Used to
+       attribute observations recorded on the apply-result. */
+    trace::SelectorVariant producer;
 
-    /* subjectId(applyResultSubject) hex — the content-only apply-result
+    /* computeSelectorHash(producer) hex — the content-only apply-result
        state hash exposed via getStateHashHex. Computed once at
        construction to match `TracingEvaluator::apply`'s
        `applyArgAncestryStateHashHex` (= what the walker computes too). */
@@ -75,7 +74,7 @@ public:
     TracingCallbackApplyResult(
         ref<Object> inner,
         TracingWriter & writer,
-        Subject applyResultSubject);
+        trace::SelectorVariant producer);
 
     TracingCallbackApplyResult & withArgCell(std::shared_ptr<const ArgCell> cell)
     {
@@ -95,12 +94,10 @@ public:
         ApplyResultSubject so a subsequent apply on this wrapper
         composes evolving ApplyResultSubject constituents instead of
         the frozen PostulatedIdempotentRead{applyArgAncestryStateHashHex} fallback. */
-    const Subject * getSubject() const override { return &applyResultSubject; }
-
     /** #183: producer Selector for the Selector-only identity path. */
     std::optional<trace::SelectorVariant> getProducer() const override
     {
-        return subjectAsSelector(applyResultSubject);
+        return producer;
     }
 
     std::optional<std::string> getStateHashHex() const override { return applyArgAncestryStateHashHex; }

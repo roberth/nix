@@ -69,10 +69,10 @@ public:
     virtual trace::ResultVariant outerQuery(
         const trace::SelectorVariant & query,
         std::function<trace::ResultVariant(const trace::SelectorVariant &)> resolve,
-        Subject subject,
+        trace::SelectorVariant producer,
         const std::shared_ptr<const ArgCell> & attributionCell = {})
     {
-        (void) subject;
+        (void) producer;
         (void) attributionCell;
         return resolve(query);
     }

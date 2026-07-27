@@ -331,39 +331,26 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        contra-arg. */
     bool fnIsTlo = dynamic_cast<TracingCallbackArg *>(fn.get_ptr().get()) != nullptr;
 
-    /* Build the ApplyResultSubject from fn/arg constituents.
+    /* Build the apply-result producer Selector.
 
-       Non-TracingCallbackArg: `getSubject()` on each with PostulatedIdempotentRead
-       fallback (= satisfied by fresh-from-evalFile TracingObjects and
-       literal `mk*` Objects per the variant contract).
+       fn's producer surfaces via `getProducer()` — for TracingObject
+       apply-results this is their SelectorApply; for OuterObject / plain
+       proxies the stored SelectorArg / SelectorGetAttr / etc. When
+       nullopt (= fresh from evalFile, literal `mk*`) fall back to
+       `SelectorGetWHNF{from=stateHashHex}` as the raw-hash carrier
+       (Role 4 of #185).
 
-       TracingCallbackArg-fn (= recursive cb-apply): the arg crosses the cb-apply
-       boundary as `Arg{depth+1}` regardless of its
-       outside-the-boundary Subject. Same convention as
-       `OuterObject::queryApply` and the walker's
-       `<replay-local-lambda>` primop. */
+       arg identity is dropped from the payload per #181; discrimination
+       flows through the arg's own cell/facts. Kept the argStateHashStr
+       for logs only. */
     auto fnIdHash = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
-    auto argSubjectHash = Hash::parseNonSRIUnprefixed(argStateHashStr, HashAlgorithm::SHA256);
 
-    Subject fnSubj = fn->getSubject()
-        ? *fn->getSubject()
-        : Subject{PostulatedIdempotentRead{fnIdHash}};
-
-    Subject argSubject;
-    if (fnIsTlo) {
-        auto callerScope = effectiveArgCell(*fn);
-        int localDepth = callerScope ? callerScope->depth + 1 : 0;
-        argSubject = Subject{Arg{localDepth}};
-    } else {
-        argSubject = arg->getSubject()
-            ? *arg->getSubject()
-            : Subject{PostulatedIdempotentRead{argSubjectHash}};
-    }
-
-    Subject resultSubject{ApplyResultSubject{
-        .fn = std::make_shared<const Subject>(std::move(fnSubj)),
-        .arg = std::make_shared<const Subject>(std::move(argSubject)),
-    }};
+    auto fnProducer = fn->getProducer().value_or(
+        trace::SelectorVariant{trace::SelectorGetWHNF{fnStateHashStr}});
+    auto fnQHex = TracingDecisionGraph::computeSelectorHash(fnProducer)
+        .to_string(HashFormat::Base16, false);
+    trace::SelectorApply resultProducer{fnQHex};
+    (void) fnIdHash;
 
     /* #183: one cell per call, tracking the arg. Reuse the arg's
        existing cell (created at the first opportunity, e.g., seedCell
@@ -393,18 +380,13 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         cell->callbackState->fnStateHashHex = fnStateHashStr;
     }
 
-    /* #178: state-hash evolution retired. Compute initial subject id
-       (no fold) with empty history. */
-    auto applyArgAncestryStateHash = subjectId(resultSubject);
+    /* #183: producer content hash IS the apply-result identity. */
+    auto applyArgAncestryStateHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
-    {
-        const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);
-        tracingCacheLog(
-            "writer apply: fn=%s arg=%s -> applyArgAncestryStateHash=%s",
-            describe(*apr.fn),
-            describe(*apr.arg),
-            applyArgAncestryStateHashHex.substr(0, 16));
-    }
+    tracingCacheLog(
+        "writer apply: fn=%s -> applyArgAncestryStateHash=%s",
+        trace::describe(fnProducer),
+        applyArgAncestryStateHashHex.substr(0, 16));
 
     /* Cell-migration Phase B: apply records SelectorApply as a proper
        Selector with its own Terminal, keyed on `cell` (resolved above).
@@ -441,7 +423,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         placeholderWhnf.payload = trace::WHNFFunction{};
         writer.logResult(v, placeholderWhnf, qh, cell);
         auto laro = std::make_shared<TracingCallbackApplyResult>(
-            result, writer, std::move(resultSubject));
+            result, writer, trace::SelectorVariant{resultProducer});
         laro->withArgCell(cell);
         /* #184: the enclosing callback firing's cell is fn's cell — fn
            is a TracingCallbackArg whose argCell IS the OuterApply::run
@@ -458,7 +440,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        SelectorApply's Terminal, wrapper is constructed with
        cachedWHNF ready. */
     auto whnfResult = computeWHNFFromObject(*result);
-    writer.emitCallbackApplyForApplyResult(cell, resultSubject, whnfResult);
+    writer.emitCallbackApplyForApplyResult(cell, trace::SelectorVariant{resultProducer}, whnfResult);
     auto tp = writer.logResult(v, whnfResult, qh, cell);
 
     TriePosition triePos = tp
@@ -474,7 +456,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
           };
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withArgCell(std::move(cell));
-    obj->withApplyResultSubject(std::move(resultSubject));
+    obj->withProducer(trace::SelectorVariant{std::move(resultProducer)});
     obj->withCachedWHNF(std::move(whnfResult));
     if (auto * argAmb = dynamic_cast<OuterObject *>(arg.get_ptr().get())) {
         if (auto ctx = argAmb->getApplyContext())

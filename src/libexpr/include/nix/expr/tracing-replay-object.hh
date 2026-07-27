@@ -43,9 +43,9 @@ class TracingReplayObject : public Object
        option-2 encoding (which routes through the evaluator's
        cumulative envWalk). */
     std::shared_ptr<ApplyContext> applyContext;
-    /* When apply-result, the ApplyResultSubject identifying it
+    /* When apply-result, the producer Selector identifying it
        structurally. */
-    std::optional<Subject> applyResultSubject;
+    std::optional<trace::SelectorVariant> producer;
 
     /* Marks this wrapper as cb-apply-descendant, symmetric to
        TracingObject::cbApplyOrigin. Propagated by navigation. */
@@ -89,28 +89,26 @@ public:
     }
 
     /** Attach the per-apply observation context — for apply-result
-        wrappers, so subsequent queries can compute the evolved
-        state hash via subject-id. */
+        wrappers, so subsequent queries can hang off the producer. */
     TracingReplayObject & withApplyContext(
-        std::shared_ptr<ApplyContext> ctx, Subject resultSubject)
+        std::shared_ptr<ApplyContext> ctx, trace::SelectorVariant resultProducer)
     {
         applyContext = std::move(ctx);
-        applyResultSubject = std::move(resultSubject);
+        producer = std::move(resultProducer);
         return *this;
     }
 
-    /** Attach the apply-result Subject without going through
-        ApplyContext. Mirrors the writer-side
-        `TracingObject::withApplyResultSubject`. */
-    TracingReplayObject & withApplyResultSubject(Subject subject)
+    /** Attach the apply-result producer Selector without going through
+        ApplyContext. Mirrors the writer-side `TracingObject::withProducer`. */
+    TracingReplayObject & withProducer(trace::SelectorVariant p)
     {
-        applyResultSubject = std::move(subject);
+        producer = std::move(p);
         return *this;
     }
 
     /** Symmetric to `TracingObject::withCbApplyOrigin`. Walker
         propagates through navigation children so their
-        `applyResultSubject` matches cold's Q payloads. */
+        `producer` matches cold's Q payloads. */
     TracingReplayObject & withCbApplyOrigin()
     {
         cbApplyOrigin = true;
@@ -144,17 +142,10 @@ public:
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
-    const Subject * getSubject() const override
-    {
-        return applyResultSubject ? &*applyResultSubject : nullptr;
-    }
-
     /** #183: producer Selector for the Selector-only identity path. */
     std::optional<trace::SelectorVariant> getProducer() const override
     {
-        if (applyResultSubject)
-            return subjectAsSelector(*applyResultSubject);
-        return std::nullopt;
+        return producer;
     }
 
     const TriePosition & getTriePos() const

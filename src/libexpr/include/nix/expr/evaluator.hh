@@ -279,22 +279,10 @@ public:
     }
 
     /**
-     * The proxy's static structural identifier — for OuterObject
-     * and TracingCallbackArg, the Subject they carry. Used by the
-     * walker to identify the proxy for a recorded state hash.
-     * Returns null for non-proxy Objects.
-     */
-    virtual const Subject * getSubject() const
-    {
-        return nullptr;
-    }
-
-    /**
-     * #183 (in progress): the Selector that produced this Object —
-     * its content hash IS this Object's identity. Returns nullopt for
-     * Objects without a Selector-shaped producer (raw literals,
-     * non-tracing Objects); callers may fall back to getStateHashHex().
-     * Coexists with getSubject() during the Subject retirement.
+     * #183: the Selector that produced this Object — its content hash
+     * IS this Object's identity. Returns nullopt for Objects without a
+     * Selector-shaped producer (raw literals, non-tracing Objects);
+     * callers may fall back to getStateHashHex().
      */
     virtual std::optional<trace::SelectorVariant> getProducer() const
     {

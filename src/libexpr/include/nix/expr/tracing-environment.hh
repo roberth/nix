@@ -36,7 +36,7 @@ public:
     trace::ResultVariant outerQuery(
         const trace::SelectorVariant & query,
         std::function<trace::ResultVariant(const trace::SelectorVariant &)> resolve,
-        Subject subject,
+        trace::SelectorVariant producer,
         const std::shared_ptr<const ArgCell> & attributionCell = {}) override;
     TraceSink * getTraceSink() override;
 };

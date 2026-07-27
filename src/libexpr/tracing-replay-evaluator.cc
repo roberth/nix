@@ -719,10 +719,10 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                    makeCachedFnPrimOp.impl. */
                 auto parentCell = effectiveArgCell(*fnObj);
                 int argDepth = parentCell ? parentCell->depth + 1 : 0;
-                Subject argSubject{Arg{argDepth}};
+                trace::SelectorArg argProducer{argDepth};
                 auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
                 auto replayArg = std::make_shared<ReplayCallbackArg>(
-                    std::move(argSubject),
+                    trace::SelectorVariant{argProducer},
                     walkFacts,
                     decisionGraph, inner->getEvalState().rootFSRoot,
                     &inner->getEvalState());
@@ -975,40 +975,22 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        per-call observation state — exactly the anti-pattern the
        via-Asks doc's boundary-trace-only discipline calls out. */
 
-    /* Build the ApplyResultSubject from fn/arg constituents — mirror
-       of TracingEvaluator::apply. Use polymorphic `getSubject()` so
-       apply-result wrappers (TracingReplayObject /
-       TracingObject) expose their applyResultSubject as `fn` for
-       further applies — their state hashes evolve via subject-id own-loop
-       instead of being frozen by `PostulatedIdempotentRead{this.state hash}`. Fall
-       back to PostulatedIdempotentRead only when no Subject is exposed
-       (= atom whose state hash is fully determined at construction). */
-    auto fnIdHash = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
-    auto argSubjectHash = Hash::parseNonSRIUnprefixed(argStateHashStr, HashAlgorithm::SHA256);
+    /* Build the apply-result producer — mirror of
+       TracingEvaluator::apply. fn's producer surfaces via
+       `getProducer()`; nullopt falls back to a raw-hash carrier
+       (SelectorGetWHNF{from=stateHashHex}). arg is dropped per #181. */
+    auto fnProducer = fn->getProducer().value_or(
+        trace::SelectorVariant{trace::SelectorGetWHNF{fnStateHashStr}});
+    auto fnQHex = TracingDecisionGraph::computeSelectorHash(fnProducer)
+        .to_string(HashFormat::Base16, false);
+    trace::SelectorApply resultProducer{fnQHex};
 
-    Subject fnSubj = fn->getSubject()
-        ? *fn->getSubject()
-        : Subject{PostulatedIdempotentRead{fnIdHash}};
-
-    Subject argSubject = arg->getSubject()
-        ? *arg->getSubject()
-        : Subject{PostulatedIdempotentRead{argSubjectHash}};
-
-    Subject resultSubject{ApplyResultSubject{
-        .fn = std::make_shared<const Subject>(std::move(fnSubj)),
-        .arg = std::make_shared<const Subject>(std::move(argSubject)),
-    }};
-
-    auto applyArgAncestryStateHash = subjectId(resultSubject);
+    auto applyArgAncestryStateHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
-    {
-        const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);
-        tracingCacheLog(
-            "walker apply: fn=%s arg=%s -> applyArgAncestryStateHash=%s",
-            describe(*apr.fn),
-            describe(*apr.arg),
-            applyArgAncestryStateHashHex.substr(0, 16));
-    }
+    tracingCacheLog(
+        "walker apply: fn=%s -> applyArgAncestryStateHash=%s",
+        trace::describe(fnProducer),
+        applyArgAncestryStateHashHex.substr(0, 16));
 
     /* Cell-migration Phase B: pre-invoke SelectorApply's lookup so the
        applyResult wrapper can be constructed with its cached WHNF
@@ -1067,7 +1049,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
     obj->withArgCell(std::move(cell));
-    obj->withApplyResultSubject(std::move(resultSubject));
+    obj->withProducer(trace::SelectorVariant{std::move(resultProducer)});
     if (cachedWHNF)
         obj->withCachedWHNF(std::move(*cachedWHNF));
     /* Keep the applyContext attachment for the ensureInner-finalisation

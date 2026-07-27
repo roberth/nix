@@ -147,8 +147,8 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
        emits QCA per §7 of the callback model. */
     if (cbApplyOrigin) {
         child->withCbApplyOrigin();
-        if (applyResultSubject)
-            child->withApplyResultSubject(*applyResultSubject);
+        if (producer)
+            child->withProducer(*producer);
     }
     return child;
 }
@@ -163,8 +163,8 @@ trace::ResultWHNF & TracingObject::whnf()
        OUTER-side apply; the callback firing itself goes through
        OuterApply::run. Re-emit here when the wrapper is a
        callback-origin apply result. */
-    if (cbApplyOrigin && applyResultSubject)
-        writer.emitCallbackApplyForApplyResult(argCell, *applyResultSubject, whnfResult);
+    if (cbApplyOrigin && producer)
+        writer.emitCallbackApplyForApplyResult(argCell, *producer, whnfResult);
     /* #185: SelectorGetWHNF emission fully retired. Warm never looks
        these Terminals up:
          - TRO nav descendants + root wrappers have valid
@@ -292,8 +292,8 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     /* B3 / B7 remaining: same cb-apply-origin gating as maybeGetAttr. */
     if (cbApplyOrigin) {
         child->withCbApplyOrigin();
-        if (applyResultSubject)
-            child->withApplyResultSubject(*applyResultSubject);
+        if (producer)
+            child->withProducer(*producer);
     }
     return child;
 }
@@ -371,28 +371,24 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto fnIdHash = Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256);
     auto argSubjectHash = Hash::parseNonSRIUnprefixed(*argIdOpt, HashAlgorithm::SHA256);
 
-    /* Build ApplyResultSubject from fn/arg via polymorphic
-       `getSubject()`. fn = `this`: when this TracingObject is itself
-       an apply result, `getSubject()` surfaces its
-       applyResultSubject — the next apply sees an evolving
-       ApplyResultSubject constituent instead of `PostulatedIdempotentRead{
-       this.triePos}` which would freeze the state hash. Plain TracingObjects
-       (= from evalFile, navigation children) return null and the
-       PostulatedIdempotentRead fallback fires as a fixed-atom identity. */
-    Subject fnSubj = getSubject()
-        ? *getSubject()
-        : Subject{PostulatedIdempotentRead{fnIdHash}};
-    Subject argSubject = argObj->getSubject()
-        ? *argObj->getSubject()
-        : Subject{PostulatedIdempotentRead{argSubjectHash}};
-    Subject resultSubject{ApplyResultSubject{
-        .fn = std::make_shared<const Subject>(std::move(fnSubj)),
-        .arg = std::make_shared<const Subject>(std::move(argSubject)),
-    }};
+    /* Build the apply-result producer Selector.
+       fn = `this`: when this TracingObject is itself an apply result,
+       `getProducer()` surfaces its producer — the next apply's
+       SelectorApply.fn is this Object's real Q hash. Plain
+       TracingObjects (= from evalFile, navigation children) return
+       nullopt and fall back to the raw state-hash-hex from the trie
+       position (Role 4 of #185: SelectorGetWHNF as raw-hash carrier). */
+    auto fnProducer = getProducer().value_or(
+        trace::SelectorVariant{trace::SelectorGetWHNF{
+            fnIdHash.to_string(HashFormat::Base16, false)}});
+    (void) argSubjectHash;
+    auto fnQHex = TracingDecisionGraph::computeSelectorHash(fnProducer)
+        .to_string(HashFormat::Base16, false);
+    trace::SelectorApply resultProducer{fnQHex};
 
     /* apply-result state hash is content-only — see commentary in
        TracingEvaluator::apply. */
-    auto applyArgAncestryStateHash = subjectId(resultSubject);
+    auto applyArgAncestryStateHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
 
     /* Record the apply Request payload at the subject-id hash so dispatch
@@ -410,7 +406,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
         new TracingObject(ref<Object>(result), writer, v, applyTriePos));
     auto cell = ArgCell::make(argCell, argObj);
     child->withArgCell(std::move(cell));
-    child->withApplyResultSubject(std::move(resultSubject));
+    child->withProducer(trace::SelectorVariant{std::move(resultProducer)});
     if (auto * argAmb = dynamic_cast<OuterObject *>(argObj.get())) {
         if (auto ctx = argAmb->getApplyContext())
             child->withApplyContext(std::move(ctx));

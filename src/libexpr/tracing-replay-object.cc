@@ -186,8 +186,8 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
        so their queryHashes match cold's. */
     if (cbApplyOrigin) {
         child->withCbApplyOrigin();
-        if (applyResultSubject)
-            child->withApplyResultSubject(*applyResultSubject);
+        if (producer)
+            child->withProducer(*producer);
     }
     return child;
 }
@@ -376,8 +376,8 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
         /* B3/B7-remaining: cb-apply-origin propagation, symmetric to maybeGetAttr. */
         if (cbApplyOrigin) {
             child->withCbApplyOrigin();
-            if (applyResultSubject)
-                child->withApplyResultSubject(*applyResultSubject);
+            if (producer)
+                child->withProducer(*producer);
         }
         return child;
     }

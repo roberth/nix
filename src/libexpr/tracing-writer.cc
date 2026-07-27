@@ -13,7 +13,7 @@ namespace nix {
 void TracingWriter::logOuterObservation(
     const trace::SelectorVariant & query,
     const trace::ResultVariant & result,
-    Subject subject,
+    trace::SelectorVariant producer,
     const std::shared_ptr<const ArgCell> & attributionCell)
 {
     if (!decisionGraph)
@@ -30,11 +30,12 @@ void TracingWriter::logOuterObservation(
        per-cell factset model, cur at (Q, cur) does the discrimination
        the `from` state hash used to do. Q hashes become stable per
        operation. */
+    auto producerDesc = trace::describe(producer);
     std::string queryTag = std::visit(
         [](const auto & q) -> std::string { return std::string(q.tag); }, query);
     tracingCacheLog(
-        "logOuterObservation: subject=%s query=%s",
-        describe(subject), queryTag);
+        "logOuterObservation: producer=%s query=%s",
+        producerDesc, queryTag);
 
     nlohmann::json queryJson = trace::toJson(query);
     nlohmann::json resultJson;
@@ -55,7 +56,7 @@ void TracingWriter::logOuterObservation(
     if (provenanceEnabled()) {
         recordProvenance(selectorHash, "requestHash-d1",
                          {{"queryJson", queryJson},
-                          {"subject", describe(subject)}});
+                          {"producer", producerDesc}});
         recordProvenance(responseHash, "responseHash-d1",
                          {{"resultJson", resultJson},
                           {"selectorHash", selectorHash.to_string(HashFormat::Base16, false)}});
