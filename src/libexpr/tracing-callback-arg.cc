@@ -22,11 +22,9 @@ TracingCallbackArg::TracingCallbackArg(
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
     std::shared_ptr<const ArgCell> argCell,
-    Hash inheritedScope_,
     Hash applyId_)
     : inner(std::move(inner))
     , subject(std::move(subject_))
-    , argAncestry(std::move(inheritedScope_))
     , applyId(std::move(applyId_))
     , writer(writer)
     , rootFSRoot(std::move(rootFSRoot))
@@ -57,7 +55,7 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
         .name = name,
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, argAncestry, applyId);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, applyId);
 }
 
 trace::ResultWHNF & TracingCallbackArg::whnf()
@@ -70,7 +68,7 @@ trace::ResultWHNF & TracingCallbackArg::whnf()
        descendant, etc. Retires the SelectorGetWHNF wrapper for this
        role: the observation IS "this value observed to have WHNF X",
        whose natural Selector is the value's own producer. */
-    recordObservation(subjectAsSelector(subject, argAncestry), whnfResult);
+    recordObservation(subjectAsSelector(subject), whnfResult);
     cachedWHNF = std::move(whnfResult);
     return *cachedWHNF;
 }
@@ -176,7 +174,7 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
         .index = index,
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, argAncestry, applyId);
+        std::move(child), std::move(childSubject), writer, rootFSRoot, argCell, applyId);
 }
 
 ObjectType TracingCallbackArg::getTypeLazy()
@@ -240,7 +238,7 @@ void TracingCallbackArg::recordObservation(const trace::SelectorVariant & query,
     argCell->callbackState->runningObsSet.push_back({qh, rPayload});
     if (argCell->callbackState->argAncestryHex.empty())
         argCell->callbackState->argAncestryHex =
-            argAncestry.to_string(HashFormat::Base16, false);
+            Hash(HashAlgorithm::SHA256).to_string(HashFormat::Base16, false);
 }
 
 std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> argObj)
@@ -269,7 +267,7 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
     return std::make_shared<TracingCallbackArg>(
-        std::move(result), std::move(resultSubject), writer, rootFSRoot, argCell, argAncestry, applyId);
+        std::move(result), std::move(resultSubject), writer, rootFSRoot, argCell, applyId);
 }
 
 } // namespace nix

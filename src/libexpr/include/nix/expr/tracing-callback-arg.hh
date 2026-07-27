@@ -41,9 +41,6 @@ class TracingCallbackArg : public Object
 {
     std::shared_ptr<Object> inner;
     Subject subject;  ///< Static structural identifier
-    /* Inherited argAncestry: XOR of outer-argAncestry state hashes
-       at the cb-apply. Propagated to navigation children. */
-    Hash argAncestry;
     /* The cb apply this local belongs to (= apply's resultId). Used
        to route observations to the correct CallbackCell's
        runningObsSet. Navigation children inherit. */
@@ -51,9 +48,8 @@ class TracingCallbackArg : public Object
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
-    /** This local's state hash, scoped via argAncestry. Computed
-        on demand from `subject` + `argAncestry`. */
-    OuterId localId() const { return subjectId(subject, argAncestry); }
+    /** This local's state hash, computed on demand from `subject`. */
+    OuterId localId() const { return subjectId(subject); }
 
     /* The argCell cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;
@@ -75,16 +71,14 @@ public:
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
         std::shared_ptr<const ArgCell> argCell,
-        Hash argAncestry = Hash(HashAlgorithm::SHA256),
         Hash applyId = Hash(HashAlgorithm::SHA256));
 
     const Subject * getSubject() const override { return &subject; }
-    Hash getArgAncestry() const override { return argAncestry; }
 
     /** #183: producer Selector for the Selector-only identity path. */
     std::optional<trace::SelectorVariant> getProducer() const override
     {
-        return subjectAsSelector(subject, argAncestry);
+        return subjectAsSelector(subject);
     }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }

@@ -350,22 +350,15 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         : Subject{PostulatedIdempotentRead{fnIdHash}};
 
     Subject argSubject;
-    Hash argArgAncestryForApply{HashAlgorithm::SHA256};
     if (fnIsTlo) {
         auto callerScope = effectiveArgCell(*fn);
         int localDepth = callerScope ? callerScope->depth + 1 : 0;
         argSubject = Subject{Arg{localDepth}};
-        argArgAncestryForApply = Hash{HashAlgorithm::SHA256};
     } else {
         argSubject = arg->getSubject()
             ? *arg->getSubject()
             : Subject{PostulatedIdempotentRead{argSubjectHash}};
-        argArgAncestryForApply = arg->getArgAncestry();
     }
-
-    /* Apply boundary's argAncestry combines fn's and arg's inherited scopes
-       symmetrically but non-commutatively. The walker mirrors this. */
-    Hash applyArgAncestry = combineArgAncestries(fn->getArgAncestry(), argArgAncestryForApply);
 
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),
@@ -402,15 +395,14 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
     /* #178: state-hash evolution retired. Compute initial subject id
        (no fold) with empty history. */
-    auto applyArgAncestryStateHash = subjectId(resultSubject, applyArgAncestry);
+    auto applyArgAncestryStateHash = subjectId(resultSubject);
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(
-            "writer apply: fn=%s arg=%s argAncestry=%s -> applyArgAncestryStateHash=%s",
+            "writer apply: fn=%s arg=%s -> applyArgAncestryStateHash=%s",
             describe(*apr.fn),
             describe(*apr.arg),
-            applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
             applyArgAncestryStateHashHex.substr(0, 16));
     }
 
@@ -449,7 +441,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         placeholderWhnf.payload = trace::WHNFFunction{};
         writer.logResult(v, placeholderWhnf, qh, cell);
         auto laro = std::make_shared<TracingCallbackApplyResult>(
-            result, writer, std::move(resultSubject), applyArgAncestry);
+            result, writer, std::move(resultSubject));
         laro->withArgCell(cell);
         /* #184: the enclosing callback firing's cell is fn's cell — fn
            is a TracingCallbackArg whose argCell IS the OuterApply::run
@@ -466,7 +458,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        SelectorApply's Terminal, wrapper is constructed with
        cachedWHNF ready. */
     auto whnfResult = computeWHNFFromObject(*result);
-    writer.emitCallbackApplyForApplyResult(cell, resultSubject, applyArgAncestry, whnfResult);
+    writer.emitCallbackApplyForApplyResult(cell, resultSubject, whnfResult);
     auto tp = writer.logResult(v, whnfResult, qh, cell);
 
     TriePosition triePos = tp
@@ -482,7 +474,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
           };
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withArgCell(std::move(cell));
-    obj->withApplyResultSubject(std::move(resultSubject), applyArgAncestry);
+    obj->withApplyResultSubject(std::move(resultSubject));
     obj->withCachedWHNF(std::move(whnfResult));
     if (auto * argAmb = dynamic_cast<OuterObject *>(arg.get_ptr().get())) {
         if (auto ctx = argAmb->getApplyContext())

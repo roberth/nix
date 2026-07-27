@@ -22,7 +22,6 @@ template <typename Q>
 static Hash stampPerArgFields(
     Q & query,
     const Subject & subject,
-    const Hash & argAncestry,
     const std::vector<ObservationSet> & walkFacts,
     size_t step)
 {
@@ -31,7 +30,6 @@ static Hash stampPerArgFields(
        queryHashes. */
     (void) query;
     (void) subject;
-    (void) argAncestry;
     (void) walkFacts;
     (void) step;
     return Hash(HashAlgorithm::SHA256);
@@ -101,7 +99,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     if (std::find(ap->names.begin(), ap->names.end(), name) == ap->names.end())
         return nullptr;
     trace::SelectorGetAttr query{name, std::string{}};
-    auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
+    auto fromStateHash = stampPerArgFields(query, subject, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     /* Child Subject is DerivedSubject of THIS subject — `stateHashAt`
@@ -114,7 +112,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
         .name = name,
     }};
     auto child = std::make_shared<ReplayCallbackArg>(
-        std::move(childSubject), argAncestry, walkFacts,
+        std::move(childSubject), walkFacts,
         decisionGraph, rootFSRoot, state);
     child->cachedWHNF = rJson.get<trace::ResultWHNF>();
     /* Derived children probe within the same callback firing, so
@@ -127,8 +125,8 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
        the same cb-arg's depth/argAncestry (= the nested apply's positional
        depth is one deeper than the cb-arg's, regardless of how many
        getAttr/getListElem steps deep the apply happens). */
-    if (applyDepth && applyArgAncestry)
-        child->withApplyContext(*applyDepth, *applyArgAncestry);
+    if (applyDepth)
+        child->withApplyContext(*applyDepth);
     return child;
 }
 
@@ -140,10 +138,10 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
        is keyed on the value's own Selector (SelectorArg for a
        positional arg, SelectorGetAttr for a nav descendant, etc.),
        not a SelectorGetWHNF wrapper. */
-    auto sel = subjectAsSelector(subject, argAncestry);
+    auto sel = subjectAsSelector(subject);
     auto rJson = std::visit(
         [&](const auto & q) -> nlohmann::json {
-            auto fromStateHash = stampPerArgFields(q, subject, argAncestry, *walkFacts, walkFacts->size());
+            auto fromStateHash = stampPerArgFields(q, subject, *walkFacts, walkFacts->size());
             auto r = readResponse(decisionGraph, q, obsSetResponses);
             appendFactToWalk(q, fromStateHash, r, *walkFacts);
             return r;
@@ -242,7 +240,7 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
     if (!lp || index >= lp->size)
         throw Error("rlo getListElem: parent WHNF is %s, index %zu invalid", w.type, index);
     trace::SelectorGetListElem query{std::string{}, index};
-    auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
+    auto fromStateHash = stampPerArgFields(query, subject, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     Subject childSubject{DerivedSubject{
@@ -251,12 +249,12 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
         .index = index,
     }};
     auto child = std::make_shared<ReplayCallbackArg>(
-        std::move(childSubject), argAncestry, walkFacts,
+        std::move(childSubject), walkFacts,
         decisionGraph, rootFSRoot, state);
     child->cachedWHNF = rJson.get<trace::ResultWHNF>();
     child->withArgCell(argCell);
-    if (applyDepth && applyArgAncestry)
-        child->withApplyContext(*applyDepth, *applyArgAncestry);
+    if (applyDepth)
+        child->withApplyContext(*applyDepth);
     return child;
 }
 
@@ -311,7 +309,6 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
     auto subjectSaved = subject;
     auto walkFactsSaved = walkFacts;
     auto applyDepthSaved = applyDepth;
-    auto applyArgAncestrySaved = applyArgAncestry;
     /* Capture the resolver so the primop can register the live arg
        it receives (args[0]) as an outer-direction proxy. The OUTER
        walker dispatches env facts whose `from` references the cb-arg
@@ -334,7 +331,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
             .arity = 1,
             .impl = [dg, rootFSRootSaved, subjectSaved,
                      walkFactsSaved, initialWalkFactsSize,
-                     applyDepthSaved, applyArgAncestrySaved,
+                     applyDepthSaved,
                      resolverSaved](
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
                 /* Publish the live arg under the cb-arg arg's
@@ -357,7 +354,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                         state, allocRootValue(args[0]));
                     registerOuterResolverProxy(
                         *resolverSaved, std::move(argSubject),
-                        *applyArgAncestrySaved, std::move(outerArgObj));
+                        std::move(outerArgObj));
                 }
                 /* Each primop firing replays the ReplayCallbackArg's
                    synthetic-probe sequence on a LOCAL copy of walkFacts
@@ -408,30 +405,18 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     .arg = std::make_shared<const Subject>(std::move(argSubject)),
                 }};
 
-                /* Apply argAncestry: Merkle(fn.argAncestry, arg.argAncestry). The arg
-                   crosses the boundary as a fresh positional arg
-                   (argAncestry=0); fn carries applyArgAncestrySaved (= callArgAncestry
-                   from sidecar). Used for stamping the apply Fact AND
-                   for the synthetic's downstream probes — both
-                   mirror the writer's `TracingCallbackApplyResult` whose
-                   argAncestry is the same Merkle. */
-                Hash mergedApplyScope = combineArgAncestries(
-                    *applyArgAncestrySaved, Hash{HashAlgorithm::SHA256});
-
                 /* Synthetic shares the LOCAL history so its probes
                    don't pollute the ReplayCallbackArg's persistent
-                   state. Scope = mergedApplyScope — matches writer's
-                   `TracingCallbackApplyResult` which carries this same
-                   Merkle argAncestry for its downstream observations. */
+                   state. */
                 auto synthetic = std::make_shared<ReplayCallbackArg>(
-                    std::move(syntheticSubject), mergedApplyScope,
+                    std::move(syntheticSubject),
                     localWalkFacts,
                     *dg, rootFSRootSaved, &state);
                 /* Propagate apply context so a nested cb-higher-order
                    case (= the apply result is itself a function whose
                    `toValueOrProxy` builds another `<replay-local-lambda>`
-                   primop) composes the right depth/argAncestry downstream. */
-                synthetic->withApplyContext(*applyDepthSaved, *applyArgAncestrySaved);
+                   primop) composes the right depth downstream. */
+                synthetic->withApplyContext(*applyDepthSaved);
 
                 /* Convert to a Value. ExprFromObject probes
                    synthetic for type/scalar value and constructs the
@@ -447,7 +432,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
 std::optional<FunctionInfo> ReplayCallbackArg::getFunctionInfo()
 {
     trace::SelectorGetFunctionInfo query{std::string{}};
-    auto fromStateHash = stampPerArgFields(query, subject, argAncestry, *walkFacts, walkFacts->size());
+    auto fromStateHash = stampPerArgFields(query, subject, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
     appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
     trace::ResultFunctionInfo r = rJson;

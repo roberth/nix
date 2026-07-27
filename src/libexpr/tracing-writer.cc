@@ -14,7 +14,6 @@ void TracingWriter::logOuterObservation(
     const trace::SelectorVariant & query,
     const trace::ResultVariant & result,
     Subject subject,
-    Hash argAncestry,
     const std::shared_ptr<const ArgCell> & attributionCell)
 {
     if (!decisionGraph)
@@ -30,21 +29,14 @@ void TracingWriter::logOuterObservation(
     /* #178: state-hash `from` field stamping retires. Under the
        per-cell factset model, cur at (Q, cur) does the discrimination
        the `from` state hash used to do. Q hashes become stable per
-       operation. The caller-supplied `query` is used as-is; its
-       `from`/`perArgFrame`/`fromStateHashes` fields (still present
-       on the wire until the Selector types get pruned) stay at their
-       caller-set values (typically defaults). */
-    (void) argAncestry;  // no longer used for stamping
-    Hash fromStateHash(HashAlgorithm::SHA256);
-
+       operation. */
     std::string queryTag = std::visit(
         [](const auto & q) -> std::string { return std::string(q.tag); }, query);
     tracingCacheLog(
         "logOuterObservation: subject=%s query=%s",
         describe(subject), queryTag);
 
-    trace::SelectorVariant stampedQuery = query;
-    nlohmann::json queryJson = trace::toJson(stampedQuery);
+    nlohmann::json queryJson = trace::toJson(query);
     nlohmann::json resultJson;
     std::visit([&](const auto & r) { resultJson = r; }, result);
 
@@ -63,18 +55,13 @@ void TracingWriter::logOuterObservation(
     if (provenanceEnabled()) {
         recordProvenance(selectorHash, "requestHash-d1",
                          {{"queryJson", queryJson},
-                          {"subject", describe(subject)},
-                          {"argAncestry", argAncestry.to_string(HashFormat::Base16, false)}});
+                          {"subject", describe(subject)}});
         recordProvenance(responseHash, "responseHash-d1",
                          {{"resultJson", resultJson},
                           {"selectorHash", selectorHash.to_string(HashFormat::Base16, false)}});
     }
 
     decisionGraph->insertRequest(selectorHash, jsonToCborString(queryJson));
-
-    /* #178: secondary getter-index at initial-history state hash
-       retires with the primary stamping. Selector hashes are now
-       stable per operation; the fallback lookup index is redundant. */
 
     auto elementHash = TracingDecisionGraph::xorFactIntoHash(
         Hash(HashAlgorithm::SHA256), selectorHash, responseHash);
@@ -92,8 +79,6 @@ void TracingWriter::logOuterObservation(
     responseFor.emplace(selectorHash, responseHash);
     sessionRequestsTrie.insert(selectorHash);
     allRequestHashes.insert(selectorHash);
-    (void) fromStateHash;
-    (void) elementHash;
 }
 
 void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)

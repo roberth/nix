@@ -691,13 +691,9 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                 /* #181: SelectorCallbackApply.fn is now a plain string
                    (query-space hex of fn's identity). */
                 std::string fnHex = q.fn;
-                std::string argAncestryHex;
                 Hash obsSetHash{HashAlgorithm::SHA256};
-                Hash argAncestry{HashAlgorithm::SHA256};
                 try {
                     obsSetHash = Hash::parseNonSRIUnprefixed(q.argObsSet, HashAlgorithm::SHA256);
-                    if (!argAncestryHex.empty())
-                        argAncestry = Hash::parseNonSRIUnprefixed(argAncestryHex, HashAlgorithm::SHA256);
                 } catch (const std::exception &) {
                     return std::nullopt;
                 }
@@ -726,7 +722,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                 Subject argSubject{Arg{argDepth}};
                 auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
                 auto replayArg = std::make_shared<ReplayCallbackArg>(
-                    std::move(argSubject), argAncestry,
+                    std::move(argSubject),
                     walkFacts,
                     decisionGraph, inner->getEvalState().rootFSRoot,
                     &inner->getEvalState());
@@ -998,25 +994,19 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
         ? *arg->getSubject()
         : Subject{PostulatedIdempotentRead{argSubjectHash}};
 
-    /* Apply boundary's argAncestry combines fn's and arg's inherited scopes
-       symmetrically but non-commutatively — mirrors the writer's
-       formula in `TracingEvaluator::apply`. */
-    Hash applyArgAncestry = combineArgAncestries(fn->getArgAncestry(), arg->getArgAncestry());
-
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),
         .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
 
-    auto applyArgAncestryStateHash = subjectId(resultSubject, applyArgAncestry);
+    auto applyArgAncestryStateHash = subjectId(resultSubject);
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
     {
         const auto & apr = std::get<ApplyResultSubject>(resultSubject.data);
         tracingCacheLog(
-            "walker apply: fn=%s arg=%s argAncestry=%s -> applyArgAncestryStateHash=%s",
+            "walker apply: fn=%s arg=%s -> applyArgAncestryStateHash=%s",
             describe(*apr.fn),
             describe(*apr.arg),
-            applyArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
             applyArgAncestryStateHashHex.substr(0, 16));
     }
 
@@ -1077,7 +1067,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
     obj->withArgCell(std::move(cell));
-    obj->withApplyResultSubject(std::move(resultSubject), applyArgAncestry);
+    obj->withApplyResultSubject(std::move(resultSubject));
     if (cachedWHNF)
         obj->withCachedWHNF(std::move(*cachedWHNF));
     /* Keep the applyContext attachment for the ensureInner-finalisation

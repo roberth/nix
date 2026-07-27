@@ -37,7 +37,6 @@ public:
         const trace::SelectorVariant & query,
         std::function<trace::ResultVariant(const trace::SelectorVariant &)> resolve,
         Subject subject,
-        Hash argAncestry = Hash(HashAlgorithm::SHA256),
         const std::shared_ptr<const ArgCell> & attributionCell = {}) override;
     TraceSink * getTraceSink() override;
 };

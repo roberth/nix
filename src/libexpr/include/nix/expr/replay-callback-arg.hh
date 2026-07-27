@@ -57,10 +57,9 @@ class ReplayCallbackArg : public Object
        current edge index, so children don't need to snapshot parent
        state at creation. */
     Subject subject;
-    Hash argAncestry;
-    /* Initial state hash (= subjectId(subject, argAncestry)) — kept for
-       legacy id-string consumers (e.g. defeatCache's recursive
-       apply construction). */
+    /* Initial state hash (= subjectId(subject)) — kept for legacy
+       id-string consumers (e.g. defeatCache's recursive apply
+       construction). */
     OuterId localId;
     /* Shared history across all proxies in one cb apply. Each validated
        probe appends a Fact (one fact per edge). `stateHashAt` reads
@@ -105,16 +104,13 @@ class ReplayCallbackArg : public Object
     const trace::ResultWHNF & whnf();
 
     /* cb-arg apply context. `applyDepth` = `localCell->depth` at the
-       recorder's OuterResolver::cb-apply. `applyArgAncestry` = the
-       resolver's callArgAncestry. Used by the lambda primop to compose nested
-       apply-result subjects matching the recorder's encoding (=
-       `ApplyResultSubject{fn=this.subject, arg=Arg{depth+1}}`
-       at `applyArgAncestry`). Inherited unchanged through derived
-       children (= the nested apply's positional depth is one
-       deeper than the cb-arg's, regardless of attr/list navigation
-       within the cb-arg's structure). */
+       recorder's OuterResolver::cb-apply. Used by the lambda primop
+       to compose nested apply-result subjects matching the recorder's
+       encoding (= `ApplyResultSubject{fn=this.subject, arg=Arg{depth+1}}`).
+       Inherited unchanged through derived children (= the nested
+       apply's positional depth is one deeper than the cb-arg's,
+       regardless of attr/list navigation within the cb-arg's structure). */
     std::optional<int> applyDepth;
-    std::optional<Hash> applyArgAncestry;
 
     /* Argument-argAncestry cell. Navigation children carry the same cell
        as their parent; the top-level (cb-arg) Local carries the
@@ -128,14 +124,12 @@ public:
        state hash evaluation rides on the same per-cb-apply history. */
     ReplayCallbackArg(
         Subject subject_,
-        Hash scope_,
         std::shared_ptr<std::vector<ObservationSet>> walkFacts_,
         TracingDecisionGraph & dg,
         ref<SourceRoot> rootFSRoot,
         EvalState * state = nullptr)
         : subject(std::move(subject_))
-        , argAncestry(std::move(scope_))
-        , localId(subjectId(subject, argAncestry))
+        , localId(subjectId(subject))
         , walkFacts(std::move(walkFacts_))
         , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
 
@@ -152,10 +146,9 @@ public:
         `ApplyResultSubject{fn=this.subject, arg=Arg{depth+1}}`
         with the proper argAncestry. Derived children inherit the
         parent's applyContext via the same setter. */
-    ReplayCallbackArg & withApplyContext(int depth_, Hash scope_)
+    ReplayCallbackArg & withApplyContext(int depth_)
     {
         applyDepth = depth_;
-        applyArgAncestry = std::move(scope_);
         return *this;
     }
 
@@ -178,7 +171,6 @@ public:
     }
 
     std::optional<int> getApplyDepth() const { return applyDepth; }
-    std::optional<Hash> getApplyScope() const { return applyArgAncestry; }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
@@ -196,12 +188,11 @@ public:
         apply) composes ApplyResultSubject with this ReplayCallbackArg's
         evolving Subject. */
     const Subject * getSubject() const override { return &subject; }
-    Hash getArgAncestry() const override { return argAncestry; }
 
     /** #183: producer Selector for the Selector-only identity path. */
     std::optional<trace::SelectorVariant> getProducer() const override
     {
-        return subjectAsSelector(subject, argAncestry);
+        return subjectAsSelector(subject);
     }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;

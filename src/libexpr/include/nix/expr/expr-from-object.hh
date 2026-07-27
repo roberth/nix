@@ -133,7 +133,6 @@ std::shared_ptr<OuterResolver> makeOuterResolver(
 void registerOuterResolverProxy(
     OuterResolver & resolver,
     Subject subject,
-    Hash argAncestry,
     std::shared_ptr<Object> obj);
 
 /** Try to resolve a registered live-proxy from the resolver by

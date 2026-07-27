@@ -130,20 +130,17 @@ struct ObservationSet
     std::vector<Observation> observations;
 };
 
-/** #178: the initial structural id of `subject`, scoped by
-    `argAncestry`. Under stable Q hashes there is no evolution to
-    fold; every Subject variant reduces to a positional / structural
-    computation:
+/** #178: the structural id of `subject`. Under stable Q hashes there
+    is no evolution to fold; every Subject variant reduces to a
+    positional / structural computation aligned with the equivalent
+    Selector's content hash (#186):
 
-    - `Arg{depth}`: `SHA256("positional-D") XOR argAncestry`.
-    - `PostulatedIdempotentRead{hash}`: `hash` (already scoped).
-    - `ApplyResultSubject{fn, arg}`: SHA256 of a canonical
-      Apply payload composed of `subjectId(fn, argAncestry)` and
-      `subjectId(arg, argAncestry)`.
-    - `DerivedSubject{parent, kind, name/index}`: SHA256 of a
-      canonical getter payload composed of the kind, name/index,
-      and `subjectId(parent, argAncestry)`. */
-Hash subjectId(const Subject & subject, const Hash & argAncestry);
+    - `Arg{depth}`: `computeSelectorHash(SelectorArg{depth})`.
+    - `PostulatedIdempotentRead{hash}`: `hash` (already an id).
+    - `ApplyResultSubject{fn, ...}`: `computeSelectorHash(SelectorApply{fn=hex(subjectId(fn))})`.
+    - `DerivedSubject{parent, kind, name/index}`:
+      `computeSelectorHash(SelectorGetAttr|GetListElem{..., from=hex(subjectId(parent))})`. */
+Hash subjectId(const Subject & subject);
 
 /** Build the Selector variant whose content hash IS this Subject's
     identity. Under #186 every Subject variant maps to a Selector
@@ -151,22 +148,7 @@ Hash subjectId(const Subject & subject, const Hash & argAncestry);
     SelectorGetListElem, ApplyResultSubject → SelectorApply). This
     helper returns that Selector so callers can use it directly as
     payload (e.g. obsSet entries) rather than as an opaque hash. */
-trace::SelectorVariant subjectAsSelector(const Subject & subject, const Hash & argAncestry);
-
-/** Combine fn's and arg's inherited scopes into an cb-apply's
-    argAncestry. Apply treats both sides equally (= unlike QueryAttr or
-    curried-result subjects which have a neat single parent), but the
-    combination must be non-commutative (= `f a` ≠ `a f`; cf.
-    `flip apply`), so SHA-256 over a tagged concatenation rather
-    than XOR. */
-inline Hash combineArgAncestries(const Hash & fnArgAncestry, const Hash & argArgAncestry)
-{
-    std::string s = "apply-argAncestry:";
-    s += fnArgAncestry.to_string(HashFormat::Base16, false);
-    s += ":";
-    s += argArgAncestry.to_string(HashFormat::Base16, false);
-    return hashString(HashAlgorithm::SHA256, s);
-}
+trace::SelectorVariant subjectAsSelector(const Subject & subject);
 
 /** Short readable representation of a Subject — for tracing logs.
     Example: `arg(2)`, `getAttr(arg(2), "left")`,
@@ -194,13 +176,12 @@ std::string describe(const Subject & subject);
     same ApplyContext so the chain `wrapper.getAttr("foo").getInt()`
     accumulates all three observations into one history.
 
-    `argSubject`/`argAncestry` identify the cb arg's structural Subject and
-    its inherited argAncestry (= per the subject-id Inheritance section, the
-    outer-argAncestry state hashes that the per-invocation state hashes compose with). */
+    Field usage today: only `observations` is read (by TracingObject
+    and TracingReplayObject's pushObservation). `argSubject` /
+    `argAncestry` are stored at construction but never consumed under
+    the per-cell factset model. */
 struct ApplyContext
 {
-    Subject argSubject;
-    Hash argAncestry;
     std::vector<Observation> observations;
 };
 

@@ -35,31 +35,28 @@ struct OuterQueryResult
 
 /**
  * Callback type for issuing outer queries. Takes the outer Object
- * to query, the query itself, the caller's Subject, and the caller's
- * inherited argAncestry (both for state-hash attribution at the writer).
- * Passing the outer Object directly (rather than an id) reflects that
- * OuterObject wraps a specific Object from a different Interpreter.
+ * to query, the query itself, and the caller's Subject (for log
+ * attribution at the writer). Passing the outer Object directly
+ * (rather than an id) reflects that OuterObject wraps a specific
+ * Object from a different Interpreter.
  */
 using OuterQueryFn = std::function<OuterQueryResult(
     std::shared_ptr<Object> outerObj,
     const trace::SelectorVariant &,
-    Subject,
-    Hash argAncestry)>;
+    Subject)>;
 
 /**
  * Callback type for outer function application. Takes the outer fn
  * Object, its Subject-derived state hash (used to build the
  * SelectorApply payload — the outer Object itself typically has no
  * Subject, so the wrapping OuterObject computes and passes this),
- * `fnSubject` and `fnArgAncestry` (the calling OuterObject's own
- * Subject and inherited argAncestry — used to construct the
- * apply-result's ApplyResultSubject with a real evolving fn root,
- * rather than a `PostulatedIdempotentRead{fnStateHash}` shortcut
- * that the PIR docstring explicitly flags as invalid because it
- * conflates all possible future states of a lazy argument), the
- * argument Object, and the calling OuterObject's effective argCell
- * (the chain root from which the new local cell's depth descends).
- * Returns the outer's apply-result Object.
+ * `fnSubject` (the calling OuterObject's own Subject — used to
+ * construct the apply-result's ApplyResultSubject with a real
+ * evolving fn root, rather than a `PostulatedIdempotentRead{fnStateHash}`
+ * shortcut that the PIR docstring flags as invalid), the argument
+ * Object, and the calling OuterObject's effective argCell (the chain
+ * root from which the new local cell's depth descends). Returns the
+ * outer's apply-result Object.
  *
  * Why pass `callerScope`: the cb is reached via a navigation chain
  * (e.g. arg.items[0]), and `fnObj` may not carry a proxy parent chain
@@ -71,7 +68,6 @@ using OuterApplyFn = std::function<std::shared_ptr<Object>(
     std::shared_ptr<Object> fnObj,
     Hash fnStateHash,
     Subject fnSubject,
-    Hash fnArgAncestry,
     std::shared_ptr<Object> argObj,
     std::shared_ptr<const ArgCell> callerScope)>;
 
@@ -89,11 +85,6 @@ class OuterObject : public Object
        dispatches the equivalent method on `outerObj` (executing in the
        outer's Interpreter), and hands the result back to the inner. */
     std::shared_ptr<Object> outerObj;
-    /* Inherited argAncestry: XOR of outer-argAncestry state hashes (chiefly the cached
-       call's state hash(Q)) for argAncestry inheritance, per
-       content-identity-via-asks.md. Set at the cb-apply;
-       propagated to children. Zero hash if no inheritance. */
-    Hash argAncestry;
     /* Per-apply observation context. Set on cb-arg arg OuterObjects
        by makeCachedFnPrimOp.impl at the cb-apply; the queryFn
        closure routes observations through this context so the
@@ -132,16 +123,11 @@ public:
         apply-result), per the subject-id design. */
     const Subject * getSubject() const override { return &subject; }
 
-    /** This proxy's inherited argAncestry (outer-argAncestry state hashes composed),
-        used by subject-id to make sibling cached-call recordings'
-        state hashes distinct. */
-    Hash getArgAncestry() const override { return argAncestry; }
-
     /** #183: producer Selector for the Selector-only identity path.
         Coexists with getSubject during migration. */
     std::optional<trace::SelectorVariant> getProducer() const override
     {
-        return subjectAsSelector(subject, argAncestry);
+        return subjectAsSelector(subject);
     }
 
     /** Set the proxy's argCell. Call right after construction at
@@ -149,14 +135,6 @@ public:
     OuterObject & withArgCell(std::shared_ptr<const ArgCell> argScope_)
     {
         argCell = std::move(argScope_);
-        return *this;
-    }
-
-    /** Set the proxy's inherited argAncestry (outer-argAncestry state hashes).
-        Children created by this proxy inherit this argAncestry. */
-    OuterObject & withInheritedScope(const Hash & h)
-    {
-        argAncestry = h;
         return *this;
     }
 
@@ -217,7 +195,7 @@ public:
     std::optional<std::string> getStateHashHex() const override
     {
         if (producingQHex) return *producingQHex;
-        return subjectId(subject, argAncestry).to_string(HashFormat::Base16, false);
+        return subjectId(subject).to_string(HashFormat::Base16, false);
     }
 };
 

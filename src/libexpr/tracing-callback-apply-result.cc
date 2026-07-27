@@ -10,14 +10,12 @@ namespace nix {
 TracingCallbackApplyResult::TracingCallbackApplyResult(
     ref<Object> inner_,
     TracingWriter & writer_,
-    Subject applyResultSubject_,
-    Hash applyScope_)
+    Subject applyResultSubject_)
     : inner(std::move(inner_))
     , writer(writer_)
     , applyResultSubject(std::move(applyResultSubject_))
-    , applyArgAncestry(std::move(applyScope_))
 {
-    auto stateHash = subjectId(applyResultSubject, applyArgAncestry);
+    auto stateHash = subjectId(applyResultSubject);
     applyArgAncestryStateHashHex = stateHash.to_string(HashFormat::Base16, false);
 }
 
@@ -42,7 +40,7 @@ void TracingCallbackApplyResult::recordD2(const trace::SelectorVariant & query, 
     callbackCell->callbackState->runningObsSet.push_back({qh, rPayload});
     if (callbackCell->callbackState->argAncestryHex.empty())
         callbackCell->callbackState->argAncestryHex =
-            applyArgAncestry.to_string(HashFormat::Base16, false);
+            Hash(HashAlgorithm::SHA256).to_string(HashFormat::Base16, false);
 }
 
 std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::string & name)
@@ -76,7 +74,7 @@ trace::ResultWHNF & TracingCallbackApplyResult::whnf()
     auto whnfResult = computeWHNFFromObject(*inner);
     /* #185/#186: mirror TracingCallbackArg::whnf — use the value's own
        Selector as the observation, not a GetWHNF wrapper. */
-    recordD2(subjectAsSelector(applyResultSubject, applyArgAncestry), whnfResult);
+    recordD2(subjectAsSelector(applyResultSubject), whnfResult);
     cachedWHNF = std::move(whnfResult);
     return *cachedWHNF;
 }

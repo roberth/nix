@@ -187,7 +187,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
     if (cbApplyOrigin) {
         child->withCbApplyOrigin();
         if (applyResultSubject)
-            child->withApplyResultSubject(*applyResultSubject, applyArgAncestry);
+            child->withApplyResultSubject(*applyResultSubject);
     }
     return child;
 }
@@ -377,7 +377,7 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
         if (cbApplyOrigin) {
             child->withCbApplyOrigin();
             if (applyResultSubject)
-                child->withApplyResultSubject(*applyResultSubject, applyArgAncestry);
+                child->withApplyResultSubject(*applyResultSubject);
         }
         return child;
     }

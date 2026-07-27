@@ -60,11 +60,10 @@ trace::ResultVariant TracingEnvironment::outerQuery(
     const trace::SelectorVariant & query,
     std::function<trace::ResultVariant(const trace::SelectorVariant &)> resolve,
     Subject subject,
-    Hash argAncestry,
     const std::shared_ptr<const ArgCell> & attributionCell)
 {
     auto result = resolve(query);
-    writer.logOuterObservation(query, result, std::move(subject), std::move(argAncestry), attributionCell);
+    writer.logOuterObservation(query, result, std::move(subject), attributionCell);
     return result;
 }
 

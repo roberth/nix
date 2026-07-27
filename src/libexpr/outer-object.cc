@@ -12,7 +12,6 @@ OuterObject::OuterObject(
     Subject subject_, std::shared_ptr<Object> outerObj_, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn)
     : subject(std::move(subject_))
     , outerObj(std::move(outerObj_))
-    , argAncestry(HashAlgorithm::SHA256)
     , queryFn(std::move(queryFn))
     , applyFn(std::move(applyFn))
     , outerRootFSRoot(std::move(outerRootFSRoot))
@@ -37,7 +36,7 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     auto parentQHex = getStateHashHex().value_or(std::string{});
     trace::SelectorGetAttr q{name, parentQHex};
     auto childQHex = TracingDecisionGraph::computeSelectorHash(q).to_string(HashFormat::Base16, false);
-    auto qr = queryFn(outerObj, q, subject, argAncestry);
+    auto qr = queryFn(outerObj, q, subject);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("outer maybeGetAttr: queryFn returned unexpected result type");
@@ -51,9 +50,6 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     auto child = std::make_shared<OuterObject>(std::move(childSubject), qr.child, queryFn, outerRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
-    /* Inherit argAncestry so the child's `from` fields include
-       the same state hash(Q) the parent uses. */
-    child->withInheritedScope(argAncestry);
     child->withProducingQHex(std::move(childQHex));
     child->cachedWHNF = *r;
     return child;
@@ -66,7 +62,7 @@ trace::ResultWHNF & OuterObject::whnf()
     /* #183: q.from = parent's Q-space identity so distinct WHNF
        probes on distinct proxies produce distinct Q hashes. */
     trace::SelectorGetWHNF q{getStateHashHex().value_or(std::string{})};
-    auto qr = queryFn(outerObj, q, subject, argAncestry);
+    auto qr = queryFn(outerObj, q, subject);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("outer getWHNF: unexpected result type");
@@ -173,7 +169,7 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
     auto parentQHex = getStateHashHex().value_or(std::string{});
     trace::SelectorGetListElem q{parentQHex, index};
     auto childQHex = TracingDecisionGraph::computeSelectorHash(q).to_string(HashFormat::Base16, false);
-    auto qr = queryFn(outerObj, q, subject, argAncestry);
+    auto qr = queryFn(outerObj, q, subject);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("outer getListElem: queryFn returned unexpected result type");
@@ -187,7 +183,6 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
     auto child = std::make_shared<OuterObject>(std::move(childSubject), qr.child, queryFn, outerRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
-    child->withInheritedScope(argAncestry);
     child->withProducingQHex(std::move(childQHex));
     child->cachedWHNF = *r;
     return child;
@@ -224,7 +219,7 @@ std::optional<FunctionInfo> OuterObject::getFunctionInfo()
 {
     /* #183: q.from = parent's Q-space identity. */
     trace::SelectorGetFunctionInfo q{getStateHashHex().value_or(std::string{})};
-    auto qr = queryFn(outerObj, q, subject, argAncestry);
+    auto qr = queryFn(outerObj, q, subject);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
         return std::nullopt;
@@ -245,10 +240,6 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
 {
     if (!applyFn)
         throw Error("outer apply: no apply callback");
-    /* Thread the caller's effective argAncestry into applyFn so the cb
-       apply's new local cell can chain off the right depth, even
-       when `fnObj` has no proxy parent chain. Keep a copy of argObj
-       for the result's cell before moving it into applyFn. */
     auto callerScope = effectiveArgCell(*this);
     auto argForScope = argObj;
     /* Each value crossing into a cb-apply starts fresh as an Arg at
@@ -261,16 +252,14 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
        resolveIdentity looks up on the walker side). */
     auto fnStateHashHex = getStateHashHex().value_or(std::string{});
     auto fnStateHash = Hash::parseNonSRIUnprefixed(fnStateHashHex, HashAlgorithm::SHA256);
-    auto outerResult = applyFn(outerObj, fnStateHash, subject, argAncestry, std::move(argObj), callerScope);
+    auto outerResult = applyFn(outerObj, fnStateHash, subject, std::move(argObj), callerScope);
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(subject),
         .arg = std::make_shared<const Subject>(std::move(argSubject)),
     }};
     auto result = std::make_shared<OuterObject>(std::move(resultSubject), std::move(outerResult), queryFn, outerRootFSRoot, applyFn);
-    /* Apply-result argAncestry cell rooted at the caller's argAncestry. */
     auto cell = ArgCell::make(callerScope, std::move(argForScope));
     result->withArgCell(std::move(cell));
-    result->withInheritedScope(argAncestry);
     return result;
 }
 

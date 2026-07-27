@@ -148,7 +148,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     if (cbApplyOrigin) {
         child->withCbApplyOrigin();
         if (applyResultSubject)
-            child->withApplyResultSubject(*applyResultSubject, applyArgAncestry);
+            child->withApplyResultSubject(*applyResultSubject);
     }
     return child;
 }
@@ -164,7 +164,7 @@ trace::ResultWHNF & TracingObject::whnf()
        OuterApply::run. Re-emit here when the wrapper is a
        callback-origin apply result. */
     if (cbApplyOrigin && applyResultSubject)
-        writer.emitCallbackApplyForApplyResult(argCell, *applyResultSubject, applyArgAncestry, whnfResult);
+        writer.emitCallbackApplyForApplyResult(argCell, *applyResultSubject, whnfResult);
     /* #185: SelectorGetWHNF emission fully retired. Warm never looks
        these Terminals up:
          - TRO nav descendants + root wrappers have valid
@@ -293,7 +293,7 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     if (cbApplyOrigin) {
         child->withCbApplyOrigin();
         if (applyResultSubject)
-            child->withApplyResultSubject(*applyResultSubject, applyArgAncestry);
+            child->withApplyResultSubject(*applyResultSubject);
     }
     return child;
 }
@@ -382,12 +382,9 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     Subject fnSubj = getSubject()
         ? *getSubject()
         : Subject{PostulatedIdempotentRead{fnIdHash}};
-    Hash applyArgAncestryLocal = getSubject() ? getArgAncestry() : applyArgAncestry;
     Subject argSubject = argObj->getSubject()
         ? *argObj->getSubject()
         : Subject{PostulatedIdempotentRead{argSubjectHash}};
-    if (argObj->getSubject())
-        applyArgAncestryLocal = argObj->getArgAncestry();
     Subject resultSubject{ApplyResultSubject{
         .fn = std::make_shared<const Subject>(std::move(fnSubj)),
         .arg = std::make_shared<const Subject>(std::move(argSubject)),
@@ -395,7 +392,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
 
     /* apply-result state hash is content-only — see commentary in
        TracingEvaluator::apply. */
-    auto applyArgAncestryStateHash = subjectId(resultSubject, applyArgAncestryLocal);
+    auto applyArgAncestryStateHash = subjectId(resultSubject);
     auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
 
     /* Record the apply Request payload at the subject-id hash so dispatch
@@ -413,7 +410,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
         new TracingObject(ref<Object>(result), writer, v, applyTriePos));
     auto cell = ArgCell::make(argCell, argObj);
     child->withArgCell(std::move(cell));
-    child->withApplyResultSubject(std::move(resultSubject), applyArgAncestryLocal);
+    child->withApplyResultSubject(std::move(resultSubject));
     if (auto * argAmb = dynamic_cast<OuterObject *>(argObj.get())) {
         if (auto ctx = argAmb->getApplyContext())
             child->withApplyContext(std::move(ctx));

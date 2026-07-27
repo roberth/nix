@@ -69,9 +69,8 @@ static OuterQueryFn mockResolver(std::map<std::string, trace::ResultVariant> res
     return [responses = std::move(responses)](
                std::shared_ptr<Object> /*outerObj*/,
                const trace::SelectorVariant & q,
-               Subject subject,
-               Hash argAncestry) -> OuterQueryResult {
-        auto stateHash = subjectId(subject, argAncestry);
+               Subject subject) -> OuterQueryResult {
+        auto stateHash = subjectId(subject);
         std::string objHex = ambientHex(stateHash);
         std::string key = std::visit(
             [&](const auto & query) -> std::string {
@@ -92,7 +91,7 @@ static OuterQueryFn mockResolver(std::map<std::string, trace::ResultVariant> res
 
 TEST(AmbientObjectTest, GetType)
 {
-    auto arg = subjectId(testSubject(0), Hash(HashAlgorithm::SHA256));
+    auto arg = subjectId(testSubject(0));
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         stubOuter(),
@@ -103,7 +102,7 @@ TEST(AmbientObjectTest, GetType)
 
 TEST(AmbientObjectTest, GetInt)
 {
-    auto arg = subjectId(testSubject(0), Hash(HashAlgorithm::SHA256));
+    auto arg = subjectId(testSubject(0));
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         stubOuter(),
@@ -114,7 +113,7 @@ TEST(AmbientObjectTest, GetInt)
 
 TEST(AmbientObjectTest, GetString)
 {
-    auto arg = subjectId(testSubject(0), Hash(HashAlgorithm::SHA256));
+    auto arg = subjectId(testSubject(0));
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         stubOuter(),
@@ -125,7 +124,7 @@ TEST(AmbientObjectTest, GetString)
 
 TEST(AmbientObjectTest, GetBool)
 {
-    auto arg = subjectId(testSubject(0), Hash(HashAlgorithm::SHA256));
+    auto arg = subjectId(testSubject(0));
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         stubOuter(),
@@ -136,7 +135,7 @@ TEST(AmbientObjectTest, GetBool)
 
 TEST(AmbientObjectTest, GetAttrReturnsChild)
 {
-    auto arg = subjectId(testSubject(0), Hash(HashAlgorithm::SHA256));
+    auto arg = subjectId(testSubject(0));
     /* Child scopeStateId is the producer query's selectorHash. With Subject-based
        construction the OuterObject derives this from DerivedSubject
        at construction time. */
@@ -144,7 +143,7 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
             .parent = std::make_shared<const Subject>(testSubject(0)),
             .kind = DerivedSubject::Kind::GetAttr,
             .name = "x",
-        }}, Hash(HashAlgorithm::SHA256));
+        }});
     (void)childStateHash;
     /* Under the fold, existence is projected from parent WHNFAttrs.names;
        retrieval is a SelectorGetAttr returning child WHNF. */
@@ -163,7 +162,7 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
 
 TEST(AmbientObjectTest, GetAttrMissing)
 {
-    auto arg = subjectId(testSubject(0), Hash(HashAlgorithm::SHA256));
+    auto arg = subjectId(testSubject(0));
     /* Parent has an empty name list — projection yields "missing". No
        getAttr query is issued. */
     auto obj = std::make_shared<OuterObject>(
@@ -177,12 +176,12 @@ TEST(AmbientObjectTest, GetAttrMissing)
 
 TEST(AmbientObjectTest, GetListElem)
 {
-    auto arg = subjectId(testSubject(0), Hash(HashAlgorithm::SHA256));
+    auto arg = subjectId(testSubject(0));
     auto childStateHash = subjectId(Subject{DerivedSubject{
             .parent = std::make_shared<const Subject>(testSubject(0)),
             .kind = DerivedSubject::Kind::GetListElem,
             .index = 1,
-        }}, Hash(HashAlgorithm::SHA256));
+        }});
     (void)childStateHash;
     /* Under the fold, bounds are projected from parent WHNFList.size;
        retrieval is SelectorGetListElem returning child WHNF. */
@@ -201,7 +200,7 @@ TEST(AmbientObjectTest, GetListElem)
 
 TEST(AmbientObjectTest, GetAttrNames)
 {
-    auto arg = subjectId(testSubject(0), Hash(HashAlgorithm::SHA256));
+    auto arg = subjectId(testSubject(0));
     auto obj = std::make_shared<OuterObject>(
         testSubject(0),
         stubOuter(),

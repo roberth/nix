@@ -44,12 +44,8 @@ class TracingReplayObject : public Object
        cumulative envWalk). */
     std::shared_ptr<ApplyContext> applyContext;
     /* When apply-result, the ApplyResultSubject identifying it
-       structurally + the inherited argAncestry (= state hash(Q)). Used together
-       with the evaluator's envWalk to compute the evolved state hash
-       at lookup time via the same formula the writer's TracingObject
-       uses. */
+       structurally. */
     std::optional<Subject> applyResultSubject;
-    Hash applyArgAncestry{HashAlgorithm::SHA256};
 
     /* Marks this wrapper as cb-apply-descendant, symmetric to
        TracingObject::cbApplyOrigin. Propagated by navigation. */
@@ -100,18 +96,15 @@ public:
     {
         applyContext = std::move(ctx);
         applyResultSubject = std::move(resultSubject);
-        if (applyContext)
-            applyArgAncestry = applyContext->argAncestry;
         return *this;
     }
 
-    /** Attach the apply-result Subject + argAncestry without going through
+    /** Attach the apply-result Subject without going through
         ApplyContext. Mirrors the writer-side
         `TracingObject::withApplyResultSubject`. */
-    TracingReplayObject & withApplyResultSubject(Subject subject, Hash argAncestry)
+    TracingReplayObject & withApplyResultSubject(Subject subject)
     {
         applyResultSubject = std::move(subject);
-        applyArgAncestry = std::move(argAncestry);
         return *this;
     }
 
@@ -155,13 +148,12 @@ public:
     {
         return applyResultSubject ? &*applyResultSubject : nullptr;
     }
-    Hash getArgAncestry() const override { return applyArgAncestry; }
 
     /** #183: producer Selector for the Selector-only identity path. */
     std::optional<trace::SelectorVariant> getProducer() const override
     {
         if (applyResultSubject)
-            return subjectAsSelector(*applyResultSubject, applyArgAncestry);
+            return subjectAsSelector(*applyResultSubject);
         return std::nullopt;
     }
 

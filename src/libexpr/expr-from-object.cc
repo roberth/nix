@@ -105,12 +105,11 @@ struct OuterApply
         round-trip). `fnStateHash` is the Subject-derived state hash
         used to build the SelectorApply payload (the outer Object typically
         has no Subject; the wrapping OuterObject computes it).
-        `fnSubject` and `fnArgAncestry` are the caller's OuterObject's
-        real Subject and inherited argAncestry — used by the wrapper
-        to construct an evolving ApplyResultSubject. Returns the
-        outer's apply-result Object. */
+        `fnSubject` is the caller's OuterObject's real Subject —
+        used by the wrapper to construct an ApplyResultSubject.
+        Returns the outer's apply-result Object. */
     std::shared_ptr<Object> run(
-        std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject, Hash fnArgAncestry,
+        std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject,
         std::shared_ptr<Object> argObj,
         std::shared_ptr<const ArgCell> callerScope);
 };
@@ -143,7 +142,6 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
     struct LiveProxyEntry
     {
         Subject subject;
-        Hash argAncestry;
         std::shared_ptr<Object> obj;
     };
     std::vector<LiveProxyEntry> liveProxies;
@@ -151,23 +149,22 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
     /** Invoke the outer fn Object `fnObj` on `argObj`. `fnStateHash`
         is the Subject-derived state hash of the wrapping
         OuterObject, used to build the SelectorApply payload.
-        `fnSubject`/`fnArgAncestry` are the wrapping OuterObject's
-        real Subject/argAncestry. Returns the outer's apply-result
-        Object. */
+        `fnSubject` is the wrapping OuterObject's real Subject.
+        Returns the outer's apply-result Object. */
     std::shared_ptr<Object> apply(
-        std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject, Hash fnArgAncestry,
+        std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject,
         std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
     {
         return OuterApply{
             bridgedLocals, outerState, innerEvaluator, innerWriter, outerRootFSRoot,
             shared_from_this(),
-        }.run(std::move(fnObj), fnStateHash, std::move(fnSubject), fnArgAncestry,
+        }.run(std::move(fnObj), fnStateHash, std::move(fnSubject),
               std::move(argObj), std::move(callerScope));
     }
 };
 
 std::shared_ptr<Object> OuterApply::run(
-    std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject, Hash fnArgAncestry,
+    std::shared_ptr<Object> fnObj, Hash fnStateHash, Subject fnSubject,
     std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
 {
     /* fnId — the Subject-derived state hash of the wrapping OuterObject,
@@ -193,15 +190,8 @@ std::shared_ptr<Object> OuterApply::run(
        same way through their args reach the same trie position
        regardless of where the arg's source came from. */
     Subject argSubject{Arg{localCell->depth}};
-    /* Sample Hash(HashAlgorithm::SHA256) at fire time. TracingEvaluator::apply
-       leaves callArgAncestry at the current sibling's siblingScope (no
-       restore), so this sample reflects the CURRENT sibling context
-       walker is operating under. Do not freeze at closure-creation
-       time — the argAncestry evolves, and freezing would emit stale hashes. */
-    Hash argAncestry = Hash(HashAlgorithm::SHA256);
-    auto argStateHash = subjectId(argSubject, argAncestry);
-    tracingCacheLog("OuterApply::run: argAncestry=%s argStateHash=%s",
-                    argAncestry.to_string(HashFormat::Base16, false).substr(0, 12),
+    auto argStateHash = subjectId(argSubject);
+    tracingCacheLog("OuterApply::run: argStateHash=%s",
                     argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));
 
     /* Compute the resultId early so we can pass it to the
@@ -235,8 +225,7 @@ std::shared_ptr<Object> OuterApply::run(
 
     /* Wrap the argObj in TracingCallbackArg so the outer's
        accesses on it during the apply land in the inner trace
-       with `from=hex(argSubject)`. Inherit callArgAncestry so sibling cached
-       calls' local-args have distinct state hashes.
+       with `from=hex(argSubject)`.
 
        Skip the TracingCallbackArg wrap when argObj is a ReplayCallbackArg.
        At warm replay the ReplayCallbackArg reaching `runOn` already
@@ -257,7 +246,7 @@ std::shared_ptr<Object> OuterApply::run(
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
               argObj, argSubject, *innerWriter, ref<SourceRoot>(outerRootFSRoot), localCell,
-              Hash(HashAlgorithm::SHA256), resultId))
+              resultId))
         : argObj;
 
     /* Bridge local arg via ExprFromObject. The cache memoises by
@@ -316,8 +305,7 @@ std::shared_ptr<Object> OuterApply::run(
         };
         auto wrapped = TracingObject::create(
             ref<Object>(resultObj), *innerWriter, v, triePos);
-        wrapped->withApplyResultSubject(
-            std::move(applyResultSubject), fnArgAncestry);
+        wrapped->withApplyResultSubject(std::move(applyResultSubject));
         /* Mark as cb-apply root: navigation descendants will inherit
            applyResultSubject so their whnf emits QCA (§7). */
         wrapped->withCbApplyOrigin();
@@ -380,23 +368,13 @@ static PrimOp * makeCachedFnPrimOp(
                            Subject and discriminate via their observation
                            factsets, not via state-creep. */
                         Subject argSubject{Arg{seedCell->depth}};
-                        /* Inherit the resolver's callArgAncestry (= state hash(Q)
-                           of this cached call). Sibling cached calls
-                           with different Qs get distinct state hashes
-                           at every derived Subject throughout this cb-apply. */
-                        Hash callArgAncestry = Hash(HashAlgorithm::SHA256);
                         /* Per-apply observation context. Captures the
                            outer's probes on the cb arg as they fire
-                           through queryFn; the apply-result wrapper
-                           uses these observations to compute its
-                           evolved state hash (via subject-id
-                           ApplyResultSubject recursion through the
-                           arg's evolved state hash). This is what
-                           distinguishes sibling apply calls within
-                           the same cached call (`inner.f 5` vs
-                           `inner.f 2`), per the callback tracking design. */
+                           through queryFn; distinguishes sibling apply
+                           calls within the same cached call (`inner.f 5`
+                           vs `inner.f 2`), per the callback tracking design. */
                         auto applyContext = std::make_shared<ApplyContext>(
-                            ApplyContext{argSubject, callArgAncestry, {}});
+                            ApplyContext{{}});
                         auto & innerEnv = *innerEval->getEvalState().environment;
                         /* queryFn: dispatch the query directly on the
                            outer Object the OuterObject was
@@ -406,8 +384,7 @@ static PrimOp * makeCachedFnPrimOp(
                         OuterQueryFn queryFn = [&innerEnv, applyContext](
                             std::shared_ptr<Object> outerObj,
                             const trace::SelectorVariant & q,
-                            Subject subject,
-                            Hash argAncestry) {
+                            Subject subject) {
                             /* Skip the redundant `innerEnv.outerQuery` when
                                `outerObj` already emits its own recording via
                                a QCA-emitting wrapper. Cold otherwise records
@@ -435,7 +412,6 @@ static PrimOp * makeCachedFnPrimOp(
                                     q,
                                     [&](const trace::SelectorVariant &) { return qr.result; },
                                     subject,
-                                    argAncestry,
                                     attributionCell);
                             }
                             return qr;
@@ -451,10 +427,9 @@ static PrimOp * makeCachedFnPrimOp(
                             std::shared_ptr<Object> fnObj,
                             Hash fnStateHash,
                             Subject fnSubject,
-                            Hash fnArgAncestry,
                             std::shared_ptr<Object> argObj,
                             std::shared_ptr<const ArgCell> callerScope) {
-                            return resolver->apply(std::move(fnObj), fnStateHash, std::move(fnSubject), fnArgAncestry,
+                            return resolver->apply(std::move(fnObj), fnStateHash, std::move(fnSubject),
                                                     std::move(argObj), std::move(callerScope));
                         };
                         /* lazy-paths: pin OuterObject's path SourceRoot
@@ -469,11 +444,9 @@ static PrimOp * makeCachedFnPrimOp(
                            ArgCell::liveObject. */
                         seedCell->liveObject = outerArgProxy.get_ptr();
                         outerArgProxy->withArgCell(seedCell);
-                        outerArgProxy->withInheritedScope(callArgAncestry);
                         outerArgProxy->withApplyContext(applyContext);
-                        tracingCacheLog("makeCachedFnPrimOp.impl: outerArgProxy=%p seedCell=%p callArgAncestry=%s outerArg=%p",
+                        tracingCacheLog("makeCachedFnPrimOp.impl: outerArgProxy=%p seedCell=%p outerArg=%p",
                                         (void*)outerArgProxy.get_ptr().get(), (void*)seedCell.get(),
-                                        callArgAncestry.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
                                         (void*)outerArgObj.get());
                         auto result = innerEval->apply(ref<Object>(fnObj), outerArgProxy);
                         tracingCacheLog("makeCachedFnPrimOp.impl: apply result=%p", (void*)result.get_ptr().get());
@@ -636,33 +609,23 @@ std::shared_ptr<OuterResolver> makeOuterResolver(
 void registerOuterResolverProxy(
     OuterResolver & resolver,
     Subject subject,
-    Hash argAncestry,
     std::shared_ptr<Object> obj)
 {
-    /* Overwrite-on-conflict for the same (subject, argAncestry) key. The
-       primop fires once per cb-apply it covers; re-firing
-       with the same args produces the same registration. Different
-       boundaries register different subjects (= different
-       `applyDepth+1` values), so collisions across boundaries
-       within one cache call are non-existent unless sibling
-       cb-applies share the same cb-arg arg depth — same
-       boundary-trace-only caveat as the previous state hash-keyed version.
-
-       `Subject` has no `operator==`; the primop only ever
-       registers `Arg{depth}` here, so structural
-       equality reduces to comparing the depth field. Asserting on
-       the variant tag keeps this collapse honest if a future caller
-       passes a different variant. */
+    /* Overwrite-on-conflict for the same subject key. The primop
+       only ever registers `Arg{depth}` here, so structural equality
+       reduces to comparing the depth field. Asserting on the variant
+       tag keeps this collapse honest if a future caller passes a
+       different variant. */
     auto * newSeed = std::get_if<Arg>(&subject.data);
     assert(newSeed && "registerOuterResolverProxy: subject must be a Arg");
     for (auto & entry : resolver.liveProxies) {
         auto * existingSeed = std::get_if<Arg>(&entry.subject.data);
-        if (existingSeed && existingSeed->depth == newSeed->depth && entry.argAncestry == argAncestry) {
+        if (existingSeed && existingSeed->depth == newSeed->depth) {
             entry.obj = std::move(obj);
             return;
         }
     }
-    resolver.liveProxies.push_back({std::move(subject), std::move(argAncestry), std::move(obj)});
+    resolver.liveProxies.push_back({std::move(subject), std::move(obj)});
 }
 
 std::shared_ptr<Object> tryResolveOuterResolverProxy(
@@ -672,7 +635,7 @@ std::shared_ptr<Object> tryResolveOuterResolverProxy(
 {
     (void) dg;
     for (auto & entry : resolver.liveProxies) {
-        auto stateHash = subjectId(entry.subject, entry.argAncestry);
+        auto stateHash = subjectId(entry.subject);
         if (stateHash == idHash)
             return entry.obj;
     }

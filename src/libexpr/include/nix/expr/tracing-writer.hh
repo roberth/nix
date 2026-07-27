@@ -131,7 +131,6 @@ public:
     void emitCallbackApplyForApplyResult(
         const std::shared_ptr<const ArgCell> & callbackCell,
         const Subject & applyResultSubject,
-        Hash applyArgAncestry,
         const trace::ResultWHNF & whnf)
     {
         if (!decisionGraph)
@@ -139,7 +138,7 @@ public:
         auto * ar = std::get_if<ApplyResultSubject>(&applyResultSubject.data);
         if (!ar || !ar->fn)
             return;
-        auto fnInitial = subjectId(*ar->fn, applyArgAncestry);
+        auto fnInitial = subjectId(*ar->fn);
         auto fnInitialHex = fnInitial.to_string(HashFormat::Base16, false);
 
         /* Cell-based reader (preferred): if a cell with populated
@@ -178,7 +177,6 @@ public:
                 trace::SelectorVariant{std::move(qca)},
                 trace::ResultVariant{whnf},
                 *ar->fn,
-                applyArgAncestry,
                 attrCell);
             return true;
         };
@@ -417,7 +415,6 @@ public:
         const trace::SelectorVariant & query,
         const trace::ResultVariant & result,
         Subject subject,
-        Hash argAncestry = Hash(HashAlgorithm::SHA256),
         const std::shared_ptr<const ArgCell> & attributionCell = {});
 
     /**

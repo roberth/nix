@@ -37,15 +37,9 @@ class TracingObject : public Object
     std::shared_ptr<const ArgCell> argCell;
 
     /* For apply-result wrappers: the subject-id Subject that identifies
-       this apply structurally (ApplyResultSubject{fn, arg}), and the
-       inherited argAncestry (= state hash(Q) at the cb-apply). Child
-       queries on this wrapper emit at
-       `stateHashAt(applyResultSubject, applyArgAncestry, writer.envWalk,
-       history.size())` — the per-arg evolved state hash the design's
-       principle #3 requires for sibling discrimination. Null on
+       this apply structurally (ApplyResultSubject{fn, arg}). Null on
        non-apply-result wrappers (= navigation children). */
     std::optional<Subject> applyResultSubject;
-    Hash applyArgAncestry{HashAlgorithm::SHA256};
 
     /* True on wrappers rooted at a cb-apply (OuterApply::run) and on
        navigation descendants of such wrappers. Gates whether children
@@ -91,10 +85,9 @@ public:
     /** Attach the apply-result structural identity — for apply-result
         wrappers, so subsequent child queries emit at the evolved state hash.
         Mirrors TracingReplayObject's machinery. */
-    TracingObject & withApplyResultSubject(Subject subject, Hash argAncestry)
+    TracingObject & withApplyResultSubject(Subject subject)
     {
         applyResultSubject = std::move(subject);
-        applyArgAncestry = std::move(argAncestry);
         return *this;
     }
 
@@ -152,13 +145,11 @@ public:
         return applyResultSubject ? &*applyResultSubject : nullptr;
     }
 
-    Hash getArgAncestry() const override { return applyArgAncestry; }
-
     /** #183: producer Selector for the Selector-only identity path. */
     std::optional<trace::SelectorVariant> getProducer() const override
     {
         if (applyResultSubject)
-            return subjectAsSelector(*applyResultSubject, applyArgAncestry);
+            return subjectAsSelector(*applyResultSubject);
         return std::nullopt;
     }
 
