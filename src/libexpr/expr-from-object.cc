@@ -28,6 +28,11 @@ static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const tr
             using Q = std::decay_t<decltype(query)>;
             if constexpr (std::is_same_v<Q, trace::SelectorApply>) {
                 throw Error("outer query: SelectorApply should go through applyFn, not queryFn");
+            } else if constexpr (std::is_same_v<Q, trace::SelectorArg>) {
+                /* #186: SelectorArg used as identity of the outer arg
+                   itself — return its WHNF (no navigation). Same shape
+                   as SelectorGetWHNF's response. */
+                return {computeWHNFFromObject(*obj), nullptr};
             } else if constexpr (!requires { query.from; }) {
                 throw Error("outer query: query type has no 'from' field");
             } else if constexpr (std::is_same_v<Q, trace::SelectorGetWHNF>) {
