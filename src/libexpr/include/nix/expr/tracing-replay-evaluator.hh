@@ -1,6 +1,6 @@
 #pragma once
 
-#include "nix/expr/subject-id.hh"
+#include "nix/expr/observation-set.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-writer.hh"

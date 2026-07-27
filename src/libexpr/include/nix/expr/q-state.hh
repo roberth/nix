@@ -26,7 +26,7 @@
  * TracingWriter field) is what makes that invariant hold structurally.
  */
 
-#include "nix/expr/subject-id.hh"
+#include "nix/expr/observation-set.hh"
 #include "nix/expr/trace-types.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/util/hash.hh"

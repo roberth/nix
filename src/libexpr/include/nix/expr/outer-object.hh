@@ -9,7 +9,7 @@
  */
 
 #include "nix/expr/arg-cell.hh"
-#include "nix/expr/subject-id.hh"
+#include "nix/expr/observation-set.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/source-root.hh"
 #include "nix/expr/trace-ids.hh"

@@ -7,7 +7,7 @@
 #include <memory>
 #include <optional>
 #include <string>
-#include "nix/expr/subject-id.hh"
+#include "nix/expr/observation-set.hh"
 #include "nix/expr/trace-types.hh"
 #include "nix/util/hash.hh"
 #include "nix/util/ref.hh"

@@ -7,7 +7,7 @@
 
 #include "nix/expr/arg-cell.hh"
 #include "nix/expr/q-state.hh"
-#include "nix/expr/subject-id.hh"
+#include "nix/expr/observation-set.hh"
 #include "nix/expr/trace-sink.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"

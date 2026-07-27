@@ -375,12 +375,12 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     }
 
     /* #183: producer content hash IS the apply-result identity. */
-    auto applyArgAncestryStateHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
-    auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
+    auto qHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
+    auto qHex = qHash.to_string(HashFormat::Base16, false);
     tracingCacheLog(
-        "writer apply: fn=%s -> applyArgAncestryStateHash=%s",
+        "writer apply: fn=%s -> qHash=%s",
         fnQHex.substr(0, 12),
-        applyArgAncestryStateHashHex.substr(0, 16));
+        qHex.substr(0, 16));
 
     /* Cell-migration Phase B: apply records SelectorApply as a proper
        Selector with its own Terminal, keyed on `cell` (resolved above).
@@ -446,7 +446,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
                  identity for downstream applies. */
               .queryHashStr = qh.selectorHash
                   ? qh.selectorHash->to_string(HashFormat::Base16, false)
-                  : applyArgAncestryStateHashHex,
+                  : qHex,
           };
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withArgCell(std::move(cell));

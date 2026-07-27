@@ -1,5 +1,5 @@
 #include "nix/expr/tracing-writer.hh"
-#include "nix/expr/subject-id.hh"
+#include "nix/expr/observation-set.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-cache-provenance.hh"
 #include "nix/expr/tracing-cache-stats.hh"

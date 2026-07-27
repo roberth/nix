@@ -1,6 +1,6 @@
 #include "nix/expr/expr-from-object.hh"
 #include "nix/expr/outer-object.hh"
-#include "nix/expr/subject-id.hh"
+#include "nix/expr/observation-set.hh"
 #include "nix/expr/environment.hh"
 #include "nix/expr/eval.hh"
 #include "nix/expr/interpreter-object.hh"

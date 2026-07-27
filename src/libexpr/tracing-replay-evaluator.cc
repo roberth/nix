@@ -981,12 +981,12 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto fnQHex = fn->getSelectorHashHex().value_or(fnStateHashStr);
     trace::SelectorApply resultProducer{fnQHex};
 
-    auto applyArgAncestryStateHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
-    auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
+    auto qHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
+    auto qHex = qHash.to_string(HashFormat::Base16, false);
     tracingCacheLog(
-        "walker apply: fn=%s -> applyArgAncestryStateHash=%s",
+        "walker apply: fn=%s -> qHash=%s",
         fnQHex.substr(0, 12),
-        applyArgAncestryStateHashHex.substr(0, 16));
+        qHex.substr(0, 16));
 
     /* Cell-migration Phase B: pre-invoke SelectorApply's lookup so the
        applyResult wrapper can be constructed with its cached WHNF

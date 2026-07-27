@@ -10,7 +10,7 @@ config_pub_h = configure_file(
 headers = [ config_pub_h ] + files(
   'outer-object.hh',
   'attr-path.hh',
-  'subject-id.hh',
+  'observation-set.hh',
   'attr-set.hh',
   'coarse-eval-cache-object.hh',
   'coarse-eval-cache.hh',

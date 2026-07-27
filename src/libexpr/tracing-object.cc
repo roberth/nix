@@ -351,8 +351,8 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
 
     /* apply-result state hash is content-only — see commentary in
        TracingEvaluator::apply. */
-    auto applyArgAncestryStateHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
-    auto applyArgAncestryStateHashHex = applyArgAncestryStateHash.to_string(HashFormat::Base16, false);
+    auto qHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
+    auto qHex = qHash.to_string(HashFormat::Base16, false);
 
     /* Record the apply Request payload at the subject-id hash so dispatch
        and the legacy SelectorApply{fn, arg} payload coincide. The legacy
@@ -363,7 +363,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto result = inner->queryApply(argObj);
     TriePosition applyTriePos{
         .resultNodeHash = Hash{HashAlgorithm::SHA256}, // sentinel
-        .queryHashStr = applyArgAncestryStateHashHex,
+        .queryHashStr = qHex,
     };
     auto child = std::shared_ptr<TracingObject>(
         new TracingObject(ref<Object>(result), writer, v, applyTriePos));

@@ -16,7 +16,7 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
     , producer(std::move(producer_))
 {
     auto stateHash = TracingDecisionGraph::computeSelectorHash(producer);
-    applyArgAncestryStateHashHex = stateHash.to_string(HashFormat::Base16, false);
+    qHex = stateHash.to_string(HashFormat::Base16, false);
 }
 
 void TracingCallbackApplyResult::recordD2(const trace::SelectorVariant & query, const trace::ResultVariant & result)
@@ -185,8 +185,8 @@ ObjectType TracingCallbackApplyResult::getTypeLazy()
 ObjectType TracingCallbackApplyResult::getType()
 {
     auto type = stringToObjectType(whnf().type);
-    tracingCacheLog("laro: getType applyArgAncestryStateHash=%s type=%s",
-        applyArgAncestryStateHashHex.substr(0, 16), objectTypeToString(type));
+    tracingCacheLog("laro: getType qHash=%s type=%s",
+        qHex.substr(0, 16), objectTypeToString(type));
     return type;
 }
 

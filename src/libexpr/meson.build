@@ -132,7 +132,6 @@ endforeach
 
 sources = files(
   'outer-object.cc',
-  'subject-id.cc',
   'attr-path.cc',
   'attr-set.cc',
   'coarse-eval-cache-object.cc',

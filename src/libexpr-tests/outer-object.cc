@@ -8,7 +8,7 @@ namespace nix {
 
 /* lazy-paths: tests don't exercise `getPath`, so any SourceRoot
    suffices for the constructor — just stub one out. */
-static ref<SourceRoot> stubAmbientRoot()
+static ref<SourceRoot> stubOuterRoot()
 {
     return SourceRoot::make(getFSSourceAccessor(), SourceRootKind::Internal);
 }
@@ -91,51 +91,51 @@ static OuterQueryFn mockResolver(std::map<std::string, trace::ResultVariant> res
     };
 }
 
-TEST(AmbientObjectTest, GetType)
+TEST(OuterObjectTest, GetType)
 {
     auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
         testProducer(0),
         stubOuter(),
         mockResolver({{"getWHNF:" + arg, trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
-        stubAmbientRoot());
+        stubOuterRoot());
     EXPECT_EQ(obj->getType(), nInt);
 }
 
-TEST(AmbientObjectTest, GetInt)
+TEST(OuterObjectTest, GetInt)
 {
     auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
         testProducer(0),
         stubOuter(),
         mockResolver({{"getWHNF:" + arg, trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
-        stubAmbientRoot());
+        stubOuterRoot());
     EXPECT_EQ(obj->getInt().value, 42);
 }
 
-TEST(AmbientObjectTest, GetString)
+TEST(OuterObjectTest, GetString)
 {
     auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
         testProducer(0),
         stubOuter(),
         mockResolver({{"getWHNF:" + arg, trace::ResultWHNF{"string", trace::WHNFString{"hello", {}}}}}),
-        stubAmbientRoot());
+        stubOuterRoot());
     EXPECT_EQ(obj->getStringIgnoreContext(), "hello");
 }
 
-TEST(AmbientObjectTest, GetBool)
+TEST(OuterObjectTest, GetBool)
 {
     auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
         testProducer(0),
         stubOuter(),
         mockResolver({{"getWHNF:" + arg, trace::ResultWHNF{"bool", trace::WHNFBool{true}}}}),
-        stubAmbientRoot());
+        stubOuterRoot());
     EXPECT_TRUE(obj->getBool());
 }
 
-TEST(AmbientObjectTest, GetAttrReturnsChild)
+TEST(OuterObjectTest, GetAttrReturnsChild)
 {
     auto arg = producerHex(0);
     /* Under the fold, existence is projected from parent WHNFAttrs.names;
@@ -147,13 +147,13 @@ TEST(AmbientObjectTest, GetAttrReturnsChild)
             {"getWHNF:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{"x"}}}},
             {"getAttr:" + arg, trace::ResultWHNF{"int", trace::WHNFInt{99}}},
         }),
-        stubAmbientRoot());
+        stubOuterRoot());
     auto child = obj->maybeGetAttr("x");
     ASSERT_NE(child, nullptr);
     EXPECT_EQ(child->getInt().value, 99);
 }
 
-TEST(AmbientObjectTest, GetAttrMissing)
+TEST(OuterObjectTest, GetAttrMissing)
 {
     auto arg = producerHex(0);
     /* Parent has an empty name list — projection yields "missing". No
@@ -163,11 +163,11 @@ TEST(AmbientObjectTest, GetAttrMissing)
         mockResolver({
             {"getWHNF:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{}}}},
         }),
-        stubAmbientRoot());
+        stubOuterRoot());
     EXPECT_EQ(obj->maybeGetAttr("missing"), nullptr);
 }
 
-TEST(AmbientObjectTest, GetListElem)
+TEST(OuterObjectTest, GetListElem)
 {
     auto arg = producerHex(0);
     /* Under the fold, bounds are projected from parent WHNFList.size;
@@ -179,13 +179,13 @@ TEST(AmbientObjectTest, GetListElem)
             {"getWHNF:" + arg, trace::ResultWHNF{"list", trace::WHNFList{5}}},
             {"getListElem:" + arg, trace::ResultWHNF{"string", trace::WHNFString{"world", {}}}},
         }),
-        stubAmbientRoot());
+        stubOuterRoot());
     auto child = obj->getListElem(1);
     ASSERT_NE(child, nullptr);
     EXPECT_EQ(child->getStringIgnoreContext(), "world");
 }
 
-TEST(AmbientObjectTest, GetAttrNames)
+TEST(OuterObjectTest, GetAttrNames)
 {
     auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
@@ -194,7 +194,7 @@ TEST(AmbientObjectTest, GetAttrNames)
         mockResolver({
             {"getWHNF:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{"a", "b", "c"}}}},
         }),
-        stubAmbientRoot());
+        stubOuterRoot());
     auto names = obj->getAttrNames();
     EXPECT_EQ(names.size(), 3u);
     EXPECT_EQ(names[0], "a");

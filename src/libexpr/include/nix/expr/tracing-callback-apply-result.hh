@@ -25,7 +25,7 @@
  */
 
 #include "nix/expr/arg-cell.hh"
-#include "nix/expr/subject-id.hh"
+#include "nix/expr/observation-set.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/trace-types.hh"
 #include "nix/expr/tracing-writer.hh"
@@ -49,8 +49,8 @@ class TracingCallbackApplyResult : public Object
     /* computeSelectorHash(producer) hex — the content-only apply-result
        state hash exposed via getSelectorHashHex. Computed once at
        construction to match `TracingEvaluator::apply`'s
-       `applyArgAncestryStateHashHex` (= what the walker computes too). */
-    std::string applyArgAncestryStateHashHex;
+       `qHex` (= what the walker computes too). */
+    std::string qHex;
 
     /* Argument-argAncestry cell — same shape as TracingObject. */
     std::shared_ptr<const ArgCell> argCell;
@@ -93,8 +93,8 @@ public:
     /** Symmetric to TracingObject/TracingReplayObject: surface the
         ApplyResultSubject so a subsequent apply on this wrapper
         composes evolving ApplyResultSubject constituents instead of
-        the frozen PostulatedIdempotentRead{applyArgAncestryStateHashHex} fallback. */
-    std::optional<std::string> getSelectorHashHex() const override { return applyArgAncestryStateHashHex; }
+        the frozen PostulatedIdempotentRead{qHex} fallback. */
+    std::optional<std::string> getSelectorHashHex() const override { return qHex; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;

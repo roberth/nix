@@ -5,7 +5,7 @@
  * ExprFromObject - Expr that evaluates by pulling from an Object.
  */
 
-#include "nix/expr/subject-id.hh"
+#include "nix/expr/observation-set.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/nixexpr.hh"
 
