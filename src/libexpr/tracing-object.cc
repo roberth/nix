@@ -164,6 +164,13 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     if (!fromHex)
         return innerChild;
     trace::SelectorGetAttr query{name, *fromHex};
+    auto queryHash = TracingDecisionGraph::computeSelectorHash(query);
+    tracingCacheLog(
+        "TO::maybeGetAttr '%s' -> Q=%s (from=%s, cbApplyOrigin=%d)",
+        name.c_str(),
+        queryHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+        fromHex->substr(0, 12).c_str(),
+        (int) cbApplyOrigin);
     /* Phase D2: getter as Query — logQuery/logQueryResult, no push.
        Observations dispatched during innerChild's evaluation
        attribute to the argCell (the enclosing apply/root cell). */
