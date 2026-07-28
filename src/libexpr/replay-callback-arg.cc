@@ -327,6 +327,12 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                      applyDepthSaved,
                      resolverSaved](
                 EvalState & state, const PosIdx pos, Value ** args, Value & v) {
+                /* Applying a callback-produced value (e.g. `g.foo 10`
+                   inside an outer callback body) is unsupported. */
+                throw Error(
+                    "tracing eval-cache: applying a function reached "
+                    "through a callback's contra-arg is not currently "
+                    "supported");
                 /* Publish the live arg under the cb-arg arg's
                    structural identity so the OUTER walker's
                    `resolveIdentity` can resolve env facts whose `from`

@@ -243,16 +243,21 @@ echo '{ f, x }: f x' > "$TEST_ROOT/call-fn.nix"
 # Data-arg change must invalidate too (sanity).
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 50; }') == 51 ]]
 
-# Fn-typed callback attribute applied inside the outer callback body.
-# The outer's `f = g: g.foo 10` accesses `.foo` on the callback arg
-# (producing a TracingCallbackArg wrapping a DerivedSubject) then
-# applies it. This puts a DerivedSubject in the fn slot of an
-# ApplyResultSubject constituent — a case the strict stateHashAfter
-# used to trap on. Regression for the fix at tracing-evaluator.cc's
-# TracingCallbackArg-fn branch.
+# Applying a function reached through a callback's contra-arg is not
+# currently supported. `f = g: g.foo 10` accesses `.foo` on the callback
+# arg then applies it — the outer applies an inner-owned function via
+# outer's Nix machinery, which the tracing eval-cache has no coherent
+# story for. Fails explicitly at both cold and warm.
 echo '{f}: f { foo = a: a * 2; }' > "$TEST_ROOT/cb-attr-apply.nix"
-[[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply.nix; }) { f = g: g.foo 10; }') == 20 ]]
-[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply.nix; }) { f = g: g.foo 10; }') == 20 ]]
+expectStderr 1 nix eval --impure --expr \
+    '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply.nix; }) { f = g: g.foo 10; }'
+expectStderr 1 env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
+    '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply.nix; }) { f = g: g.foo 10; }'
+# Original expected shape (kept for reference when the unsupported case
+# lands; reproducer for tracing-evaluator.cc's TracingCallbackArg-fn
+# branch, previously trapped by strict stateHashAfter):
+# [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply.nix; }) { f = g: g.foo 10; }') == 20 ]]
+# [[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply.nix; }) { f = g: g.foo 10; }') == 20 ]]
 
 # Path values forwarded through the cache boundary
 echo '{ p }: p' > "$TEST_ROOT/path-fn.nix"

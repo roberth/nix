@@ -182,9 +182,17 @@ ObjectType TracingCallbackArg::getType()
 
 RootValue TracingCallbackArg::defeatCache()
 {
-    /* Pass through unrecorded. defeatCache yields a concrete RootValue
-       (no observable side effects), and there's no incoming-Fact shape
-       for "I gave you my underlying value." */
+    /* Reject function-typed contra-arg values: handing back the real
+       lambda would let outer's Nix mkApp invoke it directly, bypassing
+       the tracing machinery. That path only produces a correct answer
+       "by accident" and has no coherent story at replay. */
+    if (getType() == nFunction)
+        throw Error(
+            "tracing eval-cache: applying a function reached through a "
+            "callback's contra-arg is not currently supported");
+    /* Pass through unrecorded for non-function types. defeatCache yields
+       a concrete RootValue (no observable side effects), and there's no
+       incoming-Fact shape for "I gave you my underlying value." */
     return inner->defeatCache();
 }
 
@@ -235,24 +243,14 @@ void TracingCallbackArg::recordObservation(const trace::SelectorVariant & query,
     argCell->callbackState->runningObsSet.push_back({qh, rPayload});
 }
 
-std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> argObj)
+std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> /*argObj*/)
 {
-    /* Delegate the apply itself to the wrapped inner Object. For an
-       inner-supplied lambda (the cb-higher-order case) `inner` is an
-       InterpreterObject whose queryApply does mkApp + bridging. For
-       a replay-time ReplayCallbackArg replay object, inner->queryApply
-       throws "can't validate" — a divergence exception the walker
-       turns into a cache miss.
-
-       The result wrapper carries a SelectorApply producer so accesses
-       on the apply result continue to be routed through the enclosing
-       callback cell. Arg identity flows through the cell/facts, not
-       through the payload (#181). */
-    auto result = inner->queryApply(argObj);
-    trace::SelectorApply resultQ{tracingLocalFromOf(localId())};
-    trace::SelectorVariant resultProducer{resultQ};
-    return std::make_shared<TracingCallbackArg>(
-        std::move(result), std::move(resultProducer), writer, rootFSRoot, argCell);
+    /* Applying a callback-produced value (a function reached through
+       the contra-arg, e.g. `g.foo 10` where `g` is a callback's
+       contra-arg) is not currently supported. */
+    throw Error(
+        "tracing eval-cache: applying a function reached through a "
+        "callback's contra-arg is not currently supported");
 }
 
 } // namespace nix
