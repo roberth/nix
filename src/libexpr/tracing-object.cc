@@ -90,17 +90,36 @@ static std::string parentQOrValueHandle(const std::optional<TriePosition> & trie
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());
 }
 
-std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter &)
+std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter & w)
 {
+    /* Callback-produced wrapper: identity is a SelectorCallbackApply
+       snapshotting the enclosing callback cell's runningObsSet at
+       this moment. Insert its payload into the Requests pool so
+       walker's resolveIdentity can decode `from` references at
+       replay. Not folded as a Fact — the getAttr / apply Selector
+       that references it becomes the Fact (callback-model §7). */
+    if (cbApplyOrigin && argCell && argCell->callbackState) {
+        auto & cs = *argCell->callbackState;
+        auto * dg = w.getDecisionGraph();
+        if (dg) {
+            auto obsSetHash = dg->insertObservationSet(cs.runningObsSet);
+            trace::SelectorCallbackApply qca;
+            qca.fn = cs.fnStateHashHex;
+            qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
+            trace::SelectorVariant qcaVariant{qca};
+            auto qcaHash = TracingDecisionGraph::computeSelectorHash(qcaVariant);
+            nlohmann::json qcaJson = qcaVariant;
+            dg->insertRequest(qcaHash, jsonToCborString(qcaJson));
+            return qcaHash.to_string(HashFormat::Base16, false);
+        }
+    }
     /* Apply-result wrapper: `producer` is SelectorApply, whose payload
        carries only `fn` (arg dropped per #181). SelectorApply.fn is a
        curried-fn identity — recording a child SelectorGetAttr /
        GetListElem / GetFunctionInfo with `from=SelectorApply hex` says
        "attrset lookup on a function-identity", which is a category
        error. No compositional identity exists here; signal callers to
-       skip child Q recording rather than write nonsense.
-       A follow-up commit reinstates a valid identity for
-       callback-produced apply-results via SelectorCallbackApply. */
+       skip child Q recording rather than write nonsense. */
     if (producer)
         return std::nullopt;
     /* Navigation descendant of a validly-identified parent: our own

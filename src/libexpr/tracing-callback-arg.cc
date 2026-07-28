@@ -220,6 +220,14 @@ void TracingCallbackArg::recordObservation(const trace::SelectorVariant & query,
         [](const auto & r) -> nlohmann::json { return r; },
         result);
     auto rPayload = jsonToCborString(rJson);
+    /* Ensure the referenced Selector's payload is in the Requests pool
+       so downstream decoders (walker's resolveIdentity) can decode `q`
+       references from the obsSet. Content-addressed insert is
+       idempotent. */
+    if (auto * dg = writer.getDecisionGraph()) {
+        nlohmann::json qJson = query;
+        dg->insertRequest(qh, jsonToCborString(qJson));
+    }
     argCell->callbackState->runningObsSet.push_back({qh, rPayload});
 }
 
