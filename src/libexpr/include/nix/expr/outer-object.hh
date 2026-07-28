@@ -50,16 +50,32 @@ using OuterQueryFn = std::function<OuterQueryResult(
     std::shared_ptr<const ArgCell> callerCell)>;
 
 /**
+ * Result of an OuterApplyFn call. `applyResult` is the outer's raw
+ * apply-result Object (wrapped by the caller into an OuterObject with
+ * `producerFn` as its producer callable). `producerFn` returns the
+ * current SelectorVariant identifying the apply-result — for callback
+ * applies it snapshots the callback firing's runningObsSet into a
+ * `SelectorCallbackApply` on demand, so probes at different moments
+ * produce distinct compositional Selectors.
+ */
+struct OuterApplyResult
+{
+    std::shared_ptr<Object> applyResult;
+    std::function<trace::SelectorVariant()> producerFn;
+};
+
+/**
  * Callback type for outer function application. Takes the outer fn
  * Object, the calling OuterObject's producer Selector (identifies
  * the fn for the SelectorApply payload — the outer Object itself
  * typically has no producer, so the wrapping OuterObject provides
  * it), the argument Object, and the ArgCell for this apply (created
  * once by the caller and reused as the apply-result wrapper's argCell
- * — one cell per apply, no fragmentation). Returns the outer's
- * apply-result Object.
+ * — one cell per apply, no fragmentation). Returns the outer's raw
+ * apply-result Object plus a producer callable for the wrapping
+ * OuterObject.
  */
-using OuterApplyFn = std::function<std::shared_ptr<Object>(
+using OuterApplyFn = std::function<OuterApplyResult(
     std::shared_ptr<Object> fnObj,
     trace::SelectorVariant fnProducer,
     std::shared_ptr<Object> argObj,

@@ -26,10 +26,12 @@ static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const tr
     return std::visit(
         [&](const auto & query) -> OuterQueryResult {
             using Q = std::decay_t<decltype(query)>;
-            if constexpr (std::is_same_v<Q, trace::SelectorApply>) {
-                /* #185: Identity case — used by OuterObject::whnf when
-                   producer is SelectorApply (queryApply-result OuterObject's
-                   whnf). obj IS the applyResult; no re-application. */
+            if constexpr (std::is_same_v<Q, trace::SelectorApply>
+                          || std::is_same_v<Q, trace::SelectorCallbackApply>) {
+                /* Identity case — OuterObject::whnf dispatches with
+                   q=producer, which for callback-applyResult wrappers is
+                   SelectorCallbackApply; for other applies it's
+                   SelectorApply. obj IS the applyResult; return its WHNF. */
                 return {computeWHNFFromObject(*obj), nullptr};
             } else if constexpr (std::is_same_v<Q, trace::SelectorArg>) {
                 /* #186: SelectorArg used as identity of the outer arg
@@ -100,13 +102,13 @@ struct OuterApply
     std::shared_ptr<SourceRoot> outerRootFSRoot;
     std::shared_ptr<OuterResolver> resolverHandle;
 
-    /** Invoke `fnObj` on `argObj`. `fnObj` is the outer Object to
-        apply (passed by the caller who already holds it — no id
-        round-trip). `fnProducer` is the calling OuterObject's real
-        producer Selector; the SelectorApply payload's `fn` field is
-        `hex(computeSelectorHash(fnProducer))`. Returns the outer's
-        apply-result Object. */
-    std::shared_ptr<Object> run(
+    /** Invoke `fnObj` on `argObj`. Returns the raw outer apply-result
+        Object plus a producer callable for the wrapping OuterObject.
+        For a callback firing the callable synthesises
+        `SelectorCallbackApply{fn=<fn hex>, argObsSet=<snapshot hash>}`
+        each time it's called, so probes at different moments sample
+        the current runningObsSet. */
+    OuterApplyResult run(
         std::shared_ptr<Object> fnObj, trace::SelectorVariant fnProducer,
         std::shared_ptr<Object> argObj,
         std::shared_ptr<const ArgCell> applyCell);
@@ -140,10 +142,10 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
     };
     std::vector<LiveProxyEntry> liveProxies;
 
-    /** Invoke the outer fn Object `fnObj` on `argObj`. `fnProducer`
-        is the wrapping OuterObject's real producer Selector. Returns
-        the outer's apply-result Object. */
-    std::shared_ptr<Object> apply(
+    /** Invoke the outer fn Object `fnObj` on `argObj`. Returns the raw
+        outer apply-result plus a producer callable for the wrapping
+        OuterObject. */
+    OuterApplyResult apply(
         std::shared_ptr<Object> fnObj, trace::SelectorVariant fnProducer,
         std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
     {
@@ -155,7 +157,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
     }
 };
 
-std::shared_ptr<Object> OuterApply::run(
+OuterApplyResult OuterApply::run(
     std::shared_ptr<Object> fnObj, trace::SelectorVariant fnProducer,
     std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> applyCell)
 {
@@ -165,13 +167,10 @@ std::shared_ptr<Object> OuterApply::run(
     if (!outerState)
         throw Error("outer apply requires outerState");
 
-    /* #188: applyCell is the one cell for this apply — created by the
-       caller (OuterObject::queryApply) and reused as the apply-result
-       wrapper's argCell. No local ArgCell::make: previously we allocated
-       a second cell here with the same parent+arg, fragmenting the
-       apply's cell state (observations landed on one, attribution read
-       another). Callback state populated on this cell below is now
-       reachable from the result wrapper's own cell chain. */
+    /* applyCell is the one cell for this apply — created by
+       OuterObject::queryApply. `callbackState` populated below marks
+       it as a callback firing; the producer callable returned to the
+       caller reads runningObsSet from it on demand. */
     auto localCell = applyCell;
     /* Each new value that crosses INTO a cb-apply is
        treated uniformly as a value — no inherited Subject is
@@ -261,37 +260,47 @@ std::shared_ptr<Object> OuterApply::run(
         innerWriter->deferRequest(applyJson);
     }
 
-    /* B7: Wrap the cb-apply result so its whnf fires
-       emitCallbackApplyForApplyResult with a producer Selector
-       whose `fn` field maps to the CallbackCell we just populated.
-       Producer = SelectorApply{fn=hex(computeSelectorHash(fnProducer))}.
-       This is the same shape TracingCallbackArg::queryApply and
-       TracingEvaluator::apply build for their apply-result wrappers. */
+    /* Build the producer callable for the wrapping OuterObject.
+       For a callback firing (innerWriter present, localCell has
+       callbackState populated above), the callable synthesises
+       `SelectorCallbackApply{fn=<fn hex>, argObsSet=<snapshot hash>}`
+       from localCell.callbackState.runningObsSet on demand — probes
+       at different moments produce distinct compositional Selectors
+       per §7 of the callback model. For non-callback applies (no
+       innerWriter), falls back to a stable SelectorApply.
+
+       The obsSet snapshot is inserted into the ObservationSet CAS
+       (via decisionGraph) so walker's `resolveIdentity` can decode
+       references to this producer at replay. */
+    std::function<trace::SelectorVariant()> producerFn;
     if (innerWriter) {
-        trace::SelectorApply applyProducer{
-            TracingDecisionGraph::computeSelectorHash(fnProducer)
-                .to_string(HashFormat::Base16, false)};
-        auto v = innerWriter->getSink().logSelector(applyQuery);
-        TriePosition triePos{
-            .resultNodeHash = Hash{HashAlgorithm::SHA256},
-            .queryHashStr = fnIdStr,
+        auto * dg = innerWriter->getDecisionGraph();
+        producerFn = [localCell, fnIdStr, dg]() -> trace::SelectorVariant {
+            if (localCell->callbackState && dg) {
+                auto obsSetHash = dg->insertObservationSet(
+                    localCell->callbackState->runningObsSet);
+                trace::SelectorCallbackApply qca;
+                qca.fn = localCell->callbackState->fnStateHashHex;
+                qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
+                trace::SelectorVariant qcaVariant{qca};
+                /* Also insert the CBApply's own payload into the
+                   Requests pool so walker can decode `from` references
+                   composed on top of this producer. */
+                auto qcaHash = TracingDecisionGraph::computeSelectorHash(qcaVariant);
+                nlohmann::json qcaJson = qcaVariant;
+                dg->insertRequest(qcaHash, jsonToCborString(qcaJson));
+                return qcaVariant;
+            }
+            return trace::SelectorVariant{trace::SelectorApply{fnIdStr}};
         };
-        auto wrapped = TracingObject::create(
-            ref<Object>(resultObj), *innerWriter, v, triePos);
-        wrapped->withProducer(trace::SelectorVariant{applyProducer});
-        /* Mark as cb-apply root: navigation descendants will inherit
-           the producer so their whnf emits QCA (§7). */
-        wrapped->withCbApplyOrigin();
-        /* #183: thread the callback cell through so emitCallbackApply
-           can read its callbackState directly (no LIFO fallback over
-           writer.callbackCells). localCell was created just above and
-           its callbackState was populated with (applyId, fnStateHashHex)
-           for this specific firing. */
-        wrapped->withArgCell(localCell);
-        return wrapped.get_ptr();
+    } else {
+        producerFn = [fnIdStr]() { return trace::SelectorVariant{trace::SelectorApply{fnIdStr}}; };
     }
 
-    return resultObj;
+    return OuterApplyResult{
+        .applyResult = resultObj,
+        .producerFn = std::move(producerFn),
+    };
 }
 
 /* Out-of-line virtual definitions so the abstract base gets a key
@@ -356,39 +365,13 @@ static PrimOp * makeCachedFnPrimOp(
                             const trace::SelectorVariant & q,
                             trace::SelectorVariant producer,
                             std::shared_ptr<const ArgCell> callerCell) {
-                            /* Skip the redundant `innerEnv.outerQuery` when
-                               `outerObj` already emits its own recording via
-                               a QCA-emitting wrapper. Cold otherwise records
-                               two overlapping observations for the same
-                               event — a generic whnf-of-arg observation
-                               (which warm can't resolve because it has no
-                               live contra-arg) and the QCA observation from
-                               the wrapper's own whnf. Warm hits the generic
-                               one and misses. R2 in status.md flags this
-                               redundancy; the QCA alone is what the
-                               callback-model design requires. */
-                            bool cbApplyOrigin = false;
-                            /* #187: attributionCell = the OUTER proxy's
-                               argCell (passed as callerCell). Historically
-                               this used outerObj->getProxyArgCell(), but
-                               outerObj is the wrapped inner Object (often
-                               non-proxy) whose argCell is null — outer
-                               probes then had nowhere to attribute and
-                               logResult's cell-chain iteration missed
-                               them entirely. */
                             std::shared_ptr<const ArgCell> attributionCell = callerCell;
-                            if (outerObj) {
-                                if (auto * to = dynamic_cast<TracingObject *>(outerObj.get()))
-                                    cbApplyOrigin = to->isCbApplyOrigin();
-                            }
                             OuterQueryResult qr = dispatchOuterQuery(std::move(outerObj), q);
-                            if (!cbApplyOrigin) {
-                                innerEnv.outerQuery(
-                                    q,
-                                    [&](const trace::SelectorVariant &) { return qr.result; },
-                                    producer,
-                                    attributionCell);
-                            }
+                            innerEnv.outerQuery(
+                                q,
+                                [&](const trace::SelectorVariant &) { return qr.result; },
+                                producer,
+                                attributionCell);
                             return qr;
                         };
                         /* applyFn: invoke the outer fn on the arg,
@@ -402,7 +385,7 @@ static PrimOp * makeCachedFnPrimOp(
                             std::shared_ptr<Object> fnObj,
                             trace::SelectorVariant fnProducer,
                             std::shared_ptr<Object> argObj,
-                            std::shared_ptr<const ArgCell> applyCell) {
+                            std::shared_ptr<const ArgCell> applyCell) -> OuterApplyResult {
                             return resolver->apply(std::move(fnObj), std::move(fnProducer),
                                                     std::move(argObj), std::move(applyCell));
                         };

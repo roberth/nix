@@ -52,9 +52,16 @@ trace::ResultWHNF & OuterObject::whnf()
 {
     if (cachedWHNF)
         return *cachedWHNF;
-    /* #185 Role 3: the Fact records "value at this identity has WHNF X".
-       The value's identity IS its producer Selector. Pass producer as
-       the Fact key. */
+    /* For callback-produced OuterObjects the producer callable snapshots
+       the callback firing's runningObsSet. Force the body first (which
+       runs the callback and populates runningObsSet), THEN snapshot the
+       producer so the CBApply's obsSet reflects the observations the
+       body made — walker's dispatch materialises a ReplayCallbackArg
+       backed by this obsSet and can serve the same probes.
+       Forcing outerObj's WHNF is cheap on the second call: computeWHNF
+       caches, and queryFn's identity dispatch (SelectorApply / CBApply
+       cases in dispatchOuterQuery) just re-reads the cached WHNF. */
+    (void) computeWHNFFromObject(*outerObj);
     auto p = producer();
     auto qr = queryFn(outerObj, p, p, argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
@@ -231,21 +238,24 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
         throw Error("outer apply: no apply callback");
     auto callerScope = effectiveArgCell(*this);
     /* #188: one cell per apply. Create the apply's cell here and thread
-       it into applyFn so OuterApply::run reuses it as its localCell —
-       previously both sides made their own ArgCell(callerScope, argObj),
-       and observations that landed on OuterApply::run's cell were
-       invisible from the result wrapper's cell. */
+       it into applyFn so OuterApply::run reuses it as its localCell. */
     auto applyCell = ArgCell::make(callerScope, argObj);
-    /* Result producer = SelectorApply{fn=hex(fnProducer Q hash)}.
-       fn identifies the applied Selector; arg dropped from payload per
-       #181 (arg discrimination flows through the arg's own cell/facts). */
-    auto fnQHex = getSelectorHashHex().value_or(std::string{});
-    trace::SelectorApply resultQ{fnQHex};
-    auto outerResult = applyFn(outerObj, producer(), std::move(argObj), applyCell);
+    auto ar = applyFn(outerObj, producer(), std::move(argObj), applyCell);
+    /* The wrapping OuterObject uses:
+       - `ar.producerFn` as its producer — for callback applies this
+         constructs `SelectorCallbackApply{fn, argObsSet=<snapshot>}` on
+         demand, so probes on this apply-result yield compositional
+         `SelectorGetAttr(name, from=SelectorCallbackApply(...))`.
+       - `callerScope` (parent of applyCell) as its argCell — probes
+         on this apply-result attribute to the caller's cell, so the
+         outer probes flow into the enclosing scope's factset (e.g.,
+         the primop's seedCell for a callback firing inside the primop's
+         body). applyCell itself carries the callback firing state
+         (its `callbackState`) — the producerFn captures it directly. */
     auto result = std::make_shared<OuterObject>(
-        [resultQ]() { return trace::SelectorVariant{resultQ}; },
-        std::move(outerResult), queryFn, outerRootFSRoot, applyFn);
-    result->withArgCell(std::move(applyCell));
+        std::move(ar.producerFn),
+        std::move(ar.applyResult), queryFn, outerRootFSRoot, applyFn);
+    result->withArgCell(callerScope);
     return result;
 }
 
