@@ -116,6 +116,8 @@ public:
 
     std::optional<std::string> getSelectorHashHex() const override { return getQueryHashStr(); }
 
+    std::optional<std::string> getProducerSelectorHex(TracingWriter & writer) override;
+
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
     std::string getStringIgnoreContext() override;

@@ -286,6 +286,39 @@ public:
     }
 
     /**
+     * Return the Q hex of this Object's *producer* Selector — the
+     * Selector value that describes "how this Object was produced".
+     * Callers use it as the `from` field when constructing child
+     * Selectors (e.g. `SelectorGetAttr{name, from=<hex>}` inside
+     * `TracingObject::maybeGetAttr`).
+     *
+     * Differs from `getSelectorHashHex()` in two ways:
+     *  - `getSelectorHashHex()` is a stable-identity accessor (same
+     *    hex across calls). `getProducerSelectorHex(w)` may build a
+     *    fresh Selector on each call — e.g. a `SelectorCallbackApply`
+     *    whose `argObsSet` reflects the current running observation
+     *    snapshot.
+     *  - `getProducerSelectorHex(w)` is a *write* operation: it inserts
+     *    the constructed Selector into the writer's Requests pool
+     *    (via `decisionGraph->insertRequest`) so the walker's
+     *    `resolveIdentity` can later find its payload. Takes the
+     *    writer so the base Object doesn't need to know about it.
+     *
+     * Returns nullopt when the wrapper has no valid compositional
+     * producer identity (e.g. a non-callback apply-result wrapper whose
+     * `SelectorApply.fn` is a curried-fn reference, not an
+     * applyResult identity). Callers must skip child Q recording in
+     * that case rather than fall back to a nonsense `from` field.
+     *
+     * Default: nullopt (non-proxy Objects have no Selector to
+     * describe). Proxy wrappers override.
+     */
+    virtual std::optional<std::string> getProducerSelectorHex(class TracingWriter & /*writer*/)
+    {
+        return std::nullopt;
+    }
+
+    /**
      * Invoke a covariant-callback apply on this Object with the given
      * arg. Only meaningful for OuterObject (which dispatches to its
      * applyFn closure); default throws for any other Object type.

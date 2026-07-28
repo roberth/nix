@@ -90,6 +90,25 @@ static std::string parentQOrValueHandle(const std::optional<TriePosition> & trie
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());
 }
 
+std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter &)
+{
+    /* Apply-result wrapper: `producer` is SelectorApply, whose payload
+       carries only `fn` (arg dropped per #181). SelectorApply.fn is a
+       curried-fn identity — recording a child SelectorGetAttr /
+       GetListElem / GetFunctionInfo with `from=SelectorApply hex` says
+       "attrset lookup on a function-identity", which is a category
+       error. No compositional identity exists here; signal callers to
+       skip child Q recording rather than write nonsense.
+       A follow-up commit reinstates a valid identity for
+       callback-produced apply-results via SelectorCallbackApply. */
+    if (producer)
+        return std::nullopt;
+    /* Navigation descendant of a validly-identified parent: our own
+       stable identity is triePos.queryHashStr (or valueNum for the
+       evalExprLazy case). */
+    return parentQOrValueHandle(triePos, valueNum);
+}
+
 std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
 {
     /* Existence folds through whnf(): parent's WHNFAttrs.names answers
@@ -111,12 +130,25 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
         /* WHNF said the attr is present but inner disagrees — shouldn't
            happen under matching-until-divergence. */
         return nullptr;
-    trace::SelectorGetAttr query{name, parentQOrValueHandle(triePos, valueNum)};
+    /* Force child WHNF first — for a callback-produced wrapper, this
+       runs the callback body's attribute expression, firing contra-arg
+       probes that grow the callback cell's runningObsSet. */
+    auto childWHNF = computeWHNFFromObject(*innerChild);
+    /* Now build SelectorGetAttr with `from` = our producer at the
+       post-force moment. For cbApplyOrigin wrappers this snapshots the
+       grown runningObsSet into a SelectorCallbackApply (§7's per-probe
+       sampling); non-callback wrappers just return their stable Q hex.
+       Nullopt = no valid compositional producer (e.g. non-callback
+       apply-result wrapper); skip recording rather than write a Q
+       with a nonsense `from`. */
+    auto fromHex = getProducerSelectorHex(writer);
+    if (!fromHex)
+        return innerChild;
+    trace::SelectorGetAttr query{name, *fromHex};
     /* Phase D2: getter as Query — logQuery/logQueryResult, no push.
        Observations dispatched during innerChild's evaluation
        attribute to the argCell (the enclosing apply/root cell). */
     auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
-    auto childWHNF = computeWHNFFromObject(*innerChild);
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
     auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur, argCell);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(innerChild), writer, valueId, childTriePos));
@@ -249,7 +281,10 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
         /* Not a list, or index out of bounds — delegate so the
            interpreter throws the source-positioned error. */
         return inner->getListElem(index);
-    trace::SelectorGetListElem query{parentQOrValueHandle(triePos, valueNum), index};
+    auto fromHex = getProducerSelectorHex(writer);
+    if (!fromHex)
+        return inner->getListElem(index);
+    trace::SelectorGetListElem query{*fromHex, index};
     /* Phase D2: getter — no push, direct Terminal. */
     auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
     auto result = inner->getListElem(index);
@@ -293,7 +328,10 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
        Whether or not inner->getFunctionInfo() actually fires sub-
        observations, the swap costs at most an extra push/pop and
        eliminates the unverified assumption. */
-    trace::SelectorGetFunctionInfo query{parentQOrValueHandle(triePos, valueNum)};
+    auto fromHex = getProducerSelectorHex(writer);
+    if (!fromHex)
+        return inner->getFunctionInfo();
+    trace::SelectorGetFunctionInfo query{*fromHex};
     /* Phase D2: getter — no push, direct Terminal. */
     auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
     auto result = inner->getFunctionInfo();
