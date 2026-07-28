@@ -9,7 +9,7 @@
 namespace nix {
 
 OuterObject::OuterObject(
-    trace::SelectorVariant producer_, std::shared_ptr<Object> outerObj_, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn)
+    std::function<trace::SelectorVariant()> producer_, std::shared_ptr<Object> outerObj_, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn)
     : producer(std::move(producer_))
     , outerObj(std::move(outerObj_))
     , queryFn(std::move(queryFn))
@@ -33,13 +33,15 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     /* Child producer = SelectorGetAttr{name, from=parent's Q hash hex}. */
     auto parentQHex = getSelectorHashHex().value_or(std::string{});
     trace::SelectorGetAttr q{name, parentQHex};
-    auto qr = queryFn(outerObj, q, producer, argCell);
+    auto qr = queryFn(outerObj, q, producer(), argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("outer maybeGetAttr: queryFn returned unexpected result type");
     if (!qr.child)
         throw Error("outer maybeGetAttr: queryFn didn't return a child Object");
-    auto child = std::make_shared<OuterObject>(trace::SelectorVariant{q}, qr.child, queryFn, outerRootFSRoot, applyFn);
+    auto child = std::make_shared<OuterObject>(
+        [q]() { return trace::SelectorVariant{q}; },
+        qr.child, queryFn, outerRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     child->cachedWHNF = *r;
@@ -53,7 +55,8 @@ trace::ResultWHNF & OuterObject::whnf()
     /* #185 Role 3: the Fact records "value at this identity has WHNF X".
        The value's identity IS its producer Selector. Pass producer as
        the Fact key. */
-    auto qr = queryFn(outerObj, producer, producer, argCell);
+    auto p = producer();
+    auto qr = queryFn(outerObj, p, p, argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("outer getWHNF: unexpected result type");
@@ -159,13 +162,15 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
     /* Child producer = SelectorGetListElem{from=parent's Q hash hex, index}. */
     auto parentQHex = getSelectorHashHex().value_or(std::string{});
     trace::SelectorGetListElem q{parentQHex, index};
-    auto qr = queryFn(outerObj, q, producer, argCell);
+    auto qr = queryFn(outerObj, q, producer(), argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("outer getListElem: queryFn returned unexpected result type");
     if (!qr.child)
         throw Error("outer getListElem: queryFn didn't return a child Object");
-    auto child = std::make_shared<OuterObject>(trace::SelectorVariant{q}, qr.child, queryFn, outerRootFSRoot, applyFn);
+    auto child = std::make_shared<OuterObject>(
+        [q]() { return trace::SelectorVariant{q}; },
+        qr.child, queryFn, outerRootFSRoot, applyFn);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
     child->cachedWHNF = *r;
@@ -203,7 +208,7 @@ std::optional<FunctionInfo> OuterObject::getFunctionInfo()
 {
     /* #183: q.from = parent's Q-space identity. */
     trace::SelectorGetFunctionInfo q{getSelectorHashHex().value_or(std::string{})};
-    auto qr = queryFn(outerObj, q, producer, argCell);
+    auto qr = queryFn(outerObj, q, producer(), argCell);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
         return std::nullopt;
@@ -236,8 +241,10 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
        #181 (arg discrimination flows through the arg's own cell/facts). */
     auto fnQHex = getSelectorHashHex().value_or(std::string{});
     trace::SelectorApply resultQ{fnQHex};
-    auto outerResult = applyFn(outerObj, producer, std::move(argObj), applyCell);
-    auto result = std::make_shared<OuterObject>(trace::SelectorVariant{resultQ}, std::move(outerResult), queryFn, outerRootFSRoot, applyFn);
+    auto outerResult = applyFn(outerObj, producer(), std::move(argObj), applyCell);
+    auto result = std::make_shared<OuterObject>(
+        [resultQ]() { return trace::SelectorVariant{resultQ}; },
+        std::move(outerResult), queryFn, outerRootFSRoot, applyFn);
     result->withArgCell(std::move(applyCell));
     return result;
 }

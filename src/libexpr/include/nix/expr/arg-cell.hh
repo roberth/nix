@@ -86,20 +86,6 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         other cells. See CallbackState above for field semantics. */
     mutable std::shared_ptr<CallbackState> callbackState;
 
-    /** Cell's descriptive Producer Selector — used as the leaf of a
-        Selector chain instead of `SelectorArg{depth}`. Set by the
-        cell's construction site. For a regular apply cell (e.g. the
-        primop's seedCell), producer = `SelectorApply{fn=<fn's
-        Selector hex>}`. Callback firings synthesise their producer
-        dynamically from `callbackState` (obsSet snapshotted per query),
-        which supersedes any stored value.
-
-        Under the "Selector is a sequence" reading (see main doc's
-        Design note), the cell's Producer is the descriptive prefix
-        that other Selectors compose onto (via `from` / `fn`) —
-        replacing positional `SelectorArg` leaves. */
-    mutable std::optional<trace::SelectorVariant> producer;
-
     /** Per-fact entry. `response` is the fact's response hash (identity
         contribution to factSetHash). `barrier` is a writer-side monotonic
         sequence number used at logResult time to group facts into

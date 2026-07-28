@@ -336,15 +336,15 @@ static PrimOp * makeCachedFnPrimOp(
                         auto parentCell = effectiveArgCell(*fnObj);
                         auto seedCell = ArgCell::make(parentCell, /*liveObject set below*/ nullptr);
                         /* Selector-is-a-sequence: the arg is identified
-                           by the apply that scoped it. seedCell.producer
-                           = the SelectorApply of this apply — replacing
-                           the positional SelectorArg leaf. Descendants
-                           (GetAttr("f", from=<seedCell.producer hex>))
-                           compose on top. */
-                        auto fnHexForProducer = fnObj->getSelectorHashHex().value_or(std::string{});
-                        trace::SelectorApply seedProducer{fnHexForProducer};
-                        seedCell->producer = trace::SelectorVariant{seedProducer};
-                        trace::SelectorVariant argProducer{seedProducer};
+                           by the apply that scoped it — SelectorApply
+                           whose `fn` is fnObj's CURRENT selector hex.
+                           Passed as a live callable so the hex is
+                           recomputed on demand (fnObj may be a proxy
+                           whose identity evolves). */
+                        auto argProducerFn = [fnObj]() -> trace::SelectorVariant {
+                            return trace::SelectorApply{
+                                fnObj->getSelectorHashHex().value_or(std::string{})};
+                        };
                         auto & innerEnv = *innerEval->getEvalState().environment;
                         /* queryFn: dispatch the query directly on the
                            outer Object the OuterObject was
@@ -411,7 +411,7 @@ static PrimOp * makeCachedFnPrimOp(
                            SourceRoot outlives the Values the outer
                            evaluator builds from any returned RootedPaths. */
                         auto outerArgProxy =
-                            make_ref<OuterObject>(argProducer, outerArgObj, std::move(queryFn), state.rootFSRoot, std::move(applyFn));
+                            make_ref<OuterObject>(argProducerFn, outerArgObj, std::move(queryFn), state.rootFSRoot, std::move(applyFn));
                         /* Wire seedCell.liveObject to outerArgProxy now
                            that it exists. This is the deliberate
                            shared_ptr cycle documented on

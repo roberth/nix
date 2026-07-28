@@ -29,6 +29,11 @@ static trace::SelectorVariant testProducer(int n)
     return trace::SelectorArg{n};
 }
 
+static std::function<trace::SelectorVariant()> testProducerFn(int n)
+{
+    return [n]() { return testProducer(n); };
+}
+
 static std::string producerHex(int n)
 {
     return TracingDecisionGraph::computeSelectorHash(testProducer(n))
@@ -98,7 +103,7 @@ TEST(OuterObjectTest, GetType)
 {
     auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
-        testProducer(0),
+        testProducerFn(0),
         stubOuter(),
         mockResolver({{"arg:" + arg, trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
         stubOuterRoot());
@@ -109,7 +114,7 @@ TEST(OuterObjectTest, GetInt)
 {
     auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
-        testProducer(0),
+        testProducerFn(0),
         stubOuter(),
         mockResolver({{"arg:" + arg, trace::ResultWHNF{"int", trace::WHNFInt{42}}}}),
         stubOuterRoot());
@@ -120,7 +125,7 @@ TEST(OuterObjectTest, GetString)
 {
     auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
-        testProducer(0),
+        testProducerFn(0),
         stubOuter(),
         mockResolver({{"arg:" + arg, trace::ResultWHNF{"string", trace::WHNFString{"hello", {}}}}}),
         stubOuterRoot());
@@ -131,7 +136,7 @@ TEST(OuterObjectTest, GetBool)
 {
     auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
-        testProducer(0),
+        testProducerFn(0),
         stubOuter(),
         mockResolver({{"arg:" + arg, trace::ResultWHNF{"bool", trace::WHNFBool{true}}}}),
         stubOuterRoot());
@@ -144,7 +149,7 @@ TEST(OuterObjectTest, GetAttrReturnsChild)
     /* Under the fold, existence is projected from parent WHNFAttrs.names;
        retrieval is a SelectorGetAttr returning child WHNF. */
     auto obj = std::make_shared<OuterObject>(
-        testProducer(0),
+        testProducerFn(0),
         stubOuter(),
         mockResolver({
             {"arg:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{"x"}}}},
@@ -162,7 +167,7 @@ TEST(OuterObjectTest, GetAttrMissing)
     /* Parent has an empty name list — projection yields "missing". No
        getAttr query is issued. */
     auto obj = std::make_shared<OuterObject>(
-        testProducer(0), stubOuter(),
+        testProducerFn(0), stubOuter(),
         mockResolver({
             {"arg:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{}}}},
         }),
@@ -176,7 +181,7 @@ TEST(OuterObjectTest, GetListElem)
     /* Under the fold, bounds are projected from parent WHNFList.size;
        retrieval is SelectorGetListElem returning child WHNF. */
     auto obj = std::make_shared<OuterObject>(
-        testProducer(0),
+        testProducerFn(0),
         stubOuter(),
         mockResolver({
             {"arg:" + arg, trace::ResultWHNF{"list", trace::WHNFList{5}}},
@@ -192,7 +197,7 @@ TEST(OuterObjectTest, GetAttrNames)
 {
     auto arg = producerHex(0);
     auto obj = std::make_shared<OuterObject>(
-        testProducer(0),
+        testProducerFn(0),
         stubOuter(),
         mockResolver({
             {"arg:" + arg, trace::ResultWHNF{"set", trace::WHNFAttrs{{"a", "b", "c"}}}},

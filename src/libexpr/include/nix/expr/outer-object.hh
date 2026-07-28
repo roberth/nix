@@ -72,9 +72,14 @@ using OuterApplyFn = std::function<std::shared_ptr<Object>(
  */
 class OuterObject : public Object
 {
-    /** #183: producer Selector — the SelectorVariant whose content hash
-        IS this OuterObject's identity. */
-    trace::SelectorVariant producer;
+    /** Producer Selector — a callable that returns the current
+        SelectorVariant whose content hash IS this OuterObject's
+        identity. Callable form (not a stored value) because a
+        producer may reference live state elsewhere (e.g. a
+        `SelectorApply{fn=<fnObj's current hex>}` must recompute the
+        fn hex on demand, not bake a snapshot). Static producers wrap
+        a literal via `[v]{ return v; }`. */
+    std::function<trace::SelectorVariant()> producer;
     /* The Object from the outer Interpreter this proxy wraps.
        Methods on OuterObject dispatch through this reference: the
        inner side asks OuterObject (via Object interface), OuterObject
@@ -106,7 +111,7 @@ class OuterObject : public Object
     trace::ResultWHNF & whnf();
 
 public:
-    OuterObject(trace::SelectorVariant producer, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn = {});
+    OuterObject(std::function<trace::SelectorVariant()> producer, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn = {});
 
     /** Set the proxy's argCell. Call right after construction at
         boundary sites. Returns *this for chaining. */
@@ -149,7 +154,7 @@ public:
         override needed. */
     std::optional<std::string> getSelectorHashHex() const override
     {
-        return TracingDecisionGraph::computeSelectorHash(producer)
+        return TracingDecisionGraph::computeSelectorHash(producer())
             .to_string(HashFormat::Base16, false);
     }
 };
