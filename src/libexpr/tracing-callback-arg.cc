@@ -216,6 +216,10 @@ void TracingCallbackArg::recordObservation(const trace::SelectorVariant & query,
         return;
     }
     auto qh = trace::computeSelectorHash(query);
+    tracingCacheLog(
+        "TracingCallbackArg::recordObservation: cell=%p appending q=%s",
+        (void *) argCell.get(),
+        qh.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
     nlohmann::json rJson = std::visit(
         [](const auto & r) -> nlohmann::json { return r; },
         result);
