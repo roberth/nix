@@ -140,28 +140,56 @@ emits QCA via `logOuterObservation` attributing to `f`. The seam
 is load-bearing but the design didn't pin down where it should
 best live in code.
 
-## 6. Callback cell — per-firing accumulator
+## 6. Callback cell — per-application accumulator
 
-For each in-flight callback firing (an application of an
-inner-side function whose body is being evaluated), the writer
-keeps state that lets it (a) route contra-arg observations to
-the right accumulator, (b) snapshot the accumulator into a QCA
-payload at sampling moments. Cells are **never closed** —
-references to the applyResult can persist in unevaluated parts
-of downstream results, so more observations may arrive at any
-time.
+A **callback application** is one invocation of `OuterApply::run`:
+inner has issued an apply against an outer-side callable (an
+`OuterObject` wrapping an outer function, or a `ReplayCallbackArg`
+standing in for one at replay), and the outer-side handling of
+that apply is a callback application. The callable's body
+evaluates in the outer evaluator during the application; contra-arg
+observations the body makes on the argument accumulate on the
+application's cell. Older comments call this event a "callback
+firing"; same thing.
 
-The state lives on `ArgCell::callbackState` on the callback
-firing's own cell. Two fields:
+Each callback application has one **cell** (an `ArgCell`) — the
+per-application shared state. Every proxy participating in the
+application (the callable's `OuterObject` / `ReplayCallbackArg`,
+the contra-arg's `TracingCallbackArg`, the applyResult's
+`TracingObject` marked `cbApplyOrigin`, and any nav descendants
+of these) holds a reference to the same cell via its `argCell`
+field. Observations one proxy records land where the others can
+read them, without a writer-global lookup table. Cells are
+**never closed** — references to the applyResult can persist in
+unevaluated parts of downstream results, so more observations may
+arrive at any time.
 
-- **`fnStateHashHex`** — f's Q hash. Emitted as
-  `SelectorCallbackApply.fn` at QCA time.
-- **`runningObsSet`** — observations made on the contra-arg so
-  far. Snapshotted into the CAS at each QCA emission.
+The cell holds two pieces of state relevant to producer-Selector
+construction:
 
-Contra-arg observations are appended to `runningObsSet` directly
-via the callback-arg proxy's own cell chain (the wrapper's cell
-IS the firing's cell). No writer-global lookup table.
+- **The callable's producer Selector** — captured at the moment
+  the application began. Emitted as the `fn` field of this
+  application's producer Selector (§7). Typically a
+  `SelectorGetAttr` / `SelectorGetListElem` / `SelectorArg`
+  navigation from the outer arg; may itself be a
+  `SelectorCallbackApply` carrying its own obsSet snapshot when
+  the callable came from a prior callback application, in which
+  case that snapshot moment is captured here.
+- **The running observation set** — contra-arg observations
+  accumulated so far. Snapshotted into the ObservationSet CAS
+  when a producer Selector is queried (§7).
+
+Curried callback applications split their obsSets across the chain.
+Arity-2 `cb a b` yields two `SelectorCallbackApply` layers, each
+carrying the observations made during its own application — one
+for `cb a`, another for `(cb a) b`. Mixed sequences work the same
+way: a "library with context" pattern (outer supplies a callable
+that returns an attrset of functions; the outer later retrieves
+one function and applies it) produces a `SelectorCallbackApply →
+SelectorGetAttr → SelectorCallbackApply` chain in the final
+producer Selector. Each `SelectorCallbackApply` layer carries the
+obsSet from its own application; intervening navigation Selectors
+carry no obsSet.
 
 ## 6a. Probe
 
@@ -180,61 +208,73 @@ that capability.
 Add "Probe" to the vocabulary. Doc-improvement, not a model
 question.
 
-## 7. Sampling — when SelectorCallbackApply gets emitted
+## 7. Producer Selectors — how callback-produced values are identified
 
-**Model** (user, 2026-07-22 refinement).
+A callback-produced value's identity is its **producer Selector**
+— a `SelectorCallbackApply` snapshotting the enclosing callback
+cell's `runningObsSet` at the moment the identity is queried.
+Distinct probes at distinct moments produce distinct producer
+Selectors via distinct obsSet snapshots.
 
-**Per WHNF-producing probe on a callback-originated value.** Each
-probe that produces a WHNF emits its own QCA. Not "one per
-firing" — "firing" is under-defined. Concretely: if the callback
-returns an attrset, then:
+Composition is by nesting:
 
-- The probe that computes the applyResult's WHNF emits QCA-1 for
-  that WHNF.
-- A subsequent probe that computes an attribute's WHNF emits
-  QCA-2 for the attribute's WHNF.
+- **Getters compose via `from`.** A probe like `.whatever` on a
+  callback-produced attrset yields
+  `SelectorGetAttr{name="whatever", from=SelectorCallbackApply{...}}`.
+  The getAttr is the outer Selector; the callback-produced
+  parent's producer Selector is embedded as `from`. Its obsSet
+  snapshots the runningObsSet at the moment `.whatever` is probed.
 
-Each QCA carries the runningObsSet as observed at THAT probe's
-sample moment. Between samples, the cell's runningObsSet may have
-grown as more contra-arg observations arrived.
+- **Curried callback applications compose via `fn`.** When a
+  callback's applyResult is itself a function that the outer
+  applies to a further arg, the further application yields
+  `SelectorCallbackApply{fn=SelectorCallbackApply{...}, obs=obs_b}`
+  — the outer `fn` field references the previous application's
+  producer Selector.
+
+- **Combined.** A getAttr on the applyResult of a curried callback
+  application:
+  `SelectorGetAttr{name, from=SelectorCallbackApply{fn=SelectorCallbackApply{...}, obs=...}}`.
+
+The producer Selector's payload lives in the Requests pool (so
+`resolveIdentity` can decode `from` / `fn` references at replay).
+The producer Selector is not itself a Fact folded into any cell's
+chain — the getAttr / apply Selector that references it is what
+becomes the Fact.
 
 Idempotency: same runningObsSet content → same `argObsSet` hash →
-same selectorHash → same DB row.
+same producer Selector identity → same DB row across probes that
+sample equivalent snapshots.
 
-**"Firing" is the wrong word** (user, 2026-07-22). The scoping
-unit is the WHNF-producing probe, not the callback body's initial
-invocation. Vocabulary refinement pending.
+Empty `runningObsSet` is a legitimate snapshot. A fully-lazy
+callback application whose applyResult is used before any
+contra-arg observations have fired has `obs = ∅` at that point;
+the resulting producer Selector still needs to be in the Requests
+pool so downstream getAttr / apply Selectors that reference it
+can resolve their `from` / `fn`. Empty obs is not a reason to
+suppress payload insertion.
 
-**Closures are first-class WHNFs.** A partial application like
-`cb "a"` in `cb = k: v: k == v` is fully lazy — no contra-arg
-observations happen during the application itself. Force to WHNF
-yields the closure `k` bound, `v` unbound. That force triggers
-a QCA emission with `obs = ∅` (nothing was observed) and
-`result = <function WHNF>` (user, 2026-07-22: "That first
-function is fully lazy, so we naturally emit a QCA with empty
-obs and result: function. Function should be part of WHNF. I
-think this all just works out. Good thing functions are first-
-class values").
+Curried applications are the canonical example. Before a curried
+callback application `f a b` can happen, the caller has to demand
+the partial application `f a` — an ordinary WHNF probe whose
+response is the `Function` type tag. (Functions are characterized
+through observations made on them — `getFunctionInfo`, subsequent
+applications — not represented in the trace; only FunctionInfo
+reflection metadata appears when queried.) That probe's producer
+Selector is `CallbackApply(f, obs=<snapshot at that moment>)`;
+the response is `Function`. Later, applying the returned function
+to `b` produces a further producer Selector
+`CallbackApply(fn=<the previous producer>, obs=<later snapshot>)`
+identifying the nested application; its response is whatever that
+application evaluates to.
 
-The nested composition then works cleanly: `QCA-A(cb, obs=∅) →
-function` is a normal QCA row like any other; later, when
-`c2 = c1 "b"` is probed, `QCA-B(fn=QCA-A, obs=obs_b) → <result>`
-references QCA-A by selectorHash. No special-casing for closures.
-
-Emission fires from the wrapper's `whnf()` when the wrapper is a
-callback-origin apply-result: after computing the applyResult's
-WHNF, `emitCallbackApplyForApplyResult` snapshots the enclosing
-callback cell's `runningObsSet`, composes the QCA payload, and
-emits it as one observation on the applyResult.
-
-**Getter-fold discipline.** Structural probes on an applyResult
-(getAttr, getListElem) force `whnf()` first — the fold work
-happens through the WHNF-producing path (see #136/#137/#138 in
-the task list). Rationale: `builtins.cache` is inherently
-one-probe-at-a-time (see §6a), so it can never trigger a "sudden
-deep" probe; CLI callers rely on the deeper probe being expressible
-as a whnf followed by a getAttr — which requires the whnf leg to
-have been emitted.
+The enclosing cell's factset accumulates one Fact per probe the
+caller drives, in caller-driven order — consistent with principle
+7 (laziness end-to-end): the writer records what the caller
+actually probed, never probes ahead. `f a`'s WHNF probe is one
+Fact on the enclosing chain; a later `(f a) b` probe is another.
+Neither Fact is manufactured by the cache — each corresponds to a
+probe the ultimate caller issued.
 
 ## 7a. Sibling cb-apply discrimination
 
