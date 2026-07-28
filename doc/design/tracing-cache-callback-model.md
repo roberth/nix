@@ -1,8 +1,9 @@
 # Callback tracking model
 
 Design of covariant callback tracking: the `SelectorCallbackApply`
-Selector alternative, per-firing observation accumulation, sibling
-discrimination, sampling per WHNF-producing probe. Companion to
+Selector alternative, per-application observation accumulation,
+sibling discrimination, producer Selectors and their composition.
+Companion to
 [`tracing-eval-cache.md`](./tracing-eval-cache.md) (base cache
 model),
 [`tracing-eval-cache-vocabulary.md`](./tracing-eval-cache-vocabulary.md)
@@ -71,11 +72,12 @@ is fully proven.)
 
 The one bounded exception is **SelectorCallbackApply**. Its
 `argObsSet` field is a CAS reference to the running observation
-set at the moment of QCA emission. Distinct firings of the same
-`fn` with distinct contra-arg observation patterns produce
-distinct QCA Q hashes — content-addressed identity for the
-firing, not session-cumulative evolution. See §7 for the
-per-WHNF-probe sampling that defines "the moment of emission".
+set at the moment the producer Selector is queried. Distinct
+callback applications of the same `fn` with distinct contra-arg
+observation patterns produce distinct Q hashes — content-addressed
+identity for the application, not session-cumulative evolution.
+See §7 for the per-probe sampling that defines the moment of
+query.
 
 ## 4. SelectorCallbackApply as a first-class Selector alternative
 
@@ -84,7 +86,7 @@ its complete irrelevance — references to it may still exist in
 unevaluated parts of its result or in function closures it
 returned. But it does return a WHNF result from its body first.
 
-So the queries observed on a callback firing are:
+So the queries observed on a callback application are:
 
 1. The initial call: `SelectorCallbackApply(f, obs) → WHNF`.
 2. Subsequent probes: `<q>(SelectorCallbackApply(f, obs')) → <r>`,
@@ -127,18 +129,12 @@ arg-side value's does.
 The **contra-arg** (the arg passed *to* the callback) is a
 separate world: callback tracking doesn't inherently need
 arg-side identity tracking. Contra-arg observations accumulate
-PRIVATELY during the callback firing. No visibility into
-arg-side tracking during that time. The two worlds meet only at
-the sampling moment where `SelectorCallbackApply(f, obs)` is
-emitted as an observation on the arg — the obs set folded into
-`f`'s arg-cell's factset as one Fact.
-
-The handoff seam is the writer's QCA-emission path
-(`emitCallbackApplyForApplyResult`): it reaches into the enclosing
-callback cell's `runningObsSet`, snapshots it into the CAS, and
-emits QCA via `logOuterObservation` attributing to `f`. The seam
-is load-bearing but the design didn't pin down where it should
-best live in code.
+privately during the callback application on the application's
+own cell. The two worlds meet at the producer Selector: when a
+`SelectorCallbackApply` is constructed for a probe on a
+callback-produced value, it references `f`'s identity (arg-side)
+as `fn` and the callback application's contra-arg observation set
+(contra-arg-side) as `argObsSet`.
 
 ## 6. Callback cell — per-application accumulator
 
@@ -190,23 +186,6 @@ SelectorGetAttr → SelectorCallbackApply` chain in the final
 producer Selector. Each `SelectorCallbackApply` layer carries the
 obsSet from its own application; intervening navigation Selectors
 carry no obsSet.
-
-## 6a. Probe
-
-**Model** (user, 2026-07-22 — not yet in vocab).
-
-A **Probe** is a single Value-level query issued by a consumer:
-`whnf`, `maybeGetAttr("x")`, `getListElem(i)`, etc. Each probe
-touches one Value at a time. `builtins.cache` is inherently
-one-probe-at-a-time (it only ever accesses one Value on each side
-of the boundary), so it can never generate a "sudden and deep"
-query that reaches multiple layers in one shot. The CLI is
-different — CLI callers (historically `AttrCursor`, now `Object`)
-can reach deep in a single call, and `TracingObject` preserved
-that capability.
-
-Add "Probe" to the vocabulary. Doc-improvement, not a model
-question.
 
 ## 7. Producer Selectors — how callback-produced values are identified
 
@@ -343,8 +322,8 @@ layer.
 inner-global value — an outer argument bound immediately at the
 `builtins.cache` call (as opposed to at a callback application)
 and 1:1 with the inner evaluator. Such values don't need any
-per-firing tracking because they can't vary during the inner's
-lifetime.
+per-application tracking because they can't vary during the
+inner's lifetime.
 
 Reserving the term only. Not defining the concept formally,
 since there's no implementation or design driver for it yet.
@@ -396,57 +375,3 @@ messages / stale doc sections:
   name, all its branches dispatch first-class Selector
   alternatives. Rename pending.
 
-## 13. Nested callback composition (curried/higher-order case)
-
-`TracingCallbackApplyResult` — WRONG in the curried/nested case.
-
-Scope of this bug: **when a callback-originated value is itself
-applied later** (curried application, or a returned closure being
-applied). NOT the ordinary "contra-arg observations flow into
-cell.runningObsSet, then out via emitCallbackApplyForApplyResult
-as a QCA on the arg" routing (§4.2/§5/§6) — that channel is
-correct and load-bearing.
-
-Example (user): `cb = k: v: k == v`; `c1 = cb "a"`; `c2 = c1 "b"`;
-`c3 = c1 "a"`. Should the observations from `c2` and `c3`'s
-applications route BACK into `c1`'s cell? Certainly not — it would
-be ambiguous / contradictory (two different applications of `c1`
-writing to the same cell).
-
-**Correct design.** Each application (including of returned
-closures) has its OWN cell to track its own observational state.
-The query shape falls out naturally as nested QCAs:
-
-```
-QCA( QCA(cb, obs_a) , obs_b )
-```
-
-`c1` is `QCA(cb, obs_a)`, then applying `c1` to `"b"` produces
-`QCA(QCA(cb, obs_a), obs_b)`. No cross-cell routing needed. The
-obsSet content-hash goes directly in each QCA.
-
-The current code "has something quirky that it copied from state
-hashes, but there's no need for that. Just put the observation
-set hash in the QCA" (user).
-
-**B8** — `TracingCallbackApplyResult`'s cross-application routing
-into the enclosing cell is wrong; refactor so nested applications
-compose via nested QCA structure with per-application cells.
-
-**Walker-side dispatch of nested QCA** (user, 2026-07-22 —
-"Recursive Q resolution"). To dispatch `QCA(QCA(cb, obs_a),
-obs_b)`, the walker recursively invokes `lookup` on the inner
-`QCA(cb, obs_a)` to resolve `f`'s current identity, materialises
-the outer obsSet as a `ReplayCallbackArg`, then invokes the
-resolved callable live. Symmetric to how flat QCA dispatches
-today, extended to nested case. Requires walker to recognise
-QCA-in-fn-slot vs a leaf Q hash.
-
-Historical note: earlier framings of this design placed the
-"nested QCAs" style alongside a separate "state hash evolution"
-style for arg-side identity, suggesting two composition idioms
-coexisting. Under #183 the arg-side state-hash mechanism
-retired in favour of Selector-chain identity, which is
-inductive-style already (each Selector composes by embedding
-its parent's Q hash). Both callback and arg-side composition
-are now inductive.

@@ -125,14 +125,23 @@ present design.
    recorded `arg.x`, the fact should surface as a chain break at
    that probe's Ask edge, not remain hidden inside a batched fold.
 
-   *Consequence for callback firings.* The outer's probes on an
-   inner-supplied contra-arg (`.getInt()`, `.getAttr("foo")`, …)
-   are individual value probes with causal structure of their own.
-   They must each be their own Ask edge on the enclosing cell's
-   chain — not aggregated into one `SelectorCallbackApply` fact
-   whose `argObsSet` is opaque to the walker. Aggregation defeats
-   both live divergence detection and outer-request discipline for
-   the exact reasons above.
+   *Consequence for callback applications.* An outer probe on a
+   callback-produced value (getting an attribute on a callback's
+   applyResult, applying a callback-returned function further, …)
+   is one value request under this principle: one Ask edge on the
+   enclosing chain, one live callback invocation at dispatch. A
+   callback application takes input from the inner evaluator —
+   the contra-arg observations characterizing what inner caused
+   outer to see during the callback body — and that input belongs
+   inside the `SelectorCallbackApply` payload because it's scoped
+   to the inner's Request. To keep the Request size in check, the
+   observation set is content-addressed (via the `ObservationSet`
+   CAS pool) and referenced by hash. The walker uses the
+   referenced obsSet to materialize the callback's contra-arg for
+   the live dispatch (see
+   [`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
+   §7). Contra-arg observations are not themselves Ask edges on
+   the enclosing chain; the containing probe is.
 
 10. **Cumulative dependency.** The inner evaluator is a black box.
    Every Request observed prior to a Result is part of that
@@ -711,8 +720,8 @@ what the writer actually observed.
 Whether a specific fold moves `cur` depends on the observation
 type. A file read moves `cur`. An Env-layer outer-value probe
 moves `cur`. A `SelectorCallbackApply` observation moves `cur`,
-sampling the enclosing callback firing's running observation set
-by content-hash into its `argObsSet` payload. Contra-arg
+sampling the enclosing callback application cell's running
+observation set by content-hash into its `argObsSet` payload. Contra-arg
 observations recorded inside that `ObservationSet` do not appear
 in the outer `cur` — they travel by value inside the
 `SelectorCallbackApply` request and are dispatched from there at

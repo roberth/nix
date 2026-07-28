@@ -428,11 +428,11 @@ owns a value, the other side is what probes it:
   evaluator produced, that the outer receives when it invokes an
   inner-supplied callback. The outer's callback body reads them
   through the callback-arg objects (`TracingCallbackArg` /
-  `ReplayCallbackArg`). Queries about the callback firing use
-  `SelectorCallbackApply` (a first-class Selector alternative, see the
-  callback-tracking model doc); the observation set the callback
-  body accumulates on its contra-arg is folded into that query's
-  identity.
+  `ReplayCallbackArg`). Queries about the callback application
+  use `SelectorCallbackApply` (a first-class Selector alternative,
+  see the callback-tracking model doc); the observation set the
+  callback body accumulates on its contra-arg is folded into that
+  query's identity.
 
 The mechanism that ties observations to structural identities —
 Selector chains, callback-arg objects, cell navigation — is
@@ -481,10 +481,13 @@ callback-tracking model doc.
 **Bounded Q evolution.** Q hashes are stable per operation
 throughout the design, with one exception:
 `SelectorCallbackApply.argObsSet` embeds the running observation
-set at firing time, so distinct firings of the same fn with
-distinct contra-arg observation patterns produce distinct
-CallbackApply Q hashes. This is content-addressed identity for
-the firing, not session-cumulative evolution.
+set at the moment the producer Selector is queried, so distinct
+callback applications of the same fn with distinct contra-arg
+observation patterns produce distinct CallbackApply Q hashes.
+This is content-addressed identity for the application — a
+temporary identity tied to one query moment; see
+[`tracing-cache-callback-model.md`](./tracing-cache-callback-model.md)
+§7 — not session-cumulative evolution.
 
 ### Observation and ObservationSet
 

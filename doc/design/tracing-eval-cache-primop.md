@@ -101,8 +101,9 @@ libexpr components that the primop wires together. Reading tour:
   cell's facts (the session-root cell for env facts, or the
   probed arg's own cell for outer-value probes) and get inserted
   into `sessionRequestsTrie`. Observations the outer makes on
-  inner-supplied callback args during a callback firing accumulate
-  in the enclosing callback cell's running observation set.
+  inner-supplied callback args during a callback application
+  accumulate in the enclosing callback application cell's running
+  observation set.
 - `src/libexpr/tracing-callback-arg.cc` / `replay-callback-arg.cc` —
   `TracingCallbackArg` and `ReplayCallbackArg` handle the covariant
   callback case: the writer records the outer's probes on an
