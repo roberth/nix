@@ -341,7 +341,11 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                    walker can call getType / getInt / etc. live
                    against outer's actual Value. */
                 if (resolverSaved) {
-                    trace::SelectorArg argProducer{*applyDepthSaved + 1};
+                    /* Contra-arg identity: hardcoded sentinel matching
+                       writer's OuterApply::run and walker's CallbackApply
+                       dispatch. Scoped by the enclosing
+                       SelectorCallbackApply. */
+                    trace::SelectorArg argProducer{0};
                     auto outerArgObj = std::make_shared<InterpreterObject>(
                         state, allocRootValue(args[0]));
                     registerOuterResolverProxy(

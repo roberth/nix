@@ -671,42 +671,30 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
         [&](const auto & q) -> std::optional<std::string> {
             using Q = std::decay_t<decltype(q)>;
             if constexpr (std::is_same_v<Q, trace::SelectorApply>) {
-                /* Cell-migration Phase B: resolve fn+arg via the
-                   inline SelectorLeaf identities (walker-side cell
-                   chain provides the live proxies) and invoke live
-                   apply. Return WHNF of the applyResult. Symmetric
-                   with the callbackApply branch below but arg comes
-                   from resolveIdentity rather than a ReplayCallbackArg
-                   materialised from an ObservationSet. */
-                if (!true || !true)
-                    return std::nullopt;
-                auto fnObj = resolveIdentity(std::string{}, ctx);
-                if (!fnObj) {
+                /* Under the Selector-is-a-sequence model, a SelectorApply
+                   request identifies "the value produced by this apply" —
+                   the applyResult that some cell holds as its liveObject.
+                   Compute the request's hash, resolve via cell chain by
+                   producer-hex equality, return WHNF of the resolved
+                   liveObject. */
+                auto selfHash = TracingDecisionGraph::computeSelectorHash(q);
+                auto selfHex = selfHash.to_string(HashFormat::Base16, false);
+                auto obj = resolveIdentity(selfHex, ctx);
+                if (!obj) {
                     tracingCacheLog(
-                        "apply: fn resolution miss (fn=%s)",
-                        std::string{}.substr(0, 12));
-                    return std::nullopt;
-                }
-                auto argObj = resolveIdentity(std::string{}, ctx);
-                if (!argObj) {
-                    tracingCacheLog(
-                        "apply: arg resolution miss (arg=%s)",
-                        std::string{}.substr(0, 12));
+                        "apply: self resolution miss (self=%s)",
+                        selfHex.substr(0, 12).c_str());
                     return std::nullopt;
                 }
                 try {
-                    auto resultObj = fnObj->queryApply(argObj);
-                    if (!resultObj)
-                        return std::nullopt;
-                    auto whnf = computeWHNFFromObject(*resultObj);
+                    auto whnf = computeWHNFFromObject(*obj);
                     tracingCacheLog(
-                        "apply: HIT fn=%s arg=%s whnf=%s",
-                        std::string{}.substr(0, 12),
-                        std::string{}.substr(0, 12),
+                        "apply: HIT self=%s whnf=%s",
+                        selfHex.substr(0, 12).c_str(),
                         whnf.type.c_str());
                     return jsonToCborString(nlohmann::json(whnf));
                 } catch (const std::exception & e) {
-                    tracingCacheLog("apply: fn->queryApply failed: %s", e.what());
+                    tracingCacheLog("apply: computeWHNFFromObject threw: %s", e.what());
                     return std::nullopt;
                 }
             } else if constexpr (std::is_same_v<Q, trace::SelectorCallbackApply>) {
@@ -741,11 +729,10 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                         fnHex.substr(0, 12));
                     return std::nullopt;
                 }
-                /* Derive contra-arg depth from fn's cell chain — mirrors
-                   makeCachedFnPrimOp.impl. */
-                auto parentCell = effectiveArgCell(*fnObj);
-                int argDepth = parentCell ? parentCell->depth + 1 : 0;
-                trace::SelectorArg argProducer{argDepth};
+                /* Contra-arg identity: hardcoded sentinel matching
+                   writer's OuterApply::run and reader's replay-callback-arg.
+                   Scoped by this enclosing SelectorCallbackApply. */
+                trace::SelectorArg argProducer{0};
                 auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
                 auto replayArg = std::make_shared<ReplayCallbackArg>(
                     trace::SelectorVariant{argProducer},
@@ -759,45 +746,35 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                         return std::nullopt;
                     auto whnf = computeWHNFFromObject(*resultObj);
                     tracingCacheLog(
-                        "callbackApply: HIT obsSet=%s argDepth=%d whnf=%s",
-                        q.argObsSet.substr(0, 12), argDepth, whnf.type.c_str());
+                        "callbackApply: HIT obsSet=%s whnf=%s",
+                        q.argObsSet.substr(0, 12), whnf.type.c_str());
                     return jsonToCborString(nlohmann::json(whnf));
                 } catch (const std::exception & e) {
                     tracingCacheLog("callbackApply: fn->queryApply failed: %s", e.what());
                     return std::nullopt;
                 }
             } else if constexpr (std::is_same_v<Q, trace::SelectorArg>) {
-                /* #186: resolve the outer arg at reverse-De-Bruijn
-                   `depth` by walking up the walk's cell chain to find
-                   the cell with matching depth. Its liveObject IS that
-                   outer arg; return its WHNF.
-
-                   #187: prefer ctx.walkCell (the active walk's cell,
-                   which contains the arg's liveObject directly) over
-                   ctx.currentProxy->getProxyArgCell(). Under Phase F
-                   the walk's cell is what the SelectorApply lookup
-                   passed as `cell`, and the arg's liveObject is
-                   reachable through it. Falling back to currentProxy
-                   for root-Q lookups (evalFile / evalExpr) where
-                   currentProxy is null anyway. */
-                auto cell = ctx.walkCell
-                    ? ctx.walkCell
-                    : (ctx.currentProxy
-                        ? ctx.currentProxy->getProxyArgCell()
-                        : std::shared_ptr<const ArgCell>{});
-                while (cell && cell->depth != q.depth)
-                    cell = cell->parent;
-                if (!cell || !cell->liveObject) {
+                /* Contra-arg identity: SelectorArg with a hardcoded
+                   depth chosen by writer/reader agreement (its
+                   containing SelectorCallbackApply scopes it). Resolve
+                   by content-hash equality against liveObjects in the
+                   cell chain — the callback firing's TracingCallbackArg
+                   / ReplayCallbackArg reports the matching hex. */
+                auto selfHash = TracingDecisionGraph::computeSelectorHash(q);
+                auto selfHex = selfHash.to_string(HashFormat::Base16, false);
+                auto obj = resolveIdentity(selfHex, ctx);
+                if (!obj) {
                     tracingCacheLog(
-                        "arg: no cell for depth=%d",
-                        q.depth);
+                        "arg: self resolution miss (self=%s)",
+                        selfHex.substr(0, 12).c_str());
                     return std::nullopt;
                 }
                 try {
-                    auto whnf = computeWHNFFromObject(*cell->liveObject);
+                    auto whnf = computeWHNFFromObject(*obj);
                     tracingCacheLog(
-                        "arg: HIT depth=%d whnf=%s",
-                        q.depth, whnf.type.c_str());
+                        "arg: HIT self=%s whnf=%s",
+                        selfHex.substr(0, 12).c_str(),
+                        whnf.type.c_str());
                     return jsonToCborString(nlohmann::json(whnf));
                 } catch (const std::exception & e) {
                     tracingCacheLog("arg: computeWHNFFromObject threw: %s", e.what());

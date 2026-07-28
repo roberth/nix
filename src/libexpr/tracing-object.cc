@@ -113,18 +113,13 @@ std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter &
             return qcaHash.to_string(HashFormat::Base16, false);
         }
     }
-    /* Apply-result wrapper: `producer` is SelectorApply, whose payload
-       carries only `fn` (arg dropped per #181). SelectorApply.fn is a
-       curried-fn identity — recording a child SelectorGetAttr /
-       GetListElem / GetFunctionInfo with `from=SelectorApply hex` says
-       "attrset lookup on a function-identity", which is a category
-       error. No compositional identity exists here; signal callers to
-       skip child Q recording rather than write nonsense. */
-    if (producer)
-        return std::nullopt;
-    /* Navigation descendant of a validly-identified parent: our own
-       stable identity is triePos.queryHashStr (or valueNum for the
-       evalExprLazy case). */
+    /* Under the Selector-is-a-sequence model, the wrapper's producer
+       (the SelectorApply value that scoped this apply-result) is a
+       legitimate descriptive prefix: children compose `from` = our
+       producer hex, meaning "attribute of the applyResult of this
+       apply". Fall through to `triePos.queryHashStr` which carries
+       the producer hex for apply-result wrappers, or valueNum for
+       the evalExprLazy case. */
     return parentQOrValueHandle(triePos, valueNum);
 }
 

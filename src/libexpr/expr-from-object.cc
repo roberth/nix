@@ -182,7 +182,12 @@ std::shared_ptr<Object> OuterApply::run(
        boundary maximally predictable — two cb calls observing the
        same way through their args reach the same trie position
        regardless of where the arg's source came from. */
-    trace::SelectorArg argProducer{localCell->depth};
+    /* Contra-arg identity is a hardcoded sentinel — the enclosing
+       SelectorCallbackApply already scopes "which firing's contra-arg
+       this is", so no cell-topology encoding is needed here. Writer
+       and reader (replay-callback-arg.cc, tracing-replay-evaluator.cc)
+       agree on the same constant. */
+    trace::SelectorArg argProducer{0};
     auto argStateHash = TracingDecisionGraph::computeSelectorHash(argProducer);
     tracingCacheLog("OuterApply::run: argStateHash=%s",
                     argStateHash.to_string(HashFormat::Base16, false).substr(0, 12));
@@ -330,12 +335,16 @@ static PrimOp * makeCachedFnPrimOp(
                            navigation returns the proxy. */
                         auto parentCell = effectiveArgCell(*fnObj);
                         auto seedCell = ArgCell::make(parentCell, /*liveObject set below*/ nullptr);
-                        /* state hash fix: this arg's Subject is the positional
-                           handle at this static apply-stack depth.
-                           Sibling cb apply invocations share the same
-                           Subject and discriminate via their observation
-                           factsets, not via state-creep. */
-                        trace::SelectorArg argProducer{seedCell->depth};
+                        /* Selector-is-a-sequence: the arg is identified
+                           by the apply that scoped it. seedCell.producer
+                           = the SelectorApply of this apply — replacing
+                           the positional SelectorArg leaf. Descendants
+                           (GetAttr("f", from=<seedCell.producer hex>))
+                           compose on top. */
+                        auto fnHexForProducer = fnObj->getSelectorHashHex().value_or(std::string{});
+                        trace::SelectorApply seedProducer{fnHexForProducer};
+                        seedCell->producer = trace::SelectorVariant{seedProducer};
+                        trace::SelectorVariant argProducer{seedProducer};
                         auto & innerEnv = *innerEval->getEvalState().environment;
                         /* queryFn: dispatch the query directly on the
                            outer Object the OuterObject was
@@ -402,7 +411,7 @@ static PrimOp * makeCachedFnPrimOp(
                            SourceRoot outlives the Values the outer
                            evaluator builds from any returned RootedPaths. */
                         auto outerArgProxy =
-                            make_ref<OuterObject>(trace::SelectorVariant{argProducer}, outerArgObj, std::move(queryFn), state.rootFSRoot, std::move(applyFn));
+                            make_ref<OuterObject>(argProducer, outerArgObj, std::move(queryFn), state.rootFSRoot, std::move(applyFn));
                         /* Wire seedCell.liveObject to outerArgProxy now
                            that it exists. This is the deliberate
                            shared_ptr cycle documented on
