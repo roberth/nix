@@ -106,6 +106,10 @@ surface, or a narrower per-participant protocol.
 | **Query** | caller → evaluator | `Query` → `Result` | Full evaluator surface. |
 | **Env** | inner-evaluator → its environment | varies (see below) | Environment can be filesystem, env vars, or outer evaluator. |
 
+**Probe** — one request-response pair in any message pairing.
+Used as a general term when the specific pairing doesn't matter
+or when the discussion spans multiple pairings.
+
 Input tracing is realized by Query + Env. Content tracing applies
 to the interaction with the outer evaluator during callbacks —
 modelled as simple Query-level probes with no Env of its own.
