@@ -238,6 +238,38 @@ Every trace starts at `cur = ∅`. First-time recordings insert a
 single Ask covering all remaining Requests; Patricia split (below)
 factors shared prefixes when later recordings overlap.
 
+## Design note: Selector is a sequence, not a true algebra
+
+There's some real redundancy because a query like Import basically
+decides a "fact" like "for all Cells that derive from the root,
+`Arg(0)` refers to this file", allowing the apparently algebraic
+structure of Selector to express conflicting queries, where
+`Arg(0)` refers to two files simultaneously. We should probably
+consider the Selector to be a sequence, not a true algebra.
+"Sequence" here basically means pipe syntax:
+`f(g(leaf)) = f <| g <| leaf`, which indeed only allows one leaf
+at a time in any sequence. The useful part of Selector fits this
+shape — every alternative has at most one parent reference
+(`from` or `fn`), and every chain terminates at a leaf
+(`SelectorExpr`, `SelectorImport`, `SelectorArg`).
+
+Assuming that holds up, we could follow that "fact
+correspondence" in either direction:
+
+1. If we were to say from a trace perspective "importing a file
+   is querying `Arg(0)` and it magically turns out to be the
+   intended file", then we can get rid of Import as a Query
+   Selector.
+2. If we were to go the other direction, we can say "any
+   reference to an argument can be identified by the sequence
+   suffix that constructed it".
+
+Isomorphism, with the difference being that we get to pick
+whether we put more or less of the query (in the broad sense) in
+the actual lookup key for the decision tree. No good heuristic
+for this decision yet, but a first inkling is that the more
+descriptive choice could be better.
+
 ## Storage layer
 
 The cache database is an **index over all recorded traces**.
