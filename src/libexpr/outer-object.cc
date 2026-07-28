@@ -30,7 +30,20 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
         return outerObj->maybeGetAttr(name);
     if (std::find(ap->names.begin(), ap->names.end(), name) == ap->names.end())
         return nullptr;
-    /* Child producer = SelectorGetAttr{name, from=parent's Q hash hex}. */
+    /* Force the child value first so any callback firing's obs
+       accumulate on our cell BEFORE we snapshot the producer for
+       this getAttr's `from` field. Same reason as whnf()'s
+       force-then-snapshot: producer() on a callback-produced
+       parent samples the current runningObsSet, and the child
+       value's evaluation is what populates the obs the walker
+       will need to reproduce this probe. Second dispatch inside
+       queryFn is cheap (child WHNF caches). */
+    auto childProbe = outerObj->maybeGetAttr(name);
+    if (!childProbe)
+        return nullptr;
+    (void) computeWHNFFromObject(*childProbe);
+    /* Child producer = SelectorGetAttr{name, from=parent's Q hash hex}
+       — parent hex computed here reflects the now-populated obsSet. */
     auto parentQHex = getSelectorHashHex().value_or(std::string{});
     trace::SelectorGetAttr q{name, parentQHex};
     auto qr = queryFn(outerObj, q, producer(), argCell);

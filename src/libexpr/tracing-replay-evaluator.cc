@@ -463,6 +463,58 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
         return resolveApplyId(idStr, params, ctx);
     }
 
+    if (tag == "callbackApply") {
+        /* CBApply as a producer identity — materialise ReplayCallbackArg
+           from the referenced obsSet, resolve fn, invoke live, return
+           the applyResult Object (for the caller to navigate via
+           maybeGetAttr etc.). Mirrors dispatchQueryRequest's CBApply
+           branch but returns the Object instead of the serialised WHNF. */
+        tracingCacheLog("resolve %s: callbackApply producer", idStr.substr(0, 12));
+        std::string fnHex = params["fn"].get<std::string>();
+        std::string obsSetHex = params["argObsSet"].get<std::string>();
+        Hash obsSetHash{HashAlgorithm::SHA256};
+        try {
+            obsSetHash = Hash::parseNonSRIUnprefixed(obsSetHex, HashAlgorithm::SHA256);
+        } catch (const std::exception &) {
+            return nullptr;
+        }
+        auto obsSet = decisionGraph.getObservationSet(obsSetHash);
+        if (!obsSet) {
+            tracingCacheLog(
+                "resolve %s: callbackApply obsSet=%s not in pool",
+                idStr.substr(0, 12), obsSetHex.substr(0, 12).c_str());
+            return nullptr;
+        }
+        auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
+        for (const auto & obs : *obsSet)
+            obsSetMap->emplace(obs.selectorHash, obs.responsePayload);
+        auto fnObj = resolveIdentity(fnHex, ctx);
+        if (!fnObj) {
+            tracingCacheLog(
+                "resolve %s: callbackApply fn=%s not resolvable",
+                idStr.substr(0, 12), fnHex.substr(0, 12).c_str());
+            return nullptr;
+        }
+        trace::SelectorArg argProducer{0};
+        auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
+        auto replayArg = std::make_shared<ReplayCallbackArg>(
+            trace::SelectorVariant{argProducer},
+            walkFacts,
+            decisionGraph, inner->getEvalState().rootFSRoot,
+            &inner->getEvalState());
+        replayArg->withObsSetResponses(obsSetMap);
+        try {
+            auto resultObj = fnObj->queryApply(replayArg);
+            if (resultObj)
+                ctx.memo[idStr] = resultObj;
+            return resultObj;
+        } catch (const std::exception & e) {
+            tracingCacheLog("resolve %s: callbackApply queryApply threw: %s",
+                idStr.substr(0, 12), e.what());
+            return nullptr;
+        }
+    }
+
     auto qv = trace::parseSelectorVariant(reqJson);
     if (qv) {
         tracingCacheLog(
