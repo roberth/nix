@@ -391,6 +391,17 @@ success its target edge is copied onto the primary's fold target
 so subsequent walks find it directly. Both sides are one-shot
 per Ask; neither accumulates unbounded alternatives.
 
+*Scope: not extended to chain-level factset intersection.* The
+record-side check compares the incoming fact against other facts
+already known when the fact is inserted. Beyond that, two whole
+chains for the same Q can each carry factsets that share fact
+members — one chain's early facts may appear as another chain's
+late facts, without any intermediate Terminal to correlate them —
+and in principle the factset intersection would prune extras from
+both chains. Deferred: doing that comparison at write time would
+risk over-querying (we would not know which chain-vs-chain
+comparisons to skip), especially once parallel evaluation lands.
+
 ## Storage layer
 
 The cache database is an **index over all recorded traces**.
