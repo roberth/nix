@@ -1021,27 +1021,29 @@ void TracingDecisionGraph::insertAskSplitting(
     const std::unordered_set<RequestHash> & dispatchedSoFar,
     const std::optional<SetHash> & alt_in)
 {
-    /* Iterative Patricia-split-then-insert loop. `cur` and
-       `remainingFacts` advance as shared prefixes get factored out. */
     auto cur = cur_in;
     auto remaining = facts_in;
     /* Preserve the caller's alt only for a landing without split; on
        any split the alt is dropped (the row's identity changes). */
     auto alt = alt_in;
 
-    auto reqsOf = [](const std::vector<Fact> & fs) {
-        std::unordered_set<Hash> s;
-        s.reserve(fs.size());
-        for (const auto & f : fs) s.insert(f.request);
-        return s;
+    struct SplitStep
+    {
+        Hash newCur;
+        std::vector<Fact> remainingAfterConsume;
     };
 
-    while (true) {
-        if (remaining.empty())
-            return;
-        auto remainingReqs = reqsOf(remaining);
+    /* trySplitOne: find an overlap between remaining and an existing
+       edge at (q, cur), execute the split, return the advanced (cur,
+       remaining). Returns nullopt when no overlap is found (caller
+       inserts the remainder as a plain edge). */
+    auto trySplitOne =
+        [&](const SetHash & cur, const std::vector<Fact> & remaining) -> std::optional<SplitStep>
+    {
+        std::unordered_set<Hash> remainingReqs;
+        remainingReqs.reserve(remaining.size());
+        for (const auto & f : remaining) remainingReqs.insert(f.request);
 
-        bool didSplit = false;
         for (const auto & edge : getAsks(q, cur)) {
             auto exRsHash = edge.requestSet;
             auto exMembers = getRequestSet(exRsHash);
@@ -1061,12 +1063,13 @@ void TracingDecisionGraph::insertAskSplitting(
             if (shared.empty())
                 continue;
 
-            /* Full identity: existing rs is exactly new_rs (as far as
-               useful goes). Nothing to insert. */
+            /* Full identity: existing rs is exactly remaining. Nothing
+               to insert; signal completion by returning empty remaining. */
             if (shared.size() == exUseful.size() && shared.size() == remaining.size())
-                return;
+                return SplitStep{cur, {}};
 
-            /* Compute intermediate cur by folding shared facts into cur. */
+            /* Fold shared facts into cur → intermediate; partition
+               remaining into consumed vs tailNew. */
             std::unordered_set<Hash> sharedSet(shared.begin(), shared.end());
             Hash intermediate = cur;
             std::vector<Fact> tailNew;
@@ -1080,20 +1083,19 @@ void TracingDecisionGraph::insertAskSplitting(
 
             auto sharedRsHash = insertRequestSet(shared);
 
-            /* Placement changes only fire when the shared subset is
-               strictly smaller than either side. If shared == exUseful,
-               existing already IS the shared prefix — no need to
-               re-split existing. */
+            /* Split shape:
+               - shared < exUseful: existing must be re-anchored — insert
+                 sharedRsHash at cur, tail (ex_rs \ shared) at
+                 intermediate, remove original at cur. The tail must be
+                 exactly ex_rs \ shared: storing the whole ex_rs at
+                 intermediate would let a walker whose dispatchedSoFar
+                 doesn't contain `shared` dispatch and XOR-fold the shared
+                 reqs a second time, cancelling them out of cur.
+               - shared == exUseful: existing IS the shared prefix;
+                 sharedRsHash dedups against it. No re-anchor. */
             if (shared.size() != exUseful.size()) {
-                /* Existing tail = ex_rs's useful members minus shared.
-                   Storing the whole ex_rs at intermediate would let a
-                   walker at intermediate whose dispatchedSoFar doesn't
-                   contain `shared` dispatch and XOR-fold the shared
-                   reqs a second time, cancelling them out of cur. Tail
-                   must be exactly `ex_rs \ shared`. */
                 std::vector<Hash> tail;
                 tail.reserve(exUseful.size() - shared.size());
-                std::unordered_set<Hash> sharedSet(shared.begin(), shared.end());
                 for (const auto & req : exUseful)
                     if (!sharedSet.count(req))
                         tail.push_back(req);
@@ -1102,9 +1104,6 @@ void TracingDecisionGraph::insertAskSplitting(
                 insertAsk(q, intermediate, tailRsHash, edge.altRequestSet);
                 removeAsk(q, cur, exRsHash);
             } else {
-                /* Existing already IS the shared prefix. Just make sure
-                   sharedRsHash is registered at cur (dedups against
-                   existing since same hash). */
                 insertAsk(q, cur, sharedRsHash);
             }
 
@@ -1118,26 +1117,28 @@ void TracingDecisionGraph::insertAskSplitting(
                 sharedRsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
                 exRsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
 
-            /* Continue with the new-side tail at intermediate. Alt
-               drops because we split. */
-            cur = intermediate;
-            remaining = std::move(tailNew);
-            alt = std::nullopt;
-            didSplit = true;
-            break;
+            return SplitStep{intermediate, std::move(tailNew)};
         }
+        return std::nullopt;
+    };
 
-        if (!didSplit) {
-            /* No overlap with any existing. Insert the remainder
-               directly, preserving alt. */
-            std::vector<Hash> newReqs;
-            newReqs.reserve(remaining.size());
-            for (const auto & f : remaining) newReqs.push_back(f.request);
-            auto newRsHash = insertRequestSet(newReqs);
-            insertAsk(q, cur, newRsHash, alt);
-            return;
-        }
+    /* Iterate split steps until no overlap remains. Each successful
+       split drops alt (the row's identity changed). */
+    while (auto step = trySplitOne(cur, remaining)) {
+        cur = step->newCur;
+        remaining = std::move(step->remainingAfterConsume);
+        alt = std::nullopt;
     }
+
+    /* No split available at this cur. Insert whatever's left as a plain
+       edge, preserving alt. Empty remaining = nothing to insert. */
+    if (remaining.empty())
+        return;
+    std::vector<Hash> newReqs;
+    newReqs.reserve(remaining.size());
+    for (const auto & f : remaining) newReqs.push_back(f.request);
+    auto newRsHash = insertRequestSet(newReqs);
+    insertAsk(q, cur, newRsHash, alt);
 }
 
 void TracingDecisionGraph::copyOutgoing(
