@@ -41,10 +41,17 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     auto childProbe = outerObj->maybeGetAttr(name);
     if (!childProbe)
         return nullptr;
+    auto preHex = getSelectorHashHex().value_or(std::string{});
     (void) computeWHNFFromObject(*childProbe);
     /* Child producer = SelectorGetAttr{name, from=parent's Q hash hex}
        — parent hex computed here reflects the now-populated obsSet. */
     auto parentQHex = getSelectorHashHex().value_or(std::string{});
+    tracingCacheLog(
+        "OO::maybeGetAttr '%s' preHex=%s postHex=%s (%s)",
+        name.c_str(),
+        preHex.substr(0, 12).c_str(),
+        parentQHex.substr(0, 12).c_str(),
+        preHex == parentQHex ? "SAME" : "CHANGED");
     trace::SelectorGetAttr q{name, parentQHex};
     auto qr = queryFn(outerObj, q, producer(), argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
