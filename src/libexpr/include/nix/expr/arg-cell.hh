@@ -112,9 +112,13 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
     mutable std::map<Hash, FactEntry> facts;
 
     /** Insert a (request, response) fact with an optional barrier
-        stamp. Idempotent per request key (first stamp wins). Returns
-        true when a new entry was inserted, false if this cell already
-        had an entry for `reqHash`. */
+        stamp. Idempotent per request key (first stamp wins).
+
+        Returns true when a new entry was inserted, false when this
+        cell already had an entry for `reqHash`. Callers use the
+        return value to gate barrier bumping and any other side
+        effects that should only fire per cell-new fact (the writer's
+        logOuterObservation is the canonical caller). */
     bool addFact(const Hash & reqHash, const Hash & respHash, uint64_t barrier = 0) const
     {
         return facts.try_emplace(reqHash, FactEntry{respHash, barrier}).second;
