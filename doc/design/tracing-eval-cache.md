@@ -364,13 +364,25 @@ requestsets, and the walker's fold reconciles naturally. (In the
 equal-intersection case the adoption is a no-op — the canonical
 was already the existing record.)
 
-*Non-propagation into cells.* Canonicalisation only affects the
-outer fact record whose response evidenced the equivalence. It
-does not modify a callback firing's own accumulated observation
-trace — that trace remains authoritative for observations the
-callback still has yet to make, and dropping entries there
-would risk lying about subsequent facts from that firing which
-we won't get a second chance to correct.
+*Non-propagation into the observation-set accumulator.*
+Canonicalisation does not modify a callback application's own
+accumulated observation set — that set is authoritative for
+observations the application still has yet to make, and dropping
+entries there would risk lying about subsequent facts from that
+application which we won't get a second chance to correct.
+
+*Callback-related fact replacement.* Carve-out to the above: on
+the outer arg cell where a callback-related fact is attributed,
+canonicalisation removes the pre-existing fact and adds the
+generalized one. The generalized fact incorporates the extra
+evidence from previous traces, but it only applies to the
+specific factset and context in which it is used — as covered
+above under Adoption of the canonical, this evidence does not
+carry forward in the general case. Since each callback-related
+fact carries a fresh observation set of the contra-arg (at
+whatever nesting level), we can replace an individual such fact
+with an improved one without affecting unrelated facts the
+callback application may still produce.
 
 *Walk side.* Each Ask can carry one optional alternative
 requestset alongside its primary; the alternative is tried once
