@@ -270,74 +270,114 @@ the actual lookup key for the decision tree. No good heuristic
 for this decision yet, but a first inkling is that the more
 descriptive choice could be better.
 
-## Design note: state/observation-creep canonicalisation via a recursive meet lattice
+## Design note: state/observation-creep canonicalisation
 
 A recording session sometimes produces two facts on the same cell
 that represent the *same conceptual observation*, differing only
-in their preconditions — typically an obsSet embedded in a
-`SelectorCallbackApply` that leaked more state than the response
-actually depended on. Symptom: a getter probe (say
-`getAttr(.whatever, from=CBApply(fn, obs=P))`) fires twice with
-different `P` values but identical responses. The two facts get
+in their preconditions — a probe that fires twice with the same
+response but with the trace of prior observations having grown
+between the two moments captures more state in one recording
+than the response actually depended on. The two facts get
 inserted as distinct entries; the resulting Ask chain has an
-ambiguous node where the walker's greedy iteration can pick the
+ambiguous node and the walker's greedy iteration can pick the
 wrong branch. Under matching-until-divergence with state creep
-in the picture, the two branches are equivalent — but the walker
-doesn't know that from the raw fact set.
+in the picture the two branches are equivalent, but the walker
+doesn't know that from the raw request equality — which is
+implicit in the factset hash.
 
-**The practical operation is intersection.** The theory below has
-both meet and join, but they compose across two role-inversions
-and end up as intersection at every operational site — we never
-actually take a union. Read the abstract definition first, then
-skip to "double inversion, in one line" for the concrete rule.
+**Simple case: canonical requests.** While for our fact
+representation it's more complicated, in the abstract we could
+say that if a result can be achieved in two ways, where one does
+not have a certain precondition, that precondition can always be
+left out. That holds up for a sufficiently vague definition of
+"leaving out a precondition" — specifically that we can
+surgically remove part of a precondition. This holds up for
+simple requestsets where each individual request is canonical,
+such that one request does not cover the information probed by
+another. Example: if the result can be found without reading
+file A, any alternate attempts on the same prior factSet should
+also be able to find the result without file A. Worked
+counterexample: in one run we request file A in binary mode, and
+in another, we request it in text mode. It is not true that the
+first run can simply omit reading file A, just because the second
+run did not request file A in binary mode. So as long as no such
+overlap between requests exists, we can intersect two requestsets
+to produce a sufficient requestset that serves to produce a
+sufficient precondition for the Ask chain traversal.
 
-**Lattice on factsets** (facts and observations are the same type
-at each recursion layer):
+**Non-canonicity from nested preconditions.** Some requests carry
+a precondition of their own — a trace of what a callback firing
+observed to compute its response. Two such requests can share
+the outer shape but differ in their nested trace: the same
+conceptual probe recorded at different snapshot moments, one
+having captured more observations than the response actually
+depended on. These two requests overlap, so the canonicity
+assumption of the previous paragraph doesn't hold at this level.
 
-- `meet(A, B)` = union of members. For pairs of members that match
-  on everything except their preconditions, combine the
-  preconditions by `join`.
-- `join(A, B)` = intersection of members. For matching pairs,
-  combine preconditions by `meet`.
+**Recovery via the nested precondition.** The nested trace is
+itself a factset. When two requests differ only in this trace,
+the same reasoning applies one layer deeper: the smaller trace
+is sufficient. Intersecting at the nested-trace level
+canonicalises the two overlapping requests into one — the
+intersected trace becomes a sufficient precondition for the
+shared probe, and the outer requests, after that substitution,
+now compare equal to each other.
 
-Preconditions are themselves factsets — `CBApply.argObsSet` is
-one; an `Ask` row's `cur` is another. Same definition applies at
-each recursion step; `meet` invokes `join` one layer deeper and
-vice versa.
+**State creep vs observation creep.** Same phenomenon at
+different depths of the recursion. State creep is the
+outer-requestset case, where the non-canonicity is caused by
+two requests carrying different nested traces for the same
+probe. Observation creep is the same pattern applied to the
+nested trace itself — a trace whose own entries can carry
+further preconditions that could be pruned by the same reasoning
+one layer deeper. Same rule, applied wherever the two
+recordings differ.
 
-**Role inversion at each boundary.** Facts appear in two roles:
-as *claims* ("this happened") and as *preconditions* ("this had
-to hold before X happens"). Crossing from claim to precondition
-inverts which of `meet`/`join` we want. An `Ask`'s cur is a
-factset in precondition role; a `CBApply`'s argObsSet is also a
-precondition (input to the callback firing) — nested inside the
-request that itself is in claim role at its outer cell. So a
-fact-on-a-cell with a CBApply-carrying request has TWO
-role-inversions between the outer cell's factset and the inner
-obsSet: outer factset (claim role) → Ask cur (precondition role,
-one flip) → request payload (claim again, second flip) → CBApply
-argObsSet (precondition, cancelled back).
+**Where the design applies canonicalisation.** The insight is
+always applicable in principle: any two matching-response
+records with different preconditions can be reduced to the
+intersected precondition. The design chooses two application
+points.
 
-**Double inversion, in one line.** Two flips cancel, so the
-operation applied at the outer canonicalisation and the operation
-applied at the inner obsSet are the same set operation:
-**intersection**. In practice we never construct a union.
+*Record side.* When a new record with precondition `P_new` finds
+a matching (same predicate + same response) existing record with
+precondition `P_old` on the same cell, split on
+`intersection(P_new, P_old)`:
 
-**State creep** manifests as two same-predicate same-response
-facts with different `CBApply(fn, obs=P)` `P` values. Canonicalise:
-intersect their `P`s (the smaller obsSet was sufficient), and the
-two facts collapse to one. **Observation creep** — extra obs
-inside the callback firing that didn't affect the response —
-reduces to the same intersection applied at the obsSet's own
-recursion depth.
+- Intersection equals `P_old` (`P_new ⊇ P_old`): the existing
+  record is already canonical. Skip the new write.
 
-**Timing.** Canonicalisation happens at write time, before Ask
-insertion — whichever fact arrives second is checked against
-existing facts on the cell; a matching pair collapses in place.
-Alternative timings (batch canonicalise at `logResult`; or
-apply at replay via walker-side lattice reasoning) also work
-but pay more downstream cost. Write-time keeps the Ask chain
-unambiguous by construction.
+- Intersection is smaller than `P_old`: the intersection is the
+  new canonical precondition. Write it; keep the old requestset
+  alongside as an alternative on the Ask row (the walker's
+  fallback path).
+
+*Adoption of the canonical.* Independently of the case split,
+after canonicalisation resolves a canonical for this record, the
+NEXT node in the chain being built is written against the
+canonical precondition. Otherwise that next node would be keyed
+at a cur no subsequent walk can reach. Nodes further downstream
+handle their own canonicalisation independently — they don't
+need to carry `P_old`; if the weakening still applies for their
+own observations, their own Ask rows encode it via their own
+requestsets, and the walker's fold reconciles naturally. (In the
+equal-intersection case the adoption is a no-op — the canonical
+was already the existing record.)
+
+*Non-propagation into cells.* Canonicalisation only affects the
+outer fact record whose response evidenced the equivalence. It
+does not modify a callback firing's own accumulated observation
+trace — that trace remains authoritative for observations the
+callback still has yet to make, and dropping entries there
+would risk lying about subsequent facts from that firing which
+we won't get a second chance to correct.
+
+*Walk side.* Each Ask can carry one optional alternative
+requestset alongside its primary; the alternative is tried once
+as a fallback if the primary's fold reaches a dead end, and on
+success its target edge is copied onto the primary's fold target
+so subsequent walks find it directly. Both sides are one-shot
+per Ask; neither accumulates unbounded alternatives.
 
 ## Storage layer
 
