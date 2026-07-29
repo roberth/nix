@@ -266,6 +266,34 @@ public:
        primary without the fallback. Idempotent via INSERT OR IGNORE. */
     void copyOutgoing(const QueryHash & q, const SetHash & srcCur, const SetHash & dstCur);
 
+    /* Insert an Ask row at (q, cur) whose Request set is derived from
+       `facts`, applying Patricia split against existing Asks at the
+       same (q, cur) so that after the call all outgoing Asks at that
+       cur are pairwise-disjoint (or identical). Cascades: after
+       splitting the shared prefix off, the remaining new-side content
+       is inserted at (q, cur + fold(shared)); the same discipline
+       applies there.
+
+       `dispatchedSoFar` filters existing Asks' Request members before
+       computing the overlap — a request already folded into cur must
+       not appear in `shared`, since XOR-folding it again would cancel
+       it out of cur and place the intermediate at the wrong position.
+       Callers with a running per-recording `dispatchedSoFar` pass it
+       explicitly; callers with none (or with `cur == emptySetHash()`)
+       pass empty.
+
+       `alt` is preserved on the new Ask when it lands without split,
+       and dropped when split fires — the split changes the row's
+       identity and the alt was designed for the original whole rs.
+       Existing Asks being split preserve their own alts on the
+       tail. */
+    void insertAskSplitting(
+        const QueryHash & q,
+        const SetHash & cur,
+        const std::vector<Fact> & facts,
+        const std::unordered_set<RequestHash> & dispatchedSoFar = {},
+        const std::optional<SetHash> & alt = std::nullopt);
+
     /* Cheap existence check: does any Asks or Terminal row exist at
        (Q, factSet)? Used by walk() to validate that a candidate
        FactSet hash lies on some recording for this query, without

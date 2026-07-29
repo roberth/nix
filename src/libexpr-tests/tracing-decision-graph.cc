@@ -397,6 +397,155 @@ TEST_F(TracingDecisionGraphTest, RecordThenWalkSimpleHit)
     EXPECT_EQ(hit->resultHash, result);
 }
 
+TEST_F(TracingDecisionGraphTest, InsertAskSplittingDisjointCoexists)
+{
+    /* Two Ask inserts at the same cur with disjoint rs → both coexist,
+       no split. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto cur = TracingDecisionGraph::emptySetHash();
+    auto a = sha("a"), va = sha("va");
+    auto b = sha("b"), vb = sha("vb");
+
+    g.insertAskSplitting(q, cur, {{a, va}});
+    g.insertAskSplitting(q, cur, {{b, vb}});
+
+    auto edges = g.getAsks(q, cur);
+    ASSERT_EQ(edges.size(), 2u);
+    std::set<Hash> got;
+    for (auto & e : edges) got.insert(e.requestSet);
+    EXPECT_EQ(got, std::set<Hash>({g.insertRequestSet({a}), g.insertRequestSet({b})}));
+}
+
+TEST_F(TracingDecisionGraphTest, InsertAskSplittingPartialOverlapSplits)
+{
+    /* Existing = {a, b}, new = {a, c}. shared = {a}. Split existing
+       into {a} at cur; the ORIGINAL {a, b} rs is re-anchored at
+       cur+{a} (walker's usefulDispatch filter picks the {b} tail at
+       replay time). New's tail {c} inserts at cur+{a}. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto cur = TracingDecisionGraph::emptySetHash();
+    auto a = sha("a"), va = sha("va");
+    auto b = sha("b"), vb = sha("vb");
+    auto c = sha("c"), vc = sha("vc");
+
+    g.insertAskSplitting(q, cur, {{a, va}, {b, vb}});
+    g.insertAskSplitting(q, cur, {{a, va}, {c, vc}});
+
+    auto atCur = g.getAsks(q, cur);
+    ASSERT_EQ(atCur.size(), 1u);
+    auto shared = g.getRequestSet(atCur[0].requestSet);
+    ASSERT_TRUE(shared.has_value());
+    EXPECT_EQ(std::set<Hash>(shared->begin(), shared->end()), std::set<Hash>({a}));
+
+    auto intermediate = TracingDecisionGraph::xorFactIntoHash(cur, a, va);
+    auto atIntermediate = g.getAsks(q, intermediate);
+    ASSERT_EQ(atIntermediate.size(), 2u);
+    std::set<Hash> got;
+    for (auto & e : atIntermediate) got.insert(e.requestSet);
+    /* Existing's whole rs {a, b} is at intermediate; new's tail {c}
+       is also at intermediate. */
+    EXPECT_EQ(got, std::set<Hash>({g.insertRequestSet({a, b}), g.insertRequestSet({c})}));
+}
+
+TEST_F(TracingDecisionGraphTest, InsertAskSplittingNewSubsumesExisting)
+{
+    /* Existing = {a}, new = {a, b}. shared = {a} = existing. new's
+       tail {b} inserts at cur+{a}. Existing {a} stays. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto cur = TracingDecisionGraph::emptySetHash();
+    auto a = sha("a"), va = sha("va");
+    auto b = sha("b"), vb = sha("vb");
+
+    g.insertAskSplitting(q, cur, {{a, va}});
+    g.insertAskSplitting(q, cur, {{a, va}, {b, vb}});
+
+    auto atCur = g.getAsks(q, cur);
+    ASSERT_EQ(atCur.size(), 1u);
+    EXPECT_EQ(atCur[0].requestSet, g.insertRequestSet({a}));
+
+    auto intermediate = TracingDecisionGraph::xorFactIntoHash(cur, a, va);
+    auto atIntermediate = g.getAsks(q, intermediate);
+    ASSERT_EQ(atIntermediate.size(), 1u);
+    EXPECT_EQ(atIntermediate[0].requestSet, g.insertRequestSet({b}));
+}
+
+TEST_F(TracingDecisionGraphTest, InsertAskSplittingExistingSubsumesNew)
+{
+    /* Existing = {a, b}, new = {a}. shared = {a} = new. Split existing
+       into {a} at cur; original {a, b} rs re-anchored at cur+{a}
+       (walker's usefulDispatch reads it as tail {b}). New has no tail. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto cur = TracingDecisionGraph::emptySetHash();
+    auto a = sha("a"), va = sha("va");
+    auto b = sha("b"), vb = sha("vb");
+
+    g.insertAskSplitting(q, cur, {{a, va}, {b, vb}});
+    g.insertAskSplitting(q, cur, {{a, va}});
+
+    auto atCur = g.getAsks(q, cur);
+    ASSERT_EQ(atCur.size(), 1u);
+    EXPECT_EQ(atCur[0].requestSet, g.insertRequestSet({a}));
+
+    auto intermediate = TracingDecisionGraph::xorFactIntoHash(cur, a, va);
+    auto atIntermediate = g.getAsks(q, intermediate);
+    ASSERT_EQ(atIntermediate.size(), 1u);
+    EXPECT_EQ(atIntermediate[0].requestSet, g.insertRequestSet({a, b}));
+}
+
+TEST_F(TracingDecisionGraphTest, InsertAskSplittingIdenticalDedups)
+{
+    /* Both insertions identical → INSERT OR IGNORE dedups → one row. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto cur = TracingDecisionGraph::emptySetHash();
+    auto a = sha("a"), va = sha("va");
+    auto b = sha("b"), vb = sha("vb");
+
+    g.insertAskSplitting(q, cur, {{a, va}, {b, vb}});
+    g.insertAskSplitting(q, cur, {{a, va}, {b, vb}});
+
+    auto edges = g.getAsks(q, cur);
+    ASSERT_EQ(edges.size(), 1u);
+    EXPECT_EQ(edges[0].requestSet, g.insertRequestSet({a, b}));
+}
+
+TEST_F(TracingDecisionGraphTest, InsertAskSplittingPreservesExistingAltOnTail)
+{
+    /* Existing has alt, gets split — the tail retains the alt. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto cur = TracingDecisionGraph::emptySetHash();
+    auto a = sha("a"), va = sha("va");
+    auto b = sha("b"), vb = sha("vb");
+    auto c = sha("c"), vc = sha("vc");
+    auto altRs = g.insertRequestSet({sha("alt")});
+
+    /* Insert existing {a, b} with an alt. */
+    g.insertAsk(q, cur, g.insertRequestSet({a, b}), altRs);
+    /* Split it by inserting {a, c}. */
+    g.insertAskSplitting(q, cur, {{a, va}, {c, vc}});
+
+    /* At intermediate cur+{a}, the re-anchored original rs {a, b}
+       should retain the alt. */
+    auto intermediate = TracingDecisionGraph::xorFactIntoHash(cur, a, va);
+    auto atIntermediate = g.getAsks(q, intermediate);
+    ASSERT_EQ(atIntermediate.size(), 2u);
+    bool foundAltPreserved = false;
+    for (auto & e : atIntermediate) {
+        if (e.requestSet == g.insertRequestSet({a, b})) {
+            ASSERT_TRUE(e.altRequestSet.has_value())
+                << "re-anchored existing rs should retain the alt";
+            EXPECT_EQ(*e.altRequestSet, altRs);
+            foundAltPreserved = true;
+        }
+    }
+    EXPECT_TRUE(foundAltPreserved);
+}
+
 TEST_F(TracingDecisionGraphTest, WalkAltFallbackFindsTerminalAndCopiesEdge)
 {
     /* Seed the graph with an Ask row whose primary rs folds to a

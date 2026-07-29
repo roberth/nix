@@ -132,13 +132,16 @@ private:
         for (auto & [req, br_resp] : facts)
             byBarrier[br_resp.first].emplace_back(req, br_resp.second);
         auto cur = startCur;
+        /* dispatchedSoFar accumulates each prior barrier group's reqs
+           so insertAskSplitting's usefulDispatch filter avoids double-
+           XOR when computing intermediate curs. */
+        std::unordered_set<Hash> dispatchedSoFar;
         for (auto & [barrier, entries] : byBarrier) {
             (void) barrier;
-            std::vector<Hash> reqHashes;
-            reqHashes.reserve(entries.size());
+            std::vector<TracingDecisionGraph::Fact> factList;
+            factList.reserve(entries.size());
             for (auto & [req, resp] : entries)
-                reqHashes.push_back(req);
-            auto requestSetHash = decisionGraph->insertRequestSet(reqHashes);
+                factList.push_back({req, resp});
 
             /* Alt stamping: if any req in this Ask's rs was a canonical
                replacement, build a companion alt rs with the pre-canonical
@@ -147,23 +150,26 @@ private:
                shape. See main doc's canonicalisation note, record side. */
             std::optional<Hash> altRequestSetHash;
             std::vector<Hash> altReqHashes;
-            altReqHashes.reserve(reqHashes.size());
+            altReqHashes.reserve(factList.size());
             bool anySubstituted = false;
-            for (const auto & req : reqHashes) {
-                auto it = canonicalReplacements.find(req);
+            for (const auto & f : factList) {
+                auto it = canonicalReplacements.find(f.request);
                 if (it != canonicalReplacements.end()) {
                     altReqHashes.push_back(it->second);
                     anySubstituted = true;
                 } else {
-                    altReqHashes.push_back(req);
+                    altReqHashes.push_back(f.request);
                 }
             }
             if (anySubstituted)
                 altRequestSetHash = decisionGraph->insertRequestSet(altReqHashes);
 
-            decisionGraph->insertAsk(selectorHash, cur, requestSetHash, altRequestSetHash);
-            for (auto & [req, resp] : entries)
+            decisionGraph->insertAskSplitting(
+                selectorHash, cur, factList, dispatchedSoFar, altRequestSetHash);
+            for (auto & [req, resp] : entries) {
                 cur = TracingDecisionGraph::xorFactIntoHash(cur, req, resp);
+                dispatchedSoFar.insert(req);
+            }
         }
     }
 

@@ -1014,6 +1014,119 @@ void TracingDecisionGraph::removeAsk(
     use.exec();
 }
 
+void TracingDecisionGraph::insertAskSplitting(
+    const QueryHash & q,
+    const SetHash & cur_in,
+    const std::vector<Fact> & facts_in,
+    const std::unordered_set<RequestHash> & dispatchedSoFar,
+    const std::optional<SetHash> & alt_in)
+{
+    /* Iterative Patricia-split-then-insert loop. `cur` and
+       `remainingFacts` advance as shared prefixes get factored out. */
+    auto cur = cur_in;
+    auto remaining = facts_in;
+    /* Preserve the caller's alt only for a landing without split; on
+       any split the alt is dropped (the row's identity changes). */
+    auto alt = alt_in;
+
+    auto reqsOf = [](const std::vector<Fact> & fs) {
+        std::unordered_set<Hash> s;
+        s.reserve(fs.size());
+        for (const auto & f : fs) s.insert(f.request);
+        return s;
+    };
+
+    while (true) {
+        if (remaining.empty())
+            return;
+        auto remainingReqs = reqsOf(remaining);
+
+        bool didSplit = false;
+        for (const auto & edge : getAsks(q, cur)) {
+            auto exRsHash = edge.requestSet;
+            auto exMembers = getRequestSet(exRsHash);
+            if (!exMembers)
+                continue;
+            /* Filter existing rs against dispatchedSoFar to avoid double-
+               XOR when computing the intermediate cur. */
+            auto exUseful = usefulDispatch(*exMembers, dispatchedSoFar);
+            if (exUseful.empty())
+                continue;
+
+            std::vector<Hash> shared;
+            shared.reserve(exUseful.size());
+            for (const auto & req : exUseful)
+                if (remainingReqs.count(req))
+                    shared.push_back(req);
+            if (shared.empty())
+                continue;
+
+            /* Full identity: existing rs is exactly new_rs (as far as
+               useful goes). Nothing to insert. */
+            if (shared.size() == exUseful.size() && shared.size() == remaining.size())
+                return;
+
+            /* Compute intermediate cur by folding shared facts into cur. */
+            std::unordered_set<Hash> sharedSet(shared.begin(), shared.end());
+            Hash intermediate = cur;
+            std::vector<Fact> tailNew;
+            tailNew.reserve(remaining.size() - shared.size());
+            for (const auto & f : remaining) {
+                if (sharedSet.count(f.request))
+                    intermediate = dg_xorHash(intermediate, dg_factElementHash(f.request, f.response));
+                else
+                    tailNew.push_back(f);
+            }
+
+            auto sharedRsHash = insertRequestSet(shared);
+
+            /* Placement changes only fire when the shared subset is
+               strictly smaller than either side. If shared == exUseful,
+               existing already IS the shared prefix — no need to
+               re-split existing. */
+            if (shared.size() != exUseful.size()) {
+                insertAsk(q, cur, sharedRsHash);
+                insertAsk(q, intermediate, exRsHash, edge.altRequestSet);
+                removeAsk(q, cur, exRsHash);
+            } else {
+                /* Existing already IS the shared prefix. Just make sure
+                   sharedRsHash is registered at cur (dedups against
+                   existing since same hash). */
+                insertAsk(q, cur, sharedRsHash);
+            }
+
+            tracingCacheLog(
+                "insertAskSplitting Q=%s split at cur=%s: shared=%zu, exUseful=%zu, newRemaining=%zu "
+                "(intermediate=%s, sharedRS=%s, exRS=%s)",
+                q.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                cur.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                shared.size(), exUseful.size(), remaining.size(),
+                intermediate.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                sharedRsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                exRsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+
+            /* Continue with the new-side tail at intermediate. Alt
+               drops because we split. */
+            cur = intermediate;
+            remaining = std::move(tailNew);
+            alt = std::nullopt;
+            didSplit = true;
+            break;
+        }
+
+        if (!didSplit) {
+            /* No overlap with any existing. Insert the remainder
+               directly, preserving alt. */
+            std::vector<Hash> newReqs;
+            newReqs.reserve(remaining.size());
+            for (const auto & f : remaining) newReqs.push_back(f.request);
+            auto newRsHash = insertRequestSet(newReqs);
+            insertAsk(q, cur, newRsHash, alt);
+            return;
+        }
+    }
+}
+
 void TracingDecisionGraph::copyOutgoing(
     const QueryHash & q, const SetHash & srcCur, const SetHash & dstCur)
 {
@@ -1096,40 +1209,11 @@ static void dg_recordImpl(
     };
 
     while (dispatchedSoFar.size() < allRequests.size()) {
-        /* Eager Patricia split pass: any existing edge whose
-           usefulDispatch partially overlaps remaining gets split. */
-        for (const auto & edge : g.getAsks(q, cur)) {
-            auto rsHash = edge.requestSet;
-            auto rsMembers = g.getRequestSet(rsHash);
-            if (!rsMembers)
-                continue;
-            auto useful = TracingDecisionGraph::usefulDispatch(*rsMembers, dispatchedSoFar);
-            if (useful.empty())
-                continue;
-
-            std::vector<Hash> shared;
-            shared.reserve(useful.size());
-            for (const auto & req : useful)
-                if (isInRemaining(req))
-                    shared.push_back(req);
-            if (shared.empty() || shared.size() == useful.size())
-                continue;
-
-            auto sharedRsHash = g.insertRequestSet(shared);
-            auto intermediate = curExtendedBy(shared);
-            g.insertAsk(q, cur, sharedRsHash);
-            g.insertAsk(q, intermediate, rsHash);
-            g.removeAsk(q, cur, rsHash);
-            tracingCacheLog(
-                "record Q=%s Patricia split at cur=%s: shared=%zu of useful=%zu "
-                "(intermediate=%s, sharedRS=%s, tailRS=%s)",
-                q.to_string(HashFormat::Base16, false).substr(0, 12),
-                cur.to_string(HashFormat::Base16, false).substr(0, 12),
-                shared.size(), useful.size(),
-                intermediate.to_string(HashFormat::Base16, false).substr(0, 12),
-                sharedRsHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                rsHash.to_string(HashFormat::Base16, false).substr(0, 12));
-        }
+        /* Patricia split is now handled inside insertAskSplitting
+           (called on the fallback insert below). No separate eager
+           pass here — followUseful handles the discovery-of-existing
+           optimisation, and any residual Ask insert splits against
+           existing at the same cur. */
 
         std::optional<std::vector<Hash>> followUseful;
         for (const auto & edge : g.getAsks(q, cur)) {
@@ -1151,23 +1235,26 @@ static void dg_recordImpl(
         if (followUseful) {
             extendCur(*followUseful);
         } else {
-            /* Fast path: at cur=∅ with consumed.empty(), the
-               whole-remaining is allRequests itself. If the caller
-               supplied its canonical RS hash, skip insertRequestSet
-               and jump straight to factSet — cur ⊕ allFacts =
-               factSetHash by construction. */
-            if (dispatchedSoFar.empty() && sessionRequestsRsHash) {
-                g.insertAsk(q, cur, *sessionRequestsRsHash);
-                cur = factSetHash;
-                break;
-            }
+            /* Build the (req, resp) facts for the current remaining and
+               route through insertAskSplitting so any partial overlap
+               with an existing Ask at (q, cur) gets factored via
+               Patricia split. The fast-path fold cur → factSetHash
+               remains, but we can't jump straight to it any more —
+               splitting may distribute the insert across multiple curs.
+               (Fast-path re-optimisation is a follow-up.) */
+            std::vector<TracingDecisionGraph::Fact> remainingFacts;
+            remainingFacts.reserve(allRequests.size() - dispatchedSoFar.size());
             std::vector<Hash> remainingVec;
             remainingVec.reserve(allRequests.size() - dispatchedSoFar.size());
             for (const auto & req : allRequests)
-                if (!dispatchedSoFar.count(req))
+                if (!dispatchedSoFar.count(req)) {
+                    auto it = responseFor.find(req);
+                    assert(it != responseFor.end());
+                    remainingFacts.push_back({req, it->second});
                     remainingVec.push_back(req);
-            auto rsHash = g.insertRequestSet(remainingVec);
-            g.insertAsk(q, cur, rsHash);
+                }
+            (void) sessionRequestsRsHash; // fast-path shortcut retired
+            g.insertAskSplitting(q, cur, remainingFacts, dispatchedSoFar);
             extendCur(remainingVec);
         }
     }
