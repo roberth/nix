@@ -89,6 +89,17 @@ class TracingWriter
        (which is fact-hashed, not request-hashed). */
     std::unordered_set<Hash> allRequestHashes;
 
+    /* State-creep canonicalisation record: for every fact that
+       canonicalisation replaced on the arg cell, remember what request
+       hash it replaced. At Ask insertion time (`insertBarrieredChain`),
+       any requestSet containing a key here gets a companion alt
+       requestSet with the key substituted back to the pre-canonical
+       request hash — stamped as the Ask row's altRequestSet. Walker's
+       one-shot alt fallback uses that alt to reach recordings that
+       used the pre-canonical shape. See main doc's
+       "state/observation-creep canonicalisation" note, record side. */
+    std::unordered_map<Hash, Hash> canonicalReplacements;
+
     /* Writer-global barrier counter (Foundational principle 9). Each
        fact recorded gets stamped with the CURRENT value; bumped AFTER
        a value probe. Non-value facts (env-file, env-var) do not bump.
@@ -128,7 +139,29 @@ private:
             for (auto & [req, resp] : entries)
                 reqHashes.push_back(req);
             auto requestSetHash = decisionGraph->insertRequestSet(reqHashes);
-            decisionGraph->insertAsk(selectorHash, cur, requestSetHash);
+
+            /* Alt stamping: if any req in this Ask's rs was a canonical
+               replacement, build a companion alt rs with the pre-canonical
+               req substituted. Walker's one-shot fallback lets replay
+               reach cross-session recordings that used the pre-canonical
+               shape. See main doc's canonicalisation note, record side. */
+            std::optional<Hash> altRequestSetHash;
+            std::vector<Hash> altReqHashes;
+            altReqHashes.reserve(reqHashes.size());
+            bool anySubstituted = false;
+            for (const auto & req : reqHashes) {
+                auto it = canonicalReplacements.find(req);
+                if (it != canonicalReplacements.end()) {
+                    altReqHashes.push_back(it->second);
+                    anySubstituted = true;
+                } else {
+                    altReqHashes.push_back(req);
+                }
+            }
+            if (anySubstituted)
+                altRequestSetHash = decisionGraph->insertRequestSet(altReqHashes);
+
+            decisionGraph->insertAsk(selectorHash, cur, requestSetHash, altRequestSetHash);
             for (auto & [req, resp] : entries)
                 cur = TracingDecisionGraph::xorFactIntoHash(cur, req, resp);
         }

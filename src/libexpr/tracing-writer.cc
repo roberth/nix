@@ -233,6 +233,14 @@ void TracingWriter::logOuterObservation(
             *decisionGraph, attributionCell, queryJson, responseHash);
         auto factReqHash = canonical ? canonical->canonicalReqHash : selectorHash;
         attributionCell->addFact(factReqHash, responseHash, barrier);
+        if (canonical && canonical->canonicalReqHash != canonical->existingReqHashRemoved) {
+            /* Record for Ask-time alt stamping: any Ask carrying
+               canonicalReqHash gets a companion alt with
+               existingReqHashRemoved substituted in. */
+            canonicalReplacements.emplace(
+                canonical->canonicalReqHash,
+                canonical->existingReqHashRemoved);
+        }
     }
     bumpBarrier();
     responseFor.emplace(selectorHash, responseHash);
