@@ -1071,10 +1071,15 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
 
        Apply-result argAncestry cell. Parent = fn proxy's cell. */
     /* #183: mirror TE::apply — reuse arg's existing cell (one cell
-       per call). */
+       per call). Under #188's consolidation the arg always has a
+       cell by this point (seedCell on the primop path, applyCell
+       propagation on nested callback paths); panic on any fallback
+       so a future regression surfaces immediately instead of
+       silently allocating a redundant cell. */
     auto cell = effectiveArgCell(*arg);
     if (!cell)
-        cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
+        throw Error("TracingReplayEvaluator apply: arg had no argCell (fn=%s arg=%s)",
+                    fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
     trace::SelectorApply applySelector{fnStateHashStr};
     auto applySelectorHash = TracingDecisionGraph::computeSelectorHash(applySelector);
     /* Phase F: pass the applyResult cell so walker's per-walk state

@@ -351,9 +351,15 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        in makeCachedFnPrimOp.impl) if available; otherwise create.
        Resolved early so createCallbackCell can populate its
        callbackState in the same step. */
+    /* Under #188's consolidation the arg always has a cell by this
+       point (seedCell on the primop path, applyCell propagation on
+       nested callback paths). Panic on any fallback so a future
+       regression surfaces immediately instead of silently allocating
+       a redundant cell. */
     auto cell = effectiveArgCell(*arg);
     if (!cell)
-        cell = ArgCell::make(effectiveArgCell(*fn), arg.get_ptr());
+        throw Error("TracingEvaluator::apply: arg had no argCell (fn=%s arg=%s)",
+                    fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
 
     if (fnIsTlo) {
         /* Nested cb-apply (fn is a TracingCallbackArg): the recursive
