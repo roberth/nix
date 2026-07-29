@@ -179,8 +179,12 @@ void TracingWriter::logOuterObservation(
     std::string queryTag = std::visit(
         [](const auto & q) -> std::string { return std::string(q.tag); }, query);
     tracingCacheLog(
-        "logOuterObservation: producer=%s query=%s",
-        producerDesc, queryTag);
+        "logOuterObservation: producer=%s query=%s attributionCell=%p depth=%d facts_before=%zu%s",
+        producerDesc, queryTag,
+        (const void *) attributionCell.get(),
+        attributionCell ? attributionCell->depth : -1,
+        attributionCell ? attributionCell->facts.size() : 0,
+        attributionCell && attributionCell->parent ? " (has parent)" : "");
 
     nlohmann::json queryJson = trace::toJson(query);
     nlohmann::json resultJson;

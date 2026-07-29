@@ -117,9 +117,13 @@ public:
 
 private:
 
-    /** #187: insert a barrier-grouped Ask chain from `startCur` over
-        `facts`. Each Ask edge adds one barrier group (at most one
-        value probe per group). Foundational principle 9. */
+    /** #187 + follow-then-insert: at each cur, first follow any
+        existing outgoing Ask whose requestSet is a subset of our
+        remaining reqs (no live dispatch — we fold in our
+        already-known responses). This lets a second writer piggyback
+        on an earlier writer's chain, reducing multi-outgoing
+        ambiguity. When no existing Ask matches, insert the remaining
+        facts as barrier-grouped Asks from the current cur. */
     void insertBarrieredChain(
         const Hash & selectorHash,
         const Hash & startCur,
@@ -127,15 +131,66 @@ private:
     {
         if (facts.empty())
             return;
-        /* Group by barrier: request-keyed map into barrier-keyed groups. */
+        /* responseFor is our known-response lookup for facts; remaining
+           tracks reqs not yet consumed (via follow or insert). */
+        std::unordered_map<Hash, Hash> responseFor;
+        std::unordered_set<Hash> remaining;
+        responseFor.reserve(facts.size());
+        remaining.reserve(facts.size());
+        for (auto & [req, br_resp] : facts) {
+            responseFor.emplace(req, br_resp.second);
+            remaining.insert(req);
+        }
+        auto cur = startCur;
+        std::unordered_set<Hash> dispatchedSoFar;
+
+        /* Follow phase: greedy consume any existing edge whose useful
+           subset is fully covered by our remaining reqs. Reads from
+           the DB, folds with our own responses, updates cur. */
+        while (true) {
+            bool followed = false;
+            for (const auto & edge : decisionGraph->getAsks(selectorHash, cur)) {
+                auto rsMembers = decisionGraph->getRequestSet(edge.requestSet);
+                if (!rsMembers)
+                    continue;
+                std::vector<Hash> useful;
+                useful.reserve(rsMembers->size());
+                for (const auto & req : *rsMembers)
+                    if (!dispatchedSoFar.count(req))
+                        useful.push_back(req);
+                if (useful.empty())
+                    continue;
+                bool subset = std::all_of(useful.begin(), useful.end(),
+                    [&](const Hash & req) { return remaining.count(req) > 0; });
+                if (!subset)
+                    continue;
+                /* Follow: fold each useful req/resp into cur, dedupe
+                   from remaining/dispatchedSoFar. */
+                for (const auto & req : useful) {
+                    auto it = responseFor.find(req);
+                    /* Guaranteed by `subset` check above. */
+                    cur = TracingDecisionGraph::xorFactIntoHash(cur, req, it->second);
+                    remaining.erase(req);
+                    dispatchedSoFar.insert(req);
+                }
+                tracingCacheLog("insertBarrieredChain follow Q=%s cur→%s (consumed %zu req)",
+                                selectorHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                                cur.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                                useful.size());
+                followed = true;
+                break; // restart to see fresh outgoing at new cur
+            }
+            if (!followed)
+                break;
+        }
+
+        /* Insert phase: barrier-group only the leftover reqs from cur. */
+        if (remaining.empty())
+            return;
         std::map<uint64_t, std::vector<std::pair<Hash, Hash>>> byBarrier;
         for (auto & [req, br_resp] : facts)
-            byBarrier[br_resp.first].emplace_back(req, br_resp.second);
-        auto cur = startCur;
-        /* dispatchedSoFar accumulates each prior barrier group's reqs
-           so insertAskSplitting's usefulDispatch filter avoids double-
-           XOR when computing intermediate curs. */
-        std::unordered_set<Hash> dispatchedSoFar;
+            if (remaining.count(req))
+                byBarrier[br_resp.first].emplace_back(req, br_resp.second);
         for (auto & [barrier, entries] : byBarrier) {
             (void) barrier;
             std::vector<TracingDecisionGraph::Fact> factList;
@@ -187,6 +242,20 @@ private:
         const Hash & selectorHash,
         const std::shared_ptr<const ArgCell> & cell)
     {
+        /* Diagnostic: detect a fact attributed to both this cell and
+           an ancestor. Under XOR-fold, that would make factSetHash
+           silently cancel the fact — the cell's fold reads as if the
+           fact never happened. */
+        {
+            std::unordered_set<Hash> ownReqs;
+            for (auto & [req, entry] : cell->facts) ownReqs.insert(req);
+            for (auto c = cell->parent.get(); c; c = c->parent.get())
+                for (auto & [req, entry] : c->facts)
+                    if (ownReqs.count(req))
+                        tracingCacheLog(
+                            "XOR-CANCEL RISK: req=%s appears in cell.facts AND ancestor.facts",
+                            req.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+        }
         /* Full chain: cell + ancestors, from ∅. */
         std::map<Hash, std::pair<uint64_t, Hash>> allFacts;
         for (auto c = cell.get(); c; c = c->parent.get())
