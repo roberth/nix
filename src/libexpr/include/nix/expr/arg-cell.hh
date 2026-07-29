@@ -112,10 +112,12 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
     mutable std::map<Hash, FactEntry> facts;
 
     /** Insert a (request, response) fact with an optional barrier
-        stamp. Idempotent per request key (first stamp wins). */
-    void addFact(const Hash & reqHash, const Hash & respHash, uint64_t barrier = 0) const
+        stamp. Idempotent per request key (first stamp wins). Returns
+        true when a new entry was inserted, false if this cell already
+        had an entry for `reqHash`. */
+    bool addFact(const Hash & reqHash, const Hash & respHash, uint64_t barrier = 0) const
     {
-        facts.try_emplace(reqHash, FactEntry{respHash, barrier});
+        return facts.try_emplace(reqHash, FactEntry{respHash, barrier}).second;
     }
 
     /** Remove a fact by request hash. Used by write-time

@@ -523,6 +523,19 @@ public:
             qh.selectorHash->to_string(HashFormat::Base16, false).substr(0, 12),
             terminalCur.to_string(HashFormat::Base16, false).substr(0, 12),
             resultNodeHash.to_string(HashFormat::Base16, false).substr(0, 12));
+        if (cell) {
+            tracingCacheLog("  logResult cell chain (%p):", (const void *) cell.get());
+            for (auto c = cell.get(); c; c = c->parent.get()) {
+                tracingCacheLog("    cell=%p depth=%d facts=%zu factSetHash=%s",
+                    (const void *) c, c->depth, c->facts.size(),
+                    c->factSetHash().to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+                for (const auto & [req, entry] : c->facts) {
+                    tracingCacheLog("      fact req=%s resp=%s",
+                        req.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                        entry.response.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
+                }
+            }
+        }
         return TriePosition{
             .resultNodeHash = resultNodeHash,
             .queryHashStr = qh.selectorHash->to_string(HashFormat::Base16, false),

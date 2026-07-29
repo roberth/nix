@@ -213,20 +213,22 @@ void TracingWriter::logOuterObservation(
 
     decisionGraph->insertRequest(selectorHash, jsonToCborString(queryJson));
 
-    auto elementHash = TracingDecisionGraph::xorFactIntoHash(
-        Hash(HashAlgorithm::SHA256), selectorHash, responseHash);
-    auto factHash = elementHash;
-
-    /* Dedup by (request, response). Duplicate would XOR-cancel. */
-    if (!seenRequests.insert(factHash).second)
-        return;
-
     /* #183: fact appends to attributionCell's fact set. Ask rows
        inserted per-Selector-completion.
        #187 principle 9: outer probes ARE value probes — stamp with
        current barrier, then bump so the next value probe gets a
-       distinct barrier group. */
-    auto barrier = peekBarrier();
+       distinct barrier group.
+
+       Dedupe by (cell, reqHash) — cell.facts.addFact is idempotent
+       per reqHash. Two cells legitimately want the same fact when
+       the same probe is observed through both writer-side flows
+       (e.g., walker-attempt's phantom callback firing on cell A and
+       inner-cold's proper cell B for the same probe under pre-
+       populated obs). Each cell's chain needs its own fact so its
+       factSetHash reflects the actual observations attributed to
+       it. The writer-global side effects below (responseFor,
+       sessionRequestsTrie, allRequestHashes) are idempotent
+       primitives, so writer-wide dedupe falls out for free. */
     if (attributionCell) {
         /* State-creep canonicalisation: if this fact has a getAttr
            request with from=CBApply and matches an existing fact by
@@ -236,7 +238,10 @@ void TracingWriter::logOuterObservation(
         auto canonical = tryStateCreepCanonicalise(
             *decisionGraph, attributionCell, queryJson, responseHash);
         auto factReqHash = canonical ? canonical->canonicalReqHash : selectorHash;
-        attributionCell->addFact(factReqHash, responseHash, barrier);
+        auto barrier = peekBarrier();
+        bool added = attributionCell->addFact(factReqHash, responseHash, barrier);
+        if (added)
+            bumpBarrier();
         if (canonical && canonical->canonicalReqHash != canonical->existingReqHashRemoved) {
             /* Record for Ask-time alt stamping: any Ask carrying
                canonicalReqHash gets a companion alt with
@@ -245,8 +250,11 @@ void TracingWriter::logOuterObservation(
                 canonical->canonicalReqHash,
                 canonical->existingReqHashRemoved);
         }
+    } else {
+        /* No attribution cell — bump barrier anyway so ordering
+           within the writer stays monotonic. */
+        bumpBarrier();
     }
-    bumpBarrier();
     responseFor.emplace(selectorHash, responseHash);
     sessionRequestsTrie.insert(selectorHash);
     allRequestHashes.insert(selectorHash);
