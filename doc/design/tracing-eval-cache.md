@@ -270,6 +270,75 @@ the actual lookup key for the decision tree. No good heuristic
 for this decision yet, but a first inkling is that the more
 descriptive choice could be better.
 
+## Design note: state/observation-creep canonicalisation via a recursive meet lattice
+
+A recording session sometimes produces two facts on the same cell
+that represent the *same conceptual observation*, differing only
+in their preconditions — typically an obsSet embedded in a
+`SelectorCallbackApply` that leaked more state than the response
+actually depended on. Symptom: a getter probe (say
+`getAttr(.whatever, from=CBApply(fn, obs=P))`) fires twice with
+different `P` values but identical responses. The two facts get
+inserted as distinct entries; the resulting Ask chain has an
+ambiguous node where the walker's greedy iteration can pick the
+wrong branch. Under matching-until-divergence with state creep
+in the picture, the two branches are equivalent — but the walker
+doesn't know that from the raw fact set.
+
+**The practical operation is intersection.** The theory below has
+both meet and join, but they compose across two role-inversions
+and end up as intersection at every operational site — we never
+actually take a union. Read the abstract definition first, then
+skip to "double inversion, in one line" for the concrete rule.
+
+**Lattice on factsets** (facts and observations are the same type
+at each recursion layer):
+
+- `meet(A, B)` = union of members. For pairs of members that match
+  on everything except their preconditions, combine the
+  preconditions by `join`.
+- `join(A, B)` = intersection of members. For matching pairs,
+  combine preconditions by `meet`.
+
+Preconditions are themselves factsets — `CBApply.argObsSet` is
+one; an `Ask` row's `cur` is another. Same definition applies at
+each recursion step; `meet` invokes `join` one layer deeper and
+vice versa.
+
+**Role inversion at each boundary.** Facts appear in two roles:
+as *claims* ("this happened") and as *preconditions* ("this had
+to hold before X happens"). Crossing from claim to precondition
+inverts which of `meet`/`join` we want. An `Ask`'s cur is a
+factset in precondition role; a `CBApply`'s argObsSet is also a
+precondition (input to the callback firing) — nested inside the
+request that itself is in claim role at its outer cell. So a
+fact-on-a-cell with a CBApply-carrying request has TWO
+role-inversions between the outer cell's factset and the inner
+obsSet: outer factset (claim role) → Ask cur (precondition role,
+one flip) → request payload (claim again, second flip) → CBApply
+argObsSet (precondition, cancelled back).
+
+**Double inversion, in one line.** Two flips cancel, so the
+operation applied at the outer canonicalisation and the operation
+applied at the inner obsSet are the same set operation:
+**intersection**. In practice we never construct a union.
+
+**State creep** manifests as two same-predicate same-response
+facts with different `CBApply(fn, obs=P)` `P` values. Canonicalise:
+intersect their `P`s (the smaller obsSet was sufficient), and the
+two facts collapse to one. **Observation creep** — extra obs
+inside the callback firing that didn't affect the response —
+reduces to the same intersection applied at the obsSet's own
+recursion depth.
+
+**Timing.** Canonicalisation happens at write time, before Ask
+insertion — whichever fact arrives second is checked against
+existing facts on the cell; a matching pair collapses in place.
+Alternative timings (batch canonicalise at `logResult`; or
+apply at replay via walker-side lattice reasoning) also work
+but pay more downstream cost. Write-time keeps the Ask chain
+unambiguous by construction.
+
 ## Storage layer
 
 The cache database is an **index over all recorded traces**.
