@@ -1014,6 +1014,18 @@ void TracingDecisionGraph::removeAsk(
     use.exec();
 }
 
+void TracingDecisionGraph::copyOutgoing(
+    const QueryHash & q, const SetHash & srcCur, const SetHash & dstCur)
+{
+    if (srcCur == dstCur)
+        return;
+    auto edges = getAsks(q, srcCur);
+    for (const auto & e : edges)
+        insertAsk(q, dstCur, e.requestSet, e.altRequestSet);
+    if (auto term = getTerminal(q, srcCur))
+        insertTerminal(q, dstCur, *term);
+}
+
 void TracingDecisionGraph::insertTerminal(
     const QueryHash & q, const SetHash & factSet, const ResultHash & result)
 {
@@ -1264,29 +1276,41 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                         outgoing.size());
 
         bool advanced = false;
+        /* Try each outgoing edge. Each edge has a primary requestSet
+           and an optional alt. Attempt primary first; on miss, try
+           alt as a one-shot fallback (see main doc's
+           "state/observation-creep canonicalisation" note, walk side).
+           Returns the (usefulReqs, nextCur) that were folded, plus a
+           bool committed. */
+        auto tryDispatchRs = [&](
+            const SetHash & rsHash,
+            std::vector<Hash> * outUseful,
+            Hash * outNextCur) -> bool
+        {
+            auto rsOpt = getRequestSet(rsHash);
+            if (!rsOpt)
+                return false;
+            auto useful = usefulDispatch(*rsOpt, dispatchedSoFar);
+            if (useful.empty())
+                return false;
+            Hash nextCur = cur;
+            EdgeContext edgeCtx{q, cur, rsHash};
+            for (const auto & req : useful) {
+                auto resp = dispatch(req, edgeCtx);
+                nextCur = dg_xorHash(nextCur, dg_factElementHash(req, resp));
+            }
+            *outUseful = std::move(useful);
+            *outNextCur = nextCur;
+            return true;
+        };
+
         for (const auto & edge : outgoing) {
             auto requestSetHash = edge.requestSet;
-            /* Commit 2 will consume edge.altRequestSet here for the
-               fallback path; unused in Commit 1. */
-            (void) edge.altRequestSet;
-            auto requestSetOpt = getRequestSet(requestSetHash);
-            if (!requestSetOpt)
-                continue;
 
-            auto useful = usefulDispatch(*requestSetOpt, dispatchedSoFar);
-            if (useful.empty())
+            std::vector<Hash> useful;
+            Hash nextCur{HashAlgorithm::SHA256};
+            if (!tryDispatchRs(requestSetHash, &useful, &nextCur))
                 continue;
-
-            Hash nextCur = cur;
-            EdgeContext edgeCtx{q, cur, requestSetHash};
-            std::vector<std::pair<RequestHash, ResponseHash>> results;
-            results.reserve(useful.size());
-            for (size_t i = 0; i < useful.size(); ++i) {
-                auto resp = dispatch(useful[i], edgeCtx);
-                results.emplace_back(useful[i], resp);
-            }
-            for (const auto & pr : results)
-                nextCur = dg_xorHash(nextCur, dg_factElementHash(pr.first, pr.second));
 
             /* Trie navigation per design (see
                `doc/design/tracing-eval-cache.md`, "Walk from ∅",
@@ -1313,14 +1337,43 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                belongs on the subject-id side — not by papering
                over the divergence with a stored response. */
             if (!hasAnyEdge(q, nextCur)) {
-                tracingCacheLog("history Q=%s rs=%s useful=%zu nextCur=%s NO RECORDED EDGE -> try next",
+                tracingCacheLog("history Q=%s rs=%s useful=%zu nextCur=%s NO RECORDED EDGE -> try alt/next",
                                 q.to_string(HashFormat::Base16, false).substr(0, 12),
                                 requestSetHash.to_string(HashFormat::Base16, false).substr(0, 12),
                                 useful.size(),
                                 nextCur.to_string(HashFormat::Base16, false).substr(0, 12));
                 if (onEdgeAttempt)
                     onEdgeAttempt(/*committed=*/ false, useful);
-                continue; // Patricia-trie branch resolution (see below)
+
+                /* One-shot alt-fallback: if the primary's fold lands
+                   at a dead-end but the row carries an altRequestSet,
+                   try that. On alt hit, copy the discovered outgoing
+                   state at nextCur_alt onto nextCur_primary so future
+                   walks reach it via primary directly. */
+                if (edge.altRequestSet) {
+                    std::vector<Hash> altUseful;
+                    Hash altNextCur{HashAlgorithm::SHA256};
+                    if (tryDispatchRs(*edge.altRequestSet, &altUseful, &altNextCur)
+                        && hasAnyEdge(q, altNextCur))
+                    {
+                        tracingCacheLog(
+                            "history Q=%s ALT-FALLBACK altRs=%s useful=%zu cur=%s -> altNextCur=%s (copying to primary %s)",
+                            q.to_string(HashFormat::Base16, false).substr(0, 12),
+                            edge.altRequestSet->to_string(HashFormat::Base16, false).substr(0, 12),
+                            altUseful.size(),
+                            cur.to_string(HashFormat::Base16, false).substr(0, 12),
+                            altNextCur.to_string(HashFormat::Base16, false).substr(0, 12),
+                            nextCur.to_string(HashFormat::Base16, false).substr(0, 12));
+                        copyOutgoing(q, altNextCur, nextCur);
+                        useful = std::move(altUseful);
+                        nextCur = altNextCur;
+                        /* Fall through to the commit path below. */
+                    } else {
+                        continue; // alt didn't help either
+                    }
+                } else {
+                    continue; // no alt on this edge
+                }
             }
 
             tracingCacheLog("history Q=%s rs=%s useful=%zu cur=%s -> nextCur=%s",

@@ -397,6 +397,61 @@ TEST_F(TracingDecisionGraphTest, RecordThenWalkSimpleHit)
     EXPECT_EQ(hit->resultHash, result);
 }
 
+TEST_F(TracingDecisionGraphTest, WalkAltFallbackFindsTerminalAndCopiesEdge)
+{
+    /* Seed the graph with an Ask row whose primary rs folds to a
+       nextCur that has NO recorded continuation, but whose alt rs
+       folds to a nextCur that DOES have a Terminal. The walker
+       should try primary → miss → alt → hit, land on the Terminal,
+       and copy it onto the primary's fold target so the next walk
+       reaches it via primary directly (no alt attempt needed). */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto reqPrimary = sha("req-primary"), respPrimary = sha("respP");
+    auto reqAlt = sha("req-alt"), respAlt = sha("respA");
+    auto result = sha("R");
+
+    auto rsPrimary = g.insertRequestSet({reqPrimary});
+    auto rsAlt = g.insertRequestSet({reqAlt});
+
+    /* Compute the fold targets by hand. */
+    auto emptyFs = TracingDecisionGraph::emptySetHash();
+    auto foldPrimary = TracingDecisionGraph::xorFactIntoHash(emptyFs, reqPrimary, respPrimary);
+    auto foldAlt = TracingDecisionGraph::xorFactIntoHash(emptyFs, reqAlt, respAlt);
+
+    /* Only the alt's fold target has a Terminal. */
+    g.insertTerminal(q, foldAlt, result);
+
+    /* One Ask row at (Q, ∅) — primary rs, alt rs. */
+    g.insertAsk(q, emptyFs, rsPrimary, rsAlt);
+
+    auto dispatchCount = 0;
+    auto dispatch = [&](const Hash & r) {
+        ++dispatchCount;
+        if (r == reqPrimary) return respPrimary;
+        if (r == reqAlt) return respAlt;
+        ADD_FAILURE() << "unexpected dispatch";
+        return Hash(HashAlgorithm::SHA256);
+    };
+
+    /* First walk: primary miss → alt fallback → hit. Both dispatched. */
+    auto hit1 = g.walk(q, dispatch);
+    ASSERT_TRUE(hit1.has_value());
+    EXPECT_EQ(hit1->resultHash, result);
+    EXPECT_EQ(dispatchCount, 2) << "primary + alt dispatched on first walk";
+
+    /* After hit1, the Terminal at foldAlt should be copied onto foldPrimary. */
+    ASSERT_TRUE(g.getTerminal(q, foldPrimary).has_value());
+    EXPECT_EQ(*g.getTerminal(q, foldPrimary), result);
+
+    /* Second walk: primary lands on the copied Terminal — no alt needed. */
+    dispatchCount = 0;
+    auto hit2 = g.walk(q, dispatch);
+    ASSERT_TRUE(hit2.has_value());
+    EXPECT_EQ(hit2->resultHash, result);
+    EXPECT_EQ(dispatchCount, 1) << "only primary dispatched on second walk";
+}
+
 TEST_F(TracingDecisionGraphTest, WalkMissesWhenDispatchReturnsDifferentResponse)
 {
     TracingDecisionGraph g(dbPath);

@@ -258,6 +258,14 @@ public:
        position is expected; nondeterminism handling is deferred.) */
     std::optional<ResultHash> getTerminal(const QueryHash & q, const SetHash & factSet);
 
+    /* Copy every outgoing Ask and Terminal at (q, srcCur) into
+       (q, dstCur). Used by the walk-side alt fallback: on primary miss
+       and alt success, the alt's fold lands at srcCur; copying its
+       outgoing state onto the primary's fold target (dstCur) lets
+       future walks reach the recorded continuation directly from
+       primary without the fallback. Idempotent via INSERT OR IGNORE. */
+    void copyOutgoing(const QueryHash & q, const SetHash & srcCur, const SetHash & dstCur);
+
     /* Cheap existence check: does any Asks or Terminal row exist at
        (Q, factSet)? Used by walk() to validate that a candidate
        FactSet hash lies on some recording for this query, without
