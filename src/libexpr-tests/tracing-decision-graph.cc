@@ -419,10 +419,11 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingDisjointCoexists)
 
 TEST_F(TracingDecisionGraphTest, InsertAskSplittingPartialOverlapSplits)
 {
-    /* Existing = {a, b}, new = {a, c}. shared = {a}. Split existing
-       into {a} at cur; the ORIGINAL {a, b} rs is re-anchored at
-       cur+{a} (walker's usefulDispatch filter picks the {b} tail at
-       replay time). New's tail {c} inserts at cur+{a}. */
+    /* Existing = {a, b}, new = {a, c}. shared = {a}. Split: {a} at
+       cur; existing's TAIL {b} at cur+{a}; new's tail {c} at cur+{a}.
+       Storing the whole {a, b} at cur+{a} would XOR-cancel `a` for a
+       walker reaching cur+{a} via a different path — the tail must
+       be exactly (ex_rs \ shared). */
     TracingDecisionGraph g(dbPath);
     auto q = sha("Q");
     auto cur = TracingDecisionGraph::emptySetHash();
@@ -444,9 +445,7 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingPartialOverlapSplits)
     ASSERT_EQ(atIntermediate.size(), 2u);
     std::set<Hash> got;
     for (auto & e : atIntermediate) got.insert(e.requestSet);
-    /* Existing's whole rs {a, b} is at intermediate; new's tail {c}
-       is also at intermediate. */
-    EXPECT_EQ(got, std::set<Hash>({g.insertRequestSet({a, b}), g.insertRequestSet({c})}));
+    EXPECT_EQ(got, std::set<Hash>({g.insertRequestSet({b}), g.insertRequestSet({c})}));
 }
 
 TEST_F(TracingDecisionGraphTest, InsertAskSplittingNewSubsumesExisting)
@@ -474,9 +473,8 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingNewSubsumesExisting)
 
 TEST_F(TracingDecisionGraphTest, InsertAskSplittingExistingSubsumesNew)
 {
-    /* Existing = {a, b}, new = {a}. shared = {a} = new. Split existing
-       into {a} at cur; original {a, b} rs re-anchored at cur+{a}
-       (walker's usefulDispatch reads it as tail {b}). New has no tail. */
+    /* Existing = {a, b}, new = {a}. shared = {a} = new. Split: {a} at
+       cur; existing's TAIL {b} at cur+{a}. New has no tail. */
     TracingDecisionGraph g(dbPath);
     auto q = sha("Q");
     auto cur = TracingDecisionGraph::emptySetHash();
@@ -493,7 +491,7 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingExistingSubsumesNew)
     auto intermediate = TracingDecisionGraph::xorFactIntoHash(cur, a, va);
     auto atIntermediate = g.getAsks(q, intermediate);
     ASSERT_EQ(atIntermediate.size(), 1u);
-    EXPECT_EQ(atIntermediate[0].requestSet, g.insertRequestSet({a, b}));
+    EXPECT_EQ(atIntermediate[0].requestSet, g.insertRequestSet({b}));
 }
 
 TEST_F(TracingDecisionGraphTest, InsertAskSplittingIdenticalDedups)
@@ -513,6 +511,89 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingIdenticalDedups)
     EXPECT_EQ(edges[0].requestSet, g.insertRequestSet({a, b}));
 }
 
+TEST_F(TracingDecisionGraphTest, InsertAskSplittingCascadesThroughMultipleOverlaps)
+{
+    /* Three inserts at cur=∅: {a, b}, {a, c}, {a, d}. Expected shape:
+       {a} at ∅; {b}, {c}, {d} each at ∅+{a}. Any intermediate-cur
+       Ask carrying `a` would XOR-cancel it — verify all tails are
+       just {b} / {c} / {d}. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto cur = TracingDecisionGraph::emptySetHash();
+    auto a = sha("a"), va = sha("va");
+    auto b = sha("b"), vb = sha("vb");
+    auto c = sha("c"), vc = sha("vc");
+    auto d = sha("d"), vd = sha("vd");
+
+    g.insertAskSplitting(q, cur, {{a, va}, {b, vb}});
+    g.insertAskSplitting(q, cur, {{a, va}, {c, vc}});
+    g.insertAskSplitting(q, cur, {{a, va}, {d, vd}});
+
+    auto atCur = g.getAsks(q, cur);
+    ASSERT_EQ(atCur.size(), 1u);
+    EXPECT_EQ(atCur[0].requestSet, g.insertRequestSet({a}));
+
+    auto intermediate = TracingDecisionGraph::xorFactIntoHash(cur, a, va);
+    auto atIntermediate = g.getAsks(q, intermediate);
+    ASSERT_EQ(atIntermediate.size(), 3u);
+    std::set<Hash> got;
+    for (auto & e : atIntermediate) got.insert(e.requestSet);
+    std::set<Hash> want{
+        g.insertRequestSet({b}),
+        g.insertRequestSet({c}),
+        g.insertRequestSet({d})};
+    EXPECT_EQ(got, want)
+        << "each tail must be exactly ex_rs \\ shared — any tail containing `a` "
+        << "would XOR-cancel and land walkers at wrong curs";
+}
+
+TEST_F(TracingDecisionGraphTest, InsertAskSplittingWalkerReachesTerminalViaSplit)
+{
+    /* Two recordings sharing a prefix. Record one, then insert the
+       other via insertAskSplitting. Walk from ∅ dispatching either
+       recording's responses — walker must reach the corresponding
+       Terminal. If the split's tail Ask carried the whole ex_rs
+       instead of just the tail, walker's dispatch would XOR-cancel
+       and land at a wrong cur → miss. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto a = sha("a"), va = sha("va");
+    auto b = sha("b"), vb = sha("vb");
+    auto c = sha("c"), vc = sha("vc");
+    auto rA = sha("R-A"), rB = sha("R-B");
+
+    /* First recording: {a, b} → Terminal R-A. */
+    auto fs1 = g.insertFactSet({{a, va}, {b, vb}});
+    g.record(q, fs1, rA);
+    /* Second recording arriving via insertAskSplitting: {a, c} → Terminal R-B. */
+    g.insertAskSplitting(q, TracingDecisionGraph::emptySetHash(),
+                          {{a, va}, {c, vc}});
+    auto fs2 = TracingDecisionGraph::xorFactIntoHash(
+        TracingDecisionGraph::xorFactIntoHash(
+            TracingDecisionGraph::emptySetHash(), a, va), c, vc);
+    g.insertTerminal(q, fs2, rB);
+
+    /* Walk with vb but wrong c — only R-A chain matches. */
+    auto hitA = g.walk(q, [&](const Hash & req) {
+        if (req == a) return va;
+        if (req == b) return vb;
+        if (req == c) return sha("wrong-c");
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(hitA.has_value());
+    EXPECT_EQ(hitA->resultHash, rA);
+
+    /* Walk with vc but wrong b — only R-B chain matches. */
+    auto hitB = g.walk(q, [&](const Hash & req) {
+        if (req == a) return va;
+        if (req == b) return sha("wrong-b");
+        if (req == c) return vc;
+        return Hash(HashAlgorithm::SHA256);
+    });
+    ASSERT_TRUE(hitB.has_value());
+    EXPECT_EQ(hitB->resultHash, rB);
+}
+
 TEST_F(TracingDecisionGraphTest, InsertAskSplittingPreservesExistingAltOnTail)
 {
     /* Existing has alt, gets split — the tail retains the alt. */
@@ -529,16 +610,15 @@ TEST_F(TracingDecisionGraphTest, InsertAskSplittingPreservesExistingAltOnTail)
     /* Split it by inserting {a, c}. */
     g.insertAskSplitting(q, cur, {{a, va}, {c, vc}});
 
-    /* At intermediate cur+{a}, the re-anchored original rs {a, b}
-       should retain the alt. */
+    /* At intermediate cur+{a}, the existing's TAIL {b} should retain the alt. */
     auto intermediate = TracingDecisionGraph::xorFactIntoHash(cur, a, va);
     auto atIntermediate = g.getAsks(q, intermediate);
     ASSERT_EQ(atIntermediate.size(), 2u);
     bool foundAltPreserved = false;
     for (auto & e : atIntermediate) {
-        if (e.requestSet == g.insertRequestSet({a, b})) {
+        if (e.requestSet == g.insertRequestSet({b})) {
             ASSERT_TRUE(e.altRequestSet.has_value())
-                << "re-anchored existing rs should retain the alt";
+                << "existing's tail should retain the alt";
             EXPECT_EQ(*e.altRequestSet, altRs);
             foundAltPreserved = true;
         }

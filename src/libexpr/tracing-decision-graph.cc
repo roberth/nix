@@ -1085,8 +1085,21 @@ void TracingDecisionGraph::insertAskSplitting(
                existing already IS the shared prefix — no need to
                re-split existing. */
             if (shared.size() != exUseful.size()) {
+                /* Existing tail = ex_rs's useful members minus shared.
+                   Storing the whole ex_rs at intermediate would let a
+                   walker at intermediate whose dispatchedSoFar doesn't
+                   contain `shared` dispatch and XOR-fold the shared
+                   reqs a second time, cancelling them out of cur. Tail
+                   must be exactly `ex_rs \ shared`. */
+                std::vector<Hash> tail;
+                tail.reserve(exUseful.size() - shared.size());
+                std::unordered_set<Hash> sharedSet(shared.begin(), shared.end());
+                for (const auto & req : exUseful)
+                    if (!sharedSet.count(req))
+                        tail.push_back(req);
+                auto tailRsHash = insertRequestSet(tail);
                 insertAsk(q, cur, sharedRsHash);
-                insertAsk(q, intermediate, exRsHash, edge.altRequestSet);
+                insertAsk(q, intermediate, tailRsHash, edge.altRequestSet);
                 removeAsk(q, cur, exRsHash);
             } else {
                 /* Existing already IS the shared prefix. Just make sure
