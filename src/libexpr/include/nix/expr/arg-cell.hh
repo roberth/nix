@@ -118,6 +118,16 @@ struct ArgCell : std::enable_shared_from_this<ArgCell>
         facts.try_emplace(reqHash, FactEntry{respHash, barrier});
     }
 
+    /** Remove a fact by request hash. Used by write-time
+        canonicalisation (state-creep meet lattice, see main doc's
+        "state/observation-creep canonicalisation" note) — a fact
+        with a redundant obsSet gets replaced by its canonical form
+        (with the intersected obsSet), and the old one is removed. */
+    void removeFact(const Hash & reqHash) const
+    {
+        facts.erase(reqHash);
+    }
+
     /** Cumulative factset visible from this cell: own facts XOR-folded
         with parent's factSetHash. Pull-based (recursive) — computed
         on demand from `facts`, not stored. */
