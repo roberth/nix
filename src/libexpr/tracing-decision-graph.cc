@@ -90,6 +90,11 @@ CREATE TABLE IF NOT EXISTS Ask (
     selectorHash      BLOB NOT NULL,
     factSetHash    BLOB NOT NULL,
     requestSetHash BLOB NOT NULL,
+    -- Optional alternative requestset. Walker tries primary first;
+    -- on fold reaching a dead-end, folds via alt and copies the
+    -- discovered edge onto primary's fold target. See
+    -- "state/observation-creep canonicalisation" in the main doc.
+    altRequestSetHash BLOB,
     PRIMARY KEY (selectorHash, factSetHash, requestSetHash)
 ) WITHOUT ROWID;
 
@@ -360,10 +365,18 @@ TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
        SelectorCallbackApply's `argObsSet`. */
     state->db.exec("DROP TABLE IF EXISTS InnerValueResponse;");
 
+    /* Idempotent ALTER for pre-existing dev DBs that predate the
+       altRequestSetHash column. Newly created DBs already have it from
+       the CREATE TABLE above. */
+    try {
+        state->db.exec("ALTER TABLE Ask ADD COLUMN altRequestSetHash BLOB");
+    } catch (SQLiteError &) {
+        /* Column already exists (idempotent re-run). */
+    }
     state->insertAsk.create(state->db,
-        "INSERT OR IGNORE INTO Ask(selectorHash, factSetHash, requestSetHash) VALUES (?, ?, ?)");
+        "INSERT OR IGNORE INTO Ask(selectorHash, factSetHash, requestSetHash, altRequestSetHash) VALUES (?, ?, ?, ?)");
     state->selectAsks.create(state->db,
-        "SELECT requestSetHash FROM Ask WHERE selectorHash = ? AND factSetHash = ?");
+        "SELECT requestSetHash, altRequestSetHash FROM Ask WHERE selectorHash = ? AND factSetHash = ?");
     state->deleteAsks.create(state->db,
         "DELETE FROM Ask WHERE selectorHash = ? AND factSetHash = ? AND requestSetHash = ?");
     state->insertTerminal.create(state->db,
@@ -956,26 +969,37 @@ TracingDecisionGraph::getFactSet(const SetHash & h)
    ───────────────────────────────────────────────────────────────────── */
 
 void TracingDecisionGraph::insertAsk(
-    const QueryHash & q, const SetHash & factSet, const SetHash & requestSet)
+    const QueryHash & q,
+    const SetHash & factSet,
+    const SetHash & requestSet,
+    const std::optional<SetHash> & altRequestSet)
 {
     auto state(_state->lock());
     auto use = state->insertAsk.use();
     dg_bindBlob(use, dg_hashToBlob(q));
     dg_bindBlob(use, dg_hashToBlob(factSet));
     dg_bindBlob(use, dg_hashToBlob(requestSet));
+    if (altRequestSet)
+        dg_bindBlob(use, dg_hashToBlob(*altRequestSet));
+    else
+        use.bind(); // NULL
     use.exec();
 }
 
-std::vector<TracingDecisionGraph::SetHash>
+std::vector<TracingDecisionGraph::AskEdge>
 TracingDecisionGraph::getAsks(const QueryHash & q, const SetHash & factSet)
 {
     auto state(_state->lock());
     auto query = state->selectAsks.use();
     dg_bindBlob(query, dg_hashToBlob(q));
     dg_bindBlob(query, dg_hashToBlob(factSet));
-    std::vector<SetHash> out;
-    while (query.next())
-        out.push_back(dg_blobToHash(query.getBlob(0)));
+    std::vector<AskEdge> out;
+    while (query.next()) {
+        AskEdge e{dg_blobToHash(query.getBlob(0)), std::nullopt};
+        if (!query.isNull(1))
+            e.altRequestSet = dg_blobToHash(query.getBlob(1));
+        out.push_back(std::move(e));
+    }
     return out;
 }
 
@@ -1062,7 +1086,8 @@ static void dg_recordImpl(
     while (dispatchedSoFar.size() < allRequests.size()) {
         /* Eager Patricia split pass: any existing edge whose
            usefulDispatch partially overlaps remaining gets split. */
-        for (const auto & rsHash : g.getAsks(q, cur)) {
+        for (const auto & edge : g.getAsks(q, cur)) {
+            auto rsHash = edge.requestSet;
             auto rsMembers = g.getRequestSet(rsHash);
             if (!rsMembers)
                 continue;
@@ -1095,7 +1120,8 @@ static void dg_recordImpl(
         }
 
         std::optional<std::vector<Hash>> followUseful;
-        for (const auto & rsHash : g.getAsks(q, cur)) {
+        for (const auto & edge : g.getAsks(q, cur)) {
+            auto rsHash = edge.requestSet;
             auto rsMembers = g.getRequestSet(rsHash);
             if (!rsMembers)
                 continue;
@@ -1238,7 +1264,11 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
                         outgoing.size());
 
         bool advanced = false;
-        for (const auto & requestSetHash : outgoing) {
+        for (const auto & edge : outgoing) {
+            auto requestSetHash = edge.requestSet;
+            /* Commit 2 will consume edge.altRequestSet here for the
+               fallback path; unused in Commit 1. */
+            (void) edge.altRequestSet;
             auto requestSetOpt = getRequestSet(requestSetHash);
             if (!requestSetOpt)
                 continue;

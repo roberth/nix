@@ -220,12 +220,28 @@ public:
        ───────────────────────────────────────────────────────────────── */
 
     /* Insert an Asks edge: at (Q, factSet), the box's next set of
-       Requests is `requestSet`. Idempotent on
-       (selectorHash, factSetHash, requestSetHash). */
-    void insertAsk(const QueryHash & q, const SetHash & factSet, const SetHash & requestSet);
+       Requests is `requestSet`. Optional `altRequestSet` records a
+       fallback the walker tries if primary's fold reaches a dead end
+       (see "state/observation-creep canonicalisation" in the main
+       doc). Idempotent on
+       (selectorHash, factSetHash, requestSetHash) — alt column is
+       stamped on first insert; subsequent inserts at the same key
+       are dropped (INSERT OR IGNORE), so alt on a later insert with
+       a different alt value has no effect. */
+    void insertAsk(
+        const QueryHash & q,
+        const SetHash & factSet,
+        const SetHash & requestSet,
+        const std::optional<SetHash> & altRequestSet = std::nullopt);
 
-    /* Look up the outgoing RequestSet edges at (Q, factSet). */
-    std::vector<SetHash> getAsks(const QueryHash & q, const SetHash & factSet);
+    struct AskEdge
+    {
+        SetHash requestSet;
+        std::optional<SetHash> altRequestSet;
+    };
+
+    /* Look up the outgoing Ask edges at (Q, factSet). */
+    std::vector<AskEdge> getAsks(const QueryHash & q, const SetHash & factSet);
 
 
     /* Remove a specific Asks edge. Used by Patricia split to

@@ -235,7 +235,32 @@ TEST_F(TracingDecisionGraphTest, AsksInsertGetRoundTrip)
 
     auto edges = g.getAsks(q, factSet);
     ASSERT_EQ(edges.size(), 1u);
-    EXPECT_EQ(edges[0], requestSet);
+    EXPECT_EQ(edges[0].requestSet, requestSet);
+    EXPECT_FALSE(edges[0].altRequestSet.has_value());
+}
+
+TEST_F(TracingDecisionGraphTest, AsksInsertRoundTripWithAltRequestSet)
+{
+    /* An Ask inserted with an alt requestset round-trips both values;
+       the alt is stamped on first insert and INSERT-OR-IGNOREd on
+       repeat, so a second insertAsk with a different alt is dropped. */
+    TracingDecisionGraph g(dbPath);
+    auto q = sha("Q");
+    auto factSet = TracingDecisionGraph::emptySetHash();
+    auto primary = g.insertRequestSet({sha("a")});
+    auto alt = g.insertRequestSet({sha("a"), sha("b")});
+    auto otherAlt = g.insertRequestSet({sha("c")});
+
+    g.insertAsk(q, factSet, primary, alt);
+    /* Repeat insert with a different alt is a no-op via INSERT OR IGNORE. */
+    g.insertAsk(q, factSet, primary, otherAlt);
+
+    auto edges = g.getAsks(q, factSet);
+    ASSERT_EQ(edges.size(), 1u);
+    EXPECT_EQ(edges[0].requestSet, primary);
+    ASSERT_TRUE(edges[0].altRequestSet.has_value());
+    EXPECT_EQ(*edges[0].altRequestSet, alt)
+        << "alt stamped on first insert; second insert's alt should be ignored";
 }
 
 TEST_F(TracingDecisionGraphTest, AsksInsertIsIdempotent)
@@ -265,7 +290,8 @@ TEST_F(TracingDecisionGraphTest, AsksMultipleOutgoingPerPosition)
     g.insertAsk(q, factSet, rs2);
 
     auto edges = g.getAsks(q, factSet);
-    std::set<Hash> got(edges.begin(), edges.end());
+    std::set<Hash> got;
+    for (auto & e : edges) got.insert(e.requestSet);
     std::set<Hash> want{rs1, rs2};
     EXPECT_EQ(got, want);
 }
@@ -284,7 +310,7 @@ TEST_F(TracingDecisionGraphTest, AsksRemovePicksTheRightEdge)
 
     auto edges = g.getAsks(q, factSet);
     ASSERT_EQ(edges.size(), 1u);
-    EXPECT_EQ(edges[0], rs2);
+    EXPECT_EQ(edges[0].requestSet, rs2);
 }
 
 TEST_F(TracingDecisionGraphTest, AsksIsolatedByQ)
@@ -303,8 +329,8 @@ TEST_F(TracingDecisionGraphTest, AsksIsolatedByQ)
     auto e2 = g.getAsks(q2, factSet);
     ASSERT_EQ(e1.size(), 1u);
     ASSERT_EQ(e2.size(), 1u);
-    EXPECT_EQ(e1[0], rs1);
-    EXPECT_EQ(e2[0], rs2);
+    EXPECT_EQ(e1[0].requestSet, rs1);
+    EXPECT_EQ(e2[0].requestSet, rs2);
 }
 
 TEST_F(TracingDecisionGraphTest, TerminalInsertGetRoundTrip)
@@ -514,7 +540,7 @@ TEST_F(TracingDecisionGraphTest, PersistsAcrossReopen)
         TracingDecisionGraph g(dbPath);
         auto edges = g.getAsks(q, TracingDecisionGraph::emptySetHash());
         ASSERT_EQ(edges.size(), 1u);
-        EXPECT_EQ(edges[0], rs);
+        EXPECT_EQ(edges[0].requestSet, rs);
 
         auto term = g.getTerminal(q, TracingDecisionGraph::emptySetHash());
         ASSERT_TRUE(term.has_value());
@@ -843,7 +869,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_RecordEmitsSingleEdgeForFirstRecording)
         << "got " << outgoing.size();
 
     /* That edge's RequestSet contains all three requests. */
-    auto rs = g.getRequestSet(outgoing[0]);
+    auto rs = g.getRequestSet(outgoing[0].requestSet);
     ASSERT_TRUE(rs.has_value());
     std::set<Hash> got(rs->begin(), rs->end());
     std::set<Hash> want{req1, req2, req3};
@@ -885,7 +911,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_RecordReusesEdgeWhenExtendingSuperset)
        recording's full request set {r1, r2}. */
     auto rootEdges = g.getAsks(q, TracingDecisionGraph::emptySetHash());
     ASSERT_EQ(rootEdges.size(), 1u);
-    auto rs0 = g.getRequestSet(rootEdges[0]);
+    auto rs0 = g.getRequestSet(rootEdges[0].requestSet);
     ASSERT_TRUE(rs0.has_value());
     std::set<Hash> root_want{r1, r2};
     std::set<Hash> root_got(rs0->begin(), rs0->end());
@@ -895,7 +921,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_RecordReusesEdgeWhenExtendingSuperset)
        extension; its RS = {r3}. */
     auto fs1Edges = g.getAsks(q, fs1);
     ASSERT_EQ(fs1Edges.size(), 1u);
-    auto rs1 = g.getRequestSet(fs1Edges[0]);
+    auto rs1 = g.getRequestSet(fs1Edges[0].requestSet);
     ASSERT_TRUE(rs1.has_value());
     std::set<Hash> ext_want{r3};
     std::set<Hash> ext_got(rs1->begin(), rs1->end());
@@ -951,7 +977,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_PatriciaSplitsOnOverlappingDivergence)
     ASSERT_EQ(root.size(), 1u)
         << "after Patricia split (Q, ∅) should have exactly one outgoing edge";
 
-    auto rsShared = g.getRequestSet(root[0]);
+    auto rsShared = g.getRequestSet(root[0].requestSet);
     ASSERT_TRUE(rsShared.has_value());
     std::set<Hash> shared_got(rsShared->begin(), rsShared->end());
     std::set<Hash> shared_want{a, b};
@@ -1015,7 +1041,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_RequestSetSharedAcrossQs)
     auto q2Edges = g.getAsks(q2, TracingDecisionGraph::emptySetHash());
     ASSERT_EQ(q1Edges.size(), 1u);
     ASSERT_EQ(q2Edges.size(), 1u);
-    EXPECT_EQ(q1Edges[0], q2Edges[0])
+    EXPECT_EQ(q1Edges[0].requestSet, q2Edges[0].requestSet)
         << "Q1 and Q2 record the same factSet — their Asks edges should "
         << "point to the same content-addressed RequestSet";
 }
@@ -1045,7 +1071,7 @@ TEST_F(TracingDecisionGraphTest, Phase1_WalkDispatchesMultiElementRequestSet)
     /* One Asks edge total at (Q, ∅); its RS has N members. */
     auto edges = g.getAsks(q, TracingDecisionGraph::emptySetHash());
     ASSERT_EQ(edges.size(), 1u);
-    auto rs = g.getRequestSet(edges[0]);
+    auto rs = g.getRequestSet(edges[0].requestSet);
     ASSERT_TRUE(rs.has_value());
     EXPECT_EQ(rs->size(), static_cast<size_t>(N));
 
