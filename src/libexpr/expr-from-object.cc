@@ -209,6 +209,26 @@ OuterApplyResult OuterApply::run(
            this cell IS the callback firing's arg cell. */
         localCell->callbackState = std::make_shared<CallbackState>();
         localCell->callbackState->fnStateHashHex = fnIdStr;
+        /* Walker-side pre-population: when the arg is a ReplayCallbackArg
+           (walker-materialised callback firing), pre-populate the
+           runningObsSet with the ReplayCallbackArg's obsSetResponses.
+           Otherwise the fresh callback cell would snapshot obs=empty at
+           every probe, producing facts that don't match cold's
+           recording (where cold's runningObsSet grew via
+           TracingCallbackArg::recordObservation as the fn body probed
+           the contra-arg). Match cold's snapshot moment by starting
+           with the recorded obs. */
+        if (auto * rca = dynamic_cast<ReplayCallbackArg *>(argObj.get())) {
+            if (auto obsMap = rca->getObsSetResponses()) {
+                for (const auto & [selectorHash, responsePayload] : *obsMap) {
+                    localCell->callbackState->runningObsSet.push_back(
+                        {selectorHash, responsePayload});
+                }
+                tracingCacheLog(
+                    "OuterApply::run: pre-populated runningObsSet with %zu entries from ReplayCallbackArg",
+                    obsMap->size());
+            }
+        }
     }
 
     /* Wrap the argObj in TracingCallbackArg so the outer's
