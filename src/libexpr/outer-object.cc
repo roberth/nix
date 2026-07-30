@@ -52,9 +52,13 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
         preHex.substr(0, 12).c_str(),
         parentQHex.substr(0, 12).c_str(),
         preHex == parentQHex ? "SAME" : "CHANGED");
-    if (!selectorPool)
-        throw Error("outer maybeGetAttr: no SelectorPool");
-    auto qSel = selectorPool->intern(trace::SelectorGetAttr{name, parentSel});
+    /* Fall back to a process-scoped pool when caller didn't wire one
+       (e.g. tracing not enabled). Selectors get interned so hashes are
+       stable; walker resolution just doesn't get structural sharing
+       across separate processes. */
+    static trace::SelectorPool fallbackPool;
+    auto & poolRef = selectorPool ? *selectorPool : fallbackPool;
+    auto qSel = poolRef.intern(trace::SelectorGetAttr{name, parentSel});
     auto qr = queryFn(outerObj, qSel, parentSel, argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
@@ -187,10 +191,10 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
         /* Not a list, or index out of bounds — delegate so the
            outer's inner throws the source-positioned error. */
         return outerObj->getListElem(index);
-    if (!selectorPool)
-        throw Error("outer getListElem: no SelectorPool");
+    static trace::SelectorPool fallbackPool;
+    auto & poolRef = selectorPool ? *selectorPool : fallbackPool;
     auto parentSel = producer();
-    auto qSel = selectorPool->intern(trace::SelectorGetListElem{index, parentSel});
+    auto qSel = poolRef.intern(trace::SelectorGetListElem{index, parentSel});
     auto qr = queryFn(outerObj, qSel, parentSel, argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
@@ -234,10 +238,10 @@ RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<OuterRe
 
 std::optional<FunctionInfo> OuterObject::getFunctionInfo()
 {
-    if (!selectorPool)
-        throw Error("outer getFunctionInfo: no SelectorPool");
+    static trace::SelectorPool fallbackPool;
+    auto & poolRef = selectorPool ? *selectorPool : fallbackPool;
     auto parentSel = producer();
-    auto qSel = selectorPool->intern(trace::SelectorGetFunctionInfo{parentSel});
+    auto qSel = poolRef.intern(trace::SelectorGetFunctionInfo{parentSel});
     auto qr = queryFn(outerObj, qSel, parentSel, argCell);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)

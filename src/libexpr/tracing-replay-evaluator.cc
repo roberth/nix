@@ -925,12 +925,11 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
        per-walk state lives on cell.qState. liveObject is back-filled
        after the TracingReplayObject wrapper is constructed. */
     auto rootCell = ArgCell::make(writer.sessionRootCell, nullptr);
-    if (auto result = lookup(trace::SelectorImport{displayPath}, nullptr, rootCell)) {
+    trace::SelectorImport rootSel{displayPath};
+    if (auto result = lookup(rootSel, nullptr, rootCell)) {
         tracingCacheLog("replay hit: evalFile %s", displayPath);
         auto obj = make_ref<TracingReplayObject>(
             *this, result->second, [this, path, displayPath]() { return inner->evalFile(path, displayPath); });
-        /* Cell-migration Phase C: pre-populate cachedWHNF from the
-           Terminal's Result payload — mirrors the writer side. */
         try {
             auto whnfJson = cborStringToJson(result->first);
             trace::ResultWHNF parsed;
@@ -939,6 +938,8 @@ ref<Object> TracingReplayEvaluator::evalFile(const RootedPath & path, const std:
         } catch (const std::exception &) { /* fall through */ }
         rootCell->liveObject = obj.get_ptr();
         obj->withArgCell(rootCell);
+        /* Bootstrap the pool with this root Selector. */
+        obj->withProducer(decisionGraph.selectorPool.intern(rootSel));
         return obj;
     }
     tracingCacheLog("replay miss: evalFile %s", displayPath);
@@ -950,7 +951,8 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Roo
     /* Phase F: create root cell before lookup; back-fill liveObject
        after wrapping. */
     auto rootCell = ArgCell::make(writer.sessionRootCell, nullptr);
-    if (auto result = lookup(trace::SelectorExpr{expr, basePath.path.abs()}, nullptr, rootCell)) {
+    trace::SelectorExpr rootSel{expr, basePath.path.abs()};
+    if (auto result = lookup(rootSel, nullptr, rootCell)) {
         tracingCacheLog("replay hit: evalExpr");
         auto obj = make_ref<TracingReplayObject>(
             *this, result->second, [this, expr, basePath]() { return inner->evalExpr(expr, basePath); });
@@ -962,6 +964,7 @@ ref<Object> TracingReplayEvaluator::evalExpr(const std::string & expr, const Roo
         } catch (const std::exception &) { /* fall through */ }
         rootCell->liveObject = obj.get_ptr();
         obj->withArgCell(rootCell);
+        obj->withProducer(decisionGraph.selectorPool.intern(rootSel));
         return obj;
     }
     tracingCacheLog("replay miss: evalExpr");

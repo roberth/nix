@@ -37,8 +37,8 @@ static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const tr
                 /* #186: SelectorArg used as identity of the outer arg
                    itself — return its WHNF (no navigation). */
                 return {computeWHNFFromObject(*obj), nullptr};
-            } else if constexpr (!requires { query.from; }) {
-                throw Error("outer query: query type has no 'from' field");
+            } else if constexpr (!requires { query.parent; }) {
+                throw Error("outer query: query type has no 'parent' field");
             } else if constexpr (std::is_same_v<Q, trace::SelectorGetAttr>) {
                 /* Pure retrieval — assumes existence (caller must
                    have projected membership from parent WHNFAttrs). */
@@ -373,10 +373,12 @@ static PrimOp * makeCachedFnPrimOp(
                            Passed as a live callable so the hex is
                            recomputed on demand (fnObj may be a proxy
                            whose identity evolves). */
-                        /* Access the pool via innerEval's decision graph if reachable. */
-                        trace::SelectorPool * pool = innerEval->getEvalState().rootDecisionGraph
-                            ? &innerEval->getEvalState().rootDecisionGraph->selectorPool
-                            : nullptr;
+                        /* Access the pool via either state's decision graph. */
+                        trace::SelectorPool * pool = nullptr;
+                        if (state.rootDecisionGraph)
+                            pool = &state.rootDecisionGraph->selectorPool;
+                        else if (innerEval->getEvalState().rootDecisionGraph)
+                            pool = &innerEval->getEvalState().rootDecisionGraph->selectorPool;
                         auto argProducerFn = [pool]() mutable -> ref<const trace::Selector> {
                             static trace::SelectorPool localPool;
                             auto & p = pool ? *pool : localPool;
