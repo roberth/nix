@@ -36,7 +36,7 @@ class TracingReplayObject : public Object
 
     /* When apply-result, the producer Selector identifying it
        structurally. */
-    std::optional<trace::SelectorVariant> producer;
+    std::optional<ref<const trace::Selector>> producer;
 
     /* Marks this wrapper as cb-apply-descendant, symmetric to
        TracingObject::cbApplyOrigin. Propagated by navigation. */
@@ -79,11 +79,13 @@ public:
 
     /** Attach the apply-result producer Selector. Mirrors the
         writer-side `TracingObject::withProducer`. */
-    TracingReplayObject & withProducer(trace::SelectorVariant p)
+    TracingReplayObject & withProducer(ref<const trace::Selector> p)
     {
         producer = std::move(p);
         return *this;
     }
+
+    std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
 
     /** Symmetric to `TracingObject::withCbApplyOrigin`. Walker
         propagates through navigation children so their

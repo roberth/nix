@@ -115,8 +115,18 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
         tracingCacheLog("replay hit: getAttr '%s' -> missing (via whnf.names)", name);
         return nullptr;
     }
-    trace::SelectorGetAttr query{name, triePos.queryHashStr};
-    auto queryHash = trace::computeSelectorHash(query);
+    std::optional<ref<const trace::Selector>> parentSel;
+    try {
+        auto h = Hash::parseNonSRIUnprefixed(triePos.queryHashStr, HashAlgorithm::SHA256);
+        parentSel = evaluator.getDecisionGraph().selectorPool.find(h);
+    } catch (...) {}
+    if (!parentSel) {
+        return ensureInner()->maybeGetAttr(name);
+    }
+    auto querySel = evaluator.getDecisionGraph().selectorPool.intern(
+        trace::SelectorGetAttr{name, *parentSel});
+    auto & query = std::get<trace::SelectorGetAttr>(querySel->node);
+    auto queryHash = querySel->cachedHash;
     tracingCacheLog(
         "TRO::maybeGetAttr '%s' -> Q=%s (from=%s)",
         name.c_str(),
@@ -314,7 +324,16 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
         tracingCacheLog("replay fallback: getListElem %d out of bounds (size %zu)", idx, lp->size);
         return ensureInner()->getListElem(idx);
     }
-    trace::SelectorGetListElem query{triePos.queryHashStr, idx};
+    std::optional<ref<const trace::Selector>> parentSel;
+    try {
+        auto h = Hash::parseNonSRIUnprefixed(triePos.queryHashStr, HashAlgorithm::SHA256);
+        parentSel = evaluator.getDecisionGraph().selectorPool.find(h);
+    } catch (...) {}
+    if (!parentSel)
+        return ensureInner()->getListElem(idx);
+    auto querySel = evaluator.getDecisionGraph().selectorPool.intern(
+        trace::SelectorGetListElem{idx, *parentSel});
+    auto & query = std::get<trace::SelectorGetListElem>(querySel->node);
     if (auto result = lookupStructuralChild<trace::SelectorGetListElem, trace::ResultWHNF>(query)) {
         tracingCacheLog("replay hit: getListElem %d", idx);
         auto self = std::static_pointer_cast<TracingReplayObject>(shared_from_this());
@@ -357,7 +376,16 @@ RootValue TracingReplayObject::defeatCache()
 
 std::optional<FunctionInfo> TracingReplayObject::getFunctionInfo()
 {
-    trace::SelectorGetFunctionInfo query{triePos.queryHashStr};
+    std::optional<ref<const trace::Selector>> parentSel;
+    try {
+        auto h = Hash::parseNonSRIUnprefixed(triePos.queryHashStr, HashAlgorithm::SHA256);
+        parentSel = evaluator.getDecisionGraph().selectorPool.find(h);
+    } catch (...) {}
+    if (!parentSel)
+        return ensureInner()->getFunctionInfo();
+    auto querySel = evaluator.getDecisionGraph().selectorPool.intern(
+        trace::SelectorGetFunctionInfo{*parentSel});
+    auto & query = std::get<trace::SelectorGetFunctionInfo>(querySel->node);
     if (auto r = lookupResult<trace::SelectorGetFunctionInfo, trace::ResultFunctionInfo>(query)) {
         if (!r->first.hasInfo)
             return std::nullopt;

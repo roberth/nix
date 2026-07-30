@@ -322,8 +322,20 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        advance their cumulative subject-id history by one for ε, so the
        apply-result's state hash is computed at a history step the walker
        can reach via the recorded chain. */
-    /* #181: SelectorApply carries fn's Q hash only; arg observed by value */
-    nlohmann::json applyQ = trace::SelectorApply{fnStateHashStr};
+    /* Intern SelectorApply for fn. Look up fn's Selector via getSelector();
+       fall back to nullopt path if pool doesn't have fn (early bootstrap). */
+    std::optional<ref<const trace::Selector>> fnSelOpt = fn->getSelector();
+    if (!fnSelOpt && writer.getDecisionGraph()) {
+        try {
+            auto h = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
+            fnSelOpt = writer.getDecisionGraph()->selectorPool.find(h);
+        } catch (...) {}
+    }
+    if (!fnSelOpt)
+        throw Error("TracingEvaluator::apply: cannot resolve fn Selector for %s", fnStateHashStr);
+    auto fnSel = *fnSelOpt;
+    auto applySel = writer.getDecisionGraph()->selectorPool.intern(trace::SelectorApply{fnSel});
+    nlohmann::json applyQ = trace::toJson(*applySel);
 
     /* If fn is a TracingCallbackArg (= inner-supplied lambda the
        outer is now applying — the cb-higher-order case), capture the
@@ -354,7 +366,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        arg identity is dropped from the payload per #181; discrimination
        flows through the arg's own cell/facts. */
     auto fnQHex = fn->getSelectorHashHex().value_or(fnStateHashStr);
-    trace::SelectorApply resultProducer{fnQHex};
+    auto & resultProducer = std::get<trace::SelectorApply>(applySel->node);
 
     /* #183: one cell per call, tracking the arg. Reuse the arg's
        existing cell (created at the first opportunity, e.g., seedCell
@@ -388,8 +400,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         cell->callbackState->fnStateHashHex = fnStateHashStr;
     }
 
-    /* #183: producer content hash IS the apply-result identity. */
-    auto qHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
+    auto qHash = applySel->cachedHash;
     auto qHex = qHash.to_string(HashFormat::Base16, false);
     tracingCacheLog(
         "writer apply: fn=%s -> qHash=%s",
@@ -402,7 +413,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        queryFn's attributionCell; cell.factSetHash() reflects them for
        the SelectorApply Terminal cur — distinct calls have distinct
        cells → distinct Terminals. */
-    trace::SelectorApply applySelector{fnStateHashStr};
+    auto & applySelector = std::get<trace::SelectorApply>(applySel->node);
     auto [v, qh] = writer.logSelectorOnCell(
         cell, applySelector, /*parent=*/std::nullopt);
 
@@ -431,7 +442,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
         placeholderWhnf.payload = trace::WHNFFunction{};
         writer.logResult(v, placeholderWhnf, qh, cell);
         auto laro = std::make_shared<TracingCallbackApplyResult>(
-            result, writer, trace::SelectorVariant{resultProducer});
+            result, writer, applySel);
         laro->withArgCell(cell);
         /* #184: the enclosing callback firing's cell is fn's cell — fn
            is a TracingCallbackArg whose argCell IS the OuterApply::run
@@ -448,7 +459,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        SelectorApply's Terminal, wrapper is constructed with
        cachedWHNF ready. */
     auto whnfResult = computeWHNFFromObject(*result);
-    writer.emitCallbackApplyForApplyResult(cell, trace::SelectorVariant{resultProducer}, whnfResult);
+    writer.emitCallbackApplyForApplyResult(cell, applySel, whnfResult);
     auto tp = writer.logResult(v, whnfResult, qh, cell);
 
     TriePosition triePos = tp
@@ -464,10 +475,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
           };
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withArgCell(std::move(cell));
-    if (auto * dg = writer.getDecisionGraph()) {
-        if (auto sel = trace::fromVariant(trace::SelectorVariant{resultProducer}, dg->selectorPool))
-            obj->withProducer(*sel);
-    }
+    obj->withProducer(applySel);
     obj->withCachedWHNF(std::move(whnfResult));
     return obj;
 }

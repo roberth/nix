@@ -602,49 +602,10 @@ using CorrelatedTraceEntry =
  */
 std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j);
 
-/**
- * Parse just an inner query object — `{"query": "<tag>", "params": {...}}` —
- * into a `SelectorVariant`. Returns nullopt if `j` doesn't have a
- * recognised tag. Used at CBOR-payload dispatch sites where the
- * wrapping `{"query", "v"}` envelope isn't present.
- */
-std::optional<SelectorVariant> parseSelectorVariant(const nlohmann::json & j);
-
-/**
- * Short human-readable rendering of a Query for log lines —
- * `"tag key=value ..."`, with hashes truncated to 12 hex chars.
- * Replaces ad-hoc `params["name"/"index"/"fn"/"arg"]` reads at
- * every log site.
- */
-std::string describe(const SelectorVariant & query);
-
-/**
- * True iff a probe's response depends on the referenced Subject's
- * state — i.e. this Selector carries a `from`/`fn`/`arg` state
- * hash that a dispatcher resolves against the caller's cell chain.
- * Two sibling probes that share their requestHash (matching state
- * at that moment) can still yield different responses at the
- * probe that introduces divergence, so caching by requestHash
- * alone would serve one sibling's bytes to the other. Root
- * queries (`SelectorExpr`, `SelectorImport`) never move state.
- */
-bool willMoveStateHash(const SelectorVariant & query);
-
-/**
- * The `from` state hash a Query stamps as its primary Merkle
- * parent, if any. Returns nullopt for queries with no `from` field
- * (roots) and for leaves whose hash string doesn't parse.
- */
-std::optional<Hash> fromHashOf(const SelectorVariant & query);
-
-/**
- * Rewrite a Query's `from` (and `fromStateHashes[0]` if present)
- * to a new state hash — preserving any existing `argAncestry`
- * attached to those leaves. Used by Q-evolution paths that update
- * Q's identity as its fromSubject state advances. No-op on Selectors
- * with neither field (roots).
- */
-void rewriteFrom(SelectorVariant & query, const std::string & newFromHex);
+/* parseSelectorVariant / fromHashOf / rewriteFrom retired — under
+   the recursive Selector, parsing needs a SelectorPool (use
+   nodeFromJson), fromHashOf is a `parent->cachedHash` access, and
+   rewriteFrom is meaningless since Selectors are immutable. */
 
 /**
  * SHA-256 of the Query's JSON dump — the canonical selectorHash used

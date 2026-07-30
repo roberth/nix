@@ -47,7 +47,7 @@ class ReplayCallbackArg : public Object
        `SelectorGetAttr{name, from=hex(parent producer Q)}` or the
        list-elem equivalent — same shape as OuterObject's navigation
        children on the cold side. */
-    trace::SelectorVariant producer;
+    ref<const trace::Selector> producer;
     /* Content hash of producer — kept for legacy id-string consumers
        (e.g. defeatCache's recursive apply construction). */
     OuterId localId;
@@ -110,15 +110,17 @@ public:
        ...}`. Inherits parent's shared walkFacts so the child's
        state hash evaluation rides on the same per-cb-apply history. */
     ReplayCallbackArg(
-        trace::SelectorVariant producer_,
+        ref<const trace::Selector> producer_,
         std::shared_ptr<std::vector<ObservationSet>> walkFacts_,
         TracingDecisionGraph & dg,
         ref<SourceRoot> rootFSRoot,
         EvalState * state = nullptr)
-        : producer(std::move(producer_))
-        , localId(TracingDecisionGraph::computeSelectorHash(producer))
+        : producer(producer_)
+        , localId(producer_->cachedHash)
         , walkFacts(std::move(walkFacts_))
         , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
+
+    std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
 
     /** Set the proxy's argCell. Returns *this for chaining. */
     ReplayCallbackArg & withArgCell(std::shared_ptr<const ArgCell> argScope_)

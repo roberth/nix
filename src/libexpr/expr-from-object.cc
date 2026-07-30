@@ -109,7 +109,7 @@ struct OuterApply
         each time it's called, so probes at different moments sample
         the current runningObsSet. */
     OuterApplyResult run(
-        std::shared_ptr<Object> fnObj, trace::SelectorVariant fnProducer,
+        std::shared_ptr<Object> fnObj, ref<const trace::Selector> fnProducer,
         std::shared_ptr<Object> argObj,
         std::shared_ptr<const ArgCell> applyCell);
 };
@@ -146,7 +146,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
         outer apply-result plus a producer callable for the wrapping
         OuterObject. */
     OuterApplyResult apply(
-        std::shared_ptr<Object> fnObj, trace::SelectorVariant fnProducer,
+        std::shared_ptr<Object> fnObj, ref<const trace::Selector> fnProducer,
         std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> callerScope)
     {
         return OuterApply{
@@ -158,12 +158,10 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
 };
 
 OuterApplyResult OuterApply::run(
-    std::shared_ptr<Object> fnObj, trace::SelectorVariant fnProducer,
+    std::shared_ptr<Object> fnObj, ref<const trace::Selector> fnProducer,
     std::shared_ptr<Object> argObj, std::shared_ptr<const ArgCell> applyCell)
 {
-    /* fnId — the content hash of fn's producer Selector, used for the
-       SelectorApply payload's `fn` field. */
-    auto fnId = TracingDecisionGraph::computeSelectorHash(fnProducer);
+    auto fnId = fnProducer->cachedHash;
     if (!outerState)
         throw Error("outer apply requires outerState");
 
@@ -194,10 +192,11 @@ OuterApplyResult OuterApply::run(
     auto fnIdStr  = fnId.to_string(HashFormat::Base16, false);
     auto argStateHashStr = argStateHash.to_string(HashFormat::Base16, false);
 
-    /* #181: SelectorApply carries fn's Q hash only */
-    trace::SelectorApply applyQuery{fnIdStr};
+    /* Intern SelectorApply{parent=fnProducer} — the apply's identity. */
+    auto & pool = innerWriter->getDecisionGraph()->selectorPool;
+    auto applySel = pool.intern(trace::SelectorApply{fnProducer});
     if (innerWriter) {
-        nlohmann::json applyQ = trace::SelectorApply{fnIdStr};
+        nlohmann::json applyQ = trace::toJson(*applySel);
         tracingCacheLog("createCallbackCell callsite=OuterApply::run fn=%s arg=%s",
                         fnIdStr.substr(0, 12), argStateHashStr.substr(0, 12));
         innerWriter->createCallbackCell(applyQ);
@@ -250,10 +249,13 @@ OuterApplyResult OuterApply::run(
        cold, argObj is an `InterpreterObject` of a real inner Value and
        the cast returns null, leaving the TracingCallbackArg wrap path
        unchanged. */
+    auto argProducerSel = innerWriter
+        ? innerWriter->getDecisionGraph()->selectorPool.intern(argProducer)
+        : ref<const trace::Selector>(std::make_shared<const trace::Selector>(trace::SelectorVariant{argProducer}));
     auto wrappedArg = (innerWriter && outerRootFSRoot
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
-              argObj, trace::SelectorVariant{argProducer}, *innerWriter,
+              argObj, argProducerSel, *innerWriter,
               ref<SourceRoot>(outerRootFSRoot), localCell))
         : argObj;
 
@@ -273,10 +275,9 @@ OuterApplyResult OuterApply::run(
     resultVal->mkApp(*fnVal, argThunk);
     auto resultObj = std::make_shared<InterpreterObject>(*outerState, allocRootValue(resultVal));
 
-    /* Defer the SelectorApply Request to the writer's flush at
-       logResult. Pool entries land at the natural reqHashes. */
+    /* Defer the SelectorApply Request to the writer's flush. */
     if (innerWriter) {
-        nlohmann::json applyJson = applyQuery;
+        nlohmann::json applyJson = trace::toJson(*applySel);
         innerWriter->deferRequest(applyJson);
     }
 
@@ -292,29 +293,31 @@ OuterApplyResult OuterApply::run(
        The obsSet snapshot is inserted into the ObservationSet CAS
        (via decisionGraph) so walker's `resolveIdentity` can decode
        references to this producer at replay. */
-    std::function<trace::SelectorVariant()> producerFn;
+    std::function<ref<const trace::Selector>()> producerFn;
     if (innerWriter) {
         auto * dg = innerWriter->getDecisionGraph();
-        producerFn = [localCell, fnIdStr, dg]() -> trace::SelectorVariant {
+        producerFn = [localCell, fnProducer, applySel, dg]() -> ref<const trace::Selector> {
             if (localCell->callbackState && dg) {
                 auto obsSetHash = dg->insertObservationSet(
                     localCell->callbackState->runningObsSet);
-                trace::SelectorCallbackApply qca;
-                qca.fn = localCell->callbackState->fnStateHashHex;
-                qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
-                trace::SelectorVariant qcaVariant{qca};
-                /* Also insert the CBApply's own payload into the
-                   Requests pool so walker can decode `from` references
-                   composed on top of this producer. */
-                auto qcaHash = TracingDecisionGraph::computeSelectorHash(qcaVariant);
-                nlohmann::json qcaJson = qcaVariant;
-                dg->insertRequest(qcaHash, jsonToCborString(qcaJson));
-                return qcaVariant;
+                /* Look up cs.fnStateHashHex in pool; fallback to fnProducer. */
+                ref<const trace::Selector> fnRef = fnProducer;
+                try {
+                    auto fnHash = Hash::parseNonSRIUnprefixed(
+                        localCell->callbackState->fnStateHashHex, HashAlgorithm::SHA256);
+                    if (auto found = dg->selectorPool.find(fnHash))
+                        fnRef = *found;
+                } catch (...) {}
+                auto qcaSel = dg->selectorPool.intern(trace::SelectorCallbackApply{
+                    obsSetHash.to_string(HashFormat::Base16, false), fnRef});
+                nlohmann::json qcaJson = trace::toJson(*qcaSel);
+                dg->insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
+                return qcaSel;
             }
-            return trace::SelectorVariant{trace::SelectorApply{fnIdStr}};
+            return applySel;
         };
     } else {
-        producerFn = [fnIdStr]() { return trace::SelectorVariant{trace::SelectorApply{fnIdStr}}; };
+        producerFn = [applySel]() -> ref<const trace::Selector> { return applySel; };
     }
 
     return OuterApplyResult{
@@ -370,51 +373,40 @@ static PrimOp * makeCachedFnPrimOp(
                            Passed as a live callable so the hex is
                            recomputed on demand (fnObj may be a proxy
                            whose identity evolves). */
-                        auto argProducerFn = [fnObj]() -> trace::SelectorVariant {
-                            return trace::SelectorApply{
-                                fnObj->getSelectorHashHex().value_or(std::string{})};
+                        /* Access the pool via innerEval's decision graph if reachable. */
+                        trace::SelectorPool * pool = innerEval->getEvalState().rootDecisionGraph
+                            ? &innerEval->getEvalState().rootDecisionGraph->selectorPool
+                            : nullptr;
+                        auto argProducerFn = [pool]() mutable -> ref<const trace::Selector> {
+                            static trace::SelectorPool localPool;
+                            auto & p = pool ? *pool : localPool;
+                            return p.intern(trace::SelectorArg{0});
                         };
                         auto & innerEnv = *innerEval->getEvalState().environment;
-                        /* queryFn: dispatch the query directly on the
-                           outer Object the OuterObject was
-                           constructed to wrap. No id round-trip, no
-                           lookup table — each OuterObject already
-                           holds its outerObj, and passes it in. */
                         OuterQueryFn queryFn = [&innerEnv](
                             std::shared_ptr<Object> outerObj,
-                            const trace::SelectorVariant & q,
-                            trace::SelectorVariant producer,
+                            ref<const trace::Selector> q,
+                            ref<const trace::Selector> producer,
                             std::shared_ptr<const ArgCell> callerCell) {
                             std::shared_ptr<const ArgCell> attributionCell = callerCell;
-                            OuterQueryResult qr = dispatchOuterQuery(std::move(outerObj), q);
+                            OuterQueryResult qr = dispatchOuterQuery(std::move(outerObj), q->node);
                             innerEnv.outerQuery(
                                 q,
-                                [&](const trace::SelectorVariant &) { return qr.result; },
+                                [&](ref<const trace::Selector>) { return qr.result; },
                                 producer,
                                 attributionCell);
                             return qr;
                         };
-                        /* applyFn: invoke the outer fn on the arg,
-                           return the outer's apply-result Object
-                           directly. Caller (OuterObject::queryApply)
-                           passes fnObj — the outer's fn Object it
-                           already holds — plus the wrapping
-                           OuterObject's Subject-derived state hash
-                           used for the SelectorApply payload. */
                         OuterApplyFn applyFn = [resolver](
                             std::shared_ptr<Object> fnObj,
-                            trace::SelectorVariant fnProducer,
+                            ref<const trace::Selector> fnProducer,
                             std::shared_ptr<Object> argObj,
                             std::shared_ptr<const ArgCell> applyCell) -> OuterApplyResult {
                             return resolver->apply(std::move(fnObj), std::move(fnProducer),
                                                     std::move(argObj), std::move(applyCell));
                         };
-                        /* lazy-paths: pin OuterObject's path SourceRoot
-                           on the outer EvalState's `rootFSRoot` so the
-                           SourceRoot outlives the Values the outer
-                           evaluator builds from any returned RootedPaths. */
                         auto outerArgProxy =
-                            make_ref<OuterObject>(argProducerFn, outerArgObj, std::move(queryFn), state.rootFSRoot, std::move(applyFn));
+                            make_ref<OuterObject>(argProducerFn, outerArgObj, std::move(queryFn), state.rootFSRoot, pool, std::move(applyFn));
                         /* Wire seedCell.liveObject to outerArgProxy now
                            that it exists. This is the deliberate
                            shared_ptr cycle documented on

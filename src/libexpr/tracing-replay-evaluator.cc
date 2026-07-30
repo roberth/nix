@@ -120,10 +120,16 @@ TracingReplayEvaluator::walk(
             isQueryRequest = reqJson.contains("tag");
             if (isQueryRequest) {
                 queryTag = reqJson["tag"].get<std::string>();
-                if (auto qv = trace::parseSelectorVariant(reqJson)) {
-                    queryDescription = trace::describe(*qv);
-                    outerFromHash = trace::fromHashOf(*qv);
-                    willMoveStateHash = trace::willMoveStateHash(*qv);
+                if (auto qSel = trace::nodeFromJson(reqJson, decisionGraph.selectorPool)) {
+                    queryDescription = trace::describe(**qSel);
+                    willMoveStateHash = trace::willMoveStateHash(**qSel);
+                    /* fromHashOf equivalent: for step nodes, parent's
+                       cachedHash. Leaves return nullopt. */
+                    std::visit([&](const auto & q) {
+                        using Q = std::decay_t<decltype(q)>;
+                        if constexpr (requires { q.parent; })
+                            outerFromHash = q.parent->cachedHash;
+                    }, (*qSel)->node);
                 } else {
                     queryDescription = queryTag;
                 }
@@ -495,10 +501,10 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
                 idStr.substr(0, 12), fnHex.substr(0, 12).c_str());
             return nullptr;
         }
-        trace::SelectorArg argProducer{0};
+        auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{0});
         auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
         auto replayArg = std::make_shared<ReplayCallbackArg>(
-            trace::SelectorVariant{argProducer},
+            argProducerSel,
             walkFacts,
             decisionGraph, inner->getEvalState().rootFSRoot,
             &inner->getEvalState());
@@ -515,18 +521,18 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
         }
     }
 
-    auto qv = trace::parseSelectorVariant(reqJson);
-    if (qv) {
+    auto qSel = trace::nodeFromJson(reqJson, decisionGraph.selectorPool);
+    if (qSel) {
         tracingCacheLog(
             "resolve %s: producer-child %s",
-            idStr.substr(0, 12), trace::describe(*qv).c_str());
+            idStr.substr(0, 12), trace::describe(**qSel).c_str());
     } else {
         tracingCacheLog(
             "resolve %s: producer-child via %s (unparseable)",
             idStr.substr(0, 12), tag.c_str());
         return nullptr;
     }
-    return resolveProducerChild(idStr, *qv, params, ctx);
+    return resolveProducerChild(idStr, (*qSel)->node, params, ctx);
 }
 
 /* Resolve an "apply" producer's result by resolving fn + arg and
@@ -706,17 +712,13 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
 
 std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nlohmann::json & reqJson, ResolutionContext & ctx)
 {
-    auto qv = trace::parseSelectorVariant(reqJson);
-    if (!qv)
+    auto qSelOpt = trace::nodeFromJson(reqJson, decisionGraph.selectorPool);
+    if (!qSelOpt)
         return std::nullopt;
+    auto & qv = (*qSelOpt)->node;
 
-    /* Resolve a producer query's parent by its `from` Q-hash.
-       Producer queries (getAttr/getListElem/getFunctionInfo) under
-       #183 carry parent identity as a query-space hex string. */
-    auto resolveParentByFrom = [&](const std::string & fromHex) -> std::shared_ptr<Object> {
-        if (fromHex.empty())
-            return nullptr;
-        return resolveIdentity(fromHex, ctx);
+    auto resolveParent = [&](ref<const trace::Selector> parentSel) -> std::shared_ptr<Object> {
+        return resolveIdentity(parentSel->cachedHash.to_string(HashFormat::Base16, false), ctx);
     };
 
     return std::visit(
@@ -754,9 +756,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                    the referenced ObservationSet, resolve fn live via
                    subject-navigation, invoke fn->queryApply(replayArg),
                    return the applyResult's WHNF. */
-                /* #181: SelectorCallbackApply.fn is now a plain string
-                   (query-space hex of fn's identity). */
-                std::string fnHex = q.fn;
+                std::string fnHex = q.parent->cachedHash.to_string(HashFormat::Base16, false);
                 Hash obsSetHash{HashAlgorithm::SHA256};
                 try {
                     obsSetHash = Hash::parseNonSRIUnprefixed(q.argObsSet, HashAlgorithm::SHA256);
@@ -784,10 +784,10 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                 /* Contra-arg identity: hardcoded sentinel matching
                    writer's OuterApply::run and reader's replay-callback-arg.
                    Scoped by this enclosing SelectorCallbackApply. */
-                trace::SelectorArg argProducer{0};
+                auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{0});
                 auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
                 auto replayArg = std::make_shared<ReplayCallbackArg>(
-                    trace::SelectorVariant{argProducer},
+                    argProducerSel,
                     walkFacts,
                     decisionGraph, inner->getEvalState().rootFSRoot,
                     &inner->getEvalState());
@@ -832,10 +832,10 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     tracingCacheLog("arg: computeWHNFFromObject threw: %s", e.what());
                     return std::nullopt;
                 }
-            } else if constexpr (requires { q.from; }) {
-                /* Producer queries: resolve the parent Object via its
-                   query-space `from` hex, then invoke the leaf op. */
-                auto obj = resolveParentByFrom(q.from);
+            } else if constexpr (requires { q.parent; }) {
+                /* Producer queries: resolve the parent Object via
+                   parent Selector's cachedHash. */
+                auto obj = resolveParent(q.parent);
                 if (!obj) return std::nullopt;
 
                 nlohmann::json resultJson;
@@ -869,7 +869,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                 return std::nullopt;
             }
         },
-        *qv);
+        qv);
 }
 
 template<typename Q>
@@ -1043,9 +1043,20 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        fn's identity hex comes directly from getSelectorHashHex();
        nullopt falls back to fnStateHashStr. arg dropped per #181. */
     auto fnQHex = fn->getSelectorHashHex().value_or(fnStateHashStr);
-    trace::SelectorApply resultProducer{fnQHex};
+    /* Look up fn's Selector via getSelector(); fall back to pool by hex. */
+    std::optional<ref<const trace::Selector>> fnSelOpt = fn->getSelector();
+    if (!fnSelOpt) {
+        try {
+            auto h = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
+            fnSelOpt = decisionGraph.selectorPool.find(h);
+        } catch (...) {}
+    }
+    if (!fnSelOpt)
+        throw Error("TracingReplayEvaluator apply: cannot resolve fn Selector for %s", fnStateHashStr);
+    auto applySel = decisionGraph.selectorPool.intern(trace::SelectorApply{*fnSelOpt});
+    auto & resultProducer = std::get<trace::SelectorApply>(applySel->node);
 
-    auto qHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
+    auto qHash = applySel->cachedHash;
     auto qHex = qHash.to_string(HashFormat::Base16, false);
     tracingCacheLog(
         "walker apply: fn=%s -> qHash=%s",
@@ -1080,8 +1091,8 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     if (!cell)
         throw Error("TracingReplayEvaluator apply: arg had no argCell (fn=%s arg=%s)",
                     fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
-    trace::SelectorApply applySelector{fnStateHashStr};
-    auto applySelectorHash = TracingDecisionGraph::computeSelectorHash(applySelector);
+    auto & applySelector = std::get<trace::SelectorApply>(applySel->node);
+    auto applySelectorHash = applySel->cachedHash;
     /* Phase F: pass the applyResult cell so walker's per-walk state
        lives on cell.qState — cell chain reachable from parent (fn's
        cell), qState reset for this walk's dispatches. */
@@ -1114,7 +1125,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto obj = make_ref<TracingReplayObject>(
         *this, triePos, [this, fn, arg]() { return inner->apply(fn, arg); });
     obj->withArgCell(std::move(cell));
-    obj->withProducer(trace::SelectorVariant{std::move(resultProducer)});
+    obj->withProducer(applySel);
     if (cachedWHNF)
         obj->withCachedWHNF(std::move(*cachedWHNF));
     return obj;
