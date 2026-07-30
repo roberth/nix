@@ -454,7 +454,10 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
           };
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withArgCell(std::move(cell));
-    obj->withProducer(trace::SelectorVariant{std::move(resultProducer)});
+    if (auto * dg = writer.getDecisionGraph()) {
+        if (auto sel = trace::fromVariant(trace::SelectorVariant{resultProducer}, dg->selectorPool))
+            obj->withProducer(*sel);
+    }
     obj->withCachedWHNF(std::move(whnfResult));
     return obj;
 }

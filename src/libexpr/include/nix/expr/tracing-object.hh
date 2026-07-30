@@ -37,9 +37,9 @@ class TracingObject : public Object
     std::shared_ptr<const ArgCell> argCell;
 
     /* For apply-result wrappers: the producer Selector that identifies
-       this apply structurally (SelectorApply{fn=...}). Null on
+       this apply structurally (SelectorApplyStep{parent=fn}). Null on
        non-apply-result wrappers (= navigation children). */
-    std::optional<trace::SelectorVariant> producer;
+    std::optional<ref<const trace::Selector>> producer;
 
     /* True on wrappers rooted at a cb-apply (OuterApply::run) and on
        navigation descendants of such wrappers. Gates whether children
@@ -73,7 +73,7 @@ public:
     /** Attach the apply-result producer Selector — for apply-result
         wrappers, so subsequent child queries hang off this producer.
         Mirrors TracingReplayObject's machinery. */
-    TracingObject & withProducer(trace::SelectorVariant p)
+    TracingObject & withProducer(ref<const trace::Selector> p)
     {
         producer = std::move(p);
         return *this;

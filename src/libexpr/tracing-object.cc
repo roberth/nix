@@ -92,18 +92,7 @@ static std::string parentQOrValueHandle(const std::optional<TriePosition> & trie
 
 std::optional<ref<const trace::Selector>> TracingObject::getSelector() const
 {
-    /* Reconstruct the recursive Selector from the stored producer
-       SelectorVariant via the writer's SelectorPool. Requires the
-       parent chain to already be interned. If not (mid-migration
-       state where not every construction site has been updated to
-       use the pool), returns nullopt — callers fall back to the
-       hex-based path via getSelectorHashHex(). */
-    if (!producer)
-        return std::nullopt;
-    auto * dg = writer.getDecisionGraph();
-    if (!dg)
-        return std::nullopt;
-    return trace::fromVariant(*producer, dg->selectorPool);
+    return producer;
 }
 
 std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter & w)
@@ -212,7 +201,7 @@ trace::ResultWHNF & TracingObject::whnf()
        OuterApply::run. Re-emit here when the wrapper is a
        callback-origin apply result. */
     if (cbApplyOrigin && producer)
-        writer.emitCallbackApplyForApplyResult(argCell, *producer, whnfResult);
+        writer.emitCallbackApplyForApplyResult(argCell, trace::toVariant(**producer), whnfResult);
     /* #185: no separate whnf Fact — nav descendants + root wrappers
        decode WHNF from triePos.resultNodeHash (parent Selector's
        Terminal). Callback-origin wrappers emit QCA above. */
@@ -439,7 +428,10 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
         new TracingObject(ref<Object>(result), writer, v, applyTriePos));
     auto cell = ArgCell::make(argCell, argObj);
     child->withArgCell(std::move(cell));
-    child->withProducer(trace::SelectorVariant{std::move(resultProducer)});
+    if (auto * dg = writer.getDecisionGraph()) {
+        if (auto sel = trace::fromVariant(trace::SelectorVariant{resultProducer}, dg->selectorPool))
+            child->withProducer(*sel);
+    }
     return child;
 }
 
