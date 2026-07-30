@@ -60,9 +60,10 @@ TEST_F(TraceTypesTest, ResolveUnresolveRoundTrip)
     }
 }
 
-/* 2. SelectorPool::intern is idempotent — same content, same ref.
-   Leaves and step selectors go through the same hash-keyed cache;
-   include one of each to guard against a future intern-path split. */
+/* 2. SelectorPool::intern is idempotent — same content, same ref;
+   different content, different ref. Leaves and step selectors go through
+   the same hash-keyed cache; include one of each to guard against a
+   future intern-path split. */
 TEST_F(TraceTypesTest, InternIdempotence)
 {
     TracingDecisionGraph g(dbPath);
@@ -75,6 +76,13 @@ TEST_F(TraceTypesTest, InternIdempotence)
     auto step1 = pool.intern(SelectorGetAttr{"y", leaf1});
     auto step2 = pool.intern(SelectorGetAttr{"y", leaf1});
     EXPECT_EQ(step1.get_ptr().get(), step2.get_ptr().get());
+
+    // Different content -> different ref (guards against an intern regression
+    // that returns the same ref for all inputs, which would still pass the
+    // same-content check).
+    auto other = pool.intern(SelectorImport{"/y.nix"});
+    EXPECT_NE(other.get_ptr().get(), leaf1.get_ptr().get());
+    EXPECT_NE(other->cachedHash, leaf1->cachedHash);
 }
 
 /* 3. DB-facade cross-pool findByHash — a Selector interned into one
@@ -96,12 +104,21 @@ TEST_F(TraceTypesTest, DbFacadeCrossPoolFind)
     EXPECT_EQ(node.path, "/target.nix");
 }
 
-/* 4. SelectorPool::findByHex — nullopt on malformed input (parse
-   failure) and on valid-hex-not-in-DB (memory miss + DB miss). */
-TEST_F(TraceTypesTest, FindByHexMissAndMalformed)
+/* 4. SelectorPool::findByHex — hit on an interned Selector's hex; nullopt
+   on malformed input (parse failure) and on valid-hex-not-in-DB (memory
+   miss + DB miss). findByHex is a distinct entry point from find(Hash),
+   so its hit path needs coverage too. */
+TEST_F(TraceTypesTest, FindByHexHitMissAndMalformed)
 {
     TracingDecisionGraph g(dbPath);
     auto & pool = g.selectorPool;
+
+    // Hit: intern something, findByHex with its hex, expect same content back.
+    auto sel = pool.intern(SelectorImport{"/y.nix"});
+    auto hex = sel->cachedHash.to_string(HashFormat::Base16, false);
+    auto hit = pool.findByHex(hex);
+    ASSERT_TRUE(hit.has_value());
+    EXPECT_EQ((*hit)->cachedHash, sel->cachedHash);
 
     // Malformed hex — parse fails.
     EXPECT_FALSE(pool.findByHex("not-a-hex-string").has_value());
