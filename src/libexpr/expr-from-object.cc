@@ -383,8 +383,17 @@ static PrimOp * makeCachedFnPrimOp(
                             ? *state.rootDecisionGraph
                             : *innerEval->getEvalState().rootDecisionGraph;
                         auto & pool = dg.selectorPool;
-                        auto argProducerFn = [&pool]() -> ref<const trace::Selector> {
-                            return pool.intern(trace::SelectorArg{0});
+                        /* Selector-is-a-sequence: the arg is identified by the apply
+                           that scoped it — SelectorApply whose `fn` is fnObj's current
+                           producer Selector. Live callable so fnObj's identity is
+                           recomputed on demand (fnObj may itself be a proxy). The
+                           outside/Query surface takes the more descriptive shape;
+                           SelectorArg is reserved for INSIDE (contra-arg producer)
+                           sites where context is already established by the enclosing
+                           callback firing. */
+                        auto argProducerFn = [&pool, fnObj]() -> ref<const trace::Selector> {
+                            auto fnSel = fnObj->getSelector();
+                            return pool.intern(trace::SelectorApply{*fnSel});
                         };
                         auto & innerEnv = *innerEval->getEvalState().environment;
                         OuterQueryFn queryFn = [&innerEnv](
