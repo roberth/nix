@@ -867,6 +867,32 @@ std::optional<ref<const Selector>> SelectorPool::find(const Hash & h) const
     return std::nullopt;
 }
 
+std::string describe(const Selector & s)
+{
+    return describe(toVariant(s));
+}
+
+nlohmann::json toJson(const Selector & s)
+{
+    return toJson(toVariant(s));
+}
+
+bool willMoveStateHash(const Selector & s)
+{
+    return std::visit(
+        overloaded{
+            [](const SelectorExpr &) { return false; },
+            [](const SelectorImport &) { return false; },
+            [](const SelectorArg &) { return false; },
+            [](const SelectorGetAttrStep &) { return true; },
+            [](const SelectorGetListElemStep &) { return true; },
+            [](const SelectorGetFunctionInfoStep &) { return true; },
+            [](const SelectorApplyStep &) { return true; },
+            [](const SelectorCallbackApplyStep &) { return true; },
+        },
+        s.node);
+}
+
 std::optional<ref<const Selector>> fromVariant(
     const SelectorVariant & v, SelectorPool & pool)
 {

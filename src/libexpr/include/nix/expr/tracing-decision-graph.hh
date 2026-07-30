@@ -20,6 +20,7 @@
  * for candidate follow-ups.
  */
 
+#include "nix/expr/trace-types.hh"
 #include "nix/util/hash.hh"
 #include "nix/util/sync.hh"
 
@@ -93,6 +94,12 @@ public:
 
     TracingDecisionGraph(const TracingDecisionGraph &) = delete;
     TracingDecisionGraph & operator=(const TracingDecisionGraph &) = delete;
+
+    /** Session-scoped SelectorPool. Interns recursive Selector heap
+        nodes so identical Selectors share a single ref<const Selector>
+        across the process. Populated as writers construct producer
+        Selectors and as walkers reconstruct them from DB rows. */
+    trace::SelectorPool selectorPool;
 
     /* ─────────────────────────────────────────────────────────────────
        Storage layer: atomic content-addressed pools

@@ -590,6 +590,16 @@ SelectorVariant toVariant(const Selector & s);
 std::optional<ref<const Selector>> fromVariant(
     const SelectorVariant & v, SelectorPool & pool);
 
+/** Selector-native adapters. Consumers holding a recursive Selector
+    can use these directly without going through SelectorVariant. */
+std::string describe(const Selector & s);
+nlohmann::json toJson(const Selector & s);
+/** Hash accessor — returns the cached hash without recomputation. */
+inline const Hash & computeSelectorHash(const Selector & s) { return s.cachedHash; }
+/** True iff s.node is a step type (folds cur on dispatch). Leaves
+    (SelectorExpr / SelectorImport / SelectorArg) return false. */
+bool willMoveStateHash(const Selector & s);
+
 /** SelectorVariant's own to_json/from_json — visits the variant to
     emit an alternative's flat fields plus the `tag` discriminator,
     and reads them back into the right alternative via the fold
