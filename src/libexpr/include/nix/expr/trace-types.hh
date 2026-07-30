@@ -15,6 +15,7 @@
  */
 
 #include "nix/util/hash.hh"
+#include "nix/util/ref.hh"
 
 #include <nlohmann/json.hpp>
 
@@ -23,6 +24,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -465,6 +467,128 @@ using SelectorVariant = std::variant<
 using ResultVariant = std::variant<
     ResultFunctionInfo,
     ResultWHNF>;
+
+// ---------------------------------------------------------------------------
+// Recursive Selector (in-memory) — supersedes the stringly-typed
+// from/fn fields on the flat SelectorVariant alternatives.
+//
+// Each non-leaf node holds its parent as `ref<const Selector>`, so a
+// chain like GetAttr(GetAttr(Apply(Import))) is represented in memory
+// as a shared tree — the Apply(Import) subtree is one heap node,
+// shared by every GetAttr built on top. Stack shape enforced by the
+// type: exactly one `parent` field per non-leaf.
+//
+// Hash is computed once at construction (bottom-up) and cached in
+// `cachedHash`. Both `node` and `cachedHash` are `const` — Selectors
+// are immutable.
+//
+// DB format is unchanged: on-disk payload for a step node still emits
+// the parent's hex hash as the "from" / "fn" field. Reconstruction
+// from DB rows walks parent hashes via a Selector pool (see below).
+// ---------------------------------------------------------------------------
+
+struct Selector;
+
+struct SelectorGetAttrStep
+{
+    static constexpr std::string_view tag = "getAttr";
+    std::string name;
+    ref<const Selector> parent;
+    bool operator==(const SelectorGetAttrStep & other) const;
+    auto operator<=>(const SelectorGetAttrStep & other) const;
+};
+
+struct SelectorGetListElemStep
+{
+    static constexpr std::string_view tag = "getListElem";
+    size_t index;
+    ref<const Selector> parent;
+    bool operator==(const SelectorGetListElemStep & other) const;
+    auto operator<=>(const SelectorGetListElemStep & other) const;
+};
+
+struct SelectorGetFunctionInfoStep
+{
+    static constexpr std::string_view tag = "getFunctionInfo";
+    ref<const Selector> parent;
+    bool operator==(const SelectorGetFunctionInfoStep & other) const;
+    auto operator<=>(const SelectorGetFunctionInfoStep & other) const;
+};
+
+struct SelectorApplyStep
+{
+    static constexpr std::string_view tag = "apply";
+    ref<const Selector> parent;   ///< fn — the callable being applied
+    bool operator==(const SelectorApplyStep & other) const;
+    auto operator<=>(const SelectorApplyStep & other) const;
+};
+
+struct SelectorCallbackApplyStep
+{
+    static constexpr std::string_view tag = "callbackApply";
+    std::string argObsSet;
+    ref<const Selector> parent;   ///< fn — the callable being applied
+    bool operator==(const SelectorCallbackApplyStep & other) const;
+    auto operator<=>(const SelectorCallbackApplyStep & other) const;
+};
+
+using SelectorNode = std::variant<
+    SelectorExpr,
+    SelectorImport,
+    SelectorArg,
+    SelectorGetAttrStep,
+    SelectorGetListElemStep,
+    SelectorGetFunctionInfoStep,
+    SelectorApplyStep,
+    SelectorCallbackApplyStep>;
+
+struct Selector
+{
+    const SelectorNode node;
+    const Hash cachedHash;
+
+    /** Construct a Selector from a Node. Computes the hash bottom-up
+        (parent's cachedHash is already known via the ref) and stores
+        it. Caller normally goes through SelectorPool::intern() to
+        share heap nodes for identical payloads. */
+    explicit Selector(SelectorNode n);
+};
+
+/** In-memory pool of Selectors keyed by cachedHash. Interning gives
+    every hash exactly one heap node — traversal via `parent` visits
+    that one node. Reconstruction from DB rows walks parent hashes
+    through this pool. Owned by whoever holds Selectors long enough to
+    dedupe them (currently: TracingDecisionGraph). */
+class SelectorPool
+{
+    std::unordered_map<Hash, ref<const Selector>> pool;
+
+public:
+    /** Return the pool's canonical Selector for this node. If a
+        Selector with the same content-hash already exists, returns
+        that one (structural sharing). Otherwise constructs a fresh
+        Selector, stores it, and returns it. */
+    ref<const Selector> intern(SelectorNode node);
+
+    /** Look up an already-interned Selector by its hash. Returns
+        nullopt if not yet in the pool — callers reconstructing from
+        DB rows check this first before decoding a payload. */
+    std::optional<ref<const Selector>> find(const Hash & h) const;
+};
+
+/** Flatten a recursive Selector into the stringly-typed
+    SelectorVariant form (parent references become hex hash strings).
+    Used at serialization boundaries (JSON codec, DB payload writer). */
+SelectorVariant toVariant(const Selector & s);
+
+/** Reconstruct a recursive Selector from the flat SelectorVariant
+    form. Parent hash strings are resolved through `pool` (which must
+    already contain the parent — reconstruction is bottom-up, so
+    callers reconstruct the parent chain first). Returns nullopt if
+    the variant carries an unparseable parent hash or the pool lacks
+    the referenced parent. */
+std::optional<ref<const Selector>> fromVariant(
+    const SelectorVariant & v, SelectorPool & pool);
 
 /** SelectorVariant's own to_json/from_json — visits the variant to
     emit an alternative's flat fields plus the `tag` discriminator,

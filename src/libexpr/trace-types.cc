@@ -726,4 +726,201 @@ Hash computeSelectorHash(const SelectorVariant & query)
     return hashString(HashAlgorithm::SHA256, toJson(query).dump());
 }
 
+// ---------------------------------------------------------------------------
+// Recursive Selector: comparisons, constructor, pool, converters
+// ---------------------------------------------------------------------------
+
+/* Step-type comparisons compare by cachedHash of parent — cheap and
+   correct given hashes are content-addressed. */
+
+bool SelectorGetAttrStep::operator==(const SelectorGetAttrStep & other) const
+{
+    return name == other.name && parent->cachedHash == other.parent->cachedHash;
+}
+auto SelectorGetAttrStep::operator<=>(const SelectorGetAttrStep & other) const
+{
+    if (auto c = name <=> other.name; c != 0) return c;
+    return parent->cachedHash <=> other.parent->cachedHash;
+}
+
+bool SelectorGetListElemStep::operator==(const SelectorGetListElemStep & other) const
+{
+    return index == other.index && parent->cachedHash == other.parent->cachedHash;
+}
+auto SelectorGetListElemStep::operator<=>(const SelectorGetListElemStep & other) const
+{
+    if (auto c = index <=> other.index; c != 0) return c;
+    return parent->cachedHash <=> other.parent->cachedHash;
+}
+
+bool SelectorGetFunctionInfoStep::operator==(const SelectorGetFunctionInfoStep & other) const
+{
+    return parent->cachedHash == other.parent->cachedHash;
+}
+auto SelectorGetFunctionInfoStep::operator<=>(const SelectorGetFunctionInfoStep & other) const
+{
+    return parent->cachedHash <=> other.parent->cachedHash;
+}
+
+bool SelectorApplyStep::operator==(const SelectorApplyStep & other) const
+{
+    return parent->cachedHash == other.parent->cachedHash;
+}
+auto SelectorApplyStep::operator<=>(const SelectorApplyStep & other) const
+{
+    return parent->cachedHash <=> other.parent->cachedHash;
+}
+
+bool SelectorCallbackApplyStep::operator==(const SelectorCallbackApplyStep & other) const
+{
+    return argObsSet == other.argObsSet && parent->cachedHash == other.parent->cachedHash;
+}
+auto SelectorCallbackApplyStep::operator<=>(const SelectorCallbackApplyStep & other) const
+{
+    if (auto c = argObsSet <=> other.argObsSet; c != 0) return c;
+    return parent->cachedHash <=> other.parent->cachedHash;
+}
+
+/* Convert a step Node to the flat SelectorVariant form by emitting the
+   parent's hex hash into the from/fn field. Leaves pass through. */
+SelectorVariant toVariant(const Selector & s)
+{
+    return std::visit(
+        overloaded{
+            [](const SelectorExpr & q) -> SelectorVariant { return q; },
+            [](const SelectorImport & q) -> SelectorVariant { return q; },
+            [](const SelectorArg & q) -> SelectorVariant { return q; },
+            [](const SelectorGetAttrStep & q) -> SelectorVariant {
+                return SelectorGetAttr{q.name, q.parent->cachedHash.to_string(HashFormat::Base16, false)};
+            },
+            [](const SelectorGetListElemStep & q) -> SelectorVariant {
+                return SelectorGetListElem{q.parent->cachedHash.to_string(HashFormat::Base16, false), q.index};
+            },
+            [](const SelectorGetFunctionInfoStep & q) -> SelectorVariant {
+                return SelectorGetFunctionInfo{q.parent->cachedHash.to_string(HashFormat::Base16, false)};
+            },
+            [](const SelectorApplyStep & q) -> SelectorVariant {
+                return SelectorApply{q.parent->cachedHash.to_string(HashFormat::Base16, false)};
+            },
+            [](const SelectorCallbackApplyStep & q) -> SelectorVariant {
+                return SelectorCallbackApply{
+                    q.parent->cachedHash.to_string(HashFormat::Base16, false), q.argObsSet};
+            },
+        },
+        s.node);
+}
+
+/* Compute a Selector's cachedHash at construction: flatten to
+   SelectorVariant, dump JSON, SHA-256. Same bytes as before the
+   refactor — the DB compatibility invariant. */
+static Hash hashOfNode(const SelectorNode & node)
+{
+    /* We can't call toVariant() here without a full Selector to wrap,
+       so inline the flatten step. Leaves already carry no parent so
+       they hash directly; step types stringify parent->cachedHash. */
+    SelectorVariant v = std::visit(
+        overloaded{
+            [](const SelectorExpr & q) -> SelectorVariant { return q; },
+            [](const SelectorImport & q) -> SelectorVariant { return q; },
+            [](const SelectorArg & q) -> SelectorVariant { return q; },
+            [](const SelectorGetAttrStep & q) -> SelectorVariant {
+                return SelectorGetAttr{q.name, q.parent->cachedHash.to_string(HashFormat::Base16, false)};
+            },
+            [](const SelectorGetListElemStep & q) -> SelectorVariant {
+                return SelectorGetListElem{q.parent->cachedHash.to_string(HashFormat::Base16, false), q.index};
+            },
+            [](const SelectorGetFunctionInfoStep & q) -> SelectorVariant {
+                return SelectorGetFunctionInfo{q.parent->cachedHash.to_string(HashFormat::Base16, false)};
+            },
+            [](const SelectorApplyStep & q) -> SelectorVariant {
+                return SelectorApply{q.parent->cachedHash.to_string(HashFormat::Base16, false)};
+            },
+            [](const SelectorCallbackApplyStep & q) -> SelectorVariant {
+                return SelectorCallbackApply{
+                    q.parent->cachedHash.to_string(HashFormat::Base16, false), q.argObsSet};
+            },
+        },
+        node);
+    return computeSelectorHash(v);
+}
+
+Selector::Selector(SelectorNode n)
+    : node(std::move(n))
+    , cachedHash(hashOfNode(node))
+{
+}
+
+ref<const Selector> SelectorPool::intern(SelectorNode node)
+{
+    auto h = hashOfNode(node);
+    if (auto it = pool.find(h); it != pool.end())
+        return it->second;
+    auto s = make_ref<const Selector>(std::move(node));
+    pool.emplace(h, s);
+    return s;
+}
+
+std::optional<ref<const Selector>> SelectorPool::find(const Hash & h) const
+{
+    if (auto it = pool.find(h); it != pool.end())
+        return it->second;
+    return std::nullopt;
+}
+
+std::optional<ref<const Selector>> fromVariant(
+    const SelectorVariant & v, SelectorPool & pool)
+{
+    /* Resolve a hex parent hash to an already-interned Selector.
+       Returns nullopt if the hex doesn't parse or the pool lacks the
+       referenced parent — callers reconstruct bottom-up, so the
+       parent should already be in the pool by the time this fires. */
+    auto lookupParent = [&](const std::string & hex) -> std::optional<ref<const Selector>> {
+        try {
+            auto h = Hash::parseNonSRIUnprefixed(hex, HashAlgorithm::SHA256);
+            return pool.find(h);
+        } catch (...) {
+            return std::nullopt;
+        }
+    };
+
+    return std::visit(
+        overloaded{
+            [&](const SelectorExpr & q) -> std::optional<ref<const Selector>> {
+                return pool.intern(q);
+            },
+            [&](const SelectorImport & q) -> std::optional<ref<const Selector>> {
+                return pool.intern(q);
+            },
+            [&](const SelectorArg & q) -> std::optional<ref<const Selector>> {
+                return pool.intern(q);
+            },
+            [&](const SelectorGetAttr & q) -> std::optional<ref<const Selector>> {
+                auto p = lookupParent(q.from);
+                if (!p) return std::nullopt;
+                return pool.intern(SelectorGetAttrStep{q.name, *p});
+            },
+            [&](const SelectorGetListElem & q) -> std::optional<ref<const Selector>> {
+                auto p = lookupParent(q.from);
+                if (!p) return std::nullopt;
+                return pool.intern(SelectorGetListElemStep{q.index, *p});
+            },
+            [&](const SelectorGetFunctionInfo & q) -> std::optional<ref<const Selector>> {
+                auto p = lookupParent(q.from);
+                if (!p) return std::nullopt;
+                return pool.intern(SelectorGetFunctionInfoStep{*p});
+            },
+            [&](const SelectorApply & q) -> std::optional<ref<const Selector>> {
+                auto p = lookupParent(q.fn);
+                if (!p) return std::nullopt;
+                return pool.intern(SelectorApplyStep{*p});
+            },
+            [&](const SelectorCallbackApply & q) -> std::optional<ref<const Selector>> {
+                auto p = lookupParent(q.fn);
+                if (!p) return std::nullopt;
+                return pool.intern(SelectorCallbackApplyStep{q.argObsSet, *p});
+            },
+        },
+        v);
+}
+
 } // namespace nix::trace
