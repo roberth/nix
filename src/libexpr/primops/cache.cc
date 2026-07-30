@@ -133,15 +133,18 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     // Interpreter. On cache hit, replay serves results from the graph.
     // On miss, recording falls through and writes new entries.
     //
-    // validationEnv (2nd arg to TracingReplayEvaluator) is the *bare*
-    // system environment, not the recording tracing env. Walker's
-    // file/env-var dispatches validate against the live environment
-    // without feeding observations into the recording writer. The
-    // recording session belongs to the Interpreter's TracingEnvironment
-    // only; walker-side validation is a separate concern.
+    // validationEnv (2nd arg to TracingReplayEvaluator) is the outer's
+    // environment — i.e. the environment the outer evaluator handed to
+    // this inner. Walker-side file/env-var dispatches validate through
+    // that chain, which lets outer's TracingWriter observe the reads
+    // (input-traced nesting): a nested cache hit whose recorded chain
+    // consumes files must have those consumptions attribute to the
+    // enclosing writer's session-root cell, or the enclosing writer's
+    // Terminals get keyed at factSetHashes that omit them and warm
+    // replay hits stale.
     ref<Evaluator> recordingEval = make_ref<TracingEvaluator>(*writer, interpreter);
     ref<Evaluator> replayEval = make_ref<TracingReplayEvaluator>(
-        recordingEval, *state.systemEnvironment, *writer, *decisionGraph);
+        recordingEval, *state.environment, *writer, *decisionGraph);
 
     // Per-call state must outlive any lazy thunks the result attrset/list
     // is wrapped in (forced after prim_cache returns).
