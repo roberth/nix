@@ -123,21 +123,18 @@ TracingReplayEvaluator::walk(
                 if (auto qSel = trace::nodeFromJson(reqJson, decisionGraph.selectorPool)) {
                     queryDescription = trace::describe(**qSel);
                     willMoveStateHash = trace::willMoveStateHash(**qSel);
-                    /* Extract the parent Selector's cached hash for step
-                       alternatives — enumerated explicitly per alternative so
-                       a future SelectorNode addition can't silently absorb
-                       into the wrong "has-parent" branch. Leaves have no
-                       parent and stay nullopt. */
-                    std::visit(overloaded{
-                        [&](const trace::SelectorGetAttr & s)         { outerFromHash = s.parent->cachedHash; },
-                        [&](const trace::SelectorGetListElem & s)     { outerFromHash = s.parent->cachedHash; },
-                        [&](const trace::SelectorGetFunctionInfo & s) { outerFromHash = s.parent->cachedHash; },
-                        [&](const trace::SelectorApply & s)           { outerFromHash = s.parent->cachedHash; },
-                        [&](const trace::SelectorCallbackApply & s)   { outerFromHash = s.parent->cachedHash; },
-                        [&](const trace::SelectorExpr &)   {},
-                        [&](const trace::SelectorImport &) {},
-                        [&](const trace::SelectorArg &)    {},
-                    }, (*qSel)->node);
+                    /* Pre-migration semantics: outer-probe facts flow into cells
+                       exclusively via logOuterObservation (from the outer's
+                       queryFn attributing to callerCell = arg's own cell). The
+                       walker's commitEdge path folds ONLY env facts, never
+                       outer probes. Historical fromHashOf was effectively
+                       always nullopt (dead-code `!true` guard); post-migration
+                       structural cleanup accidentally re-enabled the commitEdge
+                       outer-probe fold via `q.parent` matching, which double-
+                       folded and (worse) into the wrong cell for applications.
+                       Keep outerFromHash always nullopt so no outer probe gets
+                       pushed into pendingEdgeObservations. */
+                    (void) (*qSel);
                 } else {
                     queryDescription = queryTag;
                 }
