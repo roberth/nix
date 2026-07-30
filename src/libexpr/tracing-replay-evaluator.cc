@@ -205,11 +205,22 @@ TracingReplayEvaluator::walk(
             respJsonStr = "(unparseable)";
         }
         if (isQueryRequest && outerFromHash) {
-            /* #183 attribution: outer observation belongs to the arg
-               proxy's cell. currentProxy is the outer Object being
-               probed; its argCell is where the observation lands. */
+            /* Attribution: the observation belongs to the cell the walk is
+               scoped to (walkCell = the arg's own cell). Under pre-migration
+               semantics, SelectorApply's field-name convention (`fn` not `from`)
+               kept it out of this branch entirely — commitEdge never folded
+               Apply-dispatch facts. Post-migration's `parent` rename brought
+               Apply into the branch, but attribution via ctx.currentProxy
+               (which is the fn proxy for a top-level apply, whose argCell is
+               the shared parent cell) leaked A's terminal-worth of facts into
+               siblings' shared cellAnchor. walkCell is the semantically correct
+               choice for all step selectors — per Foundational 10 (arguments
+               accumulate in their own cell's factset). currentProxy.argCell is
+               a backstop for the no-walkCell case (e.g. from evalFile). */
             std::weak_ptr<const ArgCell> attrCell;
-            if (ctx.currentProxy)
+            if (ctx.walkCell)
+                attrCell = ctx.walkCell;
+            else if (ctx.currentProxy)
                 attrCell = ctx.currentProxy->getProxyArgCell();
             pendingEdgeObservations.push_back({
                 *outerFromHash,
