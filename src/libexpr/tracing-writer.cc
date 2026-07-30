@@ -43,7 +43,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
         || incomingQueryJson.value("tag", std::string{}) != "getAttr")
         return std::nullopt;
     auto incomingName = incomingQueryJson.value("name", std::string{});
-    auto incomingFromHex = incomingQueryJson.value("from", std::string{});
+    auto incomingFromHex = incomingQueryJson.value("parent", std::string{});
     if (incomingName.empty() || incomingFromHex.empty()) return std::nullopt;
 
     /* Decode incoming's from-hex → expect CBApply. */
@@ -57,7 +57,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
     try { incomingFromJson = cborStringToJson(*incomingFromPayload); }
     catch (...) { return std::nullopt; }
     if (incomingFromJson.value("tag", std::string{}) != "callbackApply") return std::nullopt;
-    auto incomingCbFn = incomingFromJson.value("fn", std::string{});
+    auto incomingCbFn = incomingFromJson.value("parent", std::string{});
     auto incomingCbObsHex = incomingFromJson.value("argObsSet", std::string{});
     if (incomingCbFn.empty() || incomingCbObsHex.empty()) return std::nullopt;
 
@@ -78,7 +78,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
         catch (...) { continue; }
         if (existingReqJson.value("tag", std::string{}) != "getAttr") continue;
         if (existingReqJson.value("name", std::string{}) != incomingName) continue;
-        auto existingFromHex = existingReqJson.value("from", std::string{});
+        auto existingFromHex = existingReqJson.value("parent", std::string{});
         if (existingFromHex.empty()) continue;
 
         Hash existingFromHash{HashAlgorithm::SHA256};
@@ -91,7 +91,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
         try { existingFromJson = cborStringToJson(*existingFromPayload); }
         catch (...) { continue; }
         if (existingFromJson.value("tag", std::string{}) != "callbackApply") continue;
-        if (existingFromJson.value("fn", std::string{}) != incomingCbFn) continue;
+        if (existingFromJson.value("parent", std::string{}) != incomingCbFn) continue;
         auto existingCbObsHex = existingFromJson.value("argObsSet", std::string{});
         if (existingCbObsHex.empty() || existingCbObsHex == incomingCbObsHex) continue;
 

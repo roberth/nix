@@ -119,7 +119,7 @@ TracingReplayEvaluator::walk(
             isQueryRequest = reqJson.contains("tag");
             if (isQueryRequest) {
                 queryTag = reqJson["tag"].get<std::string>();
-                if (auto qSel = trace::nodeFromJson(reqJson, decisionGraph.selectorPool)) {
+                if (auto qSel = trace::resolveFromJson(reqJson, decisionGraph.selectorPool)) {
                     queryDescription = trace::describe(**qSel);
                     willMoveStateHash = trace::willMoveStateHash(**qSel);
                 } else {
@@ -450,7 +450,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
            maybeGetAttr etc.). Mirrors dispatchQueryRequest's CBApply
            branch but returns the Object instead of the serialised WHNF. */
         tracingCacheLog("resolve %s: callbackApply producer", idStr.substr(0, 12));
-        std::string fnHex = params["fn"].get<std::string>();
+        std::string fnHex = params["parent"].get<std::string>();
         std::string obsSetHex = params["argObsSet"].get<std::string>();
         Hash obsSetHash{HashAlgorithm::SHA256};
         try {
@@ -495,7 +495,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
         }
     }
 
-    auto qSel = trace::nodeFromJson(reqJson, decisionGraph.selectorPool);
+    auto qSel = trace::resolveFromJson(reqJson, decisionGraph.selectorPool);
     if (qSel) {
         tracingCacheLog(
             "resolve %s: producer-child %s",
@@ -517,9 +517,9 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
 std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
     const std::string & idStr, const nlohmann::json & params, ResolutionContext & ctx)
 {
-    auto fnObj = resolveIdentity(params["fn"].get<std::string>(), ctx);
+    auto fnObj = resolveIdentity(params["parent"].get<std::string>(), ctx);
     if (!fnObj) {
-        tracingCacheLog("replay: apply %s: cannot resolve fn %s", idStr, params["fn"]);
+        tracingCacheLog("replay: apply %s: cannot resolve fn %s", idStr, params["parent"]);
         return nullptr;
     }
     auto argIdStr = params["arg"].get<std::string>();
@@ -592,8 +592,8 @@ static std::vector<std::shared_ptr<Object>> resolveRoots(
             return roots;
         return {};
     }
-    if (params.contains("from")) {
-        auto obj = resolve(params["from"].get<std::string>());
+    if (params.contains("parent")) {
+        auto obj = resolve(params["parent"].get<std::string>());
         if (!obj)
             return {};
         roots.push_back(std::move(obj));
@@ -645,7 +645,7 @@ static std::shared_ptr<Object> navigatePath(
 std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
     const std::string & idStr, const trace::SelectorNode & qv, const nlohmann::json & params, ResolutionContext & ctx)
 {
-    if (!params.contains("from") && !params.contains("fromStateHashes")
+    if (!params.contains("parent") && !params.contains("fromStateHashes")
         && !params.contains("perArgFrame"))
         return nullptr;
 
@@ -686,7 +686,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
 
 std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nlohmann::json & reqJson, ResolutionContext & ctx)
 {
-    auto qSelOpt = trace::nodeFromJson(reqJson, decisionGraph.selectorPool);
+    auto qSelOpt = trace::resolveFromJson(reqJson, decisionGraph.selectorPool);
     if (!qSelOpt)
         return std::nullopt;
     auto & qv = (*qSelOpt)->node;

@@ -269,7 +269,31 @@ void from_json(const nlohmann::json & j, PathExpr & p);
 // Query payload types and their result mappings
 // ---------------------------------------------------------------------------
 
-/** Evaluate an expression string. */
+// ---------------------------------------------------------------------------
+// Trees-that-grow: step Selectors are phase-parameterized. Two phases:
+//   Resolved — parent is ref<const Selector> (in-memory recursive tree).
+//   String   — parent is std::string (hex, on-wire persistence form).
+// A `resolve` pass turns String into Resolved via SelectorPool; `unresolve`
+// goes the other way. Serde (nlohmann NON_INTRUSIVE macros) operates on
+// the String phase only — pure, no pool parameter, no defensive fallbacks.
+// Runtime code uses Selector (= SelectorF<Resolved>) via the aliases below;
+// callsites are alias-transparent.
+// ---------------------------------------------------------------------------
+
+/** Phase tags. */
+struct Resolved {};
+struct String {};
+
+/** Forward decl so SelectorParent<Resolved> can name it. */
+template<typename P> struct SelectorF;
+
+/** Type family selecting parent-reference type per phase. */
+template<typename P> struct SelectorParent;
+template<> struct SelectorParent<String>   { using type = std::string; };
+template<> struct SelectorParent<Resolved> { using type = ref<const SelectorF<Resolved>>; };
+template<typename P> using ParentRef = typename SelectorParent<P>::type;
+
+/** Evaluate an expression string. Phase-independent (no parent). */
 struct SelectorExpr
 {
     static constexpr std::string_view tag = "expr";
@@ -279,7 +303,7 @@ struct SelectorExpr
 };
 DECLARE_SELECTOR_RESULT(SelectorExpr, ResultWHNF)
 
-/** Import/evaluate a file. */
+/** Import/evaluate a file. Phase-independent. */
 struct SelectorImport
 {
     static constexpr std::string_view tag = "import";
@@ -288,22 +312,19 @@ struct SelectorImport
 };
 DECLARE_SELECTOR_RESULT(SelectorImport, ResultWHNF)
 
-struct Selector;
-
 /** Get an attribute by name from a value that has been shown (via
     parent WHNF) to contain it. Pure retrieval — no existence check
     is folded in; the caller must have projected membership from the
     parent's WHNFAttrs.names first. Returns the child's WHNF. */
-struct SelectorGetAttr
+template<typename P>
+struct SelectorGetAttrF
 {
     static constexpr std::string_view tag = "getAttr";
     std::string name;
-    ref<const Selector> parent;
-    bool operator==(const SelectorGetAttr & other) const;
-    std::strong_ordering operator<=>(const SelectorGetAttr & other) const;
+    ParentRef<P> parent;
+    friend bool operator==(const SelectorGetAttrF & a, const SelectorGetAttrF & b);
+    friend std::strong_ordering operator<=>(const SelectorGetAttrF & a, const SelectorGetAttrF & b);
 };
-template<> struct ResultOf<SelectorGetAttr> { using Type = ResultWHNF; };
-void to_json(nlohmann::json & j, const SelectorGetAttr & q);
 
 /** Result for getFunctionInfo: optional formals map + ellipsis. */
 struct ResultFunctionInfo
@@ -316,58 +337,51 @@ void to_json(nlohmann::json & j, const ResultFunctionInfo & r);
 void from_json(const nlohmann::json & j, ResultFunctionInfo & r);
 
 /** Get a list element by index. */
-struct SelectorGetListElem
+template<typename P>
+struct SelectorGetListElemF
 {
     static constexpr std::string_view tag = "getListElem";
     size_t index;
-    ref<const Selector> parent;
-    bool operator==(const SelectorGetListElem & other) const;
-    std::strong_ordering operator<=>(const SelectorGetListElem & other) const;
+    ParentRef<P> parent;
+    friend bool operator==(const SelectorGetListElemF & a, const SelectorGetListElemF & b);
+    friend std::strong_ordering operator<=>(const SelectorGetListElemF & a, const SelectorGetListElemF & b);
 };
-template<> struct ResultOf<SelectorGetListElem> { using Type = ResultWHNF; };
-void to_json(nlohmann::json & j, const SelectorGetListElem & q);
 
 /** Get function argument info (formals). */
-struct SelectorGetFunctionInfo
+template<typename P>
+struct SelectorGetFunctionInfoF
 {
     static constexpr std::string_view tag = "getFunctionInfo";
-    ref<const Selector> parent;
-    bool operator==(const SelectorGetFunctionInfo & other) const;
-    std::strong_ordering operator<=>(const SelectorGetFunctionInfo & other) const;
+    ParentRef<P> parent;
+    friend bool operator==(const SelectorGetFunctionInfoF & a, const SelectorGetFunctionInfoF & b);
+    friend std::strong_ordering operator<=>(const SelectorGetFunctionInfoF & a, const SelectorGetFunctionInfoF & b);
 };
-template<> struct ResultOf<SelectorGetFunctionInfo> { using Type = ResultFunctionInfo; };
-void to_json(nlohmann::json & j, const SelectorGetFunctionInfo & q);
 
 /** Apply a function to an argument. `parent` is the fn Selector. */
-struct SelectorApply
+template<typename P>
+struct SelectorApplyF
 {
     static constexpr std::string_view tag = "apply";
-    ref<const Selector> parent;
-    bool operator==(const SelectorApply & other) const;
-    std::strong_ordering operator<=>(const SelectorApply & other) const;
+    ParentRef<P> parent;
+    friend bool operator==(const SelectorApplyF & a, const SelectorApplyF & b);
+    friend std::strong_ordering operator<=>(const SelectorApplyF & a, const SelectorApplyF & b);
 };
-template<> struct ResultOf<SelectorApply> { using Type = ResultWHNF; };
-void to_json(nlohmann::json & j, const SelectorApply & q);
 
 /** Apply a callback to a contra-arg. `parent` is the fn Selector;
     `argObsSet` is a content hash referring to the outer's observation-set
     on the contra-arg. */
-struct SelectorCallbackApply
+template<typename P>
+struct SelectorCallbackApplyF
 {
     static constexpr std::string_view tag = "callbackApply";
     std::string argObsSet;
-    ref<const Selector> parent;
-    bool operator==(const SelectorCallbackApply & other) const;
-    std::strong_ordering operator<=>(const SelectorCallbackApply & other) const;
+    ParentRef<P> parent;
+    friend bool operator==(const SelectorCallbackApplyF & a, const SelectorCallbackApplyF & b);
+    friend std::strong_ordering operator<=>(const SelectorCallbackApplyF & a, const SelectorCallbackApplyF & b);
 };
-template<> struct ResultOf<SelectorCallbackApply> { using Type = ResultWHNF; };
-void to_json(nlohmann::json & j, const SelectorCallbackApply & q);
 
 /** Reference a positional callback arg by its reverse-De-Bruijn depth.
-    A Selector like any other: its Q hash falls out of its shape, and
-    other Selectors reference it through their `from`/`fn` fields the
-    same way they reference any Q. Used when the outer supplies an arg
-    whose only identity is its position in the callback-apply stack. */
+    Phase-independent leaf. */
 struct SelectorArg
 {
     static constexpr std::string_view tag = "arg";
@@ -375,6 +389,36 @@ struct SelectorArg
     auto operator<=>(const SelectorArg &) const = default;
 };
 DECLARE_SELECTOR_RESULT(SelectorArg, ResultWHNF)
+
+/** Aliases: Resolved is the in-memory form used by runtime code;
+    String is the on-wire form for serde. Callsites use the Resolved
+    aliases exclusively — they're transparent for construction and
+    variant access. */
+using SelectorGetAttr         = SelectorGetAttrF<Resolved>;
+using SelectorGetListElem     = SelectorGetListElemF<Resolved>;
+using SelectorGetFunctionInfo = SelectorGetFunctionInfoF<Resolved>;
+using SelectorApply           = SelectorApplyF<Resolved>;
+using SelectorCallbackApply   = SelectorCallbackApplyF<Resolved>;
+
+using StringSelectorGetAttr         = SelectorGetAttrF<String>;
+using StringSelectorGetListElem     = SelectorGetListElemF<String>;
+using StringSelectorGetFunctionInfo = SelectorGetFunctionInfoF<String>;
+using StringSelectorApply           = SelectorApplyF<String>;
+using StringSelectorCallbackApply   = SelectorCallbackApplyF<String>;
+
+template<> struct ResultOf<SelectorGetAttr>         { using Type = ResultWHNF; };
+template<> struct ResultOf<SelectorGetListElem>     { using Type = ResultWHNF; };
+template<> struct ResultOf<SelectorGetFunctionInfo> { using Type = ResultFunctionInfo; };
+template<> struct ResultOf<SelectorApply>           { using Type = ResultWHNF; };
+template<> struct ResultOf<SelectorCallbackApply>   { using Type = ResultWHNF; };
+
+/** Resolved-phase logging helper: renders parent as hex. String-phase
+    serde is via NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE (trace-types.cc). */
+void to_json(nlohmann::json & j, const SelectorGetAttr & q);
+void to_json(nlohmann::json & j, const SelectorGetListElem & q);
+void to_json(nlohmann::json & j, const SelectorGetFunctionInfo & q);
+void to_json(nlohmann::json & j, const SelectorApply & q);
+void to_json(nlohmann::json & j, const SelectorCallbackApply & q);
 
 // ---------------------------------------------------------------------------
 // CompletedQuery: a query correlated with its result
@@ -437,15 +481,21 @@ using Results = ApplyWrapper<
 // Variant types for SelectorNode / ResultVariant
 // ---------------------------------------------------------------------------
 
-using SelectorNode = std::variant<
+/** Phase-parameterized Selector node variant. Leaves are phase-independent;
+    step alternatives carry their phase's parent-reference type. */
+template<typename P>
+using SelectorNodeF = std::variant<
     SelectorExpr,
     SelectorImport,
-    SelectorGetAttr,
-    SelectorGetListElem,
-    SelectorGetFunctionInfo,
-    SelectorApply,
-    SelectorCallbackApply,
+    SelectorGetAttrF<P>,
+    SelectorGetListElemF<P>,
+    SelectorGetFunctionInfoF<P>,
+    SelectorApplyF<P>,
+    SelectorCallbackApplyF<P>,
     SelectorArg>;
+
+using SelectorNode       = SelectorNodeF<Resolved>;
+using StringSelectorNode = SelectorNodeF<String>;
 
 using ResultVariant = std::variant<
     ResultFunctionInfo,
@@ -471,15 +521,23 @@ using ResultVariant = std::variant<
 // ---------------------------------------------------------------------------
 
 /** Recursive Selector: node payload + cached content hash. Step
-    alternatives carry ref<const Selector> parent (structural
-    sharing). Constructed via SelectorPool::intern; both fields const. */
-struct Selector
+    alternatives carry ref<const Selector> parent (structural sharing).
+    Constructed via SelectorPool::intern; both fields const.
+
+    Only the Resolved phase is defined as a full type — the String
+    phase's data lives inside SelectorNodeF<String> nodes directly and
+    never needs a wrapping Selector object (used only for transient
+    serde). */
+template<>
+struct SelectorF<Resolved>
 {
-    const SelectorNode node;
+    const SelectorNodeF<Resolved> node;
     const Hash cachedHash;
 
-    explicit Selector(SelectorNode n);
+    explicit SelectorF(SelectorNodeF<Resolved> n);
 };
+
+using Selector = SelectorF<Resolved>;
 
 /** DB facade over the Selectors table: interning writes an
     `INSERT OR IGNORE` row, lookup falls back to reconstructing from
@@ -519,14 +577,56 @@ Hash computeSelectorHash(const SelectorNode & q);
 bool willMoveStateHash(const Selector & s);
 bool willMoveStateHash(const SelectorNode & q);
 
-/** to_json on the flat SelectorNode — dispatches to per-alternative
-    to_json. No from_json companion (step Selectors need SelectorPool
-    to resolve parent references; use nodeFromJson). */
+/** to_json on the Resolved SelectorNode — hex-renders parents so
+    log paths (tracingCacheLog, describe) get the same textual shape
+    as the on-wire form. Delegates to unresolve + String-phase serde. */
 void to_json(nlohmann::json & j, const SelectorNode & q);
 
-/** Reconstruct a Selector from JSON — parents resolved via pool. */
-std::optional<ref<const Selector>> nodeFromJson(
+/** Convert a String-phase node to Resolved by looking up each parent
+    hex in the pool. Returns nullopt if any parent hex isn't present
+    (pool + DB). */
+std::optional<ref<const Selector>> resolve(
+    const StringSelectorNode & raw, SelectorPool & pool);
+
+/** Convert a Resolved node to String-phase by hex-rendering parents.
+    Total; never fails. */
+StringSelectorNode unresolve(const SelectorNode & node);
+
+/** Convenience: decode a JSON payload as StringSelectorNode via nlohmann
+    serde, then resolve. Returns nullopt if either the decode throws or
+    the resolve misses a parent hex. */
+std::optional<ref<const Selector>> resolveFromJson(
     const nlohmann::json & j, SelectorPool & pool);
+
+namespace detail {
+
+/** Fold-based `from_json` for any `std::variant<Ts...>` whose
+    alternatives carry a `static constexpr std::string_view tag`
+    discriminator. `Ts...` unpacks straight from the variant type — no
+    per-variant hand-enumeration. Historically written for QueryVariant
+    (commit 055a8c9e5); restored under the trees-that-grow refactor to
+    dispatch on StringSelectorNode without hand-listing 8 alternatives. */
+template<typename V, typename T>
+inline bool tryVariantAlternative(const nlohmann::json & j, V & v, std::string_view tag)
+{
+    if (tag != T::tag) return false;
+    T val;
+    from_json(j, val);
+    v = std::move(val);
+    return true;
+}
+
+template<typename... Ts>
+inline void fromJsonByTag(const nlohmann::json & j, std::variant<Ts...> & v)
+{
+    auto tag = j.at("tag").template get<std::string_view>();
+    bool matched = (tryVariantAlternative<std::variant<Ts...>, Ts>(j, v, tag) || ...);
+    if (!matched)
+        throw nlohmann::json::parse_error::create(
+            302, 0, "unknown variant tag: " + std::string(tag), &j);
+}
+
+} // namespace detail
 
 namespace detail {
 
