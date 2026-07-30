@@ -432,10 +432,10 @@ using Results = ApplyWrapper<
     ResultWHNF>;
 
 // ---------------------------------------------------------------------------
-// Variant types for SelectorVariant / ResultVariant
+// Variant types for SelectorNode / ResultVariant
 // ---------------------------------------------------------------------------
 
-using SelectorVariant = std::variant<
+using SelectorNode = std::variant<
     SelectorExpr,
     SelectorImport,
     SelectorGetAttr,
@@ -451,7 +451,7 @@ using ResultVariant = std::variant<
 
 // ---------------------------------------------------------------------------
 // Recursive Selector (in-memory) — supersedes the stringly-typed
-// from/fn fields on the flat SelectorVariant alternatives.
+// from/fn fields on the flat SelectorNode alternatives.
 //
 // Each non-leaf node holds its parent as `ref<const Selector>`, so a
 // chain like GetAttr(GetAttr(Apply(Import))) is represented in memory
@@ -473,10 +473,10 @@ using ResultVariant = std::variant<
     sharing). Constructed via SelectorPool::intern; both fields const. */
 struct Selector
 {
-    const SelectorVariant node;
+    const SelectorNode node;
     const Hash cachedHash;
 
-    explicit Selector(SelectorVariant n);
+    explicit Selector(SelectorNode n);
 };
 
 class SelectorPool
@@ -484,24 +484,24 @@ class SelectorPool
     std::unordered_map<Hash, ref<const Selector>> pool;
 
 public:
-    ref<const Selector> intern(SelectorVariant node);
+    ref<const Selector> intern(SelectorNode node);
     std::optional<ref<const Selector>> find(const Hash & h) const;
 };
 
 /* Selector adapters — most consumers hold Selector / ref<const Selector>. */
 std::string describe(const Selector & s);
-std::string describe(const SelectorVariant & q);
+std::string describe(const SelectorNode & q);
 nlohmann::json toJson(const Selector & s);
-nlohmann::json toJson(const SelectorVariant & q);
+nlohmann::json toJson(const SelectorNode & q);
 inline const Hash & computeSelectorHash(const Selector & s) { return s.cachedHash; }
-Hash computeSelectorHash(const SelectorVariant & q);
+Hash computeSelectorHash(const SelectorNode & q);
 bool willMoveStateHash(const Selector & s);
-bool willMoveStateHash(const SelectorVariant & q);
+bool willMoveStateHash(const SelectorNode & q);
 
-/** to_json on the flat SelectorVariant — dispatches to per-alternative
+/** to_json on the flat SelectorNode — dispatches to per-alternative
     to_json. No from_json companion (step Selectors need SelectorPool
     to resolve parent references; use nodeFromJson). */
-void to_json(nlohmann::json & j, const SelectorVariant & q);
+void to_json(nlohmann::json & j, const SelectorNode & q);
 
 /** Reconstruct a Selector from JSON — parents resolved via pool. */
 std::optional<ref<const Selector>> nodeFromJson(
@@ -528,8 +528,8 @@ template<typename... Ts> struct VariantTagsDistinct<std::variant<Ts...>>
 } // namespace detail
 
 static_assert(
-    detail::VariantTagsDistinct<SelectorVariant>::value,
-    "SelectorVariant alternatives must have distinct `tag` values.");
+    detail::VariantTagsDistinct<SelectorNode>::value,
+    "SelectorNode alternatives must have distinct `tag` values.");
 
 // ---------------------------------------------------------------------------
 // OuterValueRequest / OuterValueResponse
@@ -602,7 +602,7 @@ using CorrelatedTraceEntry =
  */
 std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j);
 
-/* parseSelectorVariant / fromHashOf / rewriteFrom retired — under
+/* parseSelectorNode / fromHashOf / rewriteFrom retired — under
    the recursive Selector, parsing needs a SelectorPool (use
    nodeFromJson), fromHashOf is a `parent->cachedHash` access, and
    rewriteFrom is meaningless since Selectors are immutable. */
@@ -611,13 +611,13 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j);
  * SHA-256 of the Query's JSON dump — the canonical selectorHash used
  * as its identity across the trace/store layer. Overload of the
  * per-Q-type `computeSelectorHash` on decision-graph, so callers
- * holding a `SelectorVariant` don't have to std::visit at every site.
+ * holding a `SelectorNode` don't have to std::visit at every site.
  */
-Hash computeSelectorHash(const SelectorVariant & query);
+Hash computeSelectorHash(const SelectorNode & query);
 
 /** Serialise a Query variant to its inner JSON payload
     (`{"query": <tag>, "params": {...}}`). */
-nlohmann::json toJson(const SelectorVariant & query);
+nlohmann::json toJson(const SelectorNode & query);
 
 /**
  * Correlate queries with their results.
@@ -644,7 +644,7 @@ struct IndexEntry
  */
 class SelectorIndex
 {
-    std::map<SelectorVariant, IndexEntry> index;
+    std::map<SelectorNode, IndexEntry> index;
 
 public:
     explicit SelectorIndex(const std::vector<TraceEntry> & trace);

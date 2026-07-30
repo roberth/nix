@@ -132,7 +132,7 @@ std::shared_ptr<OuterResolver> makeOuterResolver(
     structural-equality. */
 void registerOuterResolverProxy(
     OuterResolver & resolver,
-    trace::SelectorVariant producer,
+    trace::SelectorNode producer,
     std::shared_ptr<Object> obj);
 
 /** Try to resolve a registered live-proxy from the resolver by

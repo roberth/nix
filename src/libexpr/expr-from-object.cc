@@ -21,7 +21,7 @@ namespace nix {
    response plus (for producer queries) the outer's child Object at
    the queried position. No lookup table, no id round-trip — the
    caller passes the outer Object it already holds. */
-static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::SelectorVariant & q)
+static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::SelectorNode & q)
 {
     return std::visit(
         [&](const auto & query) -> OuterQueryResult {
@@ -137,7 +137,7 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
        can match the registered arg by its state-hash-hex. */
     struct LiveProxyEntry
     {
-        trace::SelectorVariant producer;
+        trace::SelectorNode producer;
         std::shared_ptr<Object> obj;
     };
     std::vector<LiveProxyEntry> liveProxies;
@@ -251,7 +251,7 @@ OuterApplyResult OuterApply::run(
        unchanged. */
     auto argProducerSel = innerWriter
         ? innerWriter->getDecisionGraph()->selectorPool.intern(argProducer)
-        : ref<const trace::Selector>(std::make_shared<const trace::Selector>(trace::SelectorVariant{argProducer}));
+        : ref<const trace::Selector>(std::make_shared<const trace::Selector>(trace::SelectorNode{argProducer}));
     auto wrappedArg = (innerWriter && outerRootFSRoot
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
         ? std::shared_ptr<Object>(std::make_shared<TracingCallbackArg>(
@@ -576,7 +576,7 @@ std::shared_ptr<OuterResolver> makeOuterResolver(
 
 void registerOuterResolverProxy(
     OuterResolver & resolver,
-    trace::SelectorVariant producer,
+    trace::SelectorNode producer,
     std::shared_ptr<Object> obj)
 {
     /* Overwrite-on-conflict for the same producer key. The primop

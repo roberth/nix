@@ -5,7 +5,7 @@
 
 namespace nix::trace {
 
-/* Tests were built against the pre-migration flat SelectorVariant with
+/* Tests were built against the pre-migration flat SelectorNode with
    stringly-typed from/fn fields. They exercised legacy round-trip
    serialization of that shape. After migrating to the recursive
    Selector model (ref<const Selector> parent), the round-trip requires

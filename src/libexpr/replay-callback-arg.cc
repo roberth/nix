@@ -348,7 +348,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
                     auto outerArgObj = std::make_shared<InterpreterObject>(
                         state, allocRootValue(args[0]));
                     registerOuterResolverProxy(
-                        *resolverSaved, trace::SelectorVariant{argProducer},
+                        *resolverSaved, trace::SelectorNode{argProducer},
                         std::move(outerArgObj));
                 }
                 /* Each primop firing replays the ReplayCallbackArg's

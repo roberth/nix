@@ -669,7 +669,7 @@ static std::shared_ptr<Object> navigatePath(
 }
 
 std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
-    const std::string & idStr, const trace::SelectorVariant & qv, const nlohmann::json & params, ResolutionContext & ctx)
+    const std::string & idStr, const trace::SelectorNode & qv, const nlohmann::json & params, ResolutionContext & ctx)
 {
     if (!params.contains("from") && !params.contains("fromStateHashes")
         && !params.contains("perArgFrame"))

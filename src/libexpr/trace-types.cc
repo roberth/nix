@@ -69,17 +69,17 @@ void from_json(const nlohmann::json & j, GetEnvResponse & r)
 }
 
 // ---------------------------------------------------------------------------
-// SelectorVariant serialization — discriminator lives here (flat envelope)
+// SelectorNode serialization — discriminator lives here (flat envelope)
 // ---------------------------------------------------------------------------
 
-void to_json(nlohmann::json & j, const SelectorVariant & q)
+void to_json(nlohmann::json & j, const SelectorNode & q)
 {
     /* Each per-type to_json emits `tag` alongside its fields, so
        delegation suffices. */
     std::visit([&](const auto & sub) { j = sub; }, q);
 }
 
-/* No from_json for SelectorVariant — step alternatives need SelectorPool.
+/* No from_json for SelectorNode — step alternatives need SelectorPool.
    Use nodeFromJson. */
 
 // ---------------------------------------------------------------------------
@@ -282,7 +282,7 @@ void from_json(const nlohmann::json & j, PathExpr & p)
 
 /* Flat envelope: each Query type emits `tag` alongside its fields.
    Same JSON regardless of whether the caller went through
-   per-type to_json directly or via SelectorVariant's std::visit. */
+   per-type to_json directly or via SelectorNode's std::visit. */
 
 void to_json(nlohmann::json & j, const SelectorExpr & q)
 {
@@ -596,19 +596,19 @@ std::strong_ordering SelectorCallbackApply::operator<=>(const SelectorCallbackAp
     return parent->cachedHash <=> other.parent->cachedHash;
 }
 
-Hash computeSelectorHash(const SelectorVariant & query)
+Hash computeSelectorHash(const SelectorNode & query)
 {
     nlohmann::json j;
     to_json(j, query);
     return hashString(HashAlgorithm::SHA256, j.dump());
 }
 
-Selector::Selector(SelectorVariant n)
+Selector::Selector(SelectorNode n)
     : node(std::move(n))
     , cachedHash(computeSelectorHash(node))
 {}
 
-ref<const Selector> SelectorPool::intern(SelectorVariant node)
+ref<const Selector> SelectorPool::intern(SelectorNode node)
 {
     auto h = computeSelectorHash(node);
     if (auto it = pool.find(h); it != pool.end())
@@ -624,7 +624,7 @@ std::optional<ref<const Selector>> SelectorPool::find(const Hash & h) const
     return std::nullopt;
 }
 
-nlohmann::json toJson(const SelectorVariant & query)
+nlohmann::json toJson(const SelectorNode & query)
 {
     nlohmann::json j;
     to_json(j, query);
@@ -635,7 +635,7 @@ nlohmann::json toJson(const Selector & s) { return toJson(s.node); }
 
 static std::string shortH(const Hash & h) { return h.to_string(HashFormat::Base16, false).substr(0, 12); }
 
-std::string describe(const SelectorVariant & query)
+std::string describe(const SelectorNode & query)
 {
     return std::visit(
         [](const auto & q) -> std::string {
@@ -666,7 +666,7 @@ std::string describe(const SelectorVariant & query)
 
 std::string describe(const Selector & s) { return describe(s.node); }
 
-bool willMoveStateHash(const SelectorVariant & query)
+bool willMoveStateHash(const SelectorNode & query)
 {
     return std::visit(
         overloaded{

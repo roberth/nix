@@ -53,7 +53,7 @@ using OuterQueryFn = std::function<OuterQueryResult(
  * Result of an OuterApplyFn call. `applyResult` is the outer's raw
  * apply-result Object (wrapped by the caller into an OuterObject with
  * `producerFn` as its producer callable). `producerFn` returns the
- * current SelectorVariant identifying the apply-result — for callback
+ * current SelectorNode identifying the apply-result — for callback
  * applies it snapshots the callback firing's runningObsSet into a
  * `SelectorCallbackApply` on demand, so probes at different moments
  * produce distinct compositional Selectors.
@@ -89,7 +89,7 @@ using OuterApplyFn = std::function<OuterApplyResult(
 class OuterObject : public Object
 {
     /** Producer Selector — a callable that returns the current
-        SelectorVariant whose content hash IS this OuterObject's
+        SelectorNode whose content hash IS this OuterObject's
         identity. Callable form (not a stored value) because a
         producer may reference live state elsewhere (e.g. a
         `SelectorApply{fn=<fnObj's current hex>}` must recompute the

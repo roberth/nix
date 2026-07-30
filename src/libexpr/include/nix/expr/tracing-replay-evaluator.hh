@@ -85,7 +85,7 @@ class TracingReplayEvaluator : public Evaluator
        the recorded obsSet, then invoke fn->queryApply live. No
        separate live-fire method. */
 
-    std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const trace::SelectorVariant & qv, const nlohmann::json & params, ResolutionContext & ctx);
+    std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const trace::SelectorNode & qv, const nlohmann::json & params, ResolutionContext & ctx);
 
 public:
     /** Look up a Query in the decision graph, returning (payload,

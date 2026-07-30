@@ -5,7 +5,7 @@
 namespace nix {
 
 /* Tests previously exercised OuterObject with the pre-migration flat
-   SelectorVariant model and OuterQueryFn taking SelectorVariant params.
+   SelectorNode model and OuterQueryFn taking SelectorNode params.
    After migrating to ref<const trace::Selector>, restoring these
    tests requires setting up a SelectorPool and constructing the
    producers as recursive Selectors. Deferred; the disabled placeholder
