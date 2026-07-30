@@ -112,7 +112,6 @@ TracingReplayEvaluator::walk(
             return Hash(HashAlgorithm::SHA256);
         bool isQueryRequest = false;
         bool willMoveStateHash = false;
-        std::optional<Hash> outerFromHash;
         std::string queryTag;
         std::string queryDescription;
         try {
@@ -123,18 +122,6 @@ TracingReplayEvaluator::walk(
                 if (auto qSel = trace::nodeFromJson(reqJson, decisionGraph.selectorPool)) {
                     queryDescription = trace::describe(**qSel);
                     willMoveStateHash = trace::willMoveStateHash(**qSel);
-                    /* Pre-migration semantics: outer-probe facts flow into cells
-                       exclusively via logOuterObservation (from the outer's
-                       queryFn attributing to callerCell = arg's own cell). The
-                       walker's commitEdge path folds ONLY env facts, never
-                       outer probes. Historical fromHashOf was effectively
-                       always nullopt (dead-code `!true` guard); post-migration
-                       structural cleanup accidentally re-enabled the commitEdge
-                       outer-probe fold via `q.parent` matching, which double-
-                       folded and (worse) into the wrong cell for applications.
-                       Keep outerFromHash always nullopt so no outer probe gets
-                       pushed into pendingEdgeObservations. */
-                    (void) (*qSel);
                 } else {
                     queryDescription = queryTag;
                 }
@@ -209,43 +196,14 @@ TracingReplayEvaluator::walk(
         } catch (...) {
             respJsonStr = "(unparseable)";
         }
-        if (isQueryRequest && outerFromHash) {
-            /* Attribution: the observation belongs to the cell the walk is
-               scoped to (walkCell = the arg's own cell). Under pre-migration
-               semantics, SelectorApply's field-name convention (`fn` not `from`)
-               kept it out of this branch entirely — commitEdge never folded
-               Apply-dispatch facts. Post-migration's `parent` rename brought
-               Apply into the branch, but attribution via ctx.currentProxy
-               (which is the fn proxy for a top-level apply, whose argCell is
-               the shared parent cell) leaked A's terminal-worth of facts into
-               siblings' shared cellAnchor. walkCell is the semantically correct
-               choice for all step selectors — per Foundational 10 (arguments
-               accumulate in their own cell's factset). currentProxy.argCell is
-               a backstop for the no-walkCell case (e.g. from evalFile). */
-            std::weak_ptr<const ArgCell> attrCell;
-            if (ctx.walkCell)
-                attrCell = ctx.walkCell;
-            else if (ctx.currentProxy)
-                attrCell = ctx.currentProxy->getProxyArgCell();
-            pendingEdgeObservations.push_back({
-                *outerFromHash,
-                TracingDecisionGraph::xorFactIntoHash(
-                    Hash(HashAlgorithm::SHA256), requestHash, h),
-                requestHash,
-                h,
-                std::move(attrCell),
-            });
+        if (isQueryRequest) {
+            /* Outer-probe facts fold into cells exclusively via logOuterObservation
+               (from the outer's queryFn attributing to callerCell = arg's own
+               cell). The walker's commitEdge path handles env facts only, never
+               outer probes — matches pre-migration behavior where fromHashOf's
+               dead-code guard kept this equivalent branch dormant. */
             tracingCacheLog(
-                "dispatch outer: req=%s payload=%s from=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
-                requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                queryDescription,
-                outerFromHash->to_string(HashFormat::Base16, false).substr(0, 12),
-                h.to_string(HashFormat::Base16, false).substr(0, 12),
-                reqJsonStr,
-                respJsonStr);
-        } else if (isQueryRequest) {
-            tracingCacheLog(
-                "dispatch outer (no-from): req=%s payload=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
+                "dispatch outer: req=%s payload=%s resp=%s\n  reqJSON=%s\n  respJSON=%s",
                 requestHash.to_string(HashFormat::Base16, false).substr(0, 12),
                 queryDescription,
                 h.to_string(HashFormat::Base16, false).substr(0, 12),
