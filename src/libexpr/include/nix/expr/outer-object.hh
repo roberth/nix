@@ -45,8 +45,8 @@ struct OuterQueryResult
  */
 using OuterQueryFn = std::function<OuterQueryResult(
     std::shared_ptr<Object> outerObj,
-    const trace::SelectorVariant &,
-    trace::SelectorVariant producer,
+    ref<const trace::Selector> query,
+    ref<const trace::Selector> producer,
     std::shared_ptr<const ArgCell> callerCell)>;
 
 /**
@@ -61,7 +61,7 @@ using OuterQueryFn = std::function<OuterQueryResult(
 struct OuterApplyResult
 {
     std::shared_ptr<Object> applyResult;
-    std::function<trace::SelectorVariant()> producerFn;
+    std::function<ref<const trace::Selector>()> producerFn;
 };
 
 /**
@@ -77,7 +77,7 @@ struct OuterApplyResult
  */
 using OuterApplyFn = std::function<OuterApplyResult(
     std::shared_ptr<Object> fnObj,
-    trace::SelectorVariant fnProducer,
+    ref<const trace::Selector> fnProducer,
     std::shared_ptr<Object> argObj,
     std::shared_ptr<const ArgCell> applyCell)>;
 
@@ -95,7 +95,7 @@ class OuterObject : public Object
         `SelectorApply{fn=<fnObj's current hex>}` must recompute the
         fn hex on demand, not bake a snapshot). Static producers wrap
         a literal via `[v]{ return v; }`. */
-    std::function<trace::SelectorVariant()> producer;
+    std::function<ref<const trace::Selector>()> producer;
     /* The Object from the outer Interpreter this proxy wraps.
        Methods on OuterObject dispatch through this reference: the
        inner side asks OuterObject (via Object interface), OuterObject
@@ -119,6 +119,12 @@ class OuterObject : public Object
        field needed. */
     std::shared_ptr<const ArgCell> argCell;
 
+    /* SelectorPool for interning child Selectors constructed here
+       (maybeGetAttr → SelectorGetAttr, etc.). Non-owning pointer;
+       lives on the shared TracingDecisionGraph. Nullable when the
+       proxy is constructed without a graph (rare). */
+    trace::SelectorPool * selectorPool;
+
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which issues ONE observation
        through `queryFn` keyed on this proxy's `producer`. Subsequent
@@ -127,7 +133,7 @@ class OuterObject : public Object
     trace::ResultWHNF & whnf();
 
 public:
-    OuterObject(std::function<trace::SelectorVariant()> producer, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn = {});
+    OuterObject(std::function<ref<const trace::Selector>()> producer, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, trace::SelectorPool * selectorPool = nullptr, OuterApplyFn applyFn = {});
 
     /** Set the proxy's argCell. Call right after construction at
         boundary sites. Returns *this for chaining. */
@@ -170,8 +176,12 @@ public:
         override needed. */
     std::optional<std::string> getSelectorHashHex() const override
     {
-        return TracingDecisionGraph::computeSelectorHash(producer())
-            .to_string(HashFormat::Base16, false);
+        return producer()->cachedHash.to_string(HashFormat::Base16, false);
+    }
+
+    std::optional<ref<const trace::Selector>> getSelector() const override
+    {
+        return producer();
     }
 };
 

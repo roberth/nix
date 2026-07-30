@@ -40,12 +40,12 @@ class TracingWriter;
 class TracingCallbackArg : public Object
 {
     std::shared_ptr<Object> inner;
-    trace::SelectorVariant producer;  ///< Static structural identifier as a Selector
+    ref<const trace::Selector> producer;  ///< Static structural identifier as a Selector
     TracingWriter & writer;
     ref<SourceRoot> rootFSRoot;
 
-    /** This local's Q hash, computed on demand from `producer`. */
-    OuterId localId() const { return TracingDecisionGraph::computeSelectorHash(producer); }
+    /** This local's Q hash. */
+    OuterId localId() const { return producer->cachedHash; }
 
     /* The argCell cell this local belongs to. Navigation children
        share the parent's cell. Used for scope-graph topology only;
@@ -59,15 +59,17 @@ class TracingCallbackArg : public Object
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 
-    void recordObservation(const trace::SelectorVariant & query, const trace::ResultVariant & result);
+    void recordObservation(ref<const trace::Selector> query, const trace::ResultVariant & result);
 
 public:
     TracingCallbackArg(
         std::shared_ptr<Object> inner,
-        trace::SelectorVariant producer,
+        ref<const trace::Selector> producer,
         TracingWriter & writer,
         ref<SourceRoot> rootFSRoot,
         std::shared_ptr<const ArgCell> argCell);
+
+    std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 

@@ -10,29 +10,23 @@ namespace nix {
 TracingCallbackApplyResult::TracingCallbackApplyResult(
     ref<Object> inner_,
     TracingWriter & writer_,
-    trace::SelectorVariant producer_)
+    ref<const trace::Selector> producer_)
     : inner(std::move(inner_))
     , writer(writer_)
     , producer(std::move(producer_))
 {
-    auto stateHash = TracingDecisionGraph::computeSelectorHash(producer);
-    qHex = stateHash.to_string(HashFormat::Base16, false);
+    qHex = producer->cachedHash.to_string(HashFormat::Base16, false);
 }
 
-void TracingCallbackApplyResult::recordD2(const trace::SelectorVariant & query, const trace::ResultVariant & result)
+void TracingCallbackApplyResult::recordD2(ref<const trace::Selector> query, const trace::ResultVariant & result)
 {
-    /* #184: append directly to the enclosing callback cell's
-       runningObsSet. callbackCell is set at construction by TE::apply's
-       fnIsTlo branch via withCallbackCell(effectiveArgCell(*fn)). */
     if (!callbackCell || !callbackCell->callbackState) {
         tracingCacheLog(
             "TracingCallbackApplyResult::recordD2: no callbackCell/callbackState "
             "— observation dropped");
         return;
     }
-    auto qh = std::visit(
-        [](const auto & q) { return TracingDecisionGraph::computeSelectorHash(q); },
-        query);
+    auto qh = query->cachedHash;
     nlohmann::json rJson = std::visit(
         [](const auto & r) -> nlohmann::json { return r; },
         result);
@@ -58,9 +52,11 @@ std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::stri
     auto child = inner->maybeGetAttr(name);
     if (!child)
         return nullptr;
-    trace::SelectorGetAttr q{name, std::string{}};
+    auto * dg = writer.getDecisionGraph();
+    if (!dg) return child;
+    auto qSel = dg->selectorPool.intern(trace::SelectorGetAttr{name, producer});
     auto childWHNF = computeWHNFFromObject(*child);
-    recordD2(q, childWHNF);
+    recordD2(qSel, childWHNF);
     return child;
 }
 
@@ -166,9 +162,10 @@ std::shared_ptr<Object> TracingCallbackApplyResult::getListElem(size_t index)
            throws the source-positioned error. */
         return inner->getListElem(index);
     auto child = inner->getListElem(index);
-    recordD2(
-        trace::SelectorGetListElem{std::string{}, index},
-        computeWHNFFromObject(*child));
+    if (auto * dg = writer.getDecisionGraph()) {
+        auto qSel = dg->selectorPool.intern(trace::SelectorGetListElem{index, producer});
+        recordD2(qSel, computeWHNFFromObject(*child));
+    }
     return child;
 }
 
@@ -201,7 +198,10 @@ std::optional<FunctionInfo> TracingCallbackApplyResult::getFunctionInfo()
         info.has_value(),
         info ? info->formals : std::map<std::string, bool>{},
         info ? info->ellipsis : false};
-    recordD2(trace::SelectorGetFunctionInfo{std::string{}}, rfi);
+    if (auto * dg = writer.getDecisionGraph()) {
+        auto qSel = dg->selectorPool.intern(trace::SelectorGetFunctionInfo{producer});
+        recordD2(qSel, rfi);
+    }
     return info;
 }
 

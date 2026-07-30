@@ -313,57 +313,35 @@ public:
         callers — parent's chain sees a single QCA-per-firing. */
     void emitCallbackApplyForApplyResult(
         const std::shared_ptr<const ArgCell> & callbackCell,
-        const trace::SelectorVariant & applyResultProducer,
+        ref<const trace::Selector> applyResultProducer,
         const trace::ResultWHNF & whnf)
     {
         if (!decisionGraph)
             return;
-        auto * ap = std::get_if<trace::SelectorApply>(&applyResultProducer);
+        auto * ap = std::get_if<trace::SelectorApply>(&applyResultProducer->node);
         if (!ap)
             return;
-        auto fnInitialHex = ap->fn;
+        auto fnParent = ap->parent;
 
-        /* Cell-based reader (preferred): if a cell with populated
-           callbackState is provided, and its fn matches, read from it
-           directly — no writer.callbackCells iteration. */
         auto tryEmitFromCell = [&](const CallbackState & cs) -> bool {
-            /* Skip until at least one contra-arg observation has fired —
-               otherwise the obsSet is empty and QCA emission is
-               premature. */
             if (cs.runningObsSet.empty())
                 return false;
-            /* #183: cs.fnStateHashHex is Q-space; fnInitialHex is
-               subject-space. They don't align. When cell was threaded
-               through (callbackCell provided), we trust the caller: the
-               cell IS the callback firing being completed. Skip the
-               subject-space match. */
-            (void) fnInitialHex;
             auto obsSetHash = decisionGraph->insertObservationSet(cs.runningObsSet);
-            trace::SelectorCallbackApply qca;
-            /* #181: fn = the callback fn's query-space identity,
-               captured at firing time by CallbackState. Discriminates
-               callbackApply Q across distinct callbacks with same
-               obsSet (mirrors SelectorApply.fn treatment). */
-            qca.fn = cs.fnStateHashHex;
-            qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
-            /* #188 attribution: QCA folds into the callback's
-               enclosing scope — the cell the callback provider
-               constructed applyCell against (callerScope). That's
-               reachable via callbackCell->parent under one-cell-per-
-               apply construction: OuterObject::queryApply makes
-               applyCell = ArgCell::make(callerScope, argObj), so
-               callbackCell.parent IS callerScope, i.e. the enclosing
-               SelectorApply's cell whose factSetHash the enclosing
-               getter's Terminal reads. Forwarded via the constructed
-               cell chain, not looked up via global stack. */
+            /* fnStateHashHex captures fn's Q-space identity at firing
+               time. Look up in pool; fall back to fnParent on miss. */
+            ref<const trace::Selector> fnRef = fnParent;
+            try {
+                auto fnHash = Hash::parseNonSRIUnprefixed(cs.fnStateHashHex, HashAlgorithm::SHA256);
+                if (auto found = decisionGraph->selectorPool.find(fnHash))
+                    fnRef = *found;
+            } catch (...) {}
+            auto qcaSel = decisionGraph->selectorPool.intern(trace::SelectorCallbackApply{
+                obsSetHash.to_string(HashFormat::Base16, false), fnRef});
             std::shared_ptr<const ArgCell> attrCell = callbackCell ? callbackCell->parent : nullptr;
-            /* producer describe: we only have `fn` as a hex string here
-               (SelectorApply payload's fn field); the identity that
-               matters is qca's own content hash. */
             logOuterObservation(
-                trace::SelectorVariant{std::move(qca)},
+                qcaSel,
                 trace::ResultVariant{whnf},
-                "fn=" + ap->fn.substr(0, 12),
+                "fn=" + fnParent->cachedHash.to_string(HashFormat::Base16, false).substr(0, 12),
                 attrCell);
             return true;
         };
@@ -371,18 +349,12 @@ public:
             && tryEmitFromCell(*callbackCell->callbackState))
             return;
 
-        /* #184 step 2: fallback loop over writer.callbackCells retired.
-           Every caller of emitCallbackApplyForApplyResult now threads a
-           cell whose callbackState is populated (TE::apply since #184
-           step 1; OuterApply::run + cbApplyOrigin wrappers since
-           earlier). If we reach here, the primary path failed to
-           match — probe the reason. */
         tracingCacheLog(
             "emitCallbackApplyForApplyResult: primary path returned false; "
-            "callbackCell=%p callbackState=%p fnInitialHex=%s",
+            "callbackCell=%p callbackState=%p fnParent=%s",
             (void*) callbackCell.get(),
             callbackCell ? (void*) callbackCell->callbackState.get() : nullptr,
-            fnInitialHex.substr(0, 12).c_str());
+            fnParent->cachedHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
     }
 
     /**
@@ -601,7 +573,7 @@ public:
      * requestHashes depend on evolved Subject state — so those go
      * per-probe here. */
     void logOuterObservation(
-        const trace::SelectorVariant & query,
+        ref<const trace::Selector> query,
         const trace::ResultVariant & result,
         std::string producerDesc,
         const std::shared_ptr<const ArgCell> & attributionCell = {});

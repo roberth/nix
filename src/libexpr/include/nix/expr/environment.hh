@@ -67,9 +67,9 @@ public:
      * TracingEnvironment overrides to record the interaction.
      */
     virtual trace::ResultVariant outerQuery(
-        const trace::SelectorVariant & query,
-        std::function<trace::ResultVariant(const trace::SelectorVariant &)> resolve,
-        trace::SelectorVariant producer,
+        ref<const trace::Selector> query,
+        std::function<trace::ResultVariant(ref<const trace::Selector>)> resolve,
+        ref<const trace::Selector> producer,
         const std::shared_ptr<const ArgCell> & attributionCell = {})
     {
         (void) producer;

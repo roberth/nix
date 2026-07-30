@@ -108,14 +108,20 @@ std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter &
         auto * dg = w.getDecisionGraph();
         if (dg) {
             auto obsSetHash = dg->insertObservationSet(cs.runningObsSet);
-            trace::SelectorCallbackApply qca;
-            qca.fn = cs.fnStateHashHex;
-            qca.argObsSet = obsSetHash.to_string(HashFormat::Base16, false);
-            trace::SelectorVariant qcaVariant{qca};
-            auto qcaHash = TracingDecisionGraph::computeSelectorHash(qcaVariant);
-            nlohmann::json qcaJson = qcaVariant;
-            dg->insertRequest(qcaHash, jsonToCborString(qcaJson));
-            return qcaHash.to_string(HashFormat::Base16, false);
+            /* fnStateHashHex captures fn's Q-space identity; look it
+               up in pool for the parent Selector. */
+            std::optional<ref<const trace::Selector>> fnRef;
+            try {
+                auto h = Hash::parseNonSRIUnprefixed(cs.fnStateHashHex, HashAlgorithm::SHA256);
+                fnRef = dg->selectorPool.find(h);
+            } catch (...) {}
+            if (fnRef) {
+                auto qcaSel = dg->selectorPool.intern(trace::SelectorCallbackApply{
+                    obsSetHash.to_string(HashFormat::Base16, false), *fnRef});
+                nlohmann::json qcaJson = trace::toJson(*qcaSel);
+                dg->insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
+                return qcaSel->cachedHash.to_string(HashFormat::Base16, false);
+            }
         }
     }
     /* Under the Selector-is-a-sequence model, the wrapper's producer
@@ -163,8 +169,19 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     auto fromHex = getProducerSelectorHex(writer);
     if (!fromHex)
         return innerChild;
-    trace::SelectorGetAttr query{name, *fromHex};
-    auto queryHash = TracingDecisionGraph::computeSelectorHash(query);
+    auto * dg = writer.getDecisionGraph();
+    if (!dg)
+        return innerChild;
+    std::optional<ref<const trace::Selector>> fromSel;
+    try {
+        auto h = Hash::parseNonSRIUnprefixed(*fromHex, HashAlgorithm::SHA256);
+        fromSel = dg->selectorPool.find(h);
+    } catch (...) {}
+    if (!fromSel)
+        return innerChild;
+    auto querySel = dg->selectorPool.intern(trace::SelectorGetAttr{name, *fromSel});
+    auto & query = std::get<trace::SelectorGetAttr>(querySel->node);
+    auto queryHash = querySel->cachedHash;
     tracingCacheLog(
         "TO::maybeGetAttr '%s' -> Q=%s (from=%s, cbApplyOrigin=%d)",
         name.c_str(),
@@ -201,7 +218,7 @@ trace::ResultWHNF & TracingObject::whnf()
        OuterApply::run. Re-emit here when the wrapper is a
        callback-origin apply result. */
     if (cbApplyOrigin && producer)
-        writer.emitCallbackApplyForApplyResult(argCell, trace::toVariant(**producer), whnfResult);
+        writer.emitCallbackApplyForApplyResult(argCell, *producer, whnfResult);
     /* #185: no separate whnf Fact — nav descendants + root wrappers
        decode WHNF from triePos.resultNodeHash (parent Selector's
        Terminal). Callback-origin wrappers emit QCA above. */
@@ -310,8 +327,18 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     auto fromHex = getProducerSelectorHex(writer);
     if (!fromHex)
         return inner->getListElem(index);
-    trace::SelectorGetListElem query{*fromHex, index};
-    /* Phase D2: getter — no push, direct Terminal. */
+    auto * dg = writer.getDecisionGraph();
+    if (!dg)
+        return inner->getListElem(index);
+    std::optional<ref<const trace::Selector>> fromSel;
+    try {
+        auto h = Hash::parseNonSRIUnprefixed(*fromHex, HashAlgorithm::SHA256);
+        fromSel = dg->selectorPool.find(h);
+    } catch (...) {}
+    if (!fromSel)
+        return inner->getListElem(index);
+    auto querySel = dg->selectorPool.intern(trace::SelectorGetListElem{index, *fromSel});
+    auto & query = std::get<trace::SelectorGetListElem>(querySel->node);
     auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
     auto result = inner->getListElem(index);
     trace::ResultWHNF childWHNF = computeWHNFFromObject(*result);
@@ -357,8 +384,18 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
     auto fromHex = getProducerSelectorHex(writer);
     if (!fromHex)
         return inner->getFunctionInfo();
-    trace::SelectorGetFunctionInfo query{*fromHex};
-    /* Phase D2: getter — no push, direct Terminal. */
+    auto * dg = writer.getDecisionGraph();
+    if (!dg)
+        return inner->getFunctionInfo();
+    std::optional<ref<const trace::Selector>> fromSel;
+    try {
+        auto h = Hash::parseNonSRIUnprefixed(*fromHex, HashAlgorithm::SHA256);
+        fromSel = dg->selectorPool.find(h);
+    } catch (...) {}
+    if (!fromSel)
+        return inner->getFunctionInfo();
+    auto querySel = dg->selectorPool.intern(trace::SelectorGetFunctionInfo{*fromSel});
+    auto & query = std::get<trace::SelectorGetFunctionInfo>(querySel->node);
     auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
     auto result = inner->getFunctionInfo();
     trace::ResultFunctionInfo traceResult;
@@ -394,30 +431,34 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
 
     /* cb-apply: record an explicit ε edge for this apply.
        See parallel call in TracingEvaluator::apply. */
-    /* #181: SelectorApply carries fn's Q hash only; arg observed by value */
-    nlohmann::json applyBoundaryJson = trace::SelectorApply{*fnIdOpt};
+    auto * dg = writer.getDecisionGraph();
+    if (!dg)
+        return inner->queryApply(argObj);
+    /* Look up fn's Selector in pool via hex. */
+    std::optional<ref<const trace::Selector>> fnSelOpt;
+    try {
+        auto h = Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256);
+        fnSelOpt = dg->selectorPool.find(h);
+    } catch (...) {}
+    if (!fnSelOpt)
+        return inner->queryApply(argObj);
+    auto fnSel = *fnSelOpt;
+
+    /* Also try to use this proxy's own Selector as fn identity if
+       distinct from raw fnIdOpt (apply-result case). */
+    if (auto mine = getSelector())
+        fnSel = *mine;
+
+    auto applySel = dg->selectorPool.intern(trace::SelectorApply{fnSel});
+    auto applyBoundaryJson = trace::toJson(*applySel);
     tracingCacheLog("createCallbackCell callsite=TracingObject::queryApply fn=%s arg=%s",
                     fnIdOpt->substr(0, 12), argIdOpt->substr(0, 12));
     writer.createCallbackCell(applyBoundaryJson);
 
-    /* SelectorApply.fn = fn's identity hex. `getSelectorHashHex()` on this
-       TracingObject returns the content hash of its stored producer
-       when apply-result, or triePos.queryHashStr when non-apply-result.
-       Falls back to the raw fnIdOpt for Objects without an internal
-       state-hash (shouldn't happen for TracingObject, defensive). */
-    auto fnQHex = getSelectorHashHex().value_or(*fnIdOpt);
-    trace::SelectorApply resultProducer{fnQHex};
-
-    /* apply-result state hash is content-only — see commentary in
-       TracingEvaluator::apply. */
-    auto qHash = TracingDecisionGraph::computeSelectorHash(resultProducer);
+    auto qHash = applySel->cachedHash;
     auto qHex = qHash.to_string(HashFormat::Base16, false);
 
-    /* Record the apply Request payload at the subject-id hash so dispatch
-       and the legacy SelectorApply{fn, arg} payload coincide. The legacy
-       fnId/argSubject fields remain for the dispatcher's resolveIdentity
-       chain. */
-    trace::SelectorApply applyQ{*fnIdOpt};
+    auto & applyQ = std::get<trace::SelectorApply>(applySel->node);
     auto v = writer.getSink().logSelector(applyQ);
     auto result = inner->queryApply(argObj);
     TriePosition applyTriePos{
@@ -428,10 +469,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
         new TracingObject(ref<Object>(result), writer, v, applyTriePos));
     auto cell = ArgCell::make(argCell, argObj);
     child->withArgCell(std::move(cell));
-    if (auto * dg = writer.getDecisionGraph()) {
-        if (auto sel = trace::fromVariant(trace::SelectorVariant{resultProducer}, dg->selectorPool))
-            child->withProducer(*sel);
-    }
+    child->withProducer(applySel);
     return child;
 }
 

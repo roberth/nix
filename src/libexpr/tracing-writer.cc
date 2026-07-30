@@ -119,20 +119,25 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
         auto canonicalObsSetHash = dg.insertObservationSet(intersected);
         auto canonicalObsSetHex =
             canonicalObsSetHash.to_string(HashFormat::Base16, false);
-        trace::SelectorCallbackApply canonicalCba{incomingCbFn, canonicalObsSetHex};
-        trace::SelectorVariant canonicalCbaVar{canonicalCba};
-        auto canonicalCbaHash =
-            TracingDecisionGraph::computeSelectorHash(canonicalCbaVar);
-        nlohmann::json canonicalCbaJson = canonicalCbaVar;
+        /* Look up incomingCbFn's Selector in pool; skip canonicalisation
+           if not interned. */
+        std::optional<ref<const trace::Selector>> incomingCbFnRef;
+        try {
+            auto h = Hash::parseNonSRIUnprefixed(incomingCbFn, HashAlgorithm::SHA256);
+            incomingCbFnRef = dg.selectorPool.find(h);
+        } catch (...) {}
+        if (!incomingCbFnRef)
+            return std::nullopt;
+        auto canonicalCbaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
+            canonicalObsSetHex, *incomingCbFnRef});
+        auto canonicalCbaHash = canonicalCbaSel->cachedHash;
+        nlohmann::json canonicalCbaJson = trace::toJson(*canonicalCbaSel);
         dg.insertRequest(canonicalCbaHash, jsonToCborString(canonicalCbaJson));
 
-        trace::SelectorGetAttr canonicalGetter{
-            incomingName,
-            canonicalCbaHash.to_string(HashFormat::Base16, false)};
-        trace::SelectorVariant canonicalGetterVar{canonicalGetter};
-        auto canonicalGetterHash =
-            TracingDecisionGraph::computeSelectorHash(canonicalGetterVar);
-        nlohmann::json canonicalGetterJson = canonicalGetterVar;
+        auto canonicalGetterSel = dg.selectorPool.intern(trace::SelectorGetAttr{
+            incomingName, canonicalCbaSel});
+        auto canonicalGetterHash = canonicalGetterSel->cachedHash;
+        nlohmann::json canonicalGetterJson = trace::toJson(*canonicalGetterSel);
         dg.insertRequest(canonicalGetterHash,
                          jsonToCborString(canonicalGetterJson));
 
@@ -157,7 +162,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
 
 
 void TracingWriter::logOuterObservation(
-    const trace::SelectorVariant & query,
+    ref<const trace::Selector> query,
     const trace::ResultVariant & result,
     std::string producerDesc,
     const std::shared_ptr<const ArgCell> & attributionCell)
@@ -165,19 +170,8 @@ void TracingWriter::logOuterObservation(
     if (!decisionGraph)
         return;
 
-    /* Task #110 (C3): SelectorCallbackApply emission moved to
-       TracingObject::whnf() where the applyResult's WHNF is
-       actually known. No preamble here — a WHNF query always
-       precedes any structural access on an applyResult, so cold
-       will have emitted QCA-with-WHNF by the time non-WHNF probes
-       on that applyResult happen. */
-
-    /* #178: state-hash `from` field stamping retires. Under the
-       per-cell factset model, cur at (Q, cur) does the discrimination
-       the `from` state hash used to do. Q hashes become stable per
-       operation. */
     std::string queryTag = std::visit(
-        [](const auto & q) -> std::string { return std::string(q.tag); }, query);
+        [](const auto & q) -> std::string { return std::string(q.tag); }, query->node);
     tracingCacheLog(
         "logOuterObservation: producer=%s query=%s attributionCell=%p depth=%d facts_before=%zu%s",
         producerDesc, queryTag,
@@ -186,11 +180,11 @@ void TracingWriter::logOuterObservation(
         attributionCell ? attributionCell->facts.size() : 0,
         attributionCell && attributionCell->parent ? " (has parent)" : "");
 
-    nlohmann::json queryJson = trace::toJson(query);
+    nlohmann::json queryJson = trace::toJson(*query);
     nlohmann::json resultJson;
     std::visit([&](const auto & r) { resultJson = r; }, result);
 
-    auto selectorHash = hashString(HashAlgorithm::SHA256, queryJson.dump());
+    auto selectorHash = query->cachedHash;
     auto responsePayload = jsonToCborString(resultJson);
     auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
 

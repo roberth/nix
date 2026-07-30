@@ -286,6 +286,8 @@ struct SelectorImport
 };
 DECLARE_SELECTOR_RESULT(SelectorImport, ResultWHNF)
 
+struct Selector;
+
 /** Get an attribute by name from a value that has been shown (via
     parent WHNF) to contain it. Pure retrieval — no existence check
     is folded in; the caller must have projected membership from the
@@ -294,31 +296,12 @@ struct SelectorGetAttr
 {
     static constexpr std::string_view tag = "getAttr";
     std::string name;
-    std::string from;   ///< Parent Q identity (stable under #178).
-    auto operator<=>(const SelectorGetAttr &) const = default;
+    ref<const Selector> parent;
+    bool operator==(const SelectorGetAttr & other) const;
+    std::strong_ordering operator<=>(const SelectorGetAttr & other) const;
 };
-DECLARE_SELECTOR_RESULT(SelectorGetAttr, ResultWHNF)
-
-/** Get a list element by index from a value that has been shown (via
-    parent WHNF) to have at least index+1 elements. Pure retrieval —
-    no bounds check is folded in; caller must have projected size from
-    the parent's WHNFList.size first. Returns the child's WHNF. */
-struct SelectorGetListElem
-{
-    static constexpr std::string_view tag = "getListElem";
-    std::string from;   ///< Parent Q identity (stable under #178).
-    size_t index;
-    auto operator<=>(const SelectorGetListElem &) const = default;
-};
-DECLARE_SELECTOR_RESULT(SelectorGetListElem, ResultWHNF)
-
-/** Get function argument info (formals). */
-struct SelectorGetFunctionInfo
-{
-    static constexpr std::string_view tag = "getFunctionInfo";
-    std::string from;   ///< Parent Q identity (stable under #178).
-    auto operator<=>(const SelectorGetFunctionInfo &) const = default;
-};
+template<> struct ResultOf<SelectorGetAttr> { using Type = ResultWHNF; };
+void to_json(nlohmann::json & j, const SelectorGetAttr & q);
 
 /** Result for getFunctionInfo: optional formals map + ellipsis. */
 struct ResultFunctionInfo
@@ -327,58 +310,56 @@ struct ResultFunctionInfo
     std::map<std::string, bool> formals; ///< name -> hasDefault (empty if !hasInfo)
     bool ellipsis = false;
 };
+void to_json(nlohmann::json & j, const ResultFunctionInfo & r);
+void from_json(const nlohmann::json & j, ResultFunctionInfo & r);
 
-DECLARE_SELECTOR_RESULT(SelectorGetFunctionInfo, ResultFunctionInfo)
+/** Get a list element by index. */
+struct SelectorGetListElem
+{
+    static constexpr std::string_view tag = "getListElem";
+    size_t index;
+    ref<const Selector> parent;
+    bool operator==(const SelectorGetListElem & other) const;
+    std::strong_ordering operator<=>(const SelectorGetListElem & other) const;
+};
+template<> struct ResultOf<SelectorGetListElem> { using Type = ResultWHNF; };
+void to_json(nlohmann::json & j, const SelectorGetListElem & q);
 
-/** Apply a function to an argument. `fn` is the hex of fn's own Q hash
-    — a stepping stone toward the full compositional shape (nested
-    SelectorVariant). Arg is outer-supplied, observed by value; its
-    discrimination flows through cur (observations on arg fold into
-    cell.factSetHash via the pull model). */
+/** Get function argument info (formals). */
+struct SelectorGetFunctionInfo
+{
+    static constexpr std::string_view tag = "getFunctionInfo";
+    ref<const Selector> parent;
+    bool operator==(const SelectorGetFunctionInfo & other) const;
+    std::strong_ordering operator<=>(const SelectorGetFunctionInfo & other) const;
+};
+template<> struct ResultOf<SelectorGetFunctionInfo> { using Type = ResultFunctionInfo; };
+void to_json(nlohmann::json & j, const SelectorGetFunctionInfo & q);
+
+/** Apply a function to an argument. `parent` is the fn Selector. */
 struct SelectorApply
 {
     static constexpr std::string_view tag = "apply";
-    std::string fn;
-    auto operator<=>(const SelectorApply &) const = default;
+    ref<const Selector> parent;
+    bool operator==(const SelectorApply & other) const;
+    std::strong_ordering operator<=>(const SelectorApply & other) const;
 };
-DECLARE_SELECTOR_RESULT(SelectorApply, ResultWHNF)
+template<> struct ResultOf<SelectorApply> { using Type = ResultWHNF; };
+void to_json(nlohmann::json & j, const SelectorApply & q);
 
-/** Apply a callback to a contra-arg, identified by the outer's
-    observation-set on the contra-arg.
-
-    Distinct from `SelectorApply` in identity semantics: a regular
-    `SelectorApply` identifies the arg by its state hash (evolving via
-    Env-layer observation folding), while `SelectorCallbackApply`
-    identifies the arg by the SET of observations the outer's
-    callback made on it during this call. Different observation sets
-    → different queryHashes → distinct DB rows.
-
-    Motivation: sibling `(cb 10) + (cb 20)` calls whose contra-args
-    have identical initial state hashes but observably different
-    values. State-hash-only identity collides at the first probe;
-    observation-set identity discriminates by construction.
-
-    `argObsSet` is a content hash referring to an entry in the
-    ObservationSet CAS pool. The pool entry lists the (selectorHash,
-    responseHash) tuples of the outer's probes on the contra-arg
-    during this call.
-
-    Payload consumers: writer emits this at callback firing end
-    with the accumulated observation set. Walker constructs a proxy
-    that answers exactly those observations, invokes fn live. */
+/** Apply a callback to a contra-arg. `parent` is the fn Selector;
+    `argObsSet` is a content hash referring to the outer's observation-set
+    on the contra-arg. */
 struct SelectorCallbackApply
 {
     static constexpr std::string_view tag = "callbackApply";
-    /** Hex of the callback fn's Q hash — the query-space identity of
-        the fn being applied. Under the unified selector shape (SelectorX
-        = fn-that-produced-us + distinguishing path), argObsSet plays
-        the same role as `name` in SelectorGetAttr: the discriminator
-        that says which observation set this firing recorded. */
-    std::string fn;
-    std::string argObsSet;     ///< Content hash of the observation set
-    auto operator<=>(const SelectorCallbackApply &) const = default;
+    std::string argObsSet;
+    ref<const Selector> parent;
+    bool operator==(const SelectorCallbackApply & other) const;
+    std::strong_ordering operator<=>(const SelectorCallbackApply & other) const;
 };
-DECLARE_SELECTOR_RESULT(SelectorCallbackApply, ResultWHNF)
+template<> struct ResultOf<SelectorCallbackApply> { using Type = ResultWHNF; };
+void to_json(nlohmann::json & j, const SelectorCallbackApply & q);
 
 /** Reference a positional callback arg by its reverse-De-Bruijn depth.
     A Selector like any other: its Q hash falls out of its shape, and
@@ -487,160 +468,47 @@ using ResultVariant = std::variant<
 // from DB rows walks parent hashes via a Selector pool (see below).
 // ---------------------------------------------------------------------------
 
-struct Selector;
-
-struct SelectorGetAttrStep
-{
-    static constexpr std::string_view tag = "getAttr";
-    std::string name;
-    ref<const Selector> parent;
-    bool operator==(const SelectorGetAttrStep & other) const;
-    auto operator<=>(const SelectorGetAttrStep & other) const;
-};
-
-struct SelectorGetListElemStep
-{
-    static constexpr std::string_view tag = "getListElem";
-    size_t index;
-    ref<const Selector> parent;
-    bool operator==(const SelectorGetListElemStep & other) const;
-    auto operator<=>(const SelectorGetListElemStep & other) const;
-};
-
-struct SelectorGetFunctionInfoStep
-{
-    static constexpr std::string_view tag = "getFunctionInfo";
-    ref<const Selector> parent;
-    bool operator==(const SelectorGetFunctionInfoStep & other) const;
-    auto operator<=>(const SelectorGetFunctionInfoStep & other) const;
-};
-
-struct SelectorApplyStep
-{
-    static constexpr std::string_view tag = "apply";
-    ref<const Selector> parent;   ///< fn — the callable being applied
-    bool operator==(const SelectorApplyStep & other) const;
-    auto operator<=>(const SelectorApplyStep & other) const;
-};
-
-struct SelectorCallbackApplyStep
-{
-    static constexpr std::string_view tag = "callbackApply";
-    std::string argObsSet;
-    ref<const Selector> parent;   ///< fn — the callable being applied
-    bool operator==(const SelectorCallbackApplyStep & other) const;
-    auto operator<=>(const SelectorCallbackApplyStep & other) const;
-};
-
-using SelectorNode = std::variant<
-    SelectorExpr,
-    SelectorImport,
-    SelectorArg,
-    SelectorGetAttrStep,
-    SelectorGetListElemStep,
-    SelectorGetFunctionInfoStep,
-    SelectorApplyStep,
-    SelectorCallbackApplyStep>;
-
+/** Recursive Selector: node payload + cached content hash. Step
+    alternatives carry ref<const Selector> parent (structural
+    sharing). Constructed via SelectorPool::intern; both fields const. */
 struct Selector
 {
-    const SelectorNode node;
+    const SelectorVariant node;
     const Hash cachedHash;
 
-    /** Construct a Selector from a Node. Computes the hash bottom-up
-        (parent's cachedHash is already known via the ref) and stores
-        it. Caller normally goes through SelectorPool::intern() to
-        share heap nodes for identical payloads. */
-    explicit Selector(SelectorNode n);
+    explicit Selector(SelectorVariant n);
 };
 
-/** In-memory pool of Selectors keyed by cachedHash. Interning gives
-    every hash exactly one heap node — traversal via `parent` visits
-    that one node. Reconstruction from DB rows walks parent hashes
-    through this pool. Owned by whoever holds Selectors long enough to
-    dedupe them (currently: TracingDecisionGraph). */
 class SelectorPool
 {
     std::unordered_map<Hash, ref<const Selector>> pool;
 
 public:
-    /** Return the pool's canonical Selector for this node. If a
-        Selector with the same content-hash already exists, returns
-        that one (structural sharing). Otherwise constructs a fresh
-        Selector, stores it, and returns it. */
-    ref<const Selector> intern(SelectorNode node);
-
-    /** Look up an already-interned Selector by its hash. Returns
-        nullopt if not yet in the pool — callers reconstructing from
-        DB rows check this first before decoding a payload. */
+    ref<const Selector> intern(SelectorVariant node);
     std::optional<ref<const Selector>> find(const Hash & h) const;
 };
 
-/** Flatten a recursive Selector into the stringly-typed
-    SelectorVariant form (parent references become hex hash strings).
-    Used at serialization boundaries (JSON codec, DB payload writer). */
-SelectorVariant toVariant(const Selector & s);
-
-/** Reconstruct a recursive Selector from the flat SelectorVariant
-    form. Parent hash strings are resolved through `pool` (which must
-    already contain the parent — reconstruction is bottom-up, so
-    callers reconstruct the parent chain first). Returns nullopt if
-    the variant carries an unparseable parent hash or the pool lacks
-    the referenced parent. */
-std::optional<ref<const Selector>> fromVariant(
-    const SelectorVariant & v, SelectorPool & pool);
-
-/** Selector-native adapters. Consumers holding a recursive Selector
-    can use these directly without going through SelectorVariant. */
+/* Selector adapters — most consumers hold Selector / ref<const Selector>. */
 std::string describe(const Selector & s);
+std::string describe(const SelectorVariant & q);
 nlohmann::json toJson(const Selector & s);
-/** Hash accessor — returns the cached hash without recomputation. */
+nlohmann::json toJson(const SelectorVariant & q);
 inline const Hash & computeSelectorHash(const Selector & s) { return s.cachedHash; }
-/** True iff s.node is a step type (folds cur on dispatch). Leaves
-    (SelectorExpr / SelectorImport / SelectorArg) return false. */
+Hash computeSelectorHash(const SelectorVariant & q);
 bool willMoveStateHash(const Selector & s);
+bool willMoveStateHash(const SelectorVariant & q);
 
-/** SelectorVariant's own to_json/from_json — visits the variant to
-    emit an alternative's flat fields plus the `tag` discriminator,
-    and reads them back into the right alternative via the fold
-    template below. */
+/** to_json on the flat SelectorVariant — dispatches to per-alternative
+    to_json. No from_json companion (step Selectors need SelectorPool
+    to resolve parent references; use nodeFromJson). */
 void to_json(nlohmann::json & j, const SelectorVariant & q);
-void from_json(const nlohmann::json & j, SelectorVariant & q);
+
+/** Reconstruct a Selector from JSON — parents resolved via pool. */
+std::optional<ref<const Selector>> nodeFromJson(
+    const nlohmann::json & j, SelectorPool & pool);
 
 namespace detail {
 
-/**
- * Fold-based `from_json` for any `std::variant<Ts...>` whose
- * alternatives carry a `static constexpr std::string_view tag`
- * discriminator. `Ts...` unpacks straight from the variant type —
- * no per-variant hand-enumeration of alternatives.
- */
-template<typename V, typename T>
-inline bool tryVariantAlternative(const nlohmann::json & j, V & v, std::string_view tag)
-{
-    if (tag != T::tag) return false;
-    T val;
-    from_json(j, val);
-    v = std::move(val);
-    return true;
-}
-
-template<typename... Ts>
-inline void fromJsonByTag(const nlohmann::json & j, std::variant<Ts...> & v)
-{
-    auto tag = j.at("tag").template get<std::string_view>();
-    bool matched = (tryVariantAlternative<std::variant<Ts...>, Ts>(j, v, tag) || ...);
-    if (!matched)
-        throw nlohmann::json::parse_error::create(
-            302, 0, "unknown variant tag: " + std::string(tag), &j);
-}
-
-/**
- * `true` if every `Ts::tag` differs from every other. A tag
- * collision would let `fromJsonByTag` silently pick whichever
- * alternative appears first in `Ts...` for the colliding tag —
- * enforce distinctness at compile time instead.
- */
 template<typename... Ts>
 consteval bool tagsAreDistinct()
 {
@@ -661,8 +529,7 @@ template<typename... Ts> struct VariantTagsDistinct<std::variant<Ts...>>
 
 static_assert(
     detail::VariantTagsDistinct<SelectorVariant>::value,
-    "SelectorVariant alternatives must have distinct `tag` values — "
-    "duplicated tags cause silent misroute in fromJsonByTag.");
+    "SelectorVariant alternatives must have distinct `tag` values.");
 
 // ---------------------------------------------------------------------------
 // OuterValueRequest / OuterValueResponse
@@ -679,7 +546,7 @@ static_assert(
 struct OuterValueRequest
 {
     static constexpr std::string_view tag = "outerValue";
-    SelectorVariant query;
+    ref<const Selector> query;
 };
 
 struct OuterValueResponse
@@ -687,7 +554,14 @@ struct OuterValueResponse
     ResultVariant result;
 };
 
-DECLARE_TRACE_PAIR(OuterValueRequest, OuterValueResponse)
+template<>
+struct ResponseTrace<OuterValueRequest>
+{
+    using ResponseType = OuterValueResponse;
+};
+void to_json(nlohmann::json & j, const OuterValueRequest & r);
+void to_json(nlohmann::json & j, const OuterValueResponse & r);
+void from_json(const nlohmann::json & j, OuterValueResponse & r);
 
 template<template<typename> class F>
 using AllEnvRequests = ApplyWrapper<F, FileReadRequest, GetEnvRequest, OuterValueRequest>;

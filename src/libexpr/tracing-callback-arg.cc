@@ -18,7 +18,7 @@ static std::string tracingLocalFromOf(OuterId id)
 
 TracingCallbackArg::TracingCallbackArg(
     std::shared_ptr<Object> inner,
-    trace::SelectorVariant producer_,
+    ref<const trace::Selector> producer_,
     TracingWriter & writer,
     ref<SourceRoot> rootFSRoot,
     std::shared_ptr<const ArgCell> argCell)
@@ -45,11 +45,13 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
     auto child = inner->maybeGetAttr(name);
     if (!child)
         return nullptr;
-    trace::SelectorGetAttr query{name, tracingLocalFromOf(localId())};
-    recordObservation(query, computeWHNFFromObject(*child));
-    trace::SelectorVariant childProducer{query};
+    auto * dg = writer.getDecisionGraph();
+    if (!dg)
+        return child;
+    auto querySel = dg->selectorPool.intern(trace::SelectorGetAttr{name, producer});
+    recordObservation(querySel, computeWHNFFromObject(*child));
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childProducer), writer, rootFSRoot, argCell);
+        std::move(child), querySel, writer, rootFSRoot, argCell);
 }
 
 trace::ResultWHNF & TracingCallbackArg::whnf()
@@ -159,11 +161,12 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
            throws the source-positioned error. */
         return inner->getListElem(index);
     auto child = inner->getListElem(index);
-    trace::SelectorGetListElem query{tracingLocalFromOf(localId()), index};
-    recordObservation(query, computeWHNFFromObject(*child));
-    trace::SelectorVariant childProducer{query};
+    auto * dg = writer.getDecisionGraph();
+    if (!dg) return child;
+    auto querySel = dg->selectorPool.intern(trace::SelectorGetListElem{index, producer});
+    recordObservation(querySel, computeWHNFFromObject(*child));
     return std::make_shared<TracingCallbackArg>(
-        std::move(child), std::move(childProducer), writer, rootFSRoot, argCell);
+        std::move(child), querySel, writer, rootFSRoot, argCell);
 }
 
 ObjectType TracingCallbackArg::getTypeLazy()
@@ -201,7 +204,11 @@ std::optional<FunctionInfo> TracingCallbackArg::getFunctionInfo()
     auto info = inner->getFunctionInfo();
     trace::ResultFunctionInfo rfi{
         info.has_value(), info ? info->formals : std::map<std::string, bool>{}, info ? info->ellipsis : false};
-    recordObservation(trace::SelectorGetFunctionInfo{tracingLocalFromOf(localId())}, rfi);
+    auto * dg = writer.getDecisionGraph();
+    if (dg) {
+        auto qSel = dg->selectorPool.intern(trace::SelectorGetFunctionInfo{producer});
+        recordObservation(qSel, rfi);
+    }
     return info;
 }
 
@@ -215,15 +222,14 @@ std::optional<std::vector<std::string>> TracingCallbackArg::getAttrPath()
     return inner->getAttrPath();
 }
 
-void TracingCallbackArg::recordObservation(const trace::SelectorVariant & query, const trace::ResultVariant & result)
+void TracingCallbackArg::recordObservation(ref<const trace::Selector> query, const trace::ResultVariant & result)
 {
-    /* #184: append directly to this proxy's argCell.callbackState. */
     if (!argCell || !argCell->callbackState) {
         tracingCacheLog(
             "TracingCallbackArg::recordObservation: no argCell/callbackState — observation dropped");
         return;
     }
-    auto qh = trace::computeSelectorHash(query);
+    auto qh = query->cachedHash;
     tracingCacheLog(
         "TracingCallbackArg::recordObservation: cell=%p appending q=%s",
         (void *) argCell.get(),
@@ -232,12 +238,8 @@ void TracingCallbackArg::recordObservation(const trace::SelectorVariant & query,
         [](const auto & r) -> nlohmann::json { return r; },
         result);
     auto rPayload = jsonToCborString(rJson);
-    /* Ensure the referenced Selector's payload is in the Requests pool
-       so downstream decoders (walker's resolveIdentity) can decode `q`
-       references from the obsSet. Content-addressed insert is
-       idempotent. */
     if (auto * dg = writer.getDecisionGraph()) {
-        nlohmann::json qJson = query;
+        nlohmann::json qJson = trace::toJson(*query);
         dg->insertRequest(qh, jsonToCborString(qJson));
     }
     argCell->callbackState->runningObsSet.push_back({qh, rPayload});

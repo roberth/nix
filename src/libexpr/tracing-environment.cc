@@ -57,13 +57,13 @@ std::optional<std::string> TracingEnvironment::getEnv(const std::string & name)
 }
 
 trace::ResultVariant TracingEnvironment::outerQuery(
-    const trace::SelectorVariant & query,
-    std::function<trace::ResultVariant(const trace::SelectorVariant &)> resolve,
-    trace::SelectorVariant producer,
+    ref<const trace::Selector> query,
+    std::function<trace::ResultVariant(ref<const trace::Selector>)> resolve,
+    ref<const trace::Selector> producer,
     const std::shared_ptr<const ArgCell> & attributionCell)
 {
     auto result = resolve(query);
-    writer.logOuterObservation(query, result, trace::describe(producer), attributionCell);
+    writer.logOuterObservation(query, result, trace::describe(*producer), attributionCell);
     return result;
 }
 

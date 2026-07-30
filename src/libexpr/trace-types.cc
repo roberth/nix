@@ -79,12 +79,8 @@ void to_json(nlohmann::json & j, const SelectorVariant & q)
     std::visit([&](const auto & sub) { j = sub; }, q);
 }
 
-void from_json(const nlohmann::json & j, SelectorVariant & q)
-{
-    /* Fold-based dispatch — see detail::fromJsonByTag. No
-       per-alternative enumeration here; the variant's Ts... drive it. */
-    detail::fromJsonByTag(j, q);
-}
+/* No from_json for SelectorVariant — step alternatives need SelectorPool.
+   Use nodeFromJson. */
 
 // ---------------------------------------------------------------------------
 // OuterValueRequest / OuterValueResponse serialization
@@ -119,13 +115,11 @@ static void resultVariantFromJson(const nlohmann::json & j, ResultVariant & resu
 
 void to_json(nlohmann::json & j, const OuterValueRequest & r)
 {
-    j = nlohmann::json{{"query", r.query}};
+    nlohmann::json qJson;
+    std::visit([&](const auto & sub) { qJson = sub; }, r.query->node);
+    j = nlohmann::json{{"query", std::move(qJson)}};
 }
-
-void from_json(const nlohmann::json & j, OuterValueRequest & r)
-{
-    j.at("query").get_to(r.query);
-}
+/* No from_json for OuterValueRequest — needs SelectorPool. */
 
 void to_json(nlohmann::json & j, const OuterValueResponse & r)
 {
@@ -311,42 +305,24 @@ void from_json(const nlohmann::json & j, SelectorImport & q)
     j.at("path").get_to(q.path);
 }
 
-void to_json(nlohmann::json & j, const SelectorGetAttr & q)
+static std::string hexOf(const ref<const Selector> & s)
 {
-    j = nlohmann::json{
-        {"tag", SelectorGetAttr::tag},
-        {"name", q.name}, {"from", q.from}};
+    return s->cachedHash.to_string(HashFormat::Base16, false);
 }
 
-void from_json(const nlohmann::json & j, SelectorGetAttr & q)
+void to_json(nlohmann::json & j, const SelectorGetAttr & q)
 {
-    j.at("name").get_to(q.name);
-    j.at("from").get_to(q.from);
+    j = nlohmann::json{{"tag", SelectorGetAttr::tag}, {"name", q.name}, {"from", hexOf(q.parent)}};
 }
 
 void to_json(nlohmann::json & j, const SelectorGetListElem & q)
 {
-    j = nlohmann::json{
-        {"tag", SelectorGetListElem::tag},
-        {"from", q.from}, {"index", q.index}};
-}
-
-void from_json(const nlohmann::json & j, SelectorGetListElem & q)
-{
-    j.at("from").get_to(q.from);
-    j.at("index").get_to(q.index);
+    j = nlohmann::json{{"tag", SelectorGetListElem::tag}, {"from", hexOf(q.parent)}, {"index", q.index}};
 }
 
 void to_json(nlohmann::json & j, const SelectorGetFunctionInfo & q)
 {
-    j = nlohmann::json{
-        {"tag", SelectorGetFunctionInfo::tag},
-        {"from", q.from}};
-}
-
-void from_json(const nlohmann::json & j, SelectorGetFunctionInfo & q)
-{
-    j.at("from").get_to(q.from);
+    j = nlohmann::json{{"tag", SelectorGetFunctionInfo::tag}, {"from", hexOf(q.parent)}};
 }
 
 void to_json(nlohmann::json & j, const ResultFunctionInfo & r)
@@ -363,27 +339,12 @@ void from_json(const nlohmann::json & j, ResultFunctionInfo & r)
 
 void to_json(nlohmann::json & j, const SelectorApply & q)
 {
-    j = nlohmann::json{{"tag", SelectorApply::tag}, {"fn", q.fn}};
-}
-
-void from_json(const nlohmann::json & j, SelectorApply & q)
-{
-    j.at("fn").get_to(q.fn);
+    j = nlohmann::json{{"tag", SelectorApply::tag}, {"fn", hexOf(q.parent)}};
 }
 
 void to_json(nlohmann::json & j, const SelectorCallbackApply & q)
 {
-    j = nlohmann::json{
-        {"tag", SelectorCallbackApply::tag},
-        {"fn", q.fn},
-        {"argObsSet", q.argObsSet},
-    };
-}
-
-void from_json(const nlohmann::json & j, SelectorCallbackApply & q)
-{
-    j.at("fn").get_to(q.fn);
-    j.at("argObsSet").get_to(q.argObsSet);
+    j = nlohmann::json{{"tag", SelectorCallbackApply::tag}, {"fn", hexOf(q.parent)}, {"argObsSet", q.argObsSet}};
 }
 
 void to_json(nlohmann::json & j, const SelectorArg & q)
@@ -434,13 +395,9 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
             from_json(j["response"], resp);
             return Response<GetEnvRequest>{req, resp};
         }
-        if (type == OuterValueRequest::tag) {
-            OuterValueRequest req;
-            from_json(j["request"], req);
-            OuterValueResponse resp;
-            from_json(j["response"], resp);
-            return Response<OuterValueRequest>{req, resp};
-        }
+        /* OuterValueRequest needs SelectorPool to reconstruct. Skip. */
+        if (type == OuterValueRequest::tag)
+            return std::nullopt;
         return std::nullopt;
     }
 
@@ -451,19 +408,11 @@ std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j)
             return std::nullopt;
         auto type = q["tag"].get<std::string_view>();
 
+        /* Step Selectors have no from_json (need SelectorPool). Trace-file
+           tooling only decodes leaves here. */
         if (auto r = tryParseQuery<SelectorExpr>(type, j))
             return r;
         if (auto r = tryParseQuery<SelectorImport>(type, j))
-            return r;
-        if (auto r = tryParseQuery<SelectorGetAttr>(type, j))
-            return r;
-        if (auto r = tryParseQuery<SelectorGetListElem>(type, j))
-            return r;
-        if (auto r = tryParseQuery<SelectorGetFunctionInfo>(type, j))
-            return r;
-        if (auto r = tryParseQuery<SelectorCallbackApply>(type, j))
-            return r;
-        if (auto r = tryParseQuery<SelectorApply>(type, j))
             return r;
         if (auto r = tryParseQuery<SelectorArg>(type, j))
             return r;
@@ -545,13 +494,17 @@ std::vector<CorrelatedTraceEntry> correlateTrace(const std::vector<TraceEntry> &
                                   e.v;
                               }) {
                     using QueryPayload = std::decay_t<decltype(e.query)>;
-                    CompletedQuery<QueryPayload> completed;
-                    completed.query = e.query;
-                    completed.v = e.v;
-                    auto key = std::make_pair(queryResultTypeIndex<QueryPayload>(), e.v);
-                    auto it = resultIndex.find(key);
-                    completed.resultIndex = (it != resultIndex.end()) ? it->second : 0;
-                    result.push_back(completed);
+                    /* Step Selectors have no default constructor. Skip
+                       — matches parseTraceEntry's step skipping. */
+                    if constexpr (std::is_default_constructible_v<QueryPayload>) {
+                        CompletedQuery<QueryPayload> completed;
+                        completed.query = e.query;
+                        completed.v = e.v;
+                        auto key = std::make_pair(queryResultTypeIndex<QueryPayload>(), e.v);
+                        auto it = resultIndex.find(key);
+                        completed.resultIndex = (it != resultIndex.end()) ? it->second : 0;
+                        result.push_back(completed);
+                    }
                 } else {
                     result.push_back(e);
                 }
@@ -606,28 +559,81 @@ SelectorIndex::SelectorIndex(const std::vector<TraceEntry> & trace)
 }
 
 // ---------------------------------------------------------------------------
-// parseSelectorVariant / describe / fromHashOf
+// Selector step-type comparisons + Selector adapters
 // ---------------------------------------------------------------------------
 
-std::optional<SelectorVariant> parseSelectorVariant(const nlohmann::json & j)
+bool SelectorGetAttr::operator==(const SelectorGetAttr & other) const
+{ return name == other.name && parent->cachedHash == other.parent->cachedHash; }
+std::strong_ordering SelectorGetAttr::operator<=>(const SelectorGetAttr & other) const
 {
-    /* Delegate to SelectorVariant's from_json — the discriminator
-       lives there. */
-    if (!j.is_object() || !j.contains("tag"))
-        return std::nullopt;
-    try {
-        SelectorVariant qv;
-        from_json(j, qv);
-        return qv;
-    } catch (const std::exception &) {
-        return std::nullopt;
-    }
+    if (auto c = name <=> other.name; c != 0) return c;
+    return parent->cachedHash <=> other.parent->cachedHash;
 }
 
-static std::string shortHex(const std::string & hex)
+bool SelectorGetListElem::operator==(const SelectorGetListElem & other) const
+{ return index == other.index && parent->cachedHash == other.parent->cachedHash; }
+std::strong_ordering SelectorGetListElem::operator<=>(const SelectorGetListElem & other) const
 {
-    return hex.size() > 12 ? hex.substr(0, 12) : hex;
+    if (auto c = index <=> other.index; c != 0) return c;
+    return parent->cachedHash <=> other.parent->cachedHash;
 }
+
+bool SelectorGetFunctionInfo::operator==(const SelectorGetFunctionInfo & other) const
+{ return parent->cachedHash == other.parent->cachedHash; }
+std::strong_ordering SelectorGetFunctionInfo::operator<=>(const SelectorGetFunctionInfo & other) const
+{ return parent->cachedHash <=> other.parent->cachedHash; }
+
+bool SelectorApply::operator==(const SelectorApply & other) const
+{ return parent->cachedHash == other.parent->cachedHash; }
+std::strong_ordering SelectorApply::operator<=>(const SelectorApply & other) const
+{ return parent->cachedHash <=> other.parent->cachedHash; }
+
+bool SelectorCallbackApply::operator==(const SelectorCallbackApply & other) const
+{ return argObsSet == other.argObsSet && parent->cachedHash == other.parent->cachedHash; }
+std::strong_ordering SelectorCallbackApply::operator<=>(const SelectorCallbackApply & other) const
+{
+    if (auto c = argObsSet <=> other.argObsSet; c != 0) return c;
+    return parent->cachedHash <=> other.parent->cachedHash;
+}
+
+Hash computeSelectorHash(const SelectorVariant & query)
+{
+    nlohmann::json j;
+    to_json(j, query);
+    return hashString(HashAlgorithm::SHA256, j.dump());
+}
+
+Selector::Selector(SelectorVariant n)
+    : node(std::move(n))
+    , cachedHash(computeSelectorHash(node))
+{}
+
+ref<const Selector> SelectorPool::intern(SelectorVariant node)
+{
+    auto h = computeSelectorHash(node);
+    if (auto it = pool.find(h); it != pool.end())
+        return it->second;
+    auto s = make_ref<const Selector>(std::move(node));
+    pool.emplace(h, s);
+    return s;
+}
+
+std::optional<ref<const Selector>> SelectorPool::find(const Hash & h) const
+{
+    if (auto it = pool.find(h); it != pool.end()) return it->second;
+    return std::nullopt;
+}
+
+nlohmann::json toJson(const SelectorVariant & query)
+{
+    nlohmann::json j;
+    to_json(j, query);
+    return j;
+}
+
+nlohmann::json toJson(const Selector & s) { return toJson(s.node); }
+
+static std::string shortH(const Hash & h) { return h.to_string(HashFormat::Base16, false).substr(0, 12); }
 
 std::string describe(const SelectorVariant & query)
 {
@@ -636,13 +642,16 @@ std::string describe(const SelectorVariant & query)
             using Q = std::decay_t<decltype(q)>;
             std::string out{Q::tag};
             if constexpr (std::is_same_v<Q, SelectorGetAttr>) {
-                out += " name=\"" + q.name + "\"";
+                out += " name=\"" + q.name + "\" from=" + shortH(q.parent->cachedHash);
             } else if constexpr (std::is_same_v<Q, SelectorGetListElem>) {
-                out += " index=" + std::to_string(q.index);
+                out += " index=" + std::to_string(q.index) + " from=" + shortH(q.parent->cachedHash);
+            } else if constexpr (std::is_same_v<Q, SelectorGetFunctionInfo>) {
+                out += " from=" + shortH(q.parent->cachedHash);
             } else if constexpr (std::is_same_v<Q, SelectorApply>) {
-                out += " fn=" + shortHex(q.fn);
+                out += " fn=" + shortH(q.parent->cachedHash);
             } else if constexpr (std::is_same_v<Q, SelectorCallbackApply>) {
-                out += " fn=" + shortHex(q.fn) + " obsSet=" + shortHex(q.argObsSet);
+                out += " fn=" + shortH(q.parent->cachedHash)
+                    + " obsSet=" + (q.argObsSet.size() > 12 ? q.argObsSet.substr(0, 12) : q.argObsSet);
             } else if constexpr (std::is_same_v<Q, SelectorExpr>) {
                 out += " expr=\"" + q.expr + "\"";
             } else if constexpr (std::is_same_v<Q, SelectorImport>) {
@@ -655,298 +664,86 @@ std::string describe(const SelectorVariant & query)
         query);
 }
 
-/**
- * True iff a probe's response depends on the referenced Subject's
- * state — i.e. this Selector carries a `from`/`fn`/`arg` state hash
- * that a dispatcher resolves against the caller's cell chain. The
- * response bytes may then differ across callers with the same
- * requestHash at the moment of divergence (see the walker
- * dispatcher's comment on memoization). Root queries without a
- * from-style reference (`SelectorExpr`, `SelectorImport`) never
- * move state and are always safe to memoize.
- */
+std::string describe(const Selector & s) { return describe(s.node); }
+
 bool willMoveStateHash(const SelectorVariant & query)
 {
     return std::visit(
         overloaded{
             [](const SelectorExpr &) { return false; },
             [](const SelectorImport &) { return false; },
+            [](const SelectorArg &) { return false; },
             [](const SelectorGetAttr &) { return true; },
             [](const SelectorGetListElem &) { return true; },
             [](const SelectorGetFunctionInfo &) { return true; },
             [](const SelectorApply &) { return true; },
             [](const SelectorCallbackApply &) { return true; },
-            [](const SelectorArg &) { return false; },
         },
         query);
 }
 
-std::optional<Hash> fromHashOf(const SelectorVariant & query)
-{
-    return std::visit(
-        [](const auto & q) -> std::optional<Hash> {
-            using Q = std::decay_t<decltype(q)>;
-            if constexpr (requires { q.from; }) {
-                if (!true || std::string{}.empty())
-                    return std::nullopt;
-                try {
-                    return Hash::parseNonSRIUnprefixed(std::string{}, HashAlgorithm::SHA256);
-                } catch (...) {
-                    return std::nullopt;
-                }
-            } else {
-                return std::nullopt;
-            }
-        },
-        query);
-}
+bool willMoveStateHash(const Selector & s) { return willMoveStateHash(s.node); }
 
-void rewriteFrom(SelectorVariant & query, const std::string & newFromHex)
+std::optional<ref<const Selector>> nodeFromJson(
+    const nlohmann::json & j, SelectorPool & pool)
 {
-    /* #183: `from` fields now carry query-space Q hash as std::string.
-       Directly assign newFromHex. */
-    std::visit(
-        [&](auto & q) {
-            using Q = std::decay_t<decltype(q)>;
-            if constexpr (requires { q.from; })
-                q.from = newFromHex;
-        },
-        query);
-}
+    if (!j.is_object() || !j.contains("tag"))
+        return std::nullopt;
+    auto tag = j.at("tag").get<std::string_view>();
 
-nlohmann::json toJson(const SelectorVariant & query)
-{
-    nlohmann::json j;
-    std::visit([&](const auto & q) { j = q; }, query);
-    return j;
-}
-
-Hash computeSelectorHash(const SelectorVariant & query)
-{
-    return hashString(HashAlgorithm::SHA256, toJson(query).dump());
-}
-
-// ---------------------------------------------------------------------------
-// Recursive Selector: comparisons, constructor, pool, converters
-// ---------------------------------------------------------------------------
-
-/* Step-type comparisons compare by cachedHash of parent — cheap and
-   correct given hashes are content-addressed. */
-
-bool SelectorGetAttrStep::operator==(const SelectorGetAttrStep & other) const
-{
-    return name == other.name && parent->cachedHash == other.parent->cachedHash;
-}
-auto SelectorGetAttrStep::operator<=>(const SelectorGetAttrStep & other) const
-{
-    if (auto c = name <=> other.name; c != 0) return c;
-    return parent->cachedHash <=> other.parent->cachedHash;
-}
-
-bool SelectorGetListElemStep::operator==(const SelectorGetListElemStep & other) const
-{
-    return index == other.index && parent->cachedHash == other.parent->cachedHash;
-}
-auto SelectorGetListElemStep::operator<=>(const SelectorGetListElemStep & other) const
-{
-    if (auto c = index <=> other.index; c != 0) return c;
-    return parent->cachedHash <=> other.parent->cachedHash;
-}
-
-bool SelectorGetFunctionInfoStep::operator==(const SelectorGetFunctionInfoStep & other) const
-{
-    return parent->cachedHash == other.parent->cachedHash;
-}
-auto SelectorGetFunctionInfoStep::operator<=>(const SelectorGetFunctionInfoStep & other) const
-{
-    return parent->cachedHash <=> other.parent->cachedHash;
-}
-
-bool SelectorApplyStep::operator==(const SelectorApplyStep & other) const
-{
-    return parent->cachedHash == other.parent->cachedHash;
-}
-auto SelectorApplyStep::operator<=>(const SelectorApplyStep & other) const
-{
-    return parent->cachedHash <=> other.parent->cachedHash;
-}
-
-bool SelectorCallbackApplyStep::operator==(const SelectorCallbackApplyStep & other) const
-{
-    return argObsSet == other.argObsSet && parent->cachedHash == other.parent->cachedHash;
-}
-auto SelectorCallbackApplyStep::operator<=>(const SelectorCallbackApplyStep & other) const
-{
-    if (auto c = argObsSet <=> other.argObsSet; c != 0) return c;
-    return parent->cachedHash <=> other.parent->cachedHash;
-}
-
-/* Convert a step Node to the flat SelectorVariant form by emitting the
-   parent's hex hash into the from/fn field. Leaves pass through. */
-SelectorVariant toVariant(const Selector & s)
-{
-    return std::visit(
-        overloaded{
-            [](const SelectorExpr & q) -> SelectorVariant { return q; },
-            [](const SelectorImport & q) -> SelectorVariant { return q; },
-            [](const SelectorArg & q) -> SelectorVariant { return q; },
-            [](const SelectorGetAttrStep & q) -> SelectorVariant {
-                return SelectorGetAttr{q.name, q.parent->cachedHash.to_string(HashFormat::Base16, false)};
-            },
-            [](const SelectorGetListElemStep & q) -> SelectorVariant {
-                return SelectorGetListElem{q.parent->cachedHash.to_string(HashFormat::Base16, false), q.index};
-            },
-            [](const SelectorGetFunctionInfoStep & q) -> SelectorVariant {
-                return SelectorGetFunctionInfo{q.parent->cachedHash.to_string(HashFormat::Base16, false)};
-            },
-            [](const SelectorApplyStep & q) -> SelectorVariant {
-                return SelectorApply{q.parent->cachedHash.to_string(HashFormat::Base16, false)};
-            },
-            [](const SelectorCallbackApplyStep & q) -> SelectorVariant {
-                return SelectorCallbackApply{
-                    q.parent->cachedHash.to_string(HashFormat::Base16, false), q.argObsSet};
-            },
-        },
-        s.node);
-}
-
-/* Compute a Selector's cachedHash at construction: flatten to
-   SelectorVariant, dump JSON, SHA-256. Same bytes as before the
-   refactor — the DB compatibility invariant. */
-static Hash hashOfNode(const SelectorNode & node)
-{
-    /* We can't call toVariant() here without a full Selector to wrap,
-       so inline the flatten step. Leaves already carry no parent so
-       they hash directly; step types stringify parent->cachedHash. */
-    SelectorVariant v = std::visit(
-        overloaded{
-            [](const SelectorExpr & q) -> SelectorVariant { return q; },
-            [](const SelectorImport & q) -> SelectorVariant { return q; },
-            [](const SelectorArg & q) -> SelectorVariant { return q; },
-            [](const SelectorGetAttrStep & q) -> SelectorVariant {
-                return SelectorGetAttr{q.name, q.parent->cachedHash.to_string(HashFormat::Base16, false)};
-            },
-            [](const SelectorGetListElemStep & q) -> SelectorVariant {
-                return SelectorGetListElem{q.parent->cachedHash.to_string(HashFormat::Base16, false), q.index};
-            },
-            [](const SelectorGetFunctionInfoStep & q) -> SelectorVariant {
-                return SelectorGetFunctionInfo{q.parent->cachedHash.to_string(HashFormat::Base16, false)};
-            },
-            [](const SelectorApplyStep & q) -> SelectorVariant {
-                return SelectorApply{q.parent->cachedHash.to_string(HashFormat::Base16, false)};
-            },
-            [](const SelectorCallbackApplyStep & q) -> SelectorVariant {
-                return SelectorCallbackApply{
-                    q.parent->cachedHash.to_string(HashFormat::Base16, false), q.argObsSet};
-            },
-        },
-        node);
-    return computeSelectorHash(v);
-}
-
-Selector::Selector(SelectorNode n)
-    : node(std::move(n))
-    , cachedHash(hashOfNode(node))
-{
-}
-
-ref<const Selector> SelectorPool::intern(SelectorNode node)
-{
-    auto h = hashOfNode(node);
-    if (auto it = pool.find(h); it != pool.end())
-        return it->second;
-    auto s = make_ref<const Selector>(std::move(node));
-    pool.emplace(h, s);
-    return s;
-}
-
-std::optional<ref<const Selector>> SelectorPool::find(const Hash & h) const
-{
-    if (auto it = pool.find(h); it != pool.end())
-        return it->second;
-    return std::nullopt;
-}
-
-std::string describe(const Selector & s)
-{
-    return describe(toVariant(s));
-}
-
-nlohmann::json toJson(const Selector & s)
-{
-    return toJson(toVariant(s));
-}
-
-bool willMoveStateHash(const Selector & s)
-{
-    return std::visit(
-        overloaded{
-            [](const SelectorExpr &) { return false; },
-            [](const SelectorImport &) { return false; },
-            [](const SelectorArg &) { return false; },
-            [](const SelectorGetAttrStep &) { return true; },
-            [](const SelectorGetListElemStep &) { return true; },
-            [](const SelectorGetFunctionInfoStep &) { return true; },
-            [](const SelectorApplyStep &) { return true; },
-            [](const SelectorCallbackApplyStep &) { return true; },
-        },
-        s.node);
-}
-
-std::optional<ref<const Selector>> fromVariant(
-    const SelectorVariant & v, SelectorPool & pool)
-{
-    /* Resolve a hex parent hash to an already-interned Selector.
-       Returns nullopt if the hex doesn't parse or the pool lacks the
-       referenced parent — callers reconstruct bottom-up, so the
-       parent should already be in the pool by the time this fires. */
     auto lookupParent = [&](const std::string & hex) -> std::optional<ref<const Selector>> {
         try {
             auto h = Hash::parseNonSRIUnprefixed(hex, HashAlgorithm::SHA256);
             return pool.find(h);
-        } catch (...) {
-            return std::nullopt;
-        }
+        } catch (...) { return std::nullopt; }
     };
 
-    return std::visit(
-        overloaded{
-            [&](const SelectorExpr & q) -> std::optional<ref<const Selector>> {
-                return pool.intern(q);
-            },
-            [&](const SelectorImport & q) -> std::optional<ref<const Selector>> {
-                return pool.intern(q);
-            },
-            [&](const SelectorArg & q) -> std::optional<ref<const Selector>> {
-                return pool.intern(q);
-            },
-            [&](const SelectorGetAttr & q) -> std::optional<ref<const Selector>> {
-                auto p = lookupParent(q.from);
-                if (!p) return std::nullopt;
-                return pool.intern(SelectorGetAttrStep{q.name, *p});
-            },
-            [&](const SelectorGetListElem & q) -> std::optional<ref<const Selector>> {
-                auto p = lookupParent(q.from);
-                if (!p) return std::nullopt;
-                return pool.intern(SelectorGetListElemStep{q.index, *p});
-            },
-            [&](const SelectorGetFunctionInfo & q) -> std::optional<ref<const Selector>> {
-                auto p = lookupParent(q.from);
-                if (!p) return std::nullopt;
-                return pool.intern(SelectorGetFunctionInfoStep{*p});
-            },
-            [&](const SelectorApply & q) -> std::optional<ref<const Selector>> {
-                auto p = lookupParent(q.fn);
-                if (!p) return std::nullopt;
-                return pool.intern(SelectorApplyStep{*p});
-            },
-            [&](const SelectorCallbackApply & q) -> std::optional<ref<const Selector>> {
-                auto p = lookupParent(q.fn);
-                if (!p) return std::nullopt;
-                return pool.intern(SelectorCallbackApplyStep{q.argObsSet, *p});
-            },
-        },
-        v);
+    try {
+        if (tag == SelectorExpr::tag) {
+            SelectorExpr s;
+            j.at("expr").get_to(s.expr);
+            j.at("baseDir").get_to(s.baseDir);
+            return pool.intern(std::move(s));
+        }
+        if (tag == SelectorImport::tag) {
+            SelectorImport s;
+            j.at("path").get_to(s.path);
+            return pool.intern(std::move(s));
+        }
+        if (tag == SelectorArg::tag) {
+            SelectorArg s;
+            j.at("depth").get_to(s.depth);
+            return pool.intern(std::move(s));
+        }
+        if (tag == SelectorGetAttr::tag) {
+            auto p = lookupParent(j.at("from").get<std::string>());
+            if (!p) return std::nullopt;
+            return pool.intern(SelectorGetAttr{j.at("name").get<std::string>(), *p});
+        }
+        if (tag == SelectorGetListElem::tag) {
+            auto p = lookupParent(j.at("from").get<std::string>());
+            if (!p) return std::nullopt;
+            return pool.intern(SelectorGetListElem{j.at("index").get<size_t>(), *p});
+        }
+        if (tag == SelectorGetFunctionInfo::tag) {
+            auto p = lookupParent(j.at("from").get<std::string>());
+            if (!p) return std::nullopt;
+            return pool.intern(SelectorGetFunctionInfo{*p});
+        }
+        if (tag == SelectorApply::tag) {
+            auto p = lookupParent(j.at("fn").get<std::string>());
+            if (!p) return std::nullopt;
+            return pool.intern(SelectorApply{*p});
+        }
+        if (tag == SelectorCallbackApply::tag) {
+            auto p = lookupParent(j.at("fn").get<std::string>());
+            if (!p) return std::nullopt;
+            return pool.intern(SelectorCallbackApply{j.at("argObsSet").get<std::string>(), *p});
+        }
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+    return std::nullopt;
 }
 
 } // namespace nix::trace

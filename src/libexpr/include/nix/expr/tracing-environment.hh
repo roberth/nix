@@ -34,9 +34,9 @@ public:
     Hash getFileHash(const std::string & path) override;
     std::optional<std::string> getEnv(const std::string & name) override;
     trace::ResultVariant outerQuery(
-        const trace::SelectorVariant & query,
-        std::function<trace::ResultVariant(const trace::SelectorVariant &)> resolve,
-        trace::SelectorVariant producer,
+        ref<const trace::Selector> query,
+        std::function<trace::ResultVariant(ref<const trace::Selector>)> resolve,
+        ref<const trace::Selector> producer,
         const std::shared_ptr<const ArgCell> & attributionCell = {}) override;
     TraceSink * getTraceSink() override;
 };

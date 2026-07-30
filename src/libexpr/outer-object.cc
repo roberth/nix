@@ -9,12 +9,13 @@
 namespace nix {
 
 OuterObject::OuterObject(
-    std::function<trace::SelectorVariant()> producer_, std::shared_ptr<Object> outerObj_, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, OuterApplyFn applyFn)
+    std::function<ref<const trace::Selector>()> producer_, std::shared_ptr<Object> outerObj_, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, trace::SelectorPool * selectorPool_, OuterApplyFn applyFn)
     : producer(std::move(producer_))
     , outerObj(std::move(outerObj_))
     , queryFn(std::move(queryFn))
     , applyFn(std::move(applyFn))
     , outerRootFSRoot(std::move(outerRootFSRoot))
+    , selectorPool(selectorPool_)
 {
 }
 
@@ -43,26 +44,26 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
         return nullptr;
     auto preHex = getSelectorHashHex().value_or(std::string{});
     (void) computeWHNFFromObject(*childProbe);
-    /* Child producer = SelectorGetAttr{name, from=parent's Q hash hex}
-       — parent hex computed here reflects the now-populated obsSet. */
-    auto parentQHex = getSelectorHashHex().value_or(std::string{});
+    auto parentSel = producer();  // post-force snapshot
+    auto parentQHex = parentSel->cachedHash.to_string(HashFormat::Base16, false);
     tracingCacheLog(
         "OO::maybeGetAttr '%s' preHex=%s postHex=%s (%s)",
         name.c_str(),
         preHex.substr(0, 12).c_str(),
         parentQHex.substr(0, 12).c_str(),
         preHex == parentQHex ? "SAME" : "CHANGED");
-    trace::SelectorGetAttr q{name, parentQHex};
-    auto qr = queryFn(outerObj, q, producer(), argCell);
+    if (!selectorPool)
+        throw Error("outer maybeGetAttr: no SelectorPool");
+    auto qSel = selectorPool->intern(trace::SelectorGetAttr{name, parentSel});
+    auto qr = queryFn(outerObj, qSel, parentSel, argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("outer maybeGetAttr: queryFn returned unexpected result type");
     if (!qr.child)
         throw Error("outer maybeGetAttr: queryFn didn't return a child Object");
     auto child = std::make_shared<OuterObject>(
-        [q]() { return trace::SelectorVariant{q}; },
-        qr.child, queryFn, outerRootFSRoot, applyFn);
-    /* Navigation child inherits parent's argCell cell directly. */
+        [qSel]() { return qSel; },
+        qr.child, queryFn, outerRootFSRoot, selectorPool, applyFn);
     child->withArgCell(argCell);
     child->cachedWHNF = *r;
     return child;
@@ -186,19 +187,19 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
         /* Not a list, or index out of bounds — delegate so the
            outer's inner throws the source-positioned error. */
         return outerObj->getListElem(index);
-    /* Child producer = SelectorGetListElem{from=parent's Q hash hex, index}. */
-    auto parentQHex = getSelectorHashHex().value_or(std::string{});
-    trace::SelectorGetListElem q{parentQHex, index};
-    auto qr = queryFn(outerObj, q, producer(), argCell);
+    if (!selectorPool)
+        throw Error("outer getListElem: no SelectorPool");
+    auto parentSel = producer();
+    auto qSel = selectorPool->intern(trace::SelectorGetListElem{index, parentSel});
+    auto qr = queryFn(outerObj, qSel, parentSel, argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
         throw Error("outer getListElem: queryFn returned unexpected result type");
     if (!qr.child)
         throw Error("outer getListElem: queryFn didn't return a child Object");
     auto child = std::make_shared<OuterObject>(
-        [q]() { return trace::SelectorVariant{q}; },
-        qr.child, queryFn, outerRootFSRoot, applyFn);
-    /* Navigation child inherits parent's argCell cell directly. */
+        [qSel]() { return qSel; },
+        qr.child, queryFn, outerRootFSRoot, selectorPool, applyFn);
     child->withArgCell(argCell);
     child->cachedWHNF = *r;
     return child;
@@ -233,9 +234,11 @@ RootValue OuterObject::toValueOrProxy(EvalState & state, std::shared_ptr<OuterRe
 
 std::optional<FunctionInfo> OuterObject::getFunctionInfo()
 {
-    /* #183: q.from = parent's Q-space identity. */
-    trace::SelectorGetFunctionInfo q{getSelectorHashHex().value_or(std::string{})};
-    auto qr = queryFn(outerObj, q, producer(), argCell);
+    if (!selectorPool)
+        throw Error("outer getFunctionInfo: no SelectorPool");
+    auto parentSel = producer();
+    auto qSel = selectorPool->intern(trace::SelectorGetFunctionInfo{parentSel});
+    auto qr = queryFn(outerObj, qSel, parentSel, argCell);
     auto * r = std::get_if<trace::ResultFunctionInfo>(&qr.result);
     if (!r || !r->hasInfo)
         return std::nullopt;
@@ -274,7 +277,7 @@ std::shared_ptr<Object> OuterObject::queryApply(std::shared_ptr<Object> argObj)
          (its `callbackState`) — the producerFn captures it directly. */
     auto result = std::make_shared<OuterObject>(
         std::move(ar.producerFn),
-        std::move(ar.applyResult), queryFn, outerRootFSRoot, applyFn);
+        std::move(ar.applyResult), queryFn, outerRootFSRoot, selectorPool, applyFn);
     result->withArgCell(callerScope);
     return result;
 }

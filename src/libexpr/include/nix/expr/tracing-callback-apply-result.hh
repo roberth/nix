@@ -41,14 +41,10 @@ class TracingCallbackApplyResult : public Object
     ref<Object> inner;
     TracingWriter & writer;
 
-    /* SelectorApply producer identifying this apply-result. Used to
-       attribute observations recorded on the apply-result. */
-    trace::SelectorVariant producer;
+    /* SelectorApply producer identifying this apply-result. */
+    ref<const trace::Selector> producer;
 
-    /* computeSelectorHash(producer) hex — the apply-result's Q hash
-       exposed via getSelectorHashHex. Computed once at construction
-       to match what TE::apply and the walker compute for the same
-       apply-result. */
+    /* Cached hex of producer's Q hash. */
     std::string qHex;
 
     /* Argument cell — same shape as TracingObject. */
@@ -66,13 +62,15 @@ class TracingCallbackApplyResult : public Object
     std::optional<trace::ResultWHNF> cachedWHNF;
     trace::ResultWHNF & whnf();
 
-    void recordD2(const trace::SelectorVariant & query, const trace::ResultVariant & result);
+    void recordD2(ref<const trace::Selector> query, const trace::ResultVariant & result);
 
 public:
     TracingCallbackApplyResult(
         ref<Object> inner,
         TracingWriter & writer,
-        trace::SelectorVariant producer);
+        ref<const trace::Selector> producer);
+
+    std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
 
     TracingCallbackApplyResult & withArgCell(std::shared_ptr<const ArgCell> cell)
     {
