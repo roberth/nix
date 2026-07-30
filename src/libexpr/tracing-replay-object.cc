@@ -143,13 +143,16 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
         evaluator, result->second, [self, name]() { return ref<Object>(self->ensureInner()->maybeGetAttr(name)); });
     child->cachedWHNF = std::move(result->first);
     child->withArgCell(argCell);
-    /* Symmetric to TracingObject::maybeGetAttr's B3/B7-remaining
-       propagation: cb-apply-origin walker children inherit both marks
-       so their queryHashes match cold's. */
+    /* The nav child's identity IS SelectorGetAttr{name, parent=self.producer}
+       — set it unconditionally so downstream code (ExprFromObject::eval's
+       fn dispatch, makeCachedFnPrimOp's argProducerFn) has a real Selector
+       to compose with. Pre-migration this was only set under cbApplyOrigin,
+       and other callers tolerated nullopt via getSelectorHashHex().value_or("");
+       under the recursive Selector model there's no silent empty-string
+       fallback. */
+    child->withProducer(querySel);
     if (cbApplyOrigin) {
         child->withCbApplyOrigin();
-        if (producer)
-            child->withProducer(*producer);
     }
     return child;
 }

@@ -197,12 +197,13 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(innerChild), writer, valueId, childTriePos));
     child->cachedWHNF = std::move(childWHNF);
     child->withArgCell(argCell);
-    /* Cb-apply-origin descendants propagate the marks so their whnf
-       emits QCA per §7 of the callback model. */
+    /* The nav child's producer identity IS SelectorGetAttr{name, parent=self}
+       — symmetric to TracingReplayObject::maybeGetAttr's warm-side propagation.
+       Set unconditionally so downstream code (ExprFromObject fn dispatch,
+       makeCachedFnPrimOp's argProducerFn) has a real Selector to compose. */
+    child->withProducer(querySel);
     if (cbApplyOrigin) {
         child->withCbApplyOrigin();
-        if (producer)
-            child->withProducer(*producer);
     }
     return child;
 }

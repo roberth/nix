@@ -542,10 +542,12 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
         }
         PrimOp * primOp;
         /* makeCachedFnPrimOp routes through the cache — needs a decision
-           graph to intern Selectors into. When neither the caller's state
-           nor the wrapped evaluator's state has one (tracing-eval-cache
-           OPTION disabled, no builtins.cache in scope), fall through to
-           the direct outer path — nothing to cache anyway. */
+           graph to intern Selectors into AND a real producer Selector on
+           the fn (its argProducerFn wraps `SelectorApply{fn=fnObj->getSelector()}`).
+           When the graph isn't wired (tracing-eval-cache OPTION off, no
+           builtins.cache in scope) OR fn has no producer Selector (e.g. a
+           nav child of a non-cbApplyOrigin proxy), fall through to the
+           direct outer path — no cache-side identity to compose. */
         auto hasGraph = [&] {
             if (state.rootDecisionGraph) return true;
             if (innerEvaluator && innerEvaluator->getEvalState().rootDecisionGraph) return true;
@@ -553,7 +555,7 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
         };
         if (dynamic_cast<OuterObject *>(obj.get())) {
             primOp = makeOuterFnPrimOp(obj, outerResolver);
-        } else if (innerEvaluator && hasGraph()) {
+        } else if (innerEvaluator && hasGraph() && obj->getSelector().has_value()) {
             primOp = makeCachedFnPrimOp(obj, innerEvaluator, outerResolver);
         } else {
             primOp = makeOuterFnPrimOp(obj, outerResolver);
