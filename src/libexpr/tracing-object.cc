@@ -90,6 +90,22 @@ static std::string parentQOrValueHandle(const std::optional<TriePosition> & trie
     return triePos ? triePos->queryHashStr : std::to_string(valueNum.value());
 }
 
+std::optional<ref<const trace::Selector>> TracingObject::getSelector() const
+{
+    /* Reconstruct the recursive Selector from the stored producer
+       SelectorVariant via the writer's SelectorPool. Requires the
+       parent chain to already be interned. If not (mid-migration
+       state where not every construction site has been updated to
+       use the pool), returns nullopt — callers fall back to the
+       hex-based path via getSelectorHashHex(). */
+    if (!producer)
+        return std::nullopt;
+    auto * dg = writer.getDecisionGraph();
+    if (!dg)
+        return std::nullopt;
+    return trace::fromVariant(*producer, dg->selectorPool);
+}
+
 std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter & w)
 {
     /* Callback-produced wrapper: identity is a SelectorCallbackApply

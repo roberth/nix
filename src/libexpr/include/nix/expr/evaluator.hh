@@ -286,6 +286,22 @@ public:
     }
 
     /**
+     * Return this Object's identity as a recursive Selector — the new
+     * data model complementing `getSelectorHashHex()`. Callers building
+     * child Selectors get the parent as `ref<const trace::Selector>`
+     * directly, no hex→pool lookup needed.
+     *
+     * Default: nullopt (non-proxy Objects have no Selector-shaped
+     * identity). Subclasses that already carry a producer Selector
+     * should override, returning a pool-interned ref so the recursive
+     * chain shares heap nodes across the process.
+     */
+    virtual std::optional<ref<const trace::Selector>> getSelector() const
+    {
+        return std::nullopt;
+    }
+
+    /**
      * Return the Q hex of this Object's *producer* Selector — the
      * Selector value that describes "how this Object was produced".
      * Callers use it as the `from` field when constructing child
