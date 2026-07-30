@@ -325,12 +325,8 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     /* Intern SelectorApply for fn. Look up fn's Selector via getSelector();
        fall back to nullopt path if pool doesn't have fn (early bootstrap). */
     std::optional<ref<const trace::Selector>> fnSelOpt = fn->getSelector();
-    if (!fnSelOpt && writer.getDecisionGraph()) {
-        try {
-            auto h = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
-            fnSelOpt = writer.getDecisionGraph()->selectorPool.find(h);
-        } catch (...) {}
-    }
+    if (!fnSelOpt && writer.getDecisionGraph())
+        fnSelOpt = writer.getDecisionGraph()->selectorPool.findByHex(fnStateHashStr);
     if (!fnSelOpt)
         throw Error("TracingEvaluator::apply: cannot resolve fn Selector for %s", fnStateHashStr);
     auto fnSel = *fnSelOpt;

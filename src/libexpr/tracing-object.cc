@@ -110,11 +110,7 @@ std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter &
             auto obsSetHash = dg->insertObservationSet(cs.runningObsSet);
             /* fnStateHashHex captures fn's Q-space identity; look it
                up in pool for the parent Selector. */
-            std::optional<ref<const trace::Selector>> fnRef;
-            try {
-                auto h = Hash::parseNonSRIUnprefixed(cs.fnStateHashHex, HashAlgorithm::SHA256);
-                fnRef = dg->selectorPool.find(h);
-            } catch (...) {}
+            auto fnRef = dg->selectorPool.findByHex(cs.fnStateHashHex);
             if (fnRef) {
                 auto qcaSel = dg->selectorPool.intern(trace::SelectorCallbackApply{
                     obsSetHash.to_string(HashFormat::Base16, false), *fnRef});
@@ -172,11 +168,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     auto * dg = writer.getDecisionGraph();
     if (!dg)
         return innerChild;
-    std::optional<ref<const trace::Selector>> fromSel;
-    try {
-        auto h = Hash::parseNonSRIUnprefixed(*fromHex, HashAlgorithm::SHA256);
-        fromSel = dg->selectorPool.find(h);
-    } catch (...) {}
+    auto fromSel = dg->selectorPool.findByHex(*fromHex);
     if (!fromSel)
         return innerChild;
     auto querySel = dg->selectorPool.intern(trace::SelectorGetAttr{name, *fromSel});
@@ -331,11 +323,7 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     auto * dg = writer.getDecisionGraph();
     if (!dg)
         return inner->getListElem(index);
-    std::optional<ref<const trace::Selector>> fromSel;
-    try {
-        auto h = Hash::parseNonSRIUnprefixed(*fromHex, HashAlgorithm::SHA256);
-        fromSel = dg->selectorPool.find(h);
-    } catch (...) {}
+    auto fromSel = dg->selectorPool.findByHex(*fromHex);
     if (!fromSel)
         return inner->getListElem(index);
     auto querySel = dg->selectorPool.intern(trace::SelectorGetListElem{index, *fromSel});
@@ -388,11 +376,7 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
     auto * dg = writer.getDecisionGraph();
     if (!dg)
         return inner->getFunctionInfo();
-    std::optional<ref<const trace::Selector>> fromSel;
-    try {
-        auto h = Hash::parseNonSRIUnprefixed(*fromHex, HashAlgorithm::SHA256);
-        fromSel = dg->selectorPool.find(h);
-    } catch (...) {}
+    auto fromSel = dg->selectorPool.findByHex(*fromHex);
     if (!fromSel)
         return inner->getFunctionInfo();
     auto querySel = dg->selectorPool.intern(trace::SelectorGetFunctionInfo{*fromSel});
@@ -436,11 +420,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     if (!dg)
         return inner->queryApply(argObj);
     /* Look up fn's Selector in pool via hex. */
-    std::optional<ref<const trace::Selector>> fnSelOpt;
-    try {
-        auto h = Hash::parseNonSRIUnprefixed(*fnIdOpt, HashAlgorithm::SHA256);
-        fnSelOpt = dg->selectorPool.find(h);
-    } catch (...) {}
+    auto fnSelOpt = dg->selectorPool.findByHex(*fnIdOpt);
     if (!fnSelOpt)
         return inner->queryApply(argObj);
     auto fnSel = *fnSelOpt;

@@ -121,11 +121,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
             canonicalObsSetHash.to_string(HashFormat::Base16, false);
         /* Look up incomingCbFn's Selector in pool; skip canonicalisation
            if not interned. */
-        std::optional<ref<const trace::Selector>> incomingCbFnRef;
-        try {
-            auto h = Hash::parseNonSRIUnprefixed(incomingCbFn, HashAlgorithm::SHA256);
-            incomingCbFnRef = dg.selectorPool.find(h);
-        } catch (...) {}
+        auto incomingCbFnRef = dg.selectorPool.findByHex(incomingCbFn);
         if (!incomingCbFnRef)
             return std::nullopt;
         auto canonicalCbaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{

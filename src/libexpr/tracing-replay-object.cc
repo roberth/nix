@@ -115,11 +115,7 @@ std::shared_ptr<Object> TracingReplayObject::maybeGetAttr(const std::string & na
         tracingCacheLog("replay hit: getAttr '%s' -> missing (via whnf.names)", name);
         return nullptr;
     }
-    std::optional<ref<const trace::Selector>> parentSel;
-    try {
-        auto h = Hash::parseNonSRIUnprefixed(triePos.queryHashStr, HashAlgorithm::SHA256);
-        parentSel = evaluator.getDecisionGraph().selectorPool.find(h);
-    } catch (...) {}
+    auto parentSel = evaluator.getDecisionGraph().selectorPool.findByHex(triePos.queryHashStr);
     if (!parentSel) {
         return ensureInner()->maybeGetAttr(name);
     }
@@ -327,11 +323,7 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
         tracingCacheLog("replay fallback: getListElem %d out of bounds (size %zu)", idx, lp->size);
         return ensureInner()->getListElem(idx);
     }
-    std::optional<ref<const trace::Selector>> parentSel;
-    try {
-        auto h = Hash::parseNonSRIUnprefixed(triePos.queryHashStr, HashAlgorithm::SHA256);
-        parentSel = evaluator.getDecisionGraph().selectorPool.find(h);
-    } catch (...) {}
+    auto parentSel = evaluator.getDecisionGraph().selectorPool.findByHex(triePos.queryHashStr);
     if (!parentSel)
         return ensureInner()->getListElem(idx);
     auto querySel = evaluator.getDecisionGraph().selectorPool.intern(
@@ -379,11 +371,7 @@ RootValue TracingReplayObject::defeatCache()
 
 std::optional<FunctionInfo> TracingReplayObject::getFunctionInfo()
 {
-    std::optional<ref<const trace::Selector>> parentSel;
-    try {
-        auto h = Hash::parseNonSRIUnprefixed(triePos.queryHashStr, HashAlgorithm::SHA256);
-        parentSel = evaluator.getDecisionGraph().selectorPool.find(h);
-    } catch (...) {}
+    auto parentSel = evaluator.getDecisionGraph().selectorPool.findByHex(triePos.queryHashStr);
     if (!parentSel)
         return ensureInner()->getFunctionInfo();
     auto querySel = evaluator.getDecisionGraph().selectorPool.intern(

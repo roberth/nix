@@ -501,6 +501,12 @@ public:
     /** Memory cache first, DB reconstruction on miss. Returns
         nullopt only if the hash is absent from both. */
     std::optional<ref<const Selector>> find(const Hash & h);
+
+    /** find() with hex-string input: parses to Hash, returns nullopt
+        on parse failure. Encapsulates the parseNonSRIUnprefixed +
+        find pattern common at sites decoding DB payloads and
+        callback state. */
+    std::optional<ref<const Selector>> findByHex(std::string_view hex);
 };
 
 /* Selector adapters — most consumers hold Selector / ref<const Selector>. */

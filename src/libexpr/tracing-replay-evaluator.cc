@@ -1024,12 +1024,8 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto fnQHex = fn->getSelectorHashHex().value_or(fnStateHashStr);
     /* Look up fn's Selector via getSelector(); fall back to pool by hex. */
     std::optional<ref<const trace::Selector>> fnSelOpt = fn->getSelector();
-    if (!fnSelOpt) {
-        try {
-            auto h = Hash::parseNonSRIUnprefixed(fnStateHashStr, HashAlgorithm::SHA256);
-            fnSelOpt = decisionGraph.selectorPool.find(h);
-        } catch (...) {}
-    }
+    if (!fnSelOpt)
+        fnSelOpt = decisionGraph.selectorPool.findByHex(fnStateHashStr);
     if (!fnSelOpt)
         throw Error("TracingReplayEvaluator apply: cannot resolve fn Selector for %s", fnStateHashStr);
     auto applySel = decisionGraph.selectorPool.intern(trace::SelectorApply{*fnSelOpt});

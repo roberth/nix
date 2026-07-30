@@ -620,6 +620,17 @@ ref<const Selector> SelectorPool::intern(SelectorNode node)
     return s;
 }
 
+std::optional<ref<const Selector>> SelectorPool::findByHex(std::string_view hex)
+{
+    Hash h{HashAlgorithm::SHA256};
+    try {
+        h = Hash::parseNonSRIUnprefixed(std::string(hex), HashAlgorithm::SHA256);
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+    return find(h);
+}
+
 std::optional<ref<const Selector>> SelectorPool::find(const Hash & h)
 {
     if (auto it = pool.find(h); it != pool.end()) return it->second;
@@ -703,12 +714,7 @@ std::optional<ref<const Selector>> nodeFromJson(
         return std::nullopt;
     auto tag = j.at("tag").get<std::string_view>();
 
-    auto lookupParent = [&](const std::string & hex) -> std::optional<ref<const Selector>> {
-        try {
-            auto h = Hash::parseNonSRIUnprefixed(hex, HashAlgorithm::SHA256);
-            return pool.find(h);
-        } catch (...) { return std::nullopt; }
-    };
+    auto lookupParent = [&](const std::string & hex) { return pool.findByHex(hex); };
 
     try {
         if (tag == SelectorExpr::tag) {
