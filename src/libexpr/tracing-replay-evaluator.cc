@@ -1022,12 +1022,14 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        fn's identity hex comes directly from getSelectorHashHex();
        nullopt falls back to fnStateHashStr. arg dropped per #181. */
     auto fnQHex = fn->getSelectorHashHex().value_or(fnStateHashStr);
-    /* Look up fn's Selector via getSelector(); fall back to pool by hex. */
-    std::optional<ref<const trace::Selector>> fnSelOpt = fn->getSelector();
+    /* Under `44e212e07`, TracingReplayObject / TracingObject producers
+       are set unconditionally on every nav/root proxy; ExprFromObject::eval
+       routes to makeCachedFnPrimOp only when obj has a Selector;
+       OuterObjects short-circuit at line 1000. So fn always has a
+       producer here. */
+    auto fnSelOpt = fn->getSelector();
     if (!fnSelOpt)
-        fnSelOpt = decisionGraph.selectorPool.findByHex(fnStateHashStr);
-    if (!fnSelOpt)
-        throw Error("TracingReplayEvaluator apply: cannot resolve fn Selector for %s", fnStateHashStr);
+        unreachable();
     auto applySel = decisionGraph.selectorPool.intern(trace::SelectorApply{*fnSelOpt});
     auto & resultProducer = std::get<trace::SelectorApply>(applySel->node);
 

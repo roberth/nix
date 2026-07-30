@@ -322,13 +322,13 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        advance their cumulative subject-id history by one for ε, so the
        apply-result's state hash is computed at a history step the walker
        can reach via the recorded chain. */
-    /* Intern SelectorApply for fn. Look up fn's Selector via getSelector();
-       fall back to nullopt path if pool doesn't have fn (early bootstrap). */
-    std::optional<ref<const trace::Selector>> fnSelOpt = fn->getSelector();
-    if (!fnSelOpt && writer.getDecisionGraph())
-        fnSelOpt = writer.getDecisionGraph()->selectorPool.findByHex(fnStateHashStr);
+    /* Intern SelectorApply for fn. Symmetric to TRE::apply — under the
+       producer-propagation fixes (`44e212e07`) fn always has a producer
+       Selector by construction; the audit committed as `fa2197831`
+       confirmed the fallback paths were dead. */
+    auto fnSelOpt = fn->getSelector();
     if (!fnSelOpt)
-        throw Error("TracingEvaluator::apply: cannot resolve fn Selector for %s", fnStateHashStr);
+        unreachable();
     auto fnSel = *fnSelOpt;
     auto applySel = writer.getDecisionGraph()->selectorPool.intern(trace::SelectorApply{fnSel});
     nlohmann::json applyQ = trace::toJson(*applySel);
