@@ -160,13 +160,19 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
        #177: parent = sessionRootCell so env facts (folded there) are
        visible via factSetHash() on this cell and its descendants. */
     auto rootCell = ArgCell::make(writer.sessionRootCell, nullptr);
-    auto [v, qh] = writer.logRootSelectorOnCell(rootCell, trace::SelectorImport{displayPath});
+    trace::SelectorImport rootSel{displayPath};
+    auto [v, qh] = writer.logRootSelectorOnCell(rootCell, rootSel);
     auto result = inner->evalFile(path, displayPath);
     auto whnf = computeWHNFFromObject(*result);
     auto triePos = writer.logResult(v, whnf, qh, rootCell);
     auto obj = TracingObject::create(result, writer, v, triePos);
     const_cast<ArgCell &>(*rootCell).liveObject = obj.get_ptr();
     obj->withArgCell(std::move(rootCell));
+    /* Bootstrap the SelectorPool: intern this evalFile's root Selector
+       so descendants that build SelectorApplyStep{parent=this} etc.
+       can resolve their parent via fromVariant. */
+    if (auto * dg = writer.getDecisionGraph())
+        obj->withProducer(dg->selectorPool.intern(rootSel));
     obj->withCachedWHNF(std::move(whnf));
     return obj;
 }
@@ -178,13 +184,17 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     tracingCacheLog("tracing: evalExpr %s", expr);
     /* #177: parent = sessionRootCell so env facts inherit. */
     auto rootCell = ArgCell::make(writer.sessionRootCell, nullptr);
-    auto [v, qh] = writer.logRootSelectorOnCell(rootCell, trace::SelectorExpr{expr, basePath.path.abs()});
+    trace::SelectorExpr rootSel{expr, basePath.path.abs()};
+    auto [v, qh] = writer.logRootSelectorOnCell(rootCell, rootSel);
     auto result = inner->evalExpr(expr, basePath);
     auto whnf = computeWHNFFromObject(*result);
     auto triePos = writer.logResult(v, whnf, qh, rootCell);
     auto obj = TracingObject::create(result, writer, v, triePos);
     const_cast<ArgCell &>(*rootCell).liveObject = obj.get_ptr();
     obj->withArgCell(std::move(rootCell));
+    /* Bootstrap the SelectorPool with this evalExpr's root Selector. */
+    if (auto * dg = writer.getDecisionGraph())
+        obj->withProducer(dg->selectorPool.intern(rootSel));
     obj->withCachedWHNF(std::move(whnf));
     return obj;
 }
