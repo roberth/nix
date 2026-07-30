@@ -123,12 +123,20 @@ TracingReplayEvaluator::walk(
                 if (auto qSel = trace::nodeFromJson(reqJson, decisionGraph.selectorPool)) {
                     queryDescription = trace::describe(**qSel);
                     willMoveStateHash = trace::willMoveStateHash(**qSel);
-                    /* fromHashOf equivalent: for step nodes, parent's
-                       cachedHash. Leaves return nullopt. */
-                    std::visit([&](const auto & q) {
-                        using Q = std::decay_t<decltype(q)>;
-                        if constexpr (requires { q.parent; })
-                            outerFromHash = q.parent->cachedHash;
+                    /* Extract the parent Selector's cached hash for step
+                       alternatives — enumerated explicitly per alternative so
+                       a future SelectorNode addition can't silently absorb
+                       into the wrong "has-parent" branch. Leaves have no
+                       parent and stay nullopt. */
+                    std::visit(overloaded{
+                        [&](const trace::SelectorGetAttr & s)         { outerFromHash = s.parent->cachedHash; },
+                        [&](const trace::SelectorGetListElem & s)     { outerFromHash = s.parent->cachedHash; },
+                        [&](const trace::SelectorGetFunctionInfo & s) { outerFromHash = s.parent->cachedHash; },
+                        [&](const trace::SelectorApply & s)           { outerFromHash = s.parent->cachedHash; },
+                        [&](const trace::SelectorCallbackApply & s)   { outerFromHash = s.parent->cachedHash; },
+                        [&](const trace::SelectorExpr &)   {},
+                        [&](const trace::SelectorImport &) {},
+                        [&](const trace::SelectorArg &)    {},
                     }, (*qSel)->node);
                 } else {
                     queryDescription = queryTag;
@@ -843,9 +851,11 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     tracingCacheLog("arg: computeWHNFFromObject threw: %s", e.what());
                     return std::nullopt;
                 }
-            } else if constexpr (requires { q.parent; }) {
-                /* Producer queries: resolve the parent Object via
-                   parent Selector's cachedHash. */
+            } else if constexpr (std::is_same_v<Q, trace::SelectorGetAttr>
+                                 || std::is_same_v<Q, trace::SelectorGetListElem>
+                                 || std::is_same_v<Q, trace::SelectorGetFunctionInfo>) {
+                /* Retrieval getters: resolve the parent Object via parent
+                   Selector's cachedHash and dispatch the specific probe. */
                 auto obj = resolveParent(q.parent);
                 if (!obj) return std::nullopt;
 

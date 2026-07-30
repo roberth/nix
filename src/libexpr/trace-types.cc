@@ -469,18 +469,17 @@ std::vector<CorrelatedTraceEntry> correlateTrace(const std::vector<TraceEntry> &
     // Build map from (result_type_index, v) to trace index
     std::map<std::pair<size_t, uint64_t>, size_t> resultIndex;
     for (size_t i = 0; i < trace.size(); ++i) {
-        std::visit(
-            [&](const auto & entry) {
-                if constexpr (requires {
-                                  entry.result;
-                                  entry.v;
-                              }) {
-                    using ResultPayload = std::decay_t<decltype(entry.result)>;
-                    auto key = std::make_pair(resultTypeIndex<ResultPayload>(), entry.v);
-                    resultIndex[key] = i;
-                }
+        std::visit(overloaded{
+            /* Only Result<T> envelopes contribute to the result-index — enumerate
+               by envelope template, not by field-presence, so a future variant
+               alternative can't silently be absorbed as a "result-like" entry. */
+            [&]<typename T>(const Result<T> & entry) {
+                auto key = std::make_pair(resultTypeIndex<T>(), entry.v);
+                resultIndex[key] = i;
             },
-            trace[i]);
+            /* Response<T> and Query<T> envelopes: no contribution here. */
+            [](const auto &) {},
+        }, trace[i]);
     }
 
     // Transform queries to completed queries
@@ -488,29 +487,27 @@ std::vector<CorrelatedTraceEntry> correlateTrace(const std::vector<TraceEntry> &
     result.reserve(trace.size());
 
     for (const auto & entry : trace) {
-        std::visit(
-            [&](const auto & e) {
-                if constexpr (requires {
-                                  e.query;
-                                  e.v;
-                              }) {
-                    using QueryPayload = std::decay_t<decltype(e.query)>;
-                    /* Step Selectors have no default constructor. Skip
-                       — matches parseTraceEntry's step skipping. */
-                    if constexpr (std::is_default_constructible_v<QueryPayload>) {
-                        CompletedQuery<QueryPayload> completed;
-                        completed.query = e.query;
-                        completed.v = e.v;
-                        auto key = std::make_pair(queryResultTypeIndex<QueryPayload>(), e.v);
-                        auto it = resultIndex.find(key);
-                        completed.resultIndex = (it != resultIndex.end()) ? it->second : 0;
-                        result.push_back(completed);
-                    }
-                } else {
-                    result.push_back(e);
+        std::visit(overloaded{
+            /* Query<T> envelopes become CompletedQuery<T> with a resolved
+               resultIndex. Enumerated by envelope template so a new
+               variant alternative can't silently take this branch. */
+            [&]<typename T>(const Query<T> & e) {
+                /* Step Selectors have no default constructor. Skip
+                   — matches parseTraceEntry's step skipping. */
+                if constexpr (std::is_default_constructible_v<T>) {
+                    CompletedQuery<T> completed;
+                    completed.query = e.query;
+                    completed.v = e.v;
+                    auto key = std::make_pair(queryResultTypeIndex<T>(), e.v);
+                    auto it = resultIndex.find(key);
+                    completed.resultIndex = (it != resultIndex.end()) ? it->second : 0;
+                    result.push_back(completed);
                 }
             },
-            entry);
+            /* Everything else — Response<T>, Result<T> — passes through
+               unchanged into the CorrelatedTraceEntry variant. */
+            [&](const auto & e) { result.push_back(e); },
+        }, entry);
     }
 
     return result;
@@ -525,37 +522,29 @@ SelectorIndex::SelectorIndex(const std::vector<TraceEntry> & trace)
     // First pass: build result index (result_type_index, v) -> trace index
     std::map<std::pair<size_t, uint64_t>, size_t> resultLookup;
     for (size_t i = 0; i < trace.size(); ++i) {
-        std::visit(
-            [&](const auto & entry) {
-                if constexpr (requires {
-                                  entry.result;
-                                  entry.v;
-                              }) {
-                    using ResultPayload = std::decay_t<decltype(entry.result)>;
-                    auto key = std::make_pair(resultTypeIndex<ResultPayload>(), entry.v);
-                    resultLookup[key] = i;
-                }
+        std::visit(overloaded{
+            [&]<typename T>(const Result<T> & entry) {
+                auto key = std::make_pair(resultTypeIndex<T>(), entry.v);
+                resultLookup[key] = i;
             },
-            trace[i]);
+            [](const auto &) {},
+        }, trace[i]);
     }
 
     // Second pass: index queries (only those with matching results)
     for (size_t i = 0; i < trace.size(); ++i) {
-        std::visit(
-            [&](const auto & entry) {
-                if constexpr (requires {
-                                  entry.query;
-                                  entry.v;
-                              }) {
-                    using Q = std::decay_t<decltype(entry.query)>;
-                    auto key = std::make_pair(queryResultTypeIndex<Q>(), entry.v);
-                    auto it = resultLookup.find(key);
-                    if (it != resultLookup.end()) {
-                        index[entry.query] = IndexEntry{i, it->second};
-                    }
+        std::visit(overloaded{
+            /* Only Query<T> envelopes go into the index. Enumerated by
+               envelope template — no field-presence heuristic. */
+            [&]<typename T>(const Query<T> & entry) {
+                auto key = std::make_pair(queryResultTypeIndex<T>(), entry.v);
+                auto it = resultLookup.find(key);
+                if (it != resultLookup.end()) {
+                    index[entry.query] = IndexEntry{i, it->second};
                 }
             },
-            trace[i]);
+            [](const auto &) {},
+        }, trace[i]);
     }
 }
 

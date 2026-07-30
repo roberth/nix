@@ -23,42 +23,35 @@ namespace nix {
    caller passes the outer Object it already holds. */
 static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::SelectorNode & q)
 {
-    return std::visit(
-        [&](const auto & query) -> OuterQueryResult {
-            using Q = std::decay_t<decltype(query)>;
-            if constexpr (std::is_same_v<Q, trace::SelectorApply>
-                          || std::is_same_v<Q, trace::SelectorCallbackApply>) {
-                /* Identity case — OuterObject::whnf dispatches with
-                   q=producer, which for callback-applyResult wrappers is
-                   SelectorCallbackApply; for other applies it's
-                   SelectorApply. obj IS the applyResult; return its WHNF. */
-                return {computeWHNFFromObject(*obj), nullptr};
-            } else if constexpr (std::is_same_v<Q, trace::SelectorArg>) {
-                /* #186: SelectorArg used as identity of the outer arg
-                   itself — return its WHNF (no navigation). */
-                return {computeWHNFFromObject(*obj), nullptr};
-            } else if constexpr (!requires { query.parent; }) {
-                throw Error("outer query: query type has no 'parent' field");
-            } else if constexpr (std::is_same_v<Q, trace::SelectorGetAttr>) {
-                /* Pure retrieval — assumes existence (caller must
-                   have projected membership from parent WHNFAttrs). */
-                auto child = obj->maybeGetAttr(query.name);
-                if (!child)
-                    throw Error("outer getAttr: attr '%s' unexpectedly missing", query.name);
-                return {computeWHNFFromObject(*child), std::move(child)};
-            } else if constexpr (std::is_same_v<Q, trace::SelectorGetListElem>) {
-                auto child = obj->getListElem(query.index);
-                return {computeWHNFFromObject(*child), std::move(child)};
-            } else if constexpr (std::is_same_v<Q, trace::SelectorGetFunctionInfo>) {
-                auto info = obj->getFunctionInfo();
-                if (!info)
-                    return {trace::ResultFunctionInfo{false, {}, false}, nullptr};
-                return {trace::ResultFunctionInfo{true, info->formals, info->ellipsis}, nullptr};
-            } else {
-                throw Error("unsupported outer query type");
-            }
+    /* Each Selector alternative gets its own handler — no field-presence
+       shortcuts. A new alternative added to SelectorNode won't compile
+       without an explicit case here. */
+    auto identityWHNF = [&]() -> OuterQueryResult {
+        return {computeWHNFFromObject(*obj), nullptr};
+    };
+    return std::visit(overloaded{
+        [&](const trace::SelectorApply &)         -> OuterQueryResult { return identityWHNF(); },
+        [&](const trace::SelectorCallbackApply &) -> OuterQueryResult { return identityWHNF(); },
+        [&](const trace::SelectorArg &)           -> OuterQueryResult { return identityWHNF(); },
+        [&](const trace::SelectorGetAttr & query) -> OuterQueryResult {
+            auto child = obj->maybeGetAttr(query.name);
+            if (!child)
+                throw Error("outer getAttr: attr '%s' unexpectedly missing", query.name);
+            return {computeWHNFFromObject(*child), std::move(child)};
         },
-        q);
+        [&](const trace::SelectorGetListElem & query) -> OuterQueryResult {
+            auto child = obj->getListElem(query.index);
+            return {computeWHNFFromObject(*child), std::move(child)};
+        },
+        [&](const trace::SelectorGetFunctionInfo &) -> OuterQueryResult {
+            auto info = obj->getFunctionInfo();
+            if (!info)
+                return {trace::ResultFunctionInfo{false, {}, false}, nullptr};
+            return {trace::ResultFunctionInfo{true, info->formals, info->ellipsis}, nullptr};
+        },
+        [&](const trace::SelectorExpr &)   -> OuterQueryResult { throw Error("outer query: SelectorExpr not dispatchable"); },
+        [&](const trace::SelectorImport &) -> OuterQueryResult { throw Error("outer query: SelectorImport not dispatchable"); },
+    }, q);
 }
 
 /* Memoised Object* → Value* cache for bridged argThunks. Lives long
