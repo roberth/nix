@@ -1,5 +1,6 @@
 #include "nix/expr/trace-sink.hh"
 #include "nix/expr/trace-types.hh"
+#include "nix/expr/tracing-decision-graph.hh"
 
 #include "nix/util/logging.hh"
 #include "nix/util/util.hh"
@@ -608,6 +609,11 @@ Selector::Selector(SelectorNode n)
     , cachedHash(computeSelectorHash(node))
 {}
 
+void SelectorPool::bind(TracingDecisionGraph & graph)
+{
+    backing = &graph;
+}
+
 ref<const Selector> SelectorPool::intern(SelectorNode node)
 {
     auto h = computeSelectorHash(node);
@@ -615,13 +621,30 @@ ref<const Selector> SelectorPool::intern(SelectorNode node)
         return it->second;
     auto s = make_ref<const Selector>(std::move(node));
     pool.emplace(h, s);
+    /* Mirror into the Selectors DB row so cross-session lookups
+       find this Selector without depending on the intern order of
+       the reconstructing session. INSERT OR IGNORE — a concurrent
+       recorder that already wrote the same row is a harmless no-op. */
+    auto cbor = nlohmann::json::to_cbor(toJson(*s));
+    backing->insertSelector(
+        h, std::string_view(reinterpret_cast<const char *>(cbor.data()), cbor.size()));
     return s;
 }
 
-std::optional<ref<const Selector>> SelectorPool::find(const Hash & h) const
+std::optional<ref<const Selector>> SelectorPool::find(const Hash & h)
 {
     if (auto it = pool.find(h); it != pool.end()) return it->second;
-    return std::nullopt;
+    /* Memory miss — try DB. On hit, decode the stored payload and
+       intern the reconstructed Selector so subsequent lookups are
+       memory-only. `nodeFromJson` recurses back through this same
+       pool for parent hashes, so a whole chain reconstructs
+       depth-first from the leaf up. Chains are shallow (< a dozen
+       even under nixpkgs attribute nesting), so recursion is fine. */
+    auto payload = backing->getSelectorPayload(h);
+    if (!payload) return std::nullopt;
+    auto bytes = reinterpret_cast<const uint8_t *>(payload->data());
+    auto j = nlohmann::json::from_cbor(bytes, bytes + payload->size());
+    return nodeFromJson(j, *this);
 }
 
 nlohmann::json toJson(const SelectorNode & query)

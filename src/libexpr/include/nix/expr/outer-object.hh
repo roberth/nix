@@ -120,10 +120,11 @@ class OuterObject : public Object
     std::shared_ptr<const ArgCell> argCell;
 
     /* SelectorPool for interning child Selectors constructed here
-       (maybeGetAttr → SelectorGetAttr, etc.). Non-owning pointer;
-       lives on the shared TracingDecisionGraph. Nullable when the
-       proxy is constructed without a graph (rare). */
-    trace::SelectorPool * selectorPool;
+       (maybeGetAttr → SelectorGetAttr, etc.). Lives on the shared
+       TracingDecisionGraph. Required — non-tracing runs skip the
+       Tracing{Replay,}Evaluator wrappers and never construct
+       OuterObjects, so a proxy without a session pool can't arise. */
+    trace::SelectorPool & selectorPool;
 
     /* Memoized WHNF observation. First call to any of getType / getInt /
        getString / etc. fires `whnf()`, which issues ONE observation
@@ -133,7 +134,7 @@ class OuterObject : public Object
     trace::ResultWHNF & whnf();
 
 public:
-    OuterObject(std::function<ref<const trace::Selector>()> producer, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, trace::SelectorPool * selectorPool = nullptr, OuterApplyFn applyFn = {});
+    OuterObject(std::function<ref<const trace::Selector>()> producer, std::shared_ptr<Object> outerObj, OuterQueryFn queryFn, ref<SourceRoot> outerRootFSRoot, trace::SelectorPool & selectorPool, OuterApplyFn applyFn = {});
 
     /** Set the proxy's argCell. Call right after construction at
         boundary sites. Returns *this for chaining. */

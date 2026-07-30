@@ -320,6 +320,9 @@ TracingDecisionGraph::TracingDecisionGraph()
 TracingDecisionGraph::TracingDecisionGraph(const std::filesystem::path & dbPath)
     : _state(std::make_unique<Sync<State>>())
 {
+    /* Pool routes intern/find through this graph's DB backing. */
+    selectorPool.bind(*this);
+
     auto state(_state->lock());
 
     auto parent = dbPath.parent_path();

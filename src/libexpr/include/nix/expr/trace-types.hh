@@ -28,6 +28,8 @@
 #include <variant>
 #include <vector>
 
+namespace nix { class TracingDecisionGraph; }
+
 namespace nix::trace {
 
 // ---------------------------------------------------------------------------
@@ -479,13 +481,26 @@ struct Selector
     explicit Selector(SelectorNode n);
 };
 
+/** DB facade over the Selectors table: interning writes an
+    `INSERT OR IGNORE` row, lookup falls back to reconstructing from
+    a stored payload on memory-miss. Pool membership tracks DB
+    membership; cross-session sharing falls out. */
 class SelectorPool
 {
     std::unordered_map<Hash, ref<const Selector>> pool;
+    ::nix::TracingDecisionGraph * backing = nullptr;
 
 public:
+    /** Bind the pool to the graph that provides DB backing. Called
+        once by TracingDecisionGraph during construction; after this,
+        every intern/find touches the DB transparently. */
+    void bind(::nix::TracingDecisionGraph & graph);
+
     ref<const Selector> intern(SelectorNode node);
-    std::optional<ref<const Selector>> find(const Hash & h) const;
+
+    /** Memory cache first, DB reconstruction on miss. Returns
+        nullopt only if the hash is absent from both. */
+    std::optional<ref<const Selector>> find(const Hash & h);
 };
 
 /* Selector adapters — most consumers hold Selector / ref<const Selector>. */

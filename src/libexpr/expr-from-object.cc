@@ -373,16 +373,18 @@ static PrimOp * makeCachedFnPrimOp(
                            Passed as a live callable so the hex is
                            recomputed on demand (fnObj may be a proxy
                            whose identity evolves). */
-                        /* Access the pool via either state's decision graph. */
-                        trace::SelectorPool * pool = nullptr;
-                        if (state.rootDecisionGraph)
-                            pool = &state.rootDecisionGraph->selectorPool;
-                        else if (innerEval->getEvalState().rootDecisionGraph)
-                            pool = &innerEval->getEvalState().rootDecisionGraph->selectorPool;
-                        auto argProducerFn = [pool]() mutable -> ref<const trace::Selector> {
-                            static trace::SelectorPool localPool;
-                            auto & p = pool ? *pool : localPool;
-                            return p.intern(trace::SelectorArg{0});
+                        /* Both outer and inner may hold the graph — outer's is set when
+                           the outer EvalCommand is running under the tracing-eval-cache
+                           OPTION, inner's is set unconditionally by builtins.cache's
+                           stack setup. The ExprFromObject::eval dispatch (below) only
+                           routes here when one of these is non-null; the reference bind
+                           is total under correct routing. */
+                        auto & dg = state.rootDecisionGraph
+                            ? *state.rootDecisionGraph
+                            : *innerEval->getEvalState().rootDecisionGraph;
+                        auto & pool = dg.selectorPool;
+                        auto argProducerFn = [&pool]() -> ref<const trace::Selector> {
+                            return pool.intern(trace::SelectorArg{0});
                         };
                         auto & innerEnv = *innerEval->getEvalState().environment;
                         OuterQueryFn queryFn = [&innerEnv](
@@ -537,9 +539,19 @@ void ExprFromObject::eval(EvalState & state, Env & env, Value & v)
             break;
         }
         PrimOp * primOp;
+        /* makeCachedFnPrimOp routes through the cache — needs a decision
+           graph to intern Selectors into. When neither the caller's state
+           nor the wrapped evaluator's state has one (tracing-eval-cache
+           OPTION disabled, no builtins.cache in scope), fall through to
+           the direct outer path — nothing to cache anyway. */
+        auto hasGraph = [&] {
+            if (state.rootDecisionGraph) return true;
+            if (innerEvaluator && innerEvaluator->getEvalState().rootDecisionGraph) return true;
+            return false;
+        };
         if (dynamic_cast<OuterObject *>(obj.get())) {
             primOp = makeOuterFnPrimOp(obj, outerResolver);
-        } else if (innerEvaluator) {
+        } else if (innerEvaluator && hasGraph()) {
             primOp = makeCachedFnPrimOp(obj, innerEvaluator, outerResolver);
         } else {
             primOp = makeOuterFnPrimOp(obj, outerResolver);
