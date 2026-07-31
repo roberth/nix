@@ -213,59 +213,6 @@ struct ResultWHNF
 };
 
 // ---------------------------------------------------------------------------
-// PathExpr: a structured access path from a cb_arg root
-// ---------------------------------------------------------------------------
-
-struct PathExpr;  // forward — PathStep::Apply nests sub-PathExprs
-
-/** One step within an access path. `GetAttr` / `GetListElem` extend
-    by an attr name or a list-elem index. `Apply` extends by an apply
-    node whose `fnPath` and `argPath` are themselves sub-PathExprs;
-    each sub-path resolves against an entry in the enclosing query's
-    `fromStateHashes[]` (selected by `fnRootIndex` / `argRootIndex`). The
-    apply form is used by function characterization so observations
-    on apply-result descendants compose into a path rooted in the
-    cb_args that fn and arg came from. */
-struct PathStep
-{
-    enum class Kind {
-        GetAttr,
-        GetListElem,
-        Apply,
-    };
-    Kind kind;
-    std::string name;  ///< meaningful for GetAttr
-    size_t index{};    ///< meaningful for GetListElem
-    /* Apply sub-paths. Held by shared_ptr so PathExpr can recursively
-       contain PathStep without storage cycles in the type. */
-    std::shared_ptr<PathExpr> fnPath;
-    std::shared_ptr<PathExpr> argPath;
-    size_t fnRootIndex{0};
-    size_t argRootIndex{0};
-
-    std::strong_ordering operator<=>(const PathStep & other) const;
-    bool operator==(const PathStep & other) const;
-};
-
-void to_json(nlohmann::json & j, const PathStep & s);
-void from_json(const nlohmann::json & j, PathStep & s);
-
-/** A path from a cb_arg root to the value being probed. Empty path
-    means the observation is on the root itself. Used by the per-arg
-    subject-id model: every probe's path identifies *which* derived
-    value within the root is being probed, while the root's state hash is
-    what `fromStateHashes` resolves to at flush. */
-struct PathExpr
-{
-    std::vector<PathStep> steps;
-
-    auto operator<=>(const PathExpr & other) const = default;
-};
-
-void to_json(nlohmann::json & j, const PathExpr & p);
-void from_json(const nlohmann::json & j, PathExpr & p);
-
-// ---------------------------------------------------------------------------
 // Query payload types and their result mappings
 // ---------------------------------------------------------------------------
 
