@@ -549,33 +549,6 @@ public:
         const std::shared_ptr<const ArgCell> & attributionCell = {});
 
     /**
-     * Note an environment observation made by the walker during a
-     * cache hit's dispatch. The walker calls dispatch live to verify
-     * that recorded paths still hold against the current environment;
-     * each `(request, response)` it computes is a real observation of
-     * the environment, just like one made via `logResponse` or
-     * `logOuterObservation` during interpretation. Feeding it back
-     * into `envFactSet` keeps the writer's cumulative state invariant
-     * to whether facts came via interpretation or cache-hit dispatch.
-     * Without this, a subsequent `logResult` for some Q that fell
-     * back to inner would record at a factSetHash missing the
-     * walker's prior dispatches — creating a sibling Asks chain and
-     * disqualifying single-edge fast paths on future warms.
-     */
-    void noteEnvObservation(const Hash & request, const Hash & response)
-    {
-        auto factHash = TracingDecisionGraph::xorFactIntoHash(
-            Hash(HashAlgorithm::SHA256), request, response);
-        if (!seenRequests.insert(factHash).second)
-            return;
-        responseFor.emplace(request, response);
-        /* #183: fact appends to sessionRootCell. Ask insertion happens
-           at Selector completion. #187: env fact — peek barrier, no bump. */
-        sessionRootCell->addFact(request, response, peekBarrier());
-        sessionRequestsTrie.insert(request);
-    }
-
-    /**
      * Insert a Query payload into the Requests pool at its natural
      * (payload-hash) key.
      */
@@ -645,15 +618,6 @@ public:
     TraceSink & getSink()
     {
         return sink;
-    }
-
-    /**
-     * used to advance the temporal cursor after a hit. currently has no
-     * temporal cursor; this is a no-op.
-     */
-    void syncAfterHash(const Hash & /*resultNodeHash*/)
-    {
-        // No-op.
     }
 
     TracingDecisionGraph & getDecisionGraph() const
