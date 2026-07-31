@@ -482,7 +482,15 @@ using Results = ApplyWrapper<
 // ---------------------------------------------------------------------------
 
 /** Phase-parameterized Selector node variant. Leaves are phase-independent;
-    step alternatives carry their phase's parent-reference type. */
+    step alternatives carry their phase's parent-reference type.
+
+    Tree-shape invariant (see tracing-eval-cache.md §"Design note: Selector
+    is a sequence, not a true algebra"): every alternative embeds at most
+    one Selector reference, via a single `ParentRef<P> parent` field on step
+    alternatives. `SelectorCallbackApply::argObsSet` is a hex reference to
+    an ObservationSet — a distinct content-addressed concept, not a
+    Selector — and so does not violate the invariant. Any new alternative
+    must preserve this shape or the sequence model breaks. */
 template<typename P>
 using SelectorNodeF = std::variant<
     SelectorExpr,
