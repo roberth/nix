@@ -533,123 +533,16 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
 }
 
 
-/* `perArgFrame` accessor helpers — the sub-object is the standard
-   home for `fromStateHashes` + `path`; the top-level `fromStateHashes`
-   variant is only for SelectorApply. */
-static const nlohmann::json * perArgFrameOf(const nlohmann::json & params)
-{
-    if (params.contains("perArgFrame") && params["perArgFrame"].is_object())
-        return &params["perArgFrame"];
-    return nullptr;
-}
-
-static trace::PathExpr parsePathFromParams(const nlohmann::json & params)
-{
-    trace::PathExpr path;
-    if (auto * frame = perArgFrameOf(params); frame && frame->contains("path"))
-        from_json(frame->at("path"), path);
-    return path;
-}
-
-static std::vector<std::shared_ptr<Object>> resolveRoots(
-    const nlohmann::json & params,
-    std::function<std::shared_ptr<Object>(const std::string &)> resolve)
-{
-    std::vector<std::shared_ptr<Object>> roots;
-    auto tryRoots = [&](const nlohmann::json & arr) -> bool {
-        for (auto & cid : arr) {
-            std::string cidHex;
-            if (cid.is_string())
-                cidHex = cid.get<std::string>();
-            else if (cid.is_object() && cid.contains("content"))
-                cidHex = cid["content"].get<std::string>();
-            else if (cid.is_object() && cid.contains("stateHash"))
-                cidHex = cid["stateHash"].get<std::string>();
-            else
-                return false;
-            auto obj = resolve(cidHex);
-            if (!obj)
-                return false;
-            roots.push_back(std::move(obj));
-        }
-        return true;
-    };
-    if (auto * frame = perArgFrameOf(params); frame && frame->contains("fromStateHashes")
-        && (*frame)["fromStateHashes"].is_array()) {
-        if (tryRoots((*frame)["fromStateHashes"]))
-            return roots;
-        return {};
-    }
-    if (params.contains("fromStateHashes") && params["fromStateHashes"].is_array()) {  // SelectorApply
-        if (tryRoots(params["fromStateHashes"]))
-            return roots;
-        return {};
-    }
-    if (params.contains("parent")) {
-        auto obj = resolve(params["parent"].get<std::string>());
-        if (!obj)
-            return {};
-        roots.push_back(std::move(obj));
-    }
-    return roots;
-}
-
-static std::shared_ptr<Object> navigatePath(
-    const std::vector<std::shared_ptr<Object>> & roots, const trace::PathExpr & path,
-    TracingWriter * writer = nullptr)
-{
-    if (roots.empty())
-        return nullptr;
-    std::shared_ptr<Object> obj = roots[0];
-    for (auto & step : path.steps) {
-        if (!obj)
-            return nullptr;
-        if (step.kind == trace::PathStep::Kind::GetAttr) {
-            obj = obj->maybeGetAttr(step.name);
-        } else if (step.kind == trace::PathStep::Kind::GetListElem) {
-            obj = obj->getListElem(step.index);
-        } else if (step.kind == trace::PathStep::Kind::Apply) {
-            if (!step.fnPath || !step.argPath)
-                return nullptr;
-            if (step.fnRootIndex >= roots.size() || step.argRootIndex >= roots.size())
-                return nullptr;
-            /* fn and arg sub-paths each navigate from their own
-               root entry. Walker mirrors the writer's pathAndRoots
-               builder. */
-            std::vector<std::shared_ptr<Object>> fnRoots{roots[step.fnRootIndex]};
-            std::vector<std::shared_ptr<Object>> argRoots{roots[step.argRootIndex]};
-            auto fnObj = navigatePath(fnRoots, *step.fnPath, writer);
-            auto argObj = navigatePath(argRoots, *step.argPath, writer);
-            if (!fnObj || !argObj)
-                return nullptr;
-            try {
-                obj = fnObj->queryApply(std::move(argObj));
-            } catch (const std::exception & e) {
-                tracingCacheLog("navigatePath: queryApply failed: %s", e.what());
-                return nullptr;
-            }
-        } else {
-            return nullptr;
-        }
-    }
-    return obj;
-}
-
 std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
     const std::string & idStr, const trace::SelectorNode & qv, const nlohmann::json & params, ResolutionContext & ctx)
 {
-    if (!params.contains("parent") && !params.contains("fromStateHashes")
-        && !params.contains("perArgFrame"))
+    /* Under the recursive-Selector shape, each step Selector's payload
+       carries the single `parent` hex — no perArgFrame / fromStateHashes
+       multi-root plumbing. Resolve the parent live and let the visit
+       below dispatch by Selector kind. */
+    if (!params.contains("parent"))
         return nullptr;
-
-    /* Per-arg multi-root: resolve each fromStateHashes[] entry to a live
-       cb_arg ReplayCallbackArg, then navigate. The producer query records the
-       path-to-parent in `path`; navigation uses both. */
-    auto roots = resolveRoots(params,
-        [&](const std::string & cid) { return resolveIdentity(cid, ctx); });
-    if (roots.empty())
-        return nullptr;
-    auto parent = navigatePath(roots, parsePathFromParams(params), &writer);
+    auto parent = resolveIdentity(params["parent"].get<std::string>(), ctx);
     if (!parent)
         return nullptr;
 
