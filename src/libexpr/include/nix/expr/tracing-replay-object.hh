@@ -109,11 +109,6 @@ public:
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
-    const TriePosition & getTriePos() const
-    {
-        return triePos;
-    }
-
     std::optional<std::string> getSelectorHashHex() const override { return triePos.queryHashStr; }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;

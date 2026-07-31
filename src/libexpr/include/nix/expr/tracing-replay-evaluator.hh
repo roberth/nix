@@ -85,6 +85,24 @@ class TracingReplayEvaluator : public Evaluator
 
     std::shared_ptr<Object> resolveProducerChild(const std::string & idStr, const trace::SelectorNode & qv, const nlohmann::json & params, ResolutionContext & ctx);
 
+    /** Returned (payload, resultNodeHash, terminalCur). `terminalCur`
+        is the factSet the walker landed on when committing the
+        Terminal — child Q lookups thread it through their TracingReplayObject's
+        TriePosition.factSetHash and use it as their structural-anchor
+        candidate startCur. */
+    struct WalkResult { std::string payload; Hash resultNodeHash; Hash terminalCur; };
+
+    /** Run the decision-graph walk for `selectorHash`, dispatching
+        each Ask edge's requests against the current environment via
+        computeLiveResponse. `currentProxy` is the cache-boundary
+        proxy whose method triggered this walk; its parent/argCell
+        chain grounds outer-value id resolution during dispatch (null
+        at top-level entry points). Returns nullopt on miss. */
+    std::optional<WalkResult> walk(
+        const Hash & selectorHash,
+        std::shared_ptr<Object> currentProxy = nullptr,
+        std::shared_ptr<const ArgCell> cell = nullptr);
+
 public:
     /** Look up a Query in the decision graph, returning (payload,
         triePos) on hit or nullopt on miss. Runs the walker (with
@@ -109,25 +127,6 @@ public:
     {
         return decisionGraph;
     }
-
-    /**
-     * history lookup. Returns (resultPayload, resultHash) on hit,
-     * nullopt on miss. `currentProxy` is the cache-boundary proxy
-     * whose method triggered this history — its parent/argCell chain
-     * grounds outer-value id resolution during dispatch. Null for
-     * top-level entry points (evalFile/evalExpr) that have no
-     * proxy yet.
-     */
-    /** Returned (payload, resultNodeHash, terminalCur). `terminalCur`
-        is the factSet the walker landed on when committing the
-        Terminal — child Q lookups thread it through their TracingReplayObject's
-        TriePosition.factSetHash and use it as their structural-anchor
-        candidate startCur. */
-    struct WalkResult { std::string payload; Hash resultNodeHash; Hash terminalCur; };
-    std::optional<WalkResult> walk(
-        const Hash & selectorHash,
-        std::shared_ptr<Object> currentProxy = nullptr,
-        std::shared_ptr<const ArgCell> cell = nullptr);
 
     bool isReadOnly() const override;
     Store & getStore() override;
