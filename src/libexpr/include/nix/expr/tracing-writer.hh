@@ -78,9 +78,6 @@ class TracingWriter
        RequestSet hash for the whole-remaining edge in O(1). */
     TracingDecisionGraph::TrieBuilder sessionRequestsTrie;
 
-    /* All request hashes ever inserted. Not deduped against seenRequests
-       (which is fact-hashed, not request-hashed). */
-    std::unordered_set<Hash> allRequestHashes;
 
     /* State-creep canonicalisation record: for every fact that
        canonicalisation replaced on the arg cell, remember what request
@@ -527,7 +524,6 @@ public:
         sessionRootCell->addFact(selectorHash, responseHash, peekBarrier());
         responseFor.emplace(selectorHash, responseHash);
         sessionRequestsTrie.insert(selectorHash);
-        allRequestHashes.insert(selectorHash);
     }
 
     /**
@@ -579,7 +575,6 @@ public:
            at Selector completion. #187: env fact — peek barrier, no bump. */
         sessionRootCell->addFact(request, response, peekBarrier());
         sessionRequestsTrie.insert(request);
-        allRequestHashes.insert(request);
     }
 
     /**
