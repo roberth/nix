@@ -141,9 +141,9 @@ TracingReplayEvaluator::walk(
         /* Cell-migration Phase B: SelectorApply is now walkable (its
            Terminal is inserted by TracingEvaluator::apply after
            computing the applyResult's WHNF). Dispatch falls through
-           to getCurrentResponse → dispatchQueryRequest's SelectorApply
+           to computeLiveResponse → dispatchQueryRequest's SelectorApply
            branch, which resolves fn+arg live and returns the WHNF. */
-        auto currentResp = getCurrentResponse(*requestPayload, ctx);
+        auto currentResp = computeLiveResponse(*requestPayload, ctx);
         if (!currentResp) {
             tracingCacheLog(
                 "dispatch FAIL req=%s payload=%s (no current response)",
@@ -297,7 +297,7 @@ TracingReplayEvaluator::walk(
     return WalkResult{std::move(*payload), walkHit->resultHash, walkHit->terminalCur};
 }
 
-std::optional<std::string> TracingReplayEvaluator::getCurrentResponse(const std::string & requestCbor, ResolutionContext & ctx)
+std::optional<std::string> TracingReplayEvaluator::computeLiveResponse(const std::string & requestCbor, ResolutionContext & ctx)
 {
     try {
         auto reqJson = cborStringToJson(requestCbor);

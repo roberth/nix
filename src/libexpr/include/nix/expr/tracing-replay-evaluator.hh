@@ -29,7 +29,7 @@ class TracingReplayEvaluator : public Evaluator
     /**
      * Per-history resolution context.
      *
-     * Threaded through history → dispatch → getCurrentResponse →
+     * Threaded through history → dispatch → computeLiveResponse →
      * dispatchQueryRequest → resolveIdentity. Holds the proxy
      * whose method triggered this history (so resolveIdentity can
      * history the parent / argCell chain on the proxy graph) plus a
@@ -60,6 +60,12 @@ class TracingReplayEvaluator : public Evaluator
     };
 
     std::optional<std::string> dispatchQueryRequest(const nlohmann::json & reqJson, ResolutionContext & ctx);
+
+    /** Compute the live response for a recorded request (file hash,
+        env var, outer-value probe, or SelectorCallbackApply) by
+        executing against the current validation environment.
+        Query-carrying requests route through dispatchQueryRequest. */
+    std::optional<std::string> computeLiveResponse(const std::string & requestCbor, ResolutionContext & ctx);
 
     /** Resolve a recorded outer-value id (hex of a Hash) to a live
         Object. Arg ids are found by walking ctx.currentProxy's
@@ -103,14 +109,6 @@ public:
     {
         return decisionGraph;
     }
-
-    /**
-     * Compute the current response for a recorded request (file hash,
-     * env var, outer-value probe, or SelectorCallbackApply) by executing
-     * against the current validation environment. Query-carrying
-     * requests route through proxy-graph resolution using `ctx`.
-     */
-    std::optional<std::string> getCurrentResponse(const std::string & requestCbor, ResolutionContext & ctx);
 
     /**
      * history lookup. Returns (resultPayload, resultHash) on hit,
