@@ -102,17 +102,12 @@ public:
         return *this;
     }
 
-    bool isCbApplyOrigin() const { return cbApplyOrigin; }
-
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
-    /** Get the query hash string for trie identity, if available. */
-    std::optional<std::string> getQueryHashStr() const
+    std::optional<std::string> getSelectorHashHex() const override
     {
         return triePos ? std::optional{triePos->queryHashStr} : std::nullopt;
     }
-
-    std::optional<std::string> getSelectorHashHex() const override { return getQueryHashStr(); }
 
     std::optional<ref<const trace::Selector>> getSelector() const override;
 
