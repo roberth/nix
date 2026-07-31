@@ -13,28 +13,6 @@
 
 namespace nix {
 
-/* Populate `query`'s per-arg fields (from, path, fromStateHashes)
-   so its reqHash matches what the recorder produced. Multi-root
-   applies fill fromStateHashes[] with multiple leaf-root state
-   hashes; the canonical `from` field carries fromStateHashes[0].
-   Returns the first-root state hash for callers. */
-template <typename Q>
-static Hash stampPerArgFields(
-    Q & query,
-    ref<const trace::Selector> producer,
-    const std::vector<ObservationSet> & walkFacts,
-    size_t step)
-{
-    /* #178: state-hash stamping retires. Payload used as-is (defaults
-       on `from` / `perArgFrame`) so stable Q hash matches cold's obsSet
-       queryHashes. */
-    (void) query;
-    (void) producer;
-    (void) walkFacts;
-    (void) step;
-    return Hash(HashAlgorithm::SHA256);
-}
-
 /* Look up the recorded payload for `query` in the obsSet map the
    CallbackApply consumer populated at dispatch time. The map is
    keyed by requestHash; miss is a real error (there's no
@@ -68,13 +46,12 @@ static nlohmann::json readResponse(
         Q::tag, true ? std::string{} : "<no-state-hash>");
 }
 
-/* Append the just-probed fact to `walkFacts` so the next probe's
-   `stampPerArgFields` sees its own-loop contribution. Per-arg state
-   hash evolution relies on the history extending in lockstep with
-   the recorder. */
+/* Append the just-probed fact to `walkFacts`. Per-arg state hash
+   evolution relies on the history extending in lockstep with the
+   recorder. */
 template<typename Q>
 static void appendFactToWalk(
-    const Q & query, const Hash & fromStateHash, const nlohmann::json & responseJson,
+    const Q & query, const nlohmann::json & responseJson,
     std::vector<ObservationSet> & walkFacts)
 {
     auto reqHash = TracingDecisionGraph::computeSelectorHash(query);
@@ -83,7 +60,7 @@ static void appendFactToWalk(
     auto elementHash = TracingDecisionGraph::xorFactIntoHash(
         Hash(HashAlgorithm::SHA256), reqHash, responseHash);
     ObservationSet edge;
-    edge.observations.push_back({fromStateHash, elementHash});
+    edge.observations.push_back({Hash(HashAlgorithm::SHA256), elementHash});
     walkFacts.push_back(std::move(edge));
 }
 
@@ -100,9 +77,8 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
         return nullptr;
     auto childSel = decisionGraph.selectorPool.intern(trace::SelectorGetAttr{name, producer});
     auto & query = std::get<trace::SelectorGetAttr>(childSel->node);
-    auto fromStateHash = stampPerArgFields(query, producer, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
-    appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
+    appendFactToWalk(query, rJson, *walkFacts);
     auto child = std::make_shared<ReplayCallbackArg>(
         childSel, walkFacts,
         decisionGraph, rootFSRoot, state);
@@ -131,9 +107,8 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
        positional arg, SelectorGetAttr for a nav descendant, etc.). */
     auto rJson = std::visit(
         [&](const auto & q) -> nlohmann::json {
-            auto fromStateHash = stampPerArgFields(q, producer, *walkFacts, walkFacts->size());
             auto r = readResponse(decisionGraph, q, obsSetResponses);
-            appendFactToWalk(q, fromStateHash, r, *walkFacts);
+            appendFactToWalk(q, r, *walkFacts);
             return r;
         },
         producer->node);
@@ -231,9 +206,8 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
         throw Error("rlo getListElem: parent WHNF is %s, index %zu invalid", w.type, index);
     auto childSel = decisionGraph.selectorPool.intern(trace::SelectorGetListElem{index, producer});
     auto & query = std::get<trace::SelectorGetListElem>(childSel->node);
-    auto fromStateHash = stampPerArgFields(query, producer, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
-    appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
+    appendFactToWalk(query, rJson, *walkFacts);
     auto child = std::make_shared<ReplayCallbackArg>(
         childSel, walkFacts,
         decisionGraph, rootFSRoot, state);
@@ -419,9 +393,8 @@ std::optional<FunctionInfo> ReplayCallbackArg::getFunctionInfo()
 {
     auto qSel = decisionGraph.selectorPool.intern(trace::SelectorGetFunctionInfo{producer});
     auto & query = std::get<trace::SelectorGetFunctionInfo>(qSel->node);
-    auto fromStateHash = stampPerArgFields(query, producer, *walkFacts, walkFacts->size());
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
-    appendFactToWalk(query, fromStateHash, rJson, *walkFacts);
+    appendFactToWalk(query, rJson, *walkFacts);
     trace::ResultFunctionInfo r = rJson;
     if (!r.hasInfo)
         return std::nullopt;
