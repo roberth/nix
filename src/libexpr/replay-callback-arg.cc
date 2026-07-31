@@ -46,24 +46,6 @@ static nlohmann::json readResponse(
         Q::tag, true ? std::string{} : "<no-state-hash>");
 }
 
-/* Append the just-probed fact to `walkFacts`. Per-arg state hash
-   evolution relies on the history extending in lockstep with the
-   recorder. */
-template<typename Q>
-static void appendFactToWalk(
-    const Q & query, const nlohmann::json & responseJson,
-    std::vector<ObservationSet> & walkFacts)
-{
-    auto reqHash = TracingDecisionGraph::computeSelectorHash(query);
-    auto responsePayload = jsonToCborString(responseJson);
-    auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
-    auto elementHash = TracingDecisionGraph::xorFactIntoHash(
-        Hash(HashAlgorithm::SHA256), reqHash, responseHash);
-    ObservationSet edge;
-    edge.observations.push_back({Hash(HashAlgorithm::SHA256), elementHash});
-    walkFacts.push_back(std::move(edge));
-}
-
 std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name)
 {
     /* Existence projects from parent WHNFAttrs.names (via whnf()
@@ -78,10 +60,8 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
     auto childSel = decisionGraph.selectorPool.intern(trace::SelectorGetAttr{name, producer});
     auto & query = std::get<trace::SelectorGetAttr>(childSel->node);
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
-    appendFactToWalk(query, rJson, *walkFacts);
     auto child = std::make_shared<ReplayCallbackArg>(
-        childSel, walkFacts,
-        decisionGraph, rootFSRoot, state);
+        childSel, decisionGraph, rootFSRoot, state);
     child->cachedWHNF = rJson.get<trace::ResultWHNF>();
     /* Derived children probe within the same callback firing, so
        the same obsSet serves their responses too. */
@@ -89,12 +69,6 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
         child->withObsSetResponses(obsSetResponses);
     /* Navigation child inherits parent's argCell cell directly. */
     child->withArgCell(argCell);
-    /* Inherit cb-arg apply context — derived navigation stays within
-       the same cb-arg's depth/argAncestry (= the nested apply's positional
-       depth is one deeper than the cb-arg's, regardless of how many
-       getAttr/getListElem steps deep the apply happens). */
-    if (applyDepth)
-        child->withApplyContext(*applyDepth);
     return child;
 }
 
@@ -107,9 +81,7 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
        positional arg, SelectorGetAttr for a nav descendant, etc.). */
     auto rJson = std::visit(
         [&](const auto & q) -> nlohmann::json {
-            auto r = readResponse(decisionGraph, q, obsSetResponses);
-            appendFactToWalk(q, r, *walkFacts);
-            return r;
+            return readResponse(decisionGraph, q, obsSetResponses);
         },
         producer->node);
     cachedWHNF = rJson.get<trace::ResultWHNF>();
@@ -207,14 +179,10 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
     auto childSel = decisionGraph.selectorPool.intern(trace::SelectorGetListElem{index, producer});
     auto & query = std::get<trace::SelectorGetListElem>(childSel->node);
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
-    appendFactToWalk(query, rJson, *walkFacts);
     auto child = std::make_shared<ReplayCallbackArg>(
-        childSel, walkFacts,
-        decisionGraph, rootFSRoot, state);
+        childSel, decisionGraph, rootFSRoot, state);
     child->cachedWHNF = rJson.get<trace::ResultWHNF>();
     child->withArgCell(argCell);
-    if (applyDepth)
-        child->withApplyContext(*applyDepth);
     return child;
 }
 
@@ -264,23 +232,6 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
         return allocRootValue(thunk);
     }
 
-    auto * dg = &decisionGraph;
-    auto rootFSRootSaved = rootFSRoot;
-    auto producerSaved = producer;
-    auto walkFactsSaved = walkFacts;
-    auto applyDepthSaved = applyDepth;
-    /* Capture the resolver so the primop can register the live arg
-       it receives (args[0]) as an outer-direction proxy. The OUTER
-       walker dispatches env facts whose `from` references the cb-arg
-       arg's initial state hash (= what the inner-side queryFn closure
-       captured at cold); without this registration the walker's
-       resolveIdentity falls through "outer-arg by elimination" and the
-       fact's dispatch fails. May be nullptr in unit-test paths that
-       construct a ReplayCallbackArg without a resolver — registration is
-       skipped then. */
-    auto resolverSaved = resolver;
-    auto initialWalkFactsSize = walkFacts->size();
-
     auto * primOp = new
 #if NIX_USE_BOEHMGC
         (GC)
@@ -289,99 +240,17 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
             .name = "<replay-local-lambda>",
             .args = {"args"},
             .arity = 1,
-            .impl = [dg, rootFSRootSaved, producerSaved,
-                     walkFactsSaved, initialWalkFactsSize,
-                     applyDepthSaved,
-                     resolverSaved](
-                EvalState & state, const PosIdx pos, Value ** args, Value & v) {
-                /* Applying a callback-produced value (e.g. `g.foo 10`
-                   inside an outer callback body) is unsupported. */
+            .impl = [](EvalState &, const PosIdx, Value **, Value &) {
+                /* Higher-order callback application — the reconstructed
+                   primop being applied to another argument — is not
+                   currently supported. When the design lights up (see
+                   the cb-higher-order test family), reinstate the arg
+                   registration + synthetic-Apply materialisation this
+                   stub used to house. */
                 throw Error(
                     "tracing eval-cache: applying a function reached "
                     "through a callback's contra-arg is not currently "
                     "supported");
-                /* Publish the live arg under the cb-arg arg's
-                   structural identity so the OUTER walker's
-                   `resolveIdentity` can resolve env facts whose `from`
-                   is the arg's subject-id-evolved state hash at any
-                   history-edge index. Registration carries the
-                   subject + argAncestry (= `Arg{applyDepth+1}`
-                   at `applyArgAncestry`), matching what
-                   `makeCachedFnPrimOp`'s impl uses for its
-                   `argSubject` / `callArgAncestry` at cold; the walker
-                   iterates `envWalk` to find the matching edge.
-                   Wraps args[0] in an `InterpreterObject` so the
-                   walker can call getType / getInt / etc. live
-                   against outer's actual Value. */
-                if (resolverSaved) {
-                    /* Contra-arg identity: hardcoded sentinel matching
-                       writer's OuterApply::run and walker's CallbackApply
-                       dispatch. Scoped by the enclosing
-                       SelectorCallbackApply. */
-                    trace::SelectorArg argProducer{0};
-                    auto outerArgObj = std::make_shared<InterpreterObject>(
-                        state, allocRootValue(args[0]));
-                    registerOuterResolverProxy(
-                        *resolverSaved, trace::SelectorNode{argProducer},
-                        std::move(outerArgObj));
-                }
-                /* Each primop firing replays the ReplayCallbackArg's
-                   synthetic-probe sequence on a LOCAL copy of walkFacts
-                   so the ReplayCallbackArg's persistent shared state
-                   isn't polluted across firings.
-
-                   The ReplayCallbackArg (materialised by
-                   `materialiseLocalStandin` and cached in
-                   `ResolutionContext::memo`) is reused when the walker
-                   dispatches multiple env facts whose resolution paths
-                   force the same ReplayCallbackArg's primop. Without a
-                   copy, walkFacts would accumulate entries from prior
-                   firings and the synthetic's `stampPerArgFields` would
-                   compute its `from` at a later edge index than what
-                   the recorded probe used, breaking the obsSet-map
-                   lookup.
-
-                   localWalkFacts copies just the ReplayCallbackArg's
-                   surface-probe portion (= entries pushed before any
-                   primop firing), trimming any contributions from
-                   prior firings. */
-                auto localWalkFacts = std::make_shared<std::vector<ObservationSet>>(
-                    walkFactsSaved->begin(),
-                    walkFactsSaved->begin() + std::min(initialWalkFactsSize, walkFactsSaved->size()));
-                /* Compose the recursive apply result's subject to
-                   match what the recorder built at cold via
-                   `OuterObject::queryApply` (= outer-object.cc
-                   line ~280):
-                     ApplyResultSubject{
-                       fn  = this OuterObject's subject,
-                       arg = Arg{localCell.depth},
-                     }
-                   where `localCell.depth = callerScope.depth + 1`.
-
-                   This lambda primop fires on the ReplayCallbackArg that
-                   represents the fn of the nested apply; its
-                   `subject` IS the recorder's "this OuterObject's
-                   subject". The arg subject is Arg{depth+1}
-                   at applyArgAncestry, with `depth` threaded in through the
-                   localArg sidecar. The ReplayCallbackArg's construction (in
-                   dispatchApplyLive) requires the sidecar to carry
-                   depth+argAncestry, so the optionals are always set
-                   here. */
-                auto syntheticSel = dg->selectorPool.intern(trace::SelectorApply{producerSaved});
-                auto synthetic = std::make_shared<ReplayCallbackArg>(
-                    syntheticSel,
-                    localWalkFacts,
-                    *dg, rootFSRootSaved, &state);
-                /* Propagate apply context so a nested cb-higher-order
-                   case (= the apply result is itself a function whose
-                   `toValueOrProxy` builds another `<replay-local-lambda>`
-                   primop) composes the right depth downstream. */
-                synthetic->withApplyContext(*applyDepthSaved);
-
-                /* Convert to a Value. ExprFromObject probes
-                   synthetic for type/scalar value and constructs the
-                   matching Value. */
-                ExprFromObject(synthetic, nullptr, nullptr).eval(state, state.baseEnv, v);
             },
         };
     auto * val = evalState.allocValue();
@@ -394,7 +263,6 @@ std::optional<FunctionInfo> ReplayCallbackArg::getFunctionInfo()
     auto qSel = decisionGraph.selectorPool.intern(trace::SelectorGetFunctionInfo{producer});
     auto & query = std::get<trace::SelectorGetFunctionInfo>(qSel->node);
     auto rJson = readResponse(decisionGraph, query, obsSetResponses);
-    appendFactToWalk(query, rJson, *walkFacts);
     trace::ResultFunctionInfo r = rJson;
     if (!r.hasInfo)
         return std::nullopt;

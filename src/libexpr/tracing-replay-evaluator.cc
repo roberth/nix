@@ -469,10 +469,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
             return nullptr;
         }
         auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{0});
-        auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
         auto replayArg = std::make_shared<ReplayCallbackArg>(
             argProducerSel,
-            walkFacts,
             decisionGraph, inner->getEvalState().rootFSRoot,
             &inner->getEvalState());
         replayArg->withObsSetResponses(obsSetMap);
@@ -645,10 +643,8 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                    writer's OuterApply::run and reader's replay-callback-arg.
                    Scoped by this enclosing SelectorCallbackApply. */
                 auto argProducerSel = decisionGraph.selectorPool.intern(trace::SelectorArg{0});
-                auto walkFacts = std::make_shared<std::vector<ObservationSet>>();
                 auto replayArg = std::make_shared<ReplayCallbackArg>(
                     argProducerSel,
-                    walkFacts,
                     decisionGraph, inner->getEvalState().rootFSRoot,
                     &inner->getEvalState());
                 replayArg->withObsSetResponses(obsSetMap);

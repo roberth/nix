@@ -51,10 +51,6 @@ class ReplayCallbackArg : public Object
     /* Content hash of producer — kept for legacy id-string consumers
        (e.g. defeatCache's recursive apply construction). */
     OuterId localId;
-    /* Shared history across all proxies in one cb apply. Each validated
-       probe appends a single-fact ObservationSet so the history's
-       edge indices match the recorder's flush history. */
-    std::shared_ptr<std::vector<ObservationSet>> walkFacts;
     TracingDecisionGraph & decisionGraph;
     ref<SourceRoot> rootFSRoot;
     /* EvalState used for primop construction in `defeatCache`. The
@@ -74,32 +70,15 @@ class ReplayCallbackArg : public Object
 
     /* Memoized WHNF response. The recorder logs ONE observation per
        value force (keyed on the value's producer Selector); the walker
-       must reuse the cached response on any subsequent call. Without
-       this, when
-       `dispatchQueryRequest::navigatePath` invokes `queryApply`
-       multiple times against the same ReplayCallbackArg (= once per fact
-       dispatched on the apply result), each Apply Value's force
-       re-fires the ReplayCallbackArg's surface probes and pushes a fresh fact
-       past where the recorder stopped recording — the next lookup at
-       `walkFacts.size() > recorded_size` then misses and the walker
-       fails. */
+       must reuse the cached response on subsequent calls (e.g. when
+       queryApply invokes on the same ReplayCallbackArg multiple times
+       across dispatched facts). */
     std::optional<trace::ResultWHNF> cachedWHNF;
     /** Read recorded WHNF for this proxy. Memoized; subsequent calls
         return the same result without re-probing. Returns the cached
         WHNF as a const reference so callers can decode the payload
         by alternative. */
     const trace::ResultWHNF & whnf();
-
-    /* Recorder-side depth at the cb-arg's OuterResolver::cb-apply,
-       threaded unchanged through derived children (nested apply's
-       positional depth is one deeper than the cb-arg's, regardless of
-       attr/list navigation within the cb-arg's structure). Consumed
-       only by the higher-order-application path in the lambda primop,
-       which currently throws "unsupported" — see the impl in the
-       lambda constructed near replay-callback-arg.cc:325. When that
-       path lights up, this will compose `SelectorArg{applyDepth+1}`
-       for the nested callback's arg identity. */
-    std::optional<int> applyDepth;
 
     /* Argument-argAncestry cell. Navigation children carry the same cell
        as their parent; the top-level (cb-arg) Local carries the
@@ -109,17 +88,14 @@ class ReplayCallbackArg : public Object
 public:
     /* Constructor for derived children. Subject is built by the
        parent's maybeGetAttr / getListElem as `DerivedSubject{parent,
-       ...}`. Inherits parent's shared walkFacts so the child's
-       state hash evaluation rides on the same per-cb-apply history. */
+       ...}`. */
     ReplayCallbackArg(
         ref<const trace::Selector> producer_,
-        std::shared_ptr<std::vector<ObservationSet>> walkFacts_,
         TracingDecisionGraph & dg,
         ref<SourceRoot> rootFSRoot,
         EvalState * state = nullptr)
         : producer(producer_)
         , localId(producer_->cachedHash)
-        , walkFacts(std::move(walkFacts_))
         , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
 
     std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
@@ -128,15 +104,6 @@ public:
     ReplayCallbackArg & withArgCell(std::shared_ptr<const ArgCell> argScope_)
     {
         argCell = std::move(argScope_);
-        return *this;
-    }
-
-    /** Set the cb-arg apply depth. See `applyDepth` field doc for the
-        currently-unimplemented consumer. Derived children inherit via
-        the same setter, called from their constructors. */
-    ReplayCallbackArg & withApplyContext(int depth_)
-    {
-        applyDepth = depth_;
         return *this;
     }
 
@@ -157,8 +124,6 @@ public:
     {
         return obsSetResponses;
     }
-
-    std::optional<int> getApplyDepth() const { return applyDepth; }
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
