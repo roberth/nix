@@ -60,11 +60,10 @@ class TracingReplayEvaluator : public Evaluator
     };
 
     /* Phase F: envWalk / envCur / responseFor / committedEdgeFingerprints
-       migrated to `SessionState` (defined in q-state.hh) held via
-       shared_ptr on `QState::session`. Cells within an active tree
-       share the same SessionState by inheritance through parent-cell
-       qState at walk-start. Switching active trees = switching qState =
-       switching SessionState; no shared TRE state to trample under the
+       live on `QState` (see q-state.hh) held via shared_ptr on ArgCell.
+       Cells within an active tree share the same QState by inheritance
+       through parent-cell qState at walk-start. Switching active trees
+       = switching qState; no shared TRE state to trample under the
        concurrency invariant. See task #168. */
 
     std::optional<std::string> dispatchQueryRequest(const nlohmann::json & reqJson, ResolutionContext & ctx);
@@ -110,16 +109,6 @@ public:
     TracingDecisionGraph & getDecisionGraph() const
     {
         return decisionGraph;
-    }
-
-    /** Access the shared TracingWriter. Used by TracingReplayObject's
-        `evolvedQueryFrom` to read the writer's `envWalk`
-        directly — single source of truth for the cumulative history on
-        both writer and walker sides, so option-2 encoding can't drift
-        between the two. */
-    TracingWriter & getWriter() const
-    {
-        return writer;
     }
 
     /**

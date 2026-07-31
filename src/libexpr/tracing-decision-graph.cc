@@ -1345,8 +1345,7 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
     const QueryHash & q_initial,
     const std::function<ResponseHash(const RequestHash &, const EdgeContext &)> & dispatch,
     const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt,
-    const SetHash & startCur,
-    const std::function<QueryHash(const QueryHash & preFoldQ)> & recomputeQ)
+    const SetHash & startCur)
 {
     Hash q = q_initial;
     auto cur = startCur;
@@ -1496,22 +1495,6 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
             }
             if (onEdgeAttempt)
                 onEdgeAttempt(/*committed=*/ true, useful);
-            /* Task #110 Q-evolution: after the edge commits (walker's
-               envWalk has grown via onEdgeAttempt), let the caller
-               re-derive Q based on the new envWalk state. If Q
-               evolved, subsequent Terminal/Ask lookups use the new Q,
-               matching the writer's per-observation Q-evolution
-               protocol. */
-            if (recomputeQ) {
-                auto newQ = recomputeQ(q);
-                if (newQ != q) {
-                    tracingCacheLog("history Q evolved %s -> %s at cur=%s",
-                                    q.to_string(HashFormat::Base16, false).substr(0, 12),
-                                    newQ.to_string(HashFormat::Base16, false).substr(0, 12),
-                                    cur.to_string(HashFormat::Base16, false).substr(0, 12));
-                    q = newQ;
-                }
-            }
             advanced = true;
             break;
         }

@@ -236,11 +236,6 @@ TracingReplayEvaluator::walk(
         pendingEdgeObservations.clear();
     };
 
-    /* #178: walker Q evolution retires. Q hashes stable per operation;
-       recomputeQ becomes identity. Left null so decisionGraph.walk
-       skips the call. */
-    std::function<Hash(const Hash &)> recomputeQ;
-
     std::optional<TracingDecisionGraph::WalkHit> walkHit;
 
     /* Per-walk scope: reset committedEdgeFingerprints to empty for the
@@ -274,8 +269,7 @@ TracingReplayEvaluator::walk(
             if (committed) commitEdge();
             else commitRejected(useful);
         },
-        cellAnchor,
-        recomputeQ);
+        cellAnchor);
     /* #187 fallback: if cell-anchored walk misses AND cellAnchor ≠ ∅,
        retry from ∅. Under barrier-based Ask insertion the writer's
        chain starts at ∅; walker at parent.terminalCur may not find
@@ -292,8 +286,7 @@ TracingReplayEvaluator::walk(
                 if (committed) commitEdge();
                 else commitRejected(useful);
             },
-            TracingDecisionGraph::emptySetHash(),
-            recomputeQ);
+            TracingDecisionGraph::emptySetHash());
     }
     if (!walkHit) {
         tracingCacheStats().misses++;

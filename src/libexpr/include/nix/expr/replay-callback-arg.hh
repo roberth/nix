@@ -90,13 +90,15 @@ class ReplayCallbackArg : public Object
         by alternative. */
     const trace::ResultWHNF & whnf();
 
-    /* cb-arg apply context. `applyDepth` = `localCell->depth` at the
-       recorder's OuterResolver::cb-apply. Used by the lambda primop
-       to compose nested apply-result subjects matching the recorder's
-       encoding (= `ApplyResultSubject{fn=this.subject, arg=Arg{depth+1}}`).
-       Inherited unchanged through derived children (= the nested
-       apply's positional depth is one deeper than the cb-arg's,
-       regardless of attr/list navigation within the cb-arg's structure). */
+    /* Recorder-side depth at the cb-arg's OuterResolver::cb-apply,
+       threaded unchanged through derived children (nested apply's
+       positional depth is one deeper than the cb-arg's, regardless of
+       attr/list navigation within the cb-arg's structure). Consumed
+       only by the higher-order-application path in the lambda primop,
+       which currently throws "unsupported" — see the impl in the
+       lambda constructed near replay-callback-arg.cc:325. When that
+       path lights up, this will compose `SelectorArg{applyDepth+1}`
+       for the nested callback's arg identity. */
     std::optional<int> applyDepth;
 
     /* Argument-argAncestry cell. Navigation children carry the same cell
@@ -129,12 +131,9 @@ public:
         return *this;
     }
 
-    /** Set the cb-arg apply context (depth + argAncestry) so the lambda
-        primop on this ReplayCallbackArg (or its derived children) can compose the
-        nested apply-result's synthetic subject as
-        `ApplyResultSubject{fn=this.subject, arg=Arg{depth+1}}`
-        with the proper argAncestry. Derived children inherit the
-        parent's applyContext via the same setter. */
+    /** Set the cb-arg apply depth. See `applyDepth` field doc for the
+        currently-unimplemented consumer. Derived children inherit via
+        the same setter, called from their constructors. */
     ReplayCallbackArg & withApplyContext(int depth_)
     {
         applyDepth = depth_;

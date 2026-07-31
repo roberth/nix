@@ -191,8 +191,6 @@ public:
        cost of insertFactSet. */
     static Hash xorFactIntoHash(const Hash & h, const Hash & request, const Hash & response);
 
-    /* XOR two set-hashes. Used by stateHashAt and similar
-       XOR-fold operations over factSet hashes. */
     static Hash xorHashes(const Hash & a, const Hash & b);
 
     /* Extend an existing set by adding new members. Computes the
@@ -393,17 +391,10 @@ public:
         /* Starting cur for the history. Defaults to ∅. Callers that
            have a structural anchor (= parent TracingReplayObject's terminalCur) can
            hand it in so the history starts at that lookup position. */
-        const SetHash & startCur = SetHash(HashAlgorithm::SHA256),
-        /* Task #110 Q-evolution: after each Ask edge commits (folding
-           its request/response into cur), the walker calls this hook
-           with the pre-fold Q, and it returns the post-fold Q. If Q
-           evolved (the caller's fromSubject state hash changed under
-           the walker's local envWalk), subsequent getTerminal/getAsks
-           lookups use the new Q. Default is identity (no evolution). */
-        const std::function<QueryHash(const QueryHash & preFoldQ)> & recomputeQ = {});
+        const SetHash & startCur = SetHash(HashAlgorithm::SHA256));
 
-    /* Backward-compat overload: dispatch takes only the request. Used
-       by unit tests that don't need edge context. */
+    /* Overload: dispatch takes only the request. Used by unit tests
+       that don't need edge context. */
     std::optional<WalkHit> walk(
         const QueryHash & q,
         const std::function<ResponseHash(const RequestHash &)> & dispatch,
