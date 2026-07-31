@@ -28,10 +28,8 @@ class TracingReplayObject : public Object
     std::function<ref<Object>()> getInner;
     mutable std::optional<ref<Object>> inner;
 
-    /* Argument-argAncestry cell. Apply-result proxies open a fresh cell
-       rooted at the fn's cell; navigation children carry the same
-       cell as their parent. Cell's own `parent` field gives the
-       ancestor chain. */
+    /* Apply-result proxies open a fresh cell rooted at the fn's cell;
+       navigation children carry the same cell as their parent. */
     std::shared_ptr<const ArgCell> argCell;
 
     /* When apply-result, the producer Selector identifying it

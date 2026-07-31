@@ -124,17 +124,6 @@ struct OuterResolver : std::enable_shared_from_this<OuterResolver>
        ref) so OuterResolver stays default-constructible. */
     std::shared_ptr<SourceRoot> outerRootFSRoot;
 
-    /* Outer-direction proxies registered live by the ReplayCallbackArg's
-       `<replay-local-lambda>` primop (= `registerOuterResolverProxy`).
-       Keyed by producer content hash so the walker's `resolveIdentity`
-       can match the registered arg by its state-hash-hex. */
-    struct LiveProxyEntry
-    {
-        trace::SelectorNode producer;
-        std::shared_ptr<Object> obj;
-    };
-    std::vector<LiveProxyEntry> liveProxies;
-
     /** Invoke the outer fn Object `fnObj` on `argObj`. Returns the raw
         outer apply-result plus a producer callable for the wrapping
         OuterObject. */
@@ -590,42 +579,6 @@ std::shared_ptr<OuterResolver> makeOuterResolver(
     if (outerState)
         resolver->outerRootFSRoot = outerState->rootFSRoot.get_ptr();
     return resolver;
-}
-
-void registerOuterResolverProxy(
-    OuterResolver & resolver,
-    trace::SelectorNode producer,
-    std::shared_ptr<Object> obj)
-{
-    /* Overwrite-on-conflict for the same producer key. The primop
-       only ever registers `SelectorArg{depth}` here, so structural
-       equality reduces to comparing the depth field. Asserting on the
-       variant tag keeps this collapse honest if a future caller passes
-       a different variant. */
-    auto * newSeed = std::get_if<trace::SelectorArg>(&producer);
-    assert(newSeed && "registerOuterResolverProxy: producer must be a SelectorArg");
-    for (auto & entry : resolver.liveProxies) {
-        auto * existingSeed = std::get_if<trace::SelectorArg>(&entry.producer);
-        if (existingSeed && existingSeed->depth == newSeed->depth) {
-            entry.obj = std::move(obj);
-            return;
-        }
-    }
-    resolver.liveProxies.push_back({std::move(producer), std::move(obj)});
-}
-
-std::shared_ptr<Object> tryResolveOuterResolverProxy(
-    OuterResolver & resolver,
-    const Hash & idHash,
-    TracingDecisionGraph * dg)
-{
-    (void) dg;
-    for (auto & entry : resolver.liveProxies) {
-        auto stateHash = TracingDecisionGraph::computeSelectorHash(entry.producer);
-        if (stateHash == idHash)
-            return entry.obj;
-    }
-    return nullptr;
 }
 
 } // namespace nix

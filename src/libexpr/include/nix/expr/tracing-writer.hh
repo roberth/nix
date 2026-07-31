@@ -418,13 +418,9 @@ public:
             selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
             qj.dump());
         SelectorHandle qh{selectorHash};
-        (void) parent;  // structuralParentFactSetHash retired
+        (void) parent;
         auto qState = std::make_shared<QState>();
         qState->currentQ = selectorHash;
-        /* #178: Q evolution retires. fromSubject / precondition-fold /
-           payloadTemplate.from rewriting all gone. Q hashes stable
-           per operation; cur at (Q, cur) discriminates. */
-
         if (cell) {
             /* Cross-link both directions atomically. QState needs the
                back-ref for cell->factSetHash() lookups during Ask/Terminal
@@ -438,12 +434,10 @@ public:
     }
 
     /**
-     * Cell-migration Phase D2: getter Query — trace-only, no push
-     * onto activeQueryStack. Contra-observations dispatched during
-     * the getter's evaluation attribute to whatever frame is on top
-     * of the stack (the enclosing apply/root cell), not to a
-     * getter-specific frame. Terminal is inserted via logQueryResult
-     * at a caller-supplied anchorCur (typically parent's
+     * Log a getter Selector — trace-only. Contra-observations dispatched
+     * during the getter's evaluation attribute to the enclosing apply/root
+     * cell, not to a getter-specific frame. Terminal is inserted via
+     * logQueryResult at a caller-supplied anchorCur (typically parent's
      * terminalCur) — no factSet chain of the getter's own.
      */
     template<typename Q>
@@ -468,10 +462,9 @@ public:
     }
 
     /**
-     * Cell-migration Phase D2: getter Result. Inserts a direct
-     * Terminal at (getterSelectorHash, anchorCur) — no chain walk,
-     * no logResult side effects (no closeAsksEdge, no pop from
-     * activeQueryStack).
+     * Log a getter Result. Inserts a direct Terminal at
+     * (getterSelectorHash, anchorCur) — no chain walk, no logResult
+     * side effects.
      */
     template<typename R>
     std::optional<TriePosition> logQueryResult(

@@ -111,12 +111,10 @@ class OuterObject : public Object
        resolver from the outer EvalState's `rootFSRoot`. */
     ref<SourceRoot> outerRootFSRoot;
 
-    /* Argument-argAncestry wiring. `argCell` is the nearest enclosing
-       apply's cell — navigation children carry the same cell as their
-       parent; apply-result proxies open a fresh cell rooted at the
-       fn's cell. The cell carries its own `parent` field, so the
-       ancestor chain is reachable from the cell — no proxy `parent`
-       field needed. */
+    /* Nearest enclosing apply's cell. Navigation children carry the
+       same cell as their parent; apply-result proxies open a fresh
+       cell rooted at the fn's cell. Ancestor chain reached via the
+       cell's own `parent` field. */
     std::shared_ptr<const ArgCell> argCell;
 
     /* SelectorPool for interning child Selectors constructed here

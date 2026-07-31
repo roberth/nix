@@ -38,10 +38,9 @@ namespace nix {
 
 /**
  * Register what a hash represents. `kind` is a short tag
- * (`"requestHash"`, `"stateHash"`, `"contextHash"`, …). `details`
- * carries the structured description — for a requestHash this is
- * the query payload; for a stateHash the subject/argAncestry/step,
- * and so on.
+ * (`"requestHash"`, `"contextHash"`, …). `details` carries the
+ * structured description — for a requestHash this is the query
+ * payload.
  *
  * Cheap and safe to call unconditionally: if provenance capture is
  * disabled the call returns immediately.

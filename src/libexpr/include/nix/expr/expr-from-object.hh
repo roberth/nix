@@ -117,32 +117,4 @@ std::shared_ptr<OuterResolver> makeOuterResolver(
     std::shared_ptr<Evaluator> innerEvaluator,
     TracingWriter * innerWriter = nullptr);
 
-/** Register a live outer-direction proxy under a subject-id `subject` +
-    `argAncestry` in the resolver's outer-values map. Used by the
-    `<replay-local-lambda>` primop at warm replay to publish the
-    live arg it received (args[0]) under the cb-arg arg's
-    structural identity, so the OUTER walker can resolve env facts
-    whose `from` references the arg's state hash — at ANY history
-    step, since the env fact's `from` is the arg's subject-id-evolved
-    state hash at flush time and the walker doesn't know that step a
-    priori. At cold these queries' answers came from the queryFn
-    closure that captured the live outer arg; at warm this
-    registration is the equivalent live channel. Single-entry
-    contract (= overwrite-on-conflict) keyed by `(subject, argAncestry)`
-    structural-equality. */
-void registerOuterResolverProxy(
-    OuterResolver & resolver,
-    trace::SelectorNode producer,
-    std::shared_ptr<Object> obj);
-
-/** Try to resolve a registered live-proxy from the resolver by
-    matching its registered `(subject, argAncestry)` against `idHash`.
-    Returns nullptr if no registration matches. Used by
-    `TracingReplayEvaluator::resolveIdentity` as a fallback after
-    cell-chain and Requests-pool resolution fail. */
-std::shared_ptr<Object> tryResolveOuterResolverProxy(
-    OuterResolver & resolver,
-    const Hash & idHash,
-    TracingDecisionGraph * dg = nullptr);
-
 } // namespace nix

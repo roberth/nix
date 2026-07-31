@@ -383,36 +383,12 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
 
     auto reqPayload = decisionGraph.getRequestPayload(idHash);
     if (!reqPayload) {
-        /* "Not in pool" means the id has no producer Request. Such
-           ids are OUTER-direction by elimination — outer-arg state
-           hashes minted by makeCachedFnPrimOp.impl, e.g. a nested
-           OuterObject for the int the callback body passes to
-           inner_lambda in cb-higher-order's `g 10`.
-
-           Live-proxy fallback: the `<replay-local-lambda>` primop
-           registers the args[0] it receives under the cb-arg arg's
-           initial state hash when fired (= registerOuterResolverProxy
-           in replay-callback-arg.cc). If we find a matching
-           registration here, the OUTER walker resolves to that live
-           proxy and dispatches the env fact live against outer's
-           actual value — capability-mediated, not cached.
-
-           Without a registration, fall through to nullptr. The via-
-           Asks design forbids serving from the Responses pool for
-           OUTER values — silently masks outer-body change (cb-
-           higher-order step 3 returning stale 6 when outer changed
-           from `g 5` to `g 10`). */
-        if (auto resolver = inner->getOuterResolver()) {
-            if (auto live = tryResolveOuterResolverProxy(*resolver, idHash, &decisionGraph)) {
-                tracingCacheLog(
-                    "resolve %s: not in pool — found live-proxy registration",
-                    idStr.substr(0, 12));
-                ctx.memo[idStr] = live;
-                return live;
-            }
-        }
+        /* Not in pool = id has no producer Request. Under the via-Asks
+           design we can't serve OUTER values from the Responses pool
+           (would silently mask outer-body change), so nothing to do
+           here — return nullptr. */
         tracingCacheLog(
-            "resolve %s: not in pool — no provenance (outer-arg by elimination); returning null",
+            "resolve %s: not in pool — no provenance; returning null",
             idStr.substr(0, 12));
         return nullptr;
     }
@@ -532,10 +508,8 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveApplyId(
 std::shared_ptr<Object> TracingReplayEvaluator::resolveProducerChild(
     const std::string & idStr, const trace::SelectorNode & qv, const nlohmann::json & params, ResolutionContext & ctx)
 {
-    /* Under the recursive-Selector shape, each step Selector's payload
-       carries the single `parent` hex — no perArgFrame / fromStateHashes
-       multi-root plumbing. Resolve the parent live and let the visit
-       below dispatch by Selector kind. */
+    /* Each step Selector's payload carries its parent's hex. Resolve
+       the parent live and let the visit below dispatch by Selector kind. */
     if (!params.contains("parent"))
         return nullptr;
     auto parent = resolveIdentity(params["parent"].get<std::string>(), ctx);
@@ -629,7 +603,6 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                 auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
                 for (const auto & obs : *obsSet)
                     obsSetMap->emplace(obs.selectorHash, obs.responsePayload);
-                /* #178: perArgFrame retired; resolve fn by state hash. */
                 std::shared_ptr<Object> fnObj = resolveIdentity(fnHex, ctx);
                 if (!fnObj) {
                     tracingCacheLog(
@@ -934,10 +907,10 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        resolves fn/arg identities — fn's own cell chain roots the
        resolution up to the outer cache-boundary arg. Without a
        currentProxy the cell chain is empty and resolveIdentity
-       falls through to the pool + live-proxy registration path,
-       which under DISALLOW_PARSE cascades into inner parsing.
+       falls through to the pool lookup, which under DISALLOW_PARSE
+       cascades into inner parsing.
 
-       Apply-result argAncestry cell. Parent = fn proxy's cell. */
+       The apply-result opens a fresh cell parented on fn's cell. */
     /* #183: mirror TE::apply — reuse arg's existing cell (one cell
        per call). Under #188's consolidation the arg always has a
        cell by this point (seedCell on the primop path, applyCell

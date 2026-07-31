@@ -59,13 +59,6 @@ class TracingReplayEvaluator : public Evaluator
 
     };
 
-    /* Phase F: envWalk / envCur / responseFor / committedEdgeFingerprints
-       live on `QState` (see q-state.hh) held via shared_ptr on ArgCell.
-       Cells within an active tree share the same QState by inheritance
-       through parent-cell qState at walk-start. Switching active trees
-       = switching qState; no shared TRE state to trample under the
-       concurrency invariant. See task #168. */
-
     std::optional<std::string> dispatchQueryRequest(const nlohmann::json & reqJson, ResolutionContext & ctx);
 
     /** Resolve a recorded outer-value id (hex of a Hash) to a live

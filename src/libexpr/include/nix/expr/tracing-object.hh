@@ -29,11 +29,9 @@ class TracingObject : public Object
     ValueHandle valueNum;
     std::optional<TriePosition> triePos;
 
-    /* Argument-argAncestry cell. Apply-result proxies (constructed by
-       TracingEvaluator::apply) open a fresh cell rooted at the fn's
-       cell; navigation children (maybeGetAttr / getListElem) inherit
-       the parent's cell. Cell's own `parent` field carries the
-       ancestor chain. */
+    /* Apply-result proxies (constructed by TracingEvaluator::apply)
+       open a fresh cell rooted at the fn's cell; navigation children
+       (maybeGetAttr / getListElem) inherit the parent's cell. */
     std::shared_ptr<const ArgCell> argCell;
 
     /* For apply-result wrappers: the producer Selector that identifies

@@ -80,9 +80,8 @@ class ReplayCallbackArg : public Object
         by alternative. */
     const trace::ResultWHNF & whnf();
 
-    /* Argument-argAncestry cell. Navigation children carry the same cell
-       as their parent; the top-level (cb-arg) Local carries the
-       apply's cell. Cell's own `parent` field gives ancestor chain. */
+    /* Navigation children carry the same cell as their parent; the
+       top-level (cb-arg) Local carries the apply's cell. */
     std::shared_ptr<const ArgCell> argCell;
 
 public:
@@ -135,11 +134,6 @@ public:
         return localId.to_string(HashFormat::Base16, false);
     }
 
-    /** Symmetric to TracingCallbackArg: expose the ReplayCallbackArg's structural
-        Subject so a subsequent apply on this ReplayCallbackArg (= the cb-arg
-        ReplayCallbackArg used as `arg` in `<replay-local-lambda>`'s recursive
-        apply) composes ApplyResultSubject with this ReplayCallbackArg's
-        evolving Subject. */
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;
     std::vector<std::string> getAttrNames() override;
     std::string getStringIgnoreContext() override;
@@ -154,15 +148,11 @@ public:
     ObjectType getType() override;
     ObjectType getTypeLazy() override;
     RootValue defeatCache() override;
-    /** `toValueOrProxy` is the principled entry point for callers that
-        want a Value-shaped representation of this recorded local —
-        e.g., `Interpreter::apply` constructing an `mkApp` thunk where
-        this Object is the fn. The current implementation delegates to
-        `defeatCache` for behaviour parity; the structural-fix follow-up
-        (= task #5) reimplements it to produce a primop with the correct
-        `ApplyResultSubject` encoding so the synthetic ReplayCallbackArg's reads
-        match what the recorder wrote (= avoids the cb-higher-order
-        recursion). */
+    /** Materialise a Value-shaped representation of this recorded proxy.
+        For non-function types, returns a thunk over ExprFromObject that
+        lazily probes the recorded responses. For nFunction, returns a
+        primop that throws — higher-order callback application is not
+        currently supported (see the impl for details). */
     RootValue toValueOrProxy(EvalState & state, std::shared_ptr<OuterResolver> resolver) override;
     std::optional<FunctionInfo> getFunctionInfo() override;
     /** Recorded frozen callback args can't be applied without

@@ -1,14 +1,11 @@
 #pragma once
 /**
  * @file
- * QState — per-Selector-invocation state that used to live on
- * `TracingWriter::activeQueryStack`'s `ActiveSelector` frames.
+ * QState — per-Selector-invocation state owned by an ArgCell.
  *
- * Under the cell-migration (see task list #158–#171), every function
- * application creates a new `ArgCell` (already true structurally),
- * and that cell owns a QState holding the invocation's Q-evolution
- * bookkeeping: current Selector hash, payload template, from-subject,
- * per-Q chain observation history, landing-chain anchors.
+ * Every function application creates an ArgCell whose QState holds the
+ * invocation's stable Selector hash plus walker-local buffers
+ * (pending/committed edge observations and per-walk request memoization).
  *
  * Held via `mutable std::shared_ptr<QState>` on ArgCell so that:
  * - Topology-only cells (localCell / seedCell in expr-from-object.cc)
@@ -18,12 +15,11 @@
  *   Q state; the pointee's fields mutate freely because the QState
  *   itself is not const-qualified.
  *
- * Concurrency invariant to preserve (per user 2026-07-24): the eval
- * cache runs with one evaluator active at a time even under I/O-driven
- * multi-evaluator concurrency. Each evaluator owns its cell trees;
- * switching evaluators means switching which tree is active; no shared
- * writer-side stack to trample. QState living on cells (not on a
- * TracingWriter field) is what makes that invariant hold structurally.
+ * Concurrency invariant (per user 2026-07-24): the eval cache runs with
+ * one evaluator active at a time even under I/O-driven multi-evaluator
+ * concurrency. Each evaluator owns its cell trees; switching evaluators
+ * means switching which tree is active. Cell-owned QState is what makes
+ * that hold structurally — no shared global state across trees.
  */
 
 #include "nix/expr/observation-set.hh"
