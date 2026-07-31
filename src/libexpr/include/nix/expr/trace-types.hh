@@ -240,6 +240,14 @@ template<> struct SelectorParent<String>   { using type = std::string; };
 template<> struct SelectorParent<Resolved> { using type = ref<const SelectorF<Resolved>>; };
 template<typename P> using ParentRef = typename SelectorParent<P>::type;
 
+/** Type family selecting how a content-hash CAS reference is carried
+    per phase. Resolved holds a typed Hash; String holds a hex-encoded
+    payload from the wire. */
+template<typename P> struct HashRef;
+template<> struct HashRef<String>   { using type = std::string; };
+template<> struct HashRef<Resolved> { using type = Hash; };
+template<typename P> using HashRefT = typename HashRef<P>::type;
+
 /** Evaluate an expression string. Phase-independent (no parent). */
 struct SelectorExpr
 {
@@ -316,12 +324,13 @@ struct SelectorApplyF
 
 /** Apply a callback to a contra-arg. `parent` is the fn Selector;
     `argObsSet` is a content hash referring to the outer's observation-set
-    on the contra-arg. */
+    on the contra-arg. Phase-dependent: Resolved carries `Hash`, String
+    carries the hex form. */
 template<typename P>
 struct SelectorCallbackApplyF
 {
     static constexpr std::string_view tag = "callbackApply";
-    std::string argObsSet;
+    HashRefT<P> argObsSet;
     ParentRef<P> parent;
     friend bool operator==(const SelectorCallbackApplyF & a, const SelectorCallbackApplyF & b);
     friend std::strong_ordering operator<=>(const SelectorCallbackApplyF & a, const SelectorCallbackApplyF & b);

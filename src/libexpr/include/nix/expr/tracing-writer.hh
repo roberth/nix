@@ -326,7 +326,7 @@ public:
                     fnRef = *found;
             } catch (...) {}
             auto qcaSel = decisionGraph.selectorPool.intern(trace::SelectorCallbackApply{
-                obsSetHash.to_string(HashFormat::Base16, false), fnRef});
+                obsSetHash, fnRef});
             std::shared_ptr<const ArgCell> attrCell = callbackCell ? callbackCell->parent : nullptr;
             logOuterObservation(
                 qcaSel,

@@ -261,7 +261,7 @@ void to_json(nlohmann::json & j, const SelectorGetFunctionInfo & q)
 void to_json(nlohmann::json & j, const SelectorApply & q)
 { to_json(j, StringSelectorApply{hexOf(q.parent)}); }
 void to_json(nlohmann::json & j, const SelectorCallbackApply & q)
-{ to_json(j, StringSelectorCallbackApply{q.argObsSet, hexOf(q.parent)}); }
+{ to_json(j, StringSelectorCallbackApply{q.argObsSet.to_string(HashFormat::Base16, false), hexOf(q.parent)}); }
 
 // ---------------------------------------------------------------------------
 // parseTraceEntry
@@ -619,7 +619,7 @@ std::string describe(const SelectorNode & query)
                 out += " fn=" + shortH(q.parent->cachedHash);
             } else if constexpr (std::is_same_v<Q, SelectorCallbackApply>) {
                 out += " fn=" + shortH(q.parent->cachedHash)
-                    + " obsSet=" + (q.argObsSet.size() > 12 ? q.argObsSet.substr(0, 12) : q.argObsSet);
+                    + " obsSet=" + shortH(q.argObsSet);
             } else if constexpr (std::is_same_v<Q, SelectorExpr>) {
                 out += " expr=\"" + q.expr + "\"";
             } else if constexpr (std::is_same_v<Q, SelectorImport>) {
@@ -697,7 +697,8 @@ std::optional<ref<const Selector>> resolve(const StringSelectorNode & raw, Selec
         [&](const StringSelectorCallbackApply & s) -> std::optional<ref<const Selector>> {
             auto p = pool.findByHex(s.parent);
             if (!p) return std::nullopt;
-            return pool.intern(SelectorCallbackApply{s.argObsSet, *p});
+            auto obsSetHash = Hash::parseNonSRIUnprefixed(s.argObsSet, HashAlgorithm::SHA256);
+            return pool.intern(SelectorCallbackApply{obsSetHash, *p});
         },
     }, raw);
 }
@@ -739,7 +740,7 @@ StringSelectorNode unresolve(const SelectorNode & node)
             return StringSelectorApply{hexOf(s.parent)};
         },
         [](const SelectorCallbackApply & s) -> StringSelectorNode {
-            return StringSelectorCallbackApply{s.argObsSet, hexOf(s.parent)};
+            return StringSelectorCallbackApply{s.argObsSet.to_string(HashFormat::Base16, false), hexOf(s.parent)};
         },
     }, node);
 }

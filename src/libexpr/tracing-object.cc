@@ -111,7 +111,7 @@ std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter &
         auto fnRef = dg.selectorPool.findByHex(cs.fnStateHashHex);
         if (fnRef) {
             auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
-                obsSetHash.to_string(HashFormat::Base16, false), *fnRef});
+                obsSetHash, *fnRef});
             nlohmann::json qcaJson = trace::toJson(*qcaSel);
             dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
             return qcaSel->cachedHash.to_string(HashFormat::Base16, false);

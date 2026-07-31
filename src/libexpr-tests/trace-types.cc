@@ -50,7 +50,8 @@ TEST_F(TraceTypesTest, ResolveUnresolveRoundTrip)
     auto list = pool.intern(SelectorGetListElem{5, imp});
     auto deep = pool.intern(SelectorGetAttr{"deep", list});
     auto app  = pool.intern(SelectorApply{imp});
-    auto cba  = pool.intern(SelectorCallbackApply{"abc123", imp});
+    auto cba  = pool.intern(SelectorCallbackApply{
+        Hash::parseNonSRIUnprefixed("0000000000000000000000000000000000000000000000000000000000abc123", HashAlgorithm::SHA256), imp});
 
     for (auto sel : std::vector{leaf, step, deep, app, cba}) {
         auto raw = unresolve(sel->node);

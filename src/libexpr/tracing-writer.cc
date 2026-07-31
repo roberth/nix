@@ -45,8 +45,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
     auto * incCBA = std::get_if<trace::SelectorCallbackApply>(&incGA->parent->node);
     if (!incCBA) return std::nullopt;
 
-    auto incomingObsSetHash = Hash::parseNonSRIUnprefixed(incCBA->argObsSet, HashAlgorithm::SHA256);
-    auto incomingObsSet = dg.getObservationSet(incomingObsSetHash);
+    auto incomingObsSet = dg.getObservationSet(incCBA->argObsSet);
     if (!incomingObsSet) return std::nullopt;
 
     /* Scan cell's facts for a matching predicate + response. */
@@ -62,8 +61,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
         if (exCBA->parent->cachedHash != incCBA->parent->cachedHash) continue;
         if (exCBA->argObsSet == incCBA->argObsSet) continue;
 
-        auto existingObsSetHash = Hash::parseNonSRIUnprefixed(exCBA->argObsSet, HashAlgorithm::SHA256);
-        auto existingObsSet = dg.getObservationSet(existingObsSetHash);
+        auto existingObsSet = dg.getObservationSet(exCBA->argObsSet);
         if (!existingObsSet) continue;
 
         /* Intersect: keep entries present in both, matched by
@@ -81,7 +79,7 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
 
         auto canonicalObsSetHash = dg.insertObservationSet(intersected);
         auto canonicalCbaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
-            canonicalObsSetHash.to_string(HashFormat::Base16, false), incCBA->parent});
+            canonicalObsSetHash, incCBA->parent});
         dg.insertRequest(canonicalCbaSel->cachedHash,
                          jsonToCborString(trace::toJson(*canonicalCbaSel)));
         auto canonicalGetterSel = dg.selectorPool.intern(trace::SelectorGetAttr{
@@ -94,8 +92,8 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
             existingReqHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
             incomingSelector->cachedHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
             canonicalGetterSel->cachedHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-            exCBA->argObsSet.substr(0, 12).c_str(),
-            incCBA->argObsSet.substr(0, 12).c_str(),
+            exCBA->argObsSet.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+            incCBA->argObsSet.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
             canonicalObsSetHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
 
         auto existingHashCopy = existingReqHash;

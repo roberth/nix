@@ -585,17 +585,11 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                    subject-navigation, invoke fn->queryApply(replayArg),
                    return the applyResult's WHNF. */
                 std::string fnHex = q.parent->cachedHash.to_string(HashFormat::Base16, false);
-                Hash obsSetHash{HashAlgorithm::SHA256};
-                try {
-                    obsSetHash = Hash::parseNonSRIUnprefixed(q.argObsSet, HashAlgorithm::SHA256);
-                } catch (const std::exception &) {
-                    return std::nullopt;
-                }
-                auto obsSet = decisionGraph.getObservationSet(obsSetHash);
+                auto obsSet = decisionGraph.getObservationSet(q.argObsSet);
                 if (!obsSet) {
                     tracingCacheLog(
                         "callbackApply: obsSet=%s not in pool — miss",
-                        q.argObsSet.substr(0, 12));
+                        q.argObsSet.to_string(HashFormat::Base16, false).substr(0, 12));
                     return std::nullopt;
                 }
                 auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
@@ -624,7 +618,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                     auto whnf = computeWHNFFromObject(*resultObj);
                     tracingCacheLog(
                         "callbackApply: HIT obsSet=%s whnf=%s",
-                        q.argObsSet.substr(0, 12), whnf.type.c_str());
+                        q.argObsSet.to_string(HashFormat::Base16, false).substr(0, 12), whnf.type.c_str());
                     return jsonToCborString(nlohmann::json(whnf));
                 } catch (const std::exception & e) {
                     tracingCacheLog("callbackApply: fn->queryApply failed: %s", e.what());
