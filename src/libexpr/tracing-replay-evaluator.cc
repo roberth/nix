@@ -881,7 +881,6 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     if (!fnSelOpt)
         unreachable();
     auto applySel = decisionGraph.selectorPool.intern(trace::SelectorApply{*fnSelOpt});
-    auto & resultProducer = std::get<trace::SelectorApply>(applySel->node);
 
     auto qHash = applySel->cachedHash;
     auto qHex = qHash.to_string(HashFormat::Base16, false);

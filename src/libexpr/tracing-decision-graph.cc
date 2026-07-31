@@ -131,7 +131,6 @@ struct TracingDecisionGraph::State
     SQLiteStmt insertAsk, selectAsks, deleteAsks;
     SQLiteStmt insertTerminal, selectTerminal;
 
-    /* (subject-evolution fast-path) — populated by cold's
     /* In-memory caches of parsed sets and payloads. Populated lazily on
        first read or write so that subsequent operations within the same
        process avoid the SQLite round-trip and the CBOR decode.
@@ -1210,17 +1209,6 @@ static void dg_recordImpl(
             cur = dg_xorHash(cur, dg_factElementHash(req, it->second));
             dispatchedSoFar.insert(req);
         }
-    };
-
-    auto curExtendedBy = [&](const std::vector<Hash> & reqs) -> Hash {
-        Hash h = cur;
-        for (const auto & req : reqs) {
-            assert(!dispatchedSoFar.count(req));
-            auto it = responseFor.find(req);
-            assert(it != responseFor.end());
-            h = dg_xorHash(h, dg_factElementHash(req, it->second));
-        }
-        return h;
     };
 
     while (dispatchedSoFar.size() < allRequests.size()) {

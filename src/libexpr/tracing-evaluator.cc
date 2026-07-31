@@ -360,7 +360,6 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        arg identity is dropped from the payload per #181; discrimination
        flows through the arg's own cell/facts. */
     auto fnQHex = fn->getSelectorHashHex().value_or(fnStateHashStr);
-    auto & resultProducer = std::get<trace::SelectorApply>(applySel->node);
 
     /* #183: one cell per call, tracking the arg. Reuse the arg's
        existing cell (created at the first opportunity, e.g., seedCell
