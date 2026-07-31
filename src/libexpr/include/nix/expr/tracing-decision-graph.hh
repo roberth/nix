@@ -156,7 +156,6 @@ public:
             return responsePayload < o.responsePayload;
         }
     };
-    static Hash computeObservationSetHash(std::vector<Observation> members);
     Hash insertObservationSet(std::vector<Observation> members);
     std::optional<std::vector<Observation>> getObservationSet(const Hash & h);
 
@@ -179,12 +178,6 @@ public:
        canonical hash. Idempotent on hash. */
     SetHash insertRequestSet(std::vector<RequestHash> members);
     SetHash insertFactSet(std::vector<Fact> members);
-
-    /* Make the given factSet members available to record() under the
-       caller-provided hash, *without* re-sorting or re-folding.
-       Caller is responsible for ensuring the hash matches an XOR-fold
-       over the per-element hashes of these (deduplicated) members. */
-    void installFactSet(const SetHash & hash, const std::vector<Fact> & members);
 
     /* XOR-fold one Fact into a running set hash. Used by callers that
        maintain their factSet hash incrementally to avoid the O(N)

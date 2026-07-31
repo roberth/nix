@@ -516,13 +516,6 @@ static std::string dg_observationSetPayload(
     return std::string(reinterpret_cast<const char *>(cbor.data()), cbor.size());
 }
 
-Hash TracingDecisionGraph::computeObservationSetHash(
-    std::vector<TracingDecisionGraph::Observation> members)
-{
-    auto sorted = dg_sortAndDedup(std::move(members));
-    return hashString(HashAlgorithm::SHA256, dg_observationSetPayload(sorted));
-}
-
 Hash TracingDecisionGraph::insertObservationSet(
     std::vector<TracingDecisionGraph::Observation> members)
 {
@@ -725,17 +718,6 @@ TracingDecisionGraph::insertFactSet(std::vector<Fact> members)
     auto state(_state->lock());
     state->factSetCache.try_emplace(setHash, std::optional{std::move(canonical)});
     return setHash;
-}
-
-void TracingDecisionGraph::installFactSet(
-    const SetHash & hash, const std::vector<Fact> & members)
-{
-    auto state(_state->lock());
-    /* Always store the latest snapshot — the caller's growing envFactSet
-       supersedes any prior shorter version recorded under the same
-       hash. Distinct factSet hashes never collide so this only
-       overwrites when the caller has re-primed at the same hash. */
-    state->factSetCache.insert_or_assign(hash, std::optional{members});
 }
 
 Hash TracingDecisionGraph::xorFactIntoHash(
