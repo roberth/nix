@@ -522,25 +522,3 @@ listed. What remains:
   conjure hints for arbitrary Values); CLI-only. Mentioned for
   completeness — the current apply-boundary sequence is stable
   enough that this doesn't need building.
-
-## Source map
-
-- `src/libexpr/primops/cache.cc` — `prim_cache` body.
-- `src/libexpr/include/nix/expr/eval.hh` —
-  `EvalState::rootDecisionGraph`, `cacheState`.
-- `src/libcmd/command.cc` — sets `evalState->rootDecisionGraph`
-  during `getEvalState()`.
-- `src/libexpr/tracing-replay-evaluator.cc` —
-  `dispatchQueryRequest`, `apply()`, `resolveIdentity`
-  (cell-chain identity resolution).
-- `src/libexpr/outer-object.cc` — `OuterObject` (outer-owned value
-  the inner probes via Env).
-- `src/libexpr/expr-from-object.cc` — `ExprFromObject`,
-  `OuterResolver`, `makeOuterResolver`, `makeCachedFnPrimOp`.
-- `src/libexpr/tracing-callback-arg.cc` /
-  `replay-callback-arg.cc` — `TracingCallbackArg` /
-  `ReplayCallbackArg` (writer/replay sides of covariant callbacks).
-- `src/libexpr/include/nix/expr/observation-set.hh` —
-  Observation / ObservationSet value types.
-- `tests/functional/builtins-cache.sh` — feature-coverage test
-  suite; wired into `tests/functional/meson.build`.

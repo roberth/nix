@@ -227,13 +227,12 @@ sessions via the DB index.
 
 ### Query payload types
 
-**Selector** — the eDSL of operations the caller can ask:
-`evalFile`, `getAttr`, `getString`, `apply`, etc. Concrete
-alternatives include `SelectorGetWHNF`, `SelectorGetAttr`,
-`SelectorApply`, `SelectorCallbackApply`, and so on
-(see `src/libexpr/include/nix/expr/trace-types.hh`).
-Each carries the operation's parameters and a `from` field carrying
-the parent Query's identity (Merkle chain).
+**Selector** — the simple query language of operations the caller
+can ask: evaluate a file, evaluate an expression, get an attribute,
+get a list element, get function info, apply a function, apply a
+callback function, refer to a positional callback arg. Non-leaf
+alternatives carry the operation's parameters plus a `parent`
+reference to the parent Selector — a Merkle chain rooted at a leaf.
 
 **Query** — the caller's ask half of the Query/Result message pair.
 Its payload is a Selector; identity is the hash of that payload.
