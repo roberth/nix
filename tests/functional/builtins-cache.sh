@@ -243,20 +243,17 @@ echo '{ f, x }: f x' > "$TEST_ROOT/call-fn.nix"
 # Data-arg change must invalidate too (sanity).
 [[ $(nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/call-fn.nix; }) { f = x: x + 1; x = 50; }') == 51 ]]
 
-# Applying a function reached through a callback's contra-arg is not
-# currently supported. `f = g: g.foo 10` accesses `.foo` on the callback
-# arg then applies it — the outer applies an inner-owned function via
-# outer's Nix machinery, which the tracing eval-cache has no coherent
-# story for. Fails explicitly at both cold and warm.
+# Higher-order callback via attribute navigation (#217). `f = g: g.foo 10`
+# accesses `.foo` on the callback arg then applies it — outer applies an
+# inner-owned function reached through the contra-arg. Handled via
+# TracingCallbackArg::toValueOrProxy's `<cb-arg-apply>` primop, which
+# records the apply as an observation on the enclosing callback's
+# runningObsSet at cold and serves the recorded response at warm.
 echo '{f}: f { foo = a: a * 2; }' > "$TEST_ROOT/cb-attr-apply.nix"
-expectStderr 1 nix eval --impure --expr \
-    '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply.nix; }) { f = g: g.foo 10; }' \
-    | grep -q "applying a function reached through a callback's contra-arg"
-# Warm path fails via a different mechanism (walker miss → ensureInner →
-# evalFile blocked by DISALLOW_PARSE); grepping only for "unsupported"
-# there would miss.  Just assert non-zero exit.
-expectStderr 1 env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
-    '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply.nix; }) { f = g: g.foo 10; }'
+[[ $(nix eval --impure --expr \
+    '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply.nix; }) { f = g: g.foo 10; }') == 20 ]]
+[[ $(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr \
+    '(builtins.cache { import = '"$TEST_ROOT"'/cb-attr-apply.nix; }) { f = g: g.foo 10; }') == 20 ]]
 
 # Path values forwarded through the cache boundary
 echo '{ p }: p' > "$TEST_ROOT/path-fn.nix"
@@ -275,14 +272,14 @@ let
   mypkg = { buildPackages, hello }: hello;
 in callPackageWith self mypkg {}
 NIX
-expectStderr 1 nix eval --impure --expr '
+[[ $(nix eval --impure --expr '
   let callPackageWith = autoArgs: fn: args:
     let
       fargs = builtins.functionArgs fn;
       allArgs = builtins.intersectAttrs fargs autoArgs // args;
     in fn allArgs;
   in (builtins.cache { import = '"$TEST_ROOT"'/callpkg-fn.nix; }) { inherit callPackageWith; }
-' | grep -q "applying a function reached through a callback's contra-arg"
+') == '"hi"' ]]
 if false; then
 [[ $(nix eval --impure --expr '
   let callPackageWith = autoArgs: fn: args:
@@ -317,12 +314,12 @@ cat > "$TEST_ROOT/overridable-fn.nix" << 'NIX'
 { mkOverridable }:
 mkOverridable (self: { name = "pkg"; version = "1.0"; override = newF: mkOverridable newF; })
 NIX
-expectStderr 1 nix eval --impure --expr '
+[[ $(nix eval --impure --expr '
   let mkOverridable = rattrs:
     let args = rattrs (args // { extra = true; });
     in args;
   in ((builtins.cache { import = '"$TEST_ROOT"'/overridable-fn.nix; }) { inherit mkOverridable; }).name
-' | grep -q "applying a function reached through a callback's contra-arg"
+') == '"pkg"' ]]
 if false; then
 [[ $(nix eval --impure --expr '
   let mkOverridable = rattrs:
