@@ -181,7 +181,7 @@ ref<EvalState> EvalCommand::getEvalState()
                 tracePath, [this, tracePath]() { tracingDb->updateLatestSymlink(tracePath); });
             tracingDecisionGraph = std::make_unique<TracingDecisionGraph>();
             tracingWriter = std::make_unique<TracingWriter>(
-                *traceFile, tracingDecisionGraph.get());
+                *traceFile, *tracingDecisionGraph);
             auto sysEnv = make_ref<SystemEnvironment>(evalSettings, getEvalStore(), getStore());
             auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *tracingWriter);
             evalState = std::allocate_shared<EvalState>(

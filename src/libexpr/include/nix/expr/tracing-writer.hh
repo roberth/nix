@@ -66,9 +66,7 @@ struct TriePosition
 class TracingWriter
 {
     TraceSink & sink;
-    /* decision-graph index. nullptr disables decision-graph
-       recording (sink-only mode). */
-    TracingDecisionGraph * decisionGraph;
+    TracingDecisionGraph & decisionGraph;
 
     /* Dedup guard for fact insertion — skips XOR-cancelling duplicates. */
     std::unordered_set<Hash> seenRequests;
@@ -149,8 +147,8 @@ private:
            the DB, folds with our own responses, updates cur. */
         while (true) {
             bool followed = false;
-            for (const auto & edge : decisionGraph->getAsks(selectorHash, cur)) {
-                auto rsMembers = decisionGraph->getRequestSet(edge.requestSet);
+            for (const auto & edge : decisionGraph.getAsks(selectorHash, cur)) {
+                auto rsMembers = decisionGraph.getRequestSet(edge.requestSet);
                 if (!rsMembers)
                     continue;
                 std::vector<Hash> useful;
@@ -219,9 +217,9 @@ private:
                 }
             }
             if (anySubstituted)
-                altRequestSetHash = decisionGraph->insertRequestSet(altReqHashes);
+                altRequestSetHash = decisionGraph.insertRequestSet(altReqHashes);
 
-            decisionGraph->insertAskSplitting(
+            decisionGraph.insertAskSplitting(
                 selectorHash, cur, factList, dispatchedSoFar, altRequestSetHash);
             for (auto & [req, resp] : entries) {
                 cur = TracingDecisionGraph::xorFactIntoHash(cur, req, resp);
@@ -285,7 +283,7 @@ private:
         is empty or if the cell match fails. */
 
 public:
-    TracingWriter(TraceSink & sink, TracingDecisionGraph * decisionGraph = nullptr)
+    TracingWriter(TraceSink & sink, TracingDecisionGraph & decisionGraph)
         : sink(sink)
         , decisionGraph(decisionGraph)
         , sessionRootCell(ArgCell::make(nullptr, nullptr))
@@ -318,8 +316,6 @@ public:
         ref<const trace::Selector> applyResultProducer,
         const trace::ResultWHNF & whnf)
     {
-        if (!decisionGraph)
-            return;
         auto * ap = std::get_if<trace::SelectorApply>(&applyResultProducer->node);
         if (!ap)
             return;
@@ -328,16 +324,16 @@ public:
         auto tryEmitFromCell = [&](const CallbackState & cs) -> bool {
             if (cs.runningObsSet.empty())
                 return false;
-            auto obsSetHash = decisionGraph->insertObservationSet(cs.runningObsSet);
+            auto obsSetHash = decisionGraph.insertObservationSet(cs.runningObsSet);
             /* fnStateHashHex captures fn's Q-space identity at firing
                time. Look up in pool; fall back to fnParent on miss. */
             ref<const trace::Selector> fnRef = fnParent;
             try {
                 auto fnHash = Hash::parseNonSRIUnprefixed(cs.fnStateHashHex, HashAlgorithm::SHA256);
-                if (auto found = decisionGraph->selectorPool.find(fnHash))
+                if (auto found = decisionGraph.selectorPool.find(fnHash))
                     fnRef = *found;
             } catch (...) {}
-            auto qcaSel = decisionGraph->selectorPool.intern(trace::SelectorCallbackApply{
+            auto qcaSel = decisionGraph.selectorPool.intern(trace::SelectorCallbackApply{
                 obsSetHash.to_string(HashFormat::Base16, false), fnRef});
             std::shared_ptr<const ArgCell> attrCell = callbackCell ? callbackCell->parent : nullptr;
             logOuterObservation(
@@ -378,8 +374,6 @@ public:
         const Q & query)
     {
         auto valueNum = sink.logSelector(query);
-        if (!decisionGraph)
-            return {valueNum, {}};
         auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
         nlohmann::json qj = query;
         tracingCacheLog(
@@ -410,8 +404,6 @@ public:
         const Q & query)
     {
         auto valueNum = sink.logSelector(query);
-        if (!decisionGraph)
-            return {valueNum, {}};
         auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
         nlohmann::json qj = query;
         tracingCacheLog(
@@ -444,8 +436,6 @@ public:
     std::pair<ValueHandle, SelectorHandle> logQuery(const Q & query)
     {
         auto valueNum = sink.logSelector(query);
-        if (!decisionGraph)
-            return {valueNum, {}};
         auto selectorHash = TracingDecisionGraph::computeSelectorHash(query);
         nlohmann::json qj = query;
         tracingCacheLog(
@@ -469,7 +459,7 @@ public:
         const std::shared_ptr<const ArgCell> & cell = {})
     {
         sink.logResult(valueNum, result);
-        if (!decisionGraph || !qh.selectorHash)
+        if (!qh.selectorHash)
             return std::nullopt;
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);
@@ -479,14 +469,14 @@ public:
            not the pre-fold anchor snapshot. Then pop the matching
            in-progress entry. */
         Hash terminalCur = cell ? cell->factSetHash() : anchorCur;
-        decisionGraph->insertResult(resultNodeHash, resultPayload);
+        decisionGraph.insertResult(resultNodeHash, resultPayload);
         /* #187 principle 9: barrier-based Ask chain, one Ask per barrier
            group (one value probe per group). Walker dispatches each
            edge's requestSet live, folds, reaches next cur; a divergent
            live response at any barrier misses cleanly there. */
         if (cell)
             insertBarrieredAskChain(*qh.selectorHash, cell);
-        decisionGraph->insertTerminal(*qh.selectorHash, terminalCur, resultNodeHash);
+        decisionGraph.insertTerminal(*qh.selectorHash, terminalCur, resultNodeHash);
         tracingCacheLog(
             "writer logQueryResult: Q=%s anchor=%s -> result=%s",
             qh.selectorHash->to_string(HashFormat::Base16, false).substr(0, 12),
@@ -523,14 +513,12 @@ public:
     void logResponse(const trace::Response<Req> & resp)
     {
         sink.log(nlohmann::json(resp));
-        if (!decisionGraph)
-            return;
         nlohmann::json reqJson = resp.request;
         nlohmann::json respJson = resp.response;
         auto selectorHash = TracingDecisionGraph::computeSelectorHash(resp.request);
         auto responsePayload = jsonToCborString(respJson);
         auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
-        decisionGraph->insertRequest(selectorHash, jsonToCborString(reqJson));
+        decisionGraph.insertRequest(selectorHash, jsonToCborString(reqJson));
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), selectorHash, responseHash);
         if (!seenRequests.insert(factHash).second)
@@ -587,8 +575,6 @@ public:
      */
     void noteEnvObservation(const Hash & request, const Hash & response)
     {
-        if (!decisionGraph)
-            return;
         auto factHash = TracingDecisionGraph::xorFactIntoHash(
             Hash(HashAlgorithm::SHA256), request, response);
         if (!seenRequests.insert(factHash).second)
@@ -610,10 +596,8 @@ public:
      */
     void deferRequest(nlohmann::json payload)
     {
-        if (!decisionGraph)
-            return;
         auto key = hashString(HashAlgorithm::SHA256, payload.dump());
-        decisionGraph->insertRequest(key, jsonToCborString(payload));
+        decisionGraph.insertRequest(key, jsonToCborString(payload));
     }
 
     /**
@@ -640,15 +624,15 @@ public:
     {
         sink.logResult(valueNum, result);
 
-        if (!decisionGraph || !qh.selectorHash)
+        if (!qh.selectorHash)
             return std::nullopt;
 
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);
         auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
-        decisionGraph->insertResult(resultNodeHash, resultPayload);
+        decisionGraph.insertResult(resultNodeHash, resultPayload);
 
-        sessionRequestsTrie.persist(*decisionGraph);
+        sessionRequestsTrie.persist(decisionGraph);
 
         Hash finalQ = *qh.selectorHash;
         /* #177 pull model: Terminal keyed at the completing Q's
@@ -664,7 +648,7 @@ public:
            each carrying at most one value probe. */
         if (cell)
             insertBarrieredAskChain(finalQ, cell);
-        decisionGraph->insertTerminal(finalQ, terminalCur, resultNodeHash);
+        decisionGraph.insertTerminal(finalQ, terminalCur, resultNodeHash);
 
         return TriePosition{
             .resultNodeHash = resultNodeHash,
@@ -690,15 +674,7 @@ public:
         // No-op.
     }
 
-    /**
-     * Whether decision-graph recording is enabled.
-     */
-    bool hasIndex() const
-    {
-        return decisionGraph != nullptr;
-    }
-
-    TracingDecisionGraph * getDecisionGraph() const
+    TracingDecisionGraph & getDecisionGraph() const
     {
         return decisionGraph;
     }

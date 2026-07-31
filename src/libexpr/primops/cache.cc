@@ -105,7 +105,7 @@ static void prim_cache(EvalState & state, const PosIdx pos, Value ** args, Value
     } else {
         sink = std::make_shared<NullTraceSink>();
     }
-    auto writer = std::make_shared<TracingWriter>(*sink, decisionGraph);
+    auto writer = std::make_shared<TracingWriter>(*sink, *decisionGraph);
 
     // Wrap the *outer* environment, not a fresh SystemEnvironment, so
     // file reads bubble up through the outer accessor chain

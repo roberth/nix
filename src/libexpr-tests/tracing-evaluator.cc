@@ -63,7 +63,7 @@ protected:
         state = stateRef;
         sink = std::make_shared<MemoryTraceSink>();
         decisionGraph = std::make_unique<TracingDecisionGraph>(":memory:");
-        writer = std::make_unique<TracingWriter>(*sink, decisionGraph.get());
+        writer = std::make_unique<TracingWriter>(*sink, *decisionGraph);
         auto interpreter = make_ref<Interpreter>(stateRef);
         evaluator = std::make_shared<TracingEvaluator>(*writer, interpreter);
     }

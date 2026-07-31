@@ -45,10 +45,8 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
     auto child = inner->maybeGetAttr(name);
     if (!child)
         return nullptr;
-    auto * dg = writer.getDecisionGraph();
-    if (!dg)
-        return child;
-    auto querySel = dg->selectorPool.intern(trace::SelectorGetAttr{name, producer});
+    auto & dg = writer.getDecisionGraph();
+    auto querySel = dg.selectorPool.intern(trace::SelectorGetAttr{name, producer});
     recordObservation(querySel, computeWHNFFromObject(*child));
     return std::make_shared<TracingCallbackArg>(
         std::move(child), querySel, writer, rootFSRoot, argCell);
@@ -161,9 +159,8 @@ std::shared_ptr<Object> TracingCallbackArg::getListElem(size_t index)
            throws the source-positioned error. */
         return inner->getListElem(index);
     auto child = inner->getListElem(index);
-    auto * dg = writer.getDecisionGraph();
-    if (!dg) return child;
-    auto querySel = dg->selectorPool.intern(trace::SelectorGetListElem{index, producer});
+    auto & dg = writer.getDecisionGraph();
+    auto querySel = dg.selectorPool.intern(trace::SelectorGetListElem{index, producer});
     recordObservation(querySel, computeWHNFFromObject(*child));
     return std::make_shared<TracingCallbackArg>(
         std::move(child), querySel, writer, rootFSRoot, argCell);
@@ -204,11 +201,9 @@ std::optional<FunctionInfo> TracingCallbackArg::getFunctionInfo()
     auto info = inner->getFunctionInfo();
     trace::ResultFunctionInfo rfi{
         info.has_value(), info ? info->formals : std::map<std::string, bool>{}, info ? info->ellipsis : false};
-    auto * dg = writer.getDecisionGraph();
-    if (dg) {
-        auto qSel = dg->selectorPool.intern(trace::SelectorGetFunctionInfo{producer});
-        recordObservation(qSel, rfi);
-    }
+    auto & dg = writer.getDecisionGraph();
+    auto qSel = dg.selectorPool.intern(trace::SelectorGetFunctionInfo{producer});
+    recordObservation(qSel, rfi);
     return info;
 }
 
@@ -238,10 +233,9 @@ void TracingCallbackArg::recordObservation(ref<const trace::Selector> query, con
         [](const auto & r) -> nlohmann::json { return r; },
         result);
     auto rPayload = jsonToCborString(rJson);
-    if (auto * dg = writer.getDecisionGraph()) {
-        nlohmann::json qJson = trace::toJson(*query);
-        dg->insertRequest(qh, jsonToCborString(qJson));
-    }
+    auto & dg = writer.getDecisionGraph();
+    nlohmann::json qJson = trace::toJson(*query);
+    dg.insertRequest(qh, jsonToCborString(qJson));
     argCell->callbackState->runningObsSet.push_back({qh, rPayload});
 }
 

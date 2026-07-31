@@ -175,7 +175,7 @@ OuterApplyResult OuterApply::run(
     auto argStateHashStr = argStateHash.to_string(HashFormat::Base16, false);
 
     /* Intern SelectorApply{parent=fnProducer} — the apply's identity. */
-    auto & pool = innerWriter->getDecisionGraph()->selectorPool;
+    auto & pool = innerWriter->getDecisionGraph().selectorPool;
     auto applySel = pool.intern(trace::SelectorApply{fnProducer});
     if (innerWriter) {
         nlohmann::json applyQ = trace::toJson(*applySel);
@@ -232,7 +232,7 @@ OuterApplyResult OuterApply::run(
        the cast returns null, leaving the TracingCallbackArg wrap path
        unchanged. */
     auto argProducerSel = innerWriter
-        ? innerWriter->getDecisionGraph()->selectorPool.intern(argProducer)
+        ? innerWriter->getDecisionGraph().selectorPool.intern(argProducer)
         : ref<const trace::Selector>(std::make_shared<const trace::Selector>(trace::SelectorNode{argProducer}));
     auto wrappedArg = (innerWriter && outerRootFSRoot
                        && !dynamic_cast<ReplayCallbackArg *>(argObj.get()))
@@ -277,9 +277,9 @@ OuterApplyResult OuterApply::run(
        references to this producer at replay. */
     std::function<ref<const trace::Selector>()> producerFn;
     if (innerWriter) {
-        auto * dg = innerWriter->getDecisionGraph();
+        auto * dg = &innerWriter->getDecisionGraph();
         producerFn = [localCell, fnProducer, applySel, dg]() -> ref<const trace::Selector> {
-            if (localCell->callbackState && dg) {
+            if (localCell->callbackState) {
                 auto obsSetHash = dg->insertObservationSet(
                     localCell->callbackState->runningObsSet);
                 /* Look up cs.fnStateHashHex in pool; fallback to fnProducer. */

@@ -163,9 +163,6 @@ void TracingWriter::logOuterObservation(
     std::string producerDesc,
     const std::shared_ptr<const ArgCell> & attributionCell)
 {
-    if (!decisionGraph)
-        return;
-
     std::string queryTag = std::visit(
         [](const auto & q) -> std::string { return std::string(q.tag); }, query->node);
     tracingCacheLog(
@@ -201,7 +198,7 @@ void TracingWriter::logOuterObservation(
                           {"selectorHash", selectorHash.to_string(HashFormat::Base16, false)}});
     }
 
-    decisionGraph->insertRequest(selectorHash, jsonToCborString(queryJson));
+    decisionGraph.insertRequest(selectorHash, jsonToCborString(queryJson));
 
     /* #183: fact appends to attributionCell's fact set. Ask rows
        inserted per-Selector-completion.
@@ -226,7 +223,7 @@ void TracingWriter::logOuterObservation(
            canonical form. See main doc's "state/observation-creep
            canonicalisation" note. */
         auto canonical = tryStateCreepCanonicalise(
-            *decisionGraph, attributionCell, queryJson, responseHash);
+            decisionGraph, attributionCell, queryJson, responseHash);
         auto factReqHash = canonical ? canonical->canonicalReqHash : selectorHash;
         auto barrier = peekBarrier();
         bool added = attributionCell->addFact(factReqHash, responseHash, barrier);
@@ -252,8 +249,6 @@ void TracingWriter::logOuterObservation(
 
 void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
 {
-    if (!decisionGraph)
-        return;
     /* #184: reduced to inserting the apply-request payload into the
        Requests pool. The writer-side CallbackCell vector + SuppressApplyBoundary
        guard retired — cell.callbackState (populated by the caller) is
@@ -263,7 +258,7 @@ void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
     if (provenanceEnabled())
         recordProvenance(applyReqHash, "applyRequestHash",
                          {{"applyQueryPayload", applyQueryPayload}});
-    decisionGraph->insertRequest(applyReqHash, applyPayloadCbor);
+    decisionGraph.insertRequest(applyReqHash, applyPayloadCbor);
 }
 
 } // namespace nix

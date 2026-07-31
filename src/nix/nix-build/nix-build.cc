@@ -350,7 +350,7 @@ static void main_nix_build(int argc, char ** argv)
         traceFile =
             std::make_unique<TraceFile>(tracePath, [&, tracePath]() { tracingDb->updateLatestSymlink(tracePath); });
         tracingDecisionGraph = std::make_unique<TracingDecisionGraph>();
-        tracingWriter = std::make_unique<TracingWriter>(*traceFile, tracingDecisionGraph.get());
+        tracingWriter = std::make_unique<TracingWriter>(*traceFile, *tracingDecisionGraph);
         auto sysEnv = make_ref<SystemEnvironment>(evalSettings, evalStore, store);
         auto tracingEnv = make_ref<TracingEnvironment>(sysEnv, *tracingWriter);
         state = std::make_shared<EvalState>(myArgs.lookupPath, fetchSettings, evalSettings, tracingEnv, sysEnv);

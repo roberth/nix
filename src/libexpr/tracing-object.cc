@@ -105,19 +105,17 @@ std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter &
        that references it becomes the Fact (callback-model §7). */
     if (cbApplyOrigin && argCell && argCell->callbackState) {
         auto & cs = *argCell->callbackState;
-        auto * dg = w.getDecisionGraph();
-        if (dg) {
-            auto obsSetHash = dg->insertObservationSet(cs.runningObsSet);
-            /* fnStateHashHex captures fn's Q-space identity; look it
-               up in pool for the parent Selector. */
-            auto fnRef = dg->selectorPool.findByHex(cs.fnStateHashHex);
-            if (fnRef) {
-                auto qcaSel = dg->selectorPool.intern(trace::SelectorCallbackApply{
-                    obsSetHash.to_string(HashFormat::Base16, false), *fnRef});
-                nlohmann::json qcaJson = trace::toJson(*qcaSel);
-                dg->insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
-                return qcaSel->cachedHash.to_string(HashFormat::Base16, false);
-            }
+        auto & dg = w.getDecisionGraph();
+        auto obsSetHash = dg.insertObservationSet(cs.runningObsSet);
+        /* fnStateHashHex captures fn's Q-space identity; look it up in
+           the pool for the parent Selector. */
+        auto fnRef = dg.selectorPool.findByHex(cs.fnStateHashHex);
+        if (fnRef) {
+            auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
+                obsSetHash.to_string(HashFormat::Base16, false), *fnRef});
+            nlohmann::json qcaJson = trace::toJson(*qcaSel);
+            dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
+            return qcaSel->cachedHash.to_string(HashFormat::Base16, false);
         }
     }
     /* Under the Selector-is-a-sequence model, the wrapper's producer
@@ -165,13 +163,11 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     auto fromHex = getProducerSelectorHex(writer);
     if (!fromHex)
         return innerChild;
-    auto * dg = writer.getDecisionGraph();
-    if (!dg)
-        return innerChild;
-    auto fromSel = dg->selectorPool.findByHex(*fromHex);
+    auto & dg = writer.getDecisionGraph();
+    auto fromSel = dg.selectorPool.findByHex(*fromHex);
     if (!fromSel)
         return innerChild;
-    auto querySel = dg->selectorPool.intern(trace::SelectorGetAttr{name, *fromSel});
+    auto querySel = dg.selectorPool.intern(trace::SelectorGetAttr{name, *fromSel});
     auto & query = std::get<trace::SelectorGetAttr>(querySel->node);
     auto queryHash = querySel->cachedHash;
     tracingCacheLog(
@@ -320,13 +316,11 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     auto fromHex = getProducerSelectorHex(writer);
     if (!fromHex)
         return inner->getListElem(index);
-    auto * dg = writer.getDecisionGraph();
-    if (!dg)
-        return inner->getListElem(index);
-    auto fromSel = dg->selectorPool.findByHex(*fromHex);
+    auto & dg = writer.getDecisionGraph();
+    auto fromSel = dg.selectorPool.findByHex(*fromHex);
     if (!fromSel)
         return inner->getListElem(index);
-    auto querySel = dg->selectorPool.intern(trace::SelectorGetListElem{index, *fromSel});
+    auto querySel = dg.selectorPool.intern(trace::SelectorGetListElem{index, *fromSel});
     auto & query = std::get<trace::SelectorGetListElem>(querySel->node);
     auto [valueId, qh] = writer.logQuery(query);
     auto result = inner->getListElem(index);
@@ -373,13 +367,11 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
     auto fromHex = getProducerSelectorHex(writer);
     if (!fromHex)
         return inner->getFunctionInfo();
-    auto * dg = writer.getDecisionGraph();
-    if (!dg)
-        return inner->getFunctionInfo();
-    auto fromSel = dg->selectorPool.findByHex(*fromHex);
+    auto & dg = writer.getDecisionGraph();
+    auto fromSel = dg.selectorPool.findByHex(*fromHex);
     if (!fromSel)
         return inner->getFunctionInfo();
-    auto querySel = dg->selectorPool.intern(trace::SelectorGetFunctionInfo{*fromSel});
+    auto querySel = dg.selectorPool.intern(trace::SelectorGetFunctionInfo{*fromSel});
     auto & query = std::get<trace::SelectorGetFunctionInfo>(querySel->node);
     auto [valueId, qh] = writer.logQuery(query);
     auto result = inner->getFunctionInfo();
@@ -416,11 +408,9 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
 
     /* cb-apply: record an explicit ε edge for this apply.
        See parallel call in TracingEvaluator::apply. */
-    auto * dg = writer.getDecisionGraph();
-    if (!dg)
-        return inner->queryApply(argObj);
+    auto & dg = writer.getDecisionGraph();
     /* Look up fn's Selector in pool via hex. */
-    auto fnSelOpt = dg->selectorPool.findByHex(*fnIdOpt);
+    auto fnSelOpt = dg.selectorPool.findByHex(*fnIdOpt);
     if (!fnSelOpt)
         return inner->queryApply(argObj);
     auto fnSel = *fnSelOpt;
@@ -430,7 +420,7 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     if (auto mine = getSelector())
         fnSel = *mine;
 
-    auto applySel = dg->selectorPool.intern(trace::SelectorApply{fnSel});
+    auto applySel = dg.selectorPool.intern(trace::SelectorApply{fnSel});
     auto applyBoundaryJson = trace::toJson(*applySel);
     tracingCacheLog("createCallbackCell callsite=TracingObject::queryApply fn=%s arg=%s",
                     fnIdOpt->substr(0, 12), argIdOpt->substr(0, 12));

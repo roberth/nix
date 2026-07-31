@@ -52,9 +52,8 @@ std::shared_ptr<Object> TracingCallbackApplyResult::maybeGetAttr(const std::stri
     auto child = inner->maybeGetAttr(name);
     if (!child)
         return nullptr;
-    auto * dg = writer.getDecisionGraph();
-    if (!dg) return child;
-    auto qSel = dg->selectorPool.intern(trace::SelectorGetAttr{name, producer});
+    auto & dg = writer.getDecisionGraph();
+    auto qSel = dg.selectorPool.intern(trace::SelectorGetAttr{name, producer});
     auto childWHNF = computeWHNFFromObject(*child);
     recordD2(qSel, childWHNF);
     return child;
@@ -162,10 +161,9 @@ std::shared_ptr<Object> TracingCallbackApplyResult::getListElem(size_t index)
            throws the source-positioned error. */
         return inner->getListElem(index);
     auto child = inner->getListElem(index);
-    if (auto * dg = writer.getDecisionGraph()) {
-        auto qSel = dg->selectorPool.intern(trace::SelectorGetListElem{index, producer});
-        recordD2(qSel, computeWHNFFromObject(*child));
-    }
+    auto & dg = writer.getDecisionGraph();
+    auto qSel = dg.selectorPool.intern(trace::SelectorGetListElem{index, producer});
+    recordD2(qSel, computeWHNFFromObject(*child));
     return child;
 }
 
@@ -198,10 +196,9 @@ std::optional<FunctionInfo> TracingCallbackApplyResult::getFunctionInfo()
         info.has_value(),
         info ? info->formals : std::map<std::string, bool>{},
         info ? info->ellipsis : false};
-    if (auto * dg = writer.getDecisionGraph()) {
-        auto qSel = dg->selectorPool.intern(trace::SelectorGetFunctionInfo{producer});
-        recordD2(qSel, rfi);
-    }
+    auto & dg = writer.getDecisionGraph();
+    auto qSel = dg.selectorPool.intern(trace::SelectorGetFunctionInfo{producer});
+    recordD2(qSel, rfi);
     return info;
 }
 

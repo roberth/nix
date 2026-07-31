@@ -171,8 +171,7 @@ ref<Object> TracingEvaluator::evalFile(const RootedPath & path, const std::strin
     /* Bootstrap the SelectorPool: intern this evalFile's root Selector
        so descendants that build SelectorApplyStep{parent=this} etc.
        can resolve their parent via fromVariant. */
-    if (auto * dg = writer.getDecisionGraph())
-        obj->withProducer(dg->selectorPool.intern(rootSel));
+    obj->withProducer(writer.getDecisionGraph().selectorPool.intern(rootSel));
     obj->withCachedWHNF(std::move(whnf));
     return obj;
 }
@@ -193,8 +192,7 @@ ref<Object> TracingEvaluator::evalExpr(const std::string & expr, const RootedPat
     const_cast<ArgCell &>(*rootCell).liveObject = obj.get_ptr();
     obj->withArgCell(std::move(rootCell));
     /* Bootstrap the SelectorPool with this evalExpr's root Selector. */
-    if (auto * dg = writer.getDecisionGraph())
-        obj->withProducer(dg->selectorPool.intern(rootSel));
+    obj->withProducer(writer.getDecisionGraph().selectorPool.intern(rootSel));
     obj->withCachedWHNF(std::move(whnf));
     return obj;
 }
@@ -330,7 +328,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     if (!fnSelOpt)
         unreachable();
     auto fnSel = *fnSelOpt;
-    auto applySel = writer.getDecisionGraph()->selectorPool.intern(trace::SelectorApply{fnSel});
+    auto applySel = writer.getDecisionGraph().selectorPool.intern(trace::SelectorApply{fnSel});
     nlohmann::json applyQ = trace::toJson(*applySel);
 
     /* If fn is a TracingCallbackArg (= inner-supplied lambda the
