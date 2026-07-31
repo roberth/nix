@@ -1,11 +1,9 @@
 #include "nix/expr/replay-callback-arg.hh"
 #include "nix/expr/expr-from-object.hh"
-#include "nix/expr/interpreter-object.hh"
 #include "nix/expr/object-type.hh"
 #include "nix/expr/primops.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
-#include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/expr/trace-types.hh"
 #include "nix/util/source-accessor.hh"
@@ -238,31 +236,17 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
             .name = "<replay-local-lambda>",
             .args = {"args"},
             .arity = 1,
-            .impl = [self = std::static_pointer_cast<ReplayCallbackArg>(shared_from_this()),
-                     resolver](EvalState & state, const PosIdx, Value ** /*args*/, Value & v) {
-                /* #217: serve the cached applyResult. Arg-divergence
-                   detection would require running inner-lambda's
-                   recorded probes against the live arg — deferred (see
-                   task #217). Without it, warm returns the cached result
-                   regardless of arg identity. */
-                auto & dg = self->decisionGraph;
-                if (!self->obsSetResponses)
-                    throw Error("ReplayCallbackArg::<replay-local-lambda>: no obsSetResponses");
-                auto applySel = dg.selectorPool.intern(trace::SelectorApply{self->producer});
-                auto it = self->obsSetResponses->find(applySel->cachedHash);
-                if (it == self->obsSetResponses->end())
-                    throw Error("ReplayCallbackArg::<replay-local-lambda>: no recorded apply response");
-                trace::ResultWHNF whnf = cborStringToJson(it->second).get<trace::ResultWHNF>();
-                std::visit(overloaded{
-                    [&](const trace::WHNFInt & p) { v.mkInt(p.value); },
-                    [&](const trace::WHNFBool & p) { v.mkBool(p.value); },
-                    [&](const trace::WHNFFloat & p) { v.mkFloat(p.value); },
-                    [&](const trace::WHNFString & p) { v.mkString(p.value, state.mem); },
-                    [&](const trace::WHNFNull &) { v.mkNull(); },
-                    [&](const auto &) {
-                        throw Error("ReplayCallbackArg::<replay-local-lambda>: unsupported WHNF type %s", whnf.type);
-                    },
-                }, whnf.payload);
+            .impl = [](EvalState &, const PosIdx, Value **, Value &) {
+                /* Higher-order callback application — the reconstructed
+                   primop being applied to another argument — is not
+                   currently supported. When the design lights up (see
+                   the cb-higher-order test family), reinstate the arg
+                   registration + synthetic-Apply materialisation this
+                   stub used to house. */
+                throw Error(
+                    "tracing eval-cache: applying a function reached "
+                    "through a callback's contra-arg is not currently "
+                    "supported");
             },
         };
     auto * val = evalState.allocValue();

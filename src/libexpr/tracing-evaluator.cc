@@ -417,16 +417,22 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        cb-apply): wrap the result in a TracingCallbackApplyResult so
        subsequent method calls (`getType`, `getInt`, etc.) route their
        observations into the enclosing CallbackCell's runningObsSet
-       rather than into env main-trie Terminals.
+       rather than into env main-trie Terminals. See
+       tracing-callback-apply-result.hh for the recording flow.
 
-       #217: do NOT log a Terminal for the layer-2 SelectorApply. The
-       applyResult is routed through the enclosing SelectorCallbackApply
-       (via the callback cell's runningObsSet) — a Terminal at
-       (SelectorApply{parent=SelectorArg{0}}, cell.factSetHash()) would
-       short-circuit warm's walker past the SelectorCallbackApply
-       dispatch. The prior placeholder "lambda" WHNF Terminal was
-       silently served at warm and leaked as `«primop <outer-fn>»`. */
+       Phase B note: the ActiveSelector we pushed via
+       logSelectorOnCell above still needs to pop. TLO path
+       doesn't compute/log a SelectorApply Terminal (its result is
+       routed via the callback cell), so we pop by discarding qh
+       without a matching logResult — that would leave the stack
+       inconsistent. Instead, log a trivial "function"-typed WHNF
+       so the frame closes cleanly with a Terminal-of-record; the
+       TLO path's downstream doesn't consult this Terminal. */
     if (fnIsTlo) {
+        trace::ResultWHNF placeholderWhnf;
+        placeholderWhnf.type = "lambda";
+        placeholderWhnf.payload = trace::WHNFFunction{};
+        writer.logResult(v, placeholderWhnf, qh, cell);
         auto laro = std::make_shared<TracingCallbackApplyResult>(
             result, writer, applySel);
         laro->withArgCell(cell);

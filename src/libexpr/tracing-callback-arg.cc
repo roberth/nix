@@ -1,9 +1,5 @@
 #include "nix/expr/tracing-callback-arg.hh"
-#include "nix/expr/eval.hh"
-#include "nix/expr/expr-from-object.hh"
-#include "nix/expr/interpreter-object.hh"
 #include "nix/expr/object-type.hh"
-#include "nix/expr/primops.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-object.hh"
@@ -188,65 +184,16 @@ RootValue TracingCallbackArg::defeatCache()
 {
     /* Reject function-typed contra-arg values: handing back the real
        lambda would let outer's Nix mkApp invoke it directly, bypassing
-       the tracing machinery. The right entry for higher-order callback
-       application is `toValueOrProxy` (below). */
+       the tracing machinery. That path only produces a correct answer
+       "by accident" and has no coherent story at replay. */
     if (getType() == nFunction)
         throw Error(
-            "TracingCallbackArg::defeatCache: use toValueOrProxy for nFunction "
-            "(higher-order callback application)");
+            "tracing eval-cache: applying a function reached through a "
+            "callback's contra-arg is not currently supported");
     /* Pass through unrecorded for non-function types. defeatCache yields
        a concrete RootValue (no observable side effects), and there's no
        incoming-Fact shape for "I gave you my underlying value." */
     return inner->defeatCache();
-}
-
-RootValue TracingCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<struct OuterResolver> resolver)
-{
-    /* #217: higher-order callback path. Return a primop that when
-       applied by the outer's `g arg`:
-       - records an arg-fingerprint observation (arg's WHNF under
-         SelectorGetFunctionInfo{parent=producer}) on the enclosing
-         callback firing's runningObsSet, so warm can compare live
-         vs recorded and detect divergence
-       - records `(SelectorApply{parent=producer}, applyResult-WHNF)`
-         on the same runningObsSet, so warm can serve the recorded
-         applyResult after divergence-check passes
-       - routes the actual apply through `inner->queryApply(argObj)`
-         (inner is the lambda-carrying Object), materialising the
-         result into v via ExprFromObject */
-    auto self = std::static_pointer_cast<TracingCallbackArg>(shared_from_this());
-    auto * primOp = new
-#if NIX_USE_BOEHMGC
-        (GC)
-#endif
-        PrimOp{
-            .name = "<cb-arg-apply>",
-            .args = {"arg"},
-            .arity = 1,
-            .impl = [self, resolver](EvalState & state, const PosIdx, Value ** args, Value & v) {
-                /* #217: laziness end-to-end — don't force args[0] here.
-                   Forcing eagerly (e.g. to fingerprint the arg for
-                   divergence detection) causes infinite recursion when
-                   the arg is self-referential (see the mkOverridable
-                   pattern in builtins-cache.sh). The proper divergence-
-                   detection mechanism records inner-lambda's ACTUAL
-                   probes on the arg — those only fire if the body
-                   forces the arg. Not yet wired; without it, warm serves
-                   the cached applyResult regardless of arg identity. */
-                auto argObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
-                auto resultObj = self->inner->queryApply(argObj);
-                if (!resultObj)
-                    throw Error("TracingCallbackArg::<cb-arg-apply>: queryApply returned null");
-                auto & dg = self->writer.getDecisionGraph();
-                auto applySel = dg.selectorPool.intern(trace::SelectorApply{self->producer});
-                auto applyResultWhnf = computeWHNFFromObject(*resultObj);
-                self->recordObservation(applySel, applyResultWhnf);
-                ExprFromObject(resultObj, nullptr, resolver).eval(state, state.baseEnv, v);
-            },
-        };
-    auto * val = evalState.allocValue();
-    val->mkPrimOp(primOp);
-    return allocRootValue(val);
 }
 
 std::optional<FunctionInfo> TracingCallbackArg::getFunctionInfo()
