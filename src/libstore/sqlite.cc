@@ -67,25 +67,33 @@ static void traceSQL(void * x, const char * sql)
 
 SQLite::SQLite(const std::filesystem::path & path, Settings && settings)
 {
+    // sqlite recognises ":memory:" as a sentinel for a private in-memory
+    // database, but only when passed as a plain filename (no URI mode).
+    // Detect and short-circuit before the URI encoding / ZFS shm probe
+    // below, both of which assume an on-disk path.
+    bool inMemory = path == ":memory:";
+
     // Work around a ZFS issue where SQLite's truncate() call on
     // db.sqlite-shm can randomly take up to a few seconds. See
     // https://github.com/openzfs/zfs/issues/14290#issuecomment-3074672917.
     // Remove this workaround when a fix is widely installed, perhaps 2027? Candidate:
     // https://github.com/search?q=repo%3Aopenzfs%2Fzfs+%22Linux%3A+zfs_putpage%3A+complete+async+page+writeback+immediately%22&type=commits
 #ifdef __linux__
-    try {
-        auto shmFile = path;
-        shmFile += "-shm";
-        AutoCloseFD fd = open(shmFile.string().c_str(), O_RDWR | O_CLOEXEC);
-        if (fd) {
-            struct statfs fs;
-            if (fstatfs(fd.get(), &fs))
-                throw SysError("statfs() on %s", PathFmt(shmFile));
-            if (fs.f_type == /* ZFS_SUPER_MAGIC */ 801189825 && fdatasync(fd.get()) != 0)
-                throw SysError("fsync() on %s", PathFmt(shmFile));
+    if (!inMemory) {
+        try {
+            auto shmFile = path;
+            shmFile += "-shm";
+            AutoCloseFD fd = open(shmFile.string().c_str(), O_RDWR | O_CLOEXEC);
+            if (fd) {
+                struct statfs fs;
+                if (fstatfs(fd.get(), &fs))
+                    throw SysError("statfs() on %s", PathFmt(shmFile));
+                if (fs.f_type == /* ZFS_SUPER_MAGIC */ 801189825 && fdatasync(fd.get()) != 0)
+                    throw SysError("fsync() on %s", PathFmt(shmFile));
+            }
+        } catch (...) {
+            throw;
         }
-    } catch (...) {
-        throw;
     }
 #endif
 
@@ -97,8 +105,16 @@ SQLite::SQLite(const std::filesystem::path & path, Settings && settings)
     int flags = immutable ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE;
     if (settings.mode == SQLiteOpenMode::Normal)
         flags |= SQLITE_OPEN_CREATE;
-    auto uri = "file:" + percentEncode(path.string()) + "?immutable=" + (immutable ? "1" : "0");
-    int ret = sqlite3_open_v2(uri.c_str(), &db, SQLITE_OPEN_URI | flags, vfs);
+    std::string filename;
+    int uriFlag;
+    if (inMemory) {
+        filename = ":memory:";
+        uriFlag = 0;
+    } else {
+        filename = "file:" + percentEncode(path.string()) + "?immutable=" + (immutable ? "1" : "0");
+        uriFlag = SQLITE_OPEN_URI;
+    }
+    int ret = sqlite3_open_v2(filename.c_str(), &db, uriFlag | flags, vfs);
     if (ret != SQLITE_OK) {
         const char * err = sqlite3_errstr(ret);
         throw Error("cannot open SQLite database %s: %s", PathFmt(path), err);

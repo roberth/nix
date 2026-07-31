@@ -2,6 +2,7 @@
 #include <memory>
 #include <vector>
 
+#include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-evaluator.hh"
 #include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-writer.hh"
@@ -33,6 +34,12 @@ class TracingEvaluatorTest : public LibStoreTest
 protected:
     std::shared_ptr<EvalState> state;
     std::shared_ptr<MemoryTraceSink> sink;
+    /* In-memory sqlite so the pool has real DB backing without a temp
+       dir. Under the recursive-Selector migration, building a
+       SelectorGetAttr / SelectorGetListElem requires interning the
+       parent through the pool, which lives on the graph — no graph,
+       no emission from TracingObject getters. */
+    std::unique_ptr<TracingDecisionGraph> decisionGraph;
     std::unique_ptr<TracingWriter> writer;
     std::shared_ptr<TracingEvaluator> evaluator;
     bool readOnlyMode = false;
@@ -55,7 +62,8 @@ protected:
         auto stateRef = make_ref<EvalState>(LookupPath{}, store, fetchSettings, evalSettings, nullptr);
         state = stateRef;
         sink = std::make_shared<MemoryTraceSink>();
-        writer = std::make_unique<TracingWriter>(*sink);
+        decisionGraph = std::make_unique<TracingDecisionGraph>(":memory:");
+        writer = std::make_unique<TracingWriter>(*sink, decisionGraph.get());
         auto interpreter = make_ref<Interpreter>(stateRef);
         evaluator = std::make_shared<TracingEvaluator>(*writer, interpreter);
     }
