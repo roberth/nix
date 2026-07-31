@@ -1,7 +1,5 @@
 #include "nix/expr/replay-callback-arg.hh"
-#include "nix/expr/observation-set.hh"
 #include "nix/expr/expr-from-object.hh"
-#include "nix/expr/interpreter-object.hh"
 #include "nix/expr/object-type.hh"
 #include "nix/expr/primops.hh"
 #include "nix/expr/tracing-cache-log.hh"
