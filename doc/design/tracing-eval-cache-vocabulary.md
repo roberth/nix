@@ -495,9 +495,10 @@ temporary identity tied to one query moment; see
 
 ### Observation and ObservationSet
 
-**Observation** — a Fact viewed through the arg-side lens: the
-element hash plus the identity of the value the request was
-dispatched against.
+**Observation** — a scoped Fact. Facts are the pure
+`(Request, Response)` pairing; Observations add the arg-side scope
+that says which cell / callback firing the Fact belongs to, so the
+walker can route it to the right factset.
 
 **ObservationSet** — a batch of Observations sharing a
 precondition state; the walker's fold consumes one per step.
