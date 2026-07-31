@@ -282,7 +282,7 @@ payloads.
 environment behaved this way at this moment"; the walker records
 and dispatches Facts as indivisible.
 
-**element hash** — `SHA-256(requestHash || responseHash)`. The
+**element hash** — `SHA-256(requestHash ++ responseHash)`. The
 per-Fact contribution to XOR-fold hashes below.
 
 ### Sets
