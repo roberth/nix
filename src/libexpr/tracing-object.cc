@@ -1,5 +1,4 @@
 #include "nix/expr/tracing-object.hh"
-#include "nix/expr/outer-object.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/trace-types.hh"
