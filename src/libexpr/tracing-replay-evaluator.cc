@@ -106,46 +106,23 @@ TracingReplayEvaluator::walk(
        advances state hashes, so subsequent probes discriminate
        via requestHash naturally. */
     auto dispatch = [&](const Hash & requestHash) -> Hash {
-        auto requestPayload = decisionGraph.getRequestPayload(requestHash);
-        if (!requestPayload)
+        auto req = decisionGraph.getRequest(requestHash);
+        if (!req)
             return Hash(HashAlgorithm::SHA256);
-        bool isQueryRequest = false;
+        bool isQueryRequest = std::holds_alternative<trace::OuterValueRequest>(*req);
         bool willMoveStateHash = false;
-        std::string queryTag;
-        std::string queryDescription;
-        try {
-            auto reqJson = cborStringToJson(*requestPayload);
-            isQueryRequest = reqJson.contains("tag");
-            if (isQueryRequest) {
-                queryTag = reqJson["tag"].get<std::string>();
-                /* OuterValueRequest wraps a Selector: unwrap for description. */
-                if (queryTag == trace::OuterValueRequest::tag) {
-                    if (auto req = trace::decodeRequest(reqJson, decisionGraph.selectorPool)) {
-                        if (auto * ovr = std::get_if<trace::OuterValueRequest>(&*req)) {
-                            queryDescription = trace::describe(*ovr->query);
-                            willMoveStateHash = trace::willMoveStateHash(*ovr->query);
-                        } else {
-                            queryDescription = queryTag;
-                        }
-                    } else {
-                        queryDescription = queryTag;
-                    }
-                } else if (auto qSel = trace::resolveFromJson(reqJson, decisionGraph.selectorPool)) {
-                    queryDescription = trace::describe(**qSel);
-                    willMoveStateHash = trace::willMoveStateHash(**qSel);
-                } else {
-                    queryDescription = queryTag;
-                }
-            } else if (reqJson.contains("absPath")) {
-                queryDescription = "env-file " + reqJson["absPath"].get<std::string>();
-            } else if (reqJson.contains("name")) {
-                queryDescription = "env-var " + reqJson["name"].get<std::string>();
-            } else {
-                queryDescription = "(opaque)";
-            }
-        } catch (...) {
-            queryDescription = "(parse-failed)";
-        }
+        std::string queryDescription = std::visit(overloaded{
+            [](const trace::FileReadRequest & r) {
+                return "env-file " + r.absPath;
+            },
+            [](const trace::GetEnvRequest & r) {
+                return "env-var " + r.name;
+            },
+            [&](const trace::OuterValueRequest & r) {
+                willMoveStateHash = trace::willMoveStateHash(*r.query);
+                return trace::describe(*r.query);
+            },
+        }, *req);
         if (!willMoveStateHash) {
             if (auto it = responseFor.find(requestHash); it != responseFor.end())
                 return it->second;
@@ -155,7 +132,7 @@ TracingReplayEvaluator::walk(
            computing the applyResult's WHNF). Dispatch falls through
            to computeLiveResponse → dispatchQueryRequest's SelectorApply
            branch, which resolves fn+arg live and returns the WHNF. */
-        auto currentResp = computeLiveResponse(*requestPayload, ctx);
+        auto currentResp = computeLiveResponse(*req, ctx);
         if (!currentResp) {
             tracingCacheLog(
                 "dispatch FAIL req=%s payload=%s (no current response)",
@@ -190,15 +167,11 @@ TracingReplayEvaluator::walk(
         /* Buffer facts for this in-flight Asks edge; the
            history-loop commits them via onEdgeCommitted on success. */
         /* Decode for diffing: render the full request + response JSON
-           bytes that feed `req` and `resp`. SHA256(reqJson.dump()) = req;
-           SHA256(currentResp) = h. Diffing these strings between cold and
-           warm is what isolates which exact (q, r) differs. */
-        std::string reqJsonStr;
-        try {
-            reqJsonStr = cborStringToJson(*requestPayload).dump();
-        } catch (...) {
-            reqJsonStr = "(unparseable)";
-        }
+           bytes. Diffing these strings between cold and warm is what
+           isolates which exact (q, r) differs. */
+        std::string reqJsonStr = std::visit([](const auto & r) {
+            return nlohmann::json(r).dump();
+        }, *req);
         std::string respJsonStr;
         try {
             respJsonStr = cborStringToJson(*currentResp).dump();
@@ -309,37 +282,22 @@ TracingReplayEvaluator::walk(
     return WalkResult{std::move(*payload), walkHit->resultHash, walkHit->terminalCur};
 }
 
-std::optional<std::string> TracingReplayEvaluator::computeLiveResponse(const std::string & requestCbor, ResolutionContext & ctx)
+std::optional<std::string> TracingReplayEvaluator::computeLiveResponse(const trace::Request & req, ResolutionContext & ctx)
 {
     try {
-        auto reqJson = cborStringToJson(requestCbor);
-        /* Check `tag` first: Query payloads under the flat envelope
-           carry a discriminator `tag`, and some Query types also
-           happen to have a `name` field (SelectorGetAttr) — without the
-           tag check first, they'd fall into the env-var branch and
-           produce a wrong response. */
-        if (reqJson.contains("tag")) {
-            /* OuterValueRequest envelope: unwrap to get the wrapped
-               Selector and dispatch it as if it arrived unwrapped. */
-            if (reqJson["tag"].get<std::string_view>() == trace::OuterValueRequest::tag) {
-                auto req = trace::decodeRequest(reqJson, decisionGraph.selectorPool);
-                if (!req) return std::nullopt;
-                auto * ovr = std::get_if<trace::OuterValueRequest>(&*req);
-                if (!ovr) return std::nullopt;
-                return dispatchQueryRequest(trace::toJson(*ovr->query), ctx);
-            }
-            return dispatchQueryRequest(reqJson, ctx);
-        } else if (reqJson.contains("absPath")) {
-            std::string path = reqJson["absPath"];
-            auto currentHash = validationEnv.getFileHash(path);
-            nlohmann::json respJson = trace::FileReadResponse{currentHash};
-            return jsonToCborString(respJson);
-        } else if (reqJson.contains("name")) {
-            std::string name = reqJson["name"];
-            auto currentVal = validationEnv.getEnv(name);
-            nlohmann::json respJson = trace::GetEnvResponse{currentVal};
-            return jsonToCborString(respJson);
-        }
+        return std::visit(overloaded{
+            [&](const trace::FileReadRequest & r) -> std::optional<std::string> {
+                auto currentHash = validationEnv.getFileHash(r.absPath);
+                return jsonToCborString(nlohmann::json(trace::FileReadResponse{currentHash}));
+            },
+            [&](const trace::GetEnvRequest & r) -> std::optional<std::string> {
+                auto currentVal = validationEnv.getEnv(r.name);
+                return jsonToCborString(nlohmann::json(trace::GetEnvResponse{currentVal}));
+            },
+            [&](const trace::OuterValueRequest & r) -> std::optional<std::string> {
+                return dispatchQueryRequest(trace::toJson(*r.query), ctx);
+            },
+        }, req);
     } catch (const std::exception & e) {
         tracingCacheLog("replay: failed to get current response: %s", e.what());
     }

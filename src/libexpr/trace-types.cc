@@ -22,15 +22,9 @@ namespace nix::trace {
 // Environment request/response serialization
 // ---------------------------------------------------------------------------
 
-void to_json(nlohmann::json & j, const FileReadRequest & r)
-{
-    j = nlohmann::json{{"absPath", r.absPath}};
-}
-
-void from_json(const nlohmann::json & j, FileReadRequest & r)
-{
-    j.at("absPath").get_to(r.absPath);
-}
+/* to_json emits {tag, absPath}; from_json reads absPath. Register
+   via NIX_SELECTOR_STR_SERDE below so the shape matches the Request
+   variant's tag-based decode. */
 
 void to_json(nlohmann::json & j, const FileReadResponse & r)
 {
@@ -42,15 +36,8 @@ void from_json(const nlohmann::json & j, FileReadResponse & r)
     r.contentHash = Hash::parseSRI(j.at("contentHash").get<std::string>());
 }
 
-void to_json(nlohmann::json & j, const GetEnvRequest & r)
-{
-    j = nlohmann::json{{"name", r.name}};
-}
-
-void from_json(const nlohmann::json & j, GetEnvRequest & r)
-{
-    j.at("name").get_to(r.name);
-}
+/* to_json emits {tag, name}; from_json reads name. Registered via
+   NIX_SELECTOR_STR_SERDE below alongside FileReadRequest. */
 
 void to_json(nlohmann::json & j, const GetEnvResponse & r)
 {
@@ -231,6 +218,8 @@ NIX_SELECTOR_STR_SERDE(StringSelectorGetFunctionInfo, parent)
 NIX_SELECTOR_STR_SERDE(StringSelectorApply, parent)
 NIX_SELECTOR_STR_SERDE(StringSelectorCallbackApply, argObsSet, parent)
 NIX_SELECTOR_STR_SERDE(StringOuterValueRequest, query)
+NIX_SELECTOR_STR_SERDE(FileReadRequest, absPath)
+NIX_SELECTOR_STR_SERDE(GetEnvRequest, name)
 
 void to_json(nlohmann::json & j, const ResultFunctionInfo & r)
 {
@@ -771,6 +760,19 @@ std::optional<Request> decodeRequest(const nlohmann::json & j, SelectorPool & po
         return std::nullopt;
     }
     return resolve(raw, pool);
+}
+
+std::optional<ResultVariant> decodeResult(const nlohmann::json & j)
+{
+    /* One alternative for now (ResultWHNF); if more land they get
+       tag-dispatched here via the same pattern used by decodeRequest. */
+    try {
+        ResultWHNF whnf;
+        from_json(j, whnf);
+        return ResultVariant{std::move(whnf)};
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
 }
 
 } // namespace nix::trace

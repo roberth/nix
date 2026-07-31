@@ -676,6 +676,10 @@ std::optional<Request> resolve(const StringRequest & raw, SelectorPool & pool);
     or resolve-miss. */
 std::optional<Request> decodeRequest(const nlohmann::json & j, SelectorPool & pool);
 
+/** Decode a JSON payload as a ResultVariant. Tries each alternative;
+    returns nullopt if none parses. Peer to `decodeRequest`. */
+std::optional<ResultVariant> decodeResult(const nlohmann::json & j);
+
 namespace detail {
 
 template<typename... Variants>

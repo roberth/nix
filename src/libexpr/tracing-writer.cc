@@ -50,16 +50,10 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
 
     /* Scan cell's facts for a matching predicate + response. Each
        existingReqHash keys an OuterValueRequest envelope in the Requests
-       pool; decode it to recover the Selector for field comparison. */
+       pool; the typed getRequest recovers the Selector for field comparison. */
     for (auto & [existingReqHash, existingEntry] : cell->facts) {
         if (existingEntry.response != incomingRespHash) continue;
-        auto existingPayload = dg.getRequestPayload(existingReqHash);
-        if (!existingPayload) continue;
-        nlohmann::json existingReqJson;
-        try {
-            existingReqJson = cborStringToJson(*existingPayload);
-        } catch (...) { continue; }
-        auto existingReq = trace::decodeRequest(existingReqJson, dg.selectorPool);
+        auto existingReq = dg.getRequest(existingReqHash);
         if (!existingReq) continue;
         auto * existingOVR = std::get_if<trace::OuterValueRequest>(&*existingReq);
         if (!existingOVR) continue;

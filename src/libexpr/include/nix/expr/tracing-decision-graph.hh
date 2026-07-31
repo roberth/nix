@@ -112,15 +112,24 @@ public:
     void insertSelector(const QueryHash & h, std::string_view payload);
     void insertResult(const ResultHash & h, std::string_view payload);
 
-    /* Atom payload lookup by hash. Returns nullopt if not present. */
-    std::optional<std::string> getRequestPayload(const RequestHash & h);
+    /* Typed atom lookup by hash. Returns the parsed variant; the raw
+       CBOR bytes stay behind an internal cache and never surface to
+       callers. The typed form is cached per-hash so repeat lookups
+       skip both the SQLite round-trip and the CBOR parse. Selectors
+       have their own typed accessor via `selectorPool.find`. */
+    std::optional<trace::Request> getRequest(const RequestHash & h);
+    std::optional<trace::ResultVariant> getResult(const ResultHash & h);
 
-    /* True if the request payload names a cb-apply
-       (`"query":"apply"`). Consumed only by walk()'s apply-bypass
-       fallback pass, which is a candidate for removal once the
-       walker no longer needs to guess sibling cb-apply positions.
-       If that path goes, this method goes with it. */
+    /* True if the request is a cb-apply Selector. Consumed only by
+       walk()'s apply-bypass fallback pass, which is a candidate for
+       removal once the walker no longer needs to guess sibling
+       cb-apply positions. If that path goes, this method goes with it. */
     bool isApplyRequest(const RequestHash & h);
+
+    /* Raw-payload accessors — used only by the typed accessors above
+       and by SelectorPool. Callers outside those paths should use the
+       typed forms. */
+    std::optional<std::string> getRequestPayload(const RequestHash & h);
     std::optional<std::string> getSelectorPayload(const QueryHash & h);
     std::optional<std::string> getResultPayload(const ResultHash & h);
 

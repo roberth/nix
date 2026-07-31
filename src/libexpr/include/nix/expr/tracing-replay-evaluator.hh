@@ -65,7 +65,7 @@ class TracingReplayEvaluator : public Evaluator
         env var, outer-value probe, or SelectorCallbackApply) by
         executing against the current validation environment.
         Query-carrying requests route through dispatchQueryRequest. */
-    std::optional<std::string> computeLiveResponse(const std::string & requestCbor, ResolutionContext & ctx);
+    std::optional<std::string> computeLiveResponse(const trace::Request & req, ResolutionContext & ctx);
 
     /** Resolve a recorded outer-value id (hex of a Hash) to a live
         Object. Arg ids are found by walking ctx.currentProxy's

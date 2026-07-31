@@ -140,6 +140,11 @@ struct TracingDecisionGraph::State
     std::unordered_map<Hash, std::optional<std::vector<TracingDecisionGraph::Fact>>> factSetCache;
     std::unordered_map<Hash, std::optional<std::string>> requestPayloadCache;
     std::unordered_map<Hash, std::optional<std::string>> resultPayloadCache;
+    /* Typed-form caches. `getRequest` / `getResult` decode from CBOR
+       once per hash and cache the typed variant. Consumers use the
+       typed accessors and never see raw bytes. */
+    std::unordered_map<Hash, std::optional<trace::Request>> requestCache;
+    std::unordered_map<Hash, std::optional<trace::ResultVariant>> resultCache;
     /* RequestSet trie *node* cache. Different RequestSets that share
        subtrees (via content addressing) hit the same node hashes;
        caching per-node lets second-and-later getRequestSet calls reuse
@@ -479,6 +484,52 @@ ATOM_GET_PLAIN(Selector)
 ATOM_GET_CACHED(Result, resultPayloadCache)
 #undef ATOM_GET_CACHED
 #undef ATOM_GET_PLAIN
+
+std::optional<trace::Request> TracingDecisionGraph::getRequest(const Hash & h)
+{
+    {
+        auto state(_state->lock());
+        if (auto it = state->requestCache.find(h); it != state->requestCache.end())
+            return it->second;
+    }
+    auto payload = getRequestPayload(h);
+    if (!payload) {
+        auto state(_state->lock());
+        state->requestCache.emplace(h, std::nullopt);
+        return std::nullopt;
+    }
+    std::optional<trace::Request> typed;
+    try {
+        auto j = nlohmann::json::from_cbor(*payload);
+        typed = trace::decodeRequest(j, selectorPool);
+    } catch (...) {}
+    auto state(_state->lock());
+    state->requestCache.emplace(h, typed);
+    return typed;
+}
+
+std::optional<trace::ResultVariant> TracingDecisionGraph::getResult(const Hash & h)
+{
+    {
+        auto state(_state->lock());
+        if (auto it = state->resultCache.find(h); it != state->resultCache.end())
+            return it->second;
+    }
+    auto payload = getResultPayload(h);
+    if (!payload) {
+        auto state(_state->lock());
+        state->resultCache.emplace(h, std::nullopt);
+        return std::nullopt;
+    }
+    std::optional<trace::ResultVariant> typed;
+    try {
+        auto j = nlohmann::json::from_cbor(*payload);
+        typed = trace::decodeResult(j);
+    } catch (...) {}
+    auto state(_state->lock());
+    state->resultCache.emplace(h, typed);
+    return typed;
+}
 
 /* ─────────────────────────────────────────────────────────────────────
    Storage layer: sets
