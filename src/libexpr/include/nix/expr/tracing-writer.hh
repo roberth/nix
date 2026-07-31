@@ -517,14 +517,10 @@ public:
 
     /**
      * Log a response (file read, env lookup, etc.) — a d>0
-     * Request/Response pair. Per-probe: each call pushes its own
-     * single-request Ask + envWalk entry, matching the
-     * logOuterObservation path and keeping prevQFactSetHash tightly
-     * synchronised with envFactSetHash. Without per-probe pushing
-     * here, prevQFactSetHash lags behind envFactSetHash whenever a
-     * file/env read intervenes between two logOuterObservation
-     * calls, and the latter's Ask row gets inserted at a stale cur
-     * that the walker (with its up-to-date live cur) cannot reach.
+     * Request/Response pair. Records the fact on the session-root
+     * cell (env facts default there per #183; descendants inherit
+     * via ArgCell::factSetHash's parent-chain walk) and dedupes via
+     * seenRequests so repeated identical probes don't double-add.
      */
     template<typename Req>
     void logResponse(const trace::Response<Req> & resp)
