@@ -48,9 +48,6 @@ class ReplayCallbackArg : public Object
        list-elem equivalent — same shape as OuterObject's navigation
        children on the cold side. */
     ref<const trace::Selector> producer;
-    /* Content hash of producer — kept for legacy id-string consumers
-       (e.g. defeatCache's recursive apply construction). */
-    OuterId localId;
     TracingDecisionGraph & decisionGraph;
     ref<SourceRoot> rootFSRoot;
     /* EvalState used for primop construction in `defeatCache`. The
@@ -94,7 +91,6 @@ public:
         ref<SourceRoot> rootFSRoot,
         EvalState * state = nullptr)
         : producer(producer_)
-        , localId(producer_->cachedHash)
         , decisionGraph(dg), rootFSRoot(std::move(rootFSRoot)), state(state) {}
 
     std::optional<ref<const trace::Selector>> getSelector() const override { return producer; }
@@ -126,12 +122,12 @@ public:
 
     std::shared_ptr<const ArgCell> getProxyArgCell() const override { return argCell; }
 
-    /** Content-defined identity is the localId (= the cb-apply local
-        arg's state hash hash recorded at write time). Lets evaluator.apply
-        compute the apply Request hash when this ReplayCallbackArg is the arg. */
+    /** Content-defined identity is the producer Selector's cached hash.
+        Lets evaluator.apply compute the apply Request hash when this
+        ReplayCallbackArg is the arg. */
     std::optional<std::string> getSelectorHashHex() const override
     {
-        return localId.to_string(HashFormat::Base16, false);
+        return producer->cachedHash.to_string(HashFormat::Base16, false);
     }
 
     std::shared_ptr<Object> maybeGetAttr(const std::string & name) override;

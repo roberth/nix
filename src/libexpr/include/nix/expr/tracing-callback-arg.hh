@@ -98,8 +98,6 @@ public:
         enclosing callback cell. */
     std::shared_ptr<Object> queryApply(std::shared_ptr<Object> argObj) override;
 
-    OuterId getStateHash() const { return localId(); }
-
     std::optional<std::string> getSelectorHashHex() const override
     {
         return localId().to_string(HashFormat::Base16, false);
