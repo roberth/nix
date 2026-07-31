@@ -497,14 +497,9 @@ using Selector = SelectorF<Resolved>;
 /** DB facade over the Selectors table: interning writes an
     `INSERT OR IGNORE` row, lookup falls back to reconstructing from
     a stored payload on memory-miss. Pool membership tracks DB
-    membership; cross-session sharing falls out.
-
-    Bind-or-nothing: after #197 retired the static-local fallback,
-    every consumer of intern/find must reach the pool through a
-    graph-bound instance. Callers that construct Selectors without a
-    bound DG (e.g. TracingWriter with a null decisionGraph) do not
-    reach the pool — TracingObject's getter emissions guard on the
-    DG's presence and silently skip. */
+    membership; cross-session sharing falls out. The pool must be
+    bound to a TracingDecisionGraph (via `bind`) before any intern/find
+    call; TracingDecisionGraph's constructor does this automatically. */
 class SelectorPool
 {
     std::unordered_map<Hash, ref<const Selector>> pool;
