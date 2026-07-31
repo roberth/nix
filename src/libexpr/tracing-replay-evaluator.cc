@@ -105,7 +105,7 @@ TracingReplayEvaluator::walk(
        their responses differ. After that probe the fold
        advances state hashes, so subsequent probes discriminate
        via requestHash naturally. */
-    auto dispatch = [&](const Hash & requestHash, const TracingDecisionGraph::EdgeContext & edgeCtx) -> Hash {
+    auto dispatch = [&](const Hash & requestHash) -> Hash {
         auto requestPayload = decisionGraph.getRequestPayload(requestHash);
         if (!requestPayload)
             return Hash(HashAlgorithm::SHA256);
@@ -152,19 +152,17 @@ TracingReplayEvaluator::walk(
             return Hash(HashAlgorithm::SHA256);
         }
         auto h = TracingDecisionGraph::computeResponseHash(*currentResp);
-        /* edgeCtx is threaded through walk() for offline-inspection
-           consumers; env dispatch MUST NOT read stored responses to
-           substitute for a live response that differs from cold's —
-           doing so masks legitimate outer-body change detection (per
-           the design's capability-mediated invariant) AND, even
-           under `_NIX_DISALLOW_CACHE_INTERPRET_INNER=1`, breaks
+        /* Env dispatch MUST NOT read stored responses to substitute
+           for a live response that differs from cold's — doing so
+           masks legitimate outer-body change detection (per the
+           design's capability-mediated invariant) AND, even under
+           `_NIX_DISALLOW_CACHE_INTERPRET_INNER=1`, breaks
            observation-driven sibling discrimination
            (cb-sibling-discrimination-via-observation): substituting
-           a stored response for a wrong-sibling live response
-           would route both siblings to the same recorded terminal.
-           Only substitute on DISPATCH FAILURE (see the block above),
-           not on mismatch. */
-        (void) edgeCtx;
+           a stored response for a wrong-sibling live response would
+           route both siblings to the same recorded terminal. Only
+           substitute on DISPATCH FAILURE (see the block above), not
+           on mismatch. */
         if (!willMoveStateHash)
             responseFor.emplace(requestHash, h);
         /* Walker-side dispatch is validation, not new recording.
@@ -850,8 +848,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        directly, return whatever the OuterObject yields.
        OuterObject's own queryFn/applyFn closures handle live
        dispatch + the outer-side validation chain. */
-    if (auto * fnAmb = dynamic_cast<OuterObject *>(fn.get_ptr().get())) {
-        (void) fnAmb;
+    if (dynamic_cast<OuterObject *>(fn.get_ptr().get())) {
         tracingCacheLog(
             "walker apply: outer-direction (fn is OuterObject) — live dispatch, no registry");
         auto result = fn->queryApply(arg.get_ptr());

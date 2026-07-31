@@ -183,7 +183,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     /* Phase D2: getter as Query — logQuery/logQueryResult, no push.
        Observations dispatched during innerChild's evaluation
        attribute to the argCell (the enclosing apply/root cell). */
-    auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
+    auto [valueId, qh] = writer.logQuery(query);
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
     auto childTriePos = writer.logQueryResult(valueId, childWHNF, qh, anchorCur, argCell);
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(innerChild), writer, valueId, childTriePos));
@@ -328,7 +328,7 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
         return inner->getListElem(index);
     auto querySel = dg->selectorPool.intern(trace::SelectorGetListElem{index, *fromSel});
     auto & query = std::get<trace::SelectorGetListElem>(querySel->node);
-    auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
+    auto [valueId, qh] = writer.logQuery(query);
     auto result = inner->getListElem(index);
     trace::ResultWHNF childWHNF = computeWHNFFromObject(*result);
     auto anchorCur = triePos ? triePos->factSetHash : TracingDecisionGraph::emptySetHash();
@@ -381,7 +381,7 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
         return inner->getFunctionInfo();
     auto querySel = dg->selectorPool.intern(trace::SelectorGetFunctionInfo{*fromSel});
     auto & query = std::get<trace::SelectorGetFunctionInfo>(querySel->node);
-    auto [valueId, qh] = writer.logQuery(query, triePos, argCell);
+    auto [valueId, qh] = writer.logQuery(query);
     auto result = inner->getFunctionInfo();
     trace::ResultFunctionInfo traceResult;
     if (result) {

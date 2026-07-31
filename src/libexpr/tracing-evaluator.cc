@@ -410,8 +410,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        the SelectorApply Terminal cur — distinct calls have distinct
        cells → distinct Terminals. */
     auto & applySelector = std::get<trace::SelectorApply>(applySel->node);
-    auto [v, qh] = writer.logSelectorOnCell(
-        cell, applySelector, /*parent=*/std::nullopt);
+    auto [v, qh] = writer.logSelectorOnCell(cell, applySelector);
 
     /* #178: siblingScope XOR retires. Sibling cached calls
        discriminate structurally via per-cell factset isolation. */

@@ -60,20 +60,17 @@ public:
     virtual Hash getFileHash(const std::string & path);
 
     /**
-     * Issue an outer query and return the result. `subject`
-     * identifies the value the query is about (passed through to
-     * the writer for state-hash computation at flush). The default
-     * implementation delegates to the supplied resolve callback;
-     * TracingEnvironment overrides to record the interaction.
+     * Issue an outer query and return the result. `producer` and
+     * `attributionCell` route the observation to the correct cell
+     * on the tracing override; the default implementation just
+     * delegates to the supplied resolve callback.
      */
     virtual trace::ResultVariant outerQuery(
         ref<const trace::Selector> query,
         std::function<trace::ResultVariant(ref<const trace::Selector>)> resolve,
-        ref<const trace::Selector> producer,
-        const std::shared_ptr<const ArgCell> & attributionCell = {})
+        ref<const trace::Selector> /* producer */,
+        const std::shared_ptr<const ArgCell> & /* attributionCell */ = {})
     {
-        (void) producer;
-        (void) attributionCell;
         return resolve(query);
     }
 

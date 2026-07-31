@@ -322,41 +322,6 @@ public:
        multi-Request-overlap case is a deferred optimisation. */
     void record(const QueryHash & q, const SetHash & factSet, const ResultHash & result);
 
-    /* Fast-path overload: the caller maintains responseFor (request →
-       response) and allRequests (= factSet.requests) incrementally,
-       handing them in by reference so record() skips the O(N)
-       rebuild of these structures from getFactSet() members on every
-       call. TracingWriter uses this; tests use the simpler overload
-       above.
-
-       `startFactSetHash` is the explicit start point of this Q's Ask
-       chain — the "structural parent factSet" (parent Query's
-       terminalCur). Defaults to emptySetHash(), giving from-∅
-       behavior. Non-empty values anchor the chain at parent's
-       terminal so the walker's parentAnchor path finds Q-labeled
-       Asks there. */
-    void record(
-        const QueryHash & q,
-        const SetHash & factSet,
-        const ResultHash & result,
-        const std::unordered_map<Hash, Hash> & responseFor,
-        const std::unordered_set<Hash> & allRequests,
-        SetHash startFactSetHash);
-
-    /* Fastest overload: caller also supplies the canonical RequestSet
-       hash for the *current* allRequests (e.g. from an incremental
-       TrieBuilder). When record() falls through to the whole-remaining
-       insert at cur=startFactSetHash, it uses this precomputed hash
-       directly and avoids re-running insertRequestSet over
-       allRequests. See other overload for `startFactSetHash`. */
-    void record(
-        const QueryHash & q,
-        const SetHash & factSet,
-        const ResultHash & result,
-        const std::unordered_map<Hash, Hash> & responseFor,
-        const std::unordered_set<Hash> & allRequests,
-        const SetHash & sessionRequestsRsHash,
-        SetHash startFactSetHash);
 
     /* Navigate from (Q, ∅) using `dispatch` to evaluate Requests
        the recorded path needs. Returns the Result hash on hit,
@@ -375,36 +340,15 @@ public:
        Q lookups use it as their candidate startCur, so a child's history
        starts from its parent's structural anchor. */
     struct WalkHit { ResultHash resultHash; SetHash terminalCur; };
-    /* ObservationSet context passed to dispatch: identifies the specific Asks
-       edge whose requests are being dispatched. */
-    struct EdgeContext
-    {
-        QueryHash selectorHash;
-        SetHash fromFactSetHash;
-        SetHash requestSetHash;
-    };
 
     std::optional<WalkHit> walk(
         const QueryHash & q,
-        const std::function<ResponseHash(const RequestHash &, const EdgeContext &)> & dispatch,
+        const std::function<ResponseHash(const RequestHash &)> & dispatch,
         const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt = {},
         /* Starting cur for the history. Defaults to ∅. Callers that
            have a structural anchor (= parent TracingReplayObject's terminalCur) can
            hand it in so the history starts at that lookup position. */
         const SetHash & startCur = SetHash(HashAlgorithm::SHA256));
-
-    /* Overload: dispatch takes only the request. Used by unit tests
-       that don't need edge context. */
-    std::optional<WalkHit> walk(
-        const QueryHash & q,
-        const std::function<ResponseHash(const RequestHash &)> & dispatch,
-        const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt = {},
-        const SetHash & startCur = SetHash(HashAlgorithm::SHA256))
-    {
-        return walk(q,
-            [&](const RequestHash & req, const EdgeContext &) { return dispatch(req); },
-            onEdgeAttempt, startCur);
-    }
 
     /* Persist one trie node by hash. Idempotent (INSERT OR IGNORE +
        in-process cache short-circuit). Used by TrieBuilder to push

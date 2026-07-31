@@ -207,11 +207,9 @@ public:
      * subclasses that haven't been migrated).
      */
     virtual RootValue toValueOrProxy(
-        EvalState & state,
-        std::shared_ptr<struct OuterResolver> resolver = nullptr)
+        EvalState & /* state */,
+        std::shared_ptr<struct OuterResolver> /* resolver */ = nullptr)
     {
-        (void) state;
-        (void) resolver;
         return defeatCache();
     }
 

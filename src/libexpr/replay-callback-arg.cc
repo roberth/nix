@@ -19,20 +19,19 @@ namespace nix {
    secondary source under the #103 redesign). */
 template<typename Q>
 static nlohmann::json readResponse(
-    TracingDecisionGraph & dg, const Q & query,
+    const Q & query,
     const std::shared_ptr<std::map<Hash, std::string>> & obsSetResponses = {})
 {
     auto reqHash = TracingDecisionGraph::computeSelectorHash(query);
     tracingCacheLog(
-        "rlo: read %s from=%s reqHash=%s",
-        Q::tag, true ? std::string{}.substr(0, 12) : "<?>",
+        "rlo: read %s reqHash=%s",
+        Q::tag,
         reqHash.to_string(HashFormat::Base16, false).substr(0, 12));
     /* Under the #103 redesign, every outer probe's response is
        carried in the CallbackApply query's `argObsSet` — the
        consumer at dispatch time populates `obsSetResponses` with
        that CAS content. No secondary storage. Miss here is a real
        error. */
-    (void) dg;
     if (obsSetResponses) {
         auto it = obsSetResponses->find(reqHash);
         if (it != obsSetResponses->end()) {
@@ -42,8 +41,7 @@ static nlohmann::json readResponse(
             return cborStringToJson(it->second);
         }
     }
-    throw Error("ReplayCallbackArg: no recorded response for %s on local %s",
-        Q::tag, true ? std::string{} : "<no-state-hash>");
+    throw Error("ReplayCallbackArg: no recorded response for %s", Q::tag);
 }
 
 std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name)
@@ -59,7 +57,7 @@ std::shared_ptr<Object> ReplayCallbackArg::maybeGetAttr(const std::string & name
         return nullptr;
     auto childSel = decisionGraph.selectorPool.intern(trace::SelectorGetAttr{name, producer});
     auto & query = std::get<trace::SelectorGetAttr>(childSel->node);
-    auto rJson = readResponse(decisionGraph, query, obsSetResponses);
+    auto rJson = readResponse(query, obsSetResponses);
     auto child = std::make_shared<ReplayCallbackArg>(
         childSel, decisionGraph, rootFSRoot, state);
     child->cachedWHNF = rJson.get<trace::ResultWHNF>();
@@ -81,7 +79,7 @@ const trace::ResultWHNF & ReplayCallbackArg::whnf()
        positional arg, SelectorGetAttr for a nav descendant, etc.). */
     auto rJson = std::visit(
         [&](const auto & q) -> nlohmann::json {
-            return readResponse(decisionGraph, q, obsSetResponses);
+            return readResponse(q, obsSetResponses);
         },
         producer->node);
     cachedWHNF = rJson.get<trace::ResultWHNF>();
@@ -178,7 +176,7 @@ std::shared_ptr<Object> ReplayCallbackArg::getListElem(size_t index)
         throw Error("rlo getListElem: parent WHNF is %s, index %zu invalid", w.type, index);
     auto childSel = decisionGraph.selectorPool.intern(trace::SelectorGetListElem{index, producer});
     auto & query = std::get<trace::SelectorGetListElem>(childSel->node);
-    auto rJson = readResponse(decisionGraph, query, obsSetResponses);
+    auto rJson = readResponse(query, obsSetResponses);
     auto child = std::make_shared<ReplayCallbackArg>(
         childSel, decisionGraph, rootFSRoot, state);
     child->cachedWHNF = rJson.get<trace::ResultWHNF>();
@@ -262,7 +260,7 @@ std::optional<FunctionInfo> ReplayCallbackArg::getFunctionInfo()
 {
     auto qSel = decisionGraph.selectorPool.intern(trace::SelectorGetFunctionInfo{producer});
     auto & query = std::get<trace::SelectorGetFunctionInfo>(qSel->node);
-    auto rJson = readResponse(decisionGraph, query, obsSetResponses);
+    auto rJson = readResponse(query, obsSetResponses);
     trace::ResultFunctionInfo r = rJson;
     if (!r.hasInfo)
         return std::nullopt;

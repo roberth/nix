@@ -191,8 +191,10 @@ private:
         for (auto & [req, br_resp] : facts)
             if (remaining.count(req))
                 byBarrier[br_resp.first].emplace_back(req, br_resp.second);
-        for (auto & [barrier, entries] : byBarrier) {
-            (void) barrier;
+        /* Iterate by barrier group; the barrier value itself isn't
+           needed in-loop — sortedness of `byBarrier` drives the order. */
+        for (auto & barrierGroup : byBarrier) {
+            auto & entries = barrierGroup.second;
             std::vector<TracingDecisionGraph::Fact> factList;
             factList.reserve(entries.size());
             for (auto & [req, resp] : entries)
@@ -405,8 +407,7 @@ public:
     template<typename Q>
     std::pair<ValueHandle, SelectorHandle> logSelectorOnCell(
         const std::shared_ptr<const ArgCell> & cell,
-        const Q & query,
-        const std::optional<TriePosition> & parent)
+        const Q & query)
     {
         auto valueNum = sink.logSelector(query);
         if (!decisionGraph)
@@ -418,7 +419,6 @@ public:
             selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
             qj.dump());
         SelectorHandle qh{selectorHash};
-        (void) parent;
         auto qState = std::make_shared<QState>();
         qState->currentQ = selectorHash;
         if (cell) {
@@ -441,10 +441,7 @@ public:
      * terminalCur) — no factSet chain of the getter's own.
      */
     template<typename Q>
-    std::pair<ValueHandle, SelectorHandle> logQuery(
-        const Q & query,
-        const std::optional<TriePosition> & parent,
-        const std::shared_ptr<const ArgCell> & cell = {})
+    std::pair<ValueHandle, SelectorHandle> logQuery(const Q & query)
     {
         auto valueNum = sink.logSelector(query);
         if (!decisionGraph)
@@ -455,10 +452,7 @@ public:
             "writer logQuery: Q=%s queryJSON=%s",
             selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
             qj.dump());
-        SelectorHandle qh{selectorHash};
-        (void) parent;
-        (void) cell;  // #183: cell no longer needed at push — facts accumulate on it directly
-        return {valueNum, qh};
+        return {valueNum, SelectorHandle{selectorHash}};
     }
 
     /**

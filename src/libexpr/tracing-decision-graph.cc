@@ -1183,10 +1183,9 @@ TracingDecisionGraph::getTerminal(const QueryHash & q, const SetHash & factSet)
    Recording and replay
    ───────────────────────────────────────────────────────────────────── */
 
-/* Inner body of record(). Both overloads call this with their
-   pre-built (responseFor, allRequests). The body doesn't mutate
-   either; it tracks a local dispatchedSoFar for "what I've consumed
-   so far". remaining-as-set = allRequests \ dispatchedSoFar. */
+/* Inner body of record(). The body doesn't mutate the passed
+   collections; it tracks a local dispatchedSoFar for "what I've
+   consumed so far". remaining-as-set = allRequests \ dispatchedSoFar. */
 static void dg_recordImpl(
     TracingDecisionGraph & g,
     const Hash & q,
@@ -1194,7 +1193,6 @@ static void dg_recordImpl(
     const Hash & result,
     const std::unordered_map<Hash, Hash> & responseFor,
     const std::unordered_set<Hash> & allRequests,
-    const Hash * sessionRequestsRsHash = nullptr,
     Hash startFactSetHash = TracingDecisionGraph::emptySetHash())
 {
     auto cur = startFactSetHash;
@@ -1270,7 +1268,6 @@ static void dg_recordImpl(
                     remainingFacts.push_back({req, it->second});
                     remainingVec.push_back(req);
                 }
-            (void) sessionRequestsRsHash; // fast-path shortcut retired
             g.insertAskSplitting(q, cur, remainingFacts, dispatchedSoFar);
             extendCur(remainingVec);
         }
@@ -1302,29 +1299,6 @@ void TracingDecisionGraph::record(
     dg_recordImpl(*this, q, factSetHash, result, responseFor, allRequests);
 }
 
-void TracingDecisionGraph::record(
-    const QueryHash & q,
-    const SetHash & factSetHash,
-    const ResultHash & result,
-    const std::unordered_map<Hash, Hash> & responseFor,
-    const std::unordered_set<Hash> & allRequests,
-    SetHash startFactSetHash)
-{
-    dg_recordImpl(*this, q, factSetHash, result, responseFor, allRequests, nullptr, startFactSetHash);
-}
-
-void TracingDecisionGraph::record(
-    const QueryHash & q,
-    const SetHash & factSetHash,
-    const ResultHash & result,
-    const std::unordered_map<Hash, Hash> & responseFor,
-    const std::unordered_set<Hash> & allRequests,
-    const SetHash & sessionRequestsRsHash,
-    SetHash startFactSetHash)
-{
-    dg_recordImpl(*this, q, factSetHash, result, responseFor, allRequests, &sessionRequestsRsHash, startFactSetHash);
-}
-
 bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factSet)
 {
     auto state(_state->lock());
@@ -1343,7 +1317,7 @@ bool TracingDecisionGraph::hasAnyEdge(const QueryHash & q, const SetHash & factS
 
 std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
     const QueryHash & q_initial,
-    const std::function<ResponseHash(const RequestHash &, const EdgeContext &)> & dispatch,
+    const std::function<ResponseHash(const RequestHash &)> & dispatch,
     const std::function<void(bool committed, const std::vector<RequestHash> &)> & onEdgeAttempt,
     const SetHash & startCur)
 {
@@ -1397,9 +1371,8 @@ std::optional<TracingDecisionGraph::WalkHit> TracingDecisionGraph::walk(
             if (useful.empty())
                 return false;
             Hash nextCur = cur;
-            EdgeContext edgeCtx{q, cur, rsHash};
             for (const auto & req : useful) {
-                auto resp = dispatch(req, edgeCtx);
+                auto resp = dispatch(req);
                 nextCur = dg_xorHash(nextCur, dg_factElementHash(req, resp));
             }
             *outUseful = std::move(useful);
