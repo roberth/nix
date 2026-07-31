@@ -311,14 +311,15 @@ OuterApplyResult OuterApply::run(
 /* Out-of-line virtual definitions so the abstract base gets a key
    function — without these, clang's `-Wweak-vtables` reports the
    vtable as emitted in every TU. */
-void ExprProxy::show(const SymbolTable & symbols, std::ostream & str) const
+void ExprProxy::show(const SymbolTable & /* symbols */, std::ostream & str) const
 {
+    // Placeholder message doesn't need to resolve any Symbols.
     str << "<proxy>";
 }
 
-void ExprProxy::bindVars(EvalState & es, const std::shared_ptr<const StaticEnv> & env)
+void ExprProxy::bindVars(EvalState & /* es */, const std::shared_ptr<const StaticEnv> & /* env */)
 {
-    // No variables to bind - we pull from external sources, not the environment
+    // No variables to bind — we pull from external sources, not the environment.
 }
 
 /**
@@ -338,7 +339,7 @@ static PrimOp * makeCachedFnPrimOp(
                 .args = {"args"},
                 .arity = 1,
                 .impl =
-                    [fnObj, innerEval, resolver](EvalState & state, const PosIdx pos, Value ** args, Value & v) {
+                    [fnObj, innerEval, resolver](EvalState & state, const PosIdx /* pos */, Value ** args, Value & v) {
                         // Do NOT force args[0] — it may be self-referential.
                         auto outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
                         /* Scope-graph cell for this arg. Parent = the
@@ -434,7 +435,7 @@ static PrimOp * makeOuterFnPrimOp(std::shared_ptr<Object> fnObj, std::shared_ptr
                 .args = {"args"},
                 .arity = 1,
                 .impl =
-                    [fnObj, resolver](EvalState & state, const PosIdx pos, Value ** args, Value & v) {
+                    [fnObj, resolver](EvalState & state, const PosIdx /* pos */, Value ** args, Value & v) {
                         auto argObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
                         auto result = fnObj->queryApply(std::move(argObj));
                         ExprFromObject(result, nullptr, resolver).eval(state, state.baseEnv, v);
