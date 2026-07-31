@@ -54,21 +54,20 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
         tracingCacheStats().misses++;
         return std::nullopt;
     }
-    auto payload = evaluator.getDecisionGraph().getResultPayload(*resultNodeHash);
-    if (!payload) {
+    auto typed = evaluator.getDecisionGraph().getResult(*resultNodeHash);
+    if (!typed) {
         tracingCacheStats().misses++;
         return std::nullopt;
     }
-    try {
-        auto j = cborStringToJson(*payload);
-        tracingCacheLog("replay hit: %s", Q::tag);
-        tracingCacheStats().hits++;
-        return std::make_pair(j.template get<R>(), *resultNodeHash);
-    } catch (const nlohmann::json::exception & e) {
-        tracingCacheLog("replay: payload parse failed: %s", e.what());
+    auto * val = std::get_if<R>(&*typed);
+    if (!val) {
+        tracingCacheLog("replay: payload variant mismatch for %s", Q::tag);
         tracingCacheStats().misses++;
         return std::nullopt;
     }
+    tracingCacheLog("replay hit: %s", Q::tag);
+    tracingCacheStats().hits++;
+    return std::make_pair(*val, *resultNodeHash);
 }
 
 template<typename Q, typename R>
@@ -160,18 +159,13 @@ std::optional<const trace::ResultWHNF *> TracingReplayObject::whnf()
     /* #185: decode WHNF from triePos.resultNodeHash — the parent
        Selector's Terminal Result IS a ResultWHNF (per
        DECLARE_SELECTOR_RESULT). No separate GetWHNF lookup. */
-    auto payload = evaluator.getDecisionGraph().getResultPayload(triePos.resultNodeHash);
-    if (!payload)
-        return std::nullopt;
-    try {
-        auto j = cborStringToJson(*payload);
-        cachedWHNF = j.get<trace::ResultWHNF>();
-        tracingCacheStats().hits++;
-        return &*cachedWHNF;
-    } catch (const nlohmann::json::exception & e) {
-        tracingCacheLog("replay: triePos payload parse failed: %s", e.what());
-        return std::nullopt;
-    }
+    auto typed = evaluator.getDecisionGraph().getResult(triePos.resultNodeHash);
+    if (!typed) return std::nullopt;
+    auto * whnfVal = std::get_if<trace::ResultWHNF>(&*typed);
+    if (!whnfVal) return std::nullopt;
+    cachedWHNF = *whnfVal;
+    tracingCacheStats().hits++;
+    return &*cachedWHNF;
 }
 
 std::vector<std::string> TracingReplayObject::getAttrNames()

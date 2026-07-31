@@ -682,17 +682,11 @@ TracingDecisionGraph::usefulDispatch(
 
 bool TracingDecisionGraph::isApplyRequest(const RequestHash & h)
 {
-    auto payload = getRequestPayload(h);
-    if (!payload)
-        return false;
-    try {
-        auto bytes = reinterpret_cast<const uint8_t *>(payload->data());
-        auto js = nlohmann::json::from_cbor(bytes, bytes + payload->size());
-        return js.contains("tag") && js["tag"].is_string()
-            && js["tag"].get<std::string>() == "apply";
-    } catch (...) {
-        return false;
-    }
+    auto req = getRequest(h);
+    if (!req) return false;
+    auto * ovr = std::get_if<trace::OuterValueRequest>(&*req);
+    if (!ovr) return false;
+    return std::holds_alternative<trace::SelectorApply>(ovr->query->node);
 }
 
 /* Recursively build the trie and INSERT each visited node, returning
