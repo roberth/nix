@@ -347,13 +347,12 @@ public:
             fnParent->cachedHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
     }
 
-    /**
-     * Opaque handle linking a query to its result.
-     */
-    struct SelectorHandle
-    {
-        Hash selectorHash;
-    };
+    /** Phantom tag used to keep SelectorHandle distinct from any
+        other HashFor<X> type. */
+    struct SelectorPhantom
+    {};
+    /** Opaque handle linking a query to its result. */
+    using SelectorHandle = HashFor<SelectorPhantom>;
 
     /**
      * Log a root query (evalFile, evalExpr, apply) on a cell. Root
@@ -383,7 +382,7 @@ public:
             cell->qState = qState;
             qState->cell = cell;
         }
-        return {valueNum, {selectorHash}};
+        return {valueNum, SelectorHandle{selectorHash}};
     }
 
     /**
@@ -465,11 +464,11 @@ public:
            edge's requestSet live, folds, reaches next cur; a divergent
            live response at any barrier misses cleanly there. */
         if (cell)
-            insertBarrieredAskChain(qh.selectorHash, cell);
-        decisionGraph.insertTerminal(qh.selectorHash, terminalCur, resultNodeHash);
+            insertBarrieredAskChain(qh.raw, cell);
+        decisionGraph.insertTerminal(qh.raw, terminalCur, resultNodeHash);
         tracingCacheLog(
             "writer logQueryResult: Q=%s anchor=%s -> result=%s",
-            qh.selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
+            qh.raw.to_string(HashFormat::Base16, false).substr(0, 12),
             terminalCur.to_string(HashFormat::Base16, false).substr(0, 12),
             resultNodeHash.to_string(HashFormat::Base16, false).substr(0, 12));
         if (cell) {
@@ -487,7 +486,7 @@ public:
         }
         return TriePosition{
             .resultNodeHash = resultNodeHash,
-            .queryHashStr = qh.selectorHash.to_string(HashFormat::Base16, false),
+            .queryHashStr = qh.raw.to_string(HashFormat::Base16, false),
             .factSetHash = terminalCur,
         };
     }
@@ -589,7 +588,7 @@ public:
 
         sessionRequestsTrie.persist(decisionGraph);
 
-        Hash finalQ = qh.selectorHash;
+        Hash finalQ = qh.raw;
         /* #177 pull model: Terminal keyed at the completing Q's
            cell.factSetHash() — this cell's own facts XORed with
            ancestor factSetHashes on demand. */

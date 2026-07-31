@@ -22,16 +22,15 @@ namespace nix {
 
 /**
  * CRTP-free strong id wrapper. Tag type prevents cross-assignment.
+ * Not default-constructible — callers must supply a value.
  */
 template<typename Tag, typename T>
 struct StrongId
 {
-    T raw{};
-
-    StrongId() = default;
+    T raw;
 
     explicit StrongId(T v)
-        : raw(v)
+        : raw(std::move(v))
     {
     }
 
@@ -55,6 +54,13 @@ using ValueHandle = StrongId<ValueHandleTag, uint64_t>;
  *  No registry lookup involved: outer Objects flow directly through
  *  queryFn/applyFn now. */
 using OuterId = Hash;
+
+/** Phantom-typed Hash wrapper: distinct Phantom types produce distinct
+    HashFor types that can't cross-assign. Same shape as any single-field
+    Hash wrapper struct, but prevents accidental mixing of hashes with
+    different semantic kinds (e.g., a request hash vs a result hash). */
+template<typename Phantom>
+using HashFor = StrongId<Phantom, Hash>;
 
 } // namespace nix
 

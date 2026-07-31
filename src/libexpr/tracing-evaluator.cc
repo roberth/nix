@@ -461,7 +461,7 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
               /* #181: use the SelectorApply Q hash (matches TRE::apply's
                  walker path); getSelectorHashHex() reads this back as fn's
                  identity for downstream applies. */
-              .queryHashStr = qh.selectorHash.to_string(HashFormat::Base16, false),
+              .queryHashStr = qh.raw.to_string(HashFormat::Base16, false),
           };
     auto obj = TracingObject::create(result, writer, v, triePos);
     obj->withArgCell(std::move(cell));
