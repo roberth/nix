@@ -415,24 +415,21 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
            maybeGetAttr etc.). Mirrors dispatchQueryRequest's CBApply
            branch but returns the Object instead of the serialised WHNF. */
         tracingCacheLog("resolve %s: callbackApply producer", idStr.substr(0, 12));
-        std::string fnHex = params["parent"].get<std::string>();
-        std::string obsSetHex = params["argObsSet"].get<std::string>();
-        Hash obsSetHash{HashAlgorithm::SHA256};
-        try {
-            obsSetHash = Hash::parseNonSRIUnprefixed(obsSetHex, HashAlgorithm::SHA256);
-        } catch (const std::exception &) {
-            return nullptr;
-        }
-        auto obsSet = decisionGraph.getObservationSet(obsSetHash);
+        auto resolved = trace::resolveFromJson(reqJson, decisionGraph.selectorPool);
+        auto * cba = resolved ? std::get_if<trace::SelectorCallbackApply>(&(*resolved)->node) : nullptr;
+        if (!cba) return nullptr;
+        auto obsSet = decisionGraph.getObservationSet(cba->argObsSet);
         if (!obsSet) {
             tracingCacheLog(
                 "resolve %s: callbackApply obsSet=%s not in pool",
-                idStr.substr(0, 12), obsSetHex.substr(0, 12).c_str());
+                idStr.substr(0, 12),
+                cba->argObsSet.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
             return nullptr;
         }
         auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
         for (const auto & obs : *obsSet)
             obsSetMap->emplace(obs.reqHash, obs.responsePayload);
+        std::string fnHex = cba->parent->cachedHash.to_string(HashFormat::Base16, false);
         auto fnObj = resolveIdentity(fnHex, ctx);
         if (!fnObj) {
             tracingCacheLog(
