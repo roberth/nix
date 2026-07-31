@@ -277,23 +277,23 @@ OuterApplyResult OuterApply::run(
        references to this producer at replay. */
     std::function<ref<const trace::Selector>()> producerFn;
     if (innerWriter) {
-        auto * dg = &innerWriter->getDecisionGraph();
-        producerFn = [localCell, fnProducer, applySel, dg]() -> ref<const trace::Selector> {
+        auto & dg = innerWriter->getDecisionGraph();
+        producerFn = [localCell, fnProducer, applySel, &dg]() -> ref<const trace::Selector> {
             if (localCell->callbackState) {
-                auto obsSetHash = dg->insertObservationSet(
+                auto obsSetHash = dg.insertObservationSet(
                     localCell->callbackState->runningObsSet);
                 /* Look up cs.fnStateHashHex in pool; fallback to fnProducer. */
                 ref<const trace::Selector> fnRef = fnProducer;
                 try {
                     auto fnHash = Hash::parseNonSRIUnprefixed(
                         localCell->callbackState->fnStateHashHex, HashAlgorithm::SHA256);
-                    if (auto found = dg->selectorPool.find(fnHash))
+                    if (auto found = dg.selectorPool.find(fnHash))
                         fnRef = *found;
                 } catch (...) {}
-                auto qcaSel = dg->selectorPool.intern(trace::SelectorCallbackApply{
+                auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
                     obsSetHash.to_string(HashFormat::Base16, false), fnRef});
                 nlohmann::json qcaJson = trace::toJson(*qcaSel);
-                dg->insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
+                dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
                 return qcaSel;
             }
             return applySel;
