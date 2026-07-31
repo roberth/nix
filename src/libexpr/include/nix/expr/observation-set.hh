@@ -19,11 +19,9 @@ namespace nix {
 
 /** Per-Ask-edge fact record. `elementHash` = SHA-256(reqHash ++ respHash),
     the currency of the Asks-level XOR-fold into `factSetHash`. Cell-scoped
-    attribution rides on `attributionCell`. `fromHash` is legacy — non-zero
-    only in the vestigial stampPerArgFields path, retiring with #178. */
+    attribution rides on `attributionCell`. */
 struct Observation
 {
-    Hash fromHash;
     Hash elementHash;
     /* #183: separately-carried (reqHash, respHash) so walker-side
        commits can append to cell.facts as (req, resp) pairs. */

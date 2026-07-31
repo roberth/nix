@@ -70,8 +70,7 @@ TracingReplayEvaluator::walk(
             return;
         Hash fingerprint(HashAlgorithm::SHA256);
         for (const auto & f : pendingEdgeObservations)
-            fingerprint = TracingDecisionGraph::xorFactIntoHash(
-                fingerprint, f.fromHash, f.elementHash);
+            fingerprint = TracingDecisionGraph::xorHashes(fingerprint, f.elementHash);
         if (committedEdgeFingerprints.insert(fingerprint).second) {
             /* #183: walker-side attribution — route each fact to
                its attributionCell (outer probe → arg's cell), or
@@ -213,7 +212,6 @@ TracingReplayEvaluator::walk(
             /* #183: env facts default to sessionRootCell (attrCell
                left null — commitEdge routes null to sessionRootCell). */
             pendingEdgeObservations.push_back({
-                Hash(HashAlgorithm::SHA256),
                 TracingDecisionGraph::xorFactIntoHash(
                     Hash(HashAlgorithm::SHA256), requestHash, h),
                 requestHash,
