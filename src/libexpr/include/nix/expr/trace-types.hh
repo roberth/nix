@@ -629,12 +629,19 @@ static_assert(
 /**
  * Outgoing outer query: local→external.
  * Data queries (getType, getAttr, ...) and external calls (apply).
+ *
+ * Phase-parameterised: Resolved carries `ref<const Selector>` (the
+ * in-memory recursive form); String carries the query as hex.
  */
-struct OuterValueRequest
+template<typename P>
+struct OuterValueRequestF
 {
     static constexpr std::string_view tag = "outerValue";
-    ref<const Selector> query;
+    ParentRef<P> query;
 };
+
+using OuterValueRequest       = OuterValueRequestF<Resolved>;
+using StringOuterValueRequest = OuterValueRequestF<String>;
 
 struct OuterValueResponse
 {
@@ -652,6 +659,22 @@ void from_json(const nlohmann::json & j, OuterValueResponse & r);
 
 template<template<typename> class F>
 using AllEnvRequests = ApplyWrapper<F, FileReadRequest, GetEnvRequest, OuterValueRequest>;
+
+/** Env-layer Request variant. Flat tagged union across the three
+    Env participants (filesystem, env vars, outer evaluator). This
+    is the payload shape the walker and canonicalisation std::visit
+    over after decoding a request-pool blob. */
+using Request       = std::variant<FileReadRequest, GetEnvRequest, OuterValueRequest>;
+using StringRequest = std::variant<FileReadRequest, GetEnvRequest, StringOuterValueRequest>;
+
+/** String → Resolved for a whole Request. Fails when the embedded
+    outerValue query can't be resolved (parent hex not in pool + DB). */
+std::optional<Request> resolve(const StringRequest & raw, SelectorPool & pool);
+
+/** Convenience: decode a JSON payload as StringRequest via
+    `fromJsonByTag`, then resolve. Returns nullopt on decode-failure
+    or resolve-miss. */
+std::optional<Request> decodeRequest(const nlohmann::json & j, SelectorPool & pool);
 
 namespace detail {
 

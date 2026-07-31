@@ -114,13 +114,11 @@ static void resultVariantFromJson(const nlohmann::json & j, ResultVariant & resu
     throw nlohmann::json::parse_error::create(302, 0, "could not parse outer result", &j);
 }
 
-void to_json(nlohmann::json & j, const OuterValueRequest & r)
-{
-    nlohmann::json qJson;
-    std::visit([&](const auto & sub) { qJson = sub; }, r.query->node);
-    j = nlohmann::json{{"query", std::move(qJson)}};
-}
-/* No from_json for OuterValueRequest — needs SelectorPool. */
+/* Resolved-phase OuterValueRequest to_json lives below the
+   NIX_SELECTOR_STR_SERDE definitions — it delegates to
+   StringOuterValueRequest's macro-generated to_json.
+   No from_json for OuterValueRequest — needs SelectorPool.
+   Use `resolve(StringOuterValueRequest, pool)`. */
 
 void to_json(nlohmann::json & j, const OuterValueResponse & r)
 {
@@ -232,6 +230,7 @@ NIX_SELECTOR_STR_SERDE(StringSelectorGetListElem, index, parent)
 NIX_SELECTOR_STR_SERDE(StringSelectorGetFunctionInfo, parent)
 NIX_SELECTOR_STR_SERDE(StringSelectorApply, parent)
 NIX_SELECTOR_STR_SERDE(StringSelectorCallbackApply, argObsSet, parent)
+NIX_SELECTOR_STR_SERDE(StringOuterValueRequest, query)
 
 void to_json(nlohmann::json & j, const ResultFunctionInfo & r)
 {
@@ -262,6 +261,8 @@ void to_json(nlohmann::json & j, const SelectorApply & q)
 { to_json(j, StringSelectorApply{hexOf(q.parent)}); }
 void to_json(nlohmann::json & j, const SelectorCallbackApply & q)
 { to_json(j, StringSelectorCallbackApply{q.argObsSet.to_string(HashFormat::Base16, false), hexOf(q.parent)}); }
+void to_json(nlohmann::json & j, const OuterValueRequest & r)
+{ to_json(j, StringOuterValueRequest{hexOf(r.query)}); }
 
 // ---------------------------------------------------------------------------
 // parseTraceEntry
@@ -743,6 +744,33 @@ StringSelectorNode unresolve(const SelectorNode & node)
             return StringSelectorCallbackApply{s.argObsSet.to_string(HashFormat::Base16, false), hexOf(s.parent)};
         },
     }, node);
+}
+
+/* Request-variant resolve/decode. Env-only participants
+   (FileReadRequest, GetEnvRequest) are phase-independent; the
+   OuterValue arm carries a Selector reference that needs the pool. */
+std::optional<Request> resolve(const StringRequest & raw, SelectorPool & pool)
+{
+    return std::visit(overloaded{
+        [](const FileReadRequest & r) -> std::optional<Request> { return r; },
+        [](const GetEnvRequest & r)   -> std::optional<Request> { return r; },
+        [&](const StringOuterValueRequest & r) -> std::optional<Request> {
+            auto q = pool.findByHex(r.query);
+            if (!q) return std::nullopt;
+            return OuterValueRequest{*q};
+        },
+    }, raw);
+}
+
+std::optional<Request> decodeRequest(const nlohmann::json & j, SelectorPool & pool)
+{
+    StringRequest raw;
+    try {
+        detail::fromJsonByTag(j, raw);
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+    return resolve(raw, pool);
 }
 
 } // namespace nix::trace
