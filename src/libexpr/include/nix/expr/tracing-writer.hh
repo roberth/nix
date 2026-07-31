@@ -78,11 +78,6 @@ class TracingWriter
        RequestSet hash for the whole-remaining edge in O(1). */
     TracingDecisionGraph::TrieBuilder sessionRequestsTrie;
 
-    /* #188: activeCells retired. QCA attribution reaches the enclosing
-       SelectorApply's cell via callbackCell->parent (forwarded by
-       OuterObject::queryApply's applyCell construction, not looked up
-       via global stack). logResult reads the cell parameter directly. */
-
     /* All request hashes ever inserted. Not deduped against seenRequests
        (which is fact-hashed, not request-hashed). */
     std::unordered_set<Hash> allRequestHashes;
@@ -589,10 +584,7 @@ public:
 
     /**
      * Insert a Query payload into the Requests pool at its natural
-     * (payload-hash) key. Historically deferred and batched via
-     * closeAsksEdge; direct-insert now that the batching machinery
-     * (pendingRequests / pendingNewRequests / flushPending /
-     * closeAsksEdge) has retired.
+     * (payload-hash) key.
      */
     void deferRequest(nlohmann::json payload)
     {

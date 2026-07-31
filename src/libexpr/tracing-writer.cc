@@ -249,10 +249,9 @@ void TracingWriter::logOuterObservation(
 
 void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
 {
-    /* #184: reduced to inserting the apply-request payload into the
-       Requests pool. The writer-side CallbackCell vector + SuppressApplyBoundary
-       guard retired — cell.callbackState (populated by the caller) is
-       the single source of truth for pending-payload storage. */
+    /* Insert the apply-request payload into the Requests pool.
+       Pending-payload storage lives on cell.callbackState (populated
+       by the caller). */
     auto applyReqHash = hashString(HashAlgorithm::SHA256, applyQueryPayload.dump());
     auto applyPayloadCbor = jsonToCborString(applyQueryPayload);
     if (provenanceEnabled())

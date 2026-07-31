@@ -126,8 +126,6 @@ public:
         TriePosition.factSetHash and use it as their structural-anchor
         candidate startCur. */
     struct WalkResult { std::string payload; Hash resultNodeHash; Hash terminalCur; };
-    /* #178: Q evolution retired. Q hashes are stable per operation;
-       walker doesn't re-derive `from` fields during traversal. */
     std::optional<WalkResult> walk(
         const Hash & selectorHash,
         std::shared_ptr<Object> currentProxy = nullptr,

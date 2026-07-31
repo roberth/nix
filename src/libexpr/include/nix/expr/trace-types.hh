@@ -680,11 +680,6 @@ using CorrelatedTraceEntry =
  */
 std::optional<TraceEntry> parseTraceEntry(const nlohmann::json & j);
 
-/* parseSelectorNode / fromHashOf / rewriteFrom retired — under
-   the recursive Selector, parsing needs a SelectorPool (use
-   nodeFromJson), fromHashOf is a `parent->cachedHash` access, and
-   rewriteFrom is meaningless since Selectors are immutable. */
-
 /**
  * SHA-256 of the Query's JSON dump — the canonical selectorHash used
  * as its identity across the trace/store layer. Overload of the
