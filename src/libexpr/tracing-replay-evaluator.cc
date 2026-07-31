@@ -118,7 +118,19 @@ TracingReplayEvaluator::walk(
             isQueryRequest = reqJson.contains("tag");
             if (isQueryRequest) {
                 queryTag = reqJson["tag"].get<std::string>();
-                if (auto qSel = trace::resolveFromJson(reqJson, decisionGraph.selectorPool)) {
+                /* OuterValueRequest wraps a Selector: unwrap for description. */
+                if (queryTag == trace::OuterValueRequest::tag) {
+                    if (auto req = trace::decodeRequest(reqJson, decisionGraph.selectorPool)) {
+                        if (auto * ovr = std::get_if<trace::OuterValueRequest>(&*req)) {
+                            queryDescription = trace::describe(*ovr->query);
+                            willMoveStateHash = trace::willMoveStateHash(*ovr->query);
+                        } else {
+                            queryDescription = queryTag;
+                        }
+                    } else {
+                        queryDescription = queryTag;
+                    }
+                } else if (auto qSel = trace::resolveFromJson(reqJson, decisionGraph.selectorPool)) {
                     queryDescription = trace::describe(**qSel);
                     willMoveStateHash = trace::willMoveStateHash(**qSel);
                 } else {
@@ -307,6 +319,15 @@ std::optional<std::string> TracingReplayEvaluator::computeLiveResponse(const std
            tag check first, they'd fall into the env-var branch and
            produce a wrong response. */
         if (reqJson.contains("tag")) {
+            /* OuterValueRequest envelope: unwrap to get the wrapped
+               Selector and dispatch it as if it arrived unwrapped. */
+            if (reqJson["tag"].get<std::string_view>() == trace::OuterValueRequest::tag) {
+                auto req = trace::decodeRequest(reqJson, decisionGraph.selectorPool);
+                if (!req) return std::nullopt;
+                auto * ovr = std::get_if<trace::OuterValueRequest>(&*req);
+                if (!ovr) return std::nullopt;
+                return dispatchQueryRequest(trace::toJson(*ovr->query), ctx);
+            }
             return dispatchQueryRequest(reqJson, ctx);
         } else if (reqJson.contains("absPath")) {
             std::string path = reqJson["absPath"];
@@ -379,26 +400,19 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
         return nullptr;
     }
 
-    auto reqPayload = decisionGraph.getRequestPayload(idHash);
-    if (!reqPayload) {
-        /* Not in pool = id has no producer Request. Under the via-Asks
-           design we can't serve OUTER values from the Responses pool
-           (would silently mask outer-body change), so nothing to do
-           here — return nullptr. */
+    /* Producer chains reference Selectors by their own cachedHash, so
+       the SelectorPool (Selectors table) is authoritative — the Requests
+       pool holds OuterValueRequest envelopes now, not raw Selector
+       payloads. Serialize the typed Selector back to JSON so downstream
+       tag-branching code stays uniform. */
+    auto selOpt = decisionGraph.selectorPool.find(idHash);
+    if (!selOpt) {
         tracingCacheLog(
-            "resolve %s: not in pool — no provenance; returning null",
+            "resolve %s: not in Selectors pool — no provenance; returning null",
             idStr.substr(0, 12));
         return nullptr;
     }
-
-    nlohmann::json reqJson;
-    try {
-        reqJson = cborStringToJson(*reqPayload);
-    } catch (const std::exception &) {
-        tracingCacheLog("resolve %s: pool payload parse failed", idStr.substr(0, 12));
-        return nullptr;
-    }
-
+    nlohmann::json reqJson = trace::toJson(**selOpt);
     auto tag = reqJson["tag"].get<std::string>();
     /* Flat envelope: query fields live at top level of reqJson (no "params" wrapper). */
     auto & params = reqJson;

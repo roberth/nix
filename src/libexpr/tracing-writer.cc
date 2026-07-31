@@ -48,12 +48,22 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
     auto incomingObsSet = dg.getObservationSet(incCBA->argObsSet);
     if (!incomingObsSet) return std::nullopt;
 
-    /* Scan cell's facts for a matching predicate + response. */
+    /* Scan cell's facts for a matching predicate + response. Each
+       existingReqHash keys an OuterValueRequest envelope in the Requests
+       pool; decode it to recover the Selector for field comparison. */
     for (auto & [existingReqHash, existingEntry] : cell->facts) {
         if (existingEntry.response != incomingRespHash) continue;
-        auto existingSelectorOpt = dg.selectorPool.find(existingReqHash);
-        if (!existingSelectorOpt) continue;
-        auto * exGA = std::get_if<trace::SelectorGetAttr>(&(*existingSelectorOpt)->node);
+        auto existingPayload = dg.getRequestPayload(existingReqHash);
+        if (!existingPayload) continue;
+        nlohmann::json existingReqJson;
+        try {
+            existingReqJson = cborStringToJson(*existingPayload);
+        } catch (...) { continue; }
+        auto existingReq = trace::decodeRequest(existingReqJson, dg.selectorPool);
+        if (!existingReq) continue;
+        auto * existingOVR = std::get_if<trace::OuterValueRequest>(&*existingReq);
+        if (!existingOVR) continue;
+        auto * exGA = std::get_if<trace::SelectorGetAttr>(&existingOVR->query->node);
         if (!exGA || exGA->name != incGA->name) continue;
         auto * exCBA = std::get_if<trace::SelectorCallbackApply>(&exGA->parent->node);
         if (!exCBA) continue;
@@ -84,21 +94,26 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
                          jsonToCborString(trace::toJson(*canonicalCbaSel)));
         auto canonicalGetterSel = dg.selectorPool.intern(trace::SelectorGetAttr{
             incGA->name, canonicalCbaSel});
-        dg.insertRequest(canonicalGetterSel->cachedHash,
-                         jsonToCborString(trace::toJson(*canonicalGetterSel)));
+        /* Wrap the canonical getter in the OVR envelope and insert
+           under the wrapped hash — cell.facts keys on wrapped hashes
+           (see logOuterObservation). */
+        trace::OuterValueRequest canonicalOuterReq{canonicalGetterSel};
+        auto canonicalReqPayload = jsonToCborString(nlohmann::json(canonicalOuterReq));
+        auto canonicalReqHash = TracingDecisionGraph::computeResponseHash(canonicalReqPayload);
+        dg.insertRequest(canonicalReqHash, canonicalReqPayload);
 
         tracingCacheLog(
             "state-creep collapse: existing=%s incoming=%s -> canonical=%s (obsSet %s + %s -> %s)",
             existingReqHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
             incomingSelector->cachedHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-            canonicalGetterSel->cachedHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+            canonicalReqHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
             exCBA->argObsSet.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
             incCBA->argObsSet.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
             canonicalObsSetHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str());
 
         auto existingHashCopy = existingReqHash;
         cell->removeFact(existingHashCopy);
-        return CanonicaliseResult{canonicalGetterSel->cachedHash, existingHashCopy};
+        return CanonicaliseResult{canonicalReqHash, existingHashCopy};
     }
     return std::nullopt;
 }
@@ -122,32 +137,39 @@ void TracingWriter::logOuterObservation(
         attributionCell ? attributionCell->facts.size() : 0,
         attributionCell && attributionCell->parent ? " (has parent)" : "");
 
-    nlohmann::json queryJson = trace::toJson(*query);
+    /* Wrap the Selector in an OuterValueRequest envelope so it takes
+       its place in the Env-layer Request variant (design: outer probes
+       are Env-layer Requests, alongside FileReadRequest/GetEnvRequest).
+       reqHash keys the Requests pool + cell.facts as the wrapped
+       request's hash, not the bare Selector's cachedHash. */
+    trace::OuterValueRequest outerReq{query};
+    nlohmann::json reqJson = outerReq;
+    auto reqPayload = jsonToCborString(reqJson);
+    auto reqHash = TracingDecisionGraph::computeResponseHash(reqPayload);
+
     nlohmann::json resultJson;
     std::visit([&](const auto & r) { resultJson = r; }, result);
-
-    auto selectorHash = query->cachedHash;
     auto responsePayload = jsonToCborString(resultJson);
     auto responseHash = TracingDecisionGraph::computeResponseHash(responsePayload);
 
     tracingCacheLog(
         "  reqHash=%s reqJSON=%s",
-        selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
-        queryJson.dump());
+        reqHash.to_string(HashFormat::Base16, false).substr(0, 12),
+        reqJson.dump());
     tracingCacheLog(
         "  respHash=%s respJSON=%s",
         responseHash.to_string(HashFormat::Base16, false).substr(0, 12),
         resultJson.dump());
     if (provenanceEnabled()) {
-        recordProvenance(selectorHash, "requestHash-d1",
-                         {{"queryJson", queryJson},
+        recordProvenance(reqHash, "requestHash-d1",
+                         {{"reqJson", reqJson},
                           {"producer", producerDesc}});
         recordProvenance(responseHash, "responseHash-d1",
                          {{"resultJson", resultJson},
-                          {"selectorHash", selectorHash.to_string(HashFormat::Base16, false)}});
+                          {"reqHash", reqHash.to_string(HashFormat::Base16, false)}});
     }
 
-    decisionGraph.insertRequest(selectorHash, jsonToCborString(queryJson));
+    decisionGraph.insertRequest(reqHash, reqPayload);
 
     /* #183: fact appends to attributionCell's fact set. Ask rows
        inserted per-Selector-completion.
@@ -173,7 +195,7 @@ void TracingWriter::logOuterObservation(
            canonicalisation" note. */
         auto canonical = tryStateCreepCanonicalise(
             decisionGraph, attributionCell, query, responseHash);
-        auto factReqHash = canonical ? canonical->canonicalReqHash : selectorHash;
+        auto factReqHash = canonical ? canonical->canonicalReqHash : reqHash;
         auto barrier = peekBarrier();
         bool added = attributionCell->addFact(factReqHash, responseHash, barrier);
         if (added)
@@ -191,8 +213,8 @@ void TracingWriter::logOuterObservation(
            within the writer stays monotonic. */
         bumpBarrier();
     }
-    responseFor.emplace(selectorHash, responseHash);
-    sessionRequestsTrie.insert(selectorHash);
+    responseFor.emplace(reqHash, responseHash);
+    sessionRequestsTrie.insert(reqHash);
 }
 
 void TracingWriter::createCallbackCell(const nlohmann::json & applyQueryPayload)
