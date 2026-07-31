@@ -839,11 +839,6 @@ void TracingDecisionGraph::TrieBuilder::insert(const Hash & request)
     root->insertAtDepth(request, 0);
 }
 
-Hash TracingDecisionGraph::TrieBuilder::rootHash()
-{
-    return root->ensureHash();
-}
-
 void TracingDecisionGraph::TrieBuilder::persist(TracingDecisionGraph & g)
 {
     root->persistTree(g);

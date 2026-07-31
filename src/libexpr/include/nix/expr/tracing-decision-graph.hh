@@ -380,10 +380,6 @@ public:
            are no-ops. */
         void insert(const Hash & request);
 
-        /* Current root hash. Recomputes the dirty subtree if anything
-           changed since the last call. */
-        Hash rootHash();
-
         /* Push any unpersisted nodes into the RequestSetNodes pool.
            Idempotent. */
         void persist(TracingDecisionGraph & g);
