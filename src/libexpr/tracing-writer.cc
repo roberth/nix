@@ -67,11 +67,11 @@ std::optional<CanonicaliseResult> tryStateCreepCanonicalise(
         if (!existingObsSet) continue;
 
         /* Intersect: keep entries present in both, matched by
-           (selectorHash, responsePayload). */
-        std::vector<TracingDecisionGraph::Observation> intersected;
+           (reqHash, responsePayload). */
+        std::vector<TracingDecisionGraph::InlineFact> intersected;
         for (const auto & a : *incomingObsSet) {
             for (const auto & b : *existingObsSet) {
-                if (a.selectorHash == b.selectorHash
+                if (a.reqHash == b.reqHash
                     && a.responsePayload == b.responsePayload) {
                     intersected.push_back(a);
                     break;

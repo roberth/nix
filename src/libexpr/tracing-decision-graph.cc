@@ -498,7 +498,7 @@ static std::vector<T> dg_sortAndDedup(std::vector<T> members)
    and lookup is by whole-set hash — no set-difference operations
    needed here. */
 static std::string dg_observationSetPayload(
-    const std::vector<TracingDecisionGraph::Observation> & sortedMembers)
+    const std::vector<TracingDecisionGraph::InlineFact> & sortedMembers)
 {
     nlohmann::json arr = nlohmann::json::array();
     for (const auto & m : sortedMembers) {
@@ -507,7 +507,7 @@ static std::string dg_observationSetPayload(
            byte string. Preserves exact CBOR bytes without any hex
            encoding overhead. */
         arr.push_back({
-            {"q", m.selectorHash.to_string(HashFormat::Base16, false)},
+            {"q", m.reqHash.to_string(HashFormat::Base16, false)},
             {"p", nlohmann::json::binary(std::vector<std::uint8_t>(
                 m.responsePayload.begin(), m.responsePayload.end()))},
         });
@@ -517,7 +517,7 @@ static std::string dg_observationSetPayload(
 }
 
 Hash TracingDecisionGraph::insertObservationSet(
-    std::vector<TracingDecisionGraph::Observation> members)
+    std::vector<TracingDecisionGraph::InlineFact> members)
 {
     auto sorted = dg_sortAndDedup(std::move(members));
     auto payload = dg_observationSetPayload(sorted);
@@ -532,7 +532,7 @@ Hash TracingDecisionGraph::insertObservationSet(
     return h;
 }
 
-std::optional<std::vector<TracingDecisionGraph::Observation>>
+std::optional<std::vector<TracingDecisionGraph::InlineFact>>
 TracingDecisionGraph::getObservationSet(const Hash & h)
 {
     std::optional<std::string> payload;
@@ -547,11 +547,11 @@ TracingDecisionGraph::getObservationSet(const Hash & h)
         return std::nullopt;
     auto bytes = reinterpret_cast<const uint8_t *>(payload->data());
     auto arr = nlohmann::json::from_cbor(bytes, bytes + payload->size());
-    std::vector<Observation> members;
+    std::vector<InlineFact> members;
     members.reserve(arr.size());
     for (const auto & elt : arr) {
-        Observation m;
-        m.selectorHash = Hash::parseNonSRIUnprefixed(elt.at("q").get<std::string>(), HashAlgorithm::SHA256);
+        InlineFact m;
+        m.reqHash = Hash::parseNonSRIUnprefixed(elt.at("q").get<std::string>(), HashAlgorithm::SHA256);
         auto & binVal = elt.at("p").get_binary();
         m.responsePayload.assign(binVal.begin(), binVal.end());
         members.push_back(std::move(m));

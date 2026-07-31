@@ -432,7 +432,7 @@ std::shared_ptr<Object> TracingReplayEvaluator::resolveIdentity(const std::strin
         }
         auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
         for (const auto & obs : *obsSet)
-            obsSetMap->emplace(obs.selectorHash, obs.responsePayload);
+            obsSetMap->emplace(obs.reqHash, obs.responsePayload);
         auto fnObj = resolveIdentity(fnHex, ctx);
         if (!fnObj) {
             tracingCacheLog(
@@ -600,7 +600,7 @@ std::optional<std::string> TracingReplayEvaluator::dispatchQueryRequest(const nl
                 }
                 auto obsSetMap = std::make_shared<std::map<Hash, std::string>>();
                 for (const auto & obs : *obsSet)
-                    obsSetMap->emplace(obs.selectorHash, obs.responsePayload);
+                    obsSetMap->emplace(obs.reqHash, obs.responsePayload);
                 std::shared_ptr<Object> fnObj = resolveIdentity(fnHex, ctx);
                 if (!fnObj) {
                     tracingCacheLog(

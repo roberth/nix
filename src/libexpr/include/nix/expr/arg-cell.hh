@@ -44,7 +44,7 @@ struct CallbackState
     /** Observations the outer made on this cell's contra-arg during
         the callback body's evaluation. Snapshotted into the
         ObservationSet CAS at QCA emission. */
-    std::vector<TracingDecisionGraph::Observation> runningObsSet;
+    std::vector<TracingDecisionGraph::InlineFact> runningObsSet;
 };
 
 struct ArgCell : std::enable_shared_from_this<ArgCell>

@@ -125,39 +125,41 @@ public:
     std::optional<std::string> getResultPayload(const ResultHash & h);
 
     /* ObservationSet CAS pool. An observation set is the set of
-       (selectorHash, responsePayload) tuples the outer's callback
-       probed on an inner-supplied contra-arg during one callback
-       firing. Payload is inline so the walker reconstructs arg
-       responses directly from this CAS.
+       InlineFacts the outer's callback probed on an inner-supplied
+       contra-arg during one callback firing. The set as a whole
+       carries the scope (one callback firing); individual members
+       are Facts without in-object attribution. Response is stored
+       inline so the walker reconstructs arg responses directly from
+       this CAS.
 
        Referenced by `SelectorCallbackApply.argObsSet` — different
        observation sets give different queryHashes → distinct DB
        rows.
 
-       Members hash: SHA-256 of the sorted-by-selectorHash CBOR of the
+       Members hash: SHA-256 of the sorted-by-reqHash CBOR of the
        member list. Idempotent via INSERT OR IGNORE. */
-    struct Observation
+    struct InlineFact
     {
-        Hash selectorHash{HashAlgorithm::SHA256};
+        Hash reqHash{HashAlgorithm::SHA256};
         /* CBOR bytes of the observed response (a
            `trace::ResultVariant`). Used by the walker at replay to
            serve callback probes via an obsSet-answering proxy. */
         std::string responsePayload;
 
-        bool operator==(const Observation & o) const
+        bool operator==(const InlineFact & o) const
         {
-            return selectorHash == o.selectorHash && responsePayload == o.responsePayload;
+            return reqHash == o.reqHash && responsePayload == o.responsePayload;
         }
 
-        bool operator<(const Observation & o) const
+        bool operator<(const InlineFact & o) const
         {
-            if (selectorHash != o.selectorHash)
-                return selectorHash < o.selectorHash;
+            if (reqHash != o.reqHash)
+                return reqHash < o.reqHash;
             return responsePayload < o.responsePayload;
         }
     };
-    Hash insertObservationSet(std::vector<Observation> members);
-    std::optional<std::vector<Observation>> getObservationSet(const Hash & h);
+    Hash insertObservationSet(std::vector<InlineFact> members);
+    std::optional<std::vector<InlineFact>> getObservationSet(const Hash & h);
 
 
     /* ─────────────────────────────────────────────────────────────────
