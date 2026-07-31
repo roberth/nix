@@ -387,6 +387,11 @@ public:
         auto qState = std::make_shared<QState>();
         qState->currentQ = selectorHash;
         if (cell) {
+            /* Cross-link both directions atomically. QState needs the
+               back-ref for cell->factSetHash() lookups during Ask/Terminal
+               keying; cell needs the forward-ref for cross-cell state
+               access on descendants. Setting only one direction leaves a
+               dangling half-link that will silently miss on the other side. */
             cell->qState = qState;
             qState->cell = cell;
         }
@@ -421,6 +426,11 @@ public:
            per operation; cur at (Q, cur) discriminates. */
 
         if (cell) {
+            /* Cross-link both directions atomically. QState needs the
+               back-ref for cell->factSetHash() lookups during Ask/Terminal
+               keying; cell needs the forward-ref for cross-cell state
+               access on descendants. Setting only one direction leaves a
+               dangling half-link that will silently miss on the other side. */
             cell->qState = qState;
             qState->cell = cell;
         }
