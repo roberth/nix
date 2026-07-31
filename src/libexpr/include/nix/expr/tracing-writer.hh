@@ -352,7 +352,7 @@ public:
      */
     struct SelectorHandle
     {
-        std::optional<Hash> selectorHash;
+        Hash selectorHash;
     };
 
     /**
@@ -451,8 +451,6 @@ public:
         const std::shared_ptr<const ArgCell> & cell = {})
     {
         sink.logResult(valueNum, result);
-        if (!qh.selectorHash)
-            return std::nullopt;
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);
         auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
@@ -467,11 +465,11 @@ public:
            edge's requestSet live, folds, reaches next cur; a divergent
            live response at any barrier misses cleanly there. */
         if (cell)
-            insertBarrieredAskChain(*qh.selectorHash, cell);
-        decisionGraph.insertTerminal(*qh.selectorHash, terminalCur, resultNodeHash);
+            insertBarrieredAskChain(qh.selectorHash, cell);
+        decisionGraph.insertTerminal(qh.selectorHash, terminalCur, resultNodeHash);
         tracingCacheLog(
             "writer logQueryResult: Q=%s anchor=%s -> result=%s",
-            qh.selectorHash->to_string(HashFormat::Base16, false).substr(0, 12),
+            qh.selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
             terminalCur.to_string(HashFormat::Base16, false).substr(0, 12),
             resultNodeHash.to_string(HashFormat::Base16, false).substr(0, 12));
         if (cell) {
@@ -489,7 +487,7 @@ public:
         }
         return TriePosition{
             .resultNodeHash = resultNodeHash,
-            .queryHashStr = qh.selectorHash->to_string(HashFormat::Base16, false),
+            .queryHashStr = qh.selectorHash.to_string(HashFormat::Base16, false),
             .factSetHash = terminalCur,
         };
     }
@@ -611,9 +609,6 @@ public:
     {
         sink.logResult(valueNum, result);
 
-        if (!qh.selectorHash)
-            return std::nullopt;
-
         nlohmann::json j = result;
         auto resultPayload = jsonToCborString(j);
         auto resultNodeHash = TracingDecisionGraph::computeResponseHash(resultPayload);
@@ -621,7 +616,7 @@ public:
 
         sessionRequestsTrie.persist(decisionGraph);
 
-        Hash finalQ = *qh.selectorHash;
+        Hash finalQ = qh.selectorHash;
         /* #177 pull model: Terminal keyed at the completing Q's
            cell.factSetHash() — this cell's own facts XORed with
            ancestor factSetHashes on demand. */
