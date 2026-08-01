@@ -5,6 +5,7 @@
 #include "nix/expr/primops.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
+#include "nix/expr/tracing-object.hh"
 #include "nix/expr/tracing-writer.hh"
 #include "nix/expr/trace-types.hh"
 #include "nix/util/source-accessor.hh"
@@ -296,8 +297,31 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
             if (!probeSelOpt) { allMatch = false; break; }
             trace::ResultVariant liveResult;
             try {
-                auto qr = dispatchOuterQuery(argObj, (*probeSelOpt)->node);
-                liveResult = qr.result;
+                /* O17: probe-replay type-dispatch. For SelectorCallbackApply
+                   queries, recursively materialise a nested RCA from the
+                   probe's own argObsSet and invoke argObj->queryApply on
+                   it — this reproduces the nested apply's applyResult
+                   WHNF that cold recorded. For other Selector kinds,
+                   dispatchOuterQuery's identityWHNF / getter behaviour
+                   is correct. */
+                if (auto * nestedSca = std::get_if<trace::SelectorCallbackApply>(
+                        &(*probeSelOpt)->node)) {
+                    auto nestedObsSet = decisionGraph.getObservationSet(
+                        nestedSca->argObsSet);
+                    if (!nestedObsSet) { allMatch = false; break; }
+                    auto nestedObsMap = std::make_shared<std::map<Hash, std::string>>();
+                    for (const auto & obs : *nestedObsSet)
+                        nestedObsMap->emplace(obs.reqHash, obs.responsePayload);
+                    auto nestedRca = std::make_shared<ReplayCallbackArg>(
+                        nestedSca->parent, decisionGraph, rootFSRoot, state);
+                    nestedRca->withObsSetResponses(nestedObsMap);
+                    auto nestedResultObj = argObj->queryApply(nestedRca);
+                    if (!nestedResultObj) { allMatch = false; break; }
+                    liveResult = computeWHNFFromObject(*nestedResultObj);
+                } else {
+                    auto qr = dispatchOuterQuery(argObj, (*probeSelOpt)->node);
+                    liveResult = qr.result;
+                }
             } catch (const std::exception &) { allMatch = false; break; }
             nlohmann::json liveJson = std::visit(
                 [](const auto & r) -> nlohmann::json { return r; }, liveResult);
