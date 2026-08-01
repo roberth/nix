@@ -295,22 +295,79 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
         return qr;
     };
 
-    /* applyFn: nested apply of the wrapped outer-arg. Returns plain
-       SelectorApply producerFn for now (K11 gap for the nested case —
-       cb-higher-order-nested; separate milestone M2). */
+    /* applyFn: nested higher-order apply. Fires when inner-lambda body
+       applies wrappedArg further (`wrappedArg X` inside inner's body).
+       Per callback-model §7 curried compose: the further apply's
+       producer must be a compositional SCA{fn=<enclosing SCA>,
+       argObsSet=<layer-N obs>}, not plain SelectorApply — otherwise
+       nested applies collapse identities and warm can't discriminate.
+
+       Runs the same shape as TCA::queryApply itself, one layer deeper:
+       populate the passed-in applyCell as a callback firing (its own
+       callbackState + runningObsSet), wrap argObj2 with a queryFn
+       recording to that cell, invoke fnObj->queryApply live, return
+       producerFn that snapshots the cell's runningObsSet on demand
+       (§7's "at the moment the identity is queried"). Recursive via
+       captured `applyFn` shared_ptr so deeper nestings work too. */
     auto applyFn = std::make_shared<OuterApplyFn>();
-    *applyFn = [applyFn, &dg](
+    auto rootFSRootCopy = rootFSRoot;
+    *applyFn = [applyFn, &dg, rootFSRootCopy](
         std::shared_ptr<Object> fnObj,
         ref<const trace::Selector> fnProducer,
         std::shared_ptr<Object> argObj2,
-        std::shared_ptr<const ArgCell> /*applyCell*/) -> OuterApplyResult {
-        auto applyResultObj = fnObj->queryApply(std::move(argObj2));
+        std::shared_ptr<const ArgCell> applyCell) -> OuterApplyResult {
+        /* Cell for THIS nested apply. applyCell was created by
+           OuterObject::queryApply; treat it as writable via
+           mutable callbackState (see ArgCell). liveObject also
+           mutable-shaped in practice for OuterApply::run's pattern. */
+        auto nestedCell = std::const_pointer_cast<ArgCell>(applyCell);
+        nestedCell->callbackState = std::make_shared<CallbackState>();
+        nestedCell->callbackState->fnStateHashHex =
+            fnProducer->cachedHash.to_string(HashFormat::Base16, false);
+        nestedCell->liveObject = argObj2;
+
+        auto nestedArgProducerSel = dg.selectorPool.intern(trace::SelectorArg{0});
+
+        OuterQueryFn nestedQueryFn = [nestedCell, &dg](
+            std::shared_ptr<Object> outerObj,
+            ref<const trace::Selector> q,
+            ref<const trace::Selector> /*producer*/,
+            std::shared_ptr<const ArgCell> /*callerCell*/) {
+            auto qr = dispatchOuterQuery(std::move(outerObj), q->node);
+            nlohmann::json rJson = std::visit(
+                [](const auto & r) -> nlohmann::json { return r; }, qr.result);
+            auto rPayload = jsonToCborString(rJson);
+            dg.insertRequest(q->cachedHash, jsonToCborString(trace::toJson(*q)));
+            nestedCell->callbackState->runningObsSet.push_back({q->cachedHash, rPayload});
+            return qr;
+        };
+
+        auto nestedWrappedArg = make_ref<OuterObject>(
+            [nestedArgProducerSel]() { return nestedArgProducerSel; },
+            argObj2,
+            nestedQueryFn,
+            rootFSRootCopy,
+            dg.selectorPool,
+            *applyFn);
+        nestedWrappedArg->withArgCell(nestedCell);
+
+        auto applyResultObj = fnObj->queryApply(nestedWrappedArg.get_ptr());
         if (!applyResultObj)
             throw Error("<cb-apply> nested applyFn: queryApply returned null");
-        auto applySel = dg.selectorPool.intern(trace::SelectorApply{fnProducer});
+
+        /* producerFn snapshots nestedCell's runningObsSet on demand
+           per §7: producer identity is queried at each probe moment,
+           so distinct probes at distinct moments produce distinct
+           producer Selectors when the obsSet has grown. */
+        auto producerFn = [nestedCell, fnProducer, &dg]() -> ref<const trace::Selector> {
+            auto obsSetHash = dg.insertObservationSet(
+                nestedCell->callbackState->runningObsSet);
+            return dg.selectorPool.intern(
+                trace::SelectorCallbackApply{obsSetHash, fnProducer});
+        };
         return OuterApplyResult{
             .applyResult = std::move(applyResultObj),
-            .producerFn = [applySel]() { return applySel; },
+            .producerFn = std::move(producerFn),
         };
     };
 
