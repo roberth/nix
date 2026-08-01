@@ -145,9 +145,11 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
         return nullptr;
     auto innerChild = inner->maybeGetAttr(name);
     if (!innerChild)
-        /* WHNF said the attr is present but inner disagrees — shouldn't
-           happen under matching-until-divergence. */
-        return nullptr;
+        /* WHNF said the attr is present but inner disagrees. Under
+           matching-until-divergence, WHNF's names list and inner's
+           lookup share a source — divergence here is a bug in whoever
+           produced our WHNF or in inner's iteration. */
+        panic("TracingObject::maybeGetAttr: WHNF says attr present, inner says missing");
     /* Force child WHNF first — for a callback-produced wrapper, this
        runs the callback body's attribute expression, firing contra-arg
        probes that grow the callback cell's runningObsSet. */
@@ -155,15 +157,12 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
     /* Now build SelectorGetAttr with `from` = our producer at the
        post-force moment. For cbApplyOrigin wrappers this snapshots the
        grown runningObsSet into a SelectorCallbackApply (§7's per-probe
-       sampling); non-callback wrappers just return their stable Q hex.
-       Nullopt = no valid compositional producer (e.g. non-callback
-       apply-result wrapper); skip recording rather than write a Q
-       with a nonsense `from`. */
-    auto fromHex = getProducerSelectorHex(writer);
-    if (!fromHex)
-        return innerChild;
+       sampling); non-callback wrappers return their stable Q hex.
+       This override of getProducerSelectorHex is total — dereferencing
+       enforces that (bad_optional_access if the invariant breaks). */
+    auto fromHex = getProducerSelectorHex(writer).value();
     auto & dg = writer.getDecisionGraph();
-    auto fromSel = dg.selectorPool.findByHex(*fromHex);
+    auto fromSel = dg.selectorPool.findByHex(fromHex);
     if (!fromSel)
         return innerChild;
     auto querySel = dg.selectorPool.intern(trace::SelectorGetAttr{name, *fromSel});
@@ -173,7 +172,7 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
         "TO::maybeGetAttr '%s' -> Q=%s (from=%s, cbApplyOrigin=%d)",
         name.c_str(),
         queryHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-        fromHex->substr(0, 12).c_str(),
+        fromHex.substr(0, 12).c_str(),
         (int) cbApplyOrigin);
     /* Phase D2: getter as Query — logQuery/logQueryResult, no push.
        Observations dispatched during innerChild's evaluation
@@ -312,11 +311,10 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
         /* Not a list, or index out of bounds — delegate so the
            interpreter throws the source-positioned error. */
         return inner->getListElem(index);
-    auto fromHex = getProducerSelectorHex(writer);
-    if (!fromHex)
-        return inner->getListElem(index);
+    /* Total on TracingObject; see maybeGetAttr for the reasoning. */
+    auto fromHex = getProducerSelectorHex(writer).value();
     auto & dg = writer.getDecisionGraph();
-    auto fromSel = dg.selectorPool.findByHex(*fromHex);
+    auto fromSel = dg.selectorPool.findByHex(fromHex);
     if (!fromSel)
         return inner->getListElem(index);
     auto querySel = dg.selectorPool.intern(trace::SelectorGetListElem{index, *fromSel});
@@ -363,11 +361,10 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
        Whether or not inner->getFunctionInfo() actually fires sub-
        observations, the swap costs at most an extra push/pop and
        eliminates the unverified assumption. */
-    auto fromHex = getProducerSelectorHex(writer);
-    if (!fromHex)
-        return inner->getFunctionInfo();
+    /* Total on TracingObject; see maybeGetAttr for the reasoning. */
+    auto fromHex = getProducerSelectorHex(writer).value();
     auto & dg = writer.getDecisionGraph();
-    auto fromSel = dg.selectorPool.findByHex(*fromHex);
+    auto fromSel = dg.selectorPool.findByHex(fromHex);
     if (!fromSel)
         return inner->getFunctionInfo();
     auto querySel = dg.selectorPool.intern(trace::SelectorGetFunctionInfo{*fromSel});
@@ -403,7 +400,12 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto fnIdOpt = getSelectorHashHex();
     auto argIdOpt = argObj->getSelectorHashHex();
     if (!fnIdOpt || !argIdOpt)
-        throw Error("TracingObject::queryApply: fn/arg lacks a state hash");
+        /* Invariant: any Object reaching TracingObject::queryApply
+           must have a content-defined identity. This throw was
+           previously surfaced as an inline `«error: ...»` inside a
+           forced value at `nix eval` time, hiding real bugs behind
+           wrong-looking output. Panic to surface immediately. */
+        panic("TracingObject::queryApply: fn/arg lacks a state hash");
 
     /* cb-apply: record an explicit ε edge for this apply.
        See parallel call in TracingEvaluator::apply. */
