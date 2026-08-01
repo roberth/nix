@@ -302,10 +302,13 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto getId = [](Object & obj) -> std::string {
         if (auto hex = obj.getSelectorHashHex())
             return *hex;
-        throw Error(
-            "TracingEvaluator::apply: fn/arg lacks a content-defined "
-            "identity (type %s). Wrap it as a cache-boundary proxy at its "
-            "construction site.", typeid(obj).name());
+        /* Invariant: every Object reaching TE::apply is a cache-boundary
+           proxy with a content-defined identity. Constructor sites are
+           responsible for wrapping (OuterObject, TracingObject,
+           TracingCallbackArg, TCallbackApplyResult, InterpreterObject
+           for mkString/mkInt/… — all supply hex). If we're here without
+           a hex, the caller passed a raw Object that skipped wrapping. */
+        panic("TracingEvaluator::apply: fn/arg lacks a content-defined identity");
     };
 
     auto fnStateHashStr = getId(*fn);
@@ -373,8 +376,12 @@ ref<Object> TracingEvaluator::apply(ref<Object> fn, ref<Object> arg)
        a redundant cell. */
     auto cell = effectiveArgCell(*arg);
     if (!cell)
-        throw Error("TracingEvaluator::apply: arg had no argCell (fn=%s arg=%s)",
-                    fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
+        /* Under #188's consolidation the arg always has a cell by this
+           point (seedCell on the primop path, applyCell propagation on
+           nested callback paths). Panic per the comment above — this
+           was previously a `throw Error` that got surfaced as an inline
+           `«error: ...»` at nix eval time, hiding the real bug. */
+        panic("TracingEvaluator::apply: arg had no argCell");
 
     if (fnIsTlo) {
         /* Nested cb-apply (fn is a TracingCallbackArg): the recursive
