@@ -244,130 +244,133 @@ void TracingCallbackArg::recordObservation(ref<const trace::Selector> query, con
     argCell->callbackState->runningObsSet.push_back({qh, rPayload});
 }
 
-std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> /*argObj*/)
+std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> argObj)
 {
-    /* Applying a callback-produced value (a function reached through
-       the contra-arg, e.g. `g.foo 10` where `g` is a callback's
-       contra-arg) is not currently supported. */
-    throw Error(
-        "tracing eval-cache: applying a function reached through a "
-        "callback's contra-arg is not currently supported");
+    /* #217 higher-order callback apply, Object-level. Design per
+       callback-model §7: outer applying the contra-arg records a
+       compositional SelectorCallbackApply on the enclosing
+       runningObsSet — fn = this contra-arg's producer, argObsSet =
+       hash of inner-lambda's actual probes on the outer-arg.
+
+       Object-level dispatch avoids the K1 recursion hazard —
+       Interpreter::apply → toValueOrProxy → primop would re-enter
+       this proxy. Recording lives HERE so the primop wrapper stays
+       thin (just Value materialisation from the returned Object). */
+
+    auto & dg = writer.getDecisionGraph();
+
+    /* Layer-2 cell for this apply. Parents to self's cell (enclosing
+       callback firing's cell). callbackState carries the runningObsSet
+       where inner's probes on the outer-arg accumulate — same shape
+       OuterApply::run uses for its localCell, mirrored for this
+       direction (outer applies inner-fn rather than inner→outer). */
+    auto layer2Cell = ArgCell::make(argCell, nullptr);
+    layer2Cell->callbackState = std::make_shared<CallbackState>();
+    layer2Cell->callbackState->fnStateHashHex =
+        producer->cachedHash.to_string(HashFormat::Base16, false);
+    layer2Cell->liveObject = argObj;
+
+    /* Producer for the wrapped outer-arg — SelectorArg{0} scoped by
+       the enclosing SelectorCallbackApply constructed below embedding
+       the layer-2 argObsSet (§6: contra-arg identity is hardcoded
+       sentinel scoped by enclosing SCA). */
+    auto argProducerSel = dg.selectorPool.intern(trace::SelectorArg{0});
+
+    /* queryFn: execute the probe on the outer-arg live and append
+       (Selector, response) to layer2Cell's runningObsSet. Not
+       writer.logOuterObservation — that routes to cell.facts for
+       factSet composition; we want the snapshot-into-ObservationSet-CAS
+       path used by callback firings. */
+    OuterQueryFn queryFn = [layer2Cell, &dg](
+        std::shared_ptr<Object> outerObj,
+        ref<const trace::Selector> q,
+        ref<const trace::Selector> /*producer*/,
+        std::shared_ptr<const ArgCell> /*callerCell*/) {
+        auto qr = dispatchOuterQuery(std::move(outerObj), q->node);
+        nlohmann::json rJson = std::visit(
+            [](const auto & r) -> nlohmann::json { return r; }, qr.result);
+        auto rPayload = jsonToCborString(rJson);
+        dg.insertRequest(q->cachedHash, jsonToCborString(trace::toJson(*q)));
+        layer2Cell->callbackState->runningObsSet.push_back({q->cachedHash, rPayload});
+        return qr;
+    };
+
+    /* applyFn: nested apply of the wrapped outer-arg. Returns plain
+       SelectorApply producerFn for now (K11 gap for the nested case —
+       cb-higher-order-nested; separate milestone M2). */
+    auto applyFn = std::make_shared<OuterApplyFn>();
+    *applyFn = [applyFn, &dg](
+        std::shared_ptr<Object> fnObj,
+        ref<const trace::Selector> fnProducer,
+        std::shared_ptr<Object> argObj2,
+        std::shared_ptr<const ArgCell> /*applyCell*/) -> OuterApplyResult {
+        auto applyResultObj = fnObj->queryApply(std::move(argObj2));
+        if (!applyResultObj)
+            throw Error("<cb-apply> nested applyFn: queryApply returned null");
+        auto applySel = dg.selectorPool.intern(trace::SelectorApply{fnProducer});
+        return OuterApplyResult{
+            .applyResult = std::move(applyResultObj),
+            .producerFn = [applySel]() { return applySel; },
+        };
+    };
+
+    auto wrappedArg = make_ref<OuterObject>(
+        [argProducerSel]() { return argProducerSel; },
+        argObj,
+        queryFn,
+        rootFSRoot,
+        dg.selectorPool,
+        *applyFn);
+    wrappedArg->withArgCell(layer2Cell);
+
+    /* Invoke inner-lambda live via inner->queryApply. Inner's probes
+       on wrappedArg flow through queryFn → layer2Cell's runningObsSet.
+       Using inner->queryApply (not toValueOrProxy) is what avoids K1. */
+    auto resultObj = inner->queryApply(wrappedArg.get_ptr());
+    if (!resultObj)
+        throw Error("TracingCallbackArg::queryApply: inner returned null");
+    auto applyResultWhnf = computeWHNFFromObject(*resultObj);
+
+    /* Snapshot layer-2 obs into ObservationSet CAS and construct the
+       compositional SelectorCallbackApply for record on enclosing
+       runningObsSet. */
+    auto layer2ObsHash = dg.insertObservationSet(
+        layer2Cell->callbackState->runningObsSet);
+    tracingCacheLog(
+        "TCA::queryApply: layer-2 obsSet=%s (%zu probes)",
+        layer2ObsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+        layer2Cell->callbackState->runningObsSet.size());
+    auto scaSel = dg.selectorPool.intern(
+        trace::SelectorCallbackApply{layer2ObsHash, producer});
+    recordObservation(scaSel, applyResultWhnf);
+
+    return resultObj;
 }
 
 RootValue TracingCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<struct OuterResolver> resolver)
 {
-    /* #217: Higher-order callback apply. Design per callback-model §7:
-       when outer applies the contra-arg to some outer-supplied value,
-       record a compositional SelectorCallbackApply — fn = this contra-arg's
-       producer, argObsSet = inner-lambda's probes on the outer-supplied
-       value during this apply. Warm reconstructs the argObsSet by
-       replaying recorded probes on the live arg; divergence yields
-       different argObsSet → different SelectorCallbackApply hash →
-       walker miss. */
+    /* Non-function values: hand back the underlying Value directly.
+       There's nothing higher-order to intercept. */
+    if (getType() != nFunction)
+        return inner->defeatCache();
+
+    /* Function-typed contra-arg values: return a thin primop that
+       delegates to TCA::queryApply — the recording site for the
+       higher-order apply. Object-level dispatch (via queryApply)
+       avoids the K1 recursion hazard that routing through
+       Interpreter::apply would trigger. */
     auto self = std::static_pointer_cast<TracingCallbackArg>(shared_from_this());
     auto * primOp = new
 #if NIX_USE_BOEHMGC
         (GC)
 #endif
         PrimOp{
-            .name = "<cb-arg-apply>",
+            .name = "<cb-apply>",
             .args = {"arg"},
             .arity = 1,
             .impl = [self, resolver](EvalState & state, const PosIdx, Value ** args, Value & v) {
-                auto & dg = self->writer.getDecisionGraph();
-
-                /* Layer-2 cell for this apply. Parents to self->argCell
-                   (the enclosing callback firing's cell). callbackState
-                   carries the runningObsSet where inner's probes on the
-                   outer-arg accumulate — same shape as OuterApply::run
-                   uses for its localCell, mirrored for this direction. */
-                auto layer2Cell = ArgCell::make(self->argCell, nullptr);
-                layer2Cell->callbackState = std::make_shared<CallbackState>();
-                layer2Cell->callbackState->fnStateHashHex =
-                    self->producer->cachedHash.to_string(HashFormat::Base16, false);
-
-                /* Producer for the wrapped outer-arg — SelectorArg{0}
-                   scoped by the enclosing SelectorCallbackApply
-                   (constructed below embedding the layer-2 argObsSet). */
-                auto argProducerSel = dg.selectorPool.intern(trace::SelectorArg{0});
-                auto outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
-                layer2Cell->liveObject = outerArgObj;
-
-                /* queryFn: execute the probe on the outer-arg live and
-                   append (Selector, response) to layer2Cell's runningObsSet.
-                   Not the writer.logOuterObservation path — that goes into
-                   cell.facts for factSet composition; we want the
-                   snapshot-into-ObservationSet-CAS path used by callback
-                   firings (see TracingCallbackArg::recordObservation). */
-                OuterQueryFn queryFn = [layer2Cell, &dg](
-                    std::shared_ptr<Object> outerObj,
-                    ref<const trace::Selector> q,
-                    ref<const trace::Selector> /*producer*/,
-                    std::shared_ptr<const ArgCell> /*callerCell*/) {
-                    auto qr = dispatchOuterQuery(std::move(outerObj), q->node);
-                    nlohmann::json rJson = std::visit(
-                        [](const auto & r) -> nlohmann::json { return r; }, qr.result);
-                    auto rPayload = jsonToCborString(rJson);
-                    dg.insertRequest(q->cachedHash, jsonToCborString(trace::toJson(*q)));
-                    layer2Cell->callbackState->runningObsSet.push_back({q->cachedHash, rPayload});
-                    return qr;
-                };
-
-                /* applyFn: fires when inner applies the wrapped outer-arg
-                   further (nested higher-order apply). Returns the
-                   applyResult and a producerFn — the wrapping OuterObject
-                   (constructed by OuterObject::queryApply) carries the
-                   same queryFn+applyFn so probes on the applyResult land
-                   in layer2Cell's runningObsSet, and further nested applies
-                   recurse the same machinery. */
-                auto applyFn = std::make_shared<OuterApplyFn>();
-                *applyFn = [applyFn, &dg](
-                    std::shared_ptr<Object> fnObj,
-                    ref<const trace::Selector> fnProducer,
-                    std::shared_ptr<Object> argObj,
-                    std::shared_ptr<const ArgCell> /*applyCell*/) -> OuterApplyResult {
-                    auto applyResultObj = fnObj->queryApply(std::move(argObj));
-                    if (!applyResultObj)
-                        throw Error("<cb-arg-apply> nested applyFn: queryApply returned null");
-                    auto applySel = dg.selectorPool.intern(trace::SelectorApply{fnProducer});
-                    return OuterApplyResult{
-                        .applyResult = std::move(applyResultObj),
-                        .producerFn = [applySel]() { return applySel; },
-                    };
-                };
-
-                auto wrappedArg = make_ref<OuterObject>(
-                    [argProducerSel]() { return argProducerSel; },
-                    outerArgObj,
-                    queryFn,
-                    self->rootFSRoot,
-                    dg.selectorPool,
-                    *applyFn);
-                wrappedArg->withArgCell(layer2Cell);
-
-                /* Invoke inner-lambda live via inner->queryApply. Inner's
-                   probes on wrappedArg flow through queryFn → layer2Cell's
-                   runningObsSet. */
-                auto resultObj = self->inner->queryApply(wrappedArg.get_ptr());
-                if (!resultObj)
-                    throw Error("TracingCallbackArg::<cb-arg-apply>: queryApply returned null");
-                auto applyResultWhnf = computeWHNFFromObject(*resultObj);
-
-                /* Snapshot layer-2 obs into ObservationSet CAS. */
-                auto layer2ObsHash = dg.insertObservationSet(
-                    layer2Cell->callbackState->runningObsSet);
-                tracingCacheLog(
-                    "<cb-arg-apply>: layer-2 obsSet=%s (%zu probes)",
-                    layer2ObsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
-                    layer2Cell->callbackState->runningObsSet.size());
-
-                /* Construct compositional SelectorCallbackApply and
-                   record on enclosing runningObsSet. */
-                auto scaSel = dg.selectorPool.intern(
-                    trace::SelectorCallbackApply{layer2ObsHash, self->producer});
-                self->recordObservation(scaSel, applyResultWhnf);
-
-                /* Materialise the result into v via ExprFromObject. */
+                auto argObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
+                auto resultObj = self->queryApply(argObj);
                 ExprFromObject(resultObj, nullptr, resolver).eval(state, state.baseEnv, v);
             },
         };
