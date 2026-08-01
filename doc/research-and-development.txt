@@ -406,6 +406,101 @@ V5  mkOverridable, callPackageWith, cb-attr still work.
 V6  Net line count of callback-arg primop code deletions beats
     additions.
 
+## Milestones and end goal
+
+### End goal
+
+#217 closed. Higher-order callback is a first-class supported case
+with test coverage strong enough that realistic edits (Nixpkgs-like
+patterns, cross-boundary file changes) surface regressions before
+shipping. No bespoke code in the callback-arg primop path — every
+mechanism reuses existing primitives or is clearly justified as a
+peer.
+
+### Milestones (landing order; each independently landable)
+
+M1 [pending] Flat higher-order, design-aligned.
+   cb-higher-order passes without the custom primop. TCA::toValueOrProxy
+   returns a Value produced by reused infra (parameterized
+   `<cached-fn>` or equivalent per chosen candidate). Custom primop
+   code deleted.
+   Gates: V1, V4, V5, V6.
+
+M2 [pending] Nested higher-order.
+   cb-higher-order-nested passes. Compositional SCA per §7 emitted.
+   Gates: V2.
+
+M3 [pending] Warm/cold symmetry.
+   TCA (cold) and RCA (warm) use the same primop shape (K12).
+   `<replay-local-lambda>` bespoke primop deleted or reduced to a
+   one-line delegation. Stats tests match new reality.
+   Gates: V3, K12.
+
+M4 [pending] Extended test coverage.
+   New tests covering combinations and file-change scenarios the
+   current suite doesn't reach. Breakdown below in "Test coverage
+   plan".
+
+M5 [pending] Documentation.
+   callback-model §7 gets concrete implementation reference. New
+   primitives get vocabulary entries. Primop doc sections that
+   describe the current custom primop get rewritten.
+
+### End state audit
+
+After M1-M5:
+- Full suite runs green.
+- No TODO/FIXME comments introduced by this work.
+- No dead code from fnIsTlo branch removal (or wherever it landed).
+- Diff summary shows net deletions in eval-cache primop code (V6).
+
+## Test coverage plan (M4)
+
+Current cb-* tests: 4 flat higher-order stages + 1 nested +
+mkOverridable + callPackageWith + cb-attr. Minimal on combinations
+and file-change scenarios.
+
+### Combinatorial gaps
+
+T-comb-1  Multi-arity callback: `f a b c` where each application
+          layer is inner-supplied. Curried patterns.
+T-comb-2  Attribute navigation × higher-order: outer does
+          `g.foo 10` at depth. Current cb-attr only shallow.
+T-comb-3  Two independent contra-args in same firing:
+          `f (x: ...) (y: ...)`. Each callback recorded separately.
+T-comb-4  Callback returning attrset containing a fn outer applies:
+          mimics common Nix library patterns.
+T-comb-5  3+ layer nesting. Realistic overlay / fixpoint patterns
+          go deeper than 2.
+T-comb-6  Callback with `builtins.functionArgs` reflection.
+
+### File-change gaps
+
+T-file-1  Edit the cached expression's file itself → invalidates
+          cache subtree.
+T-file-2  Edit transitive import from within cached expression.
+T-file-3  Add / remove / rename attribute in cached expression's
+          return.
+T-file-4  Semantic-preserving edits (comments, whitespace) → should
+          stay hit.
+T-file-5  Simultaneous edits: outer and cached both change.
+T-file-6  Edit-restore-edit cycles: regression / progression
+          detection.
+T-file-7  File deletion / recreation (accessor invalidation).
+
+### Divergence patterns
+
+T-div-1   Argument with same WHNF but different value (int 5 vs
+          `2 + 3`).
+T-div-2   Attrset argument, same structure, different probed subset.
+T-div-3   Function argument, different closure, same body.
+T-div-4   Path values.
+T-div-5   String context differences.
+
+Each row above is a candidate test file. Some may collapse (e.g.
+T-comb-1 and T-comb-5 both about depth); write them one at a time
+and merge only if the collapse is genuine, not to reduce count.
+
 ## Session log (append-only)
 
 2026-08-01 init | Doc created. Baseline: c6421bf8c, suite 327/1/7.
@@ -448,3 +543,15 @@ V6  Net line count of callback-arg primop code deletions beats
                   autonomous work sustainable.
                   Landed: this commit.
                   Next: still E4 as prior entry stated.
+
+2026-08-01 milestones | Added Milestones / End goal / Test coverage
+                  plan sections. M1-M5 landing order with gates.
+                  End-state audit specified. M4 broken into T-comb-1..6
+                  (combinatorial), T-file-1..7 (file-change),
+                  T-div-1..5 (divergence patterns) candidate test files.
+                  Learned: scope is bigger than "make cb-higher-order-nested
+                  pass" — realistic test coverage requires ~18 new
+                  functional tests beyond the current suite.
+                  Landed: this commit.
+                  Next: still E4 as prior entries stated. Milestones
+                  give the goal-post; E4 is the next step toward M1.
