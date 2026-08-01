@@ -311,12 +311,38 @@ RootValue TracingCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_
                     return qr;
                 };
 
+                /* applyFn: fires when inner applies the wrapped outer-arg
+                   further (nested higher-order apply). The applyResult's
+                   Object is wrapped in an OuterObject that carries the
+                   same queryFn (probes on the applyResult land in
+                   layer2Obs too) and applyFn (nested-nested applies
+                   recurse the same machinery). Producer for the wrapped
+                   applyResult: SelectorApply{fn=fnProducer} — probes on
+                   it compose as `SelectorGetAttr{name, from=SelectorApply{...}}`. */
+                auto queryFnCopy = queryFn;
+                auto applyFn = std::make_shared<OuterApplyFn>();
+                *applyFn = [queryFnCopy, applyFn, &dg, rootFSRoot = self->rootFSRoot](
+                    std::shared_ptr<Object> fnObj,
+                    ref<const trace::Selector> fnProducer,
+                    std::shared_ptr<Object> argObj,
+                    std::shared_ptr<const ArgCell> /*applyCell*/) -> OuterApplyResult {
+                    auto applyResultObj = fnObj->queryApply(std::move(argObj));
+                    if (!applyResultObj)
+                        throw Error("<cb-arg-apply> nested applyFn: queryApply returned null");
+                    auto applySel = dg.selectorPool.intern(trace::SelectorApply{fnProducer});
+                    return OuterApplyResult{
+                        .applyResult = std::move(applyResultObj),
+                        .producerFn = [applySel]() { return applySel; },
+                    };
+                };
+
                 auto wrappedArg = make_ref<OuterObject>(
                     [argProducerSel]() { return argProducerSel; },
                     outerArgObj,
-                    std::move(queryFn),
+                    queryFn,
                     self->rootFSRoot,
-                    dg.selectorPool);
+                    dg.selectorPool,
+                    *applyFn);
 
                 /* Invoke inner-lambda live via inner->queryApply. Inner's
                    probes on wrappedArg flow through queryFn → layer2Obs. */
