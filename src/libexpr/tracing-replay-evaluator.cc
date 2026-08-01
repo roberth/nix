@@ -792,10 +792,7 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
     auto getId = [](Object & obj) -> std::string {
         if (auto hex = obj.getSelectorHashHex())
             return *hex;
-        throw Error(
-            "TracingReplayEvaluator::apply: fn/arg lacks a content-defined "
-            "identity (type %s). Wrap it as a cache-boundary proxy at its "
-            "construction site.", typeid(obj).name());
+        panic("TracingReplayEvaluator::apply: fn/arg lacks a content-defined identity");
     };
 
     auto fnStateHashStr = getId(*fn);
@@ -816,7 +813,9 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
             "walker apply: outer-direction (fn is OuterObject) — live dispatch, no registry");
         auto result = fn->queryApply(arg.get_ptr());
         if (!result)
-            throw Error("TracingReplayEvaluator::apply: outer-direction queryApply returned null");
+            /* Object::queryApply contract: non-null return or throw.
+               Null violates the contract — panic. */
+            panic("TracingReplayEvaluator::apply: outer-direction queryApply returned null");
         return ref<Object>(result);
     }
 
@@ -878,8 +877,9 @@ ref<Object> TracingReplayEvaluator::apply(ref<Object> fn, ref<Object> arg)
        silently allocating a redundant cell. */
     auto cell = effectiveArgCell(*arg);
     if (!cell)
-        throw Error("TracingReplayEvaluator apply: arg had no argCell (fn=%s arg=%s)",
-                    fnStateHashStr.substr(0, 12), argStateHashStr.substr(0, 12));
+        /* Panic per the comment above — mirrors TE::apply's cell
+           invariant post-#188 consolidation. */
+        panic("TracingReplayEvaluator::apply: arg had no argCell");
     auto & applySelector = std::get<trace::SelectorApply>(applySel->node);
     auto applySelectorHash = applySel->cachedHash;
     /* Phase F: pass the applyResult cell so walker's per-walk state
