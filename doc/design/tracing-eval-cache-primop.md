@@ -274,10 +274,15 @@ live.
 
 **The callback-arg-lambda primop must fire when the outer applies
 it.** A `ReplayCallbackArg` for an inner-supplied lambda
-materialises via `toValueOrProxy` as a primop `Value`. Its `impl`
-looks up the recorded response and either reproduces the result or
-throws divergence. Three sites cooperate to keep that primop
-reachable through the wrapping chain:
+materialises via `toValueOrProxy` as a thin primop `Value` that
+delegates to `ReplayCallbackArg::queryApply`. `queryApply` looks up
+the recorded `SelectorCallbackApply` in `obsSetResponses`, replays
+its argObsSet's probes on the live outer-arg, and on all-match
+materialises a child `ReplayCallbackArg` representing the recorded
+applyResult. Nested SCA probes recurse via
+`argObj->queryApply(nestedRca)`. Same shape as
+`TracingCallbackArg::queryApply` on the cold side. Three sites
+cooperate to keep the primop reachable through the wrapping chain:
 
 - The walker's callbackApply-dispatch path invokes the apply at
   Object level (`fnObj->queryApply(replayLocal)`) rather than

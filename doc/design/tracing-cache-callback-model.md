@@ -187,6 +187,46 @@ producer Selector. Each `SelectorCallbackApply` layer carries the
 obsSet from its own application; intervening navigation Selectors
 carry no obsSet.
 
+## 6a. Higher-order callback application (#217)
+
+When outer's callback body applies a callback contra-arg to some
+outer-supplied value (`g 5` inside `f = g: g 5` where `f` is outer's
+callback and `(x: x+1)` was passed as contra-arg from inner), the
+apply itself is a callback application scoped inside the enclosing
+firing — an "inside" context per §7's terminology. Its cell is
+parented to the enclosing firing's cell, its identity is a
+compositional `SelectorCallbackApply`, and its argObsSet captures
+the inner-lambda-body's probes on the outer-supplied value.
+
+**Implementation locus.** `TracingCallbackArg::queryApply`
+(`tracing-callback-arg.cc`) is the cold-side recording site.
+Object-level dispatch avoids re-entering
+`TracingCallbackArg::toValueOrProxy` through `Interpreter::apply`'s
+`fn->toValueOrProxy` call — that would recurse without bound.
+`TracingCallbackArg::toValueOrProxy` returns a thin primop whose
+impl just wraps args[0] as an `InterpreterObject`, invokes
+`self->queryApply(argObj)`, and materialises the Value via
+`ExprFromObject`. The recording (layer-2 cell + callbackState +
+snapshot into `ObservationSet` CAS + record the compositional SCA on
+the enclosing cell) lives inside `queryApply`.
+
+**Warm-side symmetry.** `ReplayCallbackArg::queryApply` mirrors
+this: iterate `obsSetResponses` for `SelectorCallbackApply` entries
+whose fn matches this proxy's producer, replay each candidate's
+argObsSet probes on the live arg, and on all-match materialise a
+child `ReplayCallbackArg` representing the applyResult.
+Nested SCA probes recurse via `argObj->queryApply(nestedRca)`.
+
+**Deferred cases.** Multi-arity currying (`f 1 2 3`) and
+attribute-nav-then-apply on a callback-produced attrset (`t.double
+f`) are not yet fully handled. The first apply routes through
+`TCA::queryApply` correctly; subsequent applies route through
+`<cached-fn>` primop → `TE::apply`'s non-fnIsTlo branch → plain
+`SelectorApply`, which breaks warm's compositional chain. Fixing
+would require wrapping `TCA::queryApply`'s applyResult so subsequent
+applies also route through `queryApply`, or teaching
+`makeCachedFnPrimOp` to detect callback-context and route accordingly.
+
 ## 7. Producer Selectors — how callback-produced values are identified
 
 A callback-produced value's identity is its **producer Selector**

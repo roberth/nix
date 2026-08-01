@@ -512,13 +512,20 @@ argument through the outer's probes. Three related object types:
 **TracingCallbackArg** — writer-side wrapper. Wraps the
 inner-supplied value at the outer/inner interface; records the
 outer's probes on it into the enclosing `CallbackCell`'s running
-observation set.
+observation set. Its `queryApply` method (#217) also handles the
+higher-order case — outer applying the wrapped contra-arg to some
+outer-supplied value records a compositional
+`SelectorCallbackApply` on the enclosing runningObsSet with the
+inner-lambda-body's probes on the outer-arg captured as argObsSet.
 
 **ReplayCallbackArg** — replay-side counterpart. Frozen image
 reconstructed from a recorded `SelectorCallbackApply`'s referenced
 observation set. Serves the outer's probes from recorded data;
 throws a divergence exception if the outer's probes don't match
-what was recorded.
+what was recorded. Its `queryApply` mirrors TCA's higher-order
+recording — iterates recorded SCA entries, replays argObsSet
+probes on live arg (recursively for nested SCA queries), returns
+a child RCA representing the applyResult.
 
 **OuterObject** — the outer evaluator's view of the callback
 arg while running the callback body. Peer to `TracingCallbackArg`
