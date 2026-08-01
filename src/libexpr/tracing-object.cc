@@ -106,16 +106,20 @@ std::optional<std::string> TracingObject::getProducerSelectorHex(TracingWriter &
         auto & cs = *argCell->callbackState;
         auto & dg = w.getDecisionGraph();
         auto obsSetHash = dg.insertObservationSet(cs.runningObsSet);
-        /* fnStateHashHex captures fn's Q-space identity; look it up in
-           the pool for the parent Selector. */
+        /* fnStateHashHex captures fn's Q-space identity — set from the
+           hash of a Selector the writer just interned into the pool
+           (TCA::queryApply, OuterApply::run). The pool lookup must
+           succeed; a nullopt here means someone populated
+           fnStateHashHex without the corresponding Selector, which is
+           a bug in the setter. */
         auto fnRef = dg.selectorPool.findByHex(cs.fnStateHashHex);
-        if (fnRef) {
-            auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
-                obsSetHash, *fnRef});
-            nlohmann::json qcaJson = trace::toJson(*qcaSel);
-            dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
-            return qcaSel->cachedHash.to_string(HashFormat::Base16, false);
-        }
+        if (!fnRef)
+            panic("TracingObject::getProducerSelectorHex: fnStateHashHex not in selector pool");
+        auto qcaSel = dg.selectorPool.intern(trace::SelectorCallbackApply{
+            obsSetHash, *fnRef});
+        nlohmann::json qcaJson = trace::toJson(*qcaSel);
+        dg.insertRequest(qcaSel->cachedHash, jsonToCborString(qcaJson));
+        return qcaSel->cachedHash.to_string(HashFormat::Base16, false);
     }
     /* Under the Selector-is-a-sequence model, the wrapper's producer
        (the SelectorApply value that scoped this apply-result) is a
@@ -162,6 +166,10 @@ std::shared_ptr<Object> TracingObject::maybeGetAttr(const std::string & name)
        enforces that (bad_optional_access if the invariant breaks). */
     auto fromHex = getProducerSelectorHex(writer).value();
     auto & dg = writer.getDecisionGraph();
+    /* CODE SMELL (see identical note in getListElem): fromHex may be
+       a decimal valueNum, not a Selector hex — findByHex fails and
+       we delegate to inner. Real fallback for evalExprLazy wrappers
+       without a Selector. */
     auto fromSel = dg.selectorPool.findByHex(fromHex);
     if (!fromSel)
         return innerChild;
@@ -314,6 +322,13 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     /* Total on TracingObject; see maybeGetAttr for the reasoning. */
     auto fromHex = getProducerSelectorHex(writer).value();
     auto & dg = writer.getDecisionGraph();
+    /* CODE SMELL (audit deferral): fromHex is either a real Selector
+       hex OR a decimal valueNum from parentQOrValueHandle for
+       evalExprLazy wrappers that never got a Selector. findByHex on
+       the decimal never finds anything and we fall back to inner. The
+       hex/decimal conflation lives in getProducerSelectorHex — API
+       needs sorting out (return an optional Selector directly, not a
+       "hex" that isn't always a hex). Not touched in this pass. */
     auto fromSel = dg.selectorPool.findByHex(fromHex);
     if (!fromSel)
         return inner->getListElem(index);
@@ -364,6 +379,7 @@ std::optional<FunctionInfo> TracingObject::getFunctionInfo()
     /* Total on TracingObject; see maybeGetAttr for the reasoning. */
     auto fromHex = getProducerSelectorHex(writer).value();
     auto & dg = writer.getDecisionGraph();
+    /* CODE SMELL (see identical note in getListElem). */
     auto fromSel = dg.selectorPool.findByHex(fromHex);
     if (!fromSel)
         return inner->getFunctionInfo();
@@ -410,7 +426,10 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     /* cb-apply: record an explicit ε edge for this apply.
        See parallel call in TracingEvaluator::apply. */
     auto & dg = writer.getDecisionGraph();
-    /* Look up fn's Selector in pool via hex. */
+    /* CODE SMELL (see identical note in getListElem): fnIdOpt may be
+       a decimal valueNum for evalExprLazy wrappers, not a Selector
+       hex. When findByHex fails we delegate to inner and skip the
+       cache-side recording of the apply. */
     auto fnSelOpt = dg.selectorPool.findByHex(*fnIdOpt);
     if (!fnSelOpt)
         return inner->queryApply(argObj);
