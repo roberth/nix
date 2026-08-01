@@ -276,39 +276,49 @@ O15 | rec       | [engineering] Accept plain-SelectorApply producers
                   nested case via O7/O14. Narrow-scope for CAND-B.
                 | prereqs: K6a       | pending (from E1)
 O19 | perf      | [science] In-memory cache LAYER around outer
-                  callbacks. Outer is a content-traced boundary per
-                  the vocabulary — content tracing is symmetric.
-                  Currently we validate every outer callback probe
-                  live (D2 principle: never serve outer responses
-                  from persistent cache — invisible-cache invariant).
-                  BUT: within a session, if a given outer probe was
-                  already dispatched and produced result R, calling
-                  the same probe with the same arg-content again
-                  should give the same R (outer's referential
-                  transparency within session). An in-memory
-                  session-scoped cache keyed on (outer-fn identity,
-                  arg-observations) → response could unlock:
+                  callbacks. Content tracing (the mechanism used at
+                  the outer boundary today) can apply in either
+                  direction — the recording side already records
+                  content-hash observations for outer's responses.
+                  The APPLICATION direction we haven't exploited:
+                  treating outer callbacks as opaque-content sources
+                  and reusing recorded content within a session.
+                  Unlike input tracing there's no state to
+                  characterize on the outer side — just referential
+                  transparency for the callback's lifetime.
+                  Identity model: outer callbacks aren't grounded in
+                  anything persistable (no file path, no expression
+                  source, no stable hash). Each callback object lives
+                  as long as its runtime object does; caching gets
+                  keyed on that object's identity + its argObsSet
+                  content. When the object is GC'd, its cache entry
+                  goes with it — no persistent key needed, which is
+                  fine because we already accepted (per §Content
+                  tracing) that outer's character is only pinned down
+                  for its lifetime.
+                  Would unlock:
                     - cb-fib-flat / cb-fib-mutual style memoization:
-                      the `fib` callback closure is stable; probes on
-                      it repeated with same content should reuse
-                      prior invocation's result.
-                    - General callback-heavy patterns where the
-                      cache currently forces re-invocation.
-                  Persistence stays off (referential transparency
-                  can't be assumed across sessions per D2). This is
-                  a symmetric mirror of the recording side: we
-                  already record content-hash for observations; the
-                  same hash could serve as a memoization key
-                  in-session.
-                  Design tension: the current design says outer's
-                  content is "capability-mediated, not cached" —
-                  that's for cross-session persistence. Session-scoped
-                  in-memory is a different regime. Needs careful
-                  articulation of the invariant (session-scoped
-                  outer memoization is safe iff outer is referentially
-                  transparent within a session; not all outer
-                  callbacks are, e.g. those with side effects or
-                  reading files).
+                      the `fib` callback closure is a stable outer
+                      object during the session; probes on it
+                      repeated with same argObsSet content should
+                      reuse the prior invocation's result.
+                    - Any callback-heavy pattern where the same
+                      outer callback receives the same arg-content
+                      multiple times.
+                  Non-goal: cross-session persistence. Outer's
+                  character isn't guaranteed to survive session
+                  boundaries — the callback object doesn't exist
+                  between runs — so persistent keying is meaningless
+                  even if we wanted it.
+                  Distinction from D2: D2 says persistent outer-
+                  response caching is unsafe. Session-scoped
+                  in-memory caching tied to callback-object lifetime
+                  is a different regime — no persistence, identity
+                  is ephemeral (dies with the object), safe by
+                  construction as long as the runtime doesn't
+                  re-invoke a callback with side effects mid-session
+                  (which — per callback-model — the design already
+                  discourages).
                 | prereqs: none      | pending (research)
 
 ## Composed candidates
@@ -765,17 +775,24 @@ and merge only if the collapse is genuine, not to reduce count.
                   based variants (cb-fib-flat, cb-fib-mutual) don't
                   memoize because SCA identity captures the observed
                   recursion tree.
-                  User pointed out: outer is a content-traced
-                  boundary per the vocabulary — content tracing is
-                  symmetric. In-memory outer-callback caching within
-                  a session could unlock memoization for callback-
-                  based patterns without violating D2's persistent-
-                  cache invariant.
+                  User framing: the content-tracing MECHANISM (not
+                  the boundary structure) can be applied in either
+                  direction. Applied to outer callbacks it means
+                  reusing recorded content within their runtime
+                  lifetime — no persistent identity needed, just
+                  callback-object lifetime. Each outer callback ends
+                  up a unique cell with its own factset; no
+                  persistent key, and that's fine because we already
+                  don't try to pin down outer's character beyond
+                  its runtime existence.
                   New options revealed:
                    - O19: session-scoped in-memory outer-callback
-                     cache. Symmetric mirror of recording side —
-                     already computing content-hash observations,
-                     use them as memoization keys in-session.
+                     cache. Ephemeral identity tied to callback
+                     object lifetime. Would unlock memoization for
+                     stable-closure callback patterns without
+                     violating D2's persistence invariant (D2 is
+                     about cross-session persistence; this is
+                     within-lifetime).
                   Landed: cb-fib-flat.sh, cb-fib-mutual.sh,
                   cb-fib-self-cached.sh + this option.
                   Next: user directs.
