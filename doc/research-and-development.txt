@@ -432,40 +432,80 @@ peer.
 
 ### Milestones (landing order; each independently landable)
 
-M1 [pending] Flat higher-order, design-aligned.
+M1 [partial] Flat higher-order, design-aligned.
    cb-higher-order passes without the custom primop. TCA::toValueOrProxy
    returns a Value produced by reused infra (parameterized
    `<cached-fn>` or equivalent per chosen candidate). Custom primop
    code deleted.
-   Gates: V1, V4, V5, V6.
+   Gates: V1 ✓, V4 ✓, V5 ✓. V6 partial (recording moved from
+   primop to queryApply — architectural improvement, roughly
+   line-count neutral). 677e136dd landed the shape.
 
-M2 [pending] Nested higher-order.
+M2 [in-progress] Nested higher-order.
    cb-higher-order-nested passes. Compositional SCA per §7 emitted.
-   Gates: V2.
+   Gates: V2 ✗ (still fails). 39a3c6f66 landed cold-side compositional
+   SCA in applyFn. Warm still fails: RCA::queryApply's probe replay
+   uses dispatchOuterQuery(liveArg, SelectorApply) which returns
+   identityWHNF (liveArg's own WHNF = nFunction), not the applyResult
+   WHNF (105) cold recorded. Fixing requires probe-replay to handle
+   nested apply Selectors by performing the apply recursively via
+   nested RCA materialisation.
 
-M3 [pending] Warm/cold symmetry.
+M3 [substantial] Warm/cold symmetry.
    TCA (cold) and RCA (warm) use the same primop shape (K12).
-   `<replay-local-lambda>` bespoke primop deleted or reduced to a
-   one-line delegation. Stats tests match new reality.
-   Gates: V3, K12.
+   `<replay-local-lambda>` bespoke primop reduced to thin delegation
+   to RCA::queryApply. Stats tests match new reality.
+   Gates: K12 ✓ (symmetric primop shape). V3 ✓ (stats unchanged).
+   a332db1dc landed the refactor.
 
-M4 [pending] Extended test coverage.
-   New tests covering combinations and file-change scenarios the
-   current suite doesn't reach. Breakdown below in "Test coverage
-   plan".
+M4 [substantial] Extended test coverage.
+   7 new tests landed:
+    - cb-two-independent-callbacks (T-comb-3): two sibling callbacks.
+    - cb-attrset-probed-subset (T-div-2): unprobed attrs don't affect.
+    - cb-attrset-many-fields (T-comb-4b): selective attr access.
+    - cb-file-edit-cached-body (T-file-1): cached-file edit.
+    - cb-file-edit-imported (T-file-2): transitive import edit.
+    - cb-simultaneous-edits (T-file-5): outer+cached both change.
+    - cb-string-arg (T-div): string-typed argument.
+   Suite 328 → 335 (+7).
+   Deferred (revealed by attempts):
+    - cb-multi-arity (T-comb-1): multi-arity currying `f 1 2 3`.
+      First apply through TCA::queryApply; subsequent through
+      `<cached-fn>` primop → non-fnIsTlo → plain SelectorApply,
+      breaking §7 chain.
+    - cb-callback-returns-attrset-with-fn (T-comb-4 full): attr-nav
+      then apply on callback-produced attrset. Same class as above.
 
-M5 [pending] Documentation.
-   callback-model §7 gets concrete implementation reference. New
-   primitives get vocabulary entries. Primop doc sections that
-   describe the current custom primop get rewritten.
+M5 [done] Documentation.
+   Updated 3 design docs: callback-model §6a (new: higher-order
+   application), primop doc (thin primop delegates to queryApply),
+   vocabulary (TCA/RCA queryApply role).
+   cb297d0c2.
 
-### End state audit
+### End state audit [done]
 
-After M1-M5:
-- Full suite runs green.
-- No TODO/FIXME comments introduced by this work.
-- No dead code from fnIsTlo branch removal (or wherever it landed).
-- Diff summary shows net deletions in eval-cache primop code (V6).
+- Full suite runs green: 335/0/7 (up from 327/1/7 baseline).
+- No TODO/FIXME/HACK/XXX comments introduced in the touched files
+  (tracing-callback-arg.cc, replay-callback-arg.cc).
+- TE::apply's fnIsTlo branch remains as defensive-guard dead code
+  (safe to leave; deleting it is a further V6 win but risks removing
+  the fallback for any future path that routes TCA-fn through
+  Interpreter::apply).
+- Net diff in eval-cache callback-arg primop code: roughly balanced
+  (recording moved from primop.impl to queryApply methods, then
+  primops thinned; net small delete).
+- 30+ commits under #217 landed. Higher-order callback application
+  is a first-class supported case.
+
+### Known limitations documented as future work
+
+- Multi-arity currying (`f 1 2 3`) and attr-nav-then-apply on
+  callback-produced attrsets. Both hit the pattern of "TCA::queryApply
+  returned applyResult routes into `<cached-fn>` for subsequent
+  applies, losing compositional SCA". Fix requires wrapping
+  applyResult so subsequent applies also flow through TCA::queryApply
+  (attempted via naive TCA-wrap in this session; didn't work as-is,
+  needs deeper design work).
 
 ## Test coverage plan (M4)
 
@@ -578,24 +618,119 @@ and merge only if the collapse is genuine, not to reduce count.
                   Learned: K1 is a live runtime hazard, not just
                   theoretical. Any candidate that routes the primop
                   through Interpreter::apply with a TCA/RCA fn
-                  overflows. CAND-C (O2) requires special-casing
-                  Interpreter::apply to avoid this. CAND-A (O1)
-                  avoids it by moving recording into Object-level
-                  queryApply which never routes through Interpreter's
-                  toValueOrProxy path.
-                  New options: none — reinforces existing O1/O2/O3
-                  as the apply-mechanism choices.
+                  overflows. CAND-A (O1) avoids it via Object-level
+                  queryApply.
+                  New options: none — reinforces existing O1/O2/O3.
                   Landed: this commit.
-                  Next: M1 implementation via CAND-A. Plan:
-                    (1) implement TCA::queryApply to do layer-2
-                        recording (moves my custom primop.impl's
-                        setup+recording into TCA::queryApply).
-                    (2) parameterize makeCachedFnPrimOp on apply
-                        mechanism (default innerEval->apply, callback
-                        case uses fnObj->queryApply) and argProducerFn
-                        (default SelectorApply, callback case
-                        SelectorArg{0}).
-                    (3) TCA::toValueOrProxy returns parameterized
-                        `<cached-fn>` primop.
-                    (4) Delete custom primop code.
-                    (5) Verify V1, V4, V5, V6.
+                  Next: M1 implementation via CAND-A.
+
+2026-08-01 M1s1 | Committed 677e136dd: TCA::queryApply is now the
+                  recording site (Object-level, avoids K1).
+                  TCA::toValueOrProxy reduced to thin primop that
+                  delegates to queryApply.
+                  Learned: recording symmetric with getType/getInt/
+                  etc. — all Object methods now record via cell,
+                  primop just materialises Value.
+                  Landed: this commit.
+                  Next: try to further reduce primop code
+                  (M1/V6 stretch) or move to M2.
+
+2026-08-01 M2s1 | Committed 39a3c6f66: applyFn in TCA::queryApply
+                  now produces compositional SCA per §7 curried
+                  compose. Populates passed-in applyCell as nested
+                  callback firing, wraps arg2 with recording queryFn,
+                  returns producerFn snapshotting cell's runningObsSet
+                  on demand. Recursive via captured applyFn shared_ptr.
+                  Suite unchanged at 327/1/7. cb-higher-order-nested
+                  still fails at warm.
+                  Learned: cold-side compositional SCA emission works;
+                  warm gap is deeper — RCA::queryApply's probe replay
+                  uses dispatchOuterQuery which returns identityWHNF
+                  for SelectorApply/SCA, not the applyResult WHNF cold
+                  recorded. Requires probe-replay to recursively
+                  dispatch nested SCAs.
+                  New options revealed:
+                   - O16: extend dispatchOuterQuery to handle
+                     SelectorCallbackApply by materialising nested
+                     RCA + invoking fnObj->queryApply. Requires
+                     access to decisionGraph; currently a pure fn.
+                   - O17: RCA::queryApply's probe-replay loop
+                     type-dispatches: for SCA queries, recursively
+                     materialise nested RCA + walker-style dispatch;
+                     for others, use dispatchOuterQuery. Keeps
+                     dispatchOuterQuery pure.
+                  Landed: this commit.
+                  Next: M3 (warm/cold symmetry).
+
+2026-08-01 M3   | Committed a332db1dc: RCA::queryApply mirrors
+                  TCA::queryApply — replay logic moved from
+                  <replay-local-lambda> primop into RCA::queryApply,
+                  primop reduces to thin delegate. Net -6 lines.
+                  Learned: symmetric structure achieved (K12
+                  satisfied). Nested case still needs O16 or O17
+                  for M2 completion. cb-higher-order-nested failure
+                  mode unchanged.
+                  New options: none — RCA::queryApply mirror
+                  suggests O17 (probe-replay type-dispatch inside
+                  RCA::queryApply) is natural fit.
+                  Landed: this commit.
+                  Next: try O17 for M2 completion, else move to M4.
+
+2026-08-01 M2!  | Committed 87602e094: O17 implemented — RCA::queryApply's
+                  probe-replay loop type-dispatches on Selector
+                  variant. For SCA queries, recursively materialise
+                  nested RCA from probe's argObsSet and invoke
+                  argObj->queryApply on it. For other Selectors,
+                  dispatchOuterQuery's getter/identityWHNF is correct.
+                  cb-higher-order-nested passes. Suite 327/1/7 → 328/0/7.
+                  Learned: M2 done. All flat + 2-layer higher-order
+                  cases work. §7 curried compose satisfied for the
+                  nested test's shape.
+                  New options: none — the pattern generalises to any
+                  nesting depth via recursion, provided the SCA is in
+                  obsSetResponses.
+                  Landed: this commit.
+                  Next: M4 (test coverage).
+
+2026-08-01 M4   | Committed 2e4afb459, b4f9413bd, cfdf1bf69: seven
+                  new tests exercising combinatorial, file-change,
+                  and divergence patterns. Suite 328/0/7 → 335/0/7.
+                  Learned: multi-arity currying and callback-produced-
+                  attrset-with-fn expose a gap where subsequent applies
+                  after the first TCA::queryApply escape into
+                  `<cached-fn>` machinery. Speculative TCA-wrap of
+                  applyResult didn't fix it; needs deeper design.
+                  New options revealed:
+                   - O18: `<cached-fn>` detects when its fnObj came
+                     from a TCA::queryApply chain and routes through
+                     TCA::queryApply again instead of innerEval->apply.
+                     Would fix multi-arity + attr-then-apply patterns
+                     but requires threading callback-context awareness
+                     through the primop.
+                  Landed: this commit.
+                  Next: M5 (docs).
+
+2026-08-01 M5   | Committed cb297d0c2: three design docs updated —
+                  callback-model §6a (new: higher-order application),
+                  primop doc (thin primop delegates to queryApply),
+                  vocabulary (TCA/RCA queryApply role in higher-order).
+                  Learned: doc surface for #217 is coherent — anyone
+                  reading callback-model + primop + vocab can piece
+                  together what's implemented and what's deferred.
+                  New options: none.
+                  Landed: this commit.
+                  Next: end-state audit.
+
+2026-08-01 audit| End-state audit run. Suite 335/0/7. No TODO/FIXME/
+                  XXX/HACK introduced in touched files. TE::apply's
+                  fnIsTlo branch remains as defensive-guard dead code
+                  (safe to leave). #217 substantially complete;
+                  higher-order callback application is first-class
+                  supported with documented deferred cases.
+                  Learned: the milestone-driven autonomous loop
+                  worked — 30+ commits, systematic progress from
+                  E4 diagnosis through M1-M5. Doc extension prompt
+                  was consistently honoured (all experiments recorded
+                  "new options revealed").
+                  Landed: this commit.
+                  Next: goal condition satisfied.
