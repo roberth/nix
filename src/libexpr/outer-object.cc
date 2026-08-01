@@ -56,9 +56,9 @@ std::shared_ptr<Object> OuterObject::maybeGetAttr(const std::string & name)
     auto qr = queryFn(outerObj, qSel, parentSel, argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
-        throw Error("outer maybeGetAttr: queryFn returned unexpected result type");
+        panic("OuterObject::maybeGetAttr: queryFn returned non-ResultWHNF");
     if (!qr.child)
-        throw Error("outer maybeGetAttr: queryFn didn't return a child Object");
+        panic("OuterObject::maybeGetAttr: queryFn returned null child");
     auto child = std::make_shared<OuterObject>(
         [qSel]() { return qSel; },
         qr.child, queryFn, outerRootFSRoot, selectorPool, applyFn);
@@ -85,7 +85,7 @@ trace::ResultWHNF & OuterObject::whnf()
     auto qr = queryFn(outerObj, p, p, argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
-        throw Error("outer getWHNF: unexpected result type");
+        panic("OuterObject::whnf: queryFn returned non-ResultWHNF");
     cachedWHNF = std::move(*r);
     return *cachedWHNF;
 }
@@ -190,9 +190,9 @@ std::shared_ptr<Object> OuterObject::getListElem(size_t index)
     auto qr = queryFn(outerObj, qSel, parentSel, argCell);
     auto * r = std::get_if<trace::ResultWHNF>(&qr.result);
     if (!r)
-        throw Error("outer getListElem: queryFn returned unexpected result type");
+        panic("OuterObject::getListElem: queryFn returned non-ResultWHNF");
     if (!qr.child)
-        throw Error("outer getListElem: queryFn didn't return a child Object");
+        panic("OuterObject::getListElem: queryFn returned null child");
     auto child = std::make_shared<OuterObject>(
         [qSel]() { return qSel; },
         qr.child, queryFn, outerRootFSRoot, selectorPool, applyFn);
