@@ -275,6 +275,41 @@ O15 | rec       | [engineering] Accept plain-SelectorApply producers
                   SCA's argObsSet). Only fix producer shape for
                   nested case via O7/O14. Narrow-scope for CAND-B.
                 | prereqs: K6a       | pending (from E1)
+O19 | perf      | [science] In-memory cache LAYER around outer
+                  callbacks. Outer is a content-traced boundary per
+                  the vocabulary — content tracing is symmetric.
+                  Currently we validate every outer callback probe
+                  live (D2 principle: never serve outer responses
+                  from persistent cache — invisible-cache invariant).
+                  BUT: within a session, if a given outer probe was
+                  already dispatched and produced result R, calling
+                  the same probe with the same arg-content again
+                  should give the same R (outer's referential
+                  transparency within session). An in-memory
+                  session-scoped cache keyed on (outer-fn identity,
+                  arg-observations) → response could unlock:
+                    - cb-fib-flat / cb-fib-mutual style memoization:
+                      the `fib` callback closure is stable; probes on
+                      it repeated with same content should reuse
+                      prior invocation's result.
+                    - General callback-heavy patterns where the
+                      cache currently forces re-invocation.
+                  Persistence stays off (referential transparency
+                  can't be assumed across sessions per D2). This is
+                  a symmetric mirror of the recording side: we
+                  already record content-hash for observations; the
+                  same hash could serve as a memoization key
+                  in-session.
+                  Design tension: the current design says outer's
+                  content is "capability-mediated, not cached" —
+                  that's for cross-session persistence. Session-scoped
+                  in-memory is a different regime. Needs careful
+                  articulation of the invariant (session-scoped
+                  outer memoization is safe iff outer is referentially
+                  transparent within a session; not all outer
+                  callbacks are, e.g. those with side effects or
+                  reading files).
+                | prereqs: none      | pending (research)
 
 ## Composed candidates
 
@@ -720,6 +755,30 @@ and merge only if the collapse is genuine, not to reduce count.
                   New options: none.
                   Landed: this commit.
                   Next: end-state audit.
+
+2026-08-01 fib  | Wrote three fibonacci variants exercising the
+                  cache. Key insight surfaced by cb-fib-self-cached
+                  (the cached file calls builtins.cache on itself,
+                  passing only int arg): memoization WORKS naturally
+                  when no callbacks cross the boundary — cache
+                  Selector is stable on data-only args. Callback-
+                  based variants (cb-fib-flat, cb-fib-mutual) don't
+                  memoize because SCA identity captures the observed
+                  recursion tree.
+                  User pointed out: outer is a content-traced
+                  boundary per the vocabulary — content tracing is
+                  symmetric. In-memory outer-callback caching within
+                  a session could unlock memoization for callback-
+                  based patterns without violating D2's persistent-
+                  cache invariant.
+                  New options revealed:
+                   - O19: session-scoped in-memory outer-callback
+                     cache. Symmetric mirror of recording side —
+                     already computing content-hash observations,
+                     use them as memoization keys in-session.
+                  Landed: cb-fib-flat.sh, cb-fib-mutual.sh,
+                  cb-fib-self-cached.sh + this option.
+                  Next: user directs.
 
 2026-08-01 audit| End-state audit run. Suite 335/0/7. No TODO/FIXME/
                   XXX/HACK introduced in touched files. TE::apply's
