@@ -205,6 +205,7 @@ suites = [
       'cb-fn-valued-result.sh',
       'cb-module-shaped-result.sh',
       'cb-list-args.sh',
+      'cb-list-elem-fn.sh',
       'cb-with-scope-and-tryeval.sh',
       'cb-deep-nav-and-indexing.sh',
       'cb-lazy-result-multi-attr.sh',

@@ -342,11 +342,18 @@ std::shared_ptr<Object> TracingObject::getListElem(size_t index)
     auto child = std::shared_ptr<TracingObject>(new TracingObject(ref<Object>(result), writer, valueId, childTriePos));
     child->cachedWHNF = std::move(childWHNF);
     child->withArgCell(argCell);
-    /* B3 / B7 remaining: same cb-apply-origin gating as maybeGetAttr. */
+    /* Mirror maybeGetAttr: the nav child's producer identity IS
+       SelectorGetListElem{index, parent=self}. Set unconditionally
+       so downstream code (ExprFromObject fn dispatch, TE::apply's
+       fn-identity chain) has a real Selector. Previously this was
+       gated on cbApplyOrigin and used self's producer (wrong shape),
+       leaving non-callback list-element TracingObjects with
+       getSelector() = nullopt — which routed nFunction elements to
+       makeOuterFnPrimOp's fallback and hit TO::queryApply's identity
+       check. */
+    child->withProducer(querySel);
     if (cbApplyOrigin) {
         child->withCbApplyOrigin();
-        if (producer)
-            child->withProducer(*producer);
     }
     return child;
 }
@@ -417,10 +424,13 @@ std::shared_ptr<Object> TracingObject::queryApply(std::shared_ptr<Object> argObj
     auto argIdOpt = argObj->getSelectorHashHex();
     if (!fnIdOpt || !argIdOpt)
         /* Invariant: any Object reaching TracingObject::queryApply
-           must have a content-defined identity. This throw was
-           previously surfaced as an inline `«error: ...»` inside a
-           forced value at `nix eval` time, hiding real bugs behind
-           wrong-looking output. Panic to surface immediately. */
+           must have a content-defined identity. Historically fired
+           because TracingObject::getListElem forgot to set the child's
+           producer Selector (unlike maybeGetAttr) — non-callback list
+           elements ended up with getSelector()=nullopt and routed to
+           ExprFromObject::eval's makeOuterFnPrimOp fallback, which
+           wraps args as raw InterpreterObject with no identity. Fixed
+           at the source in getListElem. */
         panic("TracingObject::queryApply: fn/arg lacks a state hash");
 
     /* cb-apply: record an explicit ε edge for this apply.

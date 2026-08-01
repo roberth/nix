@@ -330,11 +330,16 @@ std::shared_ptr<Object> TracingReplayObject::getListElem(size_t idx)
             evaluator, result->second, [self, idx]() { return ref<Object>(self->ensureInner()->getListElem(idx)); });
         child->cachedWHNF = std::move(result->first);
         child->withArgCell(argCell);
-        /* B3/B7-remaining: cb-apply-origin propagation, symmetric to maybeGetAttr. */
+        /* Mirror maybeGetAttr and TracingObject::getListElem: the nav
+           child's identity IS SelectorGetListElem{index, parent=self}.
+           Set unconditionally so downstream code (ExprFromObject fn
+           dispatch, TRE::apply's fn-identity chain) has a real
+           Selector. Previously gated on cbApplyOrigin and used self's
+           producer (wrong shape), leaving non-callback list-element
+           children with getSelector()=nullopt. */
+        child->withProducer(querySel);
         if (cbApplyOrigin) {
             child->withCbApplyOrigin();
-            if (producer)
-                child->withProducer(*producer);
         }
         return child;
     }
