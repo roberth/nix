@@ -33,6 +33,13 @@ TracingCallbackArg::TracingCallbackArg(
     , rootFSRoot(std::move(rootFSRoot))
     , argCell(std::move(argCell))
 {
+    /* argCell is unconditional: every TCA construction site
+       (OuterApply::run, this class's own maybeGetAttr/getListElem
+       nav children) supplies a real cell. Field stays shared_ptr
+       for now — moving to ref<const ArgCell> would ripple through
+       callers; the panic enforces the invariant at the boundary. */
+    if (!this->argCell)
+        panic("TracingCallbackArg: constructed with null argCell");
 }
 
 std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & name)
@@ -49,7 +56,10 @@ std::shared_ptr<Object> TracingCallbackArg::maybeGetAttr(const std::string & nam
         return nullptr;
     auto child = inner->maybeGetAttr(name);
     if (!child)
-        return nullptr;
+        /* WHNF names list said the attr is present but inner
+           disagrees — same divergence as TracingObject::maybeGetAttr;
+           panic to surface. */
+        panic("TracingCallbackArg::maybeGetAttr: WHNF says attr present, inner says missing");
     auto & dg = writer.getDecisionGraph();
     auto querySel = dg.selectorPool.intern(trace::SelectorGetAttr{name, producer});
     recordObservation(querySel, computeWHNFFromObject(*child));
@@ -187,14 +197,15 @@ ObjectType TracingCallbackArg::getType()
 
 RootValue TracingCallbackArg::defeatCache()
 {
-    /* Reject function-typed contra-arg values: handing back the real
-       lambda would let outer's Nix mkApp invoke it directly, bypassing
-       the tracing machinery. That path only produces a correct answer
-       "by accident" and has no coherent story at replay. */
+    /* Function-typed contra-args: since #217, `toValueOrProxy` is the
+       supported entry — it returns a primop that delegates to
+       TCA::queryApply for recording. `defeatCache` on nFunction TCA
+       would hand back the raw lambda and bypass the tracing machinery
+       entirely — no coherent story at replay. Panic: any caller that
+       reaches here for nFunction is a bug (they should have called
+       toValueOrProxy). */
     if (getType() == nFunction)
-        throw Error(
-            "tracing eval-cache: applying a function reached through a "
-            "callback's contra-arg is not currently supported");
+        panic("TracingCallbackArg::defeatCache: nFunction reached — use toValueOrProxy");
     /* Pass through unrecorded for non-function types. defeatCache yields
        a concrete RootValue (no observable side effects), and there's no
        incoming-Fact shape for "I gave you my underlying value." */
@@ -224,11 +235,13 @@ std::optional<std::vector<std::string>> TracingCallbackArg::getAttrPath()
 
 void TracingCallbackArg::recordObservation(ref<const trace::Selector> query, const trace::ResultVariant & result)
 {
-    if (!argCell || !argCell->callbackState) {
-        tracingCacheLog(
-            "TracingCallbackArg::recordObservation: no argCell/callbackState — observation dropped");
-        return;
-    }
+    /* argCell is guaranteed non-null by the constructor. callbackState
+       is genuinely per-cell: OuterApply::run populates it moments after
+       cell creation (expr-from-object.cc:191); nav children inherit the
+       populated cell. If callbackState is null at record time,
+       something set an unpopulated cell before this call. */
+    if (!argCell->callbackState)
+        panic("TracingCallbackArg::recordObservation: argCell has no callbackState");
     auto qh = query->cachedHash;
     tracingCacheLog(
         "TracingCallbackArg::recordObservation: cell=%p appending q=%s",
@@ -353,7 +366,9 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
 
         auto applyResultObj = fnObj->queryApply(nestedWrappedArg.get_ptr());
         if (!applyResultObj)
-            throw Error("<cb-apply> nested applyFn: queryApply returned null");
+            /* Object::queryApply contract: non-null return or throw.
+               Null violates the contract — panic. */
+            panic("<cb-apply> nested applyFn: queryApply returned null");
 
         /* producerFn snapshots nestedCell's runningObsSet on demand
            per §7: producer identity is queried at each probe moment,
@@ -385,7 +400,8 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> a
        Using inner->queryApply (not toValueOrProxy) is what avoids K1. */
     auto resultObj = inner->queryApply(wrappedArg.get_ptr());
     if (!resultObj)
-        throw Error("TracingCallbackArg::queryApply: inner returned null");
+        /* Object::queryApply contract: non-null return or throw. */
+        panic("TracingCallbackArg::queryApply: inner returned null");
     auto applyResultWhnf = computeWHNFFromObject(*resultObj);
 
     /* Snapshot layer-2 obs into ObservationSet CAS and construct the
