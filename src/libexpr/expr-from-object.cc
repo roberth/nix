@@ -36,7 +36,12 @@ OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::Se
         [&](const trace::SelectorGetAttr & query) -> OuterQueryResult {
             auto child = obj->maybeGetAttr(query.name);
             if (!child)
-                throw Error("outer getAttr: attr '%s' unexpectedly missing", query.name);
+                /* dispatchOuterQuery on SelectorGetAttr is only reached
+                   after the caller (OuterObject::maybeGetAttr) projected
+                   membership from parent's WHNFAttrs.names — so missing
+                   here is a contradiction between projection and
+                   retrieval. */
+                panic("dispatchOuterQuery: SelectorGetAttr child missing after membership projection");
             return {computeWHNFFromObject(*child), std::move(child)};
         },
         [&](const trace::SelectorGetListElem & query) -> OuterQueryResult {
@@ -49,8 +54,8 @@ OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::Se
                 return {trace::ResultFunctionInfo{false, {}, false}, nullptr};
             return {trace::ResultFunctionInfo{true, info->formals, info->ellipsis}, nullptr};
         },
-        [&](const trace::SelectorExpr &)   -> OuterQueryResult { throw Error("outer query: SelectorExpr not dispatchable"); },
-        [&](const trace::SelectorImport &) -> OuterQueryResult { throw Error("outer query: SelectorImport not dispatchable"); },
+        [&](const trace::SelectorExpr &)   -> OuterQueryResult { panic("dispatchOuterQuery: SelectorExpr is a root Selector, not routable through outer probes"); },
+        [&](const trace::SelectorImport &) -> OuterQueryResult { panic("dispatchOuterQuery: SelectorImport is a root Selector, not routable through outer probes"); },
     }, q);
 }
 
