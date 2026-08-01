@@ -196,15 +196,11 @@ ObjectType ReplayCallbackArg::getTypeLazy()
 
 RootValue ReplayCallbackArg::defeatCache()
 {
-    /* `defeatCache` means "bypass the cache and force the original
-       expression to get the actual Value" — but a ReplayCallbackArg
-       IS the cache for a frozen local arg whose original Value isn't
-       live during replay. There's nothing to bypass to. Callers that
-       want a Value-shaped handle for `mkApp` should use
-       `toValueOrProxy` instead. */
-    throw Error(
-        "ReplayCallbackArg::defeatCache: cannot bypass the cache on a "
-        "frozen local — use toValueOrProxy to obtain a primop replay");
+    /* A ReplayCallbackArg IS the cache for a frozen local arg whose
+       original Value isn't live during replay. There's nothing to
+       bypass to — callers must use `toValueOrProxy`. Reaching here is
+       a bug in the caller (or in ExprFromObject::eval routing). */
+    panic("ReplayCallbackArg::defeatCache: no live source — use toValueOrProxy");
 }
 
 RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<OuterResolver> resolver)
@@ -279,7 +275,12 @@ std::shared_ptr<Object> ReplayCallbackArg::queryApply(std::shared_ptr<Object> ar
        applyResult WHNF. On no match, throw — walker catches and
        treats as miss. */
     if (!obsSetResponses)
-        throw Error("RCA::queryApply: no obsSetResponses");
+        /* Invariant: any RCA reaching queryApply has been populated
+           with obsSetResponses via withObsSetResponses at
+           materialisation (dispatchQueryRequest's callbackApply
+           branch). If null here, the RCA was constructed without
+           being wired up — bug in construction path. */
+        panic("RCA::queryApply: no obsSetResponses");
 
     for (const auto & [scaHash, recordedResp] : *obsSetResponses) {
         auto scaOpt = decisionGraph.selectorPool.find(scaHash);
