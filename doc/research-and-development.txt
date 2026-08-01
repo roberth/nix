@@ -1,0 +1,349 @@
+# Higher-order callback (#217) — research state
+
+## Purpose
+
+Living search state for #217. Git log records WHAT was done, in
+sequence. This file records WHY: what's currently believed, what's
+being tested, and what to do next.
+
+Read this file first on any new session. Update in place as findings
+arrive. Append-only where noted; edit-in-place otherwise (never
+delete entries — mark `[void]`).
+
+## How to use this file
+
+- **Claims ledger** — evolving statements about the code / design.
+  Stable ids (K1, K2, ...). Update content in place when evidence
+  lands; log the change.
+- **Experiments** — the primary unit of work at low/medium
+  confidence. Each has hypothesis, prediction, apparatus, observed
+  outcome, and the commit SHA that captures it (engineering
+  discipline: scientific results anchored in git).
+- **Options table** — the search space. Options aren't tried
+  directly; experiments try options. Tag `[science]` (needs
+  validation), `[engineering]` (mechanical once shape chosen), or
+  `[science→engineering]` (validate then execute).
+- **Composed candidates** — templates for large experiments. Each
+  is a hypothesis-driven combination of options.
+- **Session log** — append-only. Each entry notes both what was
+  LEARNED (science) and what was LANDED (engineering) with SHAs.
+
+## Autonomy rules
+
+Before escalating to the user, do all of:
+
+1. Can the answer come from reading the code?
+2. Can it come from trying + reverting?
+3. Can it come from re-reading the design docs?
+4. Can it come from checking existing tests for intent?
+
+Only escalate if all four fail AND the ambiguity has material
+consequences.
+
+When escalating, state: what was verified, what was tried, what
+specific choice needs input, what makes it consequential.
+
+**Iteration budget.** 3 attempts on a branch without measurable
+progress → stop, log, revisit the tree. Not before.
+
+## Decision procedure
+
+At each decision point, ask FIRST: what's my confidence level?
+
+**Low confidence** (design shape unclear, hypotheses unverified):
+- Unit of work = experiment (state hypothesis, predict outcome, run,
+  observe, update claims).
+- Scope follows experimental design: smallest apparatus that
+  produces falsifiable evidence for the hypothesis. Can be a grep,
+  can be a hundred-line prototype behind a git branch.
+- Prioritize experiments by information yield ÷ cost. Prefer ones
+  that resolve multiple open claims.
+- Failure with matched prediction = success (evidence lands).
+  Failure with mismatched prediction = interesting (shifts the
+  search space). Ambiguous failure = experiment was underspecified,
+  refine the hypothesis.
+
+**High confidence** (shape settled, evidence pointing one way):
+- Unit of work = engineering deliverable (build the direction,
+  land cleanly, verify).
+- Blast radius now matters — small incremental commits, each
+  attributable.
+- Watch for evidence the direction is wrong; be willing to demote
+  confidence and switch back to experiments.
+
+**Backtracking triggers:**
+- Claim voided → scan every option whose prereqs list it; re-score.
+- Experiment mismatched prediction → update affected claims, rescore.
+- 3 attempts without progress on any branch → stop.
+- Regression appears after a "successful" adoption → un-promote,
+  re-experiment.
+
+## Engineering discipline (applies at all confidence levels)
+
+E-D1. Suite-green invariant. Baseline must be green before any
+      experiment. Red states never persist across sessions.
+E-D2. Commit per experiment. One attempt per commit. Message
+      references the experiment id (e.g., "prototype for E1") so
+      revert is precise and history is auditable.
+E-D3. Prototype code standards. Prototypes may get promoted; write
+      them at production quality even during exploration. No
+      throwaway that survives.
+E-D4. Session cadence. Each session lands SOMETHING committed —
+      a claim update, an experiment result, a code change. No
+      pure-thought sessions.
+E-D5. Doc updates land alongside evidence. If an experiment shifts
+      a claim, the doc update is part of the same commit as the
+      experiment's evidence.
+
+## Claims ledger
+
+K1  [high]   Interpreter::apply (interpreter.cc:117) invokes
+             `fn->toValueOrProxy(...)`. Any primop that recursively
+             invokes the evaluator stack with a TCA/RCA fn will
+             re-enter that TCA/RCA's toValueOrProxy → recursion.
+
+K2  [high]   TE::apply (tracing-evaluator.cc:297-437) has an fnIsTlo
+             branch implementing the design's higher-order recording
+             shape (logSelectorOnCell + TCallbackApplyResult wrap).
+             Currently dead code because K1 fires first.
+
+K3  [high]   makeCachedFnPrimOp (expr-from-object.cc:330) hardcodes
+             (a) argProducerFn = SelectorApply{fn=fnObj->getSelector()}
+             — outside identity model — and (b) innerEval->apply
+             as the apply mechanism.
+
+K4  [high]   Design §6: contra-arg identity is `SelectorArg{0}`
+             scoped by the enclosing SCA (INSIDE identity model),
+             at any nesting depth.
+
+K5  [high]   Design §7 curried: when a callback's applyResult is a
+             function the outer applies further, the further apply's
+             producer is `SCA{fn=<prior SCA>, obs=<new obs>}`.
+             Composes recursively.
+
+K6a [high]   TCallbackApplyResult routes probes on the applyResult to
+             the enclosing callback cell's runningObsSet via
+             withCallbackCell → recordD2 (tracing-callback-apply-result.cc:21-35).
+             CONFIRMED by E1 (reading impl).
+
+K6b [void]   TCallbackApplyResult produces compositional SCA per K5
+             through its existing routing. FALSIFIED by E1: producer
+             is set at construction (TE::apply line 331) as plain
+             SelectorApply{fn=<TCA-producer>}. Probes chain off it as
+             SelectorGetAttr{name, parent=SelectorApply{...}} — not
+             SCA-shaped. Producer-shape choice happens in TE::apply,
+             not in TCallbackApplyResult itself.
+
+K7  [high]   Current custom primop (c6421bf8c) bypasses TE::apply by
+             calling `self->inner->queryApply(wrappedArg)`. This is
+             why K2's branch is dead in practice.
+
+K8  [high]   Design constraint (user): reuse existing primitives.
+             Reinvention is a smell.
+
+K9  [high]   Design constraint (user): writer.* higher-level calls
+             from inside callback logic are a smell — writer is
+             global; only forward-untouched calls are legitimate.
+
+K10 [high]   Foundational 7 (laziness end-to-end): no eager forcing
+             for identity purposes.
+
+K11 [high]   Design constraint: nested must produce compositional
+             SCA per K5. cb-higher-order-nested fails at warm because
+             this is unmet in current primop.
+
+K12 [high]   Design constraint (user): cold/warm symmetry. Same
+             primop shape for TCA (cold) and RCA (warm).
+
+K13 [void]   Eager arg-WHNF fingerprint for divergence detection.
+             Violates K10 (035fb4615 reverted).
+
+K14 [void]   TCA-reuse for outer args[0] wrap. Wrong direction; also
+             forces underlying via getType() checks (breaks mkOverridable).
+
+K15 [void]   Bare vector accumulator (no cell). Violates K8.
+
+K16 [void]   Marker/flag on TCA for recursion-breaking. Brittle.
+
+## Options table
+
+Tags: iden (identity model), app (apply mechanism), rec (recording
+site), cell (cell location), warm (replay mirror).
+
+Nature: [science] needs experiment / [engineering] mechanical /
+[sci→eng] validate then execute.
+
+O1  | rec, app  | [science] TCA::queryApply becomes recording site;
+                  `<cached-fn>` uses fnObj->queryApply for callback
+                  case. TE::apply fnIsTlo branch deletable.
+                | prereqs: K1, K2, K7 | pending
+O2  | app       | [sci→eng] Interpreter::apply special-cases TCA/RCA
+                  as fn: calls fn->queryApply(arg) directly.
+                | prereqs: K1        | pending
+O3  | app       | [engineering] TCA exposes getRawInnerValue();
+                  `<cached-fn>` uses it when fnObj is TCA. Ugly.
+                | prereqs: K1        | pending
+O4  | app       | Marker/flag on TCA.
+                | obsolete: K16
+O5  | iden      | [engineering] Parameterize argProducerFn in
+                  makeCachedFnPrimOp. Default = current, callback
+                  cases pass SelectorArg{0}.
+                | prereqs: K3, K4    | pending
+O6  | iden      | [engineering] Split makeCachedFnPrimOp into peer
+                  functions.
+                | prereqs: K3, K4    | pending
+O7  | rec       | [sci→eng] TCallbackApplyResult's producer becomes
+                  SCA-shaped for nested case.
+                | prereqs: K5, K11   | pending
+O8  | rec       | TCallbackApplyResult's existing routing IS the
+                  compositional-SCA mechanism.
+                | obsolete: K6b (E1 falsified)
+O9  | warm      | [sci→eng] RCA::toValueOrProxy returns same
+                  parameterized `<cached-fn>` as TCA. RCA::queryApply
+                  serves applyResult from obsSet.
+                | prereqs: O1, K12   | pending
+O10 | warm      | [engineering] Keep RCA-special-case but converge on
+                  same primop shape as O9.
+                | prereqs: K12       | pending
+O11 | cell      | [engineering] Layer-2 cell in primop.impl (current).
+                | c6421bf8c          | current baseline
+O12 | cell      | [engineering] Layer-2 cell in `<cached-fn>`'s
+                  seedCell path.
+                | prereqs: O5        | pending
+O13 | cell      | [engineering] Layer-2 cell in TCA::queryApply.
+                | prereqs: O1        | pending
+
+## Composed candidates
+
+CAND-A: O1 + O5 + O8 + O9 + O13
+   All-queryApply pathway. Recording in TCA::queryApply, parameterized
+   argProducerFn, verify TCallbackApplyResult already composes SCA,
+   symmetric RCA, cell at queryApply site. Deletes TE::apply fnIsTlo
+   branch. Highest reuse gain.
+   Hypothesis: `<cached-fn>` + TCA::queryApply as recording site
+   composes cleanly via existing primitives; nested case falls out of
+   TCallbackApplyResult routing.
+
+CAND-B: O3 + O5 + O11 + current warm primop
+   Minimal change from c6421bf8c. Fix argProducerFn, add
+   getRawInnerValue, use `<cached-fn>` structure but sidestep
+   recursion. Doesn't unify with TE::apply flow.
+   Hypothesis: enough of the design fits into the existing custom
+   primop with cosmetic reuse.
+
+CAND-C: O2 + O5 + O11 + O9
+   Interpreter::apply learns TCA/RCA case. Preserves TE::apply flow.
+   Interpreter API becomes non-uniform.
+   Hypothesis: Interpreter is the right place to break the recursion.
+
+## Experiments
+
+Each experiment: hypothesis, prediction, apparatus, outcome (once
+observed), affected claims, commit SHA.
+
+E1 [done]    Verify K6 by reading TCallbackApplyResult's
+             implementation.
+             Hypothesis: TCallbackApplyResult's method impls
+             (getType/getInt/maybeGetAttr/whnf) record observations
+             on the enclosing callback cell's runningObsSet
+             (via withCallbackCell), producing compositional SCA
+             per K5 without any additional construction.
+             Prediction: reading tracing-callback-apply-result.cc
+             will show either (a) probes route to enclosing cell's
+             runningObsSet directly (K6 holds; O8 viable), or
+             (b) probes go elsewhere / need extra construction (K6
+             falsified; O7 required).
+             Outcome: PARTIAL confirmation. Routing to enclosing
+             cell HOLDS (K6a) — recordD2 pushes to
+             callbackCell->callbackState->runningObsSet at
+             tracing-callback-apply-result.cc:34. Compositional-SCA
+             DOES NOT HOLD (K6b void): producer is plain
+             SelectorApply{fn=<TCA-producer>}, set at construction
+             from TE::apply line 331. Probes chain off it as
+             SelectorGetAttr{name, parent=SelectorApply{...}}.
+             The producer-shape choice happens in TE::apply, not
+             in TCallbackApplyResult itself.
+             Cross-cut: flat cb-higher-order might work with
+             plain-SelectorApply-based producers because the
+             enclosing SCA's argObsSet already scopes them; nested
+             requires §7 composition because layer-N applyResults
+             are themselves apply-produced.
+             Affected: K6 → split into K6a (confirmed) + K6b (void);
+             O8 obsolete; O7 becomes the §7-compliant path if we
+             pursue TCallbackApplyResult-based recording.
+             SHA: this commit.
+
+E2 [pending] Grep for callers of RCA::queryApply / RCA::defeatCache.
+             Hypothesis: the throw is an assertion, not a signal
+             others catch.
+             Prediction: grep will find no catch sites relying on
+             the throw's specific error text; call sites either
+             don't reach the throw or would benefit from a real
+             implementation.
+             Apparatus: grep, read call sites.
+             Outcome: TBD
+             Affected claims: enables O9
+             SHA: TBD
+
+E3 [pending] Confirm OuterApply::run's producerFn (expr-from-object.cc
+             :281-303) IS the "SCA snapshot on demand" per §7.
+             Hypothesis: producerFn is called by consumers each time
+             they need the identity, snapshotting current
+             runningObsSet — matching K5's "on demand at query
+             moment" language.
+             Prediction: reading callers will show producerFn
+             invoked each time producer identity is needed, not
+             cached.
+             Apparatus: grep for producerFn callers.
+             Outcome: TBD
+             Affected claims: K5, K6
+             SHA: TBD
+
+E4 [pending] Prove K1 practically: modify TCA::toValueOrProxy to
+             return a `<cached-fn>`(self) primop; trigger cb-higher-order;
+             observe whether Interpreter::apply(TCA, ...) actually
+             recurses.
+             Hypothesis: recursion happens; K1 is not just theoretical.
+             Prediction: infinite recursion or stack overflow at
+             runtime.
+             Apparatus: minimal code change, run cb-higher-order,
+             observe. Revert immediately.
+             Outcome: TBD
+             Affected claims: K1
+             SHA: TBD (revert-only, prototype commit)
+
+## Verification checklist (definition-of-done for adopted candidate)
+
+V1  cb-higher-order passes all 4 stages.
+V2  cb-higher-order-nested passes.
+V3  cb-stats-higher-order-baseline stats match reality.
+V4  No suite regressions from 327/1/7 baseline.
+V5  mkOverridable, callPackageWith, cb-attr still work.
+V6  Net line count of callback-arg primop code deletions beats
+    additions.
+
+## Session log (append-only)
+
+2026-08-01 init | Doc created. Baseline: c6421bf8c, suite 327/1/7.
+                  Structure: claims + experiments + composed
+                  candidates. Learned: nothing new yet (setup only).
+                  Landed: doc/higher-order-cb-research-tree.txt.
+
+2026-08-01 v2   | Rewrote doc: pure hierarchy → claims-ledger + flat
+                  options + composed candidates. Added autonomy rules,
+                  decision procedure, engineering discipline sections.
+                  Learned: process shape (science + engineering
+                  interleaved by confidence, not sequential).
+                  Landed: same file, this update.
+
+2026-08-01 E1   | Ran E1: read TCallbackApplyResult impl.
+                  Learned: K6 splits — routing to enclosing cell
+                  confirmed (K6a); compositional SCA falsified (K6b
+                  void) because producer is plain SelectorApply set
+                  at TE::apply line 331, not SCA. O8 obsolete; O7
+                  required for §7 compliance if we pursue
+                  TCallbackApplyResult-based recording.
+                  Cross-cut: flat case might work with plain-SelectorApply
+                  producers (enclosing SCA argObsSet scopes them);
+                  nested needs §7 composition.
+                  Landed: this doc update, in the rename commit.
