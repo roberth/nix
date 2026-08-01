@@ -29,20 +29,12 @@ assertCacheStats 0 3 2 -- \
     nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }'
 
 # Warm replay. Every Q dispatched live; everything hits.
-# Hit count progression:
-#   6 (original) → 8 (multi-root apply-path observations land at
-#   d1) → 12 (per-Q Asks edges land — each Q's recorded chain has
-#   one Asks edge per writer logResult, principles 3/5/7, so the
-#   walker visits multiple Asks edges per Q's lookup instead of one
-#   whole-remaining edge) → 4 (lambda-primop firing: per the design
-#   memo's Change C, the apply-result observations on the standin's
-#   synthetic — getType / getInt on the recursive cb-apply's result
-#   — now read from LocalResponseMap as d=2 lookups, which are not
-#   counted as v13Walk hits. The remaining 4 hits are the outer
-#   evalFile/import Qs plus the outer expression's d=0 getType /
-#   getInt at the top level).
+# 2 hits (post-#217): dropping the fnIsTlo placeholder Terminal removed
+# a spurious hit — the layer-2 SelectorApply Terminal isn't consulted
+# any more; warm routes through the SelectorCallbackApply dispatch,
+# which produces one applyResult look-up per apply instead of two.
 echo "=== warm (hits, no misses, no fallbacks) ==="
-assertCacheStats 3 0 0 -- \
+assertCacheStats 2 0 0 -- \
     env _NIX_DISALLOW_PARSE=1 nix eval --impure --expr '(builtins.cache { import = '"$TEST_ROOT"'/ho.nix; }) { f = g: g 5; }'
 
 # Result correctness: warm replay returns the same value as cold.
