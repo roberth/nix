@@ -20,12 +20,14 @@ TracingCallbackApplyResult::TracingCallbackApplyResult(
 
 void TracingCallbackApplyResult::recordD2(ref<const trace::Selector> query, const trace::ResultVariant & result)
 {
-    if (!callbackCell || !callbackCell->callbackState) {
-        tracingCacheLog(
-            "TracingCallbackApplyResult::recordD2: no callbackCell/callbackState "
-            "— observation dropped");
-        return;
-    }
+    /* Invariant: TracingCallbackApplyResult is constructed in
+       TE::apply's fnIsTlo branch (tracing-evaluator.cc:428) with
+       withCallbackCell called immediately after (line 435), and
+       that cell always has callbackState populated at that point
+       (fn is a TCA whose argCell has callbackState). If either is
+       null, the construction path is broken. */
+    if (!callbackCell || !callbackCell->callbackState)
+        panic("TracingCallbackApplyResult::recordD2: no callbackCell/callbackState");
     auto qh = query->cachedHash;
     nlohmann::json rJson = std::visit(
         [](const auto & r) -> nlohmann::json { return r; },
