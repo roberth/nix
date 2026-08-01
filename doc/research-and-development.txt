@@ -145,10 +145,14 @@ E-D5. Doc updates land alongside evidence. If an experiment shifts
 
 ## Claims ledger
 
-K1  [high]   Interpreter::apply (interpreter.cc:117) invokes
+K1  [high, verified live via E4]
+             Interpreter::apply (interpreter.cc:117) invokes
              `fn->toValueOrProxy(...)`. Any primop that recursively
              invokes the evaluator stack with a TCA/RCA fn will
              re-enter that TCA/RCA's toValueOrProxy → recursion.
+             Observed as `stack overflow; max-call-depth exceeded`
+             when apparatus routed primop through
+             innerEval->apply(TCA, ...).
 
 K2  [high]   TE::apply (tracing-evaluator.cc:297-437) has an fnIsTlo
              branch implementing the design's higher-order recording
@@ -383,16 +387,25 @@ E3 [pending] Confirm OuterApply::run's producerFn (expr-from-object.cc
              Affected claims: K5, K6
              SHA: TBD
 
-E4 [pending] Prove K1 practically: modify TCA::toValueOrProxy to
-             return a `<cached-fn>`(self) primop; trigger cb-higher-order;
-             observe whether Interpreter::apply(TCA, ...) actually
-             recurses.
+E4 [done]    Prove K1 practically: route the primop through
+             innerEval->apply(TCA, wrappedArg) instead of
+             self->inner->queryApply; observe whether recursion
+             through Interpreter::apply(TCA, ...) actually happens.
              Hypothesis: recursion happens; K1 is not just theoretical.
              Prediction: infinite recursion or stack overflow at
              runtime.
-             Apparatus: minimal code change, run cb-higher-order,
-             observe. Revert immediately.
-             Outcome: TBD
+             Apparatus: added outerResolverInnerEvaluator helper in
+             expr-from-object.{hh,cc}; swapped primop's apply call
+             to innerEval->apply(ref<Object>(self), ...); ran
+             cb-higher-order manually; reverted.
+             Outcome: CONFIRMED. `error: stack overflow;
+             max-call-depth exceeded` from within `<cached-fn>` →
+             `<outer-fn>` → recursion. K1 is a hard runtime hazard,
+             not just theoretical.
+             Affected claims: K1 promoted to [high, verified live].
+             New options revealed: none. Confirmation reinforces the
+             live options for the apply-mechanism axis (O1/O2/O3);
+             no new mechanism suggested itself.
              Affected claims: K1
              SHA: TBD (revert-only, prototype commit)
 
@@ -555,3 +568,34 @@ and merge only if the collapse is genuine, not to reduce count.
                   Landed: this commit.
                   Next: still E4 as prior entries stated. Milestones
                   give the goal-post; E4 is the next step toward M1.
+
+2026-08-01 E4   | Ran E4: swapped primop's `self->inner->queryApply`
+                  to `innerEval->apply(TCA, wrappedArg)` via a
+                  temporary outerResolverInnerEvaluator helper.
+                  Observed: `stack overflow; max-call-depth exceeded`
+                  after `<cached-fn>` → `<outer-fn>` recursion.
+                  Reverted apparatus; suite back to 327/1/7.
+                  Learned: K1 is a live runtime hazard, not just
+                  theoretical. Any candidate that routes the primop
+                  through Interpreter::apply with a TCA/RCA fn
+                  overflows. CAND-C (O2) requires special-casing
+                  Interpreter::apply to avoid this. CAND-A (O1)
+                  avoids it by moving recording into Object-level
+                  queryApply which never routes through Interpreter's
+                  toValueOrProxy path.
+                  New options: none — reinforces existing O1/O2/O3
+                  as the apply-mechanism choices.
+                  Landed: this commit.
+                  Next: M1 implementation via CAND-A. Plan:
+                    (1) implement TCA::queryApply to do layer-2
+                        recording (moves my custom primop.impl's
+                        setup+recording into TCA::queryApply).
+                    (2) parameterize makeCachedFnPrimOp on apply
+                        mechanism (default innerEval->apply, callback
+                        case uses fnObj->queryApply) and argProducerFn
+                        (default SelectorApply, callback case
+                        SelectorArg{0}).
+                    (3) TCA::toValueOrProxy returns parameterized
+                        `<cached-fn>` primop.
+                    (4) Delete custom primop code.
+                    (5) Verify V1, V4, V5, V6.
