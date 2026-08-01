@@ -37,6 +37,7 @@ void armTracingCacheStatsExitWriter()
             {"hits", s.hits},
             {"misses", s.misses},
             {"fallbacks", s.fallbacks},
+            {"maxCallbackObsSetNestingDepth", s.maxCallbackObsSetNestingDepth},
         };
         std::ofstream out(statsPath);
         if (out)

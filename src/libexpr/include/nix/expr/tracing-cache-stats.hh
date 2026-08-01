@@ -28,6 +28,17 @@ struct TracingCacheStats
     std::uint64_t hits = 0;
     std::uint64_t misses = 0;
     std::uint64_t fallbacks = 0;
+    /** Max SCA-nesting depth observed in any callback-apply
+     *  ObservationSet computed during the process lifetime. Depth is
+     *  a property OF the data: an obsSet's depth = 1 + max depth of
+     *  the argObsSets referenced by any SelectorCallbackApply
+     *  observation within it. Empty obsSet = 0; obsSet with only
+     *  non-SCA observations = 0; obsSet whose entries include an SCA
+     *  with an inner obsSet of depth D = D+1. Computed at
+     *  `insertObservationSet` time from the actual observations, so
+     *  the value reflects the recorded structure — not execution
+     *  ordering. */
+    std::uint64_t maxCallbackObsSetNestingDepth = 0;
 };
 
 /** Singleton accessor. Counters are zero-initialised on first call. */

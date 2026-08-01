@@ -1,6 +1,7 @@
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-cache-provenance.hh"
+#include "nix/expr/tracing-cache-stats.hh"
 #include "nix/store/sqlite.hh"
 #include <sqlite3.h>
 #include "nix/util/environment-variables.hh"
@@ -150,6 +151,14 @@ struct TracingDecisionGraph::State
        caching per-node lets second-and-later getRequestSet calls reuse
        the SQLite reads from the first. */
     std::unordered_map<Hash, std::optional<std::string>> requestSetNodePayloadCache;
+    /* ObservationSet SCA-nesting-depth memo. Populated at
+       insertObservationSet time: depth = 1 + max depth over argObsSets
+       of any SelectorCallbackApply in the set (0 if none). Since
+       nested obsSets are always inserted before their outer parent
+       (my TCA::queryApply's applyFn recursion is depth-first, and my
+       RCA::queryApply's O17 similarly), the memo has all children
+       populated by the time a parent computes its depth. */
+    std::unordered_map<Hash, std::uint32_t> obsSetDepthMemo;
 };
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -573,13 +582,41 @@ Hash TracingDecisionGraph::insertObservationSet(
     auto sorted = dg_sortAndDedup(std::move(members));
     auto payload = dg_observationSetPayload(sorted);
     auto h = hashString(HashAlgorithm::SHA256, payload);
+
+    /* SCA-nesting depth: derived from the ACTUAL obsSet content, not
+       from execution ordering. For each member whose reqHash resolves
+       to a SelectorCallbackApply, look up its argObsSet in the memo
+       and take max(depth) + 1. If no SCA members, depth = 0. */
+    std::uint32_t depth = 0;
+    for (const auto & m : sorted) {
+        auto selOpt = selectorPool.find(m.reqHash);
+        if (!selOpt) continue;
+        auto * sca = std::get_if<trace::SelectorCallbackApply>(&(*selOpt)->node);
+        if (!sca) continue;
+        std::uint32_t childDepth = 0;
+        {
+            auto state(_state->lock());
+            auto it = state->obsSetDepthMemo.find(sca->argObsSet);
+            if (it != state->obsSetDepthMemo.end())
+                childDepth = it->second;
+        }
+        if (childDepth + 1 > depth)
+            depth = childDepth + 1;
+    }
+
     {
         auto state(_state->lock());
         auto use = state->insertObservationSet.use();
         dg_bindBlob(use, dg_hashToBlob(h));
         dg_bindBlob(use, payload);
         use.exec();
+        state->obsSetDepthMemo[h] = depth;
     }
+
+    auto & stats = tracingCacheStats();
+    if (depth > stats.maxCallbackObsSetNestingDepth)
+        stats.maxCallbackObsSetNestingDepth = depth;
+
     return h;
 }
 

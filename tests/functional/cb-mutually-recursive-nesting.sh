@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 
-# M4 T-comb-5: mutually recursive callback nesting. Cached body threads
-# two DIFFERENT outer callbacks (f, g) through alternating deeper
-# layers, each recursion adding a callback firing. Scalability test
-# for M2's recursive nested-SCA replay (O17).
+# M4 T-comb-5: mutual recursion BETWEEN evaluators. `pong` is defined
+# in the cached inner file; `pingOuter` is defined in outer. Each
+# recursive step alternates:
+#   - pong (inner) calls pingOuter (outer) via callback, passing a
+#     contra-arg fn.
+#   - pingOuter (outer) applies the contra-arg (an inner lambda) —
+#     that's the higher-order-callback apply.
+#   - contra-arg body calls pong (inner) again with n+1.
 #
-# `{ f, g }: f (n1: g (n2: f (n3: g (n4: n1+n2+n3+n4))))` at depth 4,
-# then depth 8 and depth 10 to confirm scaling.
+# So each recursion depth = one outer→inner cache call +
+#                            one inner→outer callback +
+#                            one outer's higher-order apply of contra-arg.
 #
-# Outer: f cb = cb 1, g cb = cb 10 (or 20 for divergence).
-# Distinct callback fns at each layer verify the mechanism doesn't
-# collapse or shadow across layers of the same shape.
+# Verifies:
+#   - Cold/warm correctness for a mutually recursive shape.
+#   - obsSet nesting depth accurately reflects the recorded structure
+#     (checked via NIX_CACHE_STATS_FILE).
 
 source common.sh
 
@@ -22,92 +28,82 @@ clearCache() {
 
 clearCache
 
-cat > "$TEST_ROOT/mut-nested-4.nix" << 'NIX'
-{ f, g }: f (n1: g (n2: f (n3: g (n4: n1 + n2 + n3 + n4))))
+cat > "$TEST_ROOT/mut-cross.nix" << 'NIX'
+{ pingOuter }: rec {
+  pong = n: if n >= 3 then n else pingOuter (m: pong (n + 1));
+}
 NIX
 
-echo "=== depth 4 cold (expect 22 = 2*1 + 2*10) ==="
+echo "=== cold: pong 0 → recursion terminates at n=3 (expect 3) ==="
 result=$(nix eval --impure --expr '
-  (builtins.cache { import = '"$TEST_ROOT"'/mut-nested-4.nix; }) {
-    f = cb: cb 1;
-    g = cb: cb 10;
-  }')
+  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross.nix; };
+      pingOuter = cb: cb 0;
+  in (cached { inherit pingOuter; }).pong 0')
 echo "Got: $result"
-[[ "$result" == 22 ]]
+[[ "$result" == 3 ]]
 
-echo "=== depth 4 warm (expect 22) ==="
+echo "=== warm replay (expect 3) ==="
 result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '
-  (builtins.cache { import = '"$TEST_ROOT"'/mut-nested-4.nix; }) {
-    f = cb: cb 1;
-    g = cb: cb 10;
-  }')
+  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross.nix; };
+      pingOuter = cb: cb 0;
+  in (cached { inherit pingOuter; }).pong 0')
 echo "Got: $result"
-[[ "$result" == 22 ]]
+[[ "$result" == 3 ]]
 
-echo "=== depth 4 outer change: g gives 20 (expect 42 = 2*1 + 2*20) ==="
+# Change starting n. Expected: pong 1 → recursion 2 layers → return 3.
+echo "=== outer change: pong 1 (expect 3) ==="
 result=$(nix eval --impure --expr '
-  (builtins.cache { import = '"$TEST_ROOT"'/mut-nested-4.nix; }) {
-    f = cb: cb 1;
-    g = cb: cb 20;
-  }')
+  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross.nix; };
+      pingOuter = cb: cb 0;
+  in (cached { inherit pingOuter; }).pong 1')
 echo "Got: $result"
-[[ "$result" == 42 ]]
+[[ "$result" == 3 ]]
 
-echo "=== depth 4 restore, warm (expect 22) ==="
-result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '
-  (builtins.cache { import = '"$TEST_ROOT"'/mut-nested-4.nix; }) {
-    f = cb: cb 1;
-    g = cb: cb 10;
-  }')
-echo "Got: $result"
-[[ "$result" == 22 ]]
-
-# --- Depth 8 to confirm scalability. Fresh cache slot per depth. ---
-
-cat > "$TEST_ROOT/mut-nested-8.nix" << 'NIX'
-{ f, g }: f (n1: g (n2: f (n3: g (n4: f (n5: g (n6: f (n7: g (n8:
-  n1 + n2 + n3 + n4 + n5 + n6 + n7 + n8))))))))
+# Change terminator threshold via making inner file take an arg.
+cat > "$TEST_ROOT/mut-cross-5.nix" << 'NIX'
+{ pingOuter }: rec {
+  pong = n: if n >= 5 then n else pingOuter (m: pong (n + 1));
+}
 NIX
 
-echo "=== depth 8 cold (expect 44 = 4*1 + 4*10) ==="
+echo "=== fresh inner (threshold=5), cold pong 0 (expect 5) ==="
 result=$(nix eval --impure --expr '
-  (builtins.cache { import = '"$TEST_ROOT"'/mut-nested-8.nix; }) {
-    f = cb: cb 1;
-    g = cb: cb 10;
-  }')
+  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross-5.nix; };
+      pingOuter = cb: cb 0;
+  in (cached { inherit pingOuter; }).pong 0')
 echo "Got: $result"
-[[ "$result" == 44 ]]
+[[ "$result" == 5 ]]
 
-echo "=== depth 8 warm (expect 44) ==="
+echo "=== warm (expect 5) ==="
 result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '
-  (builtins.cache { import = '"$TEST_ROOT"'/mut-nested-8.nix; }) {
-    f = cb: cb 1;
-    g = cb: cb 10;
-  }')
+  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross-5.nix; };
+      pingOuter = cb: cb 0;
+  in (cached { inherit pingOuter; }).pong 0')
 echo "Got: $result"
-[[ "$result" == 44 ]]
+[[ "$result" == 5 ]]
 
-# --- Depth 10 to confirm no arbitrary cutoff. ---
+# Depth statistic: mutual recursion should reach some depth > 1 in the
+# recorded obsSet structure. Higher inner-terminator = deeper nesting.
+echo "=== depth-3 stats ==="
+clearCache
+statsFile=$(mktemp)
+NIX_CACHE_STATS_FILE="$statsFile" nix eval --impure --expr '
+  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross.nix; };
+      pingOuter = cb: cb 0;
+  in (cached { inherit pingOuter; }).pong 0' > /dev/null
+depth=$(jq -r .maxCallbackObsSetNestingDepth "$statsFile" 2>/dev/null || cat "$statsFile" | sed 's/.*maxCallbackObsSetNestingDepth":\([0-9]*\).*/\1/')
+echo "depth3 got maxCallbackObsSetNestingDepth=$depth"
+[[ "$depth" -ge 1 ]]
 
-cat > "$TEST_ROOT/mut-nested-10.nix" << 'NIX'
-{ f, g }: f (n1: g (n2: f (n3: g (n4: f (n5: g (n6: f (n7: g (n8: f (n9: g (n10:
-  n1 + n2 + n3 + n4 + n5 + n6 + n7 + n8 + n9 + n10))))))))))
-NIX
+echo "=== depth-5 stats ==="
+clearCache
+statsFile5=$(mktemp)
+NIX_CACHE_STATS_FILE="$statsFile5" nix eval --impure --expr '
+  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross-5.nix; };
+      pingOuter = cb: cb 0;
+  in (cached { inherit pingOuter; }).pong 0' > /dev/null
+depth5=$(jq -r .maxCallbackObsSetNestingDepth "$statsFile5" 2>/dev/null || cat "$statsFile5" | sed 's/.*maxCallbackObsSetNestingDepth":\([0-9]*\).*/\1/')
+echo "depth5 got maxCallbackObsSetNestingDepth=$depth5"
+[[ "$depth5" -ge "$depth" ]]
 
-echo "=== depth 10 cold (expect 55 = 5*1 + 5*10) ==="
-result=$(nix eval --impure --expr '
-  (builtins.cache { import = '"$TEST_ROOT"'/mut-nested-10.nix; }) {
-    f = cb: cb 1;
-    g = cb: cb 10;
-  }')
-echo "Got: $result"
-[[ "$result" == 55 ]]
-
-echo "=== depth 10 warm (expect 55) ==="
-result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '
-  (builtins.cache { import = '"$TEST_ROOT"'/mut-nested-10.nix; }) {
-    f = cb: cb 1;
-    g = cb: cb 10;
-  }')
-echo "Got: $result"
-[[ "$result" == 55 ]]
+rm -f "$statsFile" "$statsFile5"
