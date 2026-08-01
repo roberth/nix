@@ -17,8 +17,8 @@ delete entries — mark `[void]`).
   lands; log the change.
 - **Experiments** — the primary unit of work at low/medium
   confidence. Each has hypothesis, prediction, apparatus, observed
-  outcome, and the commit SHA that captures it (engineering
-  discipline: scientific results anchored in git).
+  outcome, `new options revealed`, and the commit SHA that captures
+  it (engineering discipline: scientific results anchored in git).
 - **Options table** — the search space. Options aren't tried
   directly; experiments try options. Tag `[science]` (needs
   validation), `[engineering]` (mechanical once shape chosen), or
@@ -27,6 +27,54 @@ delete entries — mark `[void]`).
   is a hypothesis-driven combination of options.
 - **Session log** — append-only. Each entry notes both what was
   LEARNED (science) and what was LANDED (engineering) with SHAs.
+
+## Working with this document across sessions
+
+**At session start:**
+1. Read this file top-to-bottom. Everything needed to resume is here.
+2. Check `git log --oneline` for commits since the last session-log
+   entry — sync your mental model with actual code state.
+3. Check test suite state matches what the session log says. If the
+   suite has drifted red, that's your first task.
+4. Pick the next experiment: highest information yield among those
+   whose prereqs are `[high]`, respecting the iteration budget.
+
+**During a session:**
+1. State the current experiment's hypothesis and prediction BEFORE
+   running it. If you can't write them clearly, the experiment is
+   underspecified — refine first.
+2. After running: record outcome, update affected claims IN PLACE
+   (change content, keep id stable). Log the change in the session
+   log.
+3. **CRITICAL — extend the search space.** After every experiment,
+   before moving to the next, ask: "does this evidence reveal
+   options I hadn't listed?" If yes, add them to the options table.
+   Common triggers:
+   - An experiment surfaces a mechanism I didn't know existed →
+     possibly enables a simpler option.
+   - A claim voids → the options that assumed it need alternatives.
+   - A partial success on one axis suggests a hybrid combining it
+     with a different mechanism on another axis.
+   This habit is what keeps the search space from stagnating.
+   Extending the tree is NOT optional — if a session ends without
+   the options table having grown or refined, log WHY in the session
+   log (e.g., "experiment confirmed existing option; no new axes
+   exposed").
+
+**At session end:**
+1. Everything committed: `git status` clean.
+2. Session log has an entry with SHA(s) landed and one-line insight.
+3. Suite state matches session log's claim (green or specific known
+   failures).
+4. Options table has evolved OR the session log explains why not.
+5. Next action stated at end of session log entry so the next
+   session knows where to pick up.
+
+**When to compact:**
+If skipping more than ~5 obsolete/tried rows to find live options,
+rewrite the options table (not append). Preserve tried/obsolete
+entries in a "closed set" appendix so nothing is lost, but the
+working set stays scannable. Log the compaction as a session entry.
 
 ## Autonomy rules
 
@@ -212,6 +260,17 @@ O12 | cell      | [engineering] Layer-2 cell in `<cached-fn>`'s
                 | prereqs: O5        | pending
 O13 | cell      | [engineering] Layer-2 cell in TCA::queryApply.
                 | prereqs: O1        | pending
+O14 | rec       | [sci→eng] TCallbackApplyResult's `producer` field
+                  becomes a producerFn callable, snapshotting SCA on
+                  demand from enclosing runningObsSet (mirroring
+                  OuterApply::run:281-303). Sub-option of O7 with
+                  concrete mechanism.
+                | prereqs: K5, K6a   | pending (from E1)
+O15 | rec       | [engineering] Accept plain-SelectorApply producers
+                  for flat case (they're already scoped by enclosing
+                  SCA's argObsSet). Only fix producer shape for
+                  nested case via O7/O14. Narrow-scope for CAND-B.
+                | prereqs: K6a       | pending (from E1)
 
 ## Composed candidates
 
@@ -238,8 +297,21 @@ CAND-C: O2 + O5 + O11 + O9
 
 ## Experiments
 
-Each experiment: hypothesis, prediction, apparatus, outcome (once
-observed), affected claims, commit SHA.
+Each experiment has the fields below. `new options revealed` is not
+optional — always answered explicitly, even if the answer is "none".
+That's the checkpoint that keeps the search space alive.
+
+Template:
+```
+E<n> [pending|active|done]  <one-line goal>
+     Hypothesis:  <what you believe going in>
+     Prediction:  <what evidence would confirm; what would falsify>
+     Apparatus:   <smallest thing that produces the evidence>
+     Outcome:     <observed>
+     Affected claims: <ids>
+     New options revealed: <list, or "none">
+     SHA:         <commit>
+```
 
 E1 [done]    Verify K6 by reading TCallbackApplyResult's
              implementation.
@@ -271,7 +343,19 @@ E1 [done]    Verify K6 by reading TCallbackApplyResult's
              Affected: K6 → split into K6a (confirmed) + K6b (void);
              O8 obsolete; O7 becomes the §7-compliant path if we
              pursue TCallbackApplyResult-based recording.
-             SHA: this commit.
+             New options revealed:
+              - O14 (proposed): TCallbackApplyResult's `producer`
+                field becomes a producerFn callable (like
+                OuterApply::run:281-303), snapshotting SCA on
+                demand from enclosing runningObsSet. Sub-option of
+                O7 that reuses OuterApply::run's pattern.
+              - O15 (proposed): For flat case only, accept the
+                cross-cut finding that plain-SelectorApply-based
+                producers work because enclosing SCA scopes them —
+                so the WORKING set can stay narrow for CAND-B's
+                minimal-change hypothesis without hunting §7 purity
+                first. Nested case still requires §7 either way.
+             SHA: fc7b638fd (this commit adds these options).
 
 E2 [pending] Grep for callers of RCA::queryApply / RCA::defeatCache.
              Hypothesis: the throw is an assertion, not a signal
@@ -346,4 +430,21 @@ V6  Net line count of callback-arg primop code deletions beats
                   Cross-cut: flat case might work with plain-SelectorApply
                   producers (enclosing SCA argObsSet scopes them);
                   nested needs §7 composition.
-                  Landed: this doc update, in the rename commit.
+                  New options: O14 (producerFn callable, on-demand SCA),
+                  O15 (accept plain-SelectorApply for flat only).
+                  Landed: fc7b638fd (doc under new name, E1 recorded).
+                  Next: E4 (prove K1 recursion practically). Higher
+                  information yield than E2/E3 — decides whether
+                  apply-mechanism axis is really live.
+
+2026-08-01 doc-process | Added "Working with this document across sessions"
+                  section (session start/during/end lifecycle);
+                  formalised experiment template with mandatory
+                  "new options revealed" field; added CLAUDE.md
+                  pointer so future sessions read this file
+                  automatically at start.
+                  Learned: nothing new about #217; process
+                  discipline is what makes multi-session
+                  autonomous work sustainable.
+                  Landed: this commit.
+                  Next: still E4 as prior entry stated.
