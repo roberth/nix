@@ -87,6 +87,12 @@ public:
     ObjectType getTypeLazy() override;
     ObjectType getType() override;
     RootValue defeatCache() override;
+    /** #217: primop that on apply records a SelectorCallbackApply
+        observation with an argObsSet of inner-lambda's probes on
+        the outer-arg. Warm reconstructs the same argObsSet by
+        replaying recorded probes on the live arg for divergence
+        detection. */
+    RootValue toValueOrProxy(EvalState & state, std::shared_ptr<struct OuterResolver> resolver) override;
     std::optional<FunctionInfo> getFunctionInfo() override;
     PosIdx getPos() override;
     std::optional<std::vector<std::string>> getAttrPath() override;

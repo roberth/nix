@@ -6,13 +6,23 @@
  */
 
 #include "nix/expr/observation-set.hh"
+#include "nix/expr/outer-object.hh"
 #include "nix/expr/evaluator.hh"
 #include "nix/expr/nixexpr.hh"
+#include "nix/expr/trace-types.hh"
 
 #include <memory>
 #include <vector>
 
 namespace nix {
+
+/**
+ * Dispatch a Selector as a query on `obj` and return the (WHNF, child)
+ * pair. Same routine `OuterObject`'s queryFn uses internally to execute
+ * a probe on the wrapped outer Object. Exported so the higher-order
+ * callback primop can reuse it for arg-obsSet accumulation.
+ */
+OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::SelectorNode & q);
 
 /**
  * Base class for pseudo-Exprs that delegate evaluation to external sources.

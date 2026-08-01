@@ -1,5 +1,6 @@
 #include "nix/expr/replay-callback-arg.hh"
 #include "nix/expr/expr-from-object.hh"
+#include "nix/expr/interpreter-object.hh"
 #include "nix/expr/object-type.hh"
 #include "nix/expr/primops.hh"
 #include "nix/expr/tracing-cache-log.hh"
@@ -228,6 +229,7 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
         return allocRootValue(thunk);
     }
 
+    auto self = std::static_pointer_cast<ReplayCallbackArg>(shared_from_this());
     auto * primOp = new
 #if NIX_USE_BOEHMGC
         (GC)
@@ -236,17 +238,73 @@ RootValue ReplayCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_p
             .name = "<replay-local-lambda>",
             .args = {"args"},
             .arity = 1,
-            .impl = [](EvalState &, const PosIdx, Value **, Value &) {
-                /* Higher-order callback application — the reconstructed
-                   primop being applied to another argument — is not
-                   currently supported. When the design lights up (see
-                   the cb-higher-order test family), reinstate the arg
-                   registration + synthetic-Apply materialisation this
-                   stub used to house. */
-                throw Error(
-                    "tracing eval-cache: applying a function reached "
-                    "through a callback's contra-arg is not currently "
-                    "supported");
+            .impl = [self, resolver](EvalState & state, const PosIdx, Value ** args, Value & v) {
+                /* #217: higher-order callback replay per callback-model §7.
+                   Iterate recorded SelectorCallbackApply entries in the
+                   enclosing obsSet where fn matches this proxy's producer.
+                   For each candidate's argObsSet, replay the recorded
+                   probes on the live outer-arg; whichever obsSet all-matches
+                   is a divergence-free hit. Serve its applyResult. */
+                auto & dg = self->decisionGraph;
+                if (!self->obsSetResponses)
+                    throw Error("<replay-local-lambda>: no obsSetResponses");
+                auto liveArgObj = std::make_shared<InterpreterObject>(
+                    state, allocRootValue(args[0]));
+
+                std::optional<trace::ResultWHNF> matchedResult;
+                for (const auto & [scaHash, recordedResp] : *self->obsSetResponses) {
+                    auto scaOpt = dg.selectorPool.find(scaHash);
+                    if (!scaOpt) continue;
+                    auto * sca = std::get_if<trace::SelectorCallbackApply>(&(*scaOpt)->node);
+                    if (!sca) continue;
+                    if (sca->parent->cachedHash != self->producer->cachedHash) continue;
+
+                    auto layer2Obs = dg.getObservationSet(sca->argObsSet);
+                    if (!layer2Obs) continue;
+
+                    bool allMatch = true;
+                    for (const auto & recordedProbe : *layer2Obs) {
+                        /* Recover the probe's Selector from the pool. */
+                        auto probeSelOpt = dg.selectorPool.find(recordedProbe.reqHash);
+                        if (!probeSelOpt) { allMatch = false; break; }
+                        /* Dispatch the probe live on the outer-arg. */
+                        trace::ResultVariant liveResult;
+                        try {
+                            auto qr = dispatchOuterQuery(liveArgObj, (*probeSelOpt)->node);
+                            liveResult = qr.result;
+                        } catch (const std::exception &) { allMatch = false; break; }
+                        /* Compare live vs recorded CBOR bytes. */
+                        nlohmann::json liveJson = std::visit(
+                            [](const auto & r) -> nlohmann::json { return r; }, liveResult);
+                        auto livePayload = jsonToCborString(liveJson);
+                        if (livePayload != recordedProbe.responsePayload) {
+                            allMatch = false;
+                            break;
+                        }
+                    }
+                    if (allMatch) {
+                        matchedResult = cborStringToJson(recordedResp).get<trace::ResultWHNF>();
+                        tracingCacheLog(
+                            "<replay-local-lambda>: HIT via SCA=%s (obsSet=%s, %zu probes)",
+                            scaHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                            sca->argObsSet.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                            layer2Obs->size());
+                        break;
+                    }
+                }
+                if (!matchedResult)
+                    throw Error("<replay-local-lambda>: no recorded SCA matches live arg (divergence)");
+
+                std::visit(overloaded{
+                    [&](const trace::WHNFInt & p) { v.mkInt(p.value); },
+                    [&](const trace::WHNFBool & p) { v.mkBool(p.value); },
+                    [&](const trace::WHNFFloat & p) { v.mkFloat(p.value); },
+                    [&](const trace::WHNFString & p) { v.mkString(p.value, state.mem); },
+                    [&](const trace::WHNFNull &) { v.mkNull(); },
+                    [&](const auto &) {
+                        throw Error("<replay-local-lambda>: unsupported WHNF type %s", matchedResult->type);
+                    },
+                }, matchedResult->payload);
             },
         };
     auto * val = evalState.allocValue();

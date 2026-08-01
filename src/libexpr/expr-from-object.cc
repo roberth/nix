@@ -21,7 +21,7 @@ namespace nix {
    response plus (for producer queries) the outer's child Object at
    the queried position. No lookup table, no id round-trip — the
    caller passes the outer Object it already holds. */
-static OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::SelectorNode & q)
+OuterQueryResult dispatchOuterQuery(std::shared_ptr<Object> obj, const trace::SelectorNode & q)
 {
     /* Each Selector alternative gets its own handler — no field-presence
        shortcuts. A new alternative added to SelectorNode won't compile

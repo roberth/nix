@@ -1,5 +1,10 @@
 #include "nix/expr/tracing-callback-arg.hh"
+#include "nix/expr/eval.hh"
+#include "nix/expr/expr-from-object.hh"
+#include "nix/expr/interpreter-object.hh"
 #include "nix/expr/object-type.hh"
+#include "nix/expr/outer-object.hh"
+#include "nix/expr/primops.hh"
 #include "nix/expr/tracing-cache-log.hh"
 #include "nix/expr/tracing-decision-graph.hh"
 #include "nix/expr/tracing-object.hh"
@@ -247,6 +252,99 @@ std::shared_ptr<Object> TracingCallbackArg::queryApply(std::shared_ptr<Object> /
     throw Error(
         "tracing eval-cache: applying a function reached through a "
         "callback's contra-arg is not currently supported");
+}
+
+RootValue TracingCallbackArg::toValueOrProxy(EvalState & evalState, std::shared_ptr<struct OuterResolver> resolver)
+{
+    /* #217: Higher-order callback apply. Design per callback-model §7:
+       when outer applies the contra-arg to some outer-supplied value,
+       record a compositional SelectorCallbackApply — fn = this contra-arg's
+       producer, argObsSet = inner-lambda's probes on the outer-supplied
+       value during this apply. Warm reconstructs the argObsSet by
+       replaying recorded probes on the live arg; divergence yields
+       different argObsSet → different SelectorCallbackApply hash →
+       walker miss. */
+    auto self = std::static_pointer_cast<TracingCallbackArg>(shared_from_this());
+    auto * primOp = new
+#if NIX_USE_BOEHMGC
+        (GC)
+#endif
+        PrimOp{
+            .name = "<cb-arg-apply>",
+            .args = {"arg"},
+            .arity = 1,
+            .impl = [self, resolver](EvalState & state, const PosIdx, Value ** args, Value & v) {
+                auto & dg = self->writer.getDecisionGraph();
+
+                /* Accumulator for inner-lambda's probes on the
+                   outer-arg during this apply. Snapshotted into the
+                   ObservationSet CAS after inner->queryApply returns. */
+                auto layer2Obs = std::make_shared<std::vector<TracingDecisionGraph::InlineFact>>();
+
+                /* Producer for the wrapped outer-arg — synthetic
+                   SelectorArg{0} in the scope of the enclosing
+                   SelectorCallbackApply (which will be constructed
+                   below to embed the argObsSet). */
+                auto argProducerSel = dg.selectorPool.intern(trace::SelectorArg{0});
+                auto outerArgObj = std::make_shared<InterpreterObject>(state, allocRootValue(args[0]));
+
+                /* queryFn: execute the probe on the outer-arg live and
+                   accumulate (Selector, response) into layer2Obs. Skip
+                   the writer.logOuterObservation path — layer-2 obs
+                   don't attribute to a main-cell factset; they live
+                   inline in the accumulator. */
+                OuterQueryFn queryFn = [layer2Obs, &dg](
+                    std::shared_ptr<Object> outerObj,
+                    ref<const trace::Selector> q,
+                    ref<const trace::Selector> /*producer*/,
+                    std::shared_ptr<const ArgCell> /*callerCell*/) {
+                    auto qr = dispatchOuterQuery(std::move(outerObj), q->node);
+                    /* Serialise the response and append to the layer-2
+                       obs accumulator. Also insert the request payload
+                       into the pool so warm can decode the recorded
+                       Selector at replay. */
+                    nlohmann::json rJson = std::visit(
+                        [](const auto & r) -> nlohmann::json { return r; }, qr.result);
+                    auto rPayload = jsonToCborString(rJson);
+                    dg.insertRequest(q->cachedHash, jsonToCborString(trace::toJson(*q)));
+                    layer2Obs->push_back({q->cachedHash, rPayload});
+                    return qr;
+                };
+
+                auto wrappedArg = make_ref<OuterObject>(
+                    [argProducerSel]() { return argProducerSel; },
+                    outerArgObj,
+                    std::move(queryFn),
+                    self->rootFSRoot,
+                    dg.selectorPool);
+
+                /* Invoke inner-lambda live via inner->queryApply. Inner's
+                   probes on wrappedArg flow through queryFn → layer2Obs. */
+                auto resultObj = self->inner->queryApply(wrappedArg.get_ptr());
+                if (!resultObj)
+                    throw Error("TracingCallbackArg::<cb-arg-apply>: queryApply returned null");
+                auto applyResultWhnf = computeWHNFFromObject(*resultObj);
+
+                /* Snapshot layer-2 obs into ObservationSet CAS. */
+                auto layer2ObsHash = dg.insertObservationSet(*layer2Obs);
+                tracingCacheLog(
+                    "<cb-arg-apply>: layer-2 obsSet=%s (%zu probes)",
+                    layer2ObsHash.to_string(HashFormat::Base16, false).substr(0, 12).c_str(),
+                    layer2Obs->size());
+
+                /* Construct compositional SelectorCallbackApply and
+                   record on enclosing runningObsSet. */
+                auto scaSel = dg.selectorPool.intern(
+                    trace::SelectorCallbackApply{layer2ObsHash, self->producer});
+                self->recordObservation(scaSel, applyResultWhnf);
+
+                /* Materialise the result into v via ExprFromObject. */
+                ExprFromObject(resultObj, nullptr, resolver).eval(state, state.baseEnv, v);
+            },
+        };
+    auto * val = evalState.allocValue();
+    val->mkPrimOp(primOp);
+    return allocRootValue(val);
 }
 
 } // namespace nix
