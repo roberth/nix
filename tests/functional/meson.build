@@ -185,6 +185,8 @@ suites = [
       'cb-attrset-many-fields.sh',
       'cb-file-edit-cached-body.sh',
       'cb-file-edit-imported.sh',
+      'cb-simultaneous-edits.sh',
+      'cb-string-arg.sh',
       'cb-stats-sanity.sh',
       'cb-same-shape-collapse.sh',
       'cb-same-shape-distinguish.sh',
