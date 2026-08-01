@@ -183,6 +183,7 @@ suites = [
       'cb-mutually-recursive-nesting.sh',
       'cb-fib-flat.sh',
       'cb-fib-mutual.sh',
+      'cb-fib-self-cached.sh',
       'cb-two-independent-callbacks.sh',
       'cb-attrset-probed-subset.sh',
       'cb-attrset-many-fields.sh',
