@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
 
-# M4 T-comb-5: mutual recursion BETWEEN evaluators. `pong` is defined
-# in the cached inner file; `pingOuter` is defined in outer. Each
-# recursive step alternates:
-#   - pong (inner) calls pingOuter (outer) via callback, passing a
-#     contra-arg fn.
-#   - pingOuter (outer) applies the contra-arg (an inner lambda) —
-#     that's the higher-order-callback apply.
-#   - contra-arg body calls pong (inner) again with n+1.
+# M4 T-comb-5: mutual recursion BETWEEN evaluators, with the recursion
+# LIMIT threaded through the callback bounces.
 #
-# So each recursion depth = one outer→inner cache call +
-#                            one inner→outer callback +
-#                            one outer's higher-order apply of contra-arg.
+# `pong` is defined in the cached inner file; `ping` in outer. Each
+# recursion carries `{ n, limit }` as an attrset arg. `pong` checks
+# the limit and either terminates or invokes `ping` with the current
+# n, the limit, and a continuation callback that will be invoked with
+# the next n value. `ping` in outer applies that continuation with
+# `n + 1`, threading the same limit through so the next `pong` firing
+# knows where to stop.
+#
+# The limit-as-a-parameter matters because it forces the callbacks to
+# genuinely carry state across the boundary at each recursion step —
+# a `>0` termination would collapse into a captured constant and hide
+# the parameter-threading. Depth = arity of state flowing through
+# each callback firing.
 #
 # Verifies:
-#   - Cold/warm correctness for a mutually recursive shape.
-#   - obsSet nesting depth accurately reflects the recorded structure
-#     (checked via NIX_CACHE_STATS_FILE).
+#   - Cold/warm correctness with attrset-shaped state threading.
+#   - Different limits produce different results; warm hits the same
+#     recorded trace when args match.
+#   - obsSet depth statistic reflects the recorded structure honestly.
 
 source common.sh
 
@@ -29,81 +34,91 @@ clearCache() {
 clearCache
 
 cat > "$TEST_ROOT/mut-cross.nix" << 'NIX'
-{ pingOuter }: rec {
-  pong = n: if n >= 3 then n else pingOuter (m: pong (n + 1));
+{ ping }: rec {
+  pong = args:
+    if args.n >= args.limit then args.n
+    else ping {
+      n = args.n;
+      limit = args.limit;
+      cb = nextN: pong { n = nextN; limit = args.limit; };
+    };
 }
 NIX
 
-echo "=== cold: pong 0 → recursion terminates at n=3 (expect 3) ==="
+# ping's contract: read args.cb (a fn), apply it to args.n + 1.
+# The limit passes through but ping doesn't inspect it.
+OUTER_PING='ping = args: args.cb (args.n + 1)'
+
+echo "=== cold: pong {n=0; limit=3} (expect 3) ==="
 result=$(nix eval --impure --expr '
   let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross.nix; };
-      pingOuter = cb: cb 0;
-  in (cached { inherit pingOuter; }).pong 0')
+      '"$OUTER_PING"';
+  in (cached { inherit ping; }).pong { n = 0; limit = 3; }')
 echo "Got: $result"
 [[ "$result" == 3 ]]
 
-echo "=== warm replay (expect 3) ==="
+echo "=== warm replay same limit (expect 3) ==="
 result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '
   let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross.nix; };
-      pingOuter = cb: cb 0;
-  in (cached { inherit pingOuter; }).pong 0')
+      '"$OUTER_PING"';
+  in (cached { inherit ping; }).pong { n = 0; limit = 3; }')
 echo "Got: $result"
 [[ "$result" == 3 ]]
 
-# Change starting n. Expected: pong 1 → recursion 2 layers → return 3.
-echo "=== outer change: pong 1 (expect 3) ==="
+echo "=== outer change: limit=5 (expect 5) ==="
 result=$(nix eval --impure --expr '
   let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross.nix; };
-      pingOuter = cb: cb 0;
-  in (cached { inherit pingOuter; }).pong 1')
-echo "Got: $result"
-[[ "$result" == 3 ]]
-
-# Change terminator threshold via making inner file take an arg.
-cat > "$TEST_ROOT/mut-cross-5.nix" << 'NIX'
-{ pingOuter }: rec {
-  pong = n: if n >= 5 then n else pingOuter (m: pong (n + 1));
-}
-NIX
-
-echo "=== fresh inner (threshold=5), cold pong 0 (expect 5) ==="
-result=$(nix eval --impure --expr '
-  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross-5.nix; };
-      pingOuter = cb: cb 0;
-  in (cached { inherit pingOuter; }).pong 0')
+      '"$OUTER_PING"';
+  in (cached { inherit ping; }).pong { n = 0; limit = 5; }')
 echo "Got: $result"
 [[ "$result" == 5 ]]
 
-echo "=== warm (expect 5) ==="
+echo "=== warm replay limit=5 (expect 5) ==="
 result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '
-  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross-5.nix; };
-      pingOuter = cb: cb 0;
-  in (cached { inherit pingOuter; }).pong 0')
+  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross.nix; };
+      '"$OUTER_PING"';
+  in (cached { inherit ping; }).pong { n = 0; limit = 5; }')
 echo "Got: $result"
 [[ "$result" == 5 ]]
 
-# Depth statistic: mutual recursion should reach some depth > 1 in the
-# recorded obsSet structure. Higher inner-terminator = deeper nesting.
-echo "=== depth-3 stats ==="
+echo "=== warm replay limit=3 (still expect 3, both recordings coexist) ==="
+result=$(_NIX_DISALLOW_PARSE=1 nix eval --impure --expr '
+  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross.nix; };
+      '"$OUTER_PING"';
+  in (cached { inherit ping; }).pong { n = 0; limit = 3; }')
+echo "Got: $result"
+[[ "$result" == 3 ]]
+
+# Divergence: change ping's semantics (increment by 2 instead of 1).
+echo "=== outer change: ping increments by 2, limit=5 (expect 6) ==="
+result=$(nix eval --impure --expr '
+  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross.nix; };
+      ping = args: args.cb (args.n + 2);
+  in (cached { inherit ping; }).pong { n = 0; limit = 5; }')
+echo "Got: $result"
+[[ "$result" == 6 ]]
+
+# Depth stat: verify the recorded structure has some nesting.
+echo "=== depth stat for limit=3 ==="
 clearCache
 statsFile=$(mktemp)
 NIX_CACHE_STATS_FILE="$statsFile" nix eval --impure --expr '
   let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross.nix; };
-      pingOuter = cb: cb 0;
-  in (cached { inherit pingOuter; }).pong 0' > /dev/null
-depth=$(jq -r .maxCallbackObsSetNestingDepth "$statsFile" 2>/dev/null || cat "$statsFile" | sed 's/.*maxCallbackObsSetNestingDepth":\([0-9]*\).*/\1/')
-echo "depth3 got maxCallbackObsSetNestingDepth=$depth"
+      '"$OUTER_PING"';
+  in (cached { inherit ping; }).pong { n = 0; limit = 3; }' > /dev/null
+depth=$(sed 's/.*maxCallbackObsSetNestingDepth":\([0-9]*\).*/\1/' "$statsFile")
+echo "limit=3 maxCallbackObsSetNestingDepth=$depth"
 [[ "$depth" -ge 1 ]]
 
-echo "=== depth-5 stats ==="
+echo "=== depth stat for limit=5 (expect >= limit=3 depth) ==="
 clearCache
 statsFile5=$(mktemp)
 NIX_CACHE_STATS_FILE="$statsFile5" nix eval --impure --expr '
-  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross-5.nix; };
-      pingOuter = cb: cb 0;
-  in (cached { inherit pingOuter; }).pong 0' > /dev/null
-depth5=$(jq -r .maxCallbackObsSetNestingDepth "$statsFile5" 2>/dev/null || cat "$statsFile5" | sed 's/.*maxCallbackObsSetNestingDepth":\([0-9]*\).*/\1/')
-echo "depth5 got maxCallbackObsSetNestingDepth=$depth5"
+  let cached = builtins.cache { import = '"$TEST_ROOT"'/mut-cross.nix; };
+      '"$OUTER_PING"';
+  in (cached { inherit ping; }).pong { n = 0; limit = 5; }' > /dev/null
+depth5=$(sed 's/.*maxCallbackObsSetNestingDepth":\([0-9]*\).*/\1/' "$statsFile5")
+echo "limit=5 maxCallbackObsSetNestingDepth=$depth5"
 [[ "$depth5" -ge "$depth" ]]
 
 rm -f "$statsFile" "$statsFile5"
