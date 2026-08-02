@@ -31,6 +31,15 @@
 #      `submoduleWith`, forced via `lib.optionAttrSetToDocList`
 #
 # Neither ingredient alone triggers it in isolation.
+#
+# Companion nixpkgs branch `eval-cache-minimization-repro` reduces
+# module-list.nix from 2047 to 38 lines (30 modules) at bisection
+# fixed point. Bisection finds a single trigger-critical module:
+# `system/activation/switchable-system.nix`. Removing it makes both
+# cold and warm succeed while everything else evaluates fine —
+# i.e., it is not needed for correctness of the eval, only to
+# expose the cache-bridge bug. Its interaction with the ghostunnel-
+# via-cache navigation is what the diagnosis must explain.
 let
   lib = import /home/sandbox/nixpkgs/lib;
   cachedNixpkgs = lib.cache { import = /home/sandbox/nixpkgs; };
