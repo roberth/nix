@@ -583,6 +583,18 @@ Hash TracingDecisionGraph::insertObservationSet(
     auto payload = dg_observationSetPayload(sorted);
     auto h = hashString(HashAlgorithm::SHA256, payload);
 
+    /* Early return if we've inserted this obsSet before in this session.
+       `obsSetDepthMemo` is populated only after a successful insert
+       (line below), so membership implies the SQLite row exists and
+       depth is already computed. Skips sort-dedup-hash+SQL round-trip
+       for repeated obsSets — hot under H2's compositional recording,
+       where the same probe pattern recurs across many callback firings. */
+    {
+        auto state(_state->lock());
+        if (state->obsSetDepthMemo.contains(h))
+            return h;
+    }
+
     /* SCA-nesting depth: derived from the ACTUAL obsSet content, not
        from execution ordering. For each member whose reqHash resolves
        to a SelectorCallbackApply, look up its argObsSet in the memo
