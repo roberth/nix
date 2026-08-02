@@ -38,8 +38,26 @@
 # `system/activation/switchable-system.nix`. Removing it makes both
 # cold and warm succeed while everything else evaluates fine —
 # i.e., it is not needed for correctness of the eval, only to
-# expose the cache-bridge bug. Its interaction with the ghostunnel-
-# via-cache navigation is what the diagnosis must explain.
+# expose the cache-bridge bug.
+#
+# Within switchable-system.nix, further chunk-bisection localizes
+# the trigger to ONE `${pkgs.<name>}` interpolation in a
+# `system.<x>BuilderCommands` string, where `<name>` is auto-called
+# from `pkgs/by-name/` (verified with switch-to-configuration-ng,
+# ripgrep, hello — all fire). Old-style `pkgs/tools/misc/coreutils`
+# packages do NOT fire. The which-option-name doesn't matter
+# (activatable- vs systemBuilder- both fire).
+#
+# Two-site requirement — dropping either makes both cold and warm
+# succeed:
+#   1. documentation.nix's ghostunnel-via-submoduleWith probe
+#      (this file's `evalConfig` module doing the same).
+#   2. any by-name pkg reference from switchable-system.nix's
+#      config.
+#
+# So the warm-recursion bug is a collision between TWO independent
+# by-name pkg navigations through cachedNixpkgs at two different
+# module-tree call sites.
 let
   lib = import /home/sandbox/nixpkgs/lib;
   cachedNixpkgs = lib.cache { import = /home/sandbox/nixpkgs; };
