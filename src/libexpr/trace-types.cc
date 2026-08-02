@@ -817,15 +817,27 @@ std::optional<Request> decodeRequest(const nlohmann::json & j, SelectorPool & po
 
 std::optional<ResultVariant> decodeResult(const nlohmann::json & j)
 {
-    /* One alternative for now (ResultWHNF); if more land they get
-       tag-dispatched here via the same pattern used by decodeRequest. */
-    try {
-        ResultWHNF whnf;
-        from_json(j, whnf);
-        return ResultVariant{std::move(whnf)};
-    } catch (const std::exception &) {
-        return std::nullopt;
+    /* ResultFunctionInfo and ResultWHNF have disjoint field sets:
+       FunctionInfo has `hasInfo`, WHNF has `type`. Peek the object to
+       decide which alternative to decode as; from_json on either would
+       throw on the wrong shape. */
+    if (j.is_object()) {
+        if (j.contains("hasInfo")) {
+            try {
+                ResultFunctionInfo fi;
+                from_json(j, fi);
+                return ResultVariant{std::move(fi)};
+            } catch (const std::exception &) {}
+        }
+        if (j.contains("type")) {
+            try {
+                ResultWHNF whnf;
+                from_json(j, whnf);
+                return ResultVariant{std::move(whnf)};
+            } catch (const std::exception &) {}
+        }
     }
+    return std::nullopt;
 }
 
 } // namespace nix::trace

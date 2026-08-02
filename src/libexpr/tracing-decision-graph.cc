@@ -1597,8 +1597,13 @@ TracingDecisionGraph::getTerminal(const QueryHash & q, const SetHash & factSet)
     auto state(_state->lock());
     auto key = std::make_pair(q, factSet);
     auto it = state->terminalCache.find(key);
-    if (it != state->terminalCache.end())
+    if (it != state->terminalCache.end()) {
+        tracingCacheLog("getTerminal(q=%s, fs=%s) CACHE %s",
+                        q.to_string(HashFormat::Base16, false).c_str(),
+                        factSet.to_string(HashFormat::Base16, false).c_str(),
+                        it->second ? "HIT" : "MISS");
         return it->second;
+    }
     state->checkpoint();
     auto query = state->selectTerminal.use();
     dg_bindBlob(query, dg_hashToBlob(q));
@@ -1606,6 +1611,10 @@ TracingDecisionGraph::getTerminal(const QueryHash & q, const SetHash & factSet)
     std::optional<ResultHash> result;
     if (query.next())
         result = dg_blobToHash(query.getBlob(0));
+    tracingCacheLog("getTerminal(q=%s, fs=%s) SQL %s",
+                    q.to_string(HashFormat::Base16, false).c_str(),
+                    factSet.to_string(HashFormat::Base16, false).c_str(),
+                    result ? "HIT" : "MISS");
     state->terminalCache.emplace(key, result);
     return result;
 }

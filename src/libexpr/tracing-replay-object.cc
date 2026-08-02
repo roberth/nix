@@ -42,13 +42,15 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
     /* Phase D2: getters have no factSet chain. Terminal at
        (getterSelectorHash, parentTerminalCur). */
     auto anchorCur = triePos.factSetHash;
-    tracingCacheLog("walker lookup: %s Q=%s anchor=%s (direct)",
+    tracingCacheLog("walker lookup: %s Q=%s anchor=%s (direct, fullQ=%s fullAnchor=%s)",
                     Q::tag,
                     selectorHash.to_string(HashFormat::Base16, false).substr(0, 12),
-                    anchorCur.to_string(HashFormat::Base16, false).substr(0, 12));
+                    anchorCur.to_string(HashFormat::Base16, false).substr(0, 12),
+                    selectorHash.to_string(HashFormat::Base16, false),
+                    anchorCur.to_string(HashFormat::Base16, false));
     auto resultNodeHash = evaluator.getDecisionGraph().getTerminal(selectorHash, anchorCur);
     if (!resultNodeHash) {
-        tracingCacheLog("walker lookup: %s MISS Q=%s",
+        tracingCacheLog("walker lookup: %s MISS-Terminal Q=%s",
                         Q::tag,
                         selectorHash.to_string(HashFormat::Base16, false).substr(0, 12));
         tracingCacheStats().misses++;
@@ -56,12 +58,17 @@ std::optional<std::pair<R, Hash>> TracingReplayObject::lookupResult(const Q & qu
     }
     auto typed = evaluator.getDecisionGraph().getResult(*resultNodeHash);
     if (!typed) {
+        tracingCacheLog("walker lookup: %s MISS-Result Q=%s resultHash=%s",
+                        Q::tag,
+                        selectorHash.to_string(HashFormat::Base16, false).c_str(),
+                        resultNodeHash->to_string(HashFormat::Base16, false).c_str());
         tracingCacheStats().misses++;
         return std::nullopt;
     }
     auto * val = std::get_if<R>(&*typed);
     if (!val) {
-        tracingCacheLog("replay: payload variant mismatch for %s", Q::tag);
+        tracingCacheLog("replay: payload variant mismatch for %s (got idx=%zu)",
+                        Q::tag, typed->index());
         tracingCacheStats().misses++;
         return std::nullopt;
     }
